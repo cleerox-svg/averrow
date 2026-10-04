@@ -694,7 +694,12 @@ export interface CreateTakedownBody {
 
 export interface UpdateTakedownBody {
   status?: string;
-  notes?: string;
+  /** Tenant PATCH: the customer's note (takedown_requests.notes). On the
+   *  ops admin PATCH it is a legacy alias for `staff_notes`. */
+  notes?: string | null;
+  /** Ops admin PATCH only: internal Averrow note (migration 0276). Never
+   *  returned to a customer. null / "" clears it. */
+  staff_notes?: string | null;
   evidence_summary?: string;
   evidence_detail?: string;
   severity?: string;

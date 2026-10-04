@@ -21,7 +21,12 @@ export interface Takedown {
   priority_score: number;
   requested_by: string | null;
   source_type: string | null;
+  /** The customer's own note (written only from the tenant app). Read-only
+   *  on the ops surface. */
   notes: string | null;
+  /** Internal Averrow note (migration 0276) — never shown to the customer.
+   *  Written by PATCH /api/admin/takedowns/:id `staff_notes`. */
+  staff_notes: string | null;
   evidence_count?: number;
   created_at: string;
   submitted_at: string | null;
@@ -188,10 +193,11 @@ export function useTakedownEvidence(takedownId: string | null) {
 export function useUpdateTakedown() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, status, notes }: { id: string; status?: string; notes?: string }) => {
-      const body: Record<string, string> = {};
+    mutationFn: async ({ id, status, staff_notes }: { id: string; status?: string; staff_notes?: string | null }) => {
+      const body: { status?: string; staff_notes?: string | null } = {};
       if (status) body.status = status;
-      if (notes !== undefined) body.notes = notes as string;
+      // Staff notes only — the customer's `notes` is never written from ops.
+      if (staff_notes !== undefined) body.staff_notes = staff_notes;
       return api.patch(`/api/admin/takedowns/${id}`, body);
     },
     onSuccess: () => {

@@ -834,7 +834,18 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   through `validateTenantAssignee` (rejects staff + the placeholder). Ops
   takedown webhooks carry `updated_by: null, updated_by_name: "Averrow SOC"`;
   tenant ones carry the member's id + display name (same shape).
-  The tenant takedown detail omits `notes` (shared with ops staff notes).
+  **Takedown notes are split like alerts (migration 0276).**
+  `takedown_requests.notes` is the CUSTOMER's note — written only by the
+  tenant POST/PATCH (`/api/orgs/:orgId/takedowns*`) and returned by the
+  tenant detail. `takedown_requests.staff_notes` is the internal Averrow
+  note — written only by the ops `PATCH /api/admin/takedowns/:id`
+  (`staff_notes`, or legacy alias `notes`, ≤4000 chars, null/"" clears),
+  which never writes the customer's `notes`. The tenant detail strips every
+  `staff_*` key (`toTenantTakedownView`, `handlers/tenantTakedowns.ts`); the
+  tenant list selects an explicit column list with neither note. The ops
+  list (`tr.*`) returns both. The old unrouted `handleListTakedowns` /
+  `handleGetTakedown` (`handlers/takedowns.ts`, `tr.*`) were deleted — tenant
+  takedown reads live only in `handlers/tenantTakedowns.ts`.
 - **Staff crossover allowance — the ONLY customer-data exception (owner
   decision 2026-10-04).** Staff may manage four tenant surfaces on the
   customer's behalf, so these do NOT call `refuseStaffTenantWrite`:

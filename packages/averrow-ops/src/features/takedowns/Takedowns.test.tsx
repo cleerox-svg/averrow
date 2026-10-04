@@ -137,6 +137,134 @@ describe('Takedowns Page', () => {
     expect(screen.getByText('Evidence')).toBeInTheDocument();
   });
 
+  // Migration 0276 — customer `notes` read-only, internal `staff_notes` editable.
+  it('detail panel shows the customer note read-only and edits staff_notes (internal)', async () => {
+    const mutate = vi.fn();
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
+    (useAdminTakedowns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        ...mockData,
+        takedowns: [createMockTakedown({ notes: 'Please prioritise this one', staff_notes: 'old soc note' })],
+      },
+      isLoading: false,
+    });
+    renderWithProviders(<Takedowns />);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+
+    expect(screen.getByText("Customer's note")).toBeInTheDocument();
+    const customerNote = screen.getByTestId('takedown-customer-note');
+    expect(customerNote).toHaveTextContent('Please prioritise this one');
+    expect(customerNote.tagName).toBe('P'); // display only, not an input
+
+    const box = screen.getByRole('textbox', { name: 'Internal notes — not visible to customers' });
+    expect(box).toHaveValue('old soc note'); // staff_notes, not the customer's notes
+    expect(screen.queryByRole('button', { name: /save notes/i })).not.toBeInTheDocument();
+
+    await userEvent.clear(box);
+    await userEvent.type(box, 'new soc note');
+    await userEvent.click(screen.getByRole('button', { name: /save notes/i }));
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', staff_notes: 'new soc note' }, expect.any(Object));
+  });
+
+  it('clearing the internal note saves staff_notes: null; no customer note shows a placeholder', async () => {
+    const mutate = vi.fn();
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
+    (useAdminTakedowns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { ...mockData, takedowns: [createMockTakedown({ staff_notes: 'x' })] },
+      isLoading: false,
+    });
+    renderWithProviders(<Takedowns />);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    expect(screen.getByText('No note from the customer')).toBeInTheDocument();
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Internal notes — not visible to customers' }));
+    await userEvent.click(screen.getByRole('button', { name: /save notes/i }));
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', staff_notes: null }, expect.any(Object));
+  });
+
+  // ─── Staff-notes draft: trim on save + discard guard ─────────
+  const NOTES_BOX = { name: 'Internal notes — not visible to customers' };
+  type MutateOpts = { onSuccess?: () => void };
+
+  function openWithStaffNote(staffNotes: string | null, opts: { succeed?: boolean } = {}) {
+    const mutate = vi.fn((_vars: unknown, o?: MutateOpts) => { if (opts.succeed) o?.onSuccess?.(); });
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
+    (useAdminTakedowns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { ...mockData, takedowns: [createMockTakedown({ staff_notes: staffNotes })] },
+      isLoading: false,
+    });
+    renderWithProviders(<Takedowns />);
+    return mutate;
+  }
+
+  it('trims the staff-notes draft on save and the Save button resets after success', async () => {
+    const mutate = openWithStaffNote(null, { succeed: true });
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    const box = screen.getByRole('textbox', NOTES_BOX);
+    await userEvent.type(box, '   padded note  ');
+    await userEvent.click(screen.getByRole('button', { name: /save notes/i }));
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', staff_notes: 'padded note' }, expect.any(Object));
+    expect(box).toHaveValue('padded note');
+    expect(screen.queryByRole('button', { name: /save notes/i })).not.toBeInTheDocument();
+  });
+
+  it('a whitespace-only draft saves as null (clears) and the Save button resets', async () => {
+    const mutate = openWithStaffNote('x', { succeed: true });
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    const box = screen.getByRole('textbox', NOTES_BOX);
+    await userEvent.clear(box);
+    await userEvent.type(box, '    ');
+    await userEvent.click(screen.getByRole('button', { name: /save notes/i }));
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', staff_notes: null }, expect.any(Object));
+    expect(box).toHaveValue('');
+    expect(screen.queryByRole('button', { name: /save notes/i })).not.toBeInTheDocument();
+  });
+
+  it('whitespace-only edits to an empty note are not a change (no Save button)', async () => {
+    openWithStaffNote(null);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.type(screen.getByRole('textbox', NOTES_BOX), '   ');
+    expect(screen.queryByRole('button', { name: /save notes/i })).not.toBeInTheDocument();
+  });
+
+  it('Escape / close with an unsaved draft asks first; cancel keeps the panel and draft', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    openWithStaffNote(null);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.type(screen.getByRole('textbox', NOTES_BOX), 'unsaved');
+
+    await userEvent.keyboard('{Escape}');
+    expect(confirmSpy).toHaveBeenCalledWith('Discard unsaved internal notes?');
+    expect(screen.getByRole('textbox', NOTES_BOX)).toHaveValue('unsaved');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close report' }));
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('textbox', NOTES_BOX)).toHaveValue('unsaved');
+
+    confirmSpy.mockReturnValue(true);
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox', NOTES_BOX)).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it('closing with no unsaved draft does not prompt', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    openWithStaffNote('saved note');
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.keyboard('{Escape}');
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('textbox', NOTES_BOX)).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it('a status change keeps the panel open when it holds an unsaved staff-notes draft', async () => {
+    openWithStaffNote(null, { succeed: true });
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.type(screen.getByRole('textbox', NOTES_BOX), 'unsaved');
+    const buttons = screen.getAllByRole('button', { name: 'Mark Submitted' });
+    await userEvent.click(buttons[buttons.length - 1]); // the panel's action
+    expect(screen.getByRole('textbox', NOTES_BOX)).toHaveValue('unsaved');
+  });
+
   it('shows search input', () => {
     renderWithProviders(<Takedowns />);
     expect(screen.getByPlaceholderText('Search by brand, handle, or URL...')).toBeInTheDocument();

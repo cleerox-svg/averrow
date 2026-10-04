@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAdminTakedowns, useAdminTakedownsAll, useUpdateTakedown } from '@/hooks/useTakedowns';
 import type { Takedown, TakedownScope } from '@/hooks/useTakedowns';
@@ -541,12 +541,99 @@ function buildTakedownReport(takedown: Takedown): string {
     parts.push('');
   }
 
-  if (takedown.notes) {
-    parts.push('## Notes');
-    parts.push(takedown.notes);
-  }
+  // Notes are NOT part of the report body: the customer's note and the
+  // internal staff note render in <TakedownNotes> (panel footer) so the two
+  // are clearly labelled and the staff note is editable.
 
   return parts.join('\n');
+}
+
+// ─── Notes (customer note read-only + internal staff note) ────
+// Migration 0276 split the columns: `notes` is the customer's own note
+// (tenant app only), `staff_notes` is internal and never shown to the
+// customer. Same labelling as the ops alert detail.
+
+const TAKEDOWN_INTERNAL_NOTES_LABEL = 'Internal notes — not visible to customers';
+const TAKEDOWN_CUSTOMER_NOTE_LABEL = "Customer's note";
+const DISCARD_STAFF_NOTES_PROMPT = 'Discard unsaved internal notes?';
+
+function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
+  takedown: Takedown;
+  onSave: (id: string, staffNotes: string | null) => void;
+  isUpdating: boolean;
+  /** Reports whether the draft differs from the saved note, so the page can
+   *  guard panel close against discarding it. */
+  onDirtyChange: (dirty: boolean) => void;
+}) {
+  const saved = takedown.staff_notes ?? '';
+  const [draft, setDraft] = useState(saved);
+  const fieldId = `takedown-staff-notes-${takedown.id}`;
+  // Whitespace-only edits are not a change; a whitespace-only save clears.
+  const dirty = draft.trim() !== saved.trim();
+
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
+
+  const handleSave = () => {
+    const trimmed = draft.trim();
+    setDraft(trimmed);
+    onSave(takedown.id, trimmed ? trimmed : null);
+  };
+
+  return (
+    <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-base)', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div className="font-mono text-[9px] uppercase tracking-wide mb-1" style={{ color: 'var(--text-secondary)' }}>
+          {TAKEDOWN_CUSTOMER_NOTE_LABEL}
+        </div>
+        {takedown.notes ? (
+          <p
+            data-testid="takedown-customer-note"
+            className="text-[12px] whitespace-pre-wrap"
+            style={{ color: 'var(--text-primary)', margin: 0 }}
+          >
+            {takedown.notes}
+          </p>
+        ) : (
+          <p className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)', margin: 0 }}>
+            No note from the customer
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label
+          htmlFor={fieldId}
+          className="block font-mono text-[9px] uppercase tracking-wide mb-1"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          {TAKEDOWN_INTERNAL_NOTES_LABEL}
+        </label>
+        <textarea
+          id={fieldId}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Add internal notes..."
+          rows={3}
+          maxLength={4000}
+          className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--amber-border)] resize-none font-mono"
+          style={{ color: 'var(--text-primary)' }}
+        />
+        {dirty && (
+          <div style={{ marginTop: 6 }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={isUpdating}
+              onClick={handleSave}
+            >
+              Save Notes
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── Status action buttons for the report panel ───────────────
@@ -614,6 +701,17 @@ export function Takedowns() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedTakedown, setSelectedTakedown] = useState<Takedown | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // True while the open panel holds an unsaved internal-notes draft.
+  const staffNotesDirtyRef = useRef(false);
+  const handleStaffNotesDirty = useCallback((dirty: boolean) => { staffNotesDirtyRef.current = dirty; }, []);
+  /** Switch/close the detail panel unless that would discard an unsaved
+   *  staff-notes draft the user chooses to keep. */
+  const selectTakedown = useCallback((next: Takedown | null) => {
+    if (staffNotesDirtyRef.current && !window.confirm(DISCARD_STAFF_NOTES_PROMPT)) return;
+    staffNotesDirtyRef.current = false;
+    setSelectedTakedown(next);
+  }, []);
+  const closePanel = useCallback(() => selectTakedown(null), [selectTakedown]);
 
   // Debounce search
   const [searchTimeout, setSearchTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
@@ -744,14 +842,28 @@ export function Takedowns() {
     ? (takedowns[0]?.brand_name ?? 'this brand')
     : null;
 
-  const handleUpdate = useCallback((id: string, updates: { status?: string; notes?: string }) => {
+  const handleUpdate = useCallback((id: string, updates: { status?: string; staff_notes?: string | null }) => {
     setUpdatingId(id);
     updateTakedown.mutate({ id, ...updates }, {
       onSuccess: () => {
         showToast(updates.status ? 'Status updated' : 'Notes saved', 'success');
         setUpdatingId(null);
-        // Close panel on status change
-        if (updates.status) setSelectedTakedown(null);
+        // Close panel on status change — unless it holds an unsaved staff-notes
+        // draft: then keep it open (status refreshed) so the draft isn't lost.
+        if (updates.status) {
+          const status = updates.status;
+          if (staffNotesDirtyRef.current) {
+            setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, status } : prev));
+          } else {
+            setSelectedTakedown(null);
+          }
+        }
+        // Keep the open panel's snapshot in step with the saved staff note
+        // (the list refetch doesn't replace selectedTakedown).
+        else if (updates.staff_notes !== undefined) {
+          const saved = updates.staff_notes;
+          setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
+        }
       },
       onError: () => {
         showToast('Update failed', 'error');
@@ -937,7 +1049,7 @@ export function Takedowns() {
                 <TakedownCard
                   key={td.id}
                   takedown={td}
-                  onReview={setSelectedTakedown}
+                  onReview={selectTakedown}
                   onStatusChange={(id, status) => handleUpdate(id, { status })}
                   onDismiss={(id) => handleUpdate(id, { status: 'withdrawn' })}
                 />
@@ -966,7 +1078,7 @@ export function Takedowns() {
       {/* ─── DETAIL PANEL ─────────────────────────────── */}
       <ReportPanel
         isOpen={!!selectedTakedown}
-        onClose={() => setSelectedTakedown(null)}
+        onClose={closePanel}
         title={selectedTakedown?.target_value ?? 'Takedown Request'}
         subtitle={
           selectedTakedown
@@ -997,6 +1109,17 @@ export function Takedowns() {
               <span>•</span>
               <span>{relativeTime(selectedTakedown.created_at)}</span>
             </>
+          ) : null
+        }
+        footer={
+          selectedTakedown ? (
+            <TakedownNotes
+              key={selectedTakedown.id}
+              takedown={selectedTakedown}
+              onSave={(id, staffNotes) => handleUpdate(id, { staff_notes: staffNotes })}
+              isUpdating={updatingId === selectedTakedown.id}
+              onDirtyChange={handleStaffNotesDirty}
+            />
           ) : null
         }
         actions={

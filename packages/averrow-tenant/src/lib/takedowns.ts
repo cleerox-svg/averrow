@@ -56,9 +56,11 @@ export interface TakedownDetailRow extends TakedownListRow {
   requested_at:           string | null;
   response_received_at:   string | null;
   response_notes:         string | null;
-  // `notes` is intentionally absent: the worker drops it from the customer
-  // view (the column also holds Averrow staff notes). User refs are masked —
-  // staff show as "Averrow SOC" with a null id.
+  /** Your team's own note on the request (set when approving/withdrawing).
+   *  Averrow's internal notes live in a separate staff-only column the
+   *  worker never returns here (migration 0276). User refs are masked —
+   *  staff show as "Averrow SOC" with a null id. */
+  notes:                  string | null;
   requested_by:           string | null;
   requested_by_name:      string | null;
   submitted_by:           string | null;

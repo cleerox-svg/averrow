@@ -38,12 +38,13 @@ import {
   STAFF_TENANT_ALERT_WRITE_ERROR,
 } from "../src/handlers/tenantData";
 import { handleBulkTakedown } from "../src/handlers/alerts";
-import { handleUpdateTakedown, handleListTakedowns, handleGetTakedown } from "../src/handlers/takedowns";
+import { handleUpdateTakedown } from "../src/handlers/takedowns";
+import { handleListTenantTakedowns, handleGetTenantTakedownDetail } from "../src/handlers/tenantTakedowns";
 import type { AuthContext } from "../src/middleware/auth";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import type { Env, UserRole } from "../src/types";
 
-const TABLES = ["users", "brands", "alerts", "org_brands", "org_members", "takedown_requests"];
+const TABLES = ["users", "brands", "alerts", "org_brands", "org_members", "takedown_requests", "takedown_submissions"];
 
 const STAFF_NAME = "Sam Staffer";
 const STAFF_EMAIL = "sam@averrow.local";
@@ -382,27 +383,31 @@ describe.skipIf(!hasSqlite())("tenant alert routes — staff refusal and masking
       seedTd("tdnull", null);
     });
 
-    it("list: org 8 sees its own + brand-wide, not org 7's (rows, total, status_counts)", async () => {
-      const res = await handleListTakedowns(new Request("https://averrow.com/api/orgs/8/takedowns"), env, "8", ORG8);
+    // The unrouted handleListTakedowns / handleGetTakedown (which also
+    // showed brand-wide org_id NULL rows) were deleted 2026-10-04; these
+    // pin the ROUTED tenant reads (handlers/tenantTakedowns.ts), which
+    // show only rows stamped with the caller's org.
+    it("list: org 8 sees only its own, not org 7's or brand-wide", async () => {
+      const res = await handleListTenantTakedowns(new Request("https://averrow.com/api/orgs/8/takedowns"), env, "8", ORG8);
       expect(res.status).toBe(200);
-      const body = await res.json<{ data: Array<{ id: string }>; total: number; status_counts: Array<{ status: string; count: number }> }>();
-      expect(body.data.map((d) => d.id).sort()).toEqual(["td8", "tdnull"]);
-      expect(body.total).toBe(2);
-      expect(body.status_counts).toEqual([{ status: "draft", count: 2 }]);
+      const body = await res.json<{ data: { takedowns: Array<{ id: string }>; totals: { total: number } } }>();
+      expect(body.data.takedowns.map((d) => d.id)).toEqual(["td8"]);
+      expect(body.data.totals.total).toBe(1);
     });
 
-    it("list with a filter keeps bind order right", async () => {
-      const res = await handleListTakedowns(new Request("https://averrow.com/api/orgs/7/takedowns?status=requested"), env, "7", CLIENT);
-      const body = await res.json<{ data: Array<{ id: string }>; total: number }>();
-      expect(body.data.map((d) => d.id)).toEqual(["td7"]);
-      expect(body.total).toBe(1);
+    it("list with a status filter", async () => {
+      const res = await handleListTenantTakedowns(new Request("https://averrow.com/api/orgs/7/takedowns?status=requested"), env, "7", CLIENT);
+      const body = await res.json<{ data: { takedowns: Array<{ id: string }> } }>();
+      expect(body.data.takedowns.map((d) => d.id)).toEqual(["td7"]);
     });
 
-    it("get: another org's takedown is 404; own and brand-wide are readable", async () => {
-      expect((await handleGetTakedown(new Request("https://averrow.com/x"), env, "8", "td7", ORG8)).status).toBe(404);
-      expect((await handleGetTakedown(new Request("https://averrow.com/x"), env, "8", "td8", ORG8)).status).toBe(200);
-      expect((await handleGetTakedown(new Request("https://averrow.com/x"), env, "8", "tdnull", ORG8)).status).toBe(200);
-      expect((await handleGetTakedown(new Request("https://averrow.com/x"), env, "7", "td7", CLIENT)).status).toBe(200);
+    it("get: another org's takedown and brand-wide rows are 404; own is readable", async () => {
+      const get = (orgId: string, id: string, ctx: AuthContext) =>
+        handleGetTenantTakedownDetail(new Request("https://averrow.com/x"), env, orgId, id, ctx);
+      expect((await get("8", "td7", ORG8)).status).toBe(404);
+      expect((await get("8", "td8", ORG8)).status).toBe(200);
+      expect((await get("8", "tdnull", ORG8)).status).toBe(404);
+      expect((await get("7", "td7", CLIENT)).status).toBe(200);
     });
   });
 

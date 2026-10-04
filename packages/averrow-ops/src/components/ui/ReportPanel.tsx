@@ -15,6 +15,7 @@ export interface ReportPanelProps {
   content:   string;         // raw markdown/text content
   meta?:     React.ReactNode; // optional metadata row (date, source, etc.)
   actions?:  React.ReactNode; // optional action buttons in header
+  footer?:   React.ReactNode; // optional interactive block rendered after the content
 }
 
 // ── Markdown-to-styled-sections parser ────────────────────────────
@@ -237,6 +238,7 @@ export function ReportPanel({
   content,
   meta,
   actions,
+  footer,
 }: ReportPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -378,6 +380,7 @@ export function ReportPanel({
               </p>
             )
           }
+          {footer}
         </div>
       </div>
     </>
