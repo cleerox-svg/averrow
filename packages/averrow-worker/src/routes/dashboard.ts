@@ -1,7 +1,9 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope, requirePermission } from "../middleware/auth";
+import { roleHasPermission } from "../lib/role-permissions";
+import { json } from "../lib/cors";
 import { handleStats, handleSourceMix, handleQualityTrend } from "../handlers/stats";
 import { handleHeatmap } from "../handlers/heatmap";
 import {
@@ -152,26 +154,35 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   // ─── Alerts ───────────────────────────────────────────────────────
   // Staff-only surface (H1, 2026-06-10 audit). Tenant alerts live at
   // /api/orgs/:orgId/alerts (handlers/tenantData.ts) and are unaffected.
+  //
+  // PR-C (owner decision 2026-10-04): platform-wide for staff — getOrgScope
+  // returns null for every staff role (isPlatformStaff), so the handlers
+  // apply no filter. Reads use the staff guard (every staff role, incl.
+  // auditor).
+  // Mutations: requirePermission('edit_alerts') — super_admin, admin,
+  // analyst, support (lib/role-permissions.ts); sales, billing, auditor and
+  // client get 403. bulk-takedown additionally needs manage_takedowns. Stricter than requireStaffMutation, so the
+  // staff-mutation-routes pin accepts it.
   router.get("/api/alerts/stats", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleAlertStats(request, env, ctx.userId);
+    const scope = await getOrgScope(ctx, env.DB);
+    return handleAlertStats(request, env, scope);
   });
   router.get("/api/alerts/triage-summary", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleAlertTriageSummary(request, env, ctx.userId);
+    const scope = await getOrgScope(ctx, env.DB);
+    return handleAlertTriageSummary(request, env, scope);
   });
-  // H2: by-id read/update thread the caller's userId + org scope so the
-  // handlers apply the same ownership predicates as handleListAlerts.
   router.get("/api/alerts/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const scope = await getOrgScope(ctx, env.DB);
-    return handleGetAlert(request, env, request.params["id"] ?? "", ctx.userId, scope);
+    return handleGetAlert(request, env, request.params["id"] ?? "", scope);
   });
   router.patch("/api/alerts/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("edit_alerts")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const scope = await getOrgScope(ctx, env.DB);
     return handleUpdateAlert(request, env, request.params["id"] ?? "", ctx.userId, scope);
@@ -180,17 +191,29 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     const scope = await getOrgScope(ctx, env.DB);
-    return handleListAlerts(request, env, ctx.userId, scope);
+    return handleListAlerts(request, env, scope);
   });
   router.post("/api/alerts/bulk-acknowledge", async (request: Request, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("edit_alerts")(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleBulkAcknowledge(request, env, ctx.userId);
+    const scope = await getOrgScope(ctx, env.DB);
+    return handleBulkAcknowledge(request, env, ctx.userId, scope);
   });
+  // bulk-takedown also creates takedown_requests, so it needs BOTH
+  // edit_alerts and manage_takedowns (super_admin, admin, analyst). support
+  // holds edit_alerts but not manage_takedowns → 403.
   router.post("/api/alerts/bulk-takedown", async (request: Request, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("edit_alerts")(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleBulkTakedown(request, env, ctx.userId);
+    if (!roleHasPermission(ctx.role, "manage_takedowns")) {
+      return json(
+        { success: false, error: "Forbidden: requires 'manage_takedowns' permission" },
+        403,
+        request.headers.get("Origin"),
+      );
+    }
+    const scope = await getOrgScope(ctx, env.DB);
+    return handleBulkTakedown(request, env, ctx.userId, scope);
   });
 
   // ─── Notifications ────────────────────────────────────────────────

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import {
   StatTile,
@@ -15,11 +15,12 @@ import {
 } from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
 import {
-  useAlerts, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
+  useAlerts, useAlert, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
   type Alert, type AlertFilters,
 } from '@/hooks/useAlerts';
 import { useSavedViews, type SavedView } from '@/hooks/useSavedViews';
 import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import { parseInitials } from '@/lib/avatar';
 import { Bell, Star, X } from 'lucide-react';
 
@@ -209,6 +210,20 @@ function viewIsEmpty(v: AlertViewState): boolean {
   return !n.severity && !n.status && !n.alert_type && !n.search && !n.ai && !n.sla;
 }
 
+const READ_ONLY_COPY = "Read-only: your role can view alerts but can't acknowledge, resolve, assign or take them down.";
+
+// URL-backed filters. Unknown values are ignored so a stale or hand-edited link
+// degrades to "no filter" instead of an empty list.
+const URL_STATUSES: ReadonlySet<string> = new Set(['new', 'acknowledged', 'investigating', 'resolved', 'false_positive']);
+const URL_SEVERITIES: ReadonlySet<string> = new Set(['critical', 'high', 'medium', 'low', 'info']);
+
+function paramIn(params: URLSearchParams, key: string, allowed?: ReadonlySet<string>): string | undefined {
+  const v = params.get(key);
+  if (!v || v === 'all') return undefined;
+  if (allowed && !allowed.has(v)) return undefined;
+  return v;
+}
+
 // ── Filter Pills ────────────────────────────────────────────────
 
 interface PillGroupProps {
@@ -266,6 +281,7 @@ interface BrandGroupCardProps {
   selectedAlertId: string | null;
   currentUserId: string | null;
   onSelectAlert: (a: Alert) => void;
+  canEdit: boolean;
   onAcknowledgeAll: () => void;
   onCreateTakedowns: () => void;
   isAcknowledging: boolean;
@@ -273,7 +289,7 @@ interface BrandGroupCardProps {
 }
 
 function BrandGroupCard({
-  group, selectedAlertId, currentUserId, onSelectAlert,
+  group, selectedAlertId, currentUserId, onSelectAlert, canEdit,
   onAcknowledgeAll, onCreateTakedowns,
   isAcknowledging, isCreatingTakedowns,
 }: BrandGroupCardProps) {
@@ -479,7 +495,15 @@ function BrandGroupCard({
               )}
             </div>
             <div className="flex items-center gap-2">
-              {newCount > 0 && (
+              {!canEdit && (
+                <span
+                  className="font-mono text-[10px] uppercase tracking-wide text-[var(--text-muted)]"
+                  title={READ_ONLY_COPY}
+                >
+                  Read-only
+                </span>
+              )}
+              {canEdit && newCount > 0 && (
                 <button
                   onClick={onAcknowledgeAll}
                   disabled={isAcknowledging}
@@ -488,6 +512,7 @@ function BrandGroupCard({
                   {isAcknowledging ? 'Acknowledging...' : 'Acknowledge All'}
                 </button>
               )}
+              {canEdit && (
               <button
                 onClick={onCreateTakedowns}
                 disabled={isCreatingTakedowns}
@@ -495,6 +520,7 @@ function BrandGroupCard({
               >
                 {isCreatingTakedowns ? 'Creating...' : 'Create Takedowns'}
               </button>
+              )}
             </div>
           </div>
         </>
@@ -513,16 +539,17 @@ interface AlertDetailProps {
   onAssign: (assignedTo: string | null) => void;
   isUpdating: boolean;
   isAssigning: boolean;
+  canEdit: boolean;
 }
 
-function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpdating, isAssigning }: AlertDetailProps) {
+function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpdating, isAssigning, canEdit }: AlertDetailProps) {
   const [notes, setNotes] = useState(alert.resolution_notes ?? '');
   const score = extractScore(alert.summary);
   const handle = extractHandle(alert.title);
   const platform = extractPlatform(alert.title);
 
   return (
-    <Card variant="active" style={{ padding: '20px', marginTop: 4 }}>
+    <Card variant="active" style={{ padding: '20px', marginTop: 4 }} data-testid="alert-detail">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -687,6 +714,12 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
         <div className="space-y-3 border-l border-white/[0.06] pl-5">
           <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
 
+          {!canEdit && (
+            <p id={`alert-readonly-${alert.id}`} className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+              {READ_ONLY_COPY}
+            </p>
+          )}
+
           {/* Owner / assignment (W9) */}
           <div className="flex items-center justify-between gap-2 pb-2 mb-1 border-b border-white/[0.06]">
             <div className="min-w-0">
@@ -697,7 +730,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                   : 'Unassigned'}
               </div>
             </div>
-            {alert.assigned_to === currentUserId ? (
+            {!canEdit ? null : alert.assigned_to === currentUserId ? (
               <button
                 onClick={() => onAssign(null)}
                 disabled={isAssigning}
@@ -717,7 +750,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           </div>
 
           <div className="flex flex-col gap-2">
-            {alert.status === 'new' && (
+            {canEdit && alert.status === 'new' && (
               <>
                 <button
                   onClick={() => onUpdate('acknowledged')}
@@ -735,7 +768,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 </button>
               </>
             )}
-            {alert.status === 'acknowledged' && (
+            {canEdit && alert.status === 'acknowledged' && (
               <>
                 <button
                   onClick={() => onUpdate('resolved')}
@@ -753,7 +786,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 </button>
               </>
             )}
-            {alert.status === 'resolved' && (
+            {canEdit && alert.status === 'resolved' && (
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
@@ -762,7 +795,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 Re-open
               </button>
             )}
-            {alert.status === 'false_positive' && (
+            {canEdit && alert.status === 'false_positive' && (
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
@@ -779,11 +812,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             <textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="Add notes..."
+              placeholder={canEdit ? 'Add notes...' : 'No notes'}
+              readOnly={!canEdit}
+              aria-describedby={canEdit ? undefined : `alert-readonly-${alert.id}`}
               rows={3}
               className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-white/30 focus:outline-none focus:border-afterburner-border resize-none font-mono" style={{ color: 'var(--text-primary)' }}
             />
-            {notes !== (alert.resolution_notes ?? '') && (
+            {canEdit && notes !== (alert.resolution_notes ?? '') && (
               <button
                 onClick={() => onUpdate(alert.status, notes)}
                 disabled={isUpdating}
@@ -820,8 +855,30 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 // ── Main Page ───────────────────────────────────────────────────
 
 export function Alerts() {
-  const [filters, setFilters] = useState<AlertFilters>({ limit: 200 });
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  // Filters + the open alert live in the URL (`status`, `severity`, `alert_type`,
+  // `alert`) so bell / Home / banner links land on the right slice and a view can
+  // be shared. Other params (the Console's `tab`) are preserved on every write.
+  const [params, setParams] = useSearchParams();
+  const statusParam = paramIn(params, 'status', URL_STATUSES);
+  const severityParam = paramIn(params, 'severity', URL_SEVERITIES);
+  const typeParam = paramIn(params, 'alert_type');
+  const alertParam = params.get('alert') || null;
+  const filters: AlertFilters = useMemo(
+    () => ({ limit: 200, status: statusParam, severity: severityParam, alert_type: typeParam }),
+    [statusParam, severityParam, typeParam],
+  );
+  const writeParams = (patch: Record<string, string | undefined>) => {
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === '' || v === 'all') next.delete(k);
+        else next.set(k, v);
+      }
+      return next;
+    }, { replace: true });
+  };
+  // Local optimistic overlay for assign (the list refetch then supersedes it).
+  const [assignOverlay, setAssignOverlay] = useState<Pick<Alert, 'id' | 'assigned_to' | 'assigned_to_name' | 'assigned_to_email'> | null>(null);
   const [search, setSearch] = useState('');
   // AI verdict filter is client-side: ai_assessment isn't an indexed
   // column on alerts, and the API doesn't accept a verdict param yet.
@@ -833,6 +890,9 @@ export function Alerts() {
   const [mineOnly, setMineOnly] = useState(false);
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
+  // Staff see every platform alert; only edit_alerts holders may act on them
+  // (the worker 403s everyone else — this keeps the UI from offering it).
+  const canEdit = roleHasPermission(user?.role, 'edit_alerts');
 
   const { data: statsData, isLoading: statsLoading, isError: statsError } = useAlertStats();
   const {
@@ -849,6 +909,34 @@ export function Alerts() {
   const bulkTakedown = useBulkTakedown();
 
   const rawAlerts = Array.isArray(alertsData?.alerts) ? alertsData.alerts : [];
+
+  // The open alert: from the loaded list when present, otherwise fetched by id
+  // (it may be filtered out, beyond the page limit, or already handled).
+  const listed = alertParam ? rawAlerts.find(a => a.id === alertParam) ?? null : null;
+  const fetchedAlert = useAlert(alertParam, { enabled: !listed && !alertsLoading });
+  const baseSelected = listed ?? fetchedAlert.data ?? null;
+  const selectedAlert: Alert | null = baseSelected && assignOverlay?.id === baseSelected.id
+    ? { ...baseSelected, ...assignOverlay }
+    : baseSelected;
+  const selectAlert = (a: Alert | null) => {
+    selfSelected.current = a?.id ?? null;
+    writeParams({ alert: a?.id });
+  };
+
+  // Scroll a deep-linked alert into view once it has rendered. Clicks inside the
+  // list don't scroll (the row is already on screen).
+  const selfSelected = useRef<string | null>(null);
+  const pendingScroll = useRef<string | null>(alertParam);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (alertParam && alertParam !== selfSelected.current) pendingScroll.current = alertParam;
+  }, [alertParam]);
+  useEffect(() => {
+    if (selectedAlert && pendingScroll.current === selectedAlert.id && detailRef.current) {
+      pendingScroll.current = null;
+      detailRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    }
+  });
   const alerts = rawAlerts.filter(a => {
     // AI verdict filter
     if (aiVerdictFilter !== 'all') {
@@ -893,9 +981,9 @@ export function Alerts() {
     !!search || aiVerdictFilter !== 'all' || slaFilter !== 'all' || mineOnly ||
     !!filters.severity || !!filters.status || !!filters.alert_type;
 
-  const setFilter = (key: keyof AlertFilters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value === 'all' ? undefined : value }));
-    setSelectedAlert(null);
+  const setFilter = (key: 'status' | 'severity' | 'alert_type', value: string) => {
+    selfSelected.current = null;
+    writeParams({ [key]: value === 'all' ? undefined : value, alert: undefined });
   };
 
   // Saved views (W6) — capture/restore the full operator filter state.
@@ -909,17 +997,51 @@ export function Alerts() {
     sla: slaFilter,
   };
   const applyView = (fv: AlertViewState) => {
-    setFilters(prev => ({ ...prev, severity: fv.severity, status: fv.status, alert_type: fv.alert_type }));
+    selfSelected.current = null;
+    writeParams({ severity: fv.severity, status: fv.status, alert_type: fv.alert_type, alert: undefined });
     setSearch(fv.search ?? '');
     setAiVerdictFilter(fv.ai ?? 'all');
     setSlaFilter(fv.sla ?? 'all');
-    setSelectedAlert(null);
   };
   const onSaveView = () => {
     const name = window.prompt('Name this view (e.g. "New app-store impers")');
     if (name?.trim()) saveView(name.trim(), normView(currentView));
   };
   const allViews = [...PRESET_VIEWS, ...views];
+
+  const detail = selectedAlert && (
+    <div ref={detailRef}>
+      <AlertDetail
+        alert={selectedAlert}
+        currentUserId={currentUserId}
+        canEdit={canEdit}
+        onClose={() => selectAlert(null)}
+        onUpdate={(status, notes) => {
+          if (!canEdit) return;
+          updateAlert.mutate(
+            { id: selectedAlert.id, status, notes },
+            { onSuccess: () => selectAlert(null) },
+          );
+        }}
+        onAssign={(assignedTo) => {
+          if (!canEdit) return;
+          // Keep the panel open and update in place so the operator
+          // sees the owner change immediately.
+          assignAlert.mutate({ id: selectedAlert.id, assigned_to: assignedTo });
+          setAssignOverlay({
+            id: selectedAlert.id,
+            assigned_to: assignedTo,
+            assigned_to_name: assignedTo === currentUserId ? (user?.name ?? null) : selectedAlert.assigned_to_name,
+            assigned_to_email: assignedTo === currentUserId ? (user?.email ?? null) : selectedAlert.assigned_to_email,
+          });
+        }}
+        isUpdating={updateAlert.isPending}
+        isAssigning={assignAlert.isPending}
+      />
+    </div>
+  );
+  const detailInList = !!selectedAlert && alerts.some(a => a.id === selectedAlert.id);
+  const detailFetchFailed = !!alertParam && !listed && fetchedAlert.isError;
 
   return (
     <div className="space-y-5">
@@ -985,6 +1107,10 @@ export function Alerts() {
             Show breached
           </button>
         </Card>
+      )}
+
+      {!canEdit && (
+        <div className="font-mono text-[11px] text-[var(--text-tertiary)]" role="note">{READ_ONLY_COPY}</div>
       )}
 
       {/* Saved views (W6) — presets + user-pinned filter sets */}
@@ -1146,6 +1272,18 @@ export function Alerts() {
         <PageState kind="error" layout="card" title="Couldn't load alerts" onRetry={() => { void refetchAlerts(); }} />
       )}
 
+      {/* A deep-linked alert that isn't in the (filtered) list below */}
+      {selectedAlert && !detailInList && detail}
+      {detailFetchFailed && (
+        <PageState
+          kind="error"
+          layout="inline"
+          title="Couldn't open that alert"
+          description="It may have been removed, or you may not have access to it."
+          onRetry={() => { void fetchedAlert.refetch(); }}
+        />
+      )}
+
       {/* Grouped alert list */}
       {(listKind === null || listKind === 'empty') && (
         <div className="space-y-3">
@@ -1173,7 +1311,8 @@ export function Alerts() {
                 group={group}
                 selectedAlertId={selectedAlert?.id ?? null}
                 currentUserId={currentUserId}
-                onSelectAlert={a => setSelectedAlert(prev => prev?.id === a.id ? null : a)}
+                onSelectAlert={a => selectAlert(selectedAlert?.id === a.id ? null : a)}
+                canEdit={canEdit}
                 onAcknowledgeAll={() => {
                   // Acknowledge only the alerts visible in this group
                   // (post-filter). Sending alert_ids[] respects the
@@ -1192,32 +1331,7 @@ export function Alerts() {
               />
 
               {/* Detail panel - rendered below the group */}
-              {selectedAlert && group.alerts.some(a => a.id === selectedAlert.id) && (
-                <AlertDetail
-                  alert={selectedAlert}
-                  currentUserId={currentUserId}
-                  onClose={() => setSelectedAlert(null)}
-                  onUpdate={(status, notes) => {
-                    updateAlert.mutate(
-                      { id: selectedAlert.id, status, notes },
-                      { onSuccess: () => setSelectedAlert(null) },
-                    );
-                  }}
-                  onAssign={(assignedTo) => {
-                    // Keep the panel open and update in place so the operator
-                    // sees the owner change immediately.
-                    assignAlert.mutate({ id: selectedAlert.id, assigned_to: assignedTo });
-                    setSelectedAlert(prev => prev ? {
-                      ...prev,
-                      assigned_to: assignedTo,
-                      assigned_to_name: assignedTo === currentUserId ? (user?.name ?? null) : prev.assigned_to_name,
-                      assigned_to_email: assignedTo === currentUserId ? (user?.email ?? null) : prev.assigned_to_email,
-                    } : prev);
-                  }}
-                  isUpdating={updateAlert.isPending}
-                  isAssigning={assignAlert.isPending}
-                />
-              )}
+              {selectedAlert && group.alerts.some(a => a.id === selectedAlert.id) && detail}
             </div>
           ))}
         </div>

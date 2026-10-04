@@ -89,6 +89,22 @@ export function useAlerts(filters?: AlertFilters) {
   });
 }
 
+// One alert by id, for `?alert=<id>` deep links whose alert is not in the
+// loaded (filtered/limited) list. Key sits under ['alerts'] so every mutation's
+// ['alerts'] invalidation refreshes it too.
+export function useAlert(id: string | null, opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ['alerts', 'detail', id],
+    queryFn: async () => {
+      const res = await api.get<Alert>(`/api/alerts/${encodeURIComponent(id ?? '')}`);
+      if (!res.success || !res.data) throw new Error(res.error ?? 'Failed to load alert');
+      return res.data;
+    },
+    enabled: !!id && opts.enabled !== false,
+    retry: false,
+  });
+}
+
 export function useAlertStats() {
   return useQuery({
     queryKey: ['alert-stats'],
@@ -102,12 +118,25 @@ export function useAlertStats() {
 }
 
 // Lightweight count for the bell-dropdown "X alerts need triage" row.
-// Status='new' alerts only — fresh things to look at, not the full
+// Platform-wide, status='new' alerts only — fresh things to look at, not the full
 // open workload (acknowledged + investigating). Cached server-side
 // in KV for 60s; the client refetches every 60s too.
+// Platform-wide (every staff role sees the same numbers). `top` is the single
+// alert Home deep-links to ("Open alert"); null when nothing is awaiting triage.
+export interface AlertTriageTop {
+  id: string;
+  title: string;
+  severity: string;
+  brand_id: string | null;
+  brand_name: string | null;
+  alert_type: string;
+  created_at: string;
+}
+
 export interface AlertTriageSummary {
   new_count: number;
   critical_count: number;
+  top?: AlertTriageTop | null;
 }
 
 export function useAlertTriageSummary(opts: { enabled?: boolean } = {}) {
@@ -135,6 +164,7 @@ export function useUpdateAlert() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
       qc.invalidateQueries({ queryKey: ['alert-stats'] });
+      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
     },
   });
 }
@@ -148,6 +178,7 @@ export function useAssignAlert() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
       qc.invalidateQueries({ queryKey: ['alert-stats'] });
+      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
     },
   });
 }
@@ -161,6 +192,7 @@ export function useBulkAcknowledge() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
       qc.invalidateQueries({ queryKey: ['alert-stats'] });
+      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
     },
   });
 }
@@ -174,6 +206,7 @@ export function useBulkTakedown() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
       qc.invalidateQueries({ queryKey: ['alert-stats'] });
+      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
       qc.invalidateQueries({ queryKey: ['admin-takedowns'] });
     },
   });

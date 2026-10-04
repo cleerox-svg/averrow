@@ -65,8 +65,12 @@ describe('enabledSources (role gating)', () => {
     expect(sources('analyst').sort()).toEqual(['agents', 'alerts', 'critical_intel', 'takedowns']);
   });
 
-  it.each(['sales', 'support', 'billing', 'auditor'])('%s gets only the staff sources', (role) => {
-    expect(sources(role).sort()).toEqual(['agents', 'alerts', 'critical_intel']);
+  it('support (edit_alerts, no manage_takedowns) gets the staff sources including alerts', () => {
+    expect(sources('support').sort()).toEqual(['agents', 'alerts', 'critical_intel']);
+  });
+
+  it.each(['sales', 'billing', 'auditor'])('%s (no edit_alerts) gets the staff sources but never alerts', (role) => {
+    expect(sources(role).sort()).toEqual(['agents', 'critical_intel']);
   });
 
   it.each([null, undefined, '', 'client', 'visitor'])('role %j gets nothing', (role) => {
@@ -107,9 +111,14 @@ describe('scoring', () => {
     expect(ranked.map((i) => i.id)).toEqual(['bad', 'nan-ts', 'low']);
   });
 
-  it('alerts detail says it is the user\'s own queue', () => {
-    const q = buildQueue({ alerts: ok({ new_count: 3, critical_count: 1 }) }, NOW);
-    expect(q.items[0]?.detail).toContain('your queue');
+  it('alerts copy is platform-wide: count + critical detail, never "your queue"', () => {
+    const crit = buildQueue({ alerts: ok({ new_count: 3, critical_count: 1 }) }, NOW).items[0]!;
+    expect(crit.title).toBe('3 alerts awaiting triage');
+    expect(crit.detail).toBe('1 critical');
+    const calm = buildQueue({ alerts: ok({ new_count: 1, critical_count: 0 }) }, NOW).items[0]!;
+    expect(calm.title).toBe('1 alert awaiting triage');
+    expect(calm.detail).toBe('none critical');
+    for (const i of [crit, calm]) expect(`${i.title} ${i.detail}`).not.toMatch(/your/i);
   });
 
   it('score = severity weight x recency x reach', () => {
@@ -172,13 +181,29 @@ describe('buildQueue', () => {
     }, NOW);
 
     const byId = Object.fromEntries(q.items.map((i) => [i.id, i]));
-    expect(byId['alerts:triage']).toMatchObject({ severity: 'critical', reach: 12, action: { to: '/console?tab=alerts' } });
+    expect(byId['alerts:triage']).toMatchObject({ severity: 'critical', reach: 12, action: { label: 'Triage', to: '/console?tab=alerts&status=new' } });
     expect(byId['incidents:open']).toMatchObject({ severity: 'critical', reach: 2, action: { to: '/console?tab=incidents' } });
     expect(byId['approvals:pending']).toMatchObject({ severity: 'medium', action: { to: '/agents/approvals' } });
     expect(byId['takedowns:queue']).toMatchObject({ reach: 5, action: { to: '/console?tab=takedowns' } });
     expect(byId['takedowns:queue']?.detail).toBe('3 draft · 2 requested');
     expect(q.failed).toEqual([]);
     expect(q.clear).toBe(false);
+  });
+
+  it('alerts action opens the top alert when the summary has one, else the new-alerts triage list', () => {
+    const top = { id: 'alr_9', title: 'x', severity: 'critical', brand_id: 'b1', brand_name: 'Acme', alert_type: 'phishing_detected', created_at: ago(1) };
+    const withTop = buildQueue({ alerts: ok({ new_count: 4, critical_count: 1, top }) }, NOW).items[0]!;
+    expect(withTop.action).toEqual({ label: 'Open alert', to: '/console?tab=alerts&status=new&alert=alr_9' });
+    const nullTop = buildQueue({ alerts: ok({ new_count: 4, critical_count: 1, top: null }) }, NOW).items[0]!;
+    expect(nullTop.action).toEqual({ label: 'Triage', to: '/console?tab=alerts&status=new' });
+    const noTop = buildQueue({ alerts: ok({ new_count: 4, critical_count: 0 }) }, NOW).items[0]!;
+    expect(noTop.action).toEqual({ label: 'Triage', to: '/console?tab=alerts&status=new' });
+  });
+
+  it('encodes the top alert id in the link', () => {
+    const top = { id: 'a b&c', title: 'x', severity: 'high', brand_id: null, brand_name: null, alert_type: 't', created_at: ago(1) };
+    const item = buildQueue({ alerts: ok({ new_count: 1, critical_count: 0, top }) }, NOW).items[0]!;
+    expect(item.action.to).toBe('/console?tab=alerts&status=new&alert=a%20b%26c');
   });
 
   it('ignores takedowns in other statuses', () => {
@@ -198,15 +223,23 @@ describe('buildQueue', () => {
     expect(q.items[0]?.id).toContain('critical_intel:burst');
   });
 
-  it('drops the banner "open critical alerts" event when the alerts item already carries criticals', () => {
+  it('always drops the banner "open critical alerts" event when the alerts source is enabled (same platform-wide number), and keeps it when it is not', () => {
     const events: CriticalBannerData['events'] = [
       { kind: 'open_critical_alerts', title: '3 open critical', subtitle: '', link: '/console?tab=alerts', severity: 'critical', ts: ago(1) },
     ];
     const withAlerts = buildQueue({ alerts: ok({ new_count: 5, critical_count: 3 }), critical_intel: ok(critBanner(events)) }, NOW);
     expect(withAlerts.items.map((i) => i.source)).toEqual(['alerts']);
-    // Without criticals on the alerts item the banner event is kept.
-    const without = buildQueue({ alerts: ok({ new_count: 5, critical_count: 0 }), critical_intel: ok(critBanner(events)) }, NOW);
-    expect(without.items.map((i) => i.source).sort()).toEqual(['alerts', 'critical_intel']);
+    // Dropped even when the alerts item carries no criticals, or nothing is awaiting triage.
+    const noCrit = buildQueue({ alerts: ok({ new_count: 5, critical_count: 0 }), critical_intel: ok(critBanner(events)) }, NOW);
+    expect(noCrit.items.map((i) => i.source)).toEqual(['alerts']);
+    const none = buildQueue({ alerts: ok({ new_count: 0, critical_count: 0 }), critical_intel: ok(critBanner(events)) }, NOW);
+    expect(none.items).toEqual([]);
+    // Dropped while the alerts source is still loading or failed, too (it is enabled).
+    const loading = buildQueue({ alerts: { status: 'loading' }, critical_intel: ok(critBanner(events)) }, NOW);
+    expect(loading.items).toEqual([]);
+    // A role without the alerts source (sales/billing/auditor) keeps the banner event.
+    const gated = buildQueue({ critical_intel: ok(critBanner(events)) }, NOW);
+    expect(gated.items.map((i) => i.source)).toEqual(['critical_intel']);
   });
 
   it('agents: tripped circuits are high, errors need AGENT_ERROR_MIN, manual pauses are ignored', () => {

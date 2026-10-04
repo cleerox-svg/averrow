@@ -27,7 +27,7 @@ const auth = useAuth as unknown as ReturnType<typeof vi.fn>;
 // Endpoint prefix -> roles allowed to call it (mirrors the worker route guards).
 const STAFF = ['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing', 'auditor'];
 const ALLOWED: Record<string, string[]> = {
-  '/api/alerts/triage-summary': STAFF,
+  '/api/alerts/triage-summary': ['super_admin', 'admin', 'analyst', 'support'], // edit_alerts
   '/api/intel/critical-banner': STAFF,
   '/api/agents': STAFF,
   '/api/admin/incidents': ['super_admin'],
@@ -87,6 +87,11 @@ describe('Home role gating: no forbidden requests', () => {
   it('admin never calls the super_admin-only endpoints', async () => {
     const requests = await renderAs('admin');
     expect(requests.filter((u) => u.startsWith('/api/admin/incidents') || u.includes('/approvals'))).toEqual([]);
+  });
+
+  it.each(['sales', 'billing', 'auditor'])('%s (no edit_alerts) never requests the alert triage summary', async (role) => {
+    const requests = await renderAs(role);
+    expect(requests.filter((u) => u.startsWith('/api/alerts'))).toEqual([]);
   });
 
   it('a gated role is shown a clear queue, not a failure, for sources it was never allowed to ask', async () => {

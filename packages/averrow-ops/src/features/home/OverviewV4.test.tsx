@@ -117,11 +117,35 @@ describe('OverviewV4 queue', () => {
     expect(screen.getByRole('button', { name: /Triage: 30 alerts awaiting triage/ })).toBeInTheDocument();
   });
 
-  it('an action navigates to the canonical tab URL', async () => {
+  it('an action navigates to the canonical tab URL (new-alerts triage list when there is no top alert)', async () => {
     setup({ alerts: { new_count: 3, critical_count: 0 } });
     const btn = await screen.findByRole('button', { name: /Triage: 3 alerts awaiting triage/ });
     await userEvent.click(btn);
-    expect(window.location.pathname + window.location.search).toBe('/console?tab=alerts');
+    expect(window.location.pathname + window.location.search).toBe('/console?tab=alerts&status=new');
+  });
+
+  it('the alerts row is platform-wide ("N critical", no "your queue") and opens the top alert', async () => {
+    setup({
+      alerts: {
+        new_count: 6, critical_count: 2,
+        top: { id: 'alr_42', title: 'Phishing', severity: 'critical', brand_id: 'b1', brand_name: 'Acme', alert_type: 'phishing_detected', created_at: new Date().toISOString() },
+      },
+    });
+    const btn = await screen.findByRole('button', { name: /Open alert: 6 alerts awaiting triage/ });
+    const row = btn.closest('li') as HTMLElement;
+    expect(row).toHaveTextContent('2 critical');
+    expect(row).not.toHaveTextContent(/your queue/i);
+    await userEvent.click(btn);
+    expect(window.location.pathname + window.location.search).toBe('/console?tab=alerts&status=new&alert=alr_42');
+  });
+
+  it('the banner "open critical alerts" event never duplicates the alerts row', async () => {
+    setup({
+      alerts: { new_count: 6, critical_count: 2 },
+      events: [{ kind: 'open_critical_alerts', title: '2 open critical alerts', subtitle: '', link: '/console?tab=alerts&severity=critical&status=new', severity: 'critical', ts: new Date().toISOString() }],
+    });
+    await screen.findByRole('button', { name: /Triage: 6 alerts awaiting triage/ });
+    expect(screen.queryByText('2 open critical alerts')).not.toBeInTheDocument();
   });
 
   it('shows the clear state only when every enabled source succeeded and found nothing', async () => {
