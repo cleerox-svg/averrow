@@ -495,48 +495,63 @@ export async function handleInviteAcceptance(
     return redirectWithError(siteOrigin, "Google account email does not match the invitation. Please sign in with the correct Google account.");
   }
 
-  // Check if user already exists
+  // Check if user already exists. Match email case-insensitively (users.email
+  // is not unique and historical rows were stored as typed, e.g. `Bob@x.com`)
+  // and read EVERY matching row: the staff guards below must see a staff row
+  // even when another row for the same address is a client. LOWER(email)
+  // bypasses idx_users_email; acceptable on this once-per-invite path over a
+  // small table. The row reused for the account prefers the google_sub match,
+  // then an exact email match, then the oldest.
   let userId: string;
-  const existing = await env.DB.prepare("SELECT id, role FROM users WHERE google_sub = ? OR email = ?")
-    .bind(googleUser.sub, googleUser.email).first<{ id: string; role: string }>();
+  const { results: matches } = await env.DB.prepare(
+    `SELECT id, role FROM users
+     WHERE google_sub = ? OR LOWER(email) = LOWER(?)
+     ORDER BY (google_sub = ?) DESC, (email = ?) DESC, created_at ASC`,
+  ).bind(googleUser.sub, googleUser.email, googleUser.sub, googleUser.email)
+    .all<{ id: string; role: string }>();
+  const existing = matches[0] ?? null;
 
   // PR-F — no tenant-affiliated staff (owner decision 2026-10-03).
   // (a) An ORG invite (org_id set, role 'client') accepted by an existing
   //     staff account used to overwrite users.role with 'client', silently
-  //     demoting the staff user. Refuse instead; users.role is untouched and
-  //     the invite stays pending.
+  //     demoting the staff user. Refuse instead (if ANY matching row is
+  //     staff); users.role is untouched and the invite stays pending.
   // (b) A STAFF invite accepted by an existing account that is an active
   //     customer-org member would create tenant-affiliated staff — the same
-  //     state the admin role PATCH refuses. Refuse it too.
-  if (existing) {
-    if (invite.org_id && isPlatformStaff(existing.role)) {
+  //     state the admin role PATCH refuses. Refuse it too. The lead-conversion
+  //     placeholder owner row (provisioned_by='lead_conversion') is the one
+  //     allowed staff membership and is ignored.
+  const staffMatch = matches.find((m) => isPlatformStaff(m.role));
+  if (invite.org_id && staffMatch) {
+    await audit(env, {
+      action: "invite_accept_refused_staff_account",
+      userId: staffMatch.id,
+      resourceType: "invitation",
+      resourceId: invite.id,
+      details: { email: googleUser.email, org_id: invite.org_id, existing_role: staffMatch.role },
+      outcome: "denied",
+      request,
+    });
+    return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+  }
+  if (matches.length > 0 && isPlatformStaff(invite.role)) {
+    const membership = await env.DB.prepare(
+      `SELECT user_id, org_id FROM org_members
+       WHERE user_id IN (SELECT id FROM users WHERE google_sub = ? OR LOWER(email) = LOWER(?))
+         AND status = 'active' AND provisioned_by IS NOT 'lead_conversion'
+       LIMIT 1`,
+    ).bind(googleUser.sub, googleUser.email).first<{ user_id: string; org_id: number }>();
+    if (membership) {
       await audit(env, {
-        action: "invite_accept_refused_staff_account",
-        userId: existing.id,
+        action: "invite_accept_refused_org_member",
+        userId: membership.user_id,
         resourceType: "invitation",
         resourceId: invite.id,
-        details: { email: googleUser.email, org_id: invite.org_id, existing_role: existing.role },
+        details: { email: googleUser.email, invite_role: invite.role, org_id: membership.org_id },
         outcome: "denied",
         request,
       });
-      return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
-    }
-    if (isPlatformStaff(invite.role)) {
-      const membership = await env.DB.prepare(
-        "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1",
-      ).bind(existing.id).first<{ org_id: number }>();
-      if (membership) {
-        await audit(env, {
-          action: "invite_accept_refused_org_member",
-          userId: existing.id,
-          resourceType: "invitation",
-          resourceId: invite.id,
-          details: { email: googleUser.email, invite_role: invite.role, org_id: membership.org_id },
-          outcome: "denied",
-          request,
-        });
-        return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
-      }
+      return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
     }
   }
 
@@ -563,6 +578,32 @@ export async function handleInviteAcceptance(
       INSERT OR IGNORE INTO org_members (org_id, user_id, role, status, invited_by, invited_at, accepted_at, provisioned_by)
       VALUES (?, ?, ?, 'active', (SELECT invited_by FROM invitations WHERE id = ?), datetime('now'), datetime('now'), 'invite')
     `).bind(invite.org_id, userId, invite.org_role || "viewer", invite.id).run();
+
+    // Lead conversion (leadConversion.ts) seats the converting super_admin as
+    // a TEMPORARY 'owner' (provisioned_by='lead_conversion') so the org has an
+    // owner before the customer arrives. The first customer owner to accept
+    // replaces it: deactivate the placeholder for THIS org only, and only once
+    // the customer's own owner row is actually active (INSERT OR IGNORE above
+    // can no-op on a stale row) so the org is never left owner-less.
+    // Idempotent — later owner acceptances match no active placeholder row.
+    if (invite.org_role === "owner" && !isPlatformStaff(invite.role)) {
+      const removed = await env.DB.prepare(
+        `UPDATE org_members SET status = 'removed', deprovisioned_at = datetime('now')
+         WHERE org_id = ? AND provisioned_by = 'lead_conversion' AND status = 'active'
+           AND EXISTS (SELECT 1 FROM org_members
+                       WHERE org_id = ? AND user_id = ? AND role = 'owner' AND status = 'active')`,
+      ).bind(invite.org_id, invite.org_id, userId).run();
+      if ((removed.meta?.changes ?? 0) > 0) {
+        await audit(env, {
+          action: "lead_conversion_placeholder_removed",
+          userId,
+          resourceType: "organization",
+          resourceId: String(invite.org_id),
+          details: { invitation_id: invite.id, placeholders_removed: removed.meta.changes },
+          request,
+        });
+      }
+    }
   }
 
   await audit(env, {

@@ -181,3 +181,146 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
     expect(roleOf(rig.raw, "admin1")).toBe("analyst");
   });
 });
+
+// ─── PR-F follow-ups ─────────────────────────────────────────────
+//
+// 1. Lead conversion seats the converting super_admin as a TEMPORARY org
+//    owner (org_members.provisioned_by='lead_conversion'). The first customer
+//    owner to accept an org invite deactivates it (this org only, audited),
+//    and both staff guards ignore that placeholder row.
+// 2. Invite acceptance matches existing accounts case-insensitively and
+//    refuses if ANY matching row is staff.
+// 3. Role PATCH refuses only an actual non-staff → staff change, and every
+//    actual role change sets the forced_logout KV stamp.
+
+interface FollowRig extends Rig { kv: ReturnType<typeof fakeKv> }
+
+function makeFollowRig(): FollowRig {
+  const rig = makeRig();
+  const kv = fakeKv();
+  (rig.env as unknown as { CACHE: KVNamespace }).CACHE = kv;
+  rig.raw.exec(`
+    INSERT INTO users (id, email, name, role) VALUES
+      ('root2',    'root2@averrow.com', 'Root2',  'super_admin'),
+      ('legacy1',  'legacy1@averrow.com', 'Legacy', 'analyst'),
+      ('bobStaff', 'Bob@x.com',         'Bob',    'analyst'),
+      ('bob2Cli',  'bob2@x.com',        'Bob2',   'client'),
+      ('bob2Adm',  'Bob2@X.com',        'Bob2A',  'admin');
+    INSERT INTO organizations (id, name, slug) VALUES (2, 'Globex', 'globex');
+    INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES
+      (1, 'root',    'owner',  'active', 'lead_conversion'),
+      (2, 'root',    'owner',  'active', 'lead_conversion'),
+      (2, 'root2',   'owner',  'active', 'lead_conversion'),
+      (1, 'legacy1', 'viewer', 'active', 'invite');
+  `);
+  return { ...rig, kv };
+}
+
+async function seedInvite(raw: SqliteDb, id: string, email: string, role: string,
+  orgId: number | null, orgRole: string | null): Promise<string> {
+  const token = `tok-${id}`;
+  raw.prepare(
+    `INSERT INTO invitations (id, email, role, token_hash, invited_by, expires_at, org_id, org_role)
+     VALUES (?, ?, ?, ?, 'root', ?, ?, ?)`,
+  ).run(id, email, role, await hashToken(token), new Date(Date.now() + 3_600_000).toISOString(), orgId, orgRole);
+  return token;
+}
+
+function memberRow(raw: SqliteDb, orgId: number, userId: string): { status: string; deprovisioned_at: string | null } {
+  return (raw.prepare("SELECT status, deprovisioned_at FROM org_members WHERE org_id = ? AND user_id = ?")
+    .all(orgId, userId) as Array<{ status: string; deprovisioned_at: string | null }>)[0]!;
+}
+
+const acceptOn = (rig: Rig, token: string, email: string, sub: string) =>
+  handleInviteAcceptance(new Request("https://averrow.com/api/auth/callback"), rig.env,
+    { sub, email, name: "Invitee" }, token, "https://averrow.com");
+
+describe.skipIf(!hasSqlite())("PR-F follow-up: lead-conversion placeholder owner", () => {
+  let rig: FollowRig;
+  beforeEach(() => { rig = makeFollowRig(); });
+
+  it("first customer owner acceptance removes this org's placeholder only, audited", async () => {
+    // A non-owner customer joining first leaves the placeholder in place.
+    const vTok = await seedInvite(rig.raw, "view1", "viewer@acme.co", "client", 1, "viewer");
+    await acceptOn(rig, vTok, "viewer@acme.co", "g-viewer");
+    expect(memberRow(rig.raw, 1, "root").status).toBe("active");
+    expect(rig.audits).not.toContain("lead_conversion_placeholder_removed");
+
+    const token = await seedInvite(rig.raw, "own1", "owner@acme.co", "client", 1, "owner");
+    const res = await acceptOn(rig, token, "owner@acme.co", "g-owner");
+    expect(res.headers.get("Location") ?? "").toContain("#token=");
+
+    const placeholder = memberRow(rig.raw, 1, "root");
+    expect(placeholder.status).toBe("removed");
+    expect(placeholder.deprovisioned_at).not.toBeNull();
+    // Other orgs' placeholders are untouched.
+    expect(memberRow(rig.raw, 2, "root").status).toBe("active");
+    expect(memberRow(rig.raw, 2, "root2").status).toBe("active");
+    // The customer is now the active owner.
+    const cust = (rig.raw.prepare("SELECT id FROM users WHERE email = ?").all("owner@acme.co") as Array<{ id: string }>)[0]!;
+    expect(memberRow(rig.raw, 1, cust.id).status).toBe("active");
+    expect(rig.audits).toContain("lead_conversion_placeholder_removed");
+  });
+
+  it("role PATCH allowed for a super_admin whose only membership is a lead_conversion placeholder", async () => {
+    const res = await handleAdminUpdateUser(patch({ role: "admin" }), rig.env, "root2", "root", "super_admin");
+    expect(res.status).toBe(200);
+    expect(roleOf(rig.raw, "root2")).toBe("admin");
+  });
+
+  it("staff invite accepted by an account whose only membership is the placeholder still works", async () => {
+    const token = await seedInvite(rig.raw, "stf1", "root2@averrow.com", "admin", null, null);
+    const res = await acceptOn(rig, token, "root2@averrow.com", "g-root2");
+    expect(res.headers.get("Location") ?? "").not.toContain("/auth/error");
+    expect(roleOf(rig.raw, "root2")).toBe("admin");
+  });
+});
+
+describe.skipIf(!hasSqlite())("PR-F follow-up: invite acceptance staff lookup is case-insensitive and multi-row", () => {
+  let rig: FollowRig;
+  beforeEach(() => { rig = makeFollowRig(); });
+
+  it("staff row `Bob@x.com` + org invite to `bob@x.com`: refused, no new account", async () => {
+    const token = await seedInvite(rig.raw, "ci1", "bob@x.com", "client", 1, "viewer");
+    const res = await acceptOn(rig, token, "bob@x.com", "g-bob-new");
+    expect(decodeURIComponent(res.headers.get("Location") ?? "")).toMatch(/Averrow staff account/);
+    expect(roleOf(rig.raw, "bobStaff")).toBe("analyst");
+    const n = (rig.raw.prepare("SELECT COUNT(*) AS n FROM users WHERE LOWER(email) = 'bob@x.com'").all() as Array<{ n: number }>)[0]!.n;
+    expect(n).toBe(1);
+    expect(rig.audits).toContain("invite_accept_refused_staff_account");
+  });
+
+  it("refuses when ANY matching row is staff, even if the exact-case row is a client", async () => {
+    const token = await seedInvite(rig.raw, "ci2", "bob2@x.com", "client", 1, "viewer");
+    const res = await acceptOn(rig, token, "bob2@x.com", "g-bob2");
+    expect(decodeURIComponent(res.headers.get("Location") ?? "")).toMatch(/Averrow staff account/);
+    expect(roleOf(rig.raw, "bob2Adm")).toBe("admin");
+    const active = (rig.raw.prepare("SELECT COUNT(*) AS n FROM org_members WHERE user_id IN ('bob2Cli','bob2Adm') AND status = 'active'")
+      .all() as Array<{ n: number }>)[0]!.n;
+    expect(active).toBe(0);
+  });
+});
+
+describe.skipIf(!hasSqlite())("PR-F follow-up: role PATCH change detection + token revocation", () => {
+  let rig: FollowRig;
+  beforeEach(() => { rig = makeFollowRig(); });
+
+  it("a role change sets forced_logout; status-only and same-role PATCHes do not", async () => {
+    expect((await handleAdminUpdateUser(patch({ status: "suspended" }), rig.env, "cust1", "root", "super_admin")).status).toBe(200);
+    expect((await handleAdminUpdateUser(patch({ role: "client" }), rig.env, "cust1", "root", "super_admin")).status).toBe(200);
+    expect(rig.kv.store.has("forced_logout:cust1")).toBe(false);
+
+    const before = Math.floor(Date.now() / 1000);
+    expect((await handleAdminUpdateUser(patch({ role: "analyst" }), rig.env, "cust2", "root", "super_admin")).status).toBe(200);
+    const stamp = rig.kv.store.get("forced_logout:cust2");
+    expect(stamp).toBeDefined();
+    expect(Number(stamp)).toBeGreaterThanOrEqual(before);
+  });
+
+  it("same-role + status PATCH on an org-affiliated staff user is allowed (no change → no refusal)", async () => {
+    const res = await handleAdminUpdateUser(patch({ role: "analyst", status: "suspended" }), rig.env, "legacy1", "root", "super_admin");
+    expect(res.status).toBe(200);
+    expect(roleOf(rig.raw, "legacy1")).toBe("analyst");
+    expect(rig.kv.store.has("forced_logout:legacy1")).toBe(false);
+  });
+});
