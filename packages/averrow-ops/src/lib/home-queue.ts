@@ -71,7 +71,10 @@ const STAFF_ROLES: ReadonlySet<string> = new Set([
 
 /**
  * Which queue sources a global role may request. Mirrors the worker guards:
- *   requireStaff        → alerts, critical_intel, agents
+ *   requireStaff        → critical_intel, agents
+ *   edit_alerts         → alerts (super_admin, admin, analyst, support). The summary
+ *                         is platform-wide and Home links into the alert to act on
+ *                         it, so roles that cannot act on alerts never fetch it.
  *   requireSuperAdmin   → incidents, approvals
  *   manage_takedowns    → takedowns (super_admin, admin, analyst)
  *   requireAdmin        → feeds (/api/admin/dashboard), attribution, brand_candidates
@@ -82,7 +85,7 @@ export function enabledSources(role: string | null | undefined): Record<QueueSou
   const isSuper = role === 'super_admin';
   const isAdminUp = isSuper || role === 'admin';
   return {
-    alerts: isStaff,
+    alerts: isStaff && roleHasPermission(role, 'edit_alerts'),
     critical_intel: isStaff,
     agents: isStaff,
     incidents: isSuper,
@@ -183,15 +186,18 @@ function buildAlerts(d: AlertTriageSummary): QueueItem[] | null {
   if (!d || typeof d.new_count !== 'number') return null;
   if (d.new_count <= 0) return [];
   const critical = d.critical_count > 0;
+  const top = d.top ?? null;
   return [{
     id: 'alerts:triage',
     source: 'alerts',
     severity: critical ? 'critical' : 'medium',
     title: `${plural(d.new_count, 'alert')} awaiting triage`,
-    detail: critical ? `${d.critical_count.toLocaleString()} critical · your queue` : 'Your queue, none critical',
+    detail: critical ? `${d.critical_count.toLocaleString()} critical` : 'none critical',
     ts: null,
     reach: d.new_count,
-    action: { label: 'Triage', to: tabUrl('alerts') },
+    action: top
+      ? { label: 'Open alert', to: tabUrl('alerts', { status: 'new', alert: top.id }) }
+      : { label: 'Triage', to: tabUrl('alerts', { status: 'new' }) },
   }];
 }
 
@@ -451,12 +457,10 @@ export function buildQueue(sources: QueueSources, now: number = Date.now()): Hom
     items = items.concat(built);
   }
 
-  // Both rows can describe critical alerts, but they are not the same number:
-  // the alerts item is YOUR triage queue (user-scoped, status 'new'), while the
-  // banner's "open critical alerts" is platform-wide. We still keep only one
-  // row to avoid a near-duplicate at the top of the queue; the alerts row wins
-  // because it is the one the user can act on.
-  if (items.some((i) => i.source === 'alerts' && i.severity === 'critical')) {
+  // Both rows describe the same platform-wide critical alerts (same number), so
+  // whenever the alerts source is enabled the banner's "open critical alerts"
+  // event is dropped: the alerts row is the one that links to the alert to act on.
+  if (sources.alerts) {
     items = items.filter(
       (i) => !(i.source === 'critical_intel' && i.id.startsWith('critical_intel:open_critical_alerts')),
     );

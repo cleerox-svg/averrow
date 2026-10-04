@@ -6,7 +6,7 @@ export type Failure = 'reject' | 'envelope';
 export interface HomeApiOptions {
   /** Failure to inject, keyed by URL prefix (first match wins). */
   fail?: Record<string, Failure>;
-  alerts?: { new_count: number; critical_count: number };
+  alerts?: { new_count: number; critical_count: number; top?: Record<string, unknown> | null };
   incidents?: unknown[];
   pending?: unknown[];
   statusCounts?: Array<{ status: string; count: number }>;
@@ -37,7 +37,7 @@ export function createHomeApi(opts: HomeApiOptions = {}) {
       }
     }
     if (url.startsWith('/api/alerts/triage-summary')) {
-      return { success: true, data: opts.alerts ?? { new_count: 0, critical_count: 0 } };
+      return { success: true, data: opts.alerts ?? { new_count: 0, critical_count: 0, top: null } };
     }
     if (url.startsWith('/api/intel/critical-banner')) {
       const events = opts.events ?? [];
