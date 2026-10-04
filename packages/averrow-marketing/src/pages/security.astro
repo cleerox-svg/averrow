@@ -100,8 +100,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </svg>
         </div>
         <div class="sec-trust-tile-text">
-          <div class="sec-trust-tile-title">No PII collected</div>
-          <div class="sec-trust-tile-sub">Public signals only</div>
+          <div class="sec-trust-tile-title">Minimal data collected</div>
+          <div class="sec-trust-tile-sub">Public signals only; country-level location at most</div>
         </div>
       </a>
     </div>
@@ -237,6 +237,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <li>Email security records (public DNS)</li>
             <li>Social platform public profiles</li>
             <li>Threat feed matches</li>
+            <li>At most, the approximate country of public scan requests (no IP, city, or coordinates stored)</li>
           </ul>
         </div>
         <div class="sec-data-block sec-no-collect" style="margin-top:2rem;">
@@ -254,6 +255,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <li>Active account data retained during subscription</li>
             <li>Scan results cached 24 hours</li>
             <li>Account deletion within 30 days of request</li>
+            <li>Rate-limit records expire within about two hours</li>
           </ul>
         </div>
       </div>
