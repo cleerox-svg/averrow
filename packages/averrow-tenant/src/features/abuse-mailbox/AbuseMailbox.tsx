@@ -8,6 +8,7 @@
 
 import { Fragment, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
 import { ArrowLeft, AlertTriangle, ShieldCheck, Mail, MailCheck, MailX, Inbox, Copy, Check, ChevronDown, ExternalLink, type LucideIcon } from 'lucide-react';
 import {
   useAbuseMailboxSummary,
@@ -1271,9 +1272,23 @@ function TenantInboxToolbar({
 
 // ─── PR-BD: per-row status mutation (tenant parity) ─────────────
 
-function TenantStatusActions({ message }: { message: AbuseInboxMessageRow }) {
+export function TenantStatusActions({ message }: { message: AbuseInboxMessageRow }) {
   const mutate = useUpdateAbuseMessageStatus();
+  // Status flips are customer analyst+ actions; the worker refuses staff on
+  // this tenant route (403) and viewers lack the org role.
+  const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
   const cur = (message.status ?? 'new') as AbuseMessageStatus;
+  if (!canTriage) {
+    return (
+      <p className="text-[11px] font-mono text-white/55">
+        <span className="uppercase tracking-wider text-white/80">{cur}</span>
+        <span className="ml-2 text-white/40">
+          {isStaff ? 'Read-only — staff triage from the Averrow console.' : 'Read-only — requires the analyst role.'}
+        </span>
+      </p>
+    );
+  }
   const next = (s: AbuseMessageStatus) => {
     if (cur === s || mutate.isPending) return;
     mutate.mutate({ messageId: message.id, status: s });

@@ -9,7 +9,8 @@
 //        customers can't assign to staff (incl. the lead-conversion
 //        placeholder super_admin); the tenant audit log masks staff actors.
 //   O1 — ops bulk-takedown stamps takedown_requests.org_id from the alert;
-//        tenant takedown PATCH refuses a takedown owned by another org.
+//        tenant takedown PATCH refuses a takedown owned by another org, or by
+//        no org (brand-wide org_id NULL rows: refused, never claimed).
 //   F1 — tenant alert reads drop alerts.user_id (fan-out owner / staff scanner).
 //   O-a — user ids inside audit details are masked whoever the actor is.
 //   O-b — an actor with no users row is "Former user", notes dropped.
@@ -435,11 +436,13 @@ describe.skipIf(!hasSqlite())("tenant alert routes — staff refusal and masking
       expect(row.notes).toBeNull();
     });
 
-    it("the owning org and brand-wide (org_id NULL) takedowns stay editable", async () => {
+    it("the owning org can edit; brand-wide (org_id NULL) takedowns are refused, not claimed", async () => {
       seedTakedown("td7", 7);
       seedTakedown("tdnull", null);
       expect((await handleUpdateTakedown(req("PATCH", { notes: "ours" }), env, "7", "td7", CLIENT)).status).toBe(200);
-      expect((await handleUpdateTakedown(req("PATCH", { notes: "shared" }), env, "8", "tdnull", ORG8)).status).toBe(200);
+      expect((await handleUpdateTakedown(req("PATCH", { notes: "shared" }), env, "8", "tdnull", ORG8)).status).toBe(404);
+      const row = raw.prepare("SELECT org_id, notes FROM takedown_requests WHERE id = 'tdnull'").all()[0];
+      expect(row).toEqual({ org_id: null, notes: null });
     });
   });
 });

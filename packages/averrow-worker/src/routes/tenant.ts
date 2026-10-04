@@ -2,6 +2,7 @@ import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
 import { requireAuth, requireOrgMember, requireSuperAdmin, isAuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 import {
   handleGetOwnOrg, handleListOrgMembers, handleOrgInvite,
   handleRemoveOrgMember, handleUpdateOrgMember,
@@ -448,6 +449,12 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
   router.patch("/api/orgs/:orgId/modules/abuse-mailbox/messages/:id/status", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireOrgMember(request, env);
     if (!isAuthContext(ctx)) return ctx;
+    // Staff refusal lives HERE, not in the handler: the ops admin mailbox
+    // (handlers/adminAbuseMailbox.ts) reuses the same handler as super_admin
+    // on the Averrow self-org. On the tenant route a staff status flip would
+    // change a customer's triage state (owner decision 2026-10-04).
+    const staffErr = refuseStaffTenantWrite(ctx, request.headers.get("Origin"));
+    if (staffErr) return staffErr;
     const { handleUpdateAbuseInboxMessageStatus } = await import("../handlers/tenantAbuseMailboxModule");
     return handleUpdateAbuseInboxMessageStatus(
       request, env, request.params["orgId"] ?? "", request.params["id"] ?? "", ctx,

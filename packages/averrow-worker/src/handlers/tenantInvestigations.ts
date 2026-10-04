@@ -6,12 +6,23 @@
 // investigations / investigation_items / investigation_notes tables
 // (migration 0222). Reads are member-visible; every mutation is
 // analyst+ (canPerformHITL) and audited.
+//
+// Staff (owner decision 2026-10-04): every mutation refuses platform
+// staff (refuseStaffTenantWrite — super_admin otherwise passes
+// verifyOrgAccess + canPerformHITL); reads mask staff/deleted users in
+// created_by / assigned_to / author_id (maskTenantUserRefs); a case can
+// only be assigned to a customer member (validateTenantAssignee).
 
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import type { Env } from "../types";
 import { verifyOrgAccess, canPerformHITL } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { validateTenantAssignee } from "./tenantData";
+import {
+  resolveTenantUserLabels, collectUserRefIds, maskTenantUserRefs, maskTenantUserRefsForRows,
+} from "./tenantUserMasking";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL is the shared org-role gate from middleware/auth.ts
@@ -38,18 +49,10 @@ async function loadOwnedInvestigation(env: Env, orgId: string, id: string) {
   ).bind(id, orgId).first<Record<string, unknown>>();
 }
 
-// Resolve display names for a set of user ids in one query.
-async function resolveNames(env: Env, ids: Array<string | null | undefined>): Promise<Record<string, string>> {
-  const unique = [...new Set(ids.filter((x): x is string => typeof x === "string" && !!x))];
-  const map: Record<string, string> = {};
-  if (unique.length === 0) return map;
-  const ph = unique.map(() => "?").join(",");
-  const rows = await env.DB.prepare(
-    `SELECT id, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${ph})`,
-  ).bind(...unique).all<{ id: string; name: string }>();
-  for (const r of rows.results ?? []) map[r.id] = r.name;
-  return map;
-}
+// User-reference columns a customer sees, masked via maskTenantUserRefs
+// (staff → null + "Averrow SOC", deleted → null + "Former user").
+const CASE_USER_FIELDS = { assigned_to: "assigned_to_name", created_by: "created_by_name" } as const;
+const NOTE_USER_FIELDS = { author_id: "author_name" } as const;
 
 // ─── GET /api/orgs/:orgId/investigations ─────────────────────
 
@@ -90,13 +93,11 @@ export async function handleListInvestigations(
       "SELECT status, COUNT(*) AS count FROM investigations WHERE org_id = ? GROUP BY status",
     ).bind(orgId).all<{ status: string; count: number }>();
 
-    const items = rows.results ?? [];
-    const names = await resolveNames(env, items.flatMap((r) => [r.assigned_to as string, r.created_by as string]));
-    const data = items.map((r) => ({
-      ...r,
-      assigned_to_name: r.assigned_to ? (names[r.assigned_to as string] ?? null) : null,
-      created_by_name: r.created_by ? (names[r.created_by as string] ?? null) : null,
-    }));
+    // NOTE: up to 100 rows x 2 ids. resolveTenantUserLabels de-duplicates
+    // ids but does NOT chunk its IN (...) on this branch — chunking lands in
+    // PR #1776. Until then a page referencing >100 DISTINCT users would
+    // exceed D1's 100-bind limit (same exposure as before this change).
+    const data = await maskTenantUserRefsForRows(env, rows.results ?? [], CASE_USER_FIELDS);
 
     return json({
       success: true, data, total: total?.total ?? 0,
@@ -115,6 +116,8 @@ export async function handleCreateInvestigation(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canPerformHITL(ctx)) return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
 
   try {
@@ -174,21 +177,16 @@ export async function handleGetInvestigation(
     const noteRows = await env.DB.prepare(
       "SELECT * FROM investigation_notes WHERE investigation_id = ? ORDER BY created_at ASC",
     ).bind(id).all<Record<string, unknown>>();
-    const noteAuthorNames = await resolveNames(env, (noteRows.results ?? []).map((n) => n.author_id as string));
-    const notes = (noteRows.results ?? []).map((n) => ({
-      ...n, author_name: n.author_id ? (noteAuthorNames[n.author_id as string] ?? null) : null,
-    }));
-
-    const names = await resolveNames(env, [inv.assigned_to as string, inv.created_by as string]);
+    const noteList = noteRows.results ?? [];
+    const labels = await resolveTenantUserLabels(env, [
+      ...collectUserRefIds([inv], CASE_USER_FIELDS),
+      ...collectUserRefIds(noteList, NOTE_USER_FIELDS),
+    ]);
+    const notes = noteList.map((n) => maskTenantUserRefs(n, labels, NOTE_USER_FIELDS));
 
     return json({
       success: true,
-      data: {
-        ...inv,
-        assigned_to_name: inv.assigned_to ? (names[inv.assigned_to as string] ?? null) : null,
-        created_by_name: inv.created_by ? (names[inv.created_by as string] ?? null) : null,
-        items, notes,
-      },
+      data: { ...maskTenantUserRefs(inv, labels, CASE_USER_FIELDS), items, notes },
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -238,6 +236,8 @@ export async function handleUpdateInvestigation(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canPerformHITL(ctx)) return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
 
   try {
@@ -265,11 +265,10 @@ export async function handleUpdateInvestigation(
     }
     if (body.assigned_to !== undefined) {
       if (body.assigned_to) {
-        // Validate the assignee is an active member of this org.
-        const member = await env.DB.prepare(
-          `SELECT 1 FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
-        ).bind(orgId, body.assigned_to).first();
-        if (!member) return json({ success: false, error: "Assignee must be an active org member" }, 400, origin);
+        // Active member of this org AND not Averrow staff (incl. the
+        // lead-conversion placeholder super_admin) — shared with alerts.
+        const assigneeErr = await validateTenantAssignee(env, orgId, body.assigned_to);
+        if (assigneeErr) return json({ success: false, error: assigneeErr }, 400, origin);
       }
       sets.push("assigned_to = ?"); binds.push(body.assigned_to || null);
     }
@@ -302,6 +301,8 @@ export async function handleAddInvestigationItem(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canPerformHITL(ctx)) return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
 
   try {
@@ -374,6 +375,8 @@ export async function handleRemoveInvestigationItem(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canPerformHITL(ctx)) return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
 
   try {
@@ -405,6 +408,8 @@ export async function handleAddInvestigationNote(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canPerformHITL(ctx)) return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
 
   try {

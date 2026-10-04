@@ -7,6 +7,7 @@
 // Phase B sprint 7.
 
 import { useEffect, useRef, useState } from 'react';
+import { useCanTriage } from '@/lib/alerts';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import {
@@ -63,7 +64,10 @@ export function BrandTrademarkFindings() {
   );
 }
 
-function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]; brandId: string }) {
+export function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]; brandId: string }) {
+  // Upload/delete are customer analyst+ actions; the worker refuses staff on
+  // these tenant writes (403), so staff never get the controls.
+  const canManage = useCanTriage();
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -72,17 +76,17 @@ function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]; brand
         </h2>
       </div>
 
-      <AssetUploader brandId={brandId} />
+      {canManage && <AssetUploader brandId={brandId} />}
 
       {assets.length === 0 ? (
         <div className="rounded-xl border border-white/[0.08] bg-bg-card p-6 text-center">
           <ImageIcon className="inline text-white/40" size={20} />
           <p className="text-white/55 text-sm mt-2">No assets registered yet.</p>
-          <p className="text-white/40 text-xs mt-1">Upload a logo or wordmark above. Active logo-image scanning lands with Phase 2; today this registers the mark and stores it for matching.</p>
+          <p className="text-white/40 text-xs mt-1">{canManage ? 'Upload a logo or wordmark above.' : ''} Active logo-image scanning lands with Phase 2; today this registers the mark and stores it for matching.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {assets.map((a) => <AssetCard key={a.id} asset={a} brandId={brandId} />)}
+          {assets.map((a) => <AssetCard key={a.id} asset={a} brandId={brandId} canManage={canManage} />)}
         </div>
       )}
     </section>
@@ -160,7 +164,7 @@ function AssetUploader({ brandId }: { brandId: string }) {
   );
 }
 
-function AssetCard({ asset: a, brandId }: { asset: TrademarkAssetRow; brandId: string }) {
+function AssetCard({ asset: a, brandId, canManage }: { asset: TrademarkAssetRow; brandId: string; canManage: boolean }) {
   const del = useDeleteTrademarkAsset(brandId);
   return (
     <article className="rounded-xl border border-white/[0.06] bg-bg-card p-3">
@@ -171,15 +175,17 @@ function AssetCard({ asset: a, brandId }: { asset: TrademarkAssetRow; brandId: s
             <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
               {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type}
             </span>
-            <button
-              type="button"
-              onClick={() => del.mutate(a.id)}
-              disabled={del.isPending}
-              title="Remove asset"
-              className="ml-auto text-white/30 hover:text-sev-critical transition-colors disabled:opacity-40"
-            >
-              <Trash2 size={13} />
-            </button>
+            {canManage && (
+              <button
+                type="button"
+                onClick={() => del.mutate(a.id)}
+                disabled={del.isPending}
+                title="Remove asset"
+                className="ml-auto text-white/30 hover:text-sev-critical transition-colors disabled:opacity-40"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
           </div>
           <div className="text-sm font-semibold text-white/90 truncate">{a.asset_name ?? '(unnamed)'}</div>
           {(a.registration_country ?? a.registration_number) && (

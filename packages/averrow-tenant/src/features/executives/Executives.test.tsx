@@ -16,7 +16,10 @@ import type { AlertsResponse } from '@/lib/alerts';
 
 vi.mock('@/lib/auth', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/dashboard', () => ({ useTenantDashboard: vi.fn() }));
-vi.mock('@/lib/alerts', () => ({ useTenantAlerts: vi.fn() }));
+vi.mock('@/lib/alerts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/alerts')>();
+  return { ...actual, useTenantAlerts: vi.fn() };
+});
 vi.mock('@/lib/executives', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/executives')>();
   return {
@@ -171,6 +174,22 @@ describe('Executives page', () => {
     renderWithProviders(<Executives />);
 
     expect(screen.getByText(/Org admins and owners can register, edit, and remove executives/)).toBeInTheDocument();
+    expect(screen.queryByText('Register executive')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Edit executive')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Remove executive')).not.toBeInTheDocument();
+  });
+
+  it('hides mutation controls for Averrow staff, even holding an org owner seat', () => {
+    // The worker refuses staff on executive writes (403) — e.g. the
+    // lead-conversion placeholder super_admin owner.
+    mockAuth('owner', 'super_admin');
+    mockDashboard([makeBrand()]);
+    mockExecutives([makeExecutive()]);
+    mockMutations();
+
+    renderWithProviders(<Executives />);
+
+    expect(screen.getByText(/Averrow staff manage the executive registry from the Averrow console/)).toBeInTheDocument();
     expect(screen.queryByText('Register executive')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Edit executive')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Remove executive')).not.toBeInTheDocument();

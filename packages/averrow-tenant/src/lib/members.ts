@@ -19,9 +19,14 @@ export type OrgRole = 'owner' | 'admin' | 'analyst' | 'viewer';
 
 export interface OrgMember {
   id:              string;
-  user_id:         string;
+  /** null (with email null, user_name "Averrow SOC", is_averrow true) for an
+   *  Averrow staff seat — e.g. the lead-conversion placeholder owner. The
+   *  worker never sends a staff member's id/name/email to a customer. */
+  user_id:         string | null;
   user_name:       string;
-  email:           string;
+  email:           string | null;
+  /** True for an Averrow staff seat (masked); never manageable here. */
+  is_averrow?:     boolean;
   role:            string;
   status:          string;
   invited_at:      string | null;

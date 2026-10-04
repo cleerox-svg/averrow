@@ -45,7 +45,9 @@ export function Settings() {
   const { data: invites } = useOrgInvites();
 
   const userCanManageMembers = canManageMembers(user?.role, user?.organization?.role);
-  const memberCount = members?.length ?? 0;
+  // The Averrow SOC row (lead-conversion placeholder / staff) is not one of
+  // the customer's seats.
+  const memberCount = members?.filter((m) => !m.is_averrow).length ?? 0;
   const pendingCount = invites?.length ?? 0;
 
   return (
@@ -276,7 +278,7 @@ function AuthorizationDetails({
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
         <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-3">Signing record</h3>
         <dl className="space-y-2">
-          <Row label="Signed by"><span className="text-[12px] text-white/75 font-mono">{auth.signed_by_user_id}</span></Row>
+          <Row label="Signed by"><span className="text-[12px] text-white/75 font-mono">{auth.signed_by_name ?? auth.signed_by_user_id ?? '—'}</span></Row>
           <Row label="Signed at"><span className="text-[12px] text-white/75 font-mono">{formatDateTime(auth.signed_at)}</span></Row>
           {auth.signed_ip && (
             <Row label="IP address"><span className="text-[12px] text-white/75 font-mono">{auth.signed_ip}</span></Row>

@@ -83,7 +83,7 @@ export function Members() {
               <div className="space-y-1">
                 {members.map((m) => (
                   <MemberRow
-                    key={m.user_id}
+                    key={m.id}
                     member={m}
                     canManage={userCanManage}
                     isSelf={m.user_id === user?.id}
@@ -238,7 +238,7 @@ function MemberRow({
   isSelf:    boolean;
 }) {
   const initials = parseInitials(member.user_name, member.email);
-  const color = colorForUserId(member.user_id);
+  const color = colorForUserId(member.user_id ?? member.id);
   const updateRole = useUpdateMemberRole();
   const removeMember = useRemoveMember();
   const [editingRole, setEditingRole] = useState(false);
@@ -246,12 +246,15 @@ function MemberRow({
 
   // Owners can't be downgraded or removed from the tenant UI —
   // ownership transfer is a deliberate, manual operation.
-  const canManageThis = canManage && !isSelf && member.role !== 'owner';
+  // An Averrow seat (masked, user_id null) is never manageable here.
+  const memberUserId = member.user_id;
+  const canManageThis = canManage && !isSelf && member.role !== 'owner'
+    && !member.is_averrow && memberUserId !== null;
 
   const handleRoleChange = (role: OrgRole) => {
     setEditingRole(false);
-    if (role === (member.role as OrgRole)) return;
-    updateRole.mutate({ userId: member.user_id, role });
+    if (role === (member.role as OrgRole) || !memberUserId) return;
+    updateRole.mutate({ userId: memberUserId, role });
   };
 
   const handleRemove = () => {
@@ -259,7 +262,7 @@ function MemberRow({
       `Remove ${member.user_name || member.email} from this organization?`,
     );
     if (!ok) return;
-    removeMember.mutate(member.user_id);
+    if (memberUserId) removeMember.mutate(memberUserId);
   };
 
   return (
@@ -284,7 +287,7 @@ function MemberRow({
             </span>
           )}
         </div>
-        <div className="text-[11px] font-mono text-white/45 truncate">{member.email}</div>
+        <div className="text-[11px] font-mono text-white/45 truncate">{member.is_averrow ? 'Averrow security operations' : member.email}</div>
       </div>
       <div className="flex-shrink-0 flex items-center gap-2">
         {editingRole && canManageThis ? (
@@ -486,9 +489,13 @@ function TransferOwnershipSection({
   currentUserId: string;
 }) {
   const transfer = useTransferOwnership();
-  const candidates = members.filter((m) => m.user_id !== currentUserId);
+  // Never offer an Averrow staff seat (masked) as an ownership target.
+  const candidates = members.filter(
+    (m): m is OrgMember & { user_id: string } =>
+      m.user_id !== null && !m.is_averrow && m.user_id !== currentUserId,
+  );
 
-  const handleTransfer = (target: OrgMember) => {
+  const handleTransfer = (target: OrgMember & { user_id: string }) => {
     const name = target.user_name || target.email;
     const ok = window.confirm(
       `Transfer ownership to ${name}?\n\n` +
@@ -516,7 +523,7 @@ function TransferOwnershipSection({
           const color = colorForUserId(m.user_id);
           return (
             <button
-              key={m.user_id}
+              key={m.id}
               type="button"
               onClick={() => handleTransfer(m)}
               disabled={transfer.isPending}

@@ -420,6 +420,13 @@ export async function handleGetAbuseInboxMessageDetail(
 // actions in the drill-down UI ("mark resolved", "dismiss",
 // "escalate" → 'investigating'). Schema CHECK in 0150 allows
 // new | investigating | resolved | dismissed.
+//
+// Staff: this handler (and the bulk one below) is ALSO the ops admin
+// mailbox's implementation — handlers/adminAbuseMailbox.ts calls it as
+// super_admin on the Averrow self-org — so it must NOT refuse staff. The
+// tenant route (routes/tenant.ts) refuses staff before delegating here
+// (refuseStaffTenantWrite, owner decision 2026-10-04). The bulk handler
+// has no tenant route.
 
 const VALID_STATUS_TRANSITIONS = new Set([
   "new", "investigating", "resolved", "dismissed",

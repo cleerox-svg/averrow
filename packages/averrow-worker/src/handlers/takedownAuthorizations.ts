@@ -20,6 +20,8 @@ import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { maskTenantUserRefsForRows } from "./tenantUserMasking";
 import { MODULE_KEYS, type ModuleKey } from "../lib/entitlements";
 import {
   getActiveAuthorization,
@@ -61,12 +63,27 @@ export async function handleGetActiveAuthorization(
     return json({ success: false, error: "Invalid organization id" }, 400, origin);
   }
 
+  // Cached value stays raw; masking happens per response below.
   const auth = await getActiveAuthorization(env, orgIdNum);
+  // Staff signer/revoker ids never reach the customer: null + "Averrow SOC".
+  const [masked] = auth
+    ? await maskTenantUserRefsForRows(
+        env,
+        [auth as unknown as Record<string, unknown>],
+        { signed_by_user_id: "signed_by_name", revoked_by_user_id: "revoked_by_name" },
+      )
+    : [null];
+  // A masked signer (staff or Former user — masking nulled the id) also
+  // drops the signing IP / user agent: they identify the person behind the
+  // "Averrow SOC" label. The revoke path records no ip/ua columns.
+  const authorization = masked && auth && masked.signed_by_user_id === null && auth.signed_by_user_id
+    ? { ...masked, signed_ip: null, signed_user_agent: null }
+    : masked;
   return json({
     success: true,
     data: {
       org_id: orgIdNum,
-      authorization: auth,
+      authorization,
     },
   }, 200, origin);
 }
@@ -189,6 +206,10 @@ export async function handleRecordAuthorization(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  // The customer signs/revokes their own consent; staff record a signed
+  // agreement via POST /api/admin/orgs/:orgId/takedown-authorization.
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canMutateAuthorization(ctx)) {
     return json({
       success: false,
@@ -258,6 +279,10 @@ export async function handleRevokeAuthorization(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  // The customer signs/revokes their own consent; staff record a signed
+  // agreement via POST /api/admin/orgs/:orgId/takedown-authorization.
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canMutateAuthorization(ctx)) {
     return json({
       success: false,

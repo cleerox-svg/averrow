@@ -15,6 +15,17 @@ import type {
 // Executives.test.tsx, so the test drives loading/populated states
 // directly without a real backend.
 
+// MaliciousDomainsSection gates its takedown CTA on the caller's role.
+vi.mock('@/lib/auth', () => ({
+  useAuth: () => ({
+    user: {
+      id: 'u1', email: 'x@example.com', name: 'X', role: 'client',
+      organization: { id: 7, name: 'Acme', slug: 'acme', plan: 'business', role: 'analyst' },
+    },
+    hasOrg: true,
+    loading: false,
+  }),
+}));
 vi.mock('@/lib/domainModule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domainModule')>();
   return {

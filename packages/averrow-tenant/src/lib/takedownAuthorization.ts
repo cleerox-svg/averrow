@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiGet, apiPost, apiDelete } from './api';
 import { useAuth } from './auth';
+import { isStaffRole } from './alerts';
 
 export type AuthorizationStatus = 'active' | 'revoked' | 'expired';
 
@@ -77,12 +78,17 @@ export interface TakedownAuthorization {
   agreement_version:  string;
   status:             AuthorizationStatus;
   signed_at:          string;
-  signed_by_user_id:  string;
+  /** null when the signer is Averrow staff or a deleted user — the worker
+   *  never sends a staff id to a customer; read signed_by_name instead. */
+  signed_by_user_id:  string | null;
+  /** Display name: the customer signer, "Averrow SOC", or "Former user". */
+  signed_by_name?:    string | null;
   signed_ip:          string | null;
   signed_user_agent:  string | null;
   scope:              AuthorizationScope;
   revoked_at:         string | null;
   revoked_by_user_id: string | null;
+  revoked_by_name?:   string | null;
   revoked_reason:     string | null;
   created_at:         string;
   updated_at:         string;
@@ -150,7 +156,8 @@ export function useSignAuthorization() {
 }
 
 /** Org-level roles that may sign — same as revoke. Mirrors backend
- *  canMutateAuthorization in handlers/takedownAuthorizations.ts. */
+ *  canMutateAuthorization + refuseStaffTenantWrite in
+ *  handlers/takedownAuthorizations.ts. */
 export function canSignAuthorization(
   globalRole: string | undefined,
   orgRole:    string | undefined,
@@ -165,7 +172,10 @@ export function canRevokeAuthorization(
   globalRole: string | undefined,
   orgRole: string | undefined,
 ): boolean {
-  if (globalRole === 'super_admin') return true;
+  // Staff never sign/revoke the customer's consent from the tenant app —
+  // the worker refuses them (403); staff record a signed agreement from the
+  // Averrow console. Only a customer org admin/owner may.
+  if (isStaffRole(globalRole)) return false;
   return REVOKE_ROLES.has(orgRole ?? '');
 }
 

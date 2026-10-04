@@ -15,6 +15,7 @@ import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { requireOrgAdmin } from "./organizations";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 import { getOrgPricingSummary, getPricingPlan } from "../lib/pricing";
 import {
   createCheckoutSession,
@@ -65,6 +66,13 @@ export async function handleCreateCheckoutSession(
   // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
+  // Platform staff are refused (owner decision 2026-10-04): a staff
+  // super_admin passes requireOrgAdmin via hasGlobalReadScope, and the
+  // checkout would otherwise stamp the STAFF email as the customer's Stripe
+  // customer_email (a portal session likewise acts on the customer's
+  // billing account). Plan changes go through the ops pricing console.
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {
@@ -175,6 +183,13 @@ export async function handleCreatePortalSession(
   // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
+  // Platform staff are refused (owner decision 2026-10-04): a staff
+  // super_admin passes requireOrgAdmin via hasGlobalReadScope, and the
+  // checkout would otherwise stamp the STAFF email as the customer's Stripe
+  // customer_email (a portal session likewise acts on the customer's
+  // billing account). Plan changes go through the ops pricing console.
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {

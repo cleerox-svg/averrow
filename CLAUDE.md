@@ -809,7 +809,34 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   "Averrow SOC" (`resolveTenantUserLabels`). Tenant alert responses omit
   `user_id`; tenant audit-log `details` mask staff/deleted user ids
   (`maskAuditDetails`); unresolvable users read "Former user". Tenant
-  takedown list/get/PATCH are scoped to `org_id IS NULL OR org_id = :orgId`.
+  takedown list and PATCH are scoped to `org_id = :orgId` — brand-wide
+  (`org_id` NULL) SOC/prospect drafts are 404 on the tenant PATCH (refused,
+  never claimed by the first tenant write). The tenant takedown GET-by-id is
+  `org_id = :orgId` for every role EXCEPT `super_admin`, which reads any
+  takedown by id (`handleGetTenantTakedownDetail`, `tenantTakedowns.ts`) —
+  the response is still staff-masked.
+- **The same rule covers every tenant customer-data WRITE (2026-10-04).**
+  `refuseStaffTenantWrite` (`lib/tenant-staff-guard.ts`) returns 403 `Staff
+  must work from the Averrow console` to any `isPlatformStaff` caller on:
+  investigations (create/update/items/notes), takedown create/PATCH,
+  abuse-mailbox status (at the ROUTE layer — `adminAbuseMailbox.ts` reuses
+  the handler for the self-org), trademark asset upload/delete,
+  takedown-authorization sign/revoke, executives, monitoring-config,
+  billing checkout-session/portal-session (a staff email must never become
+  the customer's Stripe `customer_email`). Org
+  administration (invite, members, brands, api-keys, integrations, webhook,
+  ownership transfer) stays staff-reachable by design, but what the customer
+  sees is masked: invite emails name the inviter "Averrow SOC"; the members
+  and api-keys lists mask staff for non-staff callers. Tenant reads that
+  render a user (investigation creator/assignee/note author, takedown
+  `requested_by`/`submitted_by`, authorization signer/revoker) go through
+  `maskTenantUserRefs` (`handlers/tenantUserMasking.ts`): staff → null id +
+  "Averrow SOC", deleted → null id + "Former user"; a masked authorization
+  signer also loses `signed_ip`/`signed_user_agent`. Customer assignees go
+  through `validateTenantAssignee` (rejects staff + the placeholder). Ops
+  takedown webhooks carry `updated_by: null, updated_by_name: "Averrow SOC"`;
+  tenant ones carry the member's id + display name (same shape).
+  The tenant takedown detail omits `notes` (shared with ops staff notes).
 - Account handling enforces "no tenant staff": the admin role PATCH
   (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
   for a user with an active `org_members` row (400; status-only PATCHes and

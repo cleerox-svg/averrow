@@ -12,6 +12,7 @@ import type { BillingSummary } from '@/lib/billing';
 // hook, render through QueryClientProvider + MemoryRouter, assert on
 // rendered content) since it's the only precedent in this package.
 
+vi.mock('@/lib/auth', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/billing', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/billing')>();
   return {
@@ -23,6 +24,18 @@ vi.mock('@/lib/billing', async (importOriginal) => {
 });
 
 import { useBillingSummary } from '@/lib/billing';
+import { useAuth } from '@/lib/auth';
+
+function mockAuth(globalRole: string, orgRole: string) {
+  vi.mocked(useAuth).mockReturnValue({
+    user: {
+      id: 'u1', email: 'x@example.com', name: 'X', role: globalRole,
+      organization: { id: 42, name: 'Acme', slug: 'acme', plan: 'business', role: orgRole },
+    },
+    hasOrg: true,
+    loading: false,
+  } as unknown as ReturnType<typeof useAuth>);
+}
 
 const BASE_SUMMARY: BillingSummary = {
   org_id: 42,
@@ -65,6 +78,7 @@ function renderBillingAt(path: string) {
 describe('Billing — tenant billing surface smoke test', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAuth('client', 'owner');
   });
 
   it('renders the plan, monthly total, status, and manage-billing CTA for an active subscription', () => {
@@ -99,5 +113,22 @@ describe('Billing — tenant billing surface smoke test', () => {
     expect(screen.getByText('No plan assigned yet.')).toBeInTheDocument();
     expect(screen.getByText('Start your subscription')).toBeInTheDocument();
     expect(screen.getByText(/isn't on a billed plan yet/)).toBeInTheDocument();
+  });
+
+  it.each(['super_admin', 'admin', 'auditor'])('hides checkout/portal controls for staff role %s with the read-only note', (role) => {
+    mockAuth(role, 'owner');
+    mockBilling();
+    renderBillingAt('/settings/billing');
+    expect(screen.getByText('Professional')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Manage in Stripe/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent(/Read-only for Averrow staff/);
+  });
+
+  it('hides the subscribe button for staff on an unbilled org', () => {
+    mockAuth('super_admin', 'owner');
+    mockBilling({ data: { ...BASE_SUMMARY, billing_status: 'unbilled' } });
+    renderBillingAt('/settings/billing');
+    expect(screen.queryByRole('button', { name: /Subscribe/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Start your subscription')).not.toBeInTheDocument();
   });
 });

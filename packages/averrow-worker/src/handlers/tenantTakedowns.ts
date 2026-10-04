@@ -23,6 +23,12 @@ import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { maskTenantUserRefsForRows } from "./tenantUserMasking";
+
+/** User refs on a takedown a customer sees. submitted_by is always a SOC
+ *  analyst; requested_by may be a customer or (legacy) staff. Staff are
+ *  shown as "Averrow SOC" with a null id; deleted users as "Former user". */
+const TAKEDOWN_USER_FIELDS = { requested_by: "requested_by_name", submitted_by: "submitted_by_name" } as const;
 
 export interface TakedownListRow {
   id:                     string;
@@ -238,10 +244,20 @@ export async function handleGetTenantTakedownDetail(
      LIMIT 100`,
   ).bind(takedownId).all<TakedownSubmissionAuditRow>();
 
+  // Customer-facing view (owner decision 2026-10-04): staff never named or
+  // identified; `notes` is dropped because the ops admin PATCH writes staff
+  // notes into the same column (the tenant UI never renders it).
+  // response_notes (the provider's response) stays visible by design.
+  const [masked] = await maskTenantUserRefsForRows(
+    env, [takedown as unknown as Record<string, unknown>], TAKEDOWN_USER_FIELDS,
+  );
+  const view: Record<string, unknown> = { ...masked };
+  delete view.notes;
+
   return json({
     success: true,
     data: {
-      takedown,
+      takedown: view,
       submissions: submissions.results,
     },
   }, 200, origin);
