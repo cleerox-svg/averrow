@@ -7,7 +7,7 @@ import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
-import { PLACEHOLDER_EXEMPT_SQL } from "../lib/lead-conversion-placeholder";
+import { PLACEHOLDER_EXEMPT_SQL, STAFF_ROLE_LIST_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL } from "../lib/lead-conversion-placeholder";
 import {
   generateMagicLinkToken, hashMagicLinkToken, checkRateLimit,
   persistMagicLinkRow, findMagicLinkByHash, markMagicLinkUsed,
@@ -586,9 +586,30 @@ export async function handleInviteAcceptance(
     // here with a different role (guard (c) above): client → staff.
     // Pinned to the role read above (optimistic concurrency): if an admin
     // changed it in between, the guards were decided on stale data — refuse.
-    const updated = await env.DB.prepare("UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ? AND role = ?")
-      .bind(googleUser.sub, googleUser.name, invite.role, userId, existing.role).run();
+    // A STAFF-role write also re-checks the no-tenant-staff rule IN SQL: an
+    // active customer membership that landed after the pre-check above (a
+    // concurrent org-invite acceptance) makes it match 0 rows.
+    const staffWrite = isPlatformStaff(invite.role);
+    const updated = await env.DB.prepare(
+      `UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ? AND role = ?` +
+      (staffWrite ? ` AND NOT ${USER_HAS_CUSTOMER_MEMBERSHIP_SQL}` : ""),
+    ).bind(googleUser.sub, googleUser.name, invite.role, userId, existing.role).run();
     if (!Number(updated.meta?.changes ?? 0)) {
+      const now = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+        .bind(userId).first<{ role: string }>();
+      if (staffWrite && now?.role === existing.role) {
+        // Role unchanged → the membership guard is what refused the write.
+        await audit(env, {
+          action: "invite_accept_refused_org_member",
+          userId,
+          resourceType: "invitation",
+          resourceId: invite.id,
+          details: { email: googleUser.email, invite_role: invite.role, concurrent: true },
+          outcome: "denied",
+          request,
+        });
+        return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
+      }
       await audit(env, {
         action: "invite_accept_refused_concurrent_change",
         userId,
@@ -634,16 +655,35 @@ export async function handleInviteAcceptance(
     ).bind(userId, googleUser.sub, googleUser.email, googleUser.name, invite.role, invite.id).run();
   }
 
-  // Mark invitation as accepted
-  await env.DB.prepare("UPDATE invitations SET status = 'accepted', accepted_at = datetime('now') WHERE id = ?")
-    .bind(invite.id).run();
-
-  // Create org membership if invite has org context
+  // Create org membership if invite has org context. Runs BEFORE the invite
+  // is marked accepted so a refusal below leaves it pending.
   if (invite.org_id) {
-    await env.DB.prepare(`
+    // No tenant staff, enforced IN SQL: the staff guards above ran on an
+    // earlier read, and a concurrent admin role PATCH can make this user
+    // staff in between — then the INSERT selects no row. (INSERT OR IGNORE
+    // also yields 0 rows for an existing (org_id, user_id) row, so a 0 is
+    // attributed to the staff guard only if the user is staff now.)
+    const inserted = await env.DB.prepare(`
       INSERT OR IGNORE INTO org_members (org_id, user_id, role, status, invited_by, invited_at, accepted_at, provisioned_by)
-      VALUES (?, ?, ?, 'active', (SELECT invited_by FROM invitations WHERE id = ?), datetime('now'), datetime('now'), 'invite')
-    `).bind(invite.org_id, userId, invite.org_role || "viewer", invite.id).run();
+      SELECT ?, ?, ?, 'active', (SELECT invited_by FROM invitations WHERE id = ?), datetime('now'), datetime('now'), 'invite'
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = ? AND role IN (${STAFF_ROLE_LIST_SQL}))
+    `).bind(invite.org_id, userId, invite.org_role || "viewer", invite.id, userId).run();
+    if (!Number(inserted.meta?.changes ?? 0)) {
+      const now = await env.DB.prepare("SELECT role FROM users WHERE id = ?")
+        .bind(userId).first<{ role: string }>();
+      if (now && isPlatformStaff(now.role)) {
+        await audit(env, {
+          action: "invite_accept_refused_staff_account",
+          userId,
+          resourceType: "invitation",
+          resourceId: invite.id,
+          details: { email: googleUser.email, org_id: invite.org_id, existing_role: now.role, concurrent: true },
+          outcome: "denied",
+          request,
+        });
+        return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+      }
+    }
 
     // Lead conversion (leadConversion.ts) seats the converting super_admin as
     // a TEMPORARY 'owner' (provisioned_by='lead_conversion') so the org has an
@@ -671,6 +711,10 @@ export async function handleInviteAcceptance(
       }
     }
   }
+
+  // Mark invitation as accepted
+  await env.DB.prepare("UPDATE invitations SET status = 'accepted', accepted_at = datetime('now') WHERE id = ?")
+    .bind(invite.id).run();
 
   await audit(env, {
     action: "invite_accepted",

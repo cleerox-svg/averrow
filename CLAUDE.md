@@ -789,6 +789,12 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   session the acceptance issues survives). Role writes (admin PATCH, invite
   acceptance, org member PATCH/remove) are pinned to the role the handler
   read (`AND role = ?`); a concurrent change → 409 / refused, retry.
+  The no-tenant-staff rule is also enforced IN SQL on both sides of the
+  race: a staff-role write (admin PATCH non-staff → staff, staff-invite
+  acceptance) carries `AND NOT USER_HAS_CUSTOMER_MEMBERSHIP_SQL`
+  (`lib/lead-conversion-placeholder.ts`), and invite acceptance's
+  `org_members` insert is `INSERT … SELECT … WHERE NOT EXISTS (user is
+  staff)`; either matching 0 rows → refused + audited, invite left pending.
   Any actual role change
   via that PATCH sets `forced_logout:<user_id>` in KV, revoking live tokens;
   if that KV write fails the role change stands and the PATCH returns 200
@@ -808,6 +814,9 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   demotes the CALLER's own owner row (orgs can hold several owners); its
   promote/demote are state-guarded and chained in one batch, so a
   concurrently removed target → 409 with nothing changed.
+- `DELETE /api/admin/invites/:id` (and the `GET` list) cover STAFF invites
+  only (`org_id IS NULL`); an org invite is 404 there and is revoked via
+  the tenant route, which applies the owner-seat rule.
 - **The one allowed staff membership: the lead-conversion placeholder.**
   `handlers/leadConversion.ts` seats the converting `super_admin` as a
   TEMPORARY org `owner` (`org_members.provisioned_by='lead_conversion'`) so
@@ -821,7 +830,9 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   ownership is transferred, or a member PATCH grants `owner`, to a
   non-placeholder member (that org only, same batch); or its user's role is changed staff → `client` (all of that
   user's placeholders, same batch as the role write — otherwise the next
-  refresh would embed the org as `org_id`/`org_role=owner`).
+  refresh would embed the org as `org_id`/`org_role=owner`). The
+  placeholder is owner-or-gone: a member PATCH to any other role is 409 and
+  transfer-ownership TO it is 400.
 
 **`auditor` is minted-only.** It's a real `UserRole` with a read-only
 permission set + global org scope, but it is NOT assignable to a stored

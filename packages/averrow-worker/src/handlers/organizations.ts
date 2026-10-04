@@ -73,6 +73,7 @@ async function canManageOrgOwners(env: Env, orgId: string, ctx: AuthContext): Pr
 const OWNER_SEAT_FORBIDDEN = "Only an organization owner can invite, assign, change or remove an owner";
 const LAST_OWNER_CONFLICT = "Cannot remove or demote the organization's last active owner. Transfer ownership first.";
 const CONCURRENT_CHANGE_CONFLICT = "Membership was changed concurrently; reload and retry";
+const PLACEHOLDER_ROLE_CONFLICT = "This is the lead-conversion placeholder owner seat; it can only be replaced (invite or promote a customer owner, or transfer ownership) or removed, not given another role";
 
 /** Explain why a role-pinned org_members UPDATE matched 0 rows: the row is
  *  gone (404), its role changed since it was read (409, retry), or it is the
@@ -686,6 +687,13 @@ export async function handleUpdateOrgMember(
   if ((body.role === "owner" || target.role === "owner") && !(await canManageOrgOwners(env, orgId, ctx))) {
     return json({ success: false, error: OWNER_SEAT_FORBIDDEN }, 403, origin);
   }
+  // The lead-conversion placeholder is a temporary staff OWNER seat, never a
+  // working membership: demoting it would leave a staff account holding a
+  // customer admin/analyst/viewer role. It ends by being replaced (owner
+  // invite, PATCH a real member → owner, transfer) or removed.
+  if (target.provisioned_by === LEAD_CONVERSION_PROVISIONED_BY && body.role !== "owner") {
+    return json({ success: false, error: PLACEHOLDER_ROLE_CONFLICT }, 409, origin);
+  }
 
   // Demoting an owner must leave another active owner (atomic, as in remove).
   // `AND role = ?` pins the write to the role the owner-seat check was
@@ -707,10 +715,9 @@ export async function handleUpdateOrgMember(
     ? await env.DB.batch([updateRole, deactivateOrgPlaceholdersStmt(env.DB, orgId, userId)])
     : [await updateRole.run()];
 
-  if (!Number(results[0]?.meta?.changes ?? 0)) {
-    return memberWriteConflict(env, orgId, userId, target.role, "Member not found", origin);
-  }
-
+  // The placeholder statement re-checks its own precondition, so it can
+  // apply even when the role write matched 0 rows (the target was made owner
+  // concurrently) — audit whatever it actually changed, on either branch.
   const placeholdersRemoved = promotesRealOwner ? Number(results[1]?.meta?.changes ?? 0) : 0;
   if (placeholdersRemoved > 0) {
     await audit(env, {
@@ -721,6 +728,10 @@ export async function handleUpdateOrgMember(
       details: { reason: "member_promoted_to_owner", new_owner_user_id: userId, placeholders_removed: placeholdersRemoved },
       request,
     });
+  }
+
+  if (!Number(results[0]?.meta?.changes ?? 0)) {
+    return memberWriteConflict(env, orgId, userId, target.role, "Member not found", origin);
   }
 
   await audit(env, {
@@ -1101,6 +1112,12 @@ export async function handleTransferOwnership(
   if (!target) {
     return json({ success: false, error: "Target user is not an active member of this organization" }, 404, origin);
   }
+  // Never hand ownership TO the lead-conversion placeholder (a staff
+  // account's temporary seat): the transferring real owner would be demoted
+  // and the org left owned by staff only.
+  if (target.provisioned_by === LEAD_CONVERSION_PROVISIONED_BY) {
+    return json({ success: false, error: "Cannot transfer ownership to the lead-conversion placeholder; transfer to a customer member" }, 400, origin);
+  }
 
   // One D1 batch = one transaction, executed serially with no other writer
   // interleaving. Rows can still change between the reads above and the
@@ -1110,14 +1127,14 @@ export async function handleTransferOwnership(
   //      still an active owner;
   //   2. demote: transferring owner still an active owner AND the target is
   //      now an active owner (i.e. 1 applied);
-  //   3. placeholders (real new owner only): target is an active owner.
+  //   3. placeholders: target is an active owner (it is never itself a
+  //      placeholder — refused above).
   // A 0-row write isn't an error, so D1 won't roll back on it — the chaining
   // is what makes "1 matched 0 rows" imply "nothing changed". We detect that
   // from results[0].meta.changes and return 409; the org never loses its
   // last active owner.
   // (These UPDATEs used to also set `updated_at`, a column org_members has
   // never had — every transfer threw "no such column". Removed.)
-  const toRealMember = target.provisioned_by !== LEAD_CONVERSION_PROVISIONED_BY;
   const results = await env.DB.batch([
     env.DB.prepare(
       `UPDATE org_members SET role = 'owner'
@@ -1131,12 +1148,12 @@ export async function handleTransferOwnership(
          AND EXISTS (SELECT 1 FROM org_members nw
                      WHERE nw.org_id = ? AND nw.user_id = ? AND nw.role = 'owner' AND nw.status = 'active')`,
     ).bind(orgId, currentOwnerId, orgId, targetUserId),
-    ...(toRealMember ? [deactivateOrgPlaceholdersStmt(env.DB, orgId, targetUserId)] : []),
+    deactivateOrgPlaceholdersStmt(env.DB, orgId, targetUserId),
   ]);
-  if (!Number(results[0]?.meta?.changes ?? 0)) {
-    return json({ success: false, error: "Ownership changed concurrently (the target or the current owner is no longer active); reload and retry" }, 409, origin);
-  }
-  const placeholdersRemoved = toRealMember ? Number(results[2]?.meta?.changes ?? 0) : 0;
+  // Statement 3 re-checks its own precondition, so it can apply even when
+  // the promote matched 0 rows (target made owner concurrently) — audit what
+  // it actually changed before the 409 too.
+  const placeholdersRemoved = Number(results[2]?.meta?.changes ?? 0);
   if (placeholdersRemoved > 0) {
     await audit(env, {
       action: "lead_conversion_placeholder_removed",
@@ -1146,6 +1163,9 @@ export async function handleTransferOwnership(
       details: { reason: "ownership_transferred", new_owner_user_id: targetUserId, placeholders_removed: placeholdersRemoved },
       request,
     });
+  }
+  if (!Number(results[0]?.meta?.changes ?? 0)) {
+    return json({ success: false, error: "Ownership changed concurrently (the target or the current owner is no longer active); reload and retry" }, 409, origin);
   }
 
   await audit(env, {

@@ -16,6 +16,16 @@
 //      handler's read and its UPDATE → 409.
 //   6. Resending / revoking an OWNER invite needs the owner-seat rule.
 //
+// Appsec review of 7ce7e154 (follow-up):
+//   R1. A staff-role write and an org-membership insert could interleave so a
+//       staff account ends up with an active customer membership. Both sides
+//       now re-check the rule IN SQL (0 rows → refuse + audit).
+//   R2. DELETE /api/admin/invites/:id (manage_invites) could revoke any org's
+//       owner invite — now staff invites (org_id IS NULL) only.
+//   R3. The lead-conversion placeholder can't be PATCHed to a non-owner role
+//       or receive an ownership transfer.
+//   R4. Placeholder removal is audited on the PATCH / transfer 409 branches.
+//
 // Real handlers against migration-derived SQLite (test/sqlite-d1-harness.ts).
 // Imports nothing added by the fix, so it runs (and fails) on 910d6314.
 
@@ -27,6 +37,7 @@ import {
   handleRemoveOrgMember, handleResendOrgInvite, handleRevokeOrgInvite,
   handleTransferOwnership, handleUpdateOrgMember,
 } from "../src/handlers/organizations";
+import { handleListInvites, handleRevokeInvite } from "../src/handlers/invites";
 import { hashToken } from "../src/lib/hash";
 import type { AuthContext } from "../src/middleware/auth";
 import type { Env, UserRole } from "../src/types";
@@ -370,5 +381,145 @@ describe.skipIf(!hasSqlite())("resend / revoke an owner invite requires the owne
     expect((await handleResendOrgInvite(req("POST"), rig.env, "3", "own-inv", ctx("custOwn", "client", "3", "owner"))).status).toBe(200);
     expect((await handleRevokeOrgInvite(req("DELETE"), rig.env, "3", "own-inv", ctx("custOwn", "client", "3", "owner"))).status).toBe(200);
     expect(inviteStatus(rig.raw, "own-inv")).toBe("revoked");
+  });
+});
+
+// ─── R1. staff-role write vs org-membership insert race ─────────
+
+describe.skipIf(!hasSqlite())("R1: no tenant staff, enforced in SQL against interleaving writes", () => {
+  let rig: Rig;
+  beforeEach(() => { rig = makeRig(); });
+
+  it("org invite: user made staff after the guards ran → membership insert refused, invite pending, no session, audited", async () => {
+    const token = await seedInvite(rig.raw, "org-inv", "loner@example.com", "client", 3, "viewer");
+    rig.race({ onPrepare: /INSERT OR IGNORE INTO org_members/, sql: "UPDATE users SET role = 'analyst' WHERE id = 'loner'" });
+    const res = await accept(rig, token, "loner@example.com", "g-loner");
+    expect(location(res)).toContain("/auth/error");
+    expect(location(res)).not.toContain("#token=");
+    expect(member(rig.raw, 3, "loner")).toBeUndefined();
+    expect(roleOf(rig.raw, "loner")).toBe("analyst");
+    expect(inviteStatus(rig.raw, "org-inv")).toBe("pending");
+    expect(rig.audits).toContainEqual({ action: "invite_accept_refused_staff_account", outcome: "denied" });
+    expect(actions(rig)).not.toContain("invite_accepted");
+  });
+
+  it("org invite without a race still seats the client and accepts the invite", async () => {
+    const token = await seedInvite(rig.raw, "org-ok", "loner@example.com", "client", 3, "viewer");
+    const res = await accept(rig, token, "loner@example.com", "g-loner");
+    expect(location(res)).toContain("#token=");
+    expect(member(rig.raw, 3, "loner")).toEqual({ role: "viewer", status: "active" });
+    expect(inviteStatus(rig.raw, "org-ok")).toBe("accepted");
+  });
+
+  it("staff invite: membership added after the guards ran → staff role write refused, invite pending, audited", async () => {
+    const token = await seedInvite(rig.raw, "staff-inv", "loner@example.com", "analyst");
+    rig.race({
+      onPrepare: /^UPDATE users SET google_sub/,
+      sql: "INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (3, 'loner', 'viewer', 'active', 'invite')",
+    });
+    const res = await accept(rig, token, "loner@example.com", "g-loner");
+    expect(location(res)).toContain("/auth/error");
+    expect(roleOf(rig.raw, "loner")).toBe("client");
+    expect(inviteStatus(rig.raw, "staff-inv")).toBe("pending");
+    expect(rig.audits).toContainEqual({ action: "invite_accept_refused_org_member", outcome: "denied" });
+    expect(rig.kv.store.has("forced_logout:loner")).toBe(false);
+  });
+
+  it("admin PATCH client → staff: membership added after the check → 409, role unchanged, audited, no revocation stamp", async () => {
+    rig.race({
+      onPrepare: /^UPDATE users SET/,
+      sql: "INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (3, 'loner', 'viewer', 'active', 'invite')",
+    });
+    const res = await handleAdminUpdateUser(req("PATCH", { role: "analyst" }), rig.env, "loner", "admin1", "admin");
+    expect(res.status).toBe(409);
+    expect(roleOf(rig.raw, "loner")).toBe("client");
+    expect(rig.audits).toContainEqual({ action: "user_role_change_refused_org_member", outcome: "denied" });
+    expect(rig.kv.store.has("forced_logout:loner")).toBe(false);
+  });
+
+  it("admin PATCH client → staff without a race still works", async () => {
+    const res = await handleAdminUpdateUser(req("PATCH", { role: "analyst" }), rig.env, "loner", "admin1", "admin");
+    expect(res.status).toBe(200);
+    expect(roleOf(rig.raw, "loner")).toBe("analyst");
+  });
+});
+
+// ─── R2. admin invite DELETE is staff-invite only ───────────────
+
+describe.skipIf(!hasSqlite())("R2: DELETE /api/admin/invites/:id only revokes staff invites", () => {
+  let rig: Rig;
+  beforeEach(async () => {
+    rig = makeRig();
+    await seedInvite(rig.raw, "org-owner-inv", "next@initech.co", "client", 3, "owner");
+    await seedInvite(rig.raw, "staff-inv", "new@averrow.com", "analyst");
+  });
+
+  it("an org owner invite → 404, still pending", async () => {
+    const res = await handleRevokeInvite(req("DELETE"), rig.env, "org-owner-inv", "admin1");
+    expect(res.status).toBe(404);
+    expect(inviteStatus(rig.raw, "org-owner-inv")).toBe("pending");
+    expect(actions(rig)).not.toContain("invite_revoked");
+  });
+
+  it("a staff invite is still revoked", async () => {
+    const res = await handleRevokeInvite(req("DELETE"), rig.env, "staff-inv", "admin1");
+    expect(res.status).toBe(200);
+    expect(inviteStatus(rig.raw, "staff-inv")).toBe("revoked");
+  });
+
+  it("the admin invite list shows staff invites only", async () => {
+    const res = await handleListInvites(req("GET"), rig.env);
+    const body = await res.json<{ data: Array<{ id: string }> }>();
+    expect(body.data.map((r) => r.id)).toEqual(["staff-inv"]);
+  });
+});
+
+// ─── R3. placeholder can't be demoted or receive a transfer ─────
+
+describe.skipIf(!hasSqlite())("R3: the lead-conversion placeholder is owner-or-gone", () => {
+  let rig: Rig;
+  beforeEach(() => { rig = makeRig(); });
+
+  it("PATCH the placeholder to a non-owner role → 409, still an active owner", async () => {
+    // A real owner exists, so the last-owner guard would NOT refuse this.
+    rig.raw.exec(`INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (1, 'zed', 'owner', 'active', 'invite')`);
+    const res = await handleUpdateOrgMember(req("PATCH", { role: "admin" }), rig.env, "1", "root2", ctx("root", "super_admin"));
+    expect(res.status).toBe(409);
+    expect(member(rig.raw, 1, "root2")).toEqual({ role: "owner", status: "active" });
+  });
+
+  it("transfer ownership TO the placeholder → 400, the real owner keeps the seat", async () => {
+    rig.raw.exec(`INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (1, 'zed', 'owner', 'active', 'invite')`);
+    const res = await handleTransferOwnership(req("POST", { new_owner_user_id: "root2" }), rig.env, "1", ctx("zed", "client", "1", "owner"));
+    expect(res.status).toBe(400);
+    expect(member(rig.raw, 1, "zed")).toEqual({ role: "owner", status: "active" });
+  });
+});
+
+// ─── R4. placeholder removal audited on 409 branches ────────────
+
+describe.skipIf(!hasSqlite())("R4: placeholder removal is audited even when the handler returns 409", () => {
+  let rig: Rig;
+  beforeEach(() => { rig = makeRig(); });
+
+  it("PATCH → owner: target made owner concurrently → 409, placeholder removal audited", async () => {
+    rig.race({ onBatch: true, sql: "UPDATE org_members SET role = 'owner' WHERE org_id = 1 AND user_id = 'custView'" });
+    const res = await handleUpdateOrgMember(req("PATCH", { role: "owner" }), rig.env, "1", "custView", ctx("root", "super_admin"));
+    expect(res.status).toBe(409);
+    expect(member(rig.raw, 1, "root2")!.status).toBe("removed");
+    expect(actions(rig)).toContain("lead_conversion_placeholder_removed");
+  });
+
+  it("transfer: caller demoted + target made owner concurrently → 409, placeholder removal audited", async () => {
+    rig.raw.exec(`INSERT INTO org_members (org_id, user_id, role, status, provisioned_by) VALUES (1, 'zed', 'owner', 'active', 'invite')`);
+    rig.race({
+      onBatch: true,
+      sql: `UPDATE org_members SET role = 'admin' WHERE org_id = 1 AND user_id = 'zed';
+            UPDATE org_members SET role = 'owner' WHERE org_id = 1 AND user_id = 'custView';`,
+    });
+    const res = await handleTransferOwnership(req("POST", { new_owner_user_id: "custView" }), rig.env, "1", ctx("zed", "client", "1", "owner"));
+    expect(res.status).toBe(409);
+    expect(member(rig.raw, 1, "root2")!.status).toBe("removed");
+    expect(actions(rig)).toContain("lead_conversion_placeholder_removed");
   });
 });

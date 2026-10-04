@@ -14,8 +14,9 @@ import { PLATFORM_STAFF_ROLES } from "../middleware/auth";
 export const LEAD_CONVERSION_PROVISIONED_BY = "lead_conversion";
 
 // Compile-time role literals only (no request input), so the IN list is safe
-// to inline; it is derived from the same table as isPlatformStaff.
-const STAFF_ROLE_LIST_SQL = PLATFORM_STAFF_ROLES.map((r) => `'${r}'`).join(", ");
+// to inline; it is derived from the same table as isPlatformStaff. Use as
+// `role IN (${STAFF_ROLE_LIST_SQL})`.
+export const STAFF_ROLE_LIST_SQL = PLATFORM_STAFF_ROLES.map((r) => `'${r}'`).join(", ");
 
 /**
  * SQL boolean, for an `org_members` row aliased `om`: true when the row is a
@@ -26,6 +27,18 @@ const STAFF_ROLE_LIST_SQL = PLATFORM_STAFF_ROLES.map((r) => `'${r}'`).join(", ")
 export const PLACEHOLDER_EXEMPT_SQL =
   `om.provisioned_by IS '${LEAD_CONVERSION_PROVISIONED_BY}' AND EXISTS (` +
   `SELECT 1 FROM users pu WHERE pu.id = om.user_id AND pu.role IN (${STAFF_ROLE_LIST_SQL}))`;
+
+/**
+ * SQL boolean for the target row of an `UPDATE users … WHERE`: true when that
+ * user holds an ACTIVE customer org membership (placeholder rule as above,
+ * evaluated against the pre-write role). The in-SQL twin of the handlers'
+ * "no tenant staff" membership pre-check: a staff-role write carries
+ * `AND NOT ${USER_HAS_CUSTOMER_MEMBERSHIP_SQL}` so a membership landing
+ * between that check and the write still blocks it (0 rows → refuse).
+ */
+export const USER_HAS_CUSTOMER_MEMBERSHIP_SQL =
+  `EXISTS (SELECT 1 FROM org_members om WHERE om.user_id = users.id AND om.status = 'active' ` +
+  `AND NOT (${PLACEHOLDER_EXEMPT_SQL}))`;
 
 /** Deactivate every active placeholder row held by `userId` (all orgs). For
  *  the staff → client demotion batch in handleAdminUpdateUser. Guarded on the
