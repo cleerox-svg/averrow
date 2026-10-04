@@ -268,7 +268,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | GET | `/api/briefings/latest` | Staff | Most recent briefing |
 | GET | `/api/briefings/history` | Staff | Briefing history |
 | GET | `/api/briefings/:id` | Staff | Get briefing detail |
-| POST | `/api/briefings/generate` | Staff | Generate new briefing |
+| POST | `/api/briefings/generate` | Admin | Generate new briefing ("Run Briefing Now") and email it. `requireAdmin` (admin + super_admin); analyst/sales/support/billing/auditor get 403. Rate-limited 5/min per user. |
 
 ## Campaigns
 

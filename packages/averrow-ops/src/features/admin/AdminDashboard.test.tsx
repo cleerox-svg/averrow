@@ -128,6 +128,8 @@ vi.mock('@/hooks/useBudget', async () => {
 // that tab is actually mounted, instead of unconditionally at the
 // AdminDashboard top level.
 const mocks = vi.hoisted(() => ({ useAgents: vi.fn() }));
+// OpsBriefingBody gates Run Briefing Now on the viewer's role.
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: { id: 'u1', role: 'super_admin' } }) }));
 vi.mock('@/hooks/useAgents', async () => {
   const actual = await vi.importActual<typeof import('@/hooks/useAgents')>('@/hooks/useAgents');
   return { ...actual, useAgents: mocks.useAgents };

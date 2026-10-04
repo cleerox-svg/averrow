@@ -8,6 +8,7 @@
 
 import { useState, type CSSProperties } from 'react';
 import { Badge, Button, Card, Table, Th, Td } from '@/design-system/components';
+import { useAuth } from '@/lib/auth';
 import { BriefingShell } from './BriefingShell';
 import { useGenerateBriefing, useOpsBriefing } from './useOpsBriefing';
 import type { ComprehensiveBriefing, PlatformOverview } from './types';
@@ -661,6 +662,11 @@ export function OpsBriefingBody() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const { data, isLoading, isError, refetch } = useOpsBriefing();
   const generate = useGenerateBriefing();
+  // Generating is admin-only server-side (requireAdmin); other staff roles
+  // see the briefing read-only. Hook is still called unconditionally, but
+  // the mutation is only ever invoked from the admin-gated button.
+  const { user } = useAuth();
+  const canGenerate = user?.role === 'admin' || user?.role === 'super_admin';
 
   const handleGenerate = async () => {
     setToast(null);
@@ -696,13 +702,18 @@ export function OpsBriefingBody() {
       )}
       generatedAt={data?.row.generated_at}
       meta={data && <span>&middot; {triggerLabel(data.row.trigger)}</span>}
-      actions={status === 'ready' || status === 'empty' ? runButton : undefined}
+      actions={canGenerate && (status === 'ready' || status === 'empty') ? runButton : undefined}
       notice={toast && <GenerateToast toast={toast} />}
       status={status}
       onRetry={() => { void refetch(); }}
       errorTitle="Couldn't load the briefing"
       emptyTitle="No briefing generated yet."
-      emptyDescription="Run one to populate this widget."
+      // 13:13 UTC = the dedicated `13 13 * * *` daily_briefing cron
+      // (averrow-worker wrangler.toml, cron/orchestrator.ts). Update both
+      // if the schedule moves.
+      emptyDescription={canGenerate
+        ? 'Run one to populate this widget.'
+        : 'The daily briefing runs automatically at 13:13 UTC.'}
       loadingTitle="Loading briefing…"
     >
       {briefing && <OpsSections briefing={briefing} />}
