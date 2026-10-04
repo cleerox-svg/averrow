@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { canTriageFor, isStaffRole, alertAssigneeLabel } from './alerts';
+import {
+  canTriageFor, isStaffRole, alertAssigneeLabel,
+  chunkIds, runChunkedBulk, TENANT_BULK_MAX_ALERTS,
+} from './alerts';
 
 describe('canTriageFor', () => {
   it.each(['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing', 'auditor'])(
@@ -40,5 +43,57 @@ describe('alertAssigneeLabel', () => {
   });
   it('is null when truly unassigned', () => {
     expect(alertAssigneeLabel({ assigned_to_name: null })).toBeNull();
+  });
+});
+
+describe('chunkIds', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `a_${i}`);
+  it('splits 200 ids into 90/90/20', () => {
+    expect(chunkIds(ids(200)).map((c) => c.length)).toEqual([90, 90, 20]);
+    expect(TENANT_BULK_MAX_ALERTS).toBe(90);
+  });
+  it('keeps 90 ids in one chunk and returns [] for none', () => {
+    expect(chunkIds(ids(90))).toHaveLength(1);
+    expect(chunkIds([])).toEqual([]);
+  });
+  it('preserves order across chunks', () => {
+    expect(chunkIds(ids(200)).flat()).toEqual(ids(200));
+  });
+});
+
+describe('runChunkedBulk', () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `a_${i}`);
+
+  it('sends 200 selected ids as 3 requests of 90/90/20 and sums updated', async () => {
+    const sizes: number[] = [];
+    const res = await runChunkedBulk(ids(200), async (chunk) => {
+      sizes.push(chunk.length);
+      return { updated: chunk.length - 1 };
+    });
+    expect(sizes).toEqual([90, 90, 20]);
+    expect(res).toEqual({ updated: 197 });
+  });
+
+  it('sends a single request for <= 90 ids and dedupes', async () => {
+    const sizes: number[] = [];
+    await runChunkedBulk([...ids(90), 'a_0'], async (chunk) => {
+      sizes.push(chunk.length);
+      return { updated: chunk.length };
+    });
+    expect(sizes).toEqual([90]);
+  });
+
+  it('stops on a failing chunk and reports progress', async () => {
+    let calls = 0;
+    await expect(runChunkedBulk(ids(200), async (chunk) => {
+      calls++;
+      if (calls === 2) throw new Error('Too many alerts');
+      return { updated: chunk.length };
+    })).rejects.toThrow('Bulk action failed after 90 of 200 alerts: Too many alerts');
+    expect(calls).toBe(2);
+  });
+
+  it('passes a first-chunk error through unchanged', async () => {
+    await expect(runChunkedBulk(ids(5), async () => { throw new Error('nope'); })).rejects.toThrow(/^nope$/);
   });
 });
