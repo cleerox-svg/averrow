@@ -21,9 +21,15 @@ import {
   type BillingSummary,
   type BillingPlan,
 } from '@/lib/billing';
+import { useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 
 export function Billing() {
   const { data, isLoading, error } = useBillingSummary();
+  // Staff never start a checkout / open the portal as the customer: the
+  // worker 403s them (a staff email must never become the customer's Stripe
+  // customer_email), so the controls are hidden behind the read-only note.
+  const isStaff = useIsStaff();
   const [searchParams] = useSearchParams();
   const checkoutResult = searchParams.get('checkout'); // 'success' | 'cancelled' | null
 
@@ -72,7 +78,7 @@ export function Billing() {
           <StatusCard summary={data} />
           <PlanCard summary={data} />
           {data.per_module_subscriptions.length > 0 && <ModulesCard summary={data} />}
-          <ManageBillingCard summary={data} />
+          {isStaff ? <StaffTriageNote /> : <ManageBillingCard summary={data} />}
           {data.active_overrides.length > 0 && <AdjustmentsCard summary={data} />}
         </>
       )}

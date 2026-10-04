@@ -18,6 +18,8 @@ import {
   type MaliciousDomainRow,
 } from '@/lib/domainModule';
 import { THREAT_TYPE_LABELS } from '@/lib/threats';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { SortableTable, SEVERITY_RANK, Pill, type Column } from '@/components/SortableTable';
 import {
   PAGE_SIGNAL_WEIGHTS,
@@ -75,12 +77,16 @@ export function BrandDomainFindings() {
 // `lookalike_domains` working set rendered by LookalikesSection below.
 // The dedicated /tenant/threats page paginates the full volume.
 
-function MaliciousDomainsSection({
+export function MaliciousDomainsSection({
   rows,
   brandId,
   brandName,
 }: { rows: MaliciousDomainRow[]; brandId: string; brandName: string }) {
   const [confirmRow, setConfirmRow] = useState<MaliciousDomainRow | null>(null);
+  // Takedown creation is analyst+ on the worker and refused for Averrow
+  // staff (refuseStaffTenantWrite) — hide the CTA for both.
+  const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
 
   if (rows.length === 0) {
     return (
@@ -119,6 +125,8 @@ function MaliciousDomainsSection({
     { key: 'action', header: 'Action', align: 'right',
       render: (r) => r.takedown_status
         ? <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
+        : !canTriage
+          ? <span className="text-white/30 font-mono text-[11px]">—</span>
         : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
   ];
 
@@ -144,13 +152,14 @@ function MaliciousDomainsSection({
           </Link>
         </div>
       </div>
+      {isStaff && <StaffTriageNote className="mb-2" />}
       <SortableTable
         columns={columns}
         rows={rows}
         getRowKey={(r) => r.id}
         initialSort={{ key: 'severity', dir: 'desc' }}
       />
-      {confirmRow && (
+      {confirmRow && canTriage && (
         <RequestTakedownDialog
           row={confirmRow}
           brandId={brandId}
