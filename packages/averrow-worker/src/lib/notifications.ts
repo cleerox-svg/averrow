@@ -556,7 +556,16 @@ export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs |
       start: v1Start,
       end: v1End,
       tz: pref.quiet_hours_tz ?? null,
-      criticalBreakthrough: pref.critical_breakthrough === 1,
+      // Deliberately NOT part of the atomic set: the critical-breakthrough
+      // flag keeps its pre-existing v2-over-v1 precedence. The auto-seeded
+      // v2 row carries critical_bypasses_quiet=1 while the v1 column
+      // defaults to 0, so reading v1 alone would start holding critical
+      // alerts overnight for users who never touched the checkbox. The
+      // flag carries no timezone, so this can't reintroduce the UTC bug.
+      // Phase 3 consolidates prefs on v2 and removes this fallback.
+      criticalBreakthrough: pref.v2_critical_bypasses_quiet != null
+        ? pref.v2_critical_bypasses_quiet === 1
+        : pref.critical_breakthrough === 1,
     };
   }
   return null;

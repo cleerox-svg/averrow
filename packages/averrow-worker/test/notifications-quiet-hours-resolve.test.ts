@@ -28,11 +28,11 @@ const seededV2WithV1Window: QuietHoursPrefSource = {
   quiet_hours_start: "22:00",
   quiet_hours_end: "07:00",
   quiet_hours_tz: "America/Toronto",
-  critical_breakthrough: 1,
+  critical_breakthrough: 0,          // v1 column default (migration 0106)
   v2_quiet_hours_start: null,
   v2_quiet_hours_end: null,
   v2_quiet_hours_timezone: "UTC",
-  v2_critical_bypasses_quiet: 0,
+  v2_critical_bypasses_quiet: 1,     // auto-seed default (PREF_V2_DEFAULTS)
 };
 
 // 2026-10-05T09:00Z = 05:00 EDT — inside the Toronto window, outside 22–07 UTC.
@@ -91,6 +91,24 @@ describe("resolveQuietHours — never mixes v1 and v2 fields", () => {
       tz: "America/Toronto",
       criticalBreakthrough: true,
     });
+  });
+
+  it("keeps critical alerts breaking through for a v1 window + seeded v2 row (pre-existing behaviour)", () => {
+    // Regression guard: reading the v1 flag alone (default 0) would start
+    // holding critical alerts overnight for users who never touched it.
+    const quiet = resolveQuietHours(seededV2WithV1Window);
+    expect(quiet?.criticalBreakthrough).toBe(true);
+  });
+
+  it("an explicit v2 opt-out of critical breakthrough still wins with a v1 window", () => {
+    const quiet = resolveQuietHours({ ...seededV2WithV1Window, v2_critical_bypasses_quiet: 0 });
+    expect(quiet?.criticalBreakthrough).toBe(false);
+  });
+
+  it("uses the v1 flag when there is no v2 row at all", () => {
+    const noV2 = { ...seededV2WithV1Window, v2_quiet_hours_timezone: null, v2_critical_bypasses_quiet: null };
+    expect(resolveQuietHours({ ...noV2, critical_breakthrough: 1 })?.criticalBreakthrough).toBe(true);
+    expect(resolveQuietHours({ ...noV2, critical_breakthrough: 0 })?.criticalBreakthrough).toBe(false);
   });
 
   it("returns null when neither table has a complete window", () => {
