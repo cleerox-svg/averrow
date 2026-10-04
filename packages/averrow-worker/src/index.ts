@@ -473,6 +473,23 @@ export default {
         return Response.json({ success: true, data: result });
       }
 
+      // POST /api/internal/nrd-retention/run
+      // On-demand trigger for the nrd_domains retention purge (normally
+      // Navigator-dispatched daily at UTC hour 0). Deletes rows older than
+      // 90 days on created_at, never past the phantom matcher's nrd cursor
+      // (no cursor → purges nothing). Chunked + soft-capped; safe to call
+      // repeatedly while `more_remaining` is true. Never throws.
+      if (url.pathname === '/api/internal/nrd-retention/run' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { purgeNrdDomains } = await import('./lib/nrd-retention');
+        const result = await purgeNrdDomains(env);
+        return Response.json({ success: true, data: result });
+      }
+
       // GET /api/internal/taxii/discover?root_url=<url>&auth_type=<type>&api_key_env=<env_var>&username=<u>
       // Operator helper for adding new TAXII collections without
       // guessing collection IDs (which bit us on the OTX seed —

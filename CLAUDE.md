@@ -540,6 +540,9 @@ while every agent reported `success`. Rules that came out of it:
 navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 21 page-load requests)
                               (independent agent; FC monitors health but does not dispatch;
                                historical agent_runs rows use agent_id='fast_tick')
+                              (UTC hour 0, hour-only gate: dns-queue reaper + nrd_domains 90-day
+                               retention — lib/nrd-retention.ts, never past the phantom matcher's
+                               nrd cursor; once/day, continued on later hour-0 ticks if capped)
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
 enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't share CPU
                              with the orchestrator's analyst inline-await. Decoupled

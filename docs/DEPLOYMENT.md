@@ -143,6 +143,15 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - **One-time cost.** Building the index reads `threats` once (~1.25M rows) and writes one index entry per URL-bearing row. Storage estimate ≤ ~150 MB at the upper bound (see the migration header). After that, each threat INSERT with a non-NULL `malicious_url` writes one extra index row.
 - **Verify:** `SELECT sql FROM sqlite_master WHERE name = 'idx_threats_malicious_url'` returns the definition. `EXPLAIN QUERY PLAN SELECT id FROM threats WHERE malicious_url = 'x' LIMIT 1` should show `SEARCH threats USING INDEX idx_threats_malicious_url`. The same plan is pinned on the migration-derived schema by `test/threats-malicious-url-index.test.ts`.
 
+### Migration 0279 — `nrd_domains` definition + `idx_nrd_domains_created` (retention)
+
+- `0279_nrd_domains_retention_index.sql` runs `CREATE TABLE IF NOT EXISTS nrd_domains (...)` with the exact prod schema (a no-op on prod, where `feeds/nrd_hagezi.ts` created the table lazily — no worker migration defined it before) and `CREATE INDEX IF NOT EXISTS idx_nrd_domains_created ON nrd_domains(created_at)`. No column changes.
+- **Applied automatically before the Worker.** CI (`deploy-radar.yml`) runs `db:migrate:prod` before `pnpm run deploy`. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first. Without the index the new retention purge (`lib/nrd-retention.ts`, Navigator at UTC hour 0) is still correct, but each 5,000-row DELETE chunk full-scans `nrd_domains`.
+- **One-time cost.** Index build over ~80K rows (prod, 2026-10-04 — a partial day, nearly all inserted after the feed resumed in #1781).
+- **Steady-state write cost.** One extra index write per newly inserted NRD (~180K/day on a full feed day). Each purged row costs ~3 row-writes (the table row, its PK-autoindex entry and its `idx_nrd_domains_created` entry), so ~540K row-writes/day once the 90-day window fills at ~180K rows/day.
+- **First purge.** Nothing is deleted until the phantom matcher has RUN incrementally on the nrd source (that sets `phantom_matcher:nrd:cursor`; an untruncated run advances it to `MAX(created_at)` even with no matches) AND rows are older than 90 days. If the matcher is never run, nothing is ever purged. On 2026-10-04 nearly every row was created that day, so expect `deleted: 0` until early January 2027.
+- **Verify:** `SELECT sql FROM sqlite_master WHERE name = 'idx_nrd_domains_created'` returns the definition; `EXPLAIN QUERY PLAN SELECT rowid FROM nrd_domains WHERE created_at < '2026-07-01 00:00:00' ORDER BY created_at LIMIT 5000` shows `SEARCH nrd_domains USING INDEX idx_nrd_domains_created (created_at<?)`. Pinned on the migration-derived schema by `test/nrd-retention.test.ts`.
+
 ### `hosting_providers.is_bulletproof` — prod-only column now defined in 0078 (fresh-bootstrap fix)
 
 - `GET /api/providers/v2` (`handlers/providers.ts`) selects `hp.is_bulletproof`. Prod gained the column out of band (`INTEGER`, nullable, `DEFAULT 0`), and no migration defined it, so any DB built from `migrations/` (staging, dev, the derived-schema test harness) returned 500 on that route.

@@ -59,6 +59,25 @@ import { PHANTOM_MATCH_ALERT_SEVERITY } from "./lookalike-alert-policy";
 
 export type PhantomMatchSource = "nrd" | "ct" | "lookalike";
 
+/**
+ * KV key holding the nrd source's incremental cursor, stored verbatim as a
+ * `nrd_domains.created_at` value (SQLite `datetime('now')` format,
+ * `YYYY-MM-DD HH:MM:SS` UTC).
+ *
+ * Contract: every nrd_domains row with `created_at < cursor` has been
+ * scanned by an incremental run; rows at or after it have not necessarily
+ * been (the next run re-scans `>= cursor`). An untruncated incremental run
+ * advances it to `MAX(nrd_domains.created_at)` as read BEFORE its join, even
+ * when nothing matched (see `advanceToSourceMax`) — so it means "scanned up
+ * to", not "newest match seen". It only moves when the matcher RUNS
+ * incrementally (`full=1` never reads or advances it); it is never set if
+ * the matcher has never run.
+ *
+ * Exported so `lib/nrd-retention.ts` can gate its purge on it: rows at or
+ * after this value must never be deleted.
+ */
+export const PHANTOM_MATCHER_NRD_CURSOR_KEY = "phantom_matcher:nrd:cursor";
+
 export interface PhantomMatchOptions {
   /** Per-source cap on rows scanned in one run. Clamped 1..5000, default 500. */
   limit?: number;
@@ -103,6 +122,16 @@ interface SourceConfig {
   /** Reused alert type (spec §6.1) — no new type introduced. */
   alertType: AlertTypeKey;
   /**
+   * When true, an UNTRUNCATED incremental run advances the cursor to the
+   * source table's `MAX(created_at)` read before the join (not just to the
+   * newest MATCHED row), so the cursor means "scanned up to". Requires an
+   * index on `created_at` (the MAX is a seek). nrd only: nrd_domains has
+   * idx_nrd_domains_created (migration 0279) and its cursor gates
+   * lib/nrd-retention.ts. Not applied to lookalike, whose rows can become
+   * matchable later (registered 0 → 1) without created_at changing.
+   */
+  advanceToSourceMax: boolean;
+  /**
    * Extra per-source residual appended to the join's WHERE. Compile-time
    * literal, never interpolated input. Empty for genuine-observation sources
    * (nrd = a real NRD listing, ct = an issued cert); the lookalike source
@@ -119,7 +148,8 @@ const SOURCE_CONFIG: Record<PhantomMatchSource, SourceConfig> = {
     // stamp. registered_date is the domain's intrinsic registration date and
     // is non-monotonic on backfill, so it is NOT used as the cursor.
     cursorCol: "created_at",
-    kvKey: "phantom_matcher:nrd:cursor",
+    kvKey: PHANTOM_MATCHER_NRD_CURSOR_KEY,
+    advanceToSourceMax: true,
     alertType: "lookalike_domain_active",
     extraWhere: "",
   },
@@ -134,6 +164,7 @@ const SOURCE_CONFIG: Record<PhantomMatchSource, SourceConfig> = {
     // so a phantom that appears only as a SAN on a cert won't match here.
     cursorCol: "created_at",
     kvKey: "phantom_matcher:ct:cursor",
+    advanceToSourceMax: false,
     alertType: "ct_certificate_issued",
     extraWhere: "",
   },
@@ -141,6 +172,7 @@ const SOURCE_CONFIG: Record<PhantomMatchSource, SourceConfig> = {
     table: "lookalike_domains",
     cursorCol: "created_at",
     kvKey: "phantom_matcher:lookalike:cursor",
+    advanceToSourceMax: false,
     alertType: "lookalike_domain_active",
     // SHIP-BLOCKER GATE: lookalike_domains is the scanner's FULL permutation
     // CANDIDATE set — every generated permutation is inserted with
@@ -201,6 +233,20 @@ async function matchSource(
   // NULL, not true) — a row with no created_at simply isn't cursorable.
   const cursorBefore = full ? null : await env.CACHE.get(cfg.kvKey);
   const cursorFloor = cursorBefore ?? "";
+
+  // "Scanned up to" watermark (advanceToSourceMax sources only, incremental
+  // runs only). Read BEFORE the join on the same session, so every row the
+  // join can see with created_at < sourceMax was in its candidate set. A row
+  // inserted after this read gets created_at >= sourceMax (datetime('now')
+  // evaluated under D1's serialized writes), so the next run's `>= cursor`
+  // still re-scans it. Index seek via idx_nrd_domains_created.
+  let sourceMax: string | null = null;
+  if (!full && cfg.advanceToSourceMax) {
+    const m = await read
+      .prepare(`SELECT MAX(${cfg.cursorCol}) AS m FROM ${cfg.table}`)
+      .first<{ m: string | null }>();
+    sourceMax = m?.m ?? null;
+  }
 
   // Set-based join, driven from the small phantom_domains side. The CROSS
   // JOIN pins SQLite's join order so phantom_domains p is always the OUTER
@@ -329,10 +375,19 @@ async function matchSource(
     }
   }
 
-  // Advance the incremental cursor to the newest source row seen (spec §7).
-  // `full` sweeps never persist a cursor so a later incremental run is
-  // unaffected. `>=` re-includes the boundary row next run, which is
-  // harmless — the claim guard makes the re-scan a no-op.
+  // Advance the incremental cursor (spec §7). Default: the newest MATCHED
+  // source row seen. For advanceToSourceMax sources, an untruncated join
+  // (fewer rows than `limit`) has covered every row up to the pre-read
+  // sourceMax, so the cursor advances to max(sourceMax, newest match) even
+  // with zero matches. A truncated join keeps the matched-row rule (rows
+  // beyond the LIMIT are still unscanned). `full` sweeps never persist a
+  // cursor so a later incremental run is unaffected. `>=` re-includes the
+  // boundary row next run, which is harmless — the claim guard makes the
+  // re-scan a no-op.
+  const truncated = rows.results.length >= limit;
+  if (!full && !truncated && sourceMax && (maxCursor == null || sourceMax > maxCursor)) {
+    maxCursor = sourceMax;
+  }
   if (!full && maxCursor && maxCursor !== cursorBefore) {
     await env.CACHE.put(cfg.kvKey, maxCursor);
     result.cursor_after = maxCursor;
