@@ -21,6 +21,7 @@ import { json, corsHeaders } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
 
 // Asset management (upload/delete) requires an org analyst+ role. Kept as a
@@ -81,6 +82,9 @@ export async function handleUploadTrademarkAsset(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  // Staff never upload as the customer (created_by would be a staff id).
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   const orgIdNum = Number(orgId);
   if (!Number.isFinite(orgIdNum)) return json({ success: false, error: "Invalid organization id" }, 400, origin);
@@ -207,6 +211,8 @@ export async function handleDeleteTrademarkAsset(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
   if (!canManageAssets(ctx)) {
     return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
   }

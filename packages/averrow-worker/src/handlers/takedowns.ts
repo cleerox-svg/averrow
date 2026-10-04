@@ -14,6 +14,14 @@ import type { Env, CreateTakedownBody, UpdateTakedownBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import type { ModuleKey } from "../lib/entitlements";
 import type { ProviderRecord } from "../lib/takedown-submitters";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { AVERROW_SOC_LABEL } from "./tenantData";
+import { maskTenantUserRefsForRows } from "./tenantUserMasking";
+
+/** Actor fields for a customer webhook emitted by a STAFF action: never the
+ *  staff user id (owner decision 2026-10-04) — same null + `_name`
+ *  convention the tenant audit log uses (maskAuditDetails). */
+const STAFF_WEBHOOK_ACTOR = { updated_by: null, updated_by_name: AVERROW_SOC_LABEL } as const;
 
 // ─── Platform Abuse Contacts ─────────────────────────────────
 
@@ -46,6 +54,11 @@ const ADMIN_ALLOWED_TRANSITIONS: Record<string, string[]> = {
 // ─── POST /api/orgs/:orgId/takedowns ─────────────────────────
 
 export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) => {
+  // Staff create takedowns from the ops console (admin queue / bulk-takedown),
+  // never as the customer (requested_by + org audit row would name them).
+  const staffErr = refuseStaffTenantWrite(ctx, ctx.origin);
+  if (staffErr) return staffErr;
+
   const body = await parseBody<CreateTakedownBody>(request);
 
   const fieldErr = requireFields(
@@ -307,19 +320,25 @@ export async function handleUpdateTakedown(
   const origin = request.headers.get("Origin");
   const accessErr = checkOrgAccess(ctx, orgId, origin, { minRole: "analyst" });
   if (accessErr) return accessErr;
+  // Staff work takedowns from the ops console (PATCH /api/admin/takedowns/:id).
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   try {
     const body = await parseBody<UpdateTakedownBody>(request);
 
-    // Brand ownership alone isn't enough: a takedown stamped with ANOTHER
-    // org's org_id (an org-private alert's takedown on a co-monitored brand)
-    // belongs to that org and must not be modified from here.
+    // Only the org's OWN takedowns are editable here. Brand ownership alone
+    // isn't enough: a takedown stamped with ANOTHER org's org_id belongs to
+    // that org. Brand-wide rows (org_id NULL — Sparrow/SOC prospect drafts)
+    // are refused too (404, not claimed): the tenant list/detail reads only
+    // ever show org_id = this org, and claiming would silently move an
+    // ops prospect draft into this customer's queue.
     const takedown = await env.DB.prepare(`
       SELECT tr.id, tr.status
       FROM takedown_requests tr
       JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
       WHERE tr.id = ?
-        AND (tr.org_id IS NULL OR tr.org_id = ?)
+        AND tr.org_id = ?
     `).bind(orgId, takedownId, Number(orgId)).first<{ id: string; status: string }>();
 
     if (!takedown) return error("Takedown request not found", 404, origin);
@@ -375,11 +394,18 @@ export async function handleUpdateTakedown(
     });
 
     if (typeof body.status === "string" && body.status !== takedown.status) {
+      // Same { updated_by, updated_by_name } shape as the ops path
+      // (STAFF_WEBHOOK_ACTOR): the member's id + display name, or
+      // null + "Averrow SOC" should a staff id ever reach here.
+      const [actor] = await maskTenantUserRefsForRows(
+        env, [{ updated_by: ctx.userId }], { updated_by: "updated_by_name" },
+      );
       emitOrgEvent(env, Number(orgId), "takedown.status_changed", {
         takedown_id: takedownId,
         previous_status: takedown.status,
         new_status: body.status,
-        updated_by: ctx.userId,
+        updated_by: actor?.updated_by ?? null,
+        updated_by_name: actor?.updated_by_name ?? null,
       }).catch(() => {});
     }
 
@@ -680,7 +706,7 @@ export async function handleAdminUpdateTakedown(
           takedown_id: takedownId,
           previous_status: takedown.status,
           new_status: body.status,
-          updated_by: ctx.userId,
+          ...STAFF_WEBHOOK_ACTOR,
         }).catch(() => {});
       }
     }
@@ -1010,7 +1036,7 @@ export async function handleAdminSubmitTakedown(
       takedown_id: takedownId,
       previous_status: td.status,
       new_status: "submitted",
-      updated_by: ctx.userId,
+      ...STAFF_WEBHOOK_ACTOR,
     }).catch(() => {});
 
     return success(

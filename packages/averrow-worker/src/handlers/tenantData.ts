@@ -8,6 +8,7 @@ import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
 import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
@@ -689,7 +690,7 @@ export async function handleTenantThreatDetail(
  * the ops console's staff_assigned_to, never the customer's assigned_to.
  * Returns an error message, or null when the assignee is valid.
  */
-async function validateTenantAssignee(env: Env, orgId: string, userId: string): Promise<string | null> {
+export async function validateTenantAssignee(env: Env, orgId: string, userId: string): Promise<string | null> {
   const member = await env.DB.prepare(
     `SELECT u.role AS role
        FROM org_members om
@@ -1176,6 +1177,8 @@ export async function handleUpdateMonitoringConfig(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   if (!canPerformHITL(ctx)) {
     return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);

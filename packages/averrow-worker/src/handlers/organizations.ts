@@ -13,6 +13,8 @@ import { ORG_PUBLIC_SELECT_SQL, orgPublicSelectSql, toPublicOrg, redactWebhookUr
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import { LEAD_CONVERSION_PROVISIONED_BY, deactivateOrgPlaceholdersStmt } from "../lib/lead-conversion-placeholder";
+import { isPlatformStaff } from "../middleware/auth";
+import { AVERROW_SOC_LABEL, maskTenantUserRefsForRows } from "./tenantUserMasking";
 
 // ─── SHA-256 helper ─────────────────────────────────────────
 async function sha256(text: string): Promise<string> {
@@ -222,7 +224,9 @@ export async function handleCreateOrg(
         recipientEmail: body.admin_email.toLowerCase(),
         orgName: body.name,
         role: "admin",
-        invitedByName: body.admin_name ?? "Averrow Super Admin",
+        // The creator is always Averrow staff (never named to a customer —
+        // owner decision 2026-10-04); admin_name is the INVITEE's own name.
+        invitedByName: AVERROW_SOC_LABEL,
         acceptUrl: inviteUrl,
         expiresAt: new Date(Date.now() + INVITE_EXPIRY_HOURS * 60 * 60 * 1000).toISOString(),
       });
@@ -480,14 +484,24 @@ export async function handleListOrgMembers(
 
   const { results } = await env.DB.prepare(`
     SELECT om.id, om.user_id, om.role, om.status, om.invited_at, om.accepted_at, om.last_active_at,
-           u.email, u.name AS user_name
+           u.email, u.name AS user_name, u.role AS global_role
     FROM org_members om
     JOIN users u ON u.id = om.user_id
     WHERE om.org_id = ? AND om.status = 'active'
     ORDER BY om.created_at
-  `).bind(orgId).all();
+  `).bind(orgId).all<Record<string, unknown> & { global_role: string | null }>();
 
-  return json({ success: true, data: results }, 200, origin);
+  // Staff callers (ops org admin) see real ids. A CUSTOMER never sees a staff
+  // member (e.g. the lead-conversion placeholder super_admin owner) by id,
+  // name or email — the row is shown as "Averrow SOC" (owner decision
+  // 2026-10-04). The stored users.role is never returned.
+  const callerIsStaff = isPlatformStaff(ctx.role);
+  const data = (results ?? []).map(({ global_role, ...row }) => {
+    if (callerIsStaff || !isPlatformStaff(global_role)) return { ...row, is_averrow: false };
+    return { ...row, user_id: null, email: null, user_name: AVERROW_SOC_LABEL, is_averrow: true };
+  });
+
+  return json({ success: true, data }, 200, origin);
 }
 
 // ─── Org Admin: Invite User ──────────────────────────────────
@@ -571,7 +585,10 @@ export async function handleOrgInvite(
       recipientEmail: body.email.toLowerCase(),
       orgName: orgRow?.name ?? "your organization",
       role: orgRole,
-      invitedByName: inviterRow?.name ?? inviterRow?.email ?? "A team member",
+      // Staff are never named to a customer (owner decision 2026-10-04).
+      invitedByName: isPlatformStaff(ctx.role)
+        ? AVERROW_SOC_LABEL
+        : (inviterRow?.name ?? inviterRow?.email ?? "A team member"),
       acceptUrl: inviteUrl,
       expiresAt,
     });
@@ -1027,7 +1044,10 @@ export async function handleResendOrgInvite(
       recipientEmail: invite.email,
       orgName: orgRow?.name ?? "your organization",
       role: invite.org_role,
-      invitedByName: inviterRow?.name ?? inviterRow?.email ?? "A team member",
+      // Staff are never named to a customer (owner decision 2026-10-04).
+      invitedByName: isPlatformStaff(ctx.role)
+        ? AVERROW_SOC_LABEL
+        : (inviterRow?.name ?? inviterRow?.email ?? "A team member"),
       acceptUrl: inviteUrl,
       expiresAt,
     });
@@ -1419,9 +1439,14 @@ export async function handleListApiKeys(
     FROM org_api_keys
     WHERE org_id = ? AND revoked_at IS NULL
     ORDER BY created_at DESC
-  `).bind(orgId).all();
+  `).bind(orgId).all<Record<string, unknown>>();
 
-  return json({ success: true, data: results }, 200, origin);
+  // A customer never sees a staff creator's id ("Averrow SOC" instead).
+  const data = isPlatformStaff(ctx.role)
+    ? (results ?? [])
+    : await maskTenantUserRefsForRows(env, results ?? [], { created_by: "created_by_name" });
+
+  return json({ success: true, data }, 200, origin);
 }
 
 // ─── Create API Key ─────────────────────────────────────────

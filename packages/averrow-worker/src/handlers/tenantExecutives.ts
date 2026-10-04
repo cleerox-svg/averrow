@@ -10,6 +10,8 @@
 //   • inner net — every handler ALSO runs verifyOrgAccess / requireOrgAdmin
 //     (ctx.orgId !== orgId), so a route that forgot its guard can't leak.
 // Reads are member-visible; every mutation is org-admin+ and audited.
+// Platform staff are refused on every mutation (refuseStaffTenantWrite —
+// super_admin otherwise passes requireOrgAdmin); owner decision 2026-10-04.
 // An exec can only be attached to a brand the org actually owns.
 
 import { json } from "../lib/cors";
@@ -22,6 +24,7 @@ import {
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
+import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 
 // ─── Inner-net read gate (mirrors tenantInvestigations) ──────
 // Only super_admin bypasses; auditor is deliberately NOT exempt here —
@@ -123,6 +126,8 @@ export async function handleCreateExecutive(
   const origin = request.headers.get("Origin");
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   try {
     const body = await request.json() as UpdateExecutiveBody;
@@ -196,6 +201,8 @@ export async function handleUpdateExecutive(
   const origin = request.headers.get("Origin");
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   try {
     const existing = await loadOwnedExecutive(env, orgId, execId);
@@ -251,6 +258,8 @@ export async function handleDeleteExecutive(
   const origin = request.headers.get("Origin");
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
+  const staffErr = refuseStaffTenantWrite(ctx, origin);
+  if (staffErr) return staffErr;
 
   try {
     const existing = await loadOwnedExecutive(env, orgId, execId);
