@@ -33,8 +33,8 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
   const menuItems: MenuItem[] = [
     { label: 'Profile & Settings', icon: User, path: '/profile' },
     { label: 'Notification Preferences', icon: Bell, path: '/notifications/preferences' },
-    { label: 'Organization', icon: Building2, path: '/admin' },
-    { label: 'API Keys', icon: Key, path: '/admin' },
+    { label: 'Organization', icon: Building2, path: '/admin/users' },
+    { label: 'API Keys', icon: Key, path: '/admin/users?tab=api-keys' },
   ];
 
   const handleNav = (path: string) => {

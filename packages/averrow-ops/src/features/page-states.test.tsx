@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, Link } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -407,6 +407,21 @@ describe('Organization tabs', () => {
     await userEvent.setup().click(await screen.findByRole('tab', { name: /members/i }));
     await waitFor(() => expect(errorAlert(/couldn't load members/i)).toBeTruthy());
     expect(screen.queryByText('No members yet')).not.toBeInTheDocument();
+  });
+
+  it('follows a ?tab= change while already mounted (profile menu → API Keys)', async () => {
+    routeApi([{ match: '/api/orgs/org1/members', result: { success: true, data: [] } }, ...base, { match: '/api/orgs/org1', result: org }]);
+    window.history.replaceState(null, '', '/admin/users?tab=members');
+    renderWithProviders(
+      <>
+        <Organization />
+        <Link to="/admin/users?tab=api-keys">menu: api keys</Link>
+      </>,
+    );
+    expect(await screen.findByRole('tab', { name: /members/i })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.setup().click(screen.getByRole('link', { name: 'menu: api keys' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /api keys/i })).toHaveAttribute('aria-selected', 'true'));
+    window.history.replaceState(null, '', '/');
   });
 });
 

@@ -70,12 +70,12 @@ const TABS = [
 export function Organization() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
-  const initialTab = TABS.some(t => t.id === tabFromUrl) ? tabFromUrl! : 'overview';
-  const [activeTab, setActiveTabState] = useState(initialTab);
+  // The URL is the source of truth for the active tab, so back/forward,
+  // bookmarks and deep links (Sidebar `?tab=members`, profile menu
+  // `?tab=api-keys`) switch tabs even when this page is already mounted.
+  // Audit H9.
+  const activeTab = TABS.some(t => t.id === tabFromUrl) ? tabFromUrl! : 'overview';
   const setActiveTab = (id: string) => {
-    setActiveTabState(id);
-    // Keep URL in sync so back/forward + bookmarks land on the same
-    // tab and the Sidebar can deep-link via `?tab=members`. Audit H9.
     const next = new URLSearchParams(searchParams);
     if (id === 'overview') next.delete('tab'); else next.set('tab', id);
     setSearchParams(next, { replace: true });
