@@ -347,7 +347,7 @@ export async function handleBackfillDomainGeo(
 // POST /api/admin/backfill-brand-enrichment
 // Populates logo_url, website_url, hq_lat, hq_lng, hq_country
 // for brands that haven't been enriched yet.
-// Processes 50 brands per call (logo HEAD + DNS + ipapi = 3 subrequests each max).
+// Processes 50 brands per call (logo HEAD + DNS + ipinfo = 3 subrequests each max).
 export async function handleBackfillBrandEnrichment(
   request: Request,
   env: Env,

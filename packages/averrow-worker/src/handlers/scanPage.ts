@@ -14,12 +14,11 @@ export async function handleScanPage(
   try {
     const row = await env.DB.prepare(
       `SELECT id, url, domain, trust_score, risk_level, flags, metadata,
-              geo_city, geo_country, cached, created_at
+              cached, created_at
        FROM scans WHERE id = ? LIMIT 1`
     ).bind(scanId).first<{
       id: string; url: string; domain: string; trust_score: number;
       risk_level: string; flags: string; metadata: string;
-      geo_city: string | null; geo_country: string | null;
       cached: number; created_at: string;
     }>();
 

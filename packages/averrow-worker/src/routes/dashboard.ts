@@ -5,7 +5,6 @@ import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgS
 import { roleHasPermission } from "../lib/role-permissions";
 import { json } from "../lib/cors";
 import { handleStats, handleSourceMix, handleQualityTrend } from "../handlers/stats";
-import { handleHeatmap } from "../handlers/heatmap";
 import {
   handleObservatoryNodes, handleObservatoryArcs, handleObservatoryLive,
   handleObservatoryBrandArcs, handleObservatoryStats, handleObservatoryOperations,
@@ -89,19 +88,10 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     return handleBrandAdminDashboard(request, env, scope);
   });
 
-  // ─── Scan Heatmap (staff-only) ────────────────────────────────────
-  // Was public. The points are where the people running scans are, not
-  // where the threats are: handleScan geolocates the requester's
-  // CF-Connecting-IP, including signed-in users. Each point is a 0.1° cell
-  // (about 11 km) with a city name and the trust score of what was
-  // scanned. Nothing calls this route: the only reference is
-  // templates/heatmap-component.ts, and none of its exports are imported.
-  // The public threat map is /api/observatory/heatmap.
-  router.get("/api/heatmap", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleHeatmap(request, env);
-  });
+  // /api/heatmap (the scan-submitter heatmap) was removed in PR-E: scans no
+  // longer store requester IP or coordinates, and nothing called it. The
+  // path now falls through to the /api/* 404 catch-all. The public threat
+  // map is /api/observatory/heatmap.
 
   // ─── Observatory (staff-only) ──────────────────────────────────────
   // Formerly unauthenticated. `/live` returns recent malicious

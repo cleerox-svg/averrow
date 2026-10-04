@@ -1,14 +1,15 @@
 // Router-level check: the legacy v1 dashboard aggregates
-// (/api/dashboard/stats|sources|trend) and the scan heatmap
-// (/api/heatmap) are staff-only.
+// (/api/dashboard/stats|sources|trend) are staff-only.
 //
-// All four were registered with no auth check. Nothing calls them: ops,
+// All three were registered with no auth check. Nothing calls them: ops,
 // tenant, marketing, shared, mcp, the worker templates, Navigator and the
-// legacy public/app.js were all checked. /api/heatmap also exposes the
-// requester-IP geolocation of scan submitters (handlers/scan.ts
-// resolveGeo(CF-Connecting-IP)), so these routes are gated rather than
-// left public. Public aggregates live at /api/stats/public and
+// legacy public/app.js were all checked, so these routes are gated rather
+// than left public. Public aggregates live at /api/stats/public and
 // /api/v1/public/stats.
+//
+// The scan heatmap (/api/heatmap) was gated here too until PR-E removed
+// it outright (scans no longer store requester IP / coordinates). Its
+// 404 is pinned in test/scan-geo-country-only.test.ts.
 //
 // The harness matches test/staff-only-routes-gate.test.ts. The handlers
 // are stubbed so a request that gets past the guard returns a sentinel
@@ -35,13 +36,6 @@ vi.mock("../src/handlers/stats", () => {
     handlePublicStats: ok,
   };
 });
-
-vi.mock("../src/handlers/heatmap", () => ({
-  handleHeatmap: async (): Promise<Response> => {
-    handlerCalls.count++;
-    return new Response(JSON.stringify({ success: true, data: "handler-reached" }), { status: 200 });
-  },
-}));
 
 const SECRET = "test-secret-dashboard-v1-routes-gate";
 
@@ -96,11 +90,9 @@ const GATED_PATHS = [
   "/api/dashboard/stats",
   "/api/dashboard/sources",
   "/api/dashboard/trend",
-  "/api/heatmap",
-  "/api/heatmap?hours=24&filter=phishing",
 ];
 
-describe("v1 dashboard + scan heatmap routes — staff-only at the router", () => {
+describe("v1 dashboard routes — staff-only at the router", () => {
   for (const path of GATED_PATHS) {
     it(`GET ${path}: no token gets 401 and the handler never runs`, async () => {
       handlerCalls.count = 0;

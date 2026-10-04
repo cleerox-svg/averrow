@@ -10,8 +10,6 @@ export interface ScanRecord {
     virustotal?: { malicious: number; suspicious: number; harmless: number; undetected: number };
     ai_insight?: { summary?: string; explanation?: string; recommendations?: string[] };
   };
-  geo_city?: string | null;
-  geo_country?: string | null;
   cached: number | boolean;
   created_at: string;
 }
@@ -90,12 +88,6 @@ export function renderScanResult(scan: ScanRecord): string {
              hasFlag(scan.flags, "suspicious_url") ? "Flagged suspicious" : "No matches",
       status: hasFlag(scan.flags, "malicious_url") ? "fail" : hasFlag(scan.flags, "suspicious_url") ? "warn" : "pass",
       detail: getFlag(scan.flags, "malicious_url")?.detail ?? getFlag(scan.flags, "suspicious_url")?.detail ?? "",
-    },
-    {
-      label: "Scan Origin",
-      value: scan.geo_city && scan.geo_country ? `${scan.geo_city}, ${scan.geo_country}` : "Unknown",
-      status: "info",
-      detail: "",
     },
     {
       label: "Cached Result",
