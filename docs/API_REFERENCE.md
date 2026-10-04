@@ -2,7 +2,7 @@
 
 Complete reference for the Averrow API. All authenticated endpoints require a `Bearer` token in the `Authorization` header. Base URL: `https://acerrow.com`
 
-> **URL-scan feature retired (2026-10-04).** `POST /api/scan`, `POST /api/scan/public`, `GET /api/scan/history`, the `/scan/:id` share page, `GET /api/signals`, `/api/dashboard/stats`, `/api/dashboard/sources`, `/api/dashboard/trend`, `/api/export/scans` and `/api/export/signals` were removed, along with the `url_scan` sync agent. They read or wrote the `scans` / `domain_cache` tables, which never existed in prod D1, so every call failed; the only client was the frozen legacy SPA. The API paths now 404 via the `/api/*` catch-all; `/scan/:id` falls through to the branded 404 page. `/api/heatmap` was removed earlier (PR-E). Pinned by `test/url-scan-retired.test.ts`.
+> **URL-scan feature retired (2026-10-04).** `POST /api/scan`, `POST /api/scan/public`, `GET /api/scan/history`, the `/scan/:id` share page, `GET /api/signals`, `/api/dashboard/stats`, `/api/dashboard/sources`, `/api/dashboard/trend`, `/api/export/scans` and `/api/export/signals` were removed, along with the `url_scan` sync agent. They read or wrote the `scans` / `domain_cache` tables, which never existed in prod D1, so every call failed; no client called them. The API paths now 404 via the `/api/*` catch-all; `/scan/:id` falls through to the branded 404 page. `/api/heatmap` was removed earlier (PR-E). Pinned by `test/url-scan-retired.test.ts`.
 
 ## Authentication
 

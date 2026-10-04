@@ -24,8 +24,7 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
   // ─── URL scan — retired (2026-10-04) ──────────────────────────────
   // POST /api/scan, POST /api/scan/public and GET /api/scan/history wrote
   // and read the `scans` / `domain_cache` tables, which never existed in
-  // prod, so every call failed. The only client was the frozen legacy
-  // SPA. The paths now 404 via the /api/* catch-all in routes/public.ts.
+  // prod, so every call failed; no client called them. The paths now 404 via the /api/* catch-all in routes/public.ts.
   // Pinned by test/url-scan-retired.test.ts.
 
   // ─── Brand Exposure Engine ────────────────────────────────────────

@@ -1,8 +1,8 @@
 // URL-scan feature retired (owner decision 2026-10-04).
 //
 // Prod D1 never had a `scans` or `domain_cache` table (no migration ever
-// created them), so every URL-scan write and read failed in prod. The only
-// client was the frozen legacy SPA. Removed:
+// created them), so every URL-scan write and read failed in prod, and no
+// client (not even the frozen legacy SPA) called these routes. Removed:
 //   - POST /api/scan, POST /api/scan/public, GET /api/scan/history
 //   - the /scan/:id share page
 //   - GET /api/signals (a list of `scans` rows; POST /api/signals stays)
@@ -201,6 +201,11 @@ describe("kept routes still respond", () => {
   it("POST /api/signals (manual ingestion) is still routed and staff-gated", async () => {
     const res = await call("POST", "/api/signals", null, makeEnv(), { domain: "x.com" });
     expect(res.status).toBe(401);
+  });
+
+  it("POST /api/signals refuses a tenant client (403)", async () => {
+    const res = await call("POST", "/api/signals", "client", makeEnv(), { domain: "x.com" });
+    expect(res.status).toBe(403);
   });
 });
 
