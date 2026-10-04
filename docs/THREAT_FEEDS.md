@@ -78,7 +78,11 @@ and there is no cold-cache cliff (the DB always knows what exists).
 one internal statement builder, so the single-row and bulk paths can't
 diverge. **Routing through the shared `bulkInsertThreats` helper:**
 `scam_blocklist`, `phishing_database`, `openphish`, `ipsum`, `urlhaus`,
-`threatfox`, `feodo`, `tweetfeed`. **Already on a chunked `db.batch`
+`threatfox`, `feodo`, `tweetfeed`, `nrd_hagezi` (its brand-matched
+typosquat rows: the domain × brand match runs in memory, one row per
+distinct domain, first brand wins — then one bulk flush; a busy NRD day
+with thousands of matches was thousands of serial KV+D1 round-trips).
+**Already on a chunked `db.batch`
 pattern via their own inline builders** (candidates to consolidate onto the
 shared helper): `phishdestroy.ts`, `spamhausDrop.ts`, `blocklistde.ts`,
 `cins_army.ts`, `dataplane.ts`, `emergingThreats.ts`, `torExitNodes.ts`,
@@ -88,9 +92,7 @@ shared helper): `phishdestroy.ts`, `spamhausDrop.ts`, `blocklistde.ts`,
 reason): `dshield` / `sslbl` do a per-row `SELECT` + conditional `UPDATE`
 to *enrich* existing threats (bulk insert would lose that, and both pull
 ≤100 rows so there's no reap risk); `otx_alienvault` also writes
-`threat_actors` / `threat_attributions`; `nrd_hagezi` only inserts the
-small brand-matched subset (its bulk work is the `nrd_domains` reference
-table, already chunked); `typosquat_scanner` is an internal generator, not
+`threat_actors` / `threat_attributions`; `typosquat_scanner` is an internal generator, not
 a list fetch; `certstream` carries CT cert columns + a paired Durable
 Object. Disabled/dead feeds (`phishtank`, `phishstats`, `cryptoscamdb`,
 `talos_ips`, `urlscanio`, `digitalside_osint`) are skipped.
@@ -101,7 +103,12 @@ Object. Disabled/dead feeds (`phishtank`, `phishstats`, `cryptoscamdb`,
 > domain. Dropping the KV pre-check restores per-source corroboration —
 > a domain on two feeds now records one row per feed. Expect a one-time
 > step-up in threats-per-domain counts for overlapping IOCs after a feed
-> migrates.
+> migrates. The outbound direction changes too: a migrated feed no longer
+> *writes* `dedup:*` keys either, so e.g. `nrd_hagezi` no longer sets
+> `dedup:domain:*` and `ct_logs` (`feeds/certstream.ts`, which still checks
+> those keys) will now add its own `ct_logs` row (with cert columns) for a
+> domain `nrd_hagezi` already inserted the same day, bumping
+> `brands.threat_count` once per source — consistent with one row per source.
 
 ### Threat Classification
 
