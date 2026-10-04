@@ -37,6 +37,8 @@ function makeEnv(): Env {
           async all() { return { results: [] }; },
         };
       },
+      // storeNrdReference writes via db.batch (D1 100-bind fix).
+      async batch(stmts: unknown[]) { return stmts.map(() => ({ meta: { changes: 0 } })); },
     },
   } as unknown as Env;
 }
