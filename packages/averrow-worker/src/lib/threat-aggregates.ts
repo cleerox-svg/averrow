@@ -139,10 +139,19 @@ export async function threatAggregate(
   const { where, params, empty } = buildWhere(filters, scope);
   if (empty) return emptyAgg();
 
-  const actorJoin = filters.actor_id
-    ? `JOIN threat_actor_infrastructure tai ON tai.asn = t.asn AND tai.threat_actor_id = ?`
-    : '';
-  const fromClause = `FROM threats t ${actorJoin} ${where}`;
+  // Actor filter as a semi-join, not a JOIN: threat_actor_infrastructure has
+  // no unique (threat_actor_id, asn), so a JOIN repeated each threat once per
+  // matching infrastructure row and inflated every count in the slice. Its
+  // bind leads, so `queryParams` = [actor_id, ...params].
+  const actorCond = 't.asn IN (SELECT asn FROM threat_actor_infrastructure WHERE threat_actor_id = ?)';
+  const sliceWhere = filters.actor_id
+    ? `WHERE ${[actorCond, where.replace(/^WHERE /, '')].filter(Boolean).join(' AND ')}`
+    : where;
+  // Extra JOINs must sit before WHERE: `${fromClause} JOIN ...` produced
+  // `... WHERE ... JOIN ...` (syntax error) whenever a filter or scope set
+  // `where`. Extra joins carry no binds, so `queryParams` order holds.
+  const fromWith = (extraJoin = '') => `FROM threats t ${extraJoin} ${sliceWhere}`;
+  const fromClause = fromWith();
   const queryParams = filters.actor_id
     ? [filters.actor_id, ...params]
     : params;
@@ -212,13 +221,12 @@ export async function threatAggregate(
                       GROUP BY t.status ORDER BY count DESC`)
         .bind(...queryParams).all<{ status: string; count: number }>(),
       env.DB.prepare(`SELECT t.country_code AS country, COUNT(*) AS count
-                      ${fromClause} ${where ? 'AND' : 'WHERE'} t.country_code IS NOT NULL AND t.country_code != 'XX'
+                      ${fromClause} ${sliceWhere ? 'AND' : 'WHERE'} t.country_code IS NOT NULL AND t.country_code != 'XX'
                       GROUP BY t.country_code ORDER BY count DESC LIMIT 10`)
         .bind(...queryParams).all<{ country: string; count: number }>(),
       env.DB.prepare(`SELECT t.target_brand_id AS brand_id, b.name AS brand_name,
                              b.canonical_domain, b.logo_url, COUNT(*) AS count
-                      ${fromClause}
-                      JOIN brands b ON b.id = t.target_brand_id
+                      ${fromWith('JOIN brands b ON b.id = t.target_brand_id')}
                       GROUP BY t.target_brand_id, b.name, b.canonical_domain, b.logo_url
                       ORDER BY count DESC LIMIT 8`)
         .bind(...queryParams).all<{
@@ -227,8 +235,7 @@ export async function threatAggregate(
         }>(),
       env.DB.prepare(`SELECT t.hosting_provider_id AS provider_id, hp.name AS name, hp.asn AS asn,
                              COUNT(*) AS count
-                      ${fromClause}
-                      JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+                      ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
                       GROUP BY t.hosting_provider_id, hp.name, hp.asn
                       ORDER BY count DESC LIMIT 8`)
         .bind(...queryParams).all<{
@@ -247,8 +254,7 @@ export async function threatAggregate(
         }>().catch(() => ({ results: [] as Array<{ actor_id: string; actor_name: string; count: number }> })),
       env.DB.prepare(`SELECT t.campaign_id AS campaign_id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
-                      ${fromClause}
-                      JOIN campaigns c ON c.id = t.campaign_id
+                      ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
                       ORDER BY threat_count DESC LIMIT 6`)
         .bind(...queryParams).all<{
@@ -262,8 +268,7 @@ export async function threatAggregate(
       // ── Multi-brand patterns (brand_count >= 2 in the slice) ──
       env.DB.prepare(`SELECT t.campaign_id AS id, c.name AS name, c.status AS status,
                              COUNT(*) AS threat_count, COUNT(DISTINCT t.target_brand_id) AS brand_count
-                      ${fromClause}
-                      JOIN campaigns c ON c.id = t.campaign_id
+                      ${fromWith('JOIN campaigns c ON c.id = t.campaign_id')}
                       GROUP BY t.campaign_id, c.name, c.status
                       HAVING COUNT(DISTINCT t.target_brand_id) >= 2
                       ORDER BY brand_count DESC, threat_count DESC LIMIT 5`)
@@ -292,8 +297,7 @@ export async function threatAggregate(
       env.DB.prepare(`SELECT t.hosting_provider_id AS id, hp.name AS name, hp.asn AS asn,
                              COUNT(*) AS threat_count,
                              COUNT(DISTINCT t.target_brand_id) AS brand_count
-                      ${fromClause}
-                      JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
+                      ${fromWith('JOIN hosting_providers hp ON hp.id = t.hosting_provider_id')}
                       GROUP BY t.hosting_provider_id, hp.name, hp.asn
                       HAVING COUNT(DISTINCT t.target_brand_id) >= 2
                       ORDER BY brand_count DESC, threat_count DESC LIMIT 5`)

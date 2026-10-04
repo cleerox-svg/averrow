@@ -158,7 +158,7 @@ export async function handleListThreats(request: Request, env: Env, scope?: OrgS
 // ─── Threats catalog aggregate ───────────────────────────────────
 // Slice-aware narrative numbers powering /threats Intel surface.
 // Honors the same filters as handleListThreats so aggregates match
-// what the operator sees in the list. Cached 5min via cachedValue.
+// what the operator sees in the list. Cached 30min via cachedValue (THREAT_AGGREGATE_TTL_S).
 export async function handleThreatsAggregate(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
