@@ -192,8 +192,9 @@ The Analyst processes threats that have no `target_brand_id` assigned. It uses C
 **Outputs** (`agent_outputs`): writes `type='insight'` rows for actionable narratives —
 "Active Phishing + No DMARC", "AI-Generated Threat Detected", "Risk Score Spike",
 "External Validation" — and one `type='diagnostic'` per-run summary. Insight rows
-surface via `/api/insights/latest` → Home "Latest Intel" section. (Pre-2026-05-16
-audit, insights were `type='classification'` and never reached any consumer.)
+surfaced via `/api/insights/latest` → Home "Latest Intel" until both were retired
+(#1756 / PR-D, 2026-10); no API reads them now. (Pre-2026-05-16 audit, insights were
+`type='classification'` and never reached any consumer.)
 
 **Inputs:** Threats with `target_brand_id IS NULL` and a non-null `malicious_domain`
 **Outputs:** Updated `target_brand_id` on threat records; `agent_outputs` entries
@@ -265,7 +266,7 @@ Cartographer no longer emits the `aiCalls*` counters and cannot finish `degraded
 **Inputs:** Threats missing `country_code`; hosting providers with `total_threat_count > 0`
 **Outputs:** Enriched threat records (`threats.registrar`, `registration_date` populated via IANA RDAP bootstrap — switched from rdap.org in PR-C of the 2026-05-16 audit because rdap.org returns HTTP 403 to CF Workers); provider reputation scores (`hosting_providers.reputation_score`); `agent_outputs` entries (`type='insight'` for providers with reputation <70 OR repeat-offender ≥3 campaigns, `type='diagnostic'` for per-run stats); `provider_threat_stats` rows (today / 7d / 30d / all-time, written by `aggregateProviderStats` and read by `GET /api/providers/stats`)
 
-**Historical (superseded by Phase 1):** the 2026-05-16 AI cost gate (skip Haiku for providers with <5 active threats and no campaign history) is moot — provider scoring no longer calls AI. Insight payloads (`risk_factors`) still surface via `/api/insights/latest` → Home "Latest Intel".
+**Historical (superseded by Phase 1):** the 2026-05-16 AI cost gate (skip Haiku for providers with <5 active threats and no campaign history) is moot — provider scoring no longer calls AI. Insight payloads (`risk_factors`) surfaced via `/api/insights/latest` → Home "Latest Intel" until both were retired (PR-D, 2026-10).
 
 ---
 
