@@ -54,8 +54,12 @@ const ALERTS: Array<{ id: string; brand: string; user: string; severity: string;
 const NEW_COUNT = ALERTS.filter((a) => a.status === "new").length; // 4
 const CRITICAL_NEW = ALERTS.filter((a) => a.status === "new" && a.severity === "critical").length; // 2
 
+// One fixed reference instant: seeding and assertions both call ts(), so
+// recomputing Date.now() per call let the second tick over between them.
+const NOW_MS = Date.now();
+
 function ts(minsAgo: number): string {
-  return new Date(Date.now() - minsAgo * 60_000).toISOString().slice(0, 19).replace("T", " ");
+  return new Date(NOW_MS - minsAgo * 60_000).toISOString().slice(0, 19).replace("T", " ");
 }
 
 function seed(db: SqliteDb): void {
