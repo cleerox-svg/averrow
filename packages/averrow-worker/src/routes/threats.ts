@@ -2,7 +2,7 @@ import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
 import { requireAdmin, requireStaff, requireStaffMutation, isAuthContext, getOrgScope } from "../middleware/auth";
-import { corsHeaders } from "../lib/cors";
+import { corsHeaders, json } from "../lib/cors";
 import { rateLimitCustom } from "../middleware/rateLimit";
 import {
   handleListThreats, handleThreatStats, handleThreatsAggregate,
@@ -32,16 +32,21 @@ import {
 } from "../handlers/geopolitical";
 import {
   handleTrustScoreHistory,
-  handleIntelHotlist,
+  handleMultiFeedConsensus,
   handleIntelCriticalBanner,
 } from "../handlers/intel";
 import {
-  handleProviderStats, handleListProviders, handleWorstProviders, handleImprovingProviders, handleProviderMovers,
+  handleProviderStats, handleListProviders,
   handleGetProvider, handleProviderDrilldown, handleProviderBrands,
   handleProviderTimeline, handleProviderLocations,
   handleProviderIntelligence, handleListProvidersV2, handleListClusters, handleProviderClusters,
 } from "../handlers/providers";
 import { handleThreatFeedStats } from "../handlers/threatAssessment";
+
+// /api/providers/{worst,improving,movers} were retired in PR-D (2026-10):
+// no client outside the frozen legacy public/app.js. Explore → Providers
+// "Cooling" uses /api/providers/v2?sort=cooling instead.
+export const RETIRED_PROVIDER_SUBPATHS: ReadonlySet<string> = new Set(["worst", "improving", "movers"]);
 
 export function registerThreatRoutes(router: RouterType<IRequest>): void {
   // ─── Threats ──────────────────────────────────────────────────────
@@ -297,13 +302,14 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     return handleCampaignTimeline(request, env, request.params["id"] ?? "");
   });
 
-  // ─── Intel: Hotlist (PR-A from 2026-05-16 audit) ──────────────────
-  // Top mass-impersonation IPs + multi-feed consensus + recent bursts.
-  // Powers Home "Intel Hotlist" section.
-  router.get("/api/intel/hotlist", async (request: Request, env: Env) => {
+  // ─── Intel: Multi-feed consensus IPs ──────────────────────────────
+  // IPs flagged by >= 4 distinct source feeds among active threats.
+  // The one lane kept from the retired /api/intel/hotlist (PR-D);
+  // cachedValue, 6h TTL. Powers Explore's consensus panel.
+  router.get("/api/intel/multi-feed-consensus", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleIntelHotlist(request, env);
+    return handleMultiFeedConsensus(request, env);
   });
 
   // ─── Intel: Critical banner (post-audit signal-alignment) ─────────
@@ -344,29 +350,18 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleProviderStats(request, env);
   });
-  router.get("/api/providers/worst", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleWorstProviders(request, env);
-  });
-  // /api/providers/movers must be defined before /api/providers/:id
-  // below so itty-router doesn't intercept "movers" as the :id param.
-  router.get("/api/providers/movers", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleProviderMovers(request, env);
-  });
-  router.get("/api/providers/improving", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleImprovingProviders(request, env);
-  });
   router.get("/api/providers", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleListProviders(request, env);
   });
   router.get("/api/providers/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    // Retired list endpoints (PR-D) would otherwise fall through to the
+    // detail handler as a phantom provider id and answer 200. 404 them
+    // like any unregistered /api/* path.
+    if (RETIRED_PROVIDER_SUBPATHS.has(request.params["id"] ?? "")) {
+      return json({ success: false, error: "Not found" }, 404, request.headers.get("Origin"));
+    }
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleGetProvider(request, env, request.params["id"] ?? "");

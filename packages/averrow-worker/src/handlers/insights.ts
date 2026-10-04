@@ -1,31 +1,12 @@
 // TODO: Refactor to use handler-utils (Phase 6 continuation)
-// Averrow — Insight & Notification Endpoints
+// Averrow — Notification Endpoints
+//
+// GET /api/insights/latest (handleLatestInsights) was retired in PR-D
+// (2026-10) with the Home "Latest Intel" section (#1756); no client
+// remained.
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
-
-// GET /api/insights/latest
-export async function handleLatestInsights(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    const url = new URL(request.url);
-    const limit = Math.min(20, parseInt(url.searchParams.get("limit") ?? "5", 10));
-
-    const rows = await env.DB.prepare(`
-      SELECT ao.id, ao.agent_id AS agent_name, ao.severity, ao.summary AS summary_text,
-             ao.created_at, ao.type AS output_type,
-             ao.details, ao.related_brand_ids, ao.related_campaign_id
-      FROM agent_outputs ao
-      WHERE ao.type IN ('insight', 'correlation')
-      ORDER BY ao.created_at DESC
-      LIMIT ?
-    `).bind(limit).all();
-
-    return json({ success: true, data: rows.results }, 200, origin);
-  } catch (err) {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
-}
 
 // GET /api/notifications
 export async function handleListNotifications(request: Request, env: Env, userId: string): Promise<Response> {

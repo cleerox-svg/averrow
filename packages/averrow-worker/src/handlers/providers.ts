@@ -2,95 +2,7 @@
 // Averrow — Provider Intelligence API Endpoints
 
 import { json } from "../lib/cors";
-import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
-import { newTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
-
-// GET /api/providers/movers
-//
-// Mirrors handleBrandMovers for hosting providers — top 5 by largest
-// positive 7-day inflow delta ("rising") and top 5 by largest
-// negative ("falling").
-//
-// Source: threat_cube_provider, comparing two adjacent 7-day windows
-// of new threat inflow (this_week vs last_week). See handleBrandMovers
-// for the full reasoning — short version: the active-threat count
-// barely moves down in practice, so an active-count delta was empty
-// by construction. Inflow naturally falls when a provider stops
-// hosting fresh attack infra.
-//
-// Distinct from /api/providers/worst (current absolute count) and
-// /api/providers/improving (raw 7d-vs-14d threat creation ratio).
-// This endpoint stays the apples-to-apples counterpart of
-// /api/brands/movers.
-export async function handleProviderMovers(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  const ctx = getDbContext(request);
-  const session = getReadSession(env, ctx);
-  try {
-    // v3 cache prefix — invalidates v1/v2 payloads built against
-    // daily_snapshots.active_threats (which never decreases, so
-    // Cooling Down was always empty regardless of the anchor logic).
-    const cacheKey = "provider_movers:v3";
-    const cached = await env.CACHE.get(cacheKey);
-    if (cached) {
-      recordD1Reads(env, "provider_movers", newTally());
-      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
-    }
-
-    const tally = newTally();
-
-    const rows = await session.prepare(`
-      WITH inflow AS (
-        SELECT
-          hosting_provider_id AS provider_id,
-          SUM(CASE WHEN hour_bucket >= datetime('now','-7 days')
-                   THEN threat_count ELSE 0 END) AS this_week,
-          SUM(CASE WHEN hour_bucket >= datetime('now','-14 days')
-                    AND hour_bucket <  datetime('now','-7 days')
-                   THEN threat_count ELSE 0 END) AS last_week
-        FROM threat_cube_provider
-        WHERE hour_bucket >= datetime('now','-14 days')
-        GROUP BY hosting_provider_id
-      )
-      SELECT
-        hp.id, hp.name, hp.asn, hp.country, hp.reputation_score,
-        hp.active_threat_count,
-        i.this_week AS today_count,
-        i.last_week AS week_ago_count,
-        i.this_week - i.last_week AS delta_7d
-      FROM inflow i
-      JOIN hosting_providers hp ON hp.id = i.provider_id
-      WHERE i.this_week + i.last_week > 0
-    `).all<{
-      id: string; name: string; asn: string | null;
-      country: string | null; reputation_score: number | null;
-      active_threat_count: number;
-      today_count: number; week_ago_count: number; delta_7d: number;
-    }>();
-    tally.queries += 1;
-
-    const all = rows.results ?? [];
-    const rising = all
-      .filter(r => r.delta_7d > 0)
-      .sort((a, b) => b.delta_7d - a.delta_7d)
-      .slice(0, 5);
-    const falling = all
-      .filter(r => r.delta_7d < 0)
-      .sort((a, b) => a.delta_7d - b.delta_7d)
-      .slice(0, 5);
-
-    const data = {
-      success: true,
-      data: { rising, falling },
-    };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
-    recordD1Reads(env, "provider_movers", tally);
-    return attachBookmark(json(data, 200, origin), session);
-  } catch (err) {
-    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
-  }
-}
 
 // GET /api/providers/stats (top providers by threat count)
 export async function handleProviderStats(request: Request, env: Env): Promise<Response> {
@@ -225,123 +137,6 @@ export async function handleListProviders(request: Request, env: Env): Promise<R
         threat_history: sparkMap.get(r.id as string) ?? [],
       };
     });
-    return json({ success: true, data }, 200, origin);
-  } catch (err) {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
-}
-
-// GET /api/providers/worst
-//
-// Phase 2 D1 migration: same pattern as handleListProviders. Reads
-// pre-computed counters from hosting_providers; brands_targeted comes
-// from a single bulk threat_cube_brand pass for the top-10 IDs.
-export async function handleWorstProviders(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    const rows = await env.DB.prepare(`
-      SELECT hp.id AS provider_id,
-             COALESCE(hp.name, hp.id) AS name,
-             hp.asn, hp.country AS country_code,
-             hp.reputation_score, hp.avg_response_time AS avg_response_time_hours,
-             hp.total_threat_count AS threat_count,
-             hp.active_threat_count AS active_count,
-             hp.trend_7d AS trend_7d_pct
-      FROM hosting_providers hp
-      WHERE hp.total_threat_count > 0
-      ORDER BY hp.total_threat_count DESC LIMIT 10
-    `).all<Record<string, unknown>>();
-
-    // brands_targeted via cube — DISTINCT target_brand_id requires a
-    // dimension threat_cube_provider doesn't carry, so we read
-    // threats once with a tight IN-clause limited to the top 10 IDs.
-    // Each lookup is index-driven (idx_threats_provider_created) and
-    // bounded to ~10 providers worth of rows.
-    const provIds = (rows.results as Array<{ provider_id: string }>).map(r => r.provider_id);
-    const brandsMap = new Map<string, number>();
-    if (provIds.length > 0) {
-      try {
-        const ph = provIds.map(() => '?').join(',');
-        const brandRows = await env.DB.prepare(`
-          SELECT hosting_provider_id, COUNT(DISTINCT target_brand_id) AS n
-          FROM threats
-          WHERE hosting_provider_id IN (${ph})
-            AND target_brand_id IS NOT NULL
-          GROUP BY hosting_provider_id
-        `).bind(...provIds).all<{ hosting_provider_id: string; n: number }>();
-        for (const r of brandRows.results) {
-          brandsMap.set(r.hosting_provider_id, r.n);
-        }
-      } catch { /* non-fatal */ }
-    }
-    const data = (rows.results as Array<Record<string, unknown>>).map(r => ({
-      ...r,
-      brands_targeted: brandsMap.get(r.provider_id as string) ?? 0,
-    }));
-
-    return json({ success: true, data }, 200, origin);
-  } catch (err) {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
-}
-
-// GET /api/providers/improving
-//
-// Phase 2 D1 migration: 7d-vs-prior-7d delta comparison moved from
-// raw threats GROUP BY to threat_cube_provider. The cube has hour-
-// bucket precision which is plenty for a 7-day window comparison.
-// JOIN hosting_providers for the static provider metadata only.
-export async function handleImprovingProviders(request: Request, env: Env): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    // Providers where recent (7d) threats < previous (8-14d) threats.
-    // Aggregate from the cube; ratio + sort happen client-side after
-    // the small filtered result set is returned.
-    const cubeRows = await env.DB.prepare(`
-      SELECT hosting_provider_id,
-             SUM(CASE WHEN hour_bucket >= datetime('now', '-7 days') THEN threat_count ELSE 0 END) AS recent,
-             SUM(CASE WHEN hour_bucket >= datetime('now', '-14 days') AND hour_bucket < datetime('now', '-7 days') THEN threat_count ELSE 0 END) AS previous
-      FROM threat_cube_provider
-      WHERE hour_bucket >= datetime('now', '-14 days')
-      GROUP BY hosting_provider_id
-      HAVING previous > 0 AND recent < previous
-      ORDER BY (CAST(recent AS REAL) / previous) ASC
-      LIMIT 10
-    `).all<{ hosting_provider_id: string; recent: number; previous: number }>();
-
-    const provIds = cubeRows.results.map(r => r.hosting_provider_id);
-    if (provIds.length === 0) {
-      return json({ success: true, data: [] }, 200, origin);
-    }
-
-    const ph = provIds.map(() => '?').join(',');
-    const meta = await env.DB.prepare(`
-      SELECT id, name, asn, country, reputation_score, avg_response_time
-      FROM hosting_providers
-      WHERE id IN (${ph})
-    `).bind(...provIds).all<{
-      id: string; name: string | null; asn: string | null; country: string | null;
-      reputation_score: number | null; avg_response_time: number | null;
-    }>();
-    const metaMap = new Map(meta.results.map(m => [m.id, m]));
-
-    const data = cubeRows.results.map(r => {
-      const m = metaMap.get(r.hosting_provider_id);
-      const trend = r.previous > 0 ? Math.round(((r.recent / r.previous) - 1) * 1000) / 10 : 0;
-      return {
-        provider_id: r.hosting_provider_id,
-        name: m?.name ?? r.hosting_provider_id,
-        asn: m?.asn ?? null,
-        country_code: m?.country ?? null,
-        reputation_score: m?.reputation_score ?? null,
-        avg_response_time_hours: m?.avg_response_time ?? null,
-        threat_count: r.recent,
-        recent: r.recent,
-        previous: r.previous,
-        trend_7d_pct: trend,
-      };
-    });
-
     return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -529,6 +324,8 @@ export async function handleProviderIntelligence(request: Request, env: Env): Pr
 }
 
 // GET /api/providers/v2 — Enhanced provider list with status filtering and cluster linkage
+const PROVIDERS_V2_SORTS: ReadonlySet<string> = new Set(["active_threats", "trend_7d", "trend_30d", "cooling"]);
+
 export async function handleListProvidersV2(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -538,7 +335,10 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
     const search = url.searchParams.get("q");
     const country = url.searchParams.get("country");
     const status = url.searchParams.get("status"); // active|accelerating|pivot|quiet
-    const sort = url.searchParams.get("sort") ?? "active_threats"; // active_threats|trend_7d|trend_30d
+    // Unknown sort values collapse to the default so they share its
+    // ORDER BY and its cache key instead of minting one key per typo.
+    const sortParam = url.searchParams.get("sort") ?? "active_threats";
+    const sort = PROVIDERS_V2_SORTS.has(sortParam) ? sortParam : "active_threats";
     const clusterId = url.searchParams.get("cluster_id");
 
     const conditions: string[] = [];
@@ -560,6 +360,27 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
       conditions.push("hp.active_threat_count > 0");
     } else if (status === "quiet") {
       conditions.push("hp.active_threat_count = 0");
+    }
+
+    // sort=cooling — "Cooling" providers for Explore → Providers (PR-D,
+    // replaces the retired /api/providers/movers "falling" list).
+    //
+    // hosting_providers.trend_7d / trend_30d are the rolling 7-day and
+    // 30-day NEW-threat counts written by lib/provider-trends.ts from
+    // threat_cube_provider (NEXUS, every 4h) — non-negative counts, not
+    // deltas. (lib/snapshots.ts also overwrites trend_7d with a
+    // day-over-week delta once a day at hour 0; the next NEXUS run
+    // restores the count, so a `trend_7d < 0` filter would be empty
+    // ~20h/day — the same empty-by-construction trap that left the old
+    // movers "Cooling Down" list blank.)
+    //
+    // Cooling = the last 7 days ran BELOW the provider's 30-day weekly
+    // average (trend_30d * 7/30) — the mirror of status=accelerating
+    // above. `cooling_delta_7d` = trend_7d - trend_30d*7/30 (always
+    // negative here); most negative first = the biggest volume drop.
+    const COOLING_DELTA_SQL = "(hp.trend_7d - hp.trend_30d * 7.0 / 30.0)";
+    if (sort === "cooling") {
+      conditions.push(`hp.trend_30d > 0 AND ${COOLING_DELTA_SQL} < 0`);
     }
 
     // If filtering by cluster, get ASNs from cluster first
@@ -586,6 +407,7 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
     let orderBy = "hp.active_threat_count DESC";
     if (sort === "trend_7d") orderBy = "hp.trend_7d DESC";
     else if (sort === "trend_30d") orderBy = "hp.trend_30d DESC";
+    else if (sort === "cooling") orderBy = `${COOLING_DELTA_SQL} ASC, hp.trend_30d DESC`;
 
     params.push(limit, offset);
 
@@ -594,8 +416,8 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
     // for better hit rate. Filtered/paginated views use a full-dimension key.
     const isDefaultView = !search && !clusterId && offset === 0;
     const cacheKey = isDefaultView
-      ? `providers_v2:${country ?? ""}:${status ?? ""}:${sort}:${limit}`
-      : `providers_v2:${search ?? ""}:${country ?? ""}:${status ?? ""}:${sort}:${clusterId ?? ""}:${limit}:${offset}`;
+      ? `providers_v2:v2:${country ?? ""}:${status ?? ""}:${sort}:${limit}`
+      : `providers_v2:v2:${search ?? ""}:${country ?? ""}:${status ?? ""}:${sort}:${clusterId ?? ""}:${limit}:${offset}`;
     const cached = await env.CACHE.get(cacheKey);
     if (cached) return json(JSON.parse(cached), 200, origin);
 
@@ -604,6 +426,7 @@ export async function handleListProvidersV2(request: Request, env: Env): Promise
       SELECT hp.id, hp.name, hp.asn, hp.country,
              hp.active_threat_count, hp.total_threat_count,
              hp.trend_7d, hp.trend_30d,
+             ROUND(${COOLING_DELTA_SQL}, 1) AS cooling_delta_7d,
              hp.reputation_score, hp.avg_response_time,
              hp.is_bulletproof
       FROM hosting_providers hp

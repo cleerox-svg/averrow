@@ -311,9 +311,6 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 |--------|------|------|-------------|
 | GET | `/api/providers` | Staff | List hosting providers |
 | GET | `/api/providers/stats` | Staff | Provider statistics |
-| GET | `/api/providers/worst` | Staff | Worst providers (most threats) |
-| GET | `/api/providers/improving` | Staff | Improving providers |
-| GET | `/api/providers/movers` | Staff | 7-day movers (rising / falling by active threat delta) |
 | GET | `/api/providers/:id` | Staff | Get provider detail |
 | GET | `/api/providers/:id/threats` | Staff | Provider's threats |
 | GET | `/api/providers/:id/brands` | Staff | Brands affected by provider |
@@ -325,7 +322,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/providers/v2` | Staff | Providers list with pre-computed columns (replaces v1 JOIN-based query) |
+| GET | `/api/providers/v2` | Staff | Providers list with pre-computed columns (replaces v1 JOIN-based query). Query: `limit` (≤100, default 50), `offset`, `q`, `country`, `status` (`active`\|`accelerating`\|`pivot`\|`quiet`), `cluster_id`, `sort` (`active_threats` default \| `trend_7d` \| `trend_30d` \| `cooling`; unknown values fall back to `active_threats`). `sort=cooling` returns only providers whose last-7d new-threat count (`trend_7d`) is below their 30-day weekly average (`trend_30d × 7/30`, requires `trend_30d > 0`), ordered by `cooling_delta_7d` ascending (biggest drop first). Every row carries `cooling_delta_7d` = `ROUND(trend_7d − trend_30d × 7/30, 1)`. Response `{ success, data, meta: { total, limit, offset } }`; KV 5 min, key encodes every param incl. `sort`. Replaces the retired `/api/providers/movers` "falling" list. |
 | GET | `/api/providers/intelligence` | Staff | Provider intelligence summary |
 | GET | `/api/providers/clusters` | Staff | Provider infrastructure clusters |
 
@@ -794,12 +791,6 @@ free text. They remain on `lookalike_domains` for staff
 | GET | `/api/trends/provider-momentum` | Staff | Hosting provider momentum (7d/30d) |
 | GET | `/api/trends/nexus-active` | Staff | Active accelerating Nexus clusters |
 
-## Insights
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/insights/latest` | Staff | Latest AI insights |
-
 ## Signals
 
 | Method | Path | Auth | Description |
@@ -844,9 +835,11 @@ All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including th
 
 ## Intel
 
+_Retired in PR-D (2026-10), no client after the Home views were removed in #1756: `GET /api/intel/hotlist`, `GET /api/insights/latest`, `GET /api/providers/movers`, `GET /api/providers/worst`, `GET /api/providers/improving` (all now 404; the frozen legacy `public/app.js` still references three of them)._
+
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/intel/hotlist` | Staff | Mass-impersonation IPs + multi-feed-consensus IPs + recent temporal bursts (KV cached 5min). Powers the Home "Intel Hotlist" section — PR-A from the 2026-05-16 platform audit. |
+| GET | `/api/intel/multi-feed-consensus` | Staff | IPs flagged by ≥4 distinct `source_feed` values among active threats (placeholder IPs `''`/`0.0.0.0` excluded), top 50 by `feed_count` then `threat_count`. Response `{ success, data: [{ ip_address, feed_count, feeds: string[] (sorted), threat_count, brand_count, last_seen }], total }`. `cachedValue` 6h TTL (key `intel.multi_feed_consensus.v1`) — the query is effectively a full `threats` scan, so ≤4 D1 executions/day. The one lane kept from the retired `/api/intel/hotlist`. |
 | GET | `/api/intel/critical-banner` | Staff | Prioritized "Critical Intelligence" events (provider surges, bursts, mass-impersonation IPs, new campaigns, falls back to open-critical alerts). Powers the red banner on Home — replaces the bare `alertStats.critical` count that conflated severity with operator concern. KV cached 60s. |
 | GET | `/api/trust-scores` | Staff | Trust score history |
 | GET | `/api/social-iocs` | Staff | Social IOCs |

@@ -27,7 +27,6 @@ import {
   handleGetNotificationConfig, handleListPushSubscriptions,
   handleTestNotification,
 } from "../handlers/push";
-import { handleLatestInsights } from "../handlers/insights";
 import {
   handleTrendVolume, handleTrendBrands, handleTrendProviders,
   handleTrendTLDs, handleTrendTypes, handleTrendCompare,
@@ -323,13 +322,6 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTestNotification(request, env, ctx.userId);
-  });
-
-  // ─── Insights ─────────────────────────────────────────────────────
-  router.get("/api/insights/latest", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleLatestInsights(request, env);
   });
 
   // ─── Trends ───────────────────────────────────────────────────────
