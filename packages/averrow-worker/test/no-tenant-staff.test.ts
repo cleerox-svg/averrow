@@ -174,11 +174,14 @@ describe.skipIf(!hasSqlite())("PR-F: invite acceptance never produces tenant sta
     expect(activeMemberships(rows[0]!.id)).toBe(1);
   });
 
-  it("staff invite to an existing org-less account still works", async () => {
-    const token = await invite("inv5", "admin1@averrow.com", "analyst", null);
+  // A same-role staff invite to an existing org-less staff account still
+  // works. (A DIFFERENT-role one is refused since #1766's follow-up — an
+  // invite must never change an existing staff role; see rbac-invite.test.ts.)
+  it("same-role staff invite to an existing org-less account still works", async () => {
+    const token = await invite("inv5", "admin1@averrow.com", "admin", null);
     const res = await accept(token, "admin1@averrow.com", "g-admin1");
     expect(res.headers.get("Location") ?? "").not.toContain("/auth/error");
-    expect(roleOf(rig.raw, "admin1")).toBe("analyst");
+    expect(roleOf(rig.raw, "admin1")).toBe("admin");
   });
 });
 
@@ -268,11 +271,12 @@ describe.skipIf(!hasSqlite())("PR-F follow-up: lead-conversion placeholder owner
     expect(roleOf(rig.raw, "root2")).toBe("admin");
   });
 
-  it("staff invite accepted by an account whose only membership is the placeholder still works", async () => {
-    const token = await seedInvite(rig.raw, "stf1", "root2@averrow.com", "admin", null, null);
+  it("same-role staff invite accepted by an account whose only membership is the placeholder still works", async () => {
+    const token = await seedInvite(rig.raw, "stf1", "root2@averrow.com", "super_admin", null, null);
     const res = await acceptOn(rig, token, "root2@averrow.com", "g-root2");
     expect(res.headers.get("Location") ?? "").not.toContain("/auth/error");
-    expect(roleOf(rig.raw, "root2")).toBe("admin");
+    expect(roleOf(rig.raw, "root2")).toBe("super_admin");
+    expect(memberRow(rig.raw, 2, "root2").status).toBe("active");
   });
 });
 

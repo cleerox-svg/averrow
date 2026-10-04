@@ -150,8 +150,12 @@ export async function handleAdminUpdateUser(
     params.push(status);
   }
 
-  params.push(targetUserId);
-  const updateUser = env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...params);
+  // Optimistic concurrency: every guard above was evaluated against
+  // `current.role`. Pin the write to it so a role change landing between that
+  // read and this write (another admin's PATCH, an invite acceptance) can't
+  // be overwritten with a decision made on stale data → 409, caller retries.
+  params.push(targetUserId, current.role);
+  const updateUser = env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ? AND role = ?`).bind(...params);
 
   // Staff → client: the user's lead-conversion placeholder owner rows would
   // otherwise stay active and, on the next refresh, be embedded as
@@ -159,12 +163,31 @@ export async function handleAdminUpdateUser(
   // of a real tenant. Deactivate them in the SAME batch as the role write so
   // neither lands without the other.
   const demotedToClient = roleChanged && role === "client" && isPlatformStaff(current.role);
+  // (deactivateUserPlaceholdersStmt re-checks that the user is non-staff, so
+  // if the guarded role write matched 0 rows it doesn't fire either.)
   let placeholdersRemoved = 0;
+  let userRowsChanged: number;
   if (demotedToClient) {
     const results = await env.DB.batch([updateUser, deactivateUserPlaceholdersStmt(env.DB, targetUserId)]);
+    userRowsChanged = Number(results[0]?.meta?.changes ?? 0);
     placeholdersRemoved = Number(results[1]?.meta?.changes ?? 0);
   } else {
-    await updateUser.run();
+    userRowsChanged = Number((await updateUser.run()).meta?.changes ?? 0);
+  }
+  if (userRowsChanged === 0) {
+    // The placeholder statement only fires when the user is already non-staff
+    // (someone else demoted them concurrently); still record it.
+    if (placeholdersRemoved > 0) {
+      await audit(env, {
+        action: "lead_conversion_placeholder_removed",
+        userId: adminUserId,
+        resourceType: "user",
+        resourceId: targetUserId,
+        details: { reason: "staff_demoted_to_client_concurrent", placeholders_removed: placeholdersRemoved },
+        request,
+      });
+    }
+    return json({ success: false, error: "User was changed concurrently; reload and retry" }, 409, origin);
   }
 
   const user = await env.DB.prepare(

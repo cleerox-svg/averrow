@@ -537,6 +537,28 @@ export async function handleInviteAcceptance(
     });
     return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
   }
+  // (c) An invite must never CHANGE an existing staff account's role. The
+  //     write below overwrites users.role with invite.role, so a non-org
+  //     invite minted by an `admin` (manage_invites) for a super_admin's
+  //     email would demote them on acceptance — skipping the super_admin-only
+  //     rule, the placeholder cleanup and the forced_logout of the admin user
+  //     PATCH. Refuse whenever ANY matching row is staff with a different
+  //     role; the role and the invite are untouched. Role changes for an
+  //     existing staff account go through PATCH /api/admin/users/:id only.
+  //     A same-role invite (re-linking a Google sub) still works.
+  const staffRoleChange = matches.find((m) => isPlatformStaff(m.role) && m.role !== invite.role);
+  if (staffRoleChange) {
+    await audit(env, {
+      action: "invite_accept_refused_staff_role_change",
+      userId: staffRoleChange.id,
+      resourceType: "invitation",
+      resourceId: invite.id,
+      details: { email: googleUser.email, existing_role: staffRoleChange.role, invite_role: invite.role },
+      outcome: "denied",
+      request,
+    });
+    return redirectWithError(siteOrigin, "This email belongs to an existing Averrow staff account. Its role can only be changed by an administrator, not through an invitation.");
+  }
   if (matches.length > 0 && isPlatformStaff(invite.role)) {
     const membership = await env.DB.prepare(
       `SELECT om.user_id, om.org_id FROM org_members om
@@ -560,9 +582,50 @@ export async function handleInviteAcceptance(
 
   if (existing) {
     userId = existing.id;
-    // Update google_sub + role if needed
-    await env.DB.prepare("UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ?")
-      .bind(googleUser.sub, googleUser.name, invite.role, userId).run();
+    // Update google_sub + role if needed. Only a non-staff account can reach
+    // here with a different role (guard (c) above): client → staff.
+    // Pinned to the role read above (optimistic concurrency): if an admin
+    // changed it in between, the guards were decided on stale data — refuse.
+    const updated = await env.DB.prepare("UPDATE users SET google_sub = ?, name = ?, role = ? WHERE id = ? AND role = ?")
+      .bind(googleUser.sub, googleUser.name, invite.role, userId, existing.role).run();
+    if (!Number(updated.meta?.changes ?? 0)) {
+      await audit(env, {
+        action: "invite_accept_refused_concurrent_change",
+        userId,
+        resourceType: "invitation",
+        resourceId: invite.id,
+        details: { email: googleUser.email, read_role: existing.role, invite_role: invite.role },
+        outcome: "failure",
+        request,
+      });
+      return redirectWithError(siteOrigin, "Your account was changed while accepting the invitation. Please open the invite link again.");
+    }
+    if (existing.role !== invite.role) {
+      // Same revocation as the admin role PATCH: the old tokens embed the old
+      // role + org_scope. The stamp is one second in the past because the
+      // session issued just below gets iat = now, and the gates reject
+      // iat <= stamp — stamping `now` would revoke the new session too. The
+      // residual (an old-role token minted within this same second) is the
+      // same user, at the lower old role, for at most one access-token TTL.
+      // A KV failure must not fail the sign-in; it is audited instead.
+      try {
+        await env.CACHE.put(
+          `forced_logout:${userId}`,
+          String(Math.floor(Date.now() / 1000) - 1),
+          { expirationTtl: ABSOLUTE_SESSION_TTL },
+        );
+      } catch (err) {
+        await audit(env, {
+          action: "user_role_change_revocation_failed",
+          userId,
+          resourceType: "user",
+          resourceId: userId,
+          details: { via: "invite_acceptance", invitation_id: invite.id, previous_role: existing.role, new_role: invite.role, error: err instanceof Error ? err.message : String(err) },
+          outcome: "failure",
+          request,
+        });
+      }
+    }
   } else {
     userId = crypto.randomUUID();
     await env.DB.prepare(
