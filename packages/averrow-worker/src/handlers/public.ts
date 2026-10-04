@@ -386,17 +386,17 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     const assessmentText = agentRun.data?.assessmentText
       ?? `${brandName} threat landscape — ${threatCount} known threats across ${providerCount} hosting provider(s) and ${campaignCount} campaign(s). Continuous monitoring is recommended.`;
 
-    // Store assessment
+    // Store assessment. The requester IP is used only for the KV rate-limit
+    // key above and is never persisted (PR-E: no visitor IP in D1).
     const assessmentId = `assess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     await env.DB.prepare(
-      `INSERT INTO assessments (id, domain, trust_score, grade, summary_text, threat_intel_results, ip_address, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+      `INSERT INTO assessments (id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
     ).bind(
       assessmentId, domain, trustScore, grade, assessmentText,
       // is_monitored + brand_name ride along so the H4 cached-replay
       // path can reconstruct the full response shape from this row.
       JSON.stringify({ threat_count: threatCount, provider_count: providerCount, campaign_count: campaignCount, threat_types: threatTypes, is_monitored: isMonitored, brand_name: monitoredBrand?.name ?? brandName }),
-      ip,
     ).run();
 
     // ─── Auto-add brand if it doesn't exist (from public assessment) ───
@@ -476,8 +476,8 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
     // If no real assessment, create a placeholder
     if (!body.assessment_id) {
       await env.DB.prepare(
-        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade, ip_address) VALUES (?, ?, ?, ?, ?)`
-      ).bind(assessmentId, body.domain || "", body.trust_score ?? 0, body.grade || "?", ip).run();
+        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, ?, ?)`
+      ).bind(assessmentId, body.domain || "", body.trust_score ?? 0, body.grade || "?").run();
     }
 
     await env.DB.prepare(
@@ -553,8 +553,8 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
       const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const assessmentId = `assess_monitor_${Date.now()}`;
       await env.DB.prepare(
-        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade, ip_address) VALUES (?, ?, 0, '?', ?)`
-      ).bind(assessmentId, domain, ip).run();
+        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, 0, '?')`
+      ).bind(assessmentId, domain).run();
       await env.DB.prepare(
         `INSERT INTO leads (id, assessment_id, name, email, company, notes)
          VALUES (?, ?, ?, ?, ?, 'Self-service monitor request')`

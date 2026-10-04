@@ -52,7 +52,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
-| POST | `/api/scan/public` | Public domain scan (rate-limited) |
+| POST | `/api/scan/public` | Public domain scan (rate-limited). New scans store no requester IP, city or coordinates: the `scans` row records the requester's **country only**, from Cloudflare's `request.cf.country` (`geo_country_code` + English `geo_country`; `XX`/`T1`/absent → null). No third-party geolocation lookup (the ipapi.co call was removed in PR-E, 2026-10). |
 | POST | `/api/scan/report` | Generate brand exposure report |
 | POST | `/api/brand-scan/public` | Public brand exposure scan |
 | GET | `/api/brand-scan/public/:id` | Get public scan results |
@@ -75,7 +75,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/v1/public/stats` | Platform statistics. Flat numeric fields (`total_threats`, `active_threats`, `brands_monitored` [count], `active_feeds`, `threat_campaigns`, `providers_mapped`, …) power the legacy SPA. Also returns the **marketing homepage shape** as formatted strings (consumed by `averrow-marketing/scripts/fetch-stats.mjs` at build time): `agents_deployed` (registered-agent-registry count, stable "42"), `feeds_protecting` (e.g. "45+"), `threats_detected` (e.g. "210K+"), `brands_monitored_label` (e.g. "9.6K+" — distinct from the numeric `brands_monitored`), `uptime_label`, `detection_time_label`. |
 | GET | `/api/v1/public/geo` | Geographic threat distribution |
 | GET | `/api/v1/public/feeds` | Feed status overview |
-| POST | `/api/v1/public/assess` | Domain assessment |
+| POST | `/api/v1/public/assess` | Domain assessment (rate-limited by `CF-Connecting-IP` in KV only; the requester IP is not stored in `assessments` — PR-E, 2026-10) |
 | POST | `/api/v1/public/leads` | Lead capture |
 | POST | `/api/v1/public/monitor` | Monitor request |
 | GET | `/api/v1/public/email-security/:domain` | Public email security check |
@@ -93,7 +93,6 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 | GET | `/api/dashboard/stats` | Staff | Legacy v1 scan aggregates, platform-wide counts only: `total_signals`, `processed`, `avg_trust`, `active_alerts`, `queue_depth`, `dead_letters`, `duplicates`, `stored`. No UI calls it any more. Was unauthenticated before 2026-10 (the docs wrongly said "User"). |
 | GET | `/api/dashboard/sources` | Staff | Legacy v1 scan source mix, `[{ name, count, percentage }]` by scan source (`station-alpha/beta/gamma`). Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
 | GET | `/api/dashboard/trend` | Staff | Legacy v1 scan volume and quality for the last 2h, `[{ time, count, quality }]`. Aggregates only. No UI calls it any more. Was unauthenticated before 2026-10. |
-| GET | `/api/heatmap` | Staff | Scan-submitter heatmap, `?hours=1..168&filter=all\|phishing\|malware`. Returns `{ points: [{ lat, lng, intensity, city, country, type }], stats }`. The points geolocate the **requester IP** of each `/api/scan*` call, not the threat. That is user location data, so the route is staff-only. Was public before 2026-10. No UI calls it (`templates/heatmap-component.ts` references it but is not imported anywhere). For the public threat map, use `/api/observatory/heatmap`. |
 | GET | `/api/dashboard/brand-admin` | Staff | Brand-scoped admin dashboard |
 
 ## Observatory
@@ -802,7 +801,7 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/scan` | Staff (optional) | Trigger scan — works unauthenticated (rate-limited); a staff Bearer token attributes the scan to the caller |
+| POST | `/api/scan` | Staff (optional) | Trigger scan — works unauthenticated (rate-limited); a staff Bearer token attributes the scan to the caller. Same storage rule as `/api/scan/public`: country only, from `request.cf.country`; no IP, city or coordinates, no third-party geolocation. `/api/heatmap` (the scan-submitter heatmap) was removed in PR-E and now 404s. |
 | GET | `/api/scan/history` | Staff | Scan history |
 | POST | `/api/brand-scan` | Staff | Brand exposure scan |
 | GET | `/api/brand-scan/history` | Staff | Brand scan history |
@@ -974,7 +973,7 @@ _Retired in PR-D (2026-10), no client after the Home views were removed in #1756
 | GET  | `/api/admin/geoip-status` | Admin | Dedicated GeoIP DB status: row count, last refresh, last error. Used by the Pipeline Automation card. |
 | POST | `/api/admin/geoip/import-from-r2` | Admin | Kick a GeoIP import workflow from a pre-staged R2 object (`?key=<r2-object-key>&sha256=<hash>`). Returns 202 with the workflow instance id; poll `/api/admin/geoip-status` for progress. |
 | POST | `/api/admin/backfill-brand-match` | SuperAdmin | Backfill brand matching |
-| POST | `/api/admin/backfill-brand-enrichment` | Admin | Populate brand logo_url, website_url, hq_lat/lng/country via Clearbit + DNS + ipapi (50/call) |
+| POST | `/api/admin/backfill-brand-enrichment` | Admin | Populate brand logo_url, website_url, hq_lat/lng/country via Clearbit + DNS + ipinfo.io (50/call) |
 | POST | `/api/admin/backfill-brand-sector` | Admin | Classify brand sector via Haiku + fetch RDAP registrant data (20/call) |
 | POST | `/api/admin/backfill-safe-domains` | SuperAdmin | Backfill safe domains |
 | POST | `/api/admin/backfill-social-config` | SuperAdmin | Backfill brand social-monitoring config |

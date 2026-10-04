@@ -82,43 +82,41 @@ class VTQuotaError extends Error {
   constructor() { super("VTQuotaError"); }
 }
 
-// ─── IP Geolocation (ipapi.co — HTTPS, free 1000/day, no key) ────────────
+// ─── Scan country (Cloudflare edge, country only) ─────────────────────────
+// Owner decision (PR-E, 2026-10): country only, from Cloudflare. The
+// requester's IP is never sent to a third party and never stored; no city,
+// no coordinates. `request.cf.country` is the edge's own lookup.
 
-interface GeoResult {
-  lat: number;
-  lng: number;
-  city: string;
-  country: string;
-  countryCode: string;
+export interface ScanCountry {
+  code: string | null;
+  name: string | null;
 }
 
-async function resolveGeo(ip: string, env: Env): Promise<GeoResult | null> {
-  if (!ip || ip === "127.0.0.1" || ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("::")) {
-    return null;
-  }
-
-  // Check D1 cache — reuse geo for IPs we've already looked up
-  try {
-    const cached = await env.DB.prepare(
-      "SELECT lat, lng, geo_city, geo_country, geo_country_code FROM scans WHERE ip_address = ? AND lat IS NOT NULL LIMIT 1"
-    ).bind(ip).first<{ lat: number; lng: number; geo_city: string; geo_country: string; geo_country_code: string }>();
-    if (cached) {
-      return { lat: cached.lat, lng: cached.lng, city: cached.geo_city, country: cached.geo_country, countryCode: cached.geo_country_code };
+// Built once per isolate — DisplayNames construction is the costly part.
+let regionNames: Intl.DisplayNames | null | undefined;
+function regionName(code: string): string | null {
+  if (regionNames === undefined) {
+    try {
+      regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+    } catch {
+      regionNames = null;
     }
-  } catch { /* non-fatal */ }
-
+  }
   try {
-    const res = await fetch(
-      `https://ipapi.co/${ip}/json/`,
-      { headers: { "User-Agent": "Averrow-ThreatIntel/1.0", Accept: "application/json" } }
-    );
-    if (!res.ok) return null;
-    const data = await res.json() as { error?: boolean; country_code?: string; country_name?: string; city?: string; latitude?: number; longitude?: number };
-    if (data.error || !data.latitude || !data.longitude) return null;
-    return { lat: data.latitude, lng: data.longitude, city: data.city ?? "", country: data.country_name ?? "", countryCode: data.country_code ?? "" };
+    return regionNames?.of(code) ?? null;
   } catch {
     return null;
   }
+}
+
+/** ISO-3166 alpha-2 from `request.cf.country`; 'XX' (unknown) and 'T1' (Tor) → null. */
+export function scanCountryFromRequest(request: Request): ScanCountry {
+  const cf = (request as Request & { cf?: { country?: unknown } }).cf;
+  const raw = typeof cf?.country === "string" ? cf.country.trim().toUpperCase() : "";
+  if (!/^[A-Z]{2}$/.test(raw) || raw === "XX" || raw === "T1") {
+    return { code: null, name: null };
+  }
+  return { code: raw, name: regionName(raw) };
 }
 
 async function runScan(url: string, env: Env): Promise<Omit<ScanResult, "id" | "created_at">> {
@@ -257,13 +255,13 @@ export async function handleScan(
     };
 
     // Always store — share link (/scan/:id) must work for all scans
-    const clientIpCached = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "";
-    const geoCached = await resolveGeo(clientIpCached, env);
+    // Country only, from Cloudflare — no IP, city or coordinates stored.
+    const countryCached = scanCountryFromRequest(request);
     await env.DB.prepare(
-      "INSERT INTO scans (id, user_id, url, domain, trust_score, risk_level, flags, metadata, cached, ip_address, lat, lng, geo_city, geo_country, geo_country_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO scans (id, user_id, url, domain, trust_score, risk_level, flags, metadata, cached, geo_country, geo_country_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)"
     )
       .bind(result.id, userId ?? null, url, domain, result.trust_score, result.risk_level, cached.flags, cached.metadata,
-            clientIpCached || null, geoCached?.lat ?? null, geoCached?.lng ?? null, geoCached?.city ?? null, geoCached?.country ?? null, geoCached?.countryCode ?? null)
+            countryCached.name, countryCached.code)
       .run();
 
     return json({ success: true, data: result }, 200, origin);
@@ -300,17 +298,15 @@ export async function handleScan(
   const metaJson = JSON.stringify(scanData.metadata);
   const now = new Date().toISOString();
 
-  // Resolve geo for the requesting client IP
-  const clientIp = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() || "";
-  const geo = await resolveGeo(clientIp, env);
+  // Country only, from Cloudflare — no IP, city or coordinates stored.
+  const country = scanCountryFromRequest(request);
 
-  // Always store — share link (/scan/:id) must work for all scans;
-  // geo columns populate when available and feed the heatmap
+  // Always store — share link (/scan/:id) must work for all scans
   await env.DB.prepare(
-    "INSERT INTO scans (id, user_id, url, domain, trust_score, risk_level, flags, metadata, ip_address, lat, lng, geo_city, geo_country, geo_country_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO scans (id, user_id, url, domain, trust_score, risk_level, flags, metadata, geo_country, geo_country_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   )
     .bind(id, userId ?? null, url, domain, scanData.trust_score, scanData.risk_level, flagsJson, metaJson,
-          clientIp || null, geo?.lat ?? null, geo?.lng ?? null, geo?.city ?? null, geo?.country ?? null, geo?.countryCode ?? null)
+          country.name, country.code)
     .run();
 
   // Cache the result for 24 hours — aligns with VT's daily quota window to avoid redundant calls
