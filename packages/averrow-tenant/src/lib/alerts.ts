@@ -227,7 +227,43 @@ export function useUpdateAlert() {
   });
 }
 
-/** Bulk-triage many signals at once (status and/or assignee). */
+/** Max alert ids per POST /api/orgs/:orgId/alerts/bulk call. The backend
+ *  400s above this (D1's 100-bound-parameter limit), so larger selections
+ *  are split client-side. Keep in sync with tenantData.ts TENANT_BULK_MAX_IDS. */
+export const TENANT_BULK_MAX_ALERTS = 90;
+
+/** Split ids into consecutive chunks of at most `size`. */
+export function chunkIds<T>(ids: readonly T[], size: number = TENANT_BULK_MAX_ALERTS): T[][] {
+  if (size < 1) throw new Error('chunk size must be >= 1');
+  const out: T[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+/** Send `ids` (deduped) in ≤90-id chunks, one request at a time, summing
+ *  `updated`. A failing chunk rejects with how far the run got — earlier
+ *  chunks are already applied server-side. */
+export async function runChunkedBulk(
+  ids: readonly string[],
+  send: (chunk: string[]) => Promise<{ updated: number }>,
+): Promise<{ updated: number }> {
+  const unique = [...new Set(ids)];
+  let updated = 0;
+  let done = 0;
+  for (const chunk of chunkIds(unique)) {
+    try {
+      updated += (await send(chunk)).updated;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(done > 0 ? `Bulk action failed after ${done} of ${unique.length} alerts: ${msg}` : msg);
+    }
+    done += chunk.length;
+  }
+  return { updated };
+}
+
+/** Bulk-triage many signals at once (status and/or assignee). Selections
+ *  above TENANT_BULK_MAX_ALERTS are sent as sequential chunks. */
 export function useBulkUpdateAlerts() {
   const { user } = useAuth();
   const orgId = user?.organization?.id ?? null;
@@ -235,12 +271,15 @@ export function useBulkUpdateAlerts() {
 
   return useMutation({
     mutationFn: async ({ alertIds, status, assignedTo }: { alertIds: string[]; status?: AlertAction; assignedTo?: string | null }) => {
-      const body: Record<string, unknown> = { alert_ids: alertIds };
-      if (status) body.status = status;
-      if (assignedTo !== undefined) body.assigned_to = assignedTo;
-      return apiPost<{ updated: number }>(`/api/orgs/${orgId}/alerts/bulk`, body);
+      return runChunkedBulk(alertIds, async (chunk) => {
+        const body: Record<string, unknown> = { alert_ids: chunk };
+        if (status) body.status = status;
+        if (assignedTo !== undefined) body.assigned_to = assignedTo;
+        return (await apiPost<{ updated: number }>(`/api/orgs/${orgId}/alerts/bulk`, body)).data;
+      });
     },
-    onSuccess: () => {
+    // onSettled, not onSuccess: a partial failure has still applied earlier chunks.
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['tenant-alerts', orgId] });
       qc.invalidateQueries({ queryKey: ['tenant-dashboard', orgId] });
     },
