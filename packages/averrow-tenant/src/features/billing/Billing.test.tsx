@@ -115,20 +115,44 @@ describe('Billing — tenant billing surface smoke test', () => {
     expect(screen.getByText(/isn't on a billed plan yet/)).toBeInTheDocument();
   });
 
-  it.each(['super_admin', 'admin', 'auditor'])('hides checkout/portal controls for staff role %s with the read-only note', (role) => {
+  it.each(['super_admin', 'admin'])('shows checkout/portal controls for staff role %s holding an org owner seat (staff crossover)', (role) => {
     mockAuth(role, 'owner');
+    mockBilling();
+    renderBillingAt('/settings/billing');
+    expect(screen.getByRole('button', { name: /Manage in Stripe/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only for Averrow staff/)).not.toBeInTheDocument();
+  });
+
+  it('shows the subscribe button for a staff super_admin on an unbilled org', () => {
+    mockAuth('super_admin', 'owner');
+    mockBilling({ data: { ...BASE_SUMMARY, billing_status: 'unbilled' } });
+    renderBillingAt('/settings/billing');
+    expect(screen.getByText('Start your subscription')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Subscribe/ })).toBeInTheDocument();
+  });
+
+  it('hides checkout/portal controls for the read-only auditor seat and explains why', () => {
+    mockAuth('auditor', 'owner');
     mockBilling();
     renderBillingAt('/settings/billing');
     expect(screen.getByText('Professional')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Manage in Stripe/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('note')).toHaveTextContent(/Read-only for Averrow staff/);
+    expect(screen.getByText(/Read-only for Averrow staff/)).toBeInTheDocument();
   });
 
-  it('hides the subscribe button for staff on an unbilled org', () => {
-    mockAuth('super_admin', 'owner');
-    mockBilling({ data: { ...BASE_SUMMARY, billing_status: 'unbilled' } });
+  it('hides checkout/portal controls for a staff analyst without an org admin seat, with the staff note', () => {
+    mockAuth('analyst', 'viewer');
+    mockBilling();
     renderBillingAt('/settings/billing');
-    expect(screen.queryByRole('button', { name: /Subscribe/ })).not.toBeInTheDocument();
-    expect(screen.queryByText('Start your subscription')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Manage in Stripe/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Read-only for Averrow staff/)).toBeInTheDocument();
+  });
+
+  it('keeps the controls (and no staff note) for a customer org admin', () => {
+    mockAuth('client', 'admin');
+    mockBilling();
+    renderBillingAt('/settings/billing');
+    expect(screen.getByRole('button', { name: /Manage in Stripe/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only for Averrow staff/)).not.toBeInTheDocument();
   });
 });

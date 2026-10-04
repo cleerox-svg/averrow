@@ -21,15 +21,23 @@ import {
   type BillingSummary,
   type BillingPlan,
 } from '@/lib/billing';
+import { useAuth } from '@/lib/auth';
 import { useIsStaff } from '@/lib/alerts';
 import { StaffTriageNote } from '@/features/alerts/AlertActions';
+import { canManageCrossover } from '@/lib/staffCrossover';
 
 export function Billing() {
   const { data, isLoading, error } = useBillingSummary();
-  // Staff never start a checkout / open the portal as the customer: the
-  // worker 403s them (a staff email must never become the customer's Stripe
-  // customer_email), so the controls are hidden behind the read-only note.
+  // Billing is a staff crossover surface (lib/staffCrossover.ts): staff that
+  // pass the worker's requireOrgAdmin gate (super_admin) may start checkout /
+  // open the portal on the customer's behalf — the worker sends the
+  // CUSTOMER owner's email to Stripe, never the staff email. Customers keep
+  // the controls as before (a viewer's attempt is refused server-side); staff
+  // who can't pass the gate (the read-only auditor seat) see the read-only
+  // note instead, so the missing controls are explained.
+  const { user } = useAuth();
   const isStaff = useIsStaff();
+  const staffCanManage = canManageCrossover(user?.role, user?.organization?.role, 'admin');
   const [searchParams] = useSearchParams();
   const checkoutResult = searchParams.get('checkout'); // 'success' | 'cancelled' | null
 
@@ -78,7 +86,7 @@ export function Billing() {
           <StatusCard summary={data} />
           <PlanCard summary={data} />
           {data.per_module_subscriptions.length > 0 && <ModulesCard summary={data} />}
-          {isStaff ? <StaffTriageNote /> : <ManageBillingCard summary={data} />}
+          {isStaff && !staffCanManage ? <StaffTriageNote /> : <ManageBillingCard summary={data} />}
           {data.active_overrides.length > 0 && <AdjustmentsCard summary={data} />}
         </>
       )}

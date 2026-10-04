@@ -820,10 +820,8 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   must work from the Averrow console` to any `isPlatformStaff` caller on:
   investigations (create/update/items/notes), takedown create/PATCH,
   abuse-mailbox status (at the ROUTE layer — `adminAbuseMailbox.ts` reuses
-  the handler for the self-org), trademark asset upload/delete,
-  takedown-authorization sign/revoke, executives, monitoring-config,
-  billing checkout-session/portal-session (a staff email must never become
-  the customer's Stripe `customer_email`). Org
+  the handler for the self-org), takedown-authorization sign/revoke (the
+  four crossover surfaces below are the only exception). Org
   administration (invite, members, brands, api-keys, integrations, webhook,
   ownership transfer) stays staff-reachable by design, but what the customer
   sees is masked: invite emails name the inviter "Averrow SOC"; the members
@@ -837,6 +835,26 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   takedown webhooks carry `updated_by: null, updated_by_name: "Averrow SOC"`;
   tenant ones carry the member's id + display name (same shape).
   The tenant takedown detail omits `notes` (shared with ops staff notes).
+- **Staff crossover allowance — the ONLY customer-data exception (owner
+  decision 2026-10-04).** Staff may manage four tenant surfaces on the
+  customer's behalf, so these do NOT call `refuseStaffTenantWrite`:
+  executives (create/PATCH/PUT/DELETE), monitoring-config PATCH, trademark
+  asset upload/delete, billing checkout-session/portal-session. Org access is
+  not widened — staff still pass each handler's own gate (`requireOrgAdmin` /
+  `canPerformHITL` / `canManageAssets`): in practice `super_admin` (incl. the
+  lead-conversion placeholder owner) or a staff user holding a qualifying
+  legacy org seat; `auditor` gets an explicit 403 on every crossover write
+  (`refuseReadOnlyGlobalWrite`, `lib/tenant-staff-guard.ts`). Staff are still
+  never identified: audit rows render "Averrow SOC" (`handleTenantAuditLog`;
+  billing sessions are audited as `billing_checkout_session` /
+  `billing_portal_session`), `trademark_assets.created_by` is never selected
+  by a tenant read, and a staff checkout sends the org's CUSTOMER owner email
+  (lowest-id active `owner` membership whose user is active and non-staff) as
+  Stripe `customer_email`, never the staff email. With no Stripe customer and
+  no such owner, a staff checkout is refused 409 `Invite the customer owner
+  before starting checkout` — otherwise Stripe would prompt the staff member
+  for an email that becomes the customer's (`customerEmailForCheckout`,
+  `handlers/tenantBilling.ts`).
 - Account handling enforces "no tenant staff": the admin role PATCH
   (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
   for a user with an active `org_members` row (400; status-only PATCHes and

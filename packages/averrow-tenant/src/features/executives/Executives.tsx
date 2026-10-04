@@ -15,17 +15,19 @@
 // FINDINGS (what the monitor detected); this page manages the REGISTRY
 // that feeds detection — same relationship as Monitoring Rules (config)
 // vs. Alerts (findings). Mutations are org-admin-only server side
-// (requireOrgAdmin) and refuse Averrow staff (refuseStaffTenantWrite), so
-// controls need a CUSTOMER org admin/owner: canManageMembers && !isStaff.
+// (requireOrgAdmin). Executives are one of the four staff crossover surfaces
+// (lib/staffCrossover.ts): Averrow staff that pass requireOrgAdmin (e.g.
+// super_admin, the lead-conversion placeholder owner) manage the registry on
+// the customer's behalf, so the controls mirror that gate.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { UserCog, Plus, Pencil, Trash2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { parseInitials } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
-import { canManageMembers } from '@/lib/members';
+import { canManageCrossover } from '@/lib/staffCrossover';
 import { useTenantDashboard, type DashboardBrand } from '@/lib/dashboard';
-import { useTenantAlerts, useIsStaff } from '@/lib/alerts';
+import { useTenantAlerts } from '@/lib/alerts';
 import {
   useOrgExecutives,
   useCreateExecutive,
@@ -44,8 +46,7 @@ const EXEC_ALERT_TYPE = 'executive_impersonation';
 
 export function Executives() {
   const { user } = useAuth();
-  const isStaff = useIsStaff();
-  const canManage = !isStaff && canManageMembers(user?.role, user?.organization?.role);
+  const canManage = canManageCrossover(user?.role, user?.organization?.role, 'admin');
   const dash = useTenantDashboard();
   const brands = dash.data?.brands ?? [];
 
@@ -118,9 +119,7 @@ export function Executives() {
         <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4 flex items-start gap-3">
           <AlertTriangle className="text-amber flex-shrink-0 mt-0.5" size={16} />
           <p className="text-[12px] text-white/65 leading-relaxed">
-            {isStaff
-              ? 'Read-only — Averrow staff manage the executive registry from the Averrow console, not as the customer.'
-              : 'Org admins and owners can register, edit, and remove executives. You can view the registry read-only.'}
+            Org admins and owners can register, edit, and remove executives. You can view the registry read-only.
           </p>
         </section>
       )}

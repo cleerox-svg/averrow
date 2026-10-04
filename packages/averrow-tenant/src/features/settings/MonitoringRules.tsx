@@ -1,19 +1,24 @@
 // Monitoring Rules — per-brand watchlist + suppression + signal severity
 // floor + notifications (TENANT_ANALYST_UX_RESEARCH_2026-06 #14). Backed by
-// the existing monitoring-config endpoint; no new backend.
+// the existing monitoring-config endpoint; no new backend. One of the four
+// staff crossover surfaces (lib/staffCrossover.ts): staff that pass the
+// worker's canPerformHITL gate edit rules on the customer's behalf.
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useTenantDashboard } from '@/lib/dashboard';
-import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { useAuth } from '@/lib/auth';
+import { useIsStaff } from '@/lib/alerts';
 import { StaffTriageNote } from '@/features/alerts/AlertActions';
+import { canManageCrossover } from '@/lib/staffCrossover';
 import {
   useMonitoringConfig, useUpdateMonitoringConfig, SEVERITY_LEVELS,
   type MonitoringConfig,
 } from '@/lib/monitoring';
 
 export function MonitoringRules() {
-  const canEdit = useCanTriage();
+  const { user } = useAuth();
+  const canEdit = canManageCrossover(user?.role, user?.organization?.role, 'analyst');
   const dash = useTenantDashboard();
   const brands = dash.data?.brands ?? [];
   const [brandId, setBrandId] = useState<string | null>(null);
@@ -67,6 +72,8 @@ export function MonitoringRules() {
 }
 
 function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }) {
+  // Staff who can't edit (the read-only auditor seat) get the staff note, not
+  // the customer-facing "Analyst role required" hint.
   const isStaff = useIsStaff();
   const { data, isLoading, error } = useMonitoringConfig(brandId);
   const update = useUpdateMonitoringConfig(brandId);

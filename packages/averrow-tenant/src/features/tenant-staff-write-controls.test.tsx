@@ -1,9 +1,12 @@
 // Write controls the worker refuses for Averrow staff (owner decision
 // 2026-10-04: staff never act as the customer on tenant routes) are hidden
 // for staff — and for customers below the required org role — in the tenant
-// app: abuse-mailbox status flips, trademark asset upload/delete,
-// takedown-authorization sign/revoke, and the domain-findings "Request
-// takedown" CTA.
+// app: abuse-mailbox status flips, takedown-authorization sign/revoke, and
+// the domain-findings "Request takedown" CTA.
+//
+// Trademark asset upload/delete is one of the four staff CROSSOVER surfaces
+// (with executives, monitoring rules, billing): staff that pass the worker's
+// gate (super_admin) get the controls; the read-only auditor seat does not.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
@@ -13,6 +16,11 @@ vi.mock('@/lib/auth', () => ({ useAuth: vi.fn() }));
 vi.mock('@/lib/abuseMailboxModule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/abuseMailboxModule')>();
   return { ...actual, useUpdateAbuseMessageStatus: vi.fn() };
+});
+vi.mock('@/lib/dashboard', () => ({ useTenantDashboard: vi.fn() }));
+vi.mock('@/lib/monitoring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/monitoring')>();
+  return { ...actual, useMonitoringConfig: vi.fn(), useUpdateMonitoringConfig: vi.fn() };
 });
 vi.mock('@/lib/trademarkModule', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/trademarkModule')>();
@@ -26,6 +34,9 @@ import { canSignAuthorization, canRevokeAuthorization } from '@/lib/takedownAuth
 import { TenantStatusActions } from './abuse-mailbox/AbuseMailbox';
 import { AssetsSection } from './trademark/BrandTrademarkFindings';
 import { MaliciousDomainsSection } from './domain/BrandDomainFindings';
+import { MonitoringRules } from './settings/MonitoringRules';
+import { useTenantDashboard } from '@/lib/dashboard';
+import { useMonitoringConfig, useUpdateMonitoringConfig, type MonitoringConfig } from '@/lib/monitoring';
 import type { MaliciousDomainRow } from '@/lib/domainModule';
 
 function mockAuth(globalRole: string, orgRole: string) {
@@ -45,6 +56,46 @@ beforeEach(() => {
   vi.mocked(useUpdateAbuseMessageStatus).mockReturnValue(mutationStub as unknown as ReturnType<typeof useUpdateAbuseMessageStatus>);
   vi.mocked(useUploadTrademarkAsset).mockReturnValue(mutationStub as unknown as ReturnType<typeof useUploadTrademarkAsset>);
   vi.mocked(useDeleteTrademarkAsset).mockReturnValue(mutationStub as unknown as ReturnType<typeof useDeleteTrademarkAsset>);
+  vi.mocked(useTenantDashboard).mockReturnValue({
+    data: { brands: [{ id: 'b1', name: 'Acme' }] }, isLoading: false,
+  } as unknown as ReturnType<typeof useTenantDashboard>);
+  vi.mocked(useMonitoringConfig).mockReturnValue({
+    data: MONITORING_CFG, isLoading: false, error: null,
+  } as unknown as ReturnType<typeof useMonitoringConfig>);
+  vi.mocked(useUpdateMonitoringConfig).mockReturnValue(
+    { ...mutationStub, isError: false, isSuccess: false } as unknown as ReturnType<typeof useUpdateMonitoringConfig>,
+  );
+});
+
+const MONITORING_CFG: MonitoringConfig = {
+  alert_severity_filter: ['CRITICAL', 'HIGH'], auto_acknowledge_low_days: 0,
+  social_platforms_monitored: [], email_notifications: true, email_notification_threshold: 'HIGH',
+  weekly_digest: false, custom_keywords: [], excluded_domains: [],
+};
+
+describe('monitoring rules (staff crossover surface)', () => {
+  it.each([['super_admin', 'owner'], ['admin', 'owner'], ['client', 'analyst']])(
+    'edit controls render for %s with org role %s', (g, o) => {
+      mockAuth(g, o);
+      renderWithProviders(<MonitoringRules />);
+      expect(screen.getByRole('button', { name: 'Save rules' })).toBeInTheDocument();
+      expect(screen.queryByRole('note')).not.toBeInTheDocument();
+    });
+
+  it('the read-only auditor seat gets the staff note, not the analyst-role hint', () => {
+    mockAuth('auditor', 'owner');
+    renderWithProviders(<MonitoringRules />);
+    expect(screen.queryByRole('button', { name: 'Save rules' })).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent(/Read-only for Averrow staff/);
+    expect(screen.queryByText('Analyst role required to edit.')).not.toBeInTheDocument();
+  });
+
+  it('a customer viewer still sees the analyst-role hint', () => {
+    mockAuth('client', 'viewer');
+    renderWithProviders(<MonitoringRules />);
+    expect(screen.queryByRole('button', { name: 'Save rules' })).not.toBeInTheDocument();
+    expect(screen.getByRole('note')).toHaveTextContent('Analyst role required to edit.');
+  });
 });
 
 const MESSAGE = { id: 'm1', status: 'new' } as unknown as AbuseInboxMessageRow;
@@ -85,12 +136,23 @@ describe('trademark asset controls', () => {
     expect(screen.getByTitle('Remove asset')).toBeInTheDocument();
   });
 
-  it('upload + delete are hidden for staff (placeholder super_admin owner)', () => {
+  it('upload + delete render for staff that pass the gate (placeholder super_admin owner) — crossover', () => {
     mockAuth('super_admin', 'owner');
     renderWithProviders(<AssetsSection assets={[ASSET]} brandId="b1" />);
-    expect(screen.queryByRole('button', { name: /Upload image/ })).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Remove asset')).not.toBeInTheDocument();
-    expect(screen.getByText('Acme Mark')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Upload image/ })).toBeInTheDocument();
+    expect(screen.getByTitle('Remove asset')).toBeInTheDocument();
+    expect(screen.queryByText(/Averrow console|Read-only for Averrow staff/)).not.toBeInTheDocument();
+  });
+
+  it('upload + delete are hidden for the read-only auditor seat and a customer viewer', () => {
+    for (const [g, o] of [['auditor', 'owner'], ['client', 'viewer']] as const) {
+      mockAuth(g, o);
+      const { unmount } = renderWithProviders(<AssetsSection assets={[ASSET]} brandId="b1" />);
+      expect(screen.queryByRole('button', { name: /Upload image/ })).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Remove asset')).not.toBeInTheDocument();
+      expect(screen.getByText('Acme Mark')).toBeInTheDocument();
+      unmount();
+    }
   });
 });
 

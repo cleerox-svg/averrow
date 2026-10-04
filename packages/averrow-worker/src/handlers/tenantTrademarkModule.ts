@@ -21,8 +21,9 @@ import { json, corsHeaders } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
-import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
 import { requireModule, ModuleNotEntitledError } from "../lib/entitlements";
+import { audit } from "../lib/audit";
 
 // Asset management (upload/delete) requires an org analyst+ role. Kept as a
 // distinct predicate from canPerformHITL — same threshold today, but a
@@ -82,9 +83,13 @@ export async function handleUploadTrademarkAsset(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
-  // Staff never upload as the customer (created_by would be a staff id).
-  const staffErr = refuseStaffTenantWrite(ctx, origin);
-  if (staffErr) return staffErr;
+  const roErr = refuseReadOnlyGlobalWrite(ctx, origin);
+  if (roErr) return roErr;
+  // Staff crossover allowance (owner decision 2026-10-04,
+  // lib/tenant-staff-guard.ts): staff that pass canManageAssets may upload on
+  // the customer's behalf. created_by then holds a staff id — it is never
+  // selected by any tenant read (handleGetBrandTrademarkFindings lists
+  // explicit columns), so it is not exposed to the customer.
 
   const orgIdNum = Number(orgId);
   if (!Number.isFinite(orgIdNum)) return json({ success: false, error: "Invalid organization id" }, 400, origin);
@@ -159,6 +164,15 @@ export async function handleUploadTrademarkAsset(
     ctx.userId,
   ).run();
 
+  // Customer-visible in the tenant audit log; a staff actor (crossover
+  // allowance) is rendered "Averrow SOC" by handleTenantAuditLog.
+  await audit(env, {
+    action: "trademark_asset_upload", userId: ctx.userId,
+    resourceType: "trademark_asset", resourceId: assetId,
+    details: { org_id: orgId, brand_id: brandId, asset_type: assetType },
+    outcome: "success", request,
+  });
+
   return json({ success: true, data: { id: assetId, asset_url: assetUrl, asset_hash: sha256, asset_type: assetType } }, 201, origin);
 }
 
@@ -211,8 +225,8 @@ export async function handleDeleteTrademarkAsset(
   const origin = request.headers.get("Origin");
   const accessError = verifyOrgAccess(ctx, orgId);
   if (accessError) return json({ success: false, error: accessError }, 403, origin);
-  const staffErr = refuseStaffTenantWrite(ctx, origin);
-  if (staffErr) return staffErr;
+  const roErr = refuseReadOnlyGlobalWrite(ctx, origin);
+  if (roErr) return roErr;
   if (!canManageAssets(ctx)) {
     return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
   }
@@ -233,6 +247,13 @@ export async function handleDeleteTrademarkAsset(
   await env.DB.prepare(
     "UPDATE trademark_assets SET status = 'retired', updated_at = datetime('now') WHERE id = ?",
   ).bind(assetId).run();
+
+  await audit(env, {
+    action: "trademark_asset_delete", userId: ctx.userId,
+    resourceType: "trademark_asset", resourceId: assetId,
+    details: { org_id: orgId, brand_id: row.brand_id },
+    outcome: "success", request,
+  });
 
   return json({ success: true, message: "Asset removed" }, 200, origin);
 }

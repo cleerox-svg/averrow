@@ -7,7 +7,8 @@
 // Phase B sprint 7.
 
 import { useEffect, useRef, useState } from 'react';
-import { useCanTriage } from '@/lib/alerts';
+import { useAuth } from '@/lib/auth';
+import { canManageCrossover } from '@/lib/staffCrossover';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Image as ImageIcon, Upload, Trash2 } from 'lucide-react';
 import {
@@ -65,9 +66,11 @@ export function BrandTrademarkFindings() {
 }
 
 export function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]; brandId: string }) {
-  // Upload/delete are customer analyst+ actions; the worker refuses staff on
-  // these tenant writes (403), so staff never get the controls.
-  const canManage = useCanTriage();
+  // Upload/delete need org analyst+ (worker canManageAssets). Trademark
+  // assets are a staff crossover surface (lib/staffCrossover.ts): staff that
+  // pass the worker gate (super_admin) manage them on the customer's behalf.
+  const { user } = useAuth();
+  const canManage = canManageCrossover(user?.role, user?.organization?.role, 'analyst');
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">

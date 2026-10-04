@@ -14,13 +14,29 @@
 // exceptions (org membership / invites / brands / api keys / integrations /
 // webhook / ownership transfer — CLAUDE.md §7 "Org owner seats") keep
 // working and mask the staff actor on their customer-visible outputs
-// instead. Billing checkout/portal sessions (handlers/tenantBilling.ts) are
-// refused too: a staff checkout would stamp the staff email as the
-// customer's Stripe customer_email. Tenant alert writes have their own message
-// (STAFF_TENANT_ALERT_WRITE_ERROR in handlers/tenantData.ts).
+// instead.
+//
+// STAFF CROSSOVER ALLOWANCE (owner decision 2026-10-04, the single customer-
+// data exception): staff may manage these four surfaces on the customer's
+// behalf, so they do NOT call refuseStaffTenantWrite —
+//   1. executives          — handlers/tenantExecutives.ts (create/PATCH/PUT/DELETE)
+//   2. monitoring rules    — handlers/tenantData.ts handleUpdateMonitoringConfig
+//   3. trademark assets    — handlers/tenantTrademarkModule.ts (upload/delete)
+//   4. billing             — handlers/tenantBilling.ts (checkout/portal; a staff
+//                            checkout sends the org's CUSTOMER owner email to
+//                            Stripe, never the staff email; with no Stripe
+//                            customer and no customer owner it is 409)
+// Org access is NOT widened: staff still pass each handler's own org gate
+// (requireOrgAdmin / canPerformHITL / canManageAssets), which in practice
+// means super_admin (global) or a staff member holding a qualifying org
+// membership (the lead-conversion placeholder owner). The staff actor is
+// masked on every customer-visible output ("Averrow SOC"). Every OTHER
+// customer-data write (investigations, takedowns, abuse-mailbox status,
+// takedown authorization, alerts) stays refused. Tenant alert writes have
+// their own message (STAFF_TENANT_ALERT_WRITE_ERROR in handlers/tenantData.ts).
 
 import { json } from "./cors";
-import { isPlatformStaff } from "../middleware/auth";
+import { isPlatformStaff, isReadOnlyGlobalRole } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 
 export const STAFF_TENANT_WRITE_ERROR = "Staff must work from the Averrow console";
@@ -33,4 +49,16 @@ export function refuseStaffTenantWrite(
 ): Response | null {
   if (!isPlatformStaff(ctx.role)) return null;
   return json({ success: false, error: STAFF_TENANT_WRITE_ERROR }, 403, origin);
+}
+
+/** 403 Response for the read-only global seat (`auditor`), else null.
+ *  Explicit write-guard on the four staff crossover surfaces — the same
+ *  `isReadOnlyGlobalRole` block the abuse-mailbox status writers carry —
+ *  so auditor stays refused even if a handler's org-role gate changes. */
+export function refuseReadOnlyGlobalWrite(
+  ctx: Pick<AuthContext, "role">,
+  origin: string | null,
+): Response | null {
+  if (!isReadOnlyGlobalRole(ctx.role)) return null;
+  return json({ success: false, error: "Forbidden: read-only role" }, 403, origin);
 }
