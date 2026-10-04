@@ -14,14 +14,19 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { registerDashboardRoutes } from "../src/routes/dashboard";
+import { handleTenantAlerts, handleTenantAlertDetail, AVERROW_SOC_LABEL } from "../src/handlers/tenantData";
+import type { AuthContext } from "../src/middleware/auth";
+import { deriveSchema, splitStatements } from "./migration-schema";
 import { signJWT } from "../src/lib/jwt";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import type { Env, JWTPayload, UserRole } from "../src/types";
 
 const SECRET = "test-secret-ops-alerts-platform-wide";
 
-const TABLES = ["users", "brands", "alerts", "threats", "saas_techniques", "takedown_requests"];
+const TABLES = ["users", "brands", "alerts", "threats", "saas_techniques", "takedown_requests", "org_brands"];
 
 const STAFF_ROLES: UserRole[] = ["super_admin", "admin", "analyst", "sales", "support", "billing", "auditor"];
 const EDITORS: UserRole[] = ["super_admin", "admin", "analyst", "support"];
@@ -167,7 +172,9 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
       expect(data.new_count).toBe(NEW_COUNT);
       expect(data.critical).toBe(2);
       expect(data.high).toBe(2);
-      expect((data.by_brand as unknown[]).length).toBe(3);
+      expect(data.auto_dismissed).toBe(0);
+      // by_brand (unbounded GROUP BY, unused by ops) was dropped.
+      expect(data).not.toHaveProperty("by_brand");
     });
 
     it(`${role}: triage-summary is platform-wide with the most-severe-newest top`, async () => {
@@ -212,14 +219,16 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
       expect(JSON.parse(String(entry!.bound[5]))).toMatchObject({ previous_status: "new", new_status: "acknowledged" });
     });
 
-    it(`${role}: PATCH assignment records previous + new assignee`, async () => {
-      const res = await call(role, "/api/alerts/a_low_new", "PATCH", { assigned_to: `u_${role}` });
+    it(`${role}: PATCH staff claim writes staff_assigned_to, never the customer's assigned_to`, async () => {
+      const res = await call(role, "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: `u_${role}` });
       expect(res.status).toBe(200);
-      const row = raw.prepare("SELECT assigned_to, assigned_at FROM alerts WHERE id = 'a_low_new'").all()[0] as Record<string, unknown>;
-      expect(row.assigned_to).toBe(`u_${role}`);
-      expect(row.assigned_at).not.toBeNull();
+      const row = raw.prepare("SELECT assigned_to, assigned_at, staff_assigned_to, staff_assigned_at FROM alerts WHERE id = 'a_low_new'").all()[0] as Record<string, unknown>;
+      expect(row.staff_assigned_to).toBe(`u_${role}`);
+      expect(row.staff_assigned_at).not.toBeNull();
+      expect(row.assigned_to).toBeNull();
+      expect(row.assigned_at).toBeNull();
       const entry = audits.find((a) => a.bound.includes("alert_update"))!;
-      expect(JSON.parse(String(entry.bound[5]))).toMatchObject({ previous_assigned_to: null, assigned_to: `u_${role}` });
+      expect(JSON.parse(String(entry.bound[5]))).toMatchObject({ previous_staff_assigned_to: null, staff_assigned_to: `u_${role}` });
     });
 
     it(`${role}: bulk-acknowledge by ids spans tenants`, async () => {
@@ -245,8 +254,11 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     it(`${role}: bulk-takedown resolves alerts from any tenant`, async () => {
       const res = await call(role, "/api/alerts/bulk-takedown", "POST", { alert_ids: ["a_high_new", "a_crit_new_old"] });
       expect(res.status).toBe(200);
-      const { data } = await res.json<{ data: { takedowns_created: number; alerts_acknowledged: number } }>();
-      expect(data).toEqual({ takedowns_created: 2, alerts_acknowledged: 2 });
+      const { data } = await res.json<{ data: { takedowns_created: number; alerts_acknowledged: number; alert_ids: string[]; remaining: number } }>();
+      expect(data.takedowns_created).toBe(2);
+      expect(data.alerts_acknowledged).toBe(2);
+      expect([...data.alert_ids].sort()).toEqual(["a_crit_new_old", "a_high_new"]);
+      expect(data.remaining).toBe(0);
       const n = raw.prepare("SELECT COUNT(*) AS n FROM takedown_requests").all()[0] as { n: number };
       expect(n.n).toBe(2);
       expect(audits.some((a) => a.bound.includes("alert_bulk_takedown") && a.bound[1] === `u_${role}`)).toBe(true);
@@ -323,5 +335,323 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     const after = await (await call("admin", "/api/alerts/triage-summary")).json<{ data: { new_count: number; top: { id: string } } }>();
     expect(after.data.new_count).toBe(NEW_COUNT - 1);
     expect(after.data.top.id).toBe("a_crit_new_old");
+  });
+
+  // ─── PR-C review fixes ──────────────────────────────────────────────
+
+  function auditDetails(action: string): Record<string, unknown> {
+    const entry = audits.find((a) => a.bound.includes(action));
+    expect(entry, `${action} audit row`).toBeDefined();
+    return JSON.parse(String(entry!.bound[5])) as Record<string, unknown>;
+  }
+
+  /** Seed `n` extra status='new' alerts on `brand` (all owned by a tenant user). */
+  function seedNew(brand: string, n: number, prefix = "bulk"): void {
+    const ins = raw.prepare(
+      `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, created_at, updated_at)
+       VALUES (?, ?, 't_alice', 'phishing_detected', 'medium', ?, 'summary', 'new', ?, ?)`,
+    );
+    for (let i = 0; i < n; i++) ins.run(`${prefix}_${i}`, brand, `Bulk ${i}`, ts(100 + i), ts(100 + i));
+  }
+
+  function count(sql: string): number {
+    return (raw.prepare(sql).all()[0] as { n: number }).n;
+  }
+
+  describe("staff assignment + notes", () => {
+    it("PATCH with assigned_to is 400 and changes nothing", async () => {
+      const res = await call("admin", "/api/alerts/a_low_new", "PATCH", { assigned_to: "u_admin", status: "acknowledged" });
+      expect(res.status).toBe(400);
+      const body = await res.json<{ success: boolean; error: string }>();
+      expect(body.error).toMatch(/staff_assigned_to/);
+      expect(statusOf("a_low_new")).toBe("new");
+      expect(audits).toEqual([]);
+    });
+
+    it("staff_assigned_to must be an active staff user (client / unknown / suspended → 400)", async () => {
+      raw.prepare("INSERT INTO users (id, email, name, role, status) VALUES ('u_gone', 'gone@averrow.local', 'gone', 'analyst', 'suspended')").run();
+      for (const bad of ["t_alice", "u_client", "u_nope", "u_gone", "", 42]) {
+        const res = await call("admin", "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: bad });
+        expect(res.status, String(bad)).toBe(400);
+      }
+      const row = raw.prepare("SELECT staff_assigned_to FROM alerts WHERE id = 'a_low_new'").all()[0] as Record<string, unknown>;
+      expect(row.staff_assigned_to).toBeNull();
+    });
+
+    it("any staff user (even a non-editor role) can be the staff assignee; null releases the claim", async () => {
+      expect((await call("admin", "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: "u_sales" })).status).toBe(200);
+      expect((await call("admin", "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: null })).status).toBe(200);
+      const row = raw.prepare("SELECT staff_assigned_to, staff_assigned_at FROM alerts WHERE id = 'a_low_new'").all()[0] as Record<string, unknown>;
+      expect(row).toEqual({ staff_assigned_to: null, staff_assigned_at: null });
+    });
+
+    it("notes go to staff_notes (never resolution_notes); audit notes truncated to 500", async () => {
+      const longNote = "n".repeat(1200);
+      const res = await call("analyst", "/api/alerts/a_high_new", "PATCH", { status: "resolved", notes: longNote });
+      expect(res.status).toBe(200);
+      const row = raw.prepare("SELECT status, resolved_at, resolution_notes, staff_notes FROM alerts WHERE id = 'a_high_new'").all()[0] as Record<string, unknown>;
+      expect(row.status).toBe("resolved");
+      expect(row.resolved_at).not.toBeNull();
+      expect(row.resolution_notes).toBeNull();
+      expect(row.staff_notes).toBe(longNote);
+      const d = auditDetails("alert_update");
+      expect(String(d.staff_notes)).toHaveLength(500);
+    });
+
+    it("notes alone is a valid PATCH; over 4000 chars is 400", async () => {
+      expect((await call("analyst", "/api/alerts/a_high_new", "PATCH", { notes: "triaged" })).status).toBe(200);
+      expect(statusOf("a_high_new")).toBe("new");
+      expect((await call("analyst", "/api/alerts/a_high_new", "PATCH", { notes: "x".repeat(4001) })).status).toBe(400);
+    });
+
+    it("get-by-id carries the customer assignee name, the staff assignee + notes, and the SaaS technique columns", async () => {
+      raw.exec("UPDATE alerts SET assigned_to = 't_alice' WHERE id = 'a_high_new'");
+      await call("admin", "/api/alerts/a_high_new", "PATCH", { staff_assigned_to: "u_analyst", notes: "internal: checking registrar" });
+      const res = await call("support", "/api/alerts/a_high_new");
+      expect(res.status).toBe(200);
+      const { data } = await res.json<{ data: Record<string, unknown> }>();
+      expect(data).toMatchObject({
+        id: "a_high_new",
+        assigned_to: "t_alice",
+        assigned_to_name: "t_alice",
+        assigned_to_email: "t_alice@cust.example",
+        staff_assigned_to: "u_analyst",
+        staff_assigned_to_name: "analyst",
+        staff_assigned_to_email: "analyst@averrow.local",
+        staff_notes: "internal: checking registrar",
+      });
+      expect(data.staff_assigned_at).not.toBeNull();
+      for (const k of ["saas_technique_id", "saas_technique_name", "saas_technique_phase", "saas_technique_phase_label", "saas_technique_severity"]) {
+        expect(data, k).toHaveProperty(k);
+      }
+    });
+
+    it("list rows carry staff_assigned_to_name + staff_notes", async () => {
+      await call("admin", "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: "u_admin", notes: "mine" });
+      const { data } = await (await call("analyst", "/api/alerts?limit=50")).json<{ data: Array<Record<string, unknown>> }>();
+      const row = data.find((a) => a.id === "a_low_new")!;
+      expect(row).toMatchObject({ staff_assigned_to: "u_admin", staff_assigned_to_name: "admin", staff_notes: "mine", assigned_to: null });
+    });
+  });
+
+  describe("tenant view of staff actions", () => {
+    const TENANT: AuthContext = {
+      userId: "t_alice", email: "t_alice@cust.example", role: "client",
+      orgId: "7", orgRole: "admin", embeddedScope: undefined,
+    } as AuthContext;
+
+    beforeEach(() => {
+      raw.exec("INSERT INTO org_brands (org_id, brand_id) VALUES (7, 'b1'), (7, 'b2')");
+    });
+
+    async function tenantList(): Promise<Array<Record<string, unknown>>> {
+      const res = await handleTenantAlerts(new Request("https://averrow.com/api/orgs/7/alerts"), env, "7", TENANT);
+      expect(res.status).toBe(200);
+      return (await res.json<{ data: Array<Record<string, unknown>> }>()).data;
+    }
+    async function tenantDetail(id: string): Promise<Record<string, unknown>> {
+      const res = await handleTenantAlertDetail(new Request(`https://averrow.com/api/orgs/7/alerts/${id}`), env, "7", id, TENANT);
+      expect(res.status).toBe(200);
+      return (await res.json<{ data: Record<string, unknown> }>()).data;
+    }
+
+    it("a staff claim shows as 'Averrow SOC'; no staff_* key, staff name or staff note reaches the customer", async () => {
+      await call("analyst", "/api/alerts/a_high_new", "PATCH", { status: "investigating", staff_assigned_to: "u_analyst", notes: "SECRET-STAFF-NOTE" });
+
+      const list = await tenantList();
+      const detail = await tenantDetail("a_high_new");
+      for (const view of [list.find((a) => a.id === "a_high_new")!, detail]) {
+        expect(view.status).toBe("investigating"); // staff status changes ARE visible
+        expect(view.assigned_to).toBeNull();
+        expect(view.assigned_to_name).toBe(AVERROW_SOC_LABEL);
+        expect(view.handled_by_averrow).toBe(true);
+        expect(view.resolution_notes ?? null).toBeNull();
+        expect(Object.keys(view).filter((k) => k.startsWith("staff_"))).toEqual([]);
+        const text = JSON.stringify(view);
+        expect(text).not.toContain("SECRET-STAFF-NOTE");
+        expect(text).not.toContain("u_analyst");
+        expect(text).not.toContain("analyst@averrow.local");
+      }
+      // Alerts staff never touched: no label, flag false.
+      const untouched = list.find((a) => a.id === "a_low_new")!;
+      expect(untouched).toMatchObject({ handled_by_averrow: false, assigned_to_name: null });
+    });
+
+    it("the customer's own assignee is untouched and wins over the staff claim", async () => {
+      raw.exec("UPDATE alerts SET assigned_to = 't_bob', assigned_at = datetime('now') WHERE id = 'a_low_new'");
+      await call("admin", "/api/alerts/a_low_new", "PATCH", { staff_assigned_to: "u_admin" });
+      const row = raw.prepare("SELECT assigned_to FROM alerts WHERE id = 'a_low_new'").all()[0] as Record<string, unknown>;
+      expect(row.assigned_to).toBe("t_bob");
+      const detail = await tenantDetail("a_low_new");
+      expect(detail).toMatchObject({ assigned_to: "t_bob", assigned_to_name: "t_bob", handled_by_averrow: true });
+      expect(Object.keys(detail).filter((k) => k.startsWith("staff_"))).toEqual([]);
+    });
+  });
+
+  describe("bulk caps (D1 100-bind limit)", () => {
+    const tooMany = Array.from({ length: 91 }, (_, i) => `x_${i}`);
+
+    it("more than 90 alert_ids → 400 on both bulk endpoints, nothing changes", async () => {
+      for (const path of ["/api/alerts/bulk-acknowledge", "/api/alerts/bulk-takedown"]) {
+        const res = await call("admin", path, "POST", { alert_ids: [...tooMany, "a_low_new"] });
+        expect(res.status, path).toBe(400);
+        expect((await res.json<{ error: string }>()).error).toMatch(/at most 90/);
+      }
+      expect(statusOf("a_low_new")).toBe("new");
+      expect(count("SELECT COUNT(*) AS n FROM takedown_requests")).toBe(0);
+    });
+
+    it("exactly 90 ids is accepted", async () => {
+      seedNew("b2", 90);
+      const ids = Array.from({ length: 90 }, (_, i) => `bulk_${i}`);
+      const res = await call("admin", "/api/alerts/bulk-acknowledge", "POST", { alert_ids: ids });
+      expect(res.status).toBe(200);
+      expect((await res.json<{ data: { updated: number } }>()).data.updated).toBe(90);
+    });
+
+    it("brand-wide acknowledge caps at 90, returns remaining, audits the affected ids", async () => {
+      seedNew("b1", 95); // + a_low_new + a_crit_new_old already new on b1 = 97
+      const first = await call("admin", "/api/alerts/bulk-acknowledge", "POST", { brand_id: "b1" });
+      expect(first.status).toBe(200);
+      const d1 = (await first.json<{ data: { updated: number; remaining: number; alert_ids: string[] } }>()).data;
+      expect(d1.updated).toBe(90);
+      expect(d1.remaining).toBe(7);
+      expect(d1.alert_ids).toHaveLength(90);
+      // most severe first: the critical b1 alert is in the first page
+      expect(d1.alert_ids).toContain("a_crit_new_old");
+      const ad = auditDetails("alert_bulk_acknowledge");
+      expect(ad.affected_ids).toEqual(d1.alert_ids);
+      expect((ad.affected_ids as unknown[]).every((x) => typeof x === "string")).toBe(true);
+
+      const second = await call("admin", "/api/alerts/bulk-acknowledge", "POST", { brand_id: "b1" });
+      const d2 = (await second.json<{ data: { updated: number; remaining: number } }>()).data;
+      expect(d2).toMatchObject({ updated: 7, remaining: 0 });
+      expect(count("SELECT COUNT(*) AS n FROM alerts WHERE brand_id = 'b1' AND status = 'new'")).toBe(0);
+    });
+  });
+
+  describe("bulk takedown", () => {
+    it("ids path skips resolved / false_positive / investigating alerts", async () => {
+      raw.exec("UPDATE alerts SET status = 'false_positive' WHERE id = 'a_low_new'");
+      raw.exec("UPDATE alerts SET status = 'investigating' WHERE id = 'a_crit_new_old'");
+      const res = await call("admin", "/api/alerts/bulk-takedown", "POST", {
+        alert_ids: ["a_high_resolved", "a_low_new", "a_crit_new_old", "a_med_ack", "a_high_new"],
+      });
+      expect(res.status).toBe(200);
+      const { data } = await res.json<{ data: { takedowns_created: number; alerts_acknowledged: number; alert_ids: string[] } }>();
+      expect(data.takedowns_created).toBe(2);
+      expect([...data.alert_ids].sort()).toEqual(["a_high_new", "a_med_ack"]);
+      expect(data.alerts_acknowledged).toBe(1); // a_med_ack was already acknowledged
+      expect(statusOf("a_high_resolved")).toBe("resolved");
+      expect(statusOf("a_low_new")).toBe("false_positive");
+      expect(statusOf("a_crit_new_old")).toBe("investigating");
+      const linked = raw.prepare("SELECT source_type, source_id FROM takedown_requests ORDER BY source_id").all();
+      expect(linked).toEqual([
+        { source_type: "alert", source_id: "a_high_new" },
+        { source_type: "alert", source_id: "a_med_ack" },
+      ]);
+      expect(auditDetails("alert_bulk_takedown")).toMatchObject({ takedowns_created: 2 });
+    });
+
+    it("by brand: only new/acknowledged alerts, and a repeat call creates no duplicates", async () => {
+      const res = await call("admin", "/api/alerts/bulk-takedown", "POST", { brand_id: "b3" });
+      expect(res.status).toBe(200);
+      const { data } = await res.json<{ data: { takedowns_created: number; alert_ids: string[]; remaining: number } }>();
+      expect(data).toMatchObject({ takedowns_created: 1, alert_ids: ["a_crit_new_newest"], remaining: 0 });
+      expect(statusOf("a_crit_new_newest")).toBe("acknowledged");
+      expect(statusOf("a_high_resolved")).toBe("resolved");
+      expect(auditDetails("alert_bulk_takedown").affected_ids).toEqual(["a_crit_new_newest"]);
+
+      const again = await call("admin", "/api/alerts/bulk-takedown", "POST", { brand_id: "b3" });
+      expect(again.status).toBe(404);
+      expect(count("SELECT COUNT(*) AS n FROM takedown_requests")).toBe(1);
+    });
+
+    it("by brand: bounded to 90 per call with remaining", async () => {
+      seedNew("b2", 95); // + a_high_new (new) + a_med_ack (ack) = 97 eligible
+      const d1 = (await (await call("admin", "/api/alerts/bulk-takedown", "POST", { brand_id: "b2" }))
+        .json<{ data: { takedowns_created: number; remaining: number } }>()).data;
+      expect(d1).toMatchObject({ takedowns_created: 90, remaining: 7 });
+      const d2 = (await (await call("admin", "/api/alerts/bulk-takedown", "POST", { brand_id: "b2" }))
+        .json<{ data: { takedowns_created: number; remaining: number } }>()).data;
+      expect(d2).toMatchObject({ takedowns_created: 7, remaining: 0 });
+      expect(count("SELECT COUNT(*) AS n FROM takedown_requests")).toBe(97);
+    });
+
+    it("is atomic: takedown inserts + acknowledge share one batch, so a failing acknowledge rolls back every insert", async () => {
+      // Make the harness batch transactional like D1's, and record what ran inside it.
+      const batched: string[] = [];
+      (env.DB as unknown as { batch: (s: unknown[]) => Promise<unknown[]> }).batch = async (stmts: unknown[]) => {
+        raw.exec("BEGIN");
+        try {
+          const out: unknown[] = [];
+          for (const s of stmts as Array<{ run: () => Promise<unknown>; __sql: string }>) {
+            batched.push(s.__sql);
+            out.push(await s.run());
+          }
+          raw.exec("COMMIT");
+          return out;
+        } catch (e) {
+          raw.exec("ROLLBACK");
+          throw e;
+        }
+      };
+      raw.exec(`CREATE TRIGGER fail_ack BEFORE UPDATE OF status ON alerts
+                BEGIN SELECT RAISE(ABORT, 'ack failed'); END;`);
+
+      const res = await call("admin", "/api/alerts/bulk-takedown", "POST", { alert_ids: ["a_high_new", "a_crit_new_old"] });
+      expect(res.status).toBe(500);
+      expect(batched.filter((q) => q.includes("INSERT INTO takedown_requests"))).toHaveLength(2);
+      expect(batched.some((q) => q.includes("UPDATE alerts SET status = 'acknowledged'"))).toBe(true);
+      expect(count("SELECT COUNT(*) AS n FROM takedown_requests")).toBe(0);
+      expect(statusOf("a_high_new")).toBe("new");
+      expect(audits).toEqual([]);
+    });
+  });
+
+  it("stats.auto_dismissed counts only `auto:`-stamped false positives", async () => {
+    raw.exec(`UPDATE alerts SET status = 'false_positive', resolution_notes = 'auto: clean enrichment' WHERE id = 'a_low_new'`);
+    raw.exec(`UPDATE alerts SET status = 'false_positive', resolution_notes = 'customer says benign' WHERE id = 'a_high_new'`);
+    const { data } = await (await call("admin", "/api/alerts/stats")).json<{ data: Record<string, unknown> }>();
+    expect(data.dismissed).toBe(2);
+    expect(data.auto_dismissed).toBe(1);
+  });
+});
+
+// ─── Migration 0275: additive only, applies to the pre-0275 shape ─────
+
+describe.skipIf(!hasSqlite())("migration 0275 alert staff fields", () => {
+  const file = readFileSync(new URL("../migrations/0275_alert_staff_fields.sql", import.meta.url), "utf8");
+  const statements = splitStatements(file);
+  const alters = statements.filter((s) => /^ALTER TABLE/i.test(s));
+  const indexes = statements.filter((s) => /^CREATE INDEX/i.test(s));
+
+  it("only ADD COLUMNs + CREATE INDEX IF NOT EXISTS (no DROP / column ALTER)", () => {
+    expect(alters).toHaveLength(3);
+    for (const a of alters) expect(a).toMatch(/^ALTER TABLE alerts ADD COLUMN staff_\w+ TEXT$/);
+    expect(indexes).toHaveLength(1);
+    expect(indexes[0]).toMatch(/^CREATE INDEX IF NOT EXISTS/);
+    expect(statements).toHaveLength(alters.length + indexes.length);
+  });
+
+  it("applies cleanly to the pre-0275 schema; the index statement is re-runnable", () => {
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: new (p: string) => SqliteDb };
+    const db = new DatabaseSync(":memory:");
+    const altersSet = new Set(alters.map((a) => `${a};`));
+    for (const stmt of deriveSchema(["alerts", "takedown_requests"]).ddl) {
+      if (!altersSet.has(stmt)) db.exec(stmt);
+    }
+    const colsBefore = (db.prepare("PRAGMA table_info(alerts)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(colsBefore).not.toContain("staff_assigned_to");
+    for (const s of statements) db.exec(s);
+    // D1 records applied migrations in d1_migrations and never re-runs a file
+    // (ADD COLUMN itself can't be repeated in SQLite); the index is idempotent.
+    for (const s of indexes) db.exec(s);
+    const colsAfter = (db.prepare("PRAGMA table_info(alerts)").all() as Array<{ name: string }>).map((c) => c.name);
+    expect(colsAfter).toEqual(expect.arrayContaining(["staff_assigned_to", "staff_assigned_at", "staff_notes"]));
+    const plan = (db.prepare(
+      `EXPLAIN QUERY PLAN SELECT 1 FROM takedown_requests tr WHERE tr.source_type = 'alert' AND tr.source_id = ?`,
+    ).all("a1") as Array<{ detail: string }>).map((r) => r.detail).join(" | ");
+    expect(plan).toContain("idx_takedown_requests_alert_source");
   });
 });

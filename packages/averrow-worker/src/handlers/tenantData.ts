@@ -18,6 +18,39 @@ function isOrgAdmin(ctx: AuthContext): boolean {
   return (ORG_ROLE_HIERARCHY[ctx.orgRole ?? ""] ?? 0) >= 3;
 }
 
+/** Assignee label a customer sees while Averrow staff are handling an alert. */
+export const AVERROW_SOC_LABEL = "Averrow SOC";
+
+/**
+ * Customer-facing view of an alert row (owner decision 2026-10-04: staff
+ * actions are visible to customers, branded as Averrow).
+ *
+ * The tenant reads use `SELECT a.*`, which includes the staff-only columns
+ * (staff_assigned_to, staff_assigned_at, staff_notes — migration 0275).
+ * Every `staff_*` key is stripped here (a prefix strip, so a future staff
+ * column can't leak either) and replaced by:
+ *   - handled_by_averrow: true while a staff member holds the alert
+ *   - assigned_to_name:   the customer's own assignee's name; when the
+ *     customer has no assignee and staff hold it, "Averrow SOC". A staff
+ *     member is never named. `assigned_to` itself is untouched (the
+ *     customer's own assignee, null when unassigned).
+ */
+export function toTenantAlertView(
+  row: Record<string, unknown>,
+  ownAssigneeName: string | null,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (!k.startsWith("staff_")) out[k] = v;
+  }
+  const handledByAverrow = typeof row.staff_assigned_to === "string" && row.staff_assigned_to.length > 0;
+  out.handled_by_averrow = handledByAverrow;
+  out.assigned_to_name = row.assigned_to
+    ? ownAssigneeName
+    : (handledByAverrow ? AVERROW_SOC_LABEL : null);
+  return out;
+}
+
 // ─── GET /api/orgs/:orgId/dashboard ──────────────────────────
 
 export async function handleTenantDashboard(
@@ -207,10 +240,11 @@ export async function handleTenantAlerts(
       ).bind(...assigneeIds).all<{ id: string; name: string }>();
       for (const u of us.results ?? []) nameById[u.id] = u.name;
     }
-    const data = rawAlerts.map((a) => ({
-      ...a,
-      assigned_to_name: a.assigned_to ? (nameById[a.assigned_to as string] ?? null) : null,
-    }));
+    // toTenantAlertView strips the staff-only columns (staff_*) and labels
+    // staff-handled alerts "Averrow SOC" — staff are never named here.
+    const data = rawAlerts.map((a) =>
+      toTenantAlertView(a, a.assigned_to ? (nameById[a.assigned_to as string] ?? null) : null),
+    );
 
     return json({
       success: true,
@@ -265,7 +299,7 @@ export async function handleTenantAlertDetail(
 
     return json({
       success: true,
-      data: { ...alert, assigned_to_name: assignedToName },
+      data: toTenantAlertView(alert, assignedToName),
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);

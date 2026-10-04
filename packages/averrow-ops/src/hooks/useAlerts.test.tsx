@@ -30,7 +30,7 @@ describe('alert mutations invalidate the triage summary', () => {
 
   const cases: Array<[string, () => { mutate: (v: never) => void }, unknown]> = [
     ['useUpdateAlert', useUpdateAlert as never, { id: 'a1', status: 'resolved' }],
-    ['useAssignAlert', useAssignAlert as never, { id: 'a1', assigned_to: 'u1' }],
+    ['useAssignAlert', useAssignAlert as never, { id: 'a1', staff_assigned_to: 'u1' }],
     ['useBulkAcknowledge', useBulkAcknowledge as never, { alert_ids: ['a1'] }],
     ['useBulkTakedown', useBulkTakedown as never, { brand_id: 'b1' }],
   ];

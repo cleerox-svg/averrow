@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
+const authRole = vi.hoisted(() => ({ role: 'analyst' }));
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: { role: authRole.role } }) }));
 
 import { api } from '@/lib/api';
 import { useOpenAlertCount } from './useOpenAlertCount';
@@ -17,7 +19,16 @@ function wrapper(qc = new QueryClient({ defaultOptions: { queries: { retry: fals
 }
 
 describe('useOpenAlertCount', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); authRole.role = 'analyst'; });
+
+  it.each(['sales', 'billing', 'auditor'])('%s (no edit_alerts) never requests the summary', async (role) => {
+    authRole.role = role;
+    const { result } = renderHook(() => useOpenAlertCount(), { wrapper: wrapper() });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(result.current.enabled).toBe(false);
+    expect(result.current.data).toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+  });
 
   it('maps triage-summary new_count', async () => {
     get.mockResolvedValue({ success: true, data: { new_count: 17, critical_count: 3 } });

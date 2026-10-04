@@ -780,8 +780,20 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   `manage_takedowns` (route-level `roleHasPermission` check) — support
   holds `edit_alerts` but not `manage_takedowns` and gets 403 there.
   Each mutation writes `audit_log` (`alert_update` / `alert_bulk_*`, actor
-  = `ctx.userId`) and drops the `alerts_triage:` / `alerts_stats:` KV keys.
-  Tenant `/api/orgs/:orgId/alerts` routes are unchanged.
+  = `ctx.userId`) and drops the `alerts_triage:` / `alerts_stats:` KV keys
+  (only ops `/api/alerts*` mutations invalidate; other alert writers rely on
+  the 60s TTL). Bulk calls take ≤90 ids (D1 100-bind limit) and process ≤90
+  alerts per call, returning `remaining` for brand-wide calls.
+  **Staff actions are visible to customers, branded as Averrow (owner
+  decision 2026-10-04).** Status changes write the shared columns. Staff
+  never write the customer's `assigned_to` / `resolution_notes`: a staff
+  claim goes to `alerts.staff_assigned_to` (must be an active
+  `isPlatformStaff` user) and staff notes to `alerts.staff_notes`
+  (migration 0275); the PATCH rejects `assigned_to` with 400. Tenant alert
+  reads (`toTenantAlertView`, `handlers/tenantData.ts`) strip every
+  `staff_*` key and show the assignee as "Averrow SOC" (+
+  `handled_by_averrow`) when staff hold an alert the customer hasn't
+  assigned — a staff member is never named to a customer.
 - Account handling enforces "no tenant staff": the admin role PATCH
   (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
   for a user with an active `org_members` row (400; status-only PATCHes and

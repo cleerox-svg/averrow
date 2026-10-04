@@ -117,6 +117,14 @@ describe('OverviewV4 queue', () => {
     expect(screen.getByRole('button', { name: /Triage: 30 alerts awaiting triage/ })).toBeInTheDocument();
   });
 
+  it('zero-critical alerts row renders "N alerts awaiting triage" with "none critical" beneath it', async () => {
+    setup({ alerts: { new_count: 3, critical_count: 0 } });
+    const title = await screen.findByText('3 alerts awaiting triage');
+    const row = title.closest('li');
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent(/3 alerts awaiting triage.*none critical/);
+  });
+
   it('an action navigates to the canonical tab URL (new-alerts triage list when there is no top alert)', async () => {
     setup({ alerts: { new_count: 3, critical_count: 0 } });
     const btn = await screen.findByRole('button', { name: /Triage: 3 alerts awaiting triage/ });

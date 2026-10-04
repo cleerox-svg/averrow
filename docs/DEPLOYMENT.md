@@ -111,6 +111,14 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
 - **0274** (`0274_notifications_add_abuse_mailbox_inbound_stale.sql`) is the same swap for `platform_abuse_mailbox_inbound_stale` (Flight Control's abuse-mailbox inbound freshness guard). Same ordering rule and same verification: the `notifications` schema must contain `platform_abuse_mailbox_inbound_stale`.
 
+### Migration 0275 must land before the Worker with staff alert fields (PR-C)
+
+- `0275_alert_staff_fields.sql` adds `alerts.staff_assigned_to`, `staff_assigned_at`, `staff_notes` (ADD COLUMN only) and the partial index `idx_takedown_requests_alert_source` (`takedown_requests(source_id) WHERE source_type = 'alert'`).
+- Apply it **before** the Worker. The ops alert list/detail (`GET /api/alerts`, `/api/alerts/:id`) join `users` on `a.staff_assigned_to`, and `PATCH /api/alerts/:id` reads and writes the new columns. Against the pre-0275 schema those routes return 500. Tenant alert routes keep working either way.
+- CI applies migrations before deploying. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first.
+- To verify, `PRAGMA table_info(alerts)` should list the three `staff_*` columns.
+- No backfill: existing staff assignments made via the old PATCH stay in `assigned_to`. Before this change, staff could only write that column on their own alerts, and the user_id pin meant few such alerts existed.
+
 ### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
 
 Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside it needs 0273 — see the next section). Expect, once, after the first deploy:

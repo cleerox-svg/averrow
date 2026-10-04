@@ -29,6 +29,7 @@ const target = {
   brand_name: 'Acme', brand_domain: 'acme.com', saas_technique_id: null, saas_technique_name: null,
   saas_technique_phase: null, saas_technique_phase_label: null, saas_technique_severity: null,
   assigned_to: null, assigned_at: null, assigned_to_name: null, assigned_to_email: null,
+  staff_assigned_to: null, staff_assigned_at: null, staff_assigned_to_name: null, staff_assigned_to_email: null, staff_notes: null,
 } satisfies Alert;
 
 describe('Console ?tab=alerts deep links', () => {
@@ -38,7 +39,7 @@ describe('Console ?tab=alerts deep links', () => {
     Element.prototype.scrollIntoView = vi.fn();
     get.mockImplementation(async (url: string) => {
       if (url.startsWith('/api/alerts/triage-summary')) return { success: true, data: { new_count: 1, critical_count: 1, top: null } };
-      if (url.startsWith('/api/alerts/stats')) return { success: true, data: { total: 0, new_count: 0, by_brand: [] } };
+      if (url.startsWith('/api/alerts/stats')) return { success: true, data: { total: 0, new_count: 0 } };
       if (url === '/api/alerts/alr_7') return { success: true, data: target };
       if (url.startsWith('/api/alerts?')) return { success: true, data: [], total: 0 };
       return { success: true, data: [] };

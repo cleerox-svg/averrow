@@ -56,29 +56,6 @@ export interface CreateAlertParams {
   bypassTierGate?: boolean;
 }
 
-export interface Alert {
-  id: string;
-  brand_id: string;
-  user_id: string;
-  alert_type: AlertType;
-  severity: Severity;
-  title: string;
-  summary: string;
-  details: string | null;
-  source_type: string | null;
-  source_id: string | null;
-  ai_assessment: string | null;
-  ai_recommendations: string | null;
-  status: AlertStatus;
-  acknowledged_at: string | null;
-  resolved_at: string | null;
-  resolution_notes: string | null;
-  email_sent: number;
-  webhook_sent: number;
-  created_at: string;
-  updated_at: string;
-}
-
 /**
  * Create a new alert and return its ID, or null if the brand is
  * tier='tracked' (the NX2 tier gate — unclaimed brands don't get alert
@@ -188,76 +165,9 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
   return id;
 }
 
-/**
- * Query alerts with optional filters and pagination.
- */
-export async function getAlerts(db: D1Database, userId: string, opts?: {
-  status?: AlertStatus;
-  severity?: Severity;
-  brandId?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<{ alerts: Alert[]; total: number }> {
-  const limit = Math.min(100, opts?.limit ?? 50);
-  const offset = opts?.offset ?? 0;
-
-  let where = `WHERE user_id = ?`;
-  const params: unknown[] = [userId];
-
-  if (opts?.status) {
-    where += ` AND status = ?`;
-    params.push(opts.status);
-  }
-  if (opts?.severity) {
-    where += ` AND severity = ?`;
-    params.push(opts.severity);
-  }
-  if (opts?.brandId) {
-    where += ` AND brand_id = ?`;
-    params.push(opts.brandId);
-  }
-
-  // Get total count
-  const countRow = await db.prepare(
-    `SELECT COUNT(*) as c FROM alerts ${where}`
-  ).bind(...params).first<{ c: number }>();
-  const total = countRow?.c ?? 0;
-
-  // Get paginated results
-  const rows = await db.prepare(
-    `SELECT * FROM alerts ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
-  ).bind(...params, limit, offset).all<Alert>();
-
-  return { alerts: rows.results, total };
-}
-
-/**
- * Update alert status with appropriate timestamp tracking.
- */
-export async function updateAlertStatus(
-  db: D1Database,
-  alertId: string,
-  status: AlertStatus,
-  notes?: string,
-): Promise<boolean> {
-  let extra = ``;
-  const params: unknown[] = [status];
-
-  if (status === 'acknowledged') {
-    extra = `, acknowledged_at = datetime('now')`;
-  } else if (status === 'resolved' || status === 'false_positive') {
-    extra = `, resolved_at = datetime('now')`;
-    if (notes) {
-      extra += `, resolution_notes = ?`;
-      params.push(notes);
-    }
-  }
-
-  params.push(alertId);
-
-  const result = await db.prepare(
-    `UPDATE alerts SET status = ?${extra}, updated_at = datetime('now') WHERE id = ?`
-  ).bind(...params).run();
-
-  return (result.meta.changes ?? 0) > 0;
-}
+// Alert reads + status updates live in the route handlers: ops/staff in
+// handlers/alerts.ts (staff writes go to staff_assigned_to / staff_notes,
+// never the customer-visible assigned_to / resolution_notes — migration
+// 0275), tenant in handlers/tenantData.ts. The former getAlerts (user_id-
+// pinned, no callers) and updateAlertStatus (wrote staff notes into the
+// customer-visible resolution_notes) were removed in the PR-C review.
