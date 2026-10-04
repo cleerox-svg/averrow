@@ -119,6 +119,16 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - To verify, `PRAGMA table_info(alerts)` should list the three `staff_*` columns.
 - No backfill needed: verified read-only against prod on 2026-10-04 — zero alerts have a staff user in `assigned_to` and zero alerts carry a manual (non-`auto:`) `resolution_notes`, so there is nothing to move into the staff columns. The tenant read path additionally masks any staff `assigned_to` as "Averrow SOC" (`resolveTenantUserLabels` / `toTenantAlertView`, `handlers/tenantData.ts`), so a future stray row still can't name a staff member to a customer.
 
+### `hosting_providers.is_bulletproof` — prod-only column now defined in 0078 (fresh-bootstrap fix)
+
+- `GET /api/providers/v2` (`handlers/providers.ts`) selects `hp.is_bulletproof`. Prod gained the column out of band (`INTEGER`, nullable, `DEFAULT 0`), and no migration defined it, so any DB built from `migrations/` (staging, dev, the derived-schema test harness) returned 500 on that route.
+- **Fix:** `0078_cartographer_score_recency.sql` now ends with `ALTER TABLE hosting_providers ADD COLUMN is_bulletproof INTEGER DEFAULT 0`. This is the same fresh-bootstrap pattern as 0053. A new `0276` was not an option: SQLite has no `ADD COLUMN IF NOT EXISTS`, so a plain ALTER fails prod with "duplicate column name", and a no-op `0276` (the 0010/0161 pattern) would leave migration-built DBs without the column.
+- **Production:** no action needed. 0078 was applied on 2026-04-10, and D1 tracks migrations by filename, so the edit never runs there. Verified read-only on 2026-10-04: the column is present and `d1_migrations` is at `0275`.
+- **Staging / dev** (`trust-radar-v2-staging` / `-dev`): no action needed. Both were verified read-only on 2026-10-04 as empty, with no `d1_migrations` table, so their first `npx wrangler d1 migrations apply DB --remote --env staging` (or `--env dev`) creates the column through 0078.
+- **Any DB that applied 0078 before this edit** (for example an old `--local` dev DB): add the column by hand, once, from `packages/averrow-worker`. For a local DB use `npx wrangler d1 execute DB --local --command "ALTER TABLE hosting_providers ADD COLUMN is_bulletproof INTEGER DEFAULT 0"`. Never run this against prod, where it fails with a duplicate-column error.
+- **Verify:** `PRAGMA table_info(hosting_providers)` lists `is_bulletproof`. `test/hosting-providers-bulletproof-schema.test.ts` pins the derived schema and checks that 0078 is the only migration adding the column.
+- Nothing in the codebase writes `is_bulletproof`. It is read-only, and every row reads `0` unless it was set out of band. The ops type `Provider.is_bulletproof` (`averrow-ops/src/hooks/useProviders.ts`) declares it but nothing renders it.
+
 ### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
 
 Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside it needs 0273 — see the next section). Expect, once, after the first deploy:
