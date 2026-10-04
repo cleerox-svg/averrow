@@ -134,6 +134,10 @@ export interface SharedAuthState {
   hasOrg:           boolean;
   login:            () => void;
   logout:           () => Promise<void>;
+  /** Sign out, then go straight to the OAuth login path (the worker
+   *  always sends Google `prompt=select_account`, so Google shows the
+   *  account chooser). */
+  switchAccount:    () => Promise<void>;
   /** Re-fetch /api/auth/me and refresh local state. */
   refreshUser:      () => Promise<void>;
 }

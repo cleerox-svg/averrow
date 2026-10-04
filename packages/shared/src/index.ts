@@ -11,3 +11,4 @@
 export * from './notification-events';
 export * from './alert-types';
 export * from './platform-status';
+export * from './roles';

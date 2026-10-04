@@ -11,6 +11,7 @@ import {
   ProfileCard, ProfileSectionLabel, ProfileFieldLabel, ProfileFieldHelper,
   ProfileInput, ProfileButton, ProfilePill, parseInitials,
 } from './primitives';
+import { roleLabel } from '../roles';
 import type {
   ProfileUser, ProfileApiClient, PasskeyAdapter,
   PasskeyDevice, SessionSummary,
@@ -18,16 +19,9 @@ import type {
 
 // ─── 1. Identity ─────────────────────────────────────────────
 
-const ROLE_LABEL: Record<string, string> = {
-  super_admin: 'Super Admin',
-  admin:       'Admin',
-  analyst:     'Analyst',
-  client:      'Client',
-};
-
 export function IdentitySection({ user }: { user: ProfileUser }) {
   const initials = parseInitials(user.display_name ?? user.name, user.email);
-  const role = ROLE_LABEL[user.role] ?? user.role;
+  const role = roleLabel(user.role);
 
   return (
     <ProfileCard>

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Bell, Building2, Key, LogOut, UserPlus } from 'lucide-react';
+import { roleLabel } from '@averrow/shared';
 import { useAuth } from '@/lib/auth';
 import { useIsMobile } from '@/hooks/useWindowWidth';
 import { parseInitials, SELF_AVATAR_COLOR } from '@/lib/avatar';
@@ -16,15 +17,12 @@ interface MenuItem {
 }
 
 function ProfileMenu({ onClose }: { onClose: () => void }) {
-  const { user, logout } = useAuth();
+  const { user, logout, switchAccount } = useAuth();
   const navigate = useNavigate();
 
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
 
-  const roleName = user?.role === 'super_admin' ? 'Super Admin'
-    : user?.role === 'admin' ? 'Admin'
-    : user?.role === 'analyst' ? 'Analyst'
-    : 'Client';
+  const roleName = roleLabel(user?.role);
 
   // Theme toggle lives in the sidebar header now (canonical
   // quick-access surface) + Profile → Preferences (canonical
@@ -44,7 +42,7 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
 
   return (
     <div>
-      <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-white/5">
+      <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-[var(--border-base)]">
         <div
           className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
           style={{
@@ -59,7 +57,7 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
           <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
             {user?.display_name ?? user?.name ?? 'User'}
           </p>
-          <p className="text-[11px] text-white/40 truncate">
+          <p className="text-[11px] truncate" style={{ color: 'var(--text-tertiary)' }}>
             {user?.email}
           </p>
           <p className="text-[10px] font-mono uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -76,29 +74,29 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
               if (item.onClick) item.onClick();
               else if (item.path) handleNav(item.path);
             }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-white/5 transition-colors touch-target border-b border-white/[0.04] md:border-b-0"
+            className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--bg-card-deep)] transition-colors touch-target border-b border-[var(--border-base)] md:border-b-0"
           >
-            <item.icon size={15} className="text-white/40 flex-shrink-0" />
+            <item.icon size={15} className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
             <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>{item.label}</span>
           </button>
         ))}
       </div>
 
-      <div className="border-t border-white/5 py-1">
+      <div className="border-t border-[var(--border-base)] py-1">
         <button
-          onClick={() => { void logout(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-white/5 transition-colors touch-target"
-          title="Sign out then sign in as a different user"
+          onClick={() => { void switchAccount(); onClose(); }}
+          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--bg-card-deep)] transition-colors touch-target"
+          title="Sign out, then choose a different Google account"
         >
-          <UserPlus size={15} className="text-white/40 flex-shrink-0" />
+          <UserPlus size={15} className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
           <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>Switch account</span>
         </button>
         <button
           onClick={() => { void logout(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[#C83C3C]/10 transition-colors touch-target"
+          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--sev-critical-bg)] transition-colors touch-target"
         >
-          <LogOut size={15} className="text-[#C83C3C]/70 flex-shrink-0" />
-          <span className="text-[14px] md:text-[12px] text-[#C83C3C]/80">Logout</span>
+          <LogOut size={15} className="flex-shrink-0" style={{ color: 'var(--sev-critical-text)' }} />
+          <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--sev-critical-text)' }}>Logout</span>
         </button>
       </div>
     </div>
