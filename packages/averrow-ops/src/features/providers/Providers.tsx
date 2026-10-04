@@ -182,6 +182,9 @@ function ProviderCard({
   const nexusLinked = hasNexusLink(provider, clusters);
   const t7 = provider.trend_7d ?? 0;
   const t30 = provider.trend_30d ?? 0;
+  const coolingDelta =
+    typeof provider.cooling_delta_7d === 'number' && provider.cooling_delta_7d < 0
+      ? provider.cooling_delta_7d : null;
   const activeCount = provider.active_threat_count ?? 0;
   const sparkData = provider.threat_history ?? [];
 
@@ -282,6 +285,15 @@ function ProviderCard({
       {status === 'accelerating' && (
         <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
           {'↑'} Accelerating {'—'} activity up &gt;50% vs prior week
+        </div>
+      )}
+      {coolingDelta !== null && (
+        <div
+          className="font-mono text-[10px]"
+          style={{ color: 'var(--green)' }}
+          aria-label={formatCoolingDelta(coolingDelta).aria}
+        >
+          <span aria-hidden="true">{'↓'} {formatCoolingDelta(coolingDelta).text}</span>
         </div>
       )}
       {status === 'pivot' && (
@@ -629,10 +641,28 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
 
 // ─── Filter Bar ──────────────────────────────────────────────
 
+/** "Cooling" is a server-side view of /api/providers/v2 (trend_7d < 0, most
+ *  negative first), selected via `sort` rather than `status`. Kept in one
+ *  place so the param is trivial to change. */
+const COOLING_SORT = 'cooling';
+const COOLING_FILTER_ID = 'cooling';
+
+/** cooling_delta_7d (negative) → "12.4 fewer threats/wk vs 30-day avg". */
+function formatCoolingDelta(delta: number): { text: string; aria: string } {
+  const n = Math.round(Math.abs(delta) * 10) / 10;
+  const num = Number.isInteger(n) ? String(n) : n.toFixed(1);
+  const noun = n === 1 ? 'threat' : 'threats';
+  return {
+    text: `${num} fewer ${noun}/wk vs 30-day avg`,
+    aria: `Down ${num} ${noun} per week versus the 30-day average`,
+  };
+}
+
 const STATUS_FILTERS = [
   { id: 'all', label: 'ALL' },
   { id: 'active', label: 'ACTIVE' },
   { id: 'accelerating', label: 'ACCELERATING' },
+  { id: COOLING_FILTER_ID, label: 'COOLING' },
   { id: 'pivot', label: 'PIVOTS' },
   { id: 'quiet', label: 'QUIET' },
 ] as const;
@@ -677,6 +707,8 @@ export function Providers() {
     }, { replace: true });
   }, [focusId, setSearchParams]);
 
+  const isCooling = statusFilter === COOLING_FILTER_ID;
+
   const { data: intelligence, isLoading: intelLoading, isError: intelError } = useProviderIntelligence();
   const {
     data: clusters, isLoading: clustersLoading, isError: clustersError,
@@ -687,8 +719,8 @@ export function Providers() {
     isPlaceholderData: providersPlaceholder, refetch: refetchProviders,
   } = useProviders({
     limit: 50,
-    sort: sortBy,
-    status: statusFilter === 'all' ? undefined : statusFilter,
+    sort: isCooling ? COOLING_SORT : sortBy,
+    status: statusFilter === 'all' || isCooling ? undefined : statusFilter,
     search: search || undefined,
     clusterId: selectedClusterId || undefined,
   });
@@ -832,8 +864,10 @@ export function Providers() {
             <PageState
               kind="empty"
               layout="card"
-              title="No providers match"
-              description="No providers match the current filters."
+              title={isCooling ? 'No providers cooling down this week' : 'No providers match'}
+              description={isCooling
+                ? 'No hosting provider has a falling 7-day threat trend right now.'
+                : 'No providers match the current filters.'}
             />
           )}
         </div>

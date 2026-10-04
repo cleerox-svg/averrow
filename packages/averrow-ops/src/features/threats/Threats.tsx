@@ -15,6 +15,7 @@ import {
 } from '@/design-system/components';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ThreatInflowChart } from './ThreatInflowChart';
+import { MultiFeedConsensusPanel } from './MultiFeedConsensusPanel';
 import { relativeTime } from '@/lib/time';
 import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
@@ -168,6 +169,7 @@ export function Threats() {
 
       <PanelHeader title="Coordination" subtitle="Patterns hitting multiple brands at once" />
       <MultiBrandPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
+      <MultiFeedConsensusPanel />
 
       <PanelHeader title="Evolving" subtitle="What's growing week-over-week" />
       <SurgingSignalsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
