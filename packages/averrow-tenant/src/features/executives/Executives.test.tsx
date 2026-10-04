@@ -179,9 +179,10 @@ describe('Executives page', () => {
     expect(screen.queryByTitle('Remove executive')).not.toBeInTheDocument();
   });
 
-  it('hides mutation controls for Averrow staff, even holding an org owner seat', () => {
-    // The worker refuses staff on executive writes (403) — e.g. the
-    // lead-conversion placeholder super_admin owner.
+  it('shows mutation controls for Averrow staff that pass requireOrgAdmin (staff crossover)', () => {
+    // Executives are a staff crossover surface (owner decision 2026-10-04):
+    // e.g. the lead-conversion placeholder super_admin owner manages the
+    // registry on the customer's behalf. No read-only staff note.
     mockAuth('owner', 'super_admin');
     mockDashboard([makeBrand()]);
     mockExecutives([makeExecutive()]);
@@ -189,7 +190,20 @@ describe('Executives page', () => {
 
     renderWithProviders(<Executives />);
 
-    expect(screen.getByText(/Averrow staff manage the executive registry from the Averrow console/)).toBeInTheDocument();
+    expect(screen.getByText('Register executive')).toBeInTheDocument();
+    expect(screen.getByTitle('Edit executive')).toBeInTheDocument();
+    expect(screen.getByTitle('Remove executive')).toBeInTheDocument();
+    expect(screen.queryByText(/Averrow console/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the read-only auditor seat read-only', () => {
+    mockAuth('owner', 'auditor');
+    mockDashboard([makeBrand()]);
+    mockExecutives([makeExecutive()]);
+    mockMutations();
+
+    renderWithProviders(<Executives />);
+
     expect(screen.queryByText('Register executive')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Edit executive')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Remove executive')).not.toBeInTheDocument();

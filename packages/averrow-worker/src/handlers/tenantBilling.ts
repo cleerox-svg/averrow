@@ -12,10 +12,12 @@
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
-import { verifyOrgAccess } from "../middleware/auth";
+import { verifyOrgAccess, isPlatformStaff } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 import { requireOrgAdmin } from "./organizations";
-import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { STAFF_ROLE_LIST_SQL } from "../lib/lead-conversion-placeholder";
+import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
+import { audit } from "../lib/audit";
 import { getOrgPricingSummary, getPricingPlan } from "../lib/pricing";
 import {
   createCheckoutSession,
@@ -42,6 +44,39 @@ export async function handleGetTenantBilling(
   return json({ success: true, data: summary }, 200, origin);
 }
 
+/**
+ * Stripe `customer_email` for a new checkout.
+ *  - Customer caller: their own email (unchanged behavior).
+ *  - Platform staff (crossover allowance): the org's customer owner — the
+ *    first (lowest `org_members.id`) active `owner` membership whose user is
+ *    active and NOT staff, so the lead-conversion placeholder super_admin
+ *    never qualifies. No such owner → undefined; the checkout handler then
+ *    refuses a staff caller with 409 rather than let Stripe prompt the staff
+ *    member at the keyboard for an email (which would become the customer's
+ *    Stripe email). The staff caller's own email is never returned.
+ */
+export async function customerEmailForCheckout(
+  env:           Env,
+  ctx:           Pick<AuthContext, "role" | "email">,
+  orgIdNum:      number,
+  callerDbEmail: string | null,
+): Promise<string | undefined> {
+  if (!isPlatformStaff(ctx.role)) return ctx.email ?? callerDbEmail ?? undefined;
+  // STAFF_ROLE_LIST_SQL is compile-time role literals only (no request input).
+  const owner = await env.DB.prepare(
+    `SELECT u.email
+     FROM org_members om
+     JOIN users u ON u.id = om.user_id
+     WHERE om.org_id = ? AND om.role = 'owner' AND om.status = 'active'
+       AND u.status = 'active'
+       AND u.role NOT IN (${STAFF_ROLE_LIST_SQL})
+       AND u.email IS NOT NULL AND u.email != ''
+     ORDER BY om.id ASC
+     LIMIT 1`,
+  ).bind(orgIdNum).first<{ email: string }>();
+  return owner?.email ?? undefined;
+}
+
 // ─── POST /api/orgs/:orgId/billing/checkout-session ──────────────
 //
 // Creates a Stripe Checkout session for plan signup. Caller picks
@@ -64,15 +99,14 @@ export async function handleCreateCheckoutSession(
   // Billing management (checkout) is org-admin only — a viewer must not be
   // able to start a subscription change. requireOrgAdmin also enforces the
   // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
+  const roErr = refuseReadOnlyGlobalWrite(ctx, origin);
+  if (roErr) return roErr;
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
-  // Platform staff are refused (owner decision 2026-10-04): a staff
-  // super_admin passes requireOrgAdmin via hasGlobalReadScope, and the
-  // checkout would otherwise stamp the STAFF email as the customer's Stripe
-  // customer_email (a portal session likewise acts on the customer's
-  // billing account). Plan changes go through the ops pricing console.
-  const staffErr = refuseStaffTenantWrite(ctx, origin);
-  if (staffErr) return staffErr;
+  // Platform staff MAY start checkout on the customer's behalf — billing is
+  // one of the four tenant surfaces in the staff crossover allowance (owner
+  // decision 2026-10-04; lib/tenant-staff-guard.ts). The staff member's own
+  // email is never sent to Stripe: see customerEmailForCheckout below.
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {
@@ -127,6 +161,17 @@ export async function handleCreateCheckoutSession(
     return json({ success: false, error: "Organization not found" }, 404, origin);
   }
 
+  // Only needed when Stripe has no customer for the org yet.
+  const customerEmail = orgRow.stripe_customer_id
+    ? undefined
+    : await customerEmailForCheckout(env, ctx, orgIdNum, orgRow.email);
+  // A staff checkout with no Stripe customer and no customer owner would make
+  // Stripe ask the staff member at the keyboard for an email, which then
+  // becomes the customer's Stripe email. Refuse until the owner is invited.
+  if (!orgRow.stripe_customer_id && !customerEmail && isPlatformStaff(ctx.role)) {
+    return json({ success: false, error: "Invite the customer owner before starting checkout" }, 409, origin);
+  }
+
   // success_url + cancel_url must be absolute. Use the request origin
   // (which is averrow.com in prod) so this works across environments.
   const requestOrigin = origin ?? "https://averrow.com";
@@ -140,7 +185,7 @@ export async function handleCreateCheckoutSession(
   try {
     const session = await createCheckoutSession(apiKey, {
       customer:       orgRow.stripe_customer_id ?? undefined,
-      customer_email: orgRow.stripe_customer_id ? undefined : (ctx.email ?? orgRow.email ?? undefined),
+      customer_email: customerEmail,
       mode:           "subscription",
       line_items:     [{ price: plan.stripe_price_id, quantity: 1 }],
       success_url:    successUrl,
@@ -151,6 +196,13 @@ export async function handleCreateCheckoutSession(
         metadata: { org_id: String(orgIdNum), plan_id: plan.id },
       },
       allow_promotion_codes: true,
+    });
+    // Customer-visible in the tenant audit log (staff actor → "Averrow SOC").
+    await audit(env, {
+      action: "billing_checkout_session", userId: ctx.userId,
+      resourceType: "organization", resourceId: orgId,
+      details: { org_id: orgId, plan_id: plan.id },
+      outcome: "success", request,
     });
     return json({ success: true, data: { url: session.url, session_id: session.id } }, 200, origin);
   } catch (err) {
@@ -181,15 +233,14 @@ export async function handleCreatePortalSession(
   // Portal access lets the customer cancel / change plan / view invoices —
   // org-admin only, not any viewer. requireOrgAdmin also enforces the
   // org-membership scope, so it fully subsumes the prior verifyOrgAccess.
+  const roErr = refuseReadOnlyGlobalWrite(ctx, origin);
+  if (roErr) return roErr;
   const denied = requireOrgAdmin(ctx, orgId, origin);
   if (denied) return denied;
-  // Platform staff are refused (owner decision 2026-10-04): a staff
-  // super_admin passes requireOrgAdmin via hasGlobalReadScope, and the
-  // checkout would otherwise stamp the STAFF email as the customer's Stripe
-  // customer_email (a portal session likewise acts on the customer's
-  // billing account). Plan changes go through the ops pricing console.
-  const staffErr = refuseStaffTenantWrite(ctx, origin);
-  if (staffErr) return staffErr;
+  // Platform staff MAY open the portal on the customer's behalf (crossover
+  // allowance, owner decision 2026-10-04; lib/tenant-staff-guard.ts). The
+  // session carries only the org's Stripe customer id + a return URL —
+  // nothing that identifies the caller.
 
   const apiKey = env.STRIPE_API_KEY;
   if (!apiKey) {
@@ -234,6 +285,12 @@ export async function handleCreatePortalSession(
     const session = await createPortalSession(apiKey, {
       customer:    orgRow.stripe_customer_id,
       return_url:  `${requestOrigin}${returnPath}`,
+    });
+    await audit(env, {
+      action: "billing_portal_session", userId: ctx.userId,
+      resourceType: "organization", resourceId: orgId,
+      details: { org_id: orgId },
+      outcome: "success", request,
     });
     return json({ success: true, data: { url: session.url } }, 200, origin);
   } catch (err) {

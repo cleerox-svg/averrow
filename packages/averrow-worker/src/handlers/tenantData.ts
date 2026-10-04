@@ -8,7 +8,7 @@ import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
 import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
-import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
+import { refuseReadOnlyGlobalWrite } from "../lib/tenant-staff-guard";
 
 // ─── Helpers ─────────────────────────────────────────────────
 // canPerformHITL + ORG_ROLE_HIERARCHY are the shared org-role gates from
@@ -1193,8 +1193,12 @@ export async function handleUpdateMonitoringConfig(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
-  const staffErr = refuseStaffTenantWrite(ctx, origin);
-  if (staffErr) return staffErr;
+  const roErr = refuseReadOnlyGlobalWrite(ctx, origin);
+  if (roErr) return roErr;
+  // Staff crossover allowance (owner decision 2026-10-04,
+  // lib/tenant-staff-guard.ts): staff that pass canPerformHITL may edit
+  // monitoring rules for the customer. The config JSON carries no actor; the
+  // audit row's staff user id is masked by handleTenantAuditLog.
 
   if (!canPerformHITL(ctx)) {
     return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
