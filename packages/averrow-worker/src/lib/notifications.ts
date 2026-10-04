@@ -97,13 +97,16 @@ interface CreateNotificationOpts {
   groupKey?: string;
 }
 
-interface UserPrefRow {
-  // Per-event toggles. `null` when row doesn't exist (defaults-if-absent).
-  brand_threat?: number | null;
-  campaign_escalation?: number | null;
-  feed_health?: number | null;
-  intelligence_digest?: number | null;
-  agent_milestone?: number | null;
+// Per-event toggle columns, derived from the registry so every
+// user-toggleable event's opt-out is actually honored at send time (a
+// hand-maintained list here silently ignored the toggles added later).
+const USER_TOGGLEABLE_PREF_SELECT = USER_TOGGLEABLE_EVENTS
+  .map((e) => `np.${e.key}`)
+  .join(', ');
+
+interface UserPrefRow extends Partial<Record<NotificationEventKey, number | null>> {
+  // Per-event toggles come from the extended Record. `null` when row
+  // doesn't exist (defaults-if-absent).
   // Global channel + DND (v1 — legacy)
   push_notifications?: number | null;
   quiet_hours_start?: string | null;
@@ -387,8 +390,7 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
     // Users who set their preferences in the new UI never got pushes
     // because v1.push_notifications stayed at 0/null.
     const pref = await db.prepare(
-      `SELECT np.brand_threat, np.campaign_escalation, np.feed_health,
-              np.intelligence_digest, np.agent_milestone,
+      `SELECT ${USER_TOGGLEABLE_PREF_SELECT},
               np.push_notifications,
               np.quiet_hours_start, np.quiet_hours_end, np.quiet_hours_tz,
               np.critical_breakthrough,
@@ -405,7 +407,7 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
 
     // ── Gate 2a: per-event opt-out (only for user-toggleable events) ──
     if (USER_TOGGLEABLE_EVENT_KEYS.has(opts.type) && pref) {
-      const eventEnabled = pref[opts.type as keyof UserPrefRow];
+      const eventEnabled = pref[opts.type];
       if (eventEnabled === 0) continue;
     }
 
