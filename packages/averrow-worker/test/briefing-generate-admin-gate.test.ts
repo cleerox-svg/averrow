@@ -16,7 +16,7 @@ import { registerThreatRoutes } from "../src/routes/threats";
 import { signJWT } from "../src/lib/jwt";
 import type { Env, UserRole } from "../src/types";
 
-const handlerCalls = vi.hoisted(() => ({ generate: 0, latest: 0 }));
+const handlerCalls = vi.hoisted(() => ({ generate: 0, latest: 0, history: 0 }));
 
 vi.mock("../src/handlers/briefing", () => {
   const sentinel = (): Response =>
@@ -30,7 +30,10 @@ vi.mock("../src/handlers/briefing", () => {
       handlerCalls.latest++;
       return sentinel();
     },
-    handleListBriefingHistory: async (): Promise<Response> => sentinel(),
+    handleListBriefingHistory: async (): Promise<Response> => {
+      handlerCalls.history++;
+      return sentinel();
+    },
   };
 });
 
@@ -87,7 +90,8 @@ function buildRouter(): RouterType<IRequest> {
 
 const GENERATE = "/api/briefings/generate";
 const ALLOWED: UserRole[] = ["super_admin", "admin"];
-const DENIED: UserRole[] = ["analyst", "sales", "support", "billing", "auditor"];
+const DENIED: UserRole[] = ["analyst", "sales", "support", "billing", "auditor", "client"];
+const STAFF: UserRole[] = ["super_admin", "admin", "analyst", "sales", "support", "billing", "auditor"];
 
 describe("POST /api/briefings/generate — admin-only", () => {
   it("no token gets 401 and the handler never runs", async () => {
@@ -120,16 +124,27 @@ describe("POST /api/briefings/generate — admin-only", () => {
   }
 });
 
-describe("GET /api/briefings/latest — stays staff-readable", () => {
-  it("analyst reaches the handler", async () => {
-    handlerCalls.latest = 0;
-    const res = (await buildRouter().fetch(
-      await requestAs("analyst", "GET", "/api/briefings/latest"),
-      makeEnv(),
-    )) as Response;
-    expect(res.status).toBe(200);
-    const body = await res.json<{ success: boolean; data: string }>();
-    expect(body.data).toBe("handler-reached");
-    expect(handlerCalls.latest).toBe(1);
-  });
+describe("briefing reads stay staff-readable", () => {
+  for (const [path, key] of [
+    ["/api/briefings/latest", "latest"],
+    ["/api/briefings/history", "history"],
+  ] as const) {
+    for (const role of STAFF) {
+      it(`GET ${path}: ${role} reaches the handler`, async () => {
+        handlerCalls[key] = 0;
+        const res = (await buildRouter().fetch(await requestAs(role, "GET", path), makeEnv())) as Response;
+        expect(res.status).toBe(200);
+        const body = await res.json<{ success: boolean; data: string }>();
+        expect(body.data).toBe("handler-reached");
+        expect(handlerCalls[key]).toBe(1);
+      });
+    }
+
+    it(`GET ${path}: client gets 403 and the handler never runs`, async () => {
+      handlerCalls[key] = 0;
+      const res = (await buildRouter().fetch(await requestAs("client", "GET", path), makeEnv())) as Response;
+      expect(res.status).toBe(403);
+      expect(handlerCalls[key]).toBe(0);
+    });
+  }
 });

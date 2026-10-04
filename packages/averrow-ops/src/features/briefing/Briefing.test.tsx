@@ -280,6 +280,8 @@ describe('Briefing shell — ops source', () => {
     renderWithProviders(<Briefing source="ops" />);
     expect(await screen.findByText('No briefing generated yet.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /run briefing now/i })).toBeInTheDocument();
+    expect(screen.getByText(/run one to populate this widget/i)).toBeInTheDocument();
+    expect(screen.queryByText(/runs automatically at 13:13 UTC/i)).not.toBeInTheDocument();
   });
 
   it('shows the loading state while fetching', () => {

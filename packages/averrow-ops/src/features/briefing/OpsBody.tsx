@@ -708,6 +708,9 @@ export function OpsBriefingBody() {
       onRetry={() => { void refetch(); }}
       errorTitle="Couldn't load the briefing"
       emptyTitle="No briefing generated yet."
+      // 13:13 UTC = the dedicated `13 13 * * *` daily_briefing cron
+      // (averrow-worker wrangler.toml, cron/orchestrator.ts). Update both
+      // if the schedule moves.
       emptyDescription={canGenerate
         ? 'Run one to populate this widget.'
         : 'The daily briefing runs automatically at 13:13 UTC.'}
