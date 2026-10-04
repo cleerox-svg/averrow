@@ -781,15 +781,33 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   invite when ANY existing account matching the Google sub or the email
   (case-insensitive) is staff (instead of demoting it to `client`), and a
   staff invite for an existing active org member. Any actual role change
-  via that PATCH sets `forced_logout:<user_id>` in KV, revoking live tokens.
+  via that PATCH sets `forced_logout:<user_id>` in KV, revoking live tokens;
+  if that KV write fails the role change stands and the PATCH returns 200
+  with `revocation_pending: true` + `warning` (audited
+  `user_role_change_revocation_failed`) — re-run force-logout.
+- Only `super_admin` may PATCH a user when the requested role OR the
+  target's CURRENT role is `admin`/`super_admin` (403 otherwise; also
+  covers status changes of those accounts) — an `admin` cannot demote a
+  super_admin or another admin.
+- Org owner seats (`/api/orgs/:orgId/*`): inviting, promoting to, demoting
+  or removing an `owner` requires a platform `super_admin`/`admin` or an
+  active owner of that org (read from `org_members`, not the JWT claim) — a
+  customer org `admin` cannot self-escalate. Removing/demoting the org's
+  last active owner is 409.
 - **The one allowed staff membership: the lead-conversion placeholder.**
   `handlers/leadConversion.ts` seats the converting `super_admin` as a
   TEMPORARY org `owner` (`org_members.provisioned_by='lead_conversion'`) so
   the new org has an owner before the customer arrives. Both staff guards
-  above ignore that row. The first customer (`client`) to accept an
-  `org_role='owner'` invite for that org deactivates it (`status='removed'`,
-  `deprovisioned_at`), for that org only, audited as
-  `lead_conversion_placeholder_removed`.
+  above ignore that row **only while its user is still staff**
+  (`PLACEHOLDER_EXEMPT_SQL`, `lib/lead-conversion-placeholder.ts`); a
+  client's placeholder is a real membership. It is deactivated
+  (`status='removed'`, `deprovisioned_at`, audited as
+  `lead_conversion_placeholder_removed`) when: the first customer (`client`)
+  accepts an `org_role='owner'` invite for that org (that org only);
+  ownership is transferred to a non-placeholder member (that org only, same
+  batch); or its user's role is changed staff → `client` (all of that
+  user's placeholders, same batch as the role write — otherwise the next
+  refresh would embed the org as `org_id`/`org_role=owner`).
 
 **`auditor` is minted-only.** It's a real `UserRole` with a read-only
 permission set + global org scope, but it is NOT assignable to a stored

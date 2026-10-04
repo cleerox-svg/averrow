@@ -7,6 +7,7 @@ import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
+import { PLACEHOLDER_EXEMPT_SQL } from "../lib/lead-conversion-placeholder";
 import {
   generateMagicLinkToken, hashMagicLinkToken, checkRateLimit,
   persistMagicLinkRow, findMagicLinkByHash, markMagicLinkUsed,
@@ -520,7 +521,9 @@ export async function handleInviteAcceptance(
   //     customer-org member would create tenant-affiliated staff — the same
   //     state the admin role PATCH refuses. Refuse it too. The lead-conversion
   //     placeholder owner row (provisioned_by='lead_conversion') is the one
-  //     allowed staff membership and is ignored.
+  //     allowed staff membership and is ignored — but only while its user is
+  //     still staff (PLACEHOLDER_EXEMPT_SQL); a client's leftover placeholder
+  //     is a real membership.
   const staffMatch = matches.find((m) => isPlatformStaff(m.role));
   if (invite.org_id && staffMatch) {
     await audit(env, {
@@ -536,9 +539,9 @@ export async function handleInviteAcceptance(
   }
   if (matches.length > 0 && isPlatformStaff(invite.role)) {
     const membership = await env.DB.prepare(
-      `SELECT user_id, org_id FROM org_members
-       WHERE user_id IN (SELECT id FROM users WHERE google_sub = ? OR LOWER(email) = LOWER(?))
-         AND status = 'active' AND provisioned_by IS NOT 'lead_conversion'
+      `SELECT om.user_id, om.org_id FROM org_members om
+       WHERE om.user_id IN (SELECT id FROM users WHERE google_sub = ? OR LOWER(email) = LOWER(?))
+         AND om.status = 'active' AND NOT (${PLACEHOLDER_EXEMPT_SQL})
        LIMIT 1`,
     ).bind(googleUser.sub, googleUser.email).first<{ user_id: string; org_id: number }>();
     if (membership) {

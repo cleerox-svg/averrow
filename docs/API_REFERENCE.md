@@ -943,7 +943,7 @@ All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including th
 | GET | `/api/internal/budget/ledger-health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/admin/budget/ledger-health` for MCP server access. |
 | GET | `/api/internal/agents/:name/health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/agents/:name/health` for MCP server access. |
 | GET | `/api/admin/users` | Admin | List users (`?q=` name/email search, `?role=`, `?status=`, `limit`/`offset`; `total` respects the active filters). Consumed by the Platform Users admin page (`/admin/platform-users`, Governance → Users tab) |
-| PATCH | `/api/admin/users/:id` | Admin | Update user. 400 when changing a non-staff user to a staff role (anything but `client`) while they hold an active `org_members` row — no tenant-affiliated staff (PR-F); the lead-conversion placeholder owner row (`provisioned_by='lead_conversion'`) is ignored, and status-only / same-role PATCHes never 400. Any actual role change sets `forced_logout:<id>` in KV, revoking the user's live tokens. |
+| PATCH | `/api/admin/users/:id` | Admin | Update user. 400 when changing a non-staff user to a staff role (anything but `client`) while they hold an active `org_members` row — no tenant-affiliated staff (PR-F); the lead-conversion placeholder owner row (`provisioned_by='lead_conversion'`) is ignored only while its user is staff, and status-only / same-role PATCHes never 400. 403 unless the caller is `super_admin` when the requested role OR the target's current role is `admin`/`super_admin` (covers status changes of those accounts too); self role change is 400. A staff → `client` change deactivates the user's active lead-conversion placeholder rows in the same D1 batch (audited `lead_conversion_placeholder_removed`). Any actual role change sets `forced_logout:<id>` in KV, revoking the user's live tokens; if that KV write fails the role change still stands and the response is 200 with `revocation_pending: true` + `warning` (audited `user_role_change_revocation_failed`) — re-run force-logout. |
 | GET | `/api/admin/sessions` | Admin | Active sessions |
 | POST | `/api/admin/users/:id/force-logout` | Admin | Force logout user |
 | GET | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | List invites |
@@ -1056,10 +1056,10 @@ All endpoints under `/api/orgs/:orgId/...` require the caller to be a member of 
 |--------|------|------|-------------|
 | GET | `/api/orgs/:orgId` | Member | Get organization detail |
 | GET | `/api/orgs/:orgId/members` | Member | List organization members |
-| POST | `/api/orgs/:orgId/invite` | Admin (org) | Invite a user to the organization |
-| DELETE | `/api/orgs/:orgId/members/:userId` | Admin (org) | Remove a member |
-| PATCH | `/api/orgs/:orgId/members/:userId` | Admin (org) | Update a member role |
-| POST | `/api/orgs/:orgId/transfer-ownership` | Owner (org) | Atomically demote the current owner to `admin` and promote the target member to `owner`. Body: `{ new_owner_user_id }` |
+| POST | `/api/orgs/:orgId/invite` | Admin (org) | Invite a user to the organization. `org_role: 'owner'` is 403 unless the caller is a platform `super_admin`/`admin` or an active owner of this org (checked against `org_members`, not the JWT claim). |
+| DELETE | `/api/orgs/:orgId/members/:userId` | Admin (org) | Remove a member. Removing an owner is 403 unless the caller is a platform `super_admin`/`admin` or an active owner of this org; removing the org's last active owner is 409 (transfer ownership first). |
+| PATCH | `/api/orgs/:orgId/members/:userId` | Admin (org) | Update a member role. Setting or changing an `owner` seat follows the same 403 rule as invite/remove; demoting the last active owner is 409. |
+| POST | `/api/orgs/:orgId/transfer-ownership` | Owner (org) | Atomically demote the current owner to `admin` and promote the target member to `owner`. When the new owner is not a lead-conversion placeholder, the org's active placeholder rows are deactivated in the same batch (audited `lead_conversion_placeholder_removed`). Body: `{ new_owner_user_id }` |
 | GET | `/api/orgs/:orgId/invites` | Admin (org) | List outstanding invites |
 | DELETE | `/api/orgs/:orgId/invites/:inviteId` | Admin (org) | Revoke an invite |
 | POST | `/api/orgs/:orgId/invites/:inviteId/resend` | Admin (org) | Resend an outstanding invite email |
