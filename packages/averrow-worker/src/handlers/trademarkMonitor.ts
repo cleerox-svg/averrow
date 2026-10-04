@@ -3,8 +3,8 @@
 //   GET /api/trademarks/overview
 //     Cross-brand rollup for the staff Trademark page: per-brand asset +
 //     finding counts, plus cross-brand totals. Mirrors the app-store /
-//     dark-web overview handlers. Admins see every brand with trademark
-//     data; org members see their org_brands subset.
+//     dark-web overview handlers. Every staff role sees every brand with
+//     trademark data (PR-F); org members see their org_brands subset.
 //
 // Data is produced by scanners/trademark-monitor.ts (Phase 1 correlation).
 
@@ -12,7 +12,7 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
-import type { AuthContext } from "../middleware/auth";
+import { isPlatformStaff, type AuthContext } from "../middleware/auth";
 
 export interface TrademarkOverviewRow {
   id:                     string;
@@ -45,14 +45,15 @@ export async function handleTrademarkOverview(
     const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
-    const isAdmin = ctx.role === "admin" || ctx.role === "super_admin";
+    // PR-F: every staff role sees all brands with trademark data (was admin
+    // + super_admin only). Non-staff with an org see their org_brands subset;
+    // non-staff without an org see nothing. `admin` cache-key segment kept.
+    const isGlobal = isPlatformStaff(ctx.role);
 
-    // Scope: admins see all brands with trademark data; org members see
-    // their org_brands subset. Non-admin without an org sees nothing.
     let orgFilter = "";
     const params: unknown[] = [];
     let scopeKey: string;
-    if (isAdmin) {
+    if (isGlobal) {
       scopeKey = "admin";
     } else if (ctx.orgId) {
       orgFilter = "AND b.id IN (SELECT brand_id FROM org_brands WHERE org_id = ?)";

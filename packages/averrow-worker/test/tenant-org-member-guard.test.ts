@@ -216,3 +216,52 @@ describe("billing handlers — viewer blocked, org-admin passes the gate", () =>
     expect(res.status).toBe(503);
   });
 });
+
+// ─── PR-F: ops-global staff do NOT gain tenant-route reach ───────
+// PR-F made every staff role global on the OPS surface (getOrgScope → null
+// via isPlatformStaff). The tenant backstop deliberately still uses the
+// narrower hasGlobalReadScope (super_admin, auditor), so a non-global staff
+// role is blocked on another org's /api/orgs/:orgId/* route exactly as before.
+describe("PR-F: non-global staff stay blocked on tenant routes", () => {
+  const NON_GLOBAL_STAFF: UserRole[] = ["admin", "analyst", "sales", "support", "billing"];
+
+  for (const role of NON_GLOBAL_STAFF) {
+    it(`requireOrgMember: org-less ${role} gets 403 on an org route`, async () => {
+      const req = await makeRequest({ sub: `u-${role}`, email: `${role}@averrow.com`, role }, { orgId: "20" });
+      const result = await requireOrgMember(req, makeEnv());
+      expect(isAuthContext(result)).toBe(false);
+      expect((result as Response).status).toBe(403);
+    });
+  }
+
+  it("requireOrgMember: analyst holding a legacy JWT for org 10 is still 403 on org 20", async () => {
+    const req = await makeRequest(
+      { sub: "u-an", email: "an@averrow.com", role: "analyst", org_id: "10", org_role: "admin",
+        org_scope: { org_id: 10, brand_ids: ["b1"] } },
+      { orgId: "20" },
+    );
+    const result = await requireOrgMember(req, makeEnv());
+    expect(isAuthContext(result)).toBe(false);
+    expect((result as Response).status).toBe(403);
+  });
+
+  it("router: GET /api/orgs/:orgId/takedown-authorization — analyst/admin 403, super_admin/auditor reach the handler", async () => {
+    const { Router } = await import("itty-router");
+    const { registerTenantRoutes } = await import("../src/routes/tenant");
+    const router = Router();
+    registerTenantRoutes(router);
+    const call = async (role: UserRole): Promise<number> => {
+      const token = await signJWT({ sub: `u-${role}`, email: `${role}@averrow.com`, role }, SECRET, 300);
+      const req = new Request("https://averrow.com/api/orgs/abc/takedown-authorization", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return ((await router.fetch(req, makeEnv())) as Response).status;
+    };
+    expect(await call("analyst")).toBe(403);
+    expect(await call("admin")).toBe(403);
+    // Global-read seats pass both nets; the non-numeric org id then 400s
+    // inside the handler — proof the guard let them through.
+    expect(await call("super_admin")).toBe(400);
+    expect(await call("auditor")).toBe(400);
+  });
+});

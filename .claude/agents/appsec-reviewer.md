@@ -25,8 +25,15 @@ the security of the code we ship, not external threat feeds.
   `StaffPermission`. Watch for the two role namespaces (global `users.role` vs
   org `org_members.role`) — same string, different meaning; disambiguate by the
   column, not the value. `auditor` is minted-only and read-only.
-- **Org scope**: `getOrgScope` returning null (global) is correct only for
-  super_admin/auditor. Flag any handler that leaks cross-org data.
+- **Org scope**: on the ops surface every staff role is global —
+  `getOrgScope` returns null for `isPlatformStaff` (all non-`client` roles,
+  PR-F); `client` must always get an org scope. Tenant isolation lives in
+  `/tenant` + `/api/orgs/:orgId/*`, where only `hasGlobalReadScope`
+  (super_admin, auditor) bypasses `requireOrgMember` / `verifyOrgAccess` —
+  flag any change that widens that tenant exemption, any ops handler that
+  rolls its own narrower "global" check, and any path that makes a staff
+  user an active org member (no tenant-affiliated staff). Flag any handler
+  that leaks cross-org data to a `client`.
 - **Auth flows**: session, passkey, and OAuth `return_to` handling; the
   mint-ui-preview-jwt path; no role escalation via preview tokens.
 - **Secrets**: never hardcoded — `env.SECRET_NAME` only. Run secret scanning on

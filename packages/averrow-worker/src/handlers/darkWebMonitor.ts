@@ -15,7 +15,7 @@ import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { getCacheVersion, bumpCacheVersion } from "../lib/cache-version";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
-import type { AuthContext } from "../middleware/auth";
+import { isPlatformStaff, type AuthContext } from "../middleware/auth";
 
 const VALID_CLASSIFICATIONS = [
   "confirmed",
@@ -38,6 +38,7 @@ async function assertBrandAccess(
   env: Env,
   brandId: string,
   userId: string,
+  access: "read" | "write",
 ): Promise<{ brand: { id: string; name: string; domain: string | null } } | { error: Response }> {
   const origin: string | null = null;
   const brand = await env.DB.prepare(
@@ -54,9 +55,14 @@ async function assertBrandAccess(
   const userRow = await env.DB.prepare(
     "SELECT role FROM users WHERE id = ?",
   ).bind(userId).first<{ role: string }>();
-  const isAdmin = userRow?.role === "admin" || userRow?.role === "super_admin";
+  // PR-F: READS bypass the monitored_brands check for every staff role
+  // (staff see all platform data). WRITES keep the pre-PR-F admin /
+  // super_admin bypass — mutation gates are deliberately unchanged.
+  const bypass = access === "read"
+    ? isPlatformStaff(userRow?.role)
+    : userRow?.role === "admin" || userRow?.role === "super_admin";
 
-  if (!ownership && !isAdmin) {
+  if (!ownership && !bypass) {
     return {
       error: json({ success: false, error: "Brand not in your monitored list" }, 403, origin),
     };
@@ -248,7 +254,7 @@ export async function handleListDarkWebMentions(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const access = await assertBrandAccess(env, brandId, userId);
+    const access = await assertBrandAccess(env, brandId, userId, "read");
     if ("error" in access) return access.error;
 
     const url = new URL(request.url);
@@ -353,7 +359,7 @@ export async function handleTriggerDarkWebScan(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const access = await assertBrandAccess(env, brandId, userId);
+    const access = await assertBrandAccess(env, brandId, userId, "write");
     if ("error" in access) return access.error;
 
     const brandRow = await env.DB.prepare(
@@ -439,7 +445,7 @@ export async function handleUpdateDarkWebMention(
       return json({ success: false, error: "Dark-web mention not found" }, 404, origin);
     }
 
-    const access = await assertBrandAccess(env, existing.brand_id, userId);
+    const access = await assertBrandAccess(env, existing.brand_id, userId, "write");
     if ("error" in access) return access.error;
 
     const body = await request.json().catch(() => null) as {
@@ -529,13 +535,17 @@ export async function handleDarkWebOverview(
     const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
-    const isAdmin = ctx.role === "admin" || ctx.role === "super_admin";
+    // PR-F: every staff role gets the platform-wide view (was admin +
+    // super_admin only; other staff fell to the org_brands branch and, being
+    // org-less, saw nothing). The `admin` cache-key segment is kept so the
+    // existing slot stays valid — its contents are the same global answer.
+    const isGlobal = isPlatformStaff(ctx.role);
 
     let scope: string;
     let scopeParams: unknown[];
     let scopeKey: string;
 
-    if (isAdmin) {
+    if (isGlobal) {
       scope = `INNER JOIN monitored_brands mb ON mb.brand_id = b.id`;
       scopeParams = [];
       scopeKey = "admin";

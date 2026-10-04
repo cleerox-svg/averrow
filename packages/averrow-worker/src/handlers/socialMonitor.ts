@@ -6,6 +6,7 @@ import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import { runSocialMonitorForBrand } from "../scanners/social-monitor";
 import type { Env } from "../types";
+import { isPlatformStaff } from "../middleware/auth";
 
 // ─── GET /api/social/monitor — Social monitoring overview (all brands) ───
 
@@ -96,7 +97,8 @@ export async function handleSocialOverview(request: Request, env: Env, userId: s
 export async function handleBrandSocialMonitor(request: Request, env: Env, brandId: string, userId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // Verify ownership via monitored_brands or admin role
+    // Verify ownership via monitored_brands or staff role (READ path —
+    // PR-F: every staff role bypasses, was admin + super_admin only)
     const brand = await env.DB.prepare(
       "SELECT id, name, canonical_domain, official_handles FROM brands WHERE id = ?"
     ).bind(brandId).first();
@@ -109,9 +111,9 @@ export async function handleBrandSocialMonitor(request: Request, env: Env, brand
       "SELECT brand_id FROM monitored_brands WHERE brand_id = ?"
     ).bind(brandId).first();
     const userRow = await env.DB.prepare("SELECT role FROM users WHERE id = ?").bind(userId).first<{ role: string }>();
-    const isAdmin = userRow?.role === "admin" || userRow?.role === "super_admin";
+    const isStaff = isPlatformStaff(userRow?.role);
 
-    if (!ownership && !isAdmin) {
+    if (!ownership && !isStaff) {
       return json({ success: false, error: "Brand not in your monitored list" }, 403, origin);
     }
 

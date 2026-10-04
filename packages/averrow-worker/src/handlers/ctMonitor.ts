@@ -3,8 +3,9 @@
  * Certificate Transparency Monitor API Handlers — List, stats, update, and
  * trigger CT certificate scans for monitored brands.
  *
- * Ownership: super_admin sees any brand; org members see only brands
- * in their org_brands. Replaces the old user_id-via-brand_profiles
+ * Ownership: READS — every staff role (isPlatformStaff, PR-F) sees any
+ * brand; WRITES — super_admin touches any brand; otherwise org members see
+ * only brands in their org_brands. Replaces the old user_id-via-brand_profiles
  * scoping (R2 of brand_profiles deprecation, 2026-05-07).
  */
 
@@ -12,15 +13,20 @@ import { json } from "../lib/cors";
 import { pollCertificates, checkCertForBrand } from "../scanners/ct-monitor";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
-import type { AuthContext } from "../middleware/auth";
+import { isPlatformStaff, type AuthContext } from "../middleware/auth";
 
 // ─── Brand-access helper ──────────────────────────────────────────
+// PR-F (owner decision 2026-10-03): READ callers (list, stats) bypass the
+// org_brands join for every staff role (`isPlatformStaff`); the WRITE caller
+// (trigger scan) keeps the pre-PR-F super_admin-only bypass unchanged.
 async function findBrandForCaller(
   env:     Env,
   brandId: string,
   ctx:     AuthContext,
+  access:  "read" | "write",
 ): Promise<{ id: string; canonical_domain: string; brand_keywords: string | null } | null> {
-  if (ctx.role === "super_admin") {
+  const isGlobal = access === "read" ? isPlatformStaff(ctx.role) : ctx.role === "super_admin";
+  if (isGlobal) {
     return env.DB.prepare(
       "SELECT id, canonical_domain, brand_keywords FROM brands WHERE id = ?",
     ).bind(brandId).first<{ id: string; canonical_domain: string; brand_keywords: string | null }>();
@@ -44,7 +50,7 @@ export async function handleListCertificates(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "read");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
@@ -94,7 +100,7 @@ export async function handleCertStats(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "read");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
@@ -246,7 +252,7 @@ export async function handleTriggerCTScan(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "write");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }

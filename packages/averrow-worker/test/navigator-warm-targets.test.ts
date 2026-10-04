@@ -231,7 +231,7 @@ const CLIENT_REQUESTS: Array<{ warm: string; client: string; source: string; han
   { warm: "/api/v1/operations?limit=4&offset=0&status=active", client: "/api/v1/operations?limit=4&offset=0&status=active", source: "averrow-ops/src/features/observatory-v3/components/SidePanel.tsx:310 + hooks/useOperations.ts:44-46", handler: handleListOperations },
   { warm: "/api/v1/operations?limit=12&offset=0", client: "/api/v1/operations?limit=12&offset=0", source: "averrow-ops/src/features/campaigns/Campaigns.tsx:681 + hooks/useOperations.ts:44-46", handler: handleListOperations },
   // useBrands: URLSearchParams({view, limit, offset, range}). The route
-  // passes getOrgScope() — null for super_admin/auditor ("global" key).
+  // passes getOrgScope() — null for every staff role ("global" key, PR-F).
   { warm: "/api/brands?view=top&limit=8&offset=0&range=7d", client: "/api/brands?view=top&limit=8&offset=0&range=7d", source: "averrow-ops/src/features/observatory-v3/components/SidePanel.tsx:235 + hooks/useBrands.ts:95-97", handler: (r, e) => handleListBrands(r, e, null) },
   // ThreatActors default: status=active, no country/q, no limit.
   { warm: "/api/threat-actors?status=active", client: "/api/threat-actors?status=active", source: "averrow-ops/src/features/threat-actors/ThreatActors.tsx:353-357 + hooks/useThreatActors.ts:91-98", handler: handleListThreatActors },

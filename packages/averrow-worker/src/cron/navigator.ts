@@ -119,7 +119,7 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'A2', path: '/api/observatory/stats?period=30d', consumer: 'ops ObservatoryV3 30D toggle', handler: handleObservatoryStats },
 
   // ── Phase B — Dashboard / agents / operations ──
-  { phase: 'B', path: '/api/dashboard/overview', consumer: 'averrow-mcp platform smoke probe (auditor JWT). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys', handler: handleDashboardOverview },
+  { phase: 'B', path: '/api/dashboard/overview', consumer: 'averrow-mcp platform smoke probe (auditor JWT). Writes the `global` scope key — every staff role reads it (getOrgScope null for isPlatformStaff, PR-F)', handler: handleDashboardOverview },
   { phase: 'B', path: '/api/agents', consumer: 'ops Agents (useAgents)', handler: handleListAgents },
   { phase: 'B', path: '/api/v1/operations?limit=12&offset=0', consumer: 'ops Campaigns default list (useOperations)', handler: handleListOperations },
   { phase: 'B', path: '/api/v1/operations/stats', consumer: 'ops Campaigns (useOperationsStats); MCP smoke probe', handler: handleOperationsStats },
@@ -133,7 +133,7 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // ── Phase C — Brands + Threat Actors ──
   // handleListBrands keys on tab/sort/limit only (view + range are not
   // read); this is the Observatory side panel's Top Targeted Brands load.
-  { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands). Writes the `global` scope key — only super_admin/auditor (getOrgScope null) read it; other staff read org-scoped keys and stay cold', handler: handleListBrands },
+  { phase: 'C', path: '/api/brands?view=top&limit=8&offset=0&range=7d', consumer: 'ops SidePanel TopBrandsWidget (useBrands). Writes the `global` scope key — every staff role reads it (getOrgScope null for isPlatformStaff, PR-F)', handler: handleListBrands },
   { phase: 'C', path: '/api/brands/stats', consumer: 'ops Brands (useBrandStats)', handler: handleBrandStats },
   { phase: 'C', path: '/api/threat-actors?status=active', consumer: 'ops ThreatActors default active-only list (useThreatActors)', handler: handleListThreatActors },
   { phase: 'C', path: '/api/threat-actors/stats', consumer: 'ops ThreatActors (useThreatActorStats)', handler: handleThreatActorStats },

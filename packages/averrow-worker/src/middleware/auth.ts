@@ -15,8 +15,8 @@ export interface AuthContext {
   /**
    * Pre-resolved org scope from the JWT payload, if present.
    * `undefined` means the token predates Fix 4 and getOrgScope() must
-   * fall back to a DB lookup. `null` is reserved for super_admins via
-   * the role check inside getOrgScope().
+   * fall back to a DB lookup. Ignored for staff roles: getOrgScope()
+   * returns null for every `isPlatformStaff` role before reading it (PR-F).
    */
   embeddedScope: { org_id: number; brand_ids: string[] } | undefined;
   /**
@@ -147,8 +147,41 @@ const ROLE_HIERARCHY: Record<UserRole, number> = {
   client:      1,
 };
 
-/** Roles that see ALL tenants' data unfiltered (no brand scoping). super_admin
- *  by privilege; auditor as a deliberate read-only global seat. */
+/**
+ * The staff-tier roles `requireStaff` lists. Every role at or above the
+ * lowest of these levels is Averrow staff (today: analyst, sales, support,
+ * billing, auditor, admin, super_admin); only `client` sits below.
+ */
+const STAFF_TIER_ROLES = ["analyst", "sales", "support", "billing"] as const satisfies readonly UserRole[];
+
+/** Hierarchy floor for "is Averrow staff". Derived from the same role list
+ *  `requireStaff` passes to `requireRole`, so the two can't drift. */
+const STAFF_MIN_LEVEL = Math.min(...STAFF_TIER_ROLES.map((r) => ROLE_HIERARCHY[r]));
+
+/**
+ * PR-F (owner decision 2026-10-03): true for every Averrow staff role — the
+ * exact set `requireStaff` admits (every non-`client` role). Staff are never
+ * tenant-affiliated, so on the ops surface they all see ALL platform data:
+ * `getOrgScope` / `loadOrgScopeForToken` return null (global) for them, and
+ * ops READ paths use this as their single "global" predicate.
+ *
+ * NOT the tenant-route exemption. `/api/orgs/:orgId/*` (`requireOrgMember`,
+ * `verifyOrgAccess`) keep using `hasGlobalReadScope` (super_admin, auditor)
+ * — tenant isolation for the customer app is unchanged.
+ *
+ * Accepts a raw string so handlers that read `users.role` from D1 can call it
+ * directly; an unknown value maps to level 0 and fails closed.
+ */
+export function isPlatformStaff(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const level = (ROLE_HIERARCHY as Record<string, number | undefined>)[role] ?? 0;
+  return level >= STAFF_MIN_LEVEL;
+}
+
+/** Roles that bypass org-membership checks on the TENANT routes
+ *  (`/api/orgs/:orgId/*` — `requireOrgMember`, `verifyOrgAccess`).
+ *  super_admin by privilege; auditor as a deliberate read-only global seat.
+ *  Ops-surface data scoping uses the wider `isPlatformStaff` instead (PR-F). */
 export function hasGlobalReadScope(role: UserRole): boolean {
   return role === "super_admin" || role === "auditor";
 }
@@ -283,8 +316,9 @@ export async function requireSuperAdmin(request: Request, env: Env): Promise<Aut
  */
 export async function requireStaff(request: Request, env: Env): Promise<AuthContext | Response> {
   // Any role at hierarchy level 3+ qualifies — analyst, sales,
-  // support, billing, admin, super_admin. Excludes only 'client'.
-  return requireRole("analyst", "sales", "support", "billing")(request, env);
+  // support, billing, auditor, admin, super_admin. Excludes only 'client'.
+  // Shares STAFF_TIER_ROLES with isPlatformStaff so the two can't drift.
+  return requireRole(...STAFF_TIER_ROLES)(request, env);
 }
 
 /**
@@ -399,7 +433,11 @@ export interface OrgScope {
 
 /**
  * Resolve the org scope for the authenticated user.
- * Super admins get null (no filter). Brand admins get their org's brand_ids.
+ * Every Averrow staff role (`isPlatformStaff`) gets null (no filter) — PR-F,
+ * owner decision 2026-10-03: staff are never tenant-affiliated and see ALL
+ * platform data. The role check runs FIRST, so a staff token minted before
+ * PR-F with an embedded `org_scope` is global immediately. `client` users
+ * get their org's brand_ids (unchanged).
  *
  * Hot-path optimization: if the JWT carries org_scope (issued via
  * loadOrgScopeForToken at login/refresh), we return it immediately with
@@ -410,8 +448,10 @@ export async function getOrgScope(
   ctx: AuthContext,
   db: D1Database,
 ): Promise<OrgScope | null> {
-  // Global-read roles (super_admin, auditor) see everything — no brand filter.
-  if (hasGlobalReadScope(ctx.role)) return null;
+  // Every staff role sees everything — no brand filter. Checked before the
+  // embedded-scope fast path so legacy staff tokens carrying org_scope are
+  // ignored rather than honoured.
+  if (isPlatformStaff(ctx.role)) return null;
 
   // Fast path: JWT-embedded scope (zero D1 queries).
   if (ctx.embeddedScope !== undefined) {
@@ -441,17 +481,18 @@ export async function getOrgScope(
  * Compute the org scope for embedding in a freshly-issued JWT.
  * Called only at login and refresh — not on the request hot path.
  *
- * Returns null for super_admins (whose scope is implicit by role) and
- * undefined when the user has no active org membership (so the JWT omits
- * the field, matching the legacy code path).
+ * Returns undefined for every staff role (`isPlatformStaff` — their scope
+ * is global by role, so the JWT omits the field). For `client` users it
+ * returns their first active org's brand_ids, or `{org_id:0, brand_ids:[]}`
+ * when they have no active membership.
  */
 export async function loadOrgScopeForToken(
   db: D1Database,
   userId: string,
   role: UserRole,
 ): Promise<{ org_id: number; brand_ids: string[] } | undefined> {
-  // Global-read roles embed no scope (getOrgScope returns null by role).
-  if (hasGlobalReadScope(role)) return undefined;
+  // Staff embed no scope (getOrgScope returns null by role).
+  if (isPlatformStaff(role)) return undefined;
 
   const membership = await db.prepare(
     "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1"

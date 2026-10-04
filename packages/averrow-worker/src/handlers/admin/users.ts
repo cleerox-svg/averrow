@@ -16,7 +16,7 @@ import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
-import type { AuthContext } from "../../middleware/auth";
+import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
 import {
@@ -102,6 +102,22 @@ export async function handleAdminUpdateUser(
   // Prevent self-demotion for super_admins (safety)
   if (targetUserId === adminUserId && role && role !== adminRole) {
     return json({ success: false, error: "Cannot change your own role" }, 400, origin);
+  }
+
+  // PR-F — no tenant-affiliated staff (owner decision 2026-10-03). Staff roles
+  // see ALL platform data (getOrgScope → null), so a customer org member must
+  // never be promoted into one: refuse while the user holds an ACTIVE
+  // org_members row (removal flips status to 'removed', organizations.ts).
+  if (role !== undefined && isPlatformStaff(role)) {
+    const membership = await env.DB.prepare(
+      "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1",
+    ).bind(targetUserId).first<{ org_id: number }>();
+    if (membership) {
+      return json({
+        success: false,
+        error: "Cannot assign a staff role to a user who is an active member of a customer organization. Remove them from the organization first; Averrow staff cannot be tenant-affiliated.",
+      }, 400, origin);
+    }
   }
 
   const sets: string[] = [];

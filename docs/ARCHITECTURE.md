@@ -215,7 +215,7 @@ The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a 
 - **Phase B** (every 15 min): Dashboard overview (MCP smoke probe), Agents list, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (super_admin variant) (6)
 - **Phase C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`?status=active`) + stats (4)
 
-A2/B/C are skipped when the D1 read budget is over the soft-cap. Observatory handlers normalise `source_feed` absent / empty / `all` to one `all` key segment — the ops client sends `source_feed=` for "All Sources". The brands-list and dashboard-overview warms write the `global` scope key, which only `super_admin`/`auditor` read (`getOrgScope` returns null); other staff roles read org-scoped keys those warms don't populate.
+A2/B/C are skipped when the D1 read budget is over the soft-cap. Observatory handlers normalise `source_feed` absent / empty / `all` to one `all` key segment — the ops client sends `source_feed=` for "All Sources". The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for every `isPlatformStaff` role — PR-F: staff are global, tenant isolation lives in `/tenant` + `/api/orgs/:orgId/*`).
 
 ### Counter cache (`lib/cached-count.ts`)
 
