@@ -18,6 +18,7 @@ import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import { isPlatformStaff, type AuthContext } from "../../middleware/auth";
 import { ABSOLUTE_SESSION_TTL } from "../../lib/jwt";
+import { PLACEHOLDER_EXEMPT_SQL, deactivateUserPlaceholdersStmt } from "../../lib/lead-conversion-placeholder";
 import { classifySaasTechnique } from "../../lib/saas-classifier";
 import { BudgetManager, type BudgetStatus } from "../../lib/budgetManager";
 import {
@@ -95,11 +96,6 @@ export async function handleAdminUpdateUser(
     return json({ success: false, error: "Nothing to update" }, 400, origin);
   }
 
-  // Only super_admin can change roles to/from admin/super_admin
-  if (role && (role === "super_admin" || role === "admin") && adminRole !== "super_admin") {
-    return json({ success: false, error: "Only super admins can assign admin or super_admin roles" }, 403, origin);
-  }
-
   // Prevent self-demotion for super_admins (safety)
   if (targetUserId === adminUserId && role && role !== adminRole) {
     return json({ success: false, error: "Cannot change your own role" }, 400, origin);
@@ -110,18 +106,28 @@ export async function handleAdminUpdateUser(
   if (!current) return json({ success: false, error: "User not found" }, 404, origin);
   const roleChanged = role !== undefined && role !== current.role;
 
+  // Only super_admin may touch a privileged account. Checked against BOTH the
+  // requested role and the target's CURRENT role: checking only the new role
+  // let an `admin` demote a super_admin (or another admin) to analyst/client.
+  // Covers status changes too — an admin suspending/deactivating a
+  // super_admin is the same lockout. (Appsec review of #1765.)
+  const isPrivileged = (r: string | undefined): boolean => r === "super_admin" || r === "admin";
+  if (adminRole !== "super_admin" && (isPrivileged(role) || isPrivileged(current.role))) {
+    return json({ success: false, error: "Only super admins can change the role or status of an admin or super_admin account, or assign those roles" }, 403, origin);
+  }
+
   // PR-F — no tenant-affiliated staff (owner decision 2026-10-03). Staff roles
   // see ALL platform data (getOrgScope → null), so a customer org member must
   // never be promoted into one: refuse a non-staff → staff change while the
   // user holds an ACTIVE org_members row (removal flips status to 'removed',
   // organizations.ts). Status-only PATCHes and re-sending the current role
-  // never trip this. The lead-conversion placeholder owner row
-  // (provisioned_by='lead_conversion', leadConversion.ts) is the one allowed
-  // staff membership and is ignored here.
+  // never trip this. A lead-conversion placeholder row is exempt only while
+  // its user is staff (PLACEHOLDER_EXEMPT_SQL) — here the user is a client,
+  // so a leftover placeholder counts as a real membership.
   if (roleChanged && isPlatformStaff(role) && !isPlatformStaff(current.role)) {
     const membership = await env.DB.prepare(
-      `SELECT org_id FROM org_members
-       WHERE user_id = ? AND status = 'active' AND provisioned_by IS NOT 'lead_conversion'
+      `SELECT om.org_id FROM org_members om
+       WHERE om.user_id = ? AND om.status = 'active' AND NOT (${PLACEHOLDER_EXEMPT_SQL})
        LIMIT 1`,
     ).bind(targetUserId).first<{ org_id: number }>();
     if (membership) {
@@ -145,7 +151,21 @@ export async function handleAdminUpdateUser(
   }
 
   params.push(targetUserId);
-  await env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...params).run();
+  const updateUser = env.DB.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).bind(...params);
+
+  // Staff → client: the user's lead-conversion placeholder owner rows would
+  // otherwise stay active and, on the next refresh, be embedded as
+  // org_id/org_role=owner — a former staff member becoming a customer owner
+  // of a real tenant. Deactivate them in the SAME batch as the role write so
+  // neither lands without the other.
+  const demotedToClient = roleChanged && role === "client" && isPlatformStaff(current.role);
+  let placeholdersRemoved = 0;
+  if (demotedToClient) {
+    const results = await env.DB.batch([updateUser, deactivateUserPlaceholdersStmt(env.DB, targetUserId)]);
+    placeholdersRemoved = Number(results[1]?.meta?.changes ?? 0);
+  } else {
+    await updateUser.run();
+  }
 
   const user = await env.DB.prepare(
     "SELECT id, email, name, role, status, created_at, last_login FROM users WHERE id = ?",
@@ -153,16 +173,47 @@ export async function handleAdminUpdateUser(
 
   if (!user) return json({ success: false, error: "User not found" }, 404, origin);
 
+  if (placeholdersRemoved > 0) {
+    await audit(env, {
+      action: "lead_conversion_placeholder_removed",
+      userId: adminUserId,
+      resourceType: "user",
+      resourceId: targetUserId,
+      details: { reason: "staff_demoted_to_client", previous_role: current.role, placeholders_removed: placeholdersRemoved },
+      request,
+    });
+  }
+
   // A role change alters what every live token for this user may reach (the
   // JWT embeds role + org_scope), so revoke them: requireAuth and the refresh
   // path reject tokens/sessions issued at or before this stamp. Same key and
   // TTL convention as handleForceLogout (sessions.ts) / refresh-reuse.
+  //
+  // The stamp must postdate the role write (iat comparison), so it runs after
+  // it. A KV failure must not turn a committed role change into a 500 the
+  // caller retries blind: record it (audit, outcome failure) and return 200
+  // with `revocation_pending: true` + a warning so the operator can re-run
+  // the force-logout (POST /api/admin/users/:id/force-logout).
+  let revocationPending = false;
   if (roleChanged) {
-    await env.CACHE.put(
-      `forced_logout:${targetUserId}`,
-      String(Math.floor(Date.now() / 1000)),
-      { expirationTtl: ABSOLUTE_SESSION_TTL },
-    );
+    try {
+      await env.CACHE.put(
+        `forced_logout:${targetUserId}`,
+        String(Math.floor(Date.now() / 1000)),
+        { expirationTtl: ABSOLUTE_SESSION_TTL },
+      );
+    } catch (err) {
+      revocationPending = true;
+      await audit(env, {
+        action: "user_role_change_revocation_failed",
+        userId: adminUserId,
+        resourceType: "user",
+        resourceId: targetUserId,
+        details: { new_role: role, previous_role: current.role, error: err instanceof Error ? err.message : String(err) },
+        outcome: "failure",
+        request,
+      });
+    }
   }
 
   await audit(env, {
@@ -170,9 +221,17 @@ export async function handleAdminUpdateUser(
     userId: adminUserId,
     resourceType: "user",
     resourceId: targetUserId,
-    details: { changes: parsed.data },
+    details: { changes: parsed.data, previous_role: current.role },
     request,
   });
 
+  if (revocationPending) {
+    return json({
+      success: true,
+      data: user,
+      revocation_pending: true,
+      warning: "Role updated, but existing sessions could not be revoked. Force-logout this user to end their current sessions.",
+    }, 200, origin);
+  }
   return json({ success: true, data: user }, 200, origin);
 }

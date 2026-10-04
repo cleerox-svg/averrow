@@ -12,6 +12,7 @@ import { syncOrgModulesToPlan } from "../lib/entitlements";
 import { ORG_PUBLIC_SELECT_SQL, orgPublicSelectSql, toPublicOrg, redactWebhookUrl } from "../lib/org-public";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
+import { LEAD_CONVERSION_PROVISIONED_BY, deactivateOrgPlaceholdersStmt } from "../lib/lead-conversion-placeholder";
 
 // ─── SHA-256 helper ─────────────────────────────────────────
 async function sha256(text: string): Promise<string> {
@@ -49,6 +50,25 @@ const ORG_ROLE_HIERARCHY: Record<string, number> = {
 
 const VALID_ORG_ROLES = ["viewer", "analyst", "admin", "owner"];
 const INVITE_EXPIRY_HOURS = 72;
+
+/**
+ * May the caller create, grant, change or remove an org OWNER seat in this
+ * org? Platform admin/super_admin (customer onboarding), or a caller whose
+ * CURRENT org_members row in this org is an active owner — read from D1, not
+ * the JWT's org_role claim, which can be stale after an ownership transfer.
+ * An org-level `admin` (a customer) never can: inviting/promoting an owner
+ * would be self-escalation. (Appsec review of #1765.)
+ */
+async function canManageOrgOwners(env: Env, orgId: string, ctx: AuthContext): Promise<boolean> {
+  if (ctx.role === "super_admin" || ctx.role === "admin") return true;
+  const row = await env.DB.prepare(
+    "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active' LIMIT 1",
+  ).bind(orgId, ctx.userId).first<{ role: string }>();
+  return row?.role === "owner";
+}
+
+const OWNER_SEAT_FORBIDDEN = "Only an organization owner can invite, assign, change or remove an owner";
+const LAST_OWNER_CONFLICT = "Cannot remove or demote the organization's last active owner. Transfer ownership first.";
 
 // ─── Admin: Create Organization (super_admin) ────────────────
 
@@ -478,6 +498,9 @@ export async function handleOrgInvite(
   if (!VALID_ORG_ROLES.includes(orgRole)) {
     return json({ success: false, error: `Invalid org role. Must be one of: ${VALID_ORG_ROLES.join(", ")}` }, 400, origin);
   }
+  if (orgRole === "owner" && !(await canManageOrgOwners(env, orgId, ctx))) {
+    return json({ success: false, error: OWNER_SEAT_FORBIDDEN }, 403, origin);
+  }
 
   // Check member limit
   const org = await env.DB.prepare("SELECT max_members FROM organizations WHERE id = ?")
@@ -570,11 +593,35 @@ export async function handleRemoveOrgMember(
     return json({ success: false, error: "Cannot remove yourself from the organization" }, 400, origin);
   }
 
+  const target = await env.DB.prepare(
+    "SELECT role, provisioned_by FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active' LIMIT 1",
+  ).bind(orgId, userId).first<{ role: string; provisioned_by: string | null }>();
+  if (!target) {
+    return json({ success: false, error: "Member not found or already removed" }, 404, origin);
+  }
+  if (target.role === "owner" && !(await canManageOrgOwners(env, orgId, ctx))) {
+    return json({ success: false, error: OWNER_SEAT_FORBIDDEN }, 403, origin);
+  }
+
+  // Never leave the org with zero active owners. The guard lives in the
+  // UPDATE itself so a concurrent removal can't race past a separate read;
+  // removing the lead-conversion placeholder while a customer owner exists
+  // (the normal hand-off) still passes.
   const result = await env.DB.prepare(
-    "UPDATE org_members SET status = 'removed', deprovisioned_at = datetime('now') WHERE org_id = ? AND user_id = ? AND status = 'active'",
-  ).bind(orgId, userId).run();
+    `UPDATE org_members SET status = 'removed', deprovisioned_at = datetime('now')
+     WHERE org_id = ? AND user_id = ? AND status = 'active'
+       AND (role <> 'owner' OR EXISTS (
+         SELECT 1 FROM org_members o2
+         WHERE o2.org_id = ? AND o2.role = 'owner' AND o2.status = 'active' AND o2.user_id <> ?))`,
+  ).bind(orgId, userId, orgId, userId).run();
 
   if (!result.meta.changes) {
+    const still = await env.DB.prepare(
+      "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active' LIMIT 1",
+    ).bind(orgId, userId).first<{ role: string }>();
+    if (still?.role === "owner") {
+      return json({ success: false, error: LAST_OWNER_CONFLICT }, 409, origin);
+    }
     return json({ success: false, error: "Member not found or already removed" }, 404, origin);
   }
 
@@ -583,7 +630,7 @@ export async function handleRemoveOrgMember(
     userId: ctx.userId,
     resourceType: "org_member",
     resourceId: userId,
-    details: { org_id: orgId },
+    details: { org_id: orgId, role: target.role, provisioned_by: target.provisioned_by },
     request,
   });
 
@@ -612,11 +659,30 @@ export async function handleUpdateOrgMember(
     return json({ success: false, error: `Invalid role. Must be one of: ${VALID_ORG_ROLES.join(", ")}` }, 400, origin);
   }
 
+  // Same owner-seat rule as handleOrgInvite — otherwise an org admin could
+  // PATCH themselves (or anyone) to owner, or demote the owner.
+  const target = await env.DB.prepare(
+    "SELECT role FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active' LIMIT 1",
+  ).bind(orgId, userId).first<{ role: string }>();
+  if (!target) {
+    return json({ success: false, error: "Member not found" }, 404, origin);
+  }
+  if ((body.role === "owner" || target.role === "owner") && !(await canManageOrgOwners(env, orgId, ctx))) {
+    return json({ success: false, error: OWNER_SEAT_FORBIDDEN }, 403, origin);
+  }
+
+  // Demoting an owner must leave another active owner (atomic, as in remove).
   const result = await env.DB.prepare(
-    "UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ? AND status = 'active'",
-  ).bind(body.role, orgId, userId).run();
+    `UPDATE org_members SET role = ? WHERE org_id = ? AND user_id = ? AND status = 'active'
+       AND (role <> 'owner' OR ? = 'owner' OR EXISTS (
+         SELECT 1 FROM org_members o2
+         WHERE o2.org_id = ? AND o2.role = 'owner' AND o2.status = 'active' AND o2.user_id <> ?))`,
+  ).bind(body.role, orgId, userId, body.role, orgId, userId).run();
 
   if (!result.meta.changes) {
+    if (target.role === "owner") {
+      return json({ success: false, error: LAST_OWNER_CONFLICT }, 409, origin);
+    }
     return json({ success: false, error: "Member not found" }, 404, origin);
   }
 
@@ -973,10 +1039,10 @@ export async function handleTransferOwnership(
   }
 
   const target = await env.DB.prepare(
-    `SELECT user_id, role FROM org_members
+    `SELECT user_id, role, provisioned_by FROM org_members
      WHERE org_id = ? AND user_id = ? AND status = 'active'
      LIMIT 1`,
-  ).bind(orgId, targetUserId).first<{ user_id: string; role: string }>();
+  ).bind(orgId, targetUserId).first<{ user_id: string; role: string; provisioned_by: string | null }>();
 
   if (!target) {
     return json({ success: false, error: "Target user is not an active member of this organization" }, 404, origin);
@@ -984,16 +1050,36 @@ export async function handleTransferOwnership(
 
   // Atomic batch: demote, then promote. D1 batches are
   // transactional so either both writes land or neither does.
-  await env.DB.batch([
+  // (These UPDATEs used to also set `updated_at`, a column org_members has
+  // never had — not in migration 0027, not in prod — so every transfer
+  // threw "no such column". Removed.)
+  // When ownership lands on a real (non-placeholder) member, the
+  // lead-conversion placeholder has served its purpose: deactivate this
+  // org's placeholder rows (any role — the demote above may have just made
+  // it an 'admin') in the same batch, so a staff seat never lingers.
+  const toRealMember = target.provisioned_by !== LEAD_CONVERSION_PROVISIONED_BY;
+  const results = await env.DB.batch([
     env.DB.prepare(
-      `UPDATE org_members SET role = 'admin', updated_at = datetime('now')
+      `UPDATE org_members SET role = 'admin'
        WHERE org_id = ? AND user_id = ?`,
     ).bind(orgId, currentOwner.user_id),
     env.DB.prepare(
-      `UPDATE org_members SET role = 'owner', updated_at = datetime('now')
+      `UPDATE org_members SET role = 'owner'
        WHERE org_id = ? AND user_id = ?`,
     ).bind(orgId, targetUserId),
+    ...(toRealMember ? [deactivateOrgPlaceholdersStmt(env.DB, orgId, targetUserId)] : []),
   ]);
+  const placeholdersRemoved = toRealMember ? Number(results[2]?.meta?.changes ?? 0) : 0;
+  if (placeholdersRemoved > 0) {
+    await audit(env, {
+      action: "lead_conversion_placeholder_removed",
+      userId: ctx.userId,
+      resourceType: "organization",
+      resourceId: orgId,
+      details: { reason: "ownership_transferred", new_owner_user_id: targetUserId, placeholders_removed: placeholdersRemoved },
+      request,
+    });
+  }
 
   await audit(env, {
     action: "org_ownership_transferred",

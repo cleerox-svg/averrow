@@ -178,6 +178,11 @@ export function isPlatformStaff(role: string | null | undefined): boolean {
   return level >= STAFF_MIN_LEVEL;
 }
 
+/** Every `UserRole` for which `isPlatformStaff` is true — for SQL predicates
+ *  that must agree with it (lib/lead-conversion-placeholder.ts). */
+export const PLATFORM_STAFF_ROLES: readonly UserRole[] = (Object.keys(ROLE_HIERARCHY) as UserRole[])
+  .filter((r) => isPlatformStaff(r));
+
 /** Roles that bypass org-membership checks on the TENANT routes
  *  (`/api/orgs/:orgId/*` — `requireOrgMember`, `verifyOrgAccess`).
  *  super_admin by privilege; auditor as a deliberate read-only global seat.
