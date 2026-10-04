@@ -492,8 +492,8 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
  *   - v2 push_severity_floor != 'off' AND notification severity meets the floor, OR
  *   - v2 not present AND v1 push_notifications === 1 (legacy users).
  *
- * Quiet hours: v2 columns take precedence when present; v1 used as fallback.
- * Critical breakthrough: v2 critical_bypasses_quiet takes precedence.
+ * Quiet hours + critical breakthrough: resolved as one set by
+ * resolveQuietHours — v2's set when it has a complete window, else v1's.
  */
 async function shouldSendPush(
   opts: CreateNotificationOpts,
@@ -515,25 +515,51 @@ async function shouldSendPush(
   const allowed = v2HasRow ? v2Allows : v1Allows;
   if (!allowed) return false;
 
-  // ── Quiet hours: prefer v2, fall back to v1 ──────────────────────
-  const quietStart = pref.v2_quiet_hours_start    ?? pref.quiet_hours_start    ?? null;
-  const quietEnd   = pref.v2_quiet_hours_end      ?? pref.quiet_hours_end      ?? null;
-  const quietTz    = pref.v2_quiet_hours_timezone ?? pref.quiet_hours_tz       ?? null;
-  const criticalBreakthrough = pref.v2_critical_bypasses_quiet != null
-    ? pref.v2_critical_bypasses_quiet === 1
-    : pref.critical_breakthrough === 1;
-
-  const quiet: QuietHoursPrefs = {
-    start: quietStart,
-    end: quietEnd,
-    tz: quietTz,
-    criticalBreakthrough,
-  };
-  if (isInQuietHours(quiet)) {
+  const quiet = resolveQuietHours(pref);
+  if (quiet && isInQuietHours(quiet)) {
     if (opts.severity === 'critical' && quiet.criticalBreakthrough) return true;
     return false;
   }
   return true;
+}
+
+/** The quiet-hours columns of the v1 ⋈ v2 preference join. */
+export type QuietHoursPrefSource = Pick<UserPrefRow,
+  | 'quiet_hours_start' | 'quiet_hours_end' | 'quiet_hours_tz' | 'critical_breakthrough'
+  | 'v2_quiet_hours_start' | 'v2_quiet_hours_end' | 'v2_quiet_hours_timezone'
+  | 'v2_critical_bypasses_quiet'>;
+
+/** Pick the quiet-hours set ATOMICALLY from one table — never field-by-field.
+ *
+ *  GET /api/notifications/preferences/v2 auto-seeds a v2 row with
+ *  quiet_hours_timezone='UTC' and NULL start/end, while the ops prefs UI
+ *  writes the window to v1. A per-field `v2 ?? v1` merge therefore took
+ *  start/end from v1 and the timezone from v2, evaluating the user's window
+ *  in UTC. v2's set wins only when it holds a complete window (start AND
+ *  end); otherwise v1's set is used whole. Returns null when the chosen set
+ *  has no complete window (no quiet hours). */
+export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs | null {
+  const v2Start = pref.v2_quiet_hours_start ?? null;
+  const v2End = pref.v2_quiet_hours_end ?? null;
+  if (v2Start && v2End) {
+    return {
+      start: v2Start,
+      end: v2End,
+      tz: pref.v2_quiet_hours_timezone ?? null,
+      criticalBreakthrough: pref.v2_critical_bypasses_quiet === 1,
+    };
+  }
+  const v1Start = pref.quiet_hours_start ?? null;
+  const v1End = pref.quiet_hours_end ?? null;
+  if (v1Start && v1End) {
+    return {
+      start: v1Start,
+      end: v1End,
+      tz: pref.quiet_hours_tz ?? null,
+      criticalBreakthrough: pref.critical_breakthrough === 1,
+    };
+  }
+  return null;
 }
 
 function getRateKey(opts: CreateNotificationOpts): string | null {
