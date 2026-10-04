@@ -85,6 +85,7 @@ export function createMockTakedown(overrides = {}) {
     requested_by: null,
     source_type: 'url_scan',
     notes: null,
+    staff_notes: null,
     evidence_count: 0,
     created_at: new Date().toISOString(),
     submitted_at: null,

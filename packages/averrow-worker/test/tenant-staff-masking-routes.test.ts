@@ -137,9 +137,9 @@ function seed(db: SqliteDb): void {
       VALUES ('n_staff', 'inv_staff', 'u_staff', 'staff wrote this'),
              ('n_cust', 'inv_staff', 't_bob', 'customer note'),
              ('n_gone', 'inv_staff', 'u_gone', 'deleted user note');
-    INSERT INTO takedown_requests (id, org_id, brand_id, target_type, target_value, evidence_summary, status, requested_by, submitted_by, notes, response_notes)
-      VALUES ('td7', 7, 'b1', 'url', 'https://evil.example', 'evidence', 'draft', 'u_staff', 'u_staff', 'internal staff note', 'provider said ok'),
-             ('tdnull', NULL, 'b1', 'url', 'https://shared.example', 'evidence', 'draft', NULL, NULL, NULL, NULL);
+    INSERT INTO takedown_requests (id, org_id, brand_id, target_type, target_value, evidence_summary, status, requested_by, submitted_by, notes, staff_notes, response_notes)
+      VALUES ('td7', 7, 'b1', 'url', 'https://evil.example', 'evidence', 'draft', 'u_staff', 'u_staff', 'customer takedown note', 'internal staff note', 'provider said ok'),
+             ('tdnull', NULL, 'b1', 'url', 'https://shared.example', 'evidence', 'draft', NULL, NULL, NULL, NULL, NULL);
     INSERT INTO takedown_authorizations (id, org_id, agreement_version, status, signed_at, signed_by_user_id, signed_ip, signed_user_agent, scope_json)
       VALUES ('auth1', 7, 'v1', 'active', datetime('now'), 'u_placeholder', '203.0.113.77', 'StaffBrowser/9.9',
               '{"modules":["domain"],"max_takedowns_per_month":null,"escalation":"manual_only","auto_followup_breached_sla_hours":null,"high_risk_requires_per_takedown_approval":true}');
@@ -546,7 +546,10 @@ describe.skipIf(!hasSqlite())("tenant routes — staff refusal and masking", () 
       expect(byId.n_gone).toMatchObject({ author_id: null, author_name: FORMER_USER_LABEL });
     });
 
-    it("takedown detail masks requested_by/submitted_by and drops staff-writable notes", async () => {
+    // Since migration 0276 staff notes live in staff_notes (stripped), so the
+    // customer's own `notes` is returned again (#1778 had dropped it while
+    // the column was shared with the ops PATCH).
+    it("takedown detail masks requested_by/submitted_by, returns customer notes, strips staff_notes", async () => {
       const res = await call("client_analyst", "GET", "/api/orgs/7/takedowns/td7");
       const text = await res.text();
       expect(res.status).toBe(200);
@@ -557,8 +560,9 @@ describe.skipIf(!hasSqlite())("tenant routes — staff refusal and masking", () 
         requested_by: null, requested_by_name: AVERROW_SOC_LABEL,
         submitted_by: null, submitted_by_name: AVERROW_SOC_LABEL,
         response_notes: "provider said ok",
+        notes: "customer takedown note",
       });
-      expect("notes" in data.takedown).toBe(false);
+      expect(Object.keys(data.takedown).filter((k) => k.startsWith("staff_"))).toEqual([]);
     });
 
     it("takedown authorization GET masks a staff signer", async () => {

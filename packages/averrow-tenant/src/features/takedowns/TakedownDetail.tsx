@@ -52,6 +52,7 @@ export function TakedownDetail() {
             </section>
           )}
           <EvidenceSection takedown={data.takedown} />
+          <NoteSection takedown={data.takedown} />
           <SubmissionsSection rows={data.submissions} />
         </>
       )}
@@ -132,6 +133,18 @@ function EvidenceSection({ takedown: t }: { takedown: TakedownDetailRow }) {
           <p className="text-[12px] text-white/65">{t.response_notes}</p>
         </>
       )}
+    </section>
+  );
+}
+
+// The customer's own note (written by TakedownActions on approve/withdraw).
+// Averrow's internal notes are a separate column the API never returns.
+function NoteSection({ takedown: t }: { takedown: TakedownDetailRow }) {
+  if (!t.notes) return null;
+  return (
+    <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4" aria-label="Your team's note">
+      <div className="text-[10px] uppercase tracking-widest font-mono text-white/45 mb-2">Your team's note</div>
+      <p className="text-[12px] text-white/75 whitespace-pre-wrap">{t.notes}</p>
     </section>
   );
 }

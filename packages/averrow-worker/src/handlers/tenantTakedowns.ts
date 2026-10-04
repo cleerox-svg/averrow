@@ -176,8 +176,23 @@ export interface TakedownDetailRow extends TakedownListRow {
   requested_at:           string | null;
   response_received_at:   string | null;
   response_notes:         string | null;
+  /** The customer's own note (written only by the tenant routes). */
   notes:                  string | null;
+  /** Internal Averrow note (migration 0276) — selected by `tr.*`, stripped
+   *  by toTenantTakedownView before the response. */
+  staff_notes?:           string | null;
   updated_at:             string;
+}
+
+/** Customer view of a takedown row: drops every staff-only column
+ *  (`staff_*`, e.g. staff_notes — migration 0276). Mirrors the `staff_*`
+ *  strip in toTenantAlertView (handlers/tenantData.ts). */
+export function toTenantTakedownView(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (!k.startsWith("staff_")) out[k] = v;
+  }
+  return out;
 }
 
 export interface TakedownSubmissionAuditRow {
@@ -245,14 +260,14 @@ export async function handleGetTenantTakedownDetail(
   ).bind(takedownId).all<TakedownSubmissionAuditRow>();
 
   // Customer-facing view (owner decision 2026-10-04): staff never named or
-  // identified; `notes` is dropped because the ops admin PATCH writes staff
-  // notes into the same column (the tenant UI never renders it).
+  // identified. `notes` is the customer's own note (only the tenant routes
+  // write it); staff notes live in `staff_notes` (migration 0276) and every
+  // `staff_*` key is stripped here, same as toTenantAlertView.
   // response_notes (the provider's response) stays visible by design.
   const [masked] = await maskTenantUserRefsForRows(
     env, [takedown as unknown as Record<string, unknown>], TAKEDOWN_USER_FIELDS,
   );
-  const view: Record<string, unknown> = { ...masked };
-  delete view.notes;
+  const view = toTenantTakedownView(masked ?? {});
 
   return json({
     success: true,

@@ -1,0 +1,27 @@
+-- Migration 0276: staff-only takedown notes (owner decision 2026-10-04).
+--
+-- takedown_requests.notes was a single shared column with two writers:
+--   - the tenant PATCH /api/orgs/:orgId/takedowns/:id (and the tenant POST)
+--     wrote the CUSTOMER's note, and
+--   - the ops PATCH /api/admin/takedowns/:id overwrote the SAME column with
+--     the Averrow staff member's internal note.
+-- So a staff note could clobber the customer's note and leak to the customer,
+-- and #1778 had to drop `notes` from the tenant detail entirely. This is the
+-- alerts split from migration 0275 applied to takedowns:
+--
+--   notes        customer note. Written only by the tenant routes. Returned
+--                by the tenant detail and (read-only) by the ops reads.
+--   staff_notes  internal Averrow note. Written only by the ops admin PATCH.
+--                Never returned by a tenant route (the tenant detail strips
+--                every `staff_*` key).
+--
+-- No backfill: verified read-only against prod on 2026-10-04 — 4,062
+-- takedown_requests rows, 0 with a non-empty `notes`, so there is no staff
+-- note sitting in the customer column to move. No automated writer (Sparrow,
+-- bulk-takedown, evidence assembler) sets either column.
+--
+-- Additive only (ADD COLUMN). No migration rebuilds takedown_requests.
+-- DEPLOY ORDER: apply BEFORE the Worker — the ops admin PATCH writes
+-- staff_notes, and against the pre-0276 schema a notes save returns 500.
+
+ALTER TABLE takedown_requests ADD COLUMN staff_notes TEXT;

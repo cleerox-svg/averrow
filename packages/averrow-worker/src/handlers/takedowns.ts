@@ -40,6 +40,26 @@ const PLATFORM_ABUSE_CONTACTS: Record<string, { name: string; url: string; metho
 // ─── Constants ───────────────────────────────────────────────
 
 const VALID_STATUSES = ["draft", "requested", "submitted", "pending_response", "taken_down", "failed", "expired", "withdrawn"];
+/** Staff note length cap (takedown_requests.staff_notes) — same cap as
+ *  alerts.staff_notes (MAX_STAFF_NOTES_LENGTH in handlers/alerts.ts). */
+export const MAX_TAKEDOWN_STAFF_NOTES_LENGTH = 4000;
+/** Customer note length cap (takedown_requests.notes) — same rule as staff_notes. */
+export const MAX_TAKEDOWN_NOTES_LENGTH = 4000;
+
+/**
+ * Validate a takedown note body field (`notes` on the tenant routes,
+ * `staff_notes` on the ops PATCH). Accepts a string up to `max` chars, or
+ * null / "" (normalised to null — clears on PATCH, stores NULL on POST).
+ * Anything else is a 400.
+ */
+export function parseTakedownNoteInput(
+  input: unknown, field: string, max: number,
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (input === null || input === "") return { ok: true, value: null };
+  if (typeof input !== "string") return { ok: false, error: `${field} must be a string or null` };
+  if (input.length > max) return { ok: false, error: `${field} must be at most ${max} characters` };
+  return { ok: true, value: input };
+}
 const TENANT_ALLOWED_TRANSITIONS: Record<string, string[]> = {
   draft: ["requested", "withdrawn"],
   requested: ["withdrawn"],
@@ -69,6 +89,14 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
   if (fieldErr) return fieldErr;
 
   const { brand_id: brandId, target_type: targetType, target_value: targetValue, evidence_summary: evidenceSummary } = body;
+
+  // Customer note (takedown_requests.notes) — same shape/length rule as staff_notes.
+  let createNotes: string | null = null;
+  if (body.notes !== undefined) {
+    const parsed = parseTakedownNoteInput(body.notes as unknown, "notes", MAX_TAKEDOWN_NOTES_LENGTH);
+    if (!parsed.ok) return error(parsed.error, 400, ctx.origin);
+    createNotes = parsed.value;
+  }
 
   const validTargetTypes = ["domain", "social_profile", "url", "email", "mobile_app"];
   if (!validTargetTypes.includes(targetType)) {
@@ -214,7 +242,7 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
     body.source_type || null, body.source_id || null,
     evidenceSummary, evidenceDetail, body.evidence_urls || null,
     providerName, providerAbuseContact, providerMethod,
-    severity, priorityScore, body.notes || null, ctx.userId,
+    severity, priorityScore, createNotes, ctx.userId,
   ).run();
 
   await audit(env, {
@@ -230,87 +258,11 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
   return success({ id }, ctx.origin, 201);
 }, { minRole: "analyst" });
 
-// ─── GET /api/orgs/:orgId/takedowns ──────────────────────────
-
-export const handleListTakedowns = orgHandler(async (request, env, orgId, ctx) => {
-  const { limit, offset } = parsePagination(request);
-  const filters = parseFilters(request, ["status", "brand_id", "target_type"]);
-  const { clause: filterClause, bindings: filterBindings } = buildWhereClause(filters, {
-    status: "tr.status",
-    brand_id: "tr.brand_id",
-    target_type: "tr.target_type",
-  });
-
-  // Brand ownership alone isn't enough (same rule as the PATCH guard): a
-  // takedown stamped with ANOTHER org's org_id belongs to that org and must
-  // not be listed here. Bind order: org_brands JOIN, org predicate, filters.
-  const bindings: unknown[] = [orgId, Number(orgId), ...filterBindings];
-  const whereClause = `(tr.org_id IS NULL OR tr.org_id = ?) AND ${filterClause}`;
-
-  const result = await env.DB.prepare(`
-    SELECT tr.*, b.name AS brand_name
-    FROM takedown_requests tr
-    JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
-    JOIN brands b ON b.id = tr.brand_id
-    WHERE ${whereClause}
-    ORDER BY
-      CASE tr.status
-        WHEN 'draft' THEN 1
-        WHEN 'requested' THEN 2
-        WHEN 'submitted' THEN 3
-        WHEN 'pending_response' THEN 4
-        ELSE 5
-      END,
-      tr.priority_score DESC
-    LIMIT ? OFFSET ?
-  `).bind(...bindings, limit, offset).all();
-
-  const countResult = await env.DB.prepare(`
-    SELECT COUNT(*) AS total
-    FROM takedown_requests tr
-    JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
-    WHERE ${whereClause}
-  `).bind(...bindings).first<{ total: number }>();
-
-  const statusCounts = await env.DB.prepare(`
-    SELECT tr.status, COUNT(*) AS count
-    FROM takedown_requests tr
-    JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
-    WHERE (tr.org_id IS NULL OR tr.org_id = ?)
-    GROUP BY tr.status
-  `).bind(orgId, Number(orgId)).all();
-
-  return paginatedResponse(result.results || [], countResult?.total ?? 0, ctx.origin, {
-    status_counts: statusCounts.results || [],
-  });
-});
-
-// ─── GET /api/orgs/:orgId/takedowns/:id ──────────────────────
-
-export async function handleGetTakedown(
-  request: Request, env: Env, orgId: string, takedownId: string, ctx: AuthContext,
-): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  const accessErr = checkOrgAccess(ctx, orgId, origin);
-  if (accessErr) return accessErr;
-
-  try {
-    const takedown = await env.DB.prepare(`
-      SELECT tr.*, b.name AS brand_name
-      FROM takedown_requests tr
-      JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
-      JOIN brands b ON b.id = tr.brand_id
-      WHERE tr.id = ?
-        AND (tr.org_id IS NULL OR tr.org_id = ?)
-    `).bind(orgId, takedownId, Number(orgId)).first();
-
-    if (!takedown) return error("Takedown request not found", 404, origin);
-
-    return success(takedown, origin);
-  } catch (err) {
-    return error(String(err), 500, origin);
-  }
-}
+// Tenant takedown READS (GET /api/orgs/:orgId/takedowns[/:id]) live in
+// handlers/tenantTakedowns.ts. The old unrouted handleListTakedowns /
+// handleGetTakedown here were deleted (owner decision 2026-10-04). A tenant
+// read must never `SELECT tr.*` unfiltered — it would return staff_notes
+// (migration 0276); use toTenantTakedownView.
 
 // ─── PATCH /api/orgs/:orgId/takedowns/:id ────────────────────
 
@@ -370,7 +322,14 @@ export async function handleUpdateTakedown(
       }
     }
 
-    if (typeof body.notes === "string") { updates.push("notes = ?"); values.push(body.notes); }
+    // The customer's note. `staff_notes` in a tenant body is ignored — only
+    // the ops PATCH writes it.
+    if (body.notes !== undefined) {
+      const parsed = parseTakedownNoteInput(body.notes, "notes", MAX_TAKEDOWN_NOTES_LENGTH);
+      if (!parsed.ok) return error(parsed.error, 400, origin);
+      updates.push("notes = ?");
+      values.push(parsed.value);
+    }
     if (typeof body.evidence_summary === "string") { updates.push("evidence_summary = ?"); values.push(body.evidence_summary); }
     if (typeof body.evidence_detail === "string") { updates.push("evidence_detail = ?"); values.push(body.evidence_detail); }
 
@@ -670,7 +629,19 @@ export async function handleAdminUpdateTakedown(
     }
 
     if (typeof body.response_notes === "string") { updates.push("response_notes = ?"); values.push(body.response_notes); }
-    if (typeof body.notes === "string") { updates.push("notes = ?"); values.push(body.notes); }
+
+    // Staff notes (migration 0276) — internal, never shown to the customer.
+    // `notes` on THIS route is a legacy alias for staff_notes (older ops
+    // clients sent `notes`); it never writes the customer's `notes` column,
+    // which only the tenant routes own.
+    const staffNotesInput = body.staff_notes !== undefined ? body.staff_notes : body.notes;
+    const staffNotesChanged = staffNotesInput !== undefined;
+    if (staffNotesChanged) {
+      const parsed = parseTakedownNoteInput(staffNotesInput, "staff_notes", MAX_TAKEDOWN_STAFF_NOTES_LENGTH);
+      if (!parsed.ok) return error(parsed.error, 400, origin);
+      updates.push("staff_notes = ?");
+      values.push(parsed.value);
+    }
 
     if (typeof body.severity === "string") {
       updates.push("severity = ?");
@@ -693,7 +664,12 @@ export async function handleAdminUpdateTakedown(
       userId: ctx.userId,
       resourceType: "takedown_request",
       resourceId: takedownId,
-      details: { previous_status: takedown.status, new_status: body.status ?? takedown.status },
+      // staff_notes_changed flags a set/clear — never the note text.
+      details: {
+        previous_status: takedown.status,
+        new_status: body.status ?? takedown.status,
+        ...(staffNotesChanged ? { staff_notes_changed: true } : {}),
+      },
       outcome: "success",
       request,
     });
