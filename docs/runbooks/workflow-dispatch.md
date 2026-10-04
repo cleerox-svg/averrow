@@ -199,7 +199,11 @@ Pre-PR-C the same call would tip into `partial`+reap after >180 min.
 ### 2. providersUpdated count is sensible
 
 After a successful run, count providers whose `trend_7d` or `trend_30d`
-were set (the new code only writes when the cube has a row):
+are non-zero (counts come from the 30d cube; providers with no cube row in
+the window are zeroed by the same helper, change-guarded — reported as
+`providers_zeroed` alongside `providers_updated` in the workflow's
+`batch_complete` metadata / `nexus_complete` payload, and in the manual
+agent's `agent_outputs` details):
 
 ```bash
 wrangler d1 execute trust-radar-v2 --remote --command "

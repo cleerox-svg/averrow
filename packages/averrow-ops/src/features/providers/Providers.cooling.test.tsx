@@ -38,7 +38,12 @@ describe('Providers — Cooling view', () => {
     const cooling = v2Calls().find((u) => u.includes('sort=cooling'))!;
     expect(cooling).not.toContain('status=');
     expect(await screen.findByText(/8\.7 fewer threats\/wk vs 30-day avg/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Down 8.7 threats per week versus the 30-day average')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/per week versus/)).not.toBeInTheDocument();
+    // Sorts are meaningless here (server orders by delta): replaced by a static label.
+    expect(screen.getByText('Sorted by weekly change')).toBeInTheDocument();
+    for (const name of ['THREAT COUNT', '7D TREND', '30D TREND']) {
+      expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    }
     expect(screen.queryByText(/%\s*7d/)).not.toBeInTheDocument();
   });
 
@@ -50,6 +55,17 @@ describe('Providers — Cooling view', () => {
     renderWithProviders(<Providers />);
     await screen.findAllByText('Chilly Hosting');
     expect(screen.queryByText(/fewer threat/)).not.toBeInTheDocument();
+  });
+
+  it('hides the cooling footer in non-cooling views even when a row carries a negative delta', async () => {
+    get.mockImplementation((url: string) => Promise.resolve(
+      url.startsWith('/api/providers/v2')
+        ? { success: true, data: [PROVIDER] }
+        : { success: true, data: [] }));
+    renderWithProviders(<Providers />);
+    await screen.findAllByText('Chilly Hosting');
+    expect(screen.queryByText(/fewer threat/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'THREAT COUNT' })).toBeEnabled();
   });
 
   it('shows the cooling empty state, not the generic one', async () => {

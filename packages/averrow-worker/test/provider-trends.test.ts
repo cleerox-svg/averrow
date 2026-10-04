@@ -86,6 +86,7 @@ function makeRecordingDb(opts: { agg: AggRow[]; current: CurRow[] }) {
     const isAgg = aggSqlRe.test(sql);
     const isCurrent = currentSqlRe.test(sql);
     const isUpdate = updateSqlRe.test(sql);
+    const isStale = /SELECT id FROM hosting_providers\s+WHERE COALESCE/.test(sql);
 
     const stmt = {
       _sql: sql,
@@ -96,6 +97,14 @@ function makeRecordingDb(opts: { agg: AggRow[]; current: CurRow[] }) {
       },
       async all() {
         if (isAgg) return { results: opts.agg };
+        // Step-5 stale-trend candidates: providers holding non-zero trends.
+        if (isStale) {
+          return {
+            results: opts.current
+              .filter((r) => (r.trend_7d ?? 0) !== 0 || (r.trend_30d ?? 0) !== 0)
+              .map((r) => ({ id: r.id })),
+          };
+        }
         if (isCurrent) {
           const wanted = new Set(stmt._binds as string[]);
           return { results: opts.current.filter((r) => wanted.has(r.id)) };

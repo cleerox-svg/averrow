@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ThreatsTable, useThreatsTable, type ThreatRow } from '@averrow/shared/threats-table';
 import { api } from '@/lib/api';
@@ -16,6 +16,7 @@ import {
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ThreatInflowChart } from './ThreatInflowChart';
 import { MultiFeedConsensusPanel } from './MultiFeedConsensusPanel';
+import { PanelHeader } from './PanelHeader';
 import { relativeTime } from '@/lib/time';
 import { CheckCircle, Search, X, ShieldCheck, Network, Users, Activity, TrendingUp } from 'lucide-react';
 import { useThreatAggregate, type ThreatAggregateFilters, type ThreatAggregate } from '@/hooks/useThreatAggregate';
@@ -67,6 +68,20 @@ function sinceLabelToIso(label: string): string | undefined {
 
 export function Threats() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const sliceRef = useRef<HTMLDivElement>(null);
+  // One-shot signal from the Corroboration panel (router state, not a URL param):
+  // Console remounts this view when `q` changes, so the scroll must happen here,
+  // on the NEW table, after mount. Clear the state so refresh/back don't re-scroll.
+  // The scroll itself is deferred until the new list has settled (see below):
+  // scrolling on mount clamps against a still-short .v4-outlet.
+  const focusTable = (location.state as { focusTable?: boolean } | null)?.focusTable === true;
+  const pendingFocusRef = useRef(false);
+  useEffect(() => {
+    if (!focusTable) return;
+    pendingFocusRef.current = true;
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [focusTable, navigate, location.pathname, location.search]);
   const { user } = useAuth();
   // PATCH /api/threats/:id is requireAdmin-gated, so only surface the triage
   // control to admins — analysts would hit a 403. (Relaxing the endpoint to
@@ -128,7 +143,7 @@ export function Threats() {
   const aggFailed = aggError && !agg;
   const retryAgg = () => { void refetchAgg(); };
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: ['threats', table.params],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -148,6 +163,22 @@ export function Threats() {
     },
     placeholderData: keepPreviousData,
   });
+
+  // Fire once, after the list query settles (data, empty, or error alike).
+  const listSettled = !isFetching && !isPlaceholderData;
+  useEffect(() => {
+    if (!listSettled || !pendingFocusRef.current) return;
+    pendingFocusRef.current = false;
+    const el = sliceRef.current;
+    if (!el) return;
+    const reduce = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Next frame so the settled list has laid out and .v4-outlet has its full height.
+    requestAnimationFrame(() => {
+      el.scrollIntoView?.({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+      el.focus({ preventScroll: true });
+    });
+  }, [listSettled]);
 
   const brandOpts = (agg?.top_brands ?? []).map((b) => ({ value: b.brand_id, label: b.brand_name ?? b.brand_id }));
   const countryOpts = (agg?.top_countries ?? []).map((c) => ({ value: c.country, label: c.country }));
@@ -177,7 +208,7 @@ export function Threats() {
       <PanelHeader title="Top of pile" subtitle="Where the pressure is concentrated" />
       <LeaderboardsPanel agg={agg} failed={aggFailed} onRetry={retryAgg} />
 
-      <PanelHeader title="Slice" subtitle="Filter, sort, and inspect — click a row for the evidence behind the verdict" />
+      <PanelHeader id="threats-table" innerRef={sliceRef} title="Slice" subtitle="Filter, sort, and inspect — click a row for the evidence behind the verdict" />
       <ThreatsTable
         columns={['type', 'target', 'brand', 'actor', 'technique', 'severity', 'status', 'evidence', 'last_seen']}
         rows={(data?.threats ?? []) as unknown as ThreatRow[]}
@@ -416,23 +447,6 @@ function ActiveFilterChips(props: {
       >
         Clear all
       </button>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════
-// PanelHeader — sectioned narrative dividers (matches /brands Intel)
-// ══════════════════════════════════════════════════════════════════
-function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="pt-2">
-      <div className="flex items-baseline gap-3">
-        <h2 className="text-sm font-mono font-bold uppercase tracking-[0.18em] text-[var(--text-secondary)]">
-          {title}
-        </h2>
-        <span className="text-[11px] text-[var(--text-muted)]">{subtitle}</span>
-      </div>
-      <div className="mt-1 h-px bg-gradient-to-r from-white/[0.10] via-white/[0.04] to-transparent" />
     </div>
   );
 }

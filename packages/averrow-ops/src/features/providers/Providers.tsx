@@ -172,18 +172,21 @@ function ProviderCard({
   clusters,
   isSelected,
   onSelect,
+  showCooling,
 }: {
   provider: Provider;
   clusters: Cluster[];
   isSelected: boolean;
   onSelect: (id: string) => void;
+  /** Cooling view only: show the "fewer threats/wk" footer. */
+  showCooling: boolean;
 }) {
   const status = getProviderStatus(provider);
   const nexusLinked = hasNexusLink(provider, clusters);
   const t7 = provider.trend_7d ?? 0;
   const t30 = provider.trend_30d ?? 0;
   const coolingDelta =
-    typeof provider.cooling_delta_7d === 'number' && provider.cooling_delta_7d < 0
+    showCooling && typeof provider.cooling_delta_7d === 'number' && provider.cooling_delta_7d < 0
       ? provider.cooling_delta_7d : null;
   const activeCount = provider.active_threat_count ?? 0;
   const sparkData = provider.threat_history ?? [];
@@ -288,12 +291,9 @@ function ProviderCard({
         </div>
       )}
       {coolingDelta !== null && (
-        <div
-          className="font-mono text-[10px]"
-          style={{ color: 'var(--green)' }}
-          aria-label={formatCoolingDelta(coolingDelta).aria}
-        >
-          <span aria-hidden="true">{'↓'} {formatCoolingDelta(coolingDelta).text}</span>
+        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-info-text)' }}>
+          <span aria-hidden="true">{'↓'} </span>
+          {formatCoolingDelta(coolingDelta)}
         </div>
       )}
       {status === 'pivot' && (
@@ -641,21 +641,18 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
 
 // ─── Filter Bar ──────────────────────────────────────────────
 
-/** "Cooling" is a server-side view of /api/providers/v2 (trend_7d < 0, most
- *  negative first), selected via `sort` rather than `status`. Kept in one
+/** "Cooling" is a server-side view of /api/providers/v2 (rule:
+ *  trend_7d < trend_30d*7/30, most-cooling first), selected via `sort` rather than `status`. Kept in one
  *  place so the param is trivial to change. */
 const COOLING_SORT = 'cooling';
 const COOLING_FILTER_ID = 'cooling';
 
 /** cooling_delta_7d (negative) → "12.4 fewer threats/wk vs 30-day avg". */
-function formatCoolingDelta(delta: number): { text: string; aria: string } {
+function formatCoolingDelta(delta: number): string {
   const n = Math.round(Math.abs(delta) * 10) / 10;
   const num = Number.isInteger(n) ? String(n) : n.toFixed(1);
   const noun = n === 1 ? 'threat' : 'threats';
-  return {
-    text: `${num} fewer ${noun}/wk vs 30-day avg`,
-    aria: `Down ${num} ${noun} per week versus the 30-day average`,
-  };
+  return `${num} fewer ${noun}/wk vs 30-day avg`;
 }
 
 const STATUS_FILTERS = [
@@ -811,21 +808,30 @@ export function Providers() {
               setSelectedProviderId(null);
             }}
             actions={
-              <div className="flex items-center gap-1.5">
-                <span className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Sort:</span>
-                {SORT_OPTIONS.map(s => (
-                  <button
-                    key={s.id}
-                    onClick={() => setSortBy(s.id)}
-                    className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
-                    style={{
-                      background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
-                      color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {isCooling ? (
+                  <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+                    Sorted by weekly change
+                  </span>
+                ) : (
+                  <>
+                    <span className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Sort:</span>
+                    {SORT_OPTIONS.map(s => (
+                      <button
+                        key={s.id}
+                        onClick={() => setSortBy(s.id)}
+                        className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
+                        style={{
+                          background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
+                          color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             }
           />
@@ -851,6 +857,7 @@ export function Providers() {
                     clusters={clusters ?? []}
                     isSelected={selectedProviderId === provider.id}
                     onSelect={(id) => setSelectedProviderId(prev => prev === id ? null : id)}
+                    showCooling={isCooling && !providersPlaceholder}
                   />
                   {selectedProviderId === provider.id && (
                     <div className="col-span-full" id={`provider-detail-${provider.id}`}>
