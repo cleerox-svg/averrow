@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   shouldRunProviderStats,
   PROVIDER_STATS_THROTTLE_MS,
   PROVIDER_STATS_BACKLOG_THROTTLE_MS,
   PROVIDER_STATS_LAST_RUN_KEY,
+  PROVIDER_STATS_STAMP_TTL_S,
 } from "../src/agents/cartographer";
 
 // Fix #5 — Cartographer Phase 5 KV self-throttle. Phase 5 runs on every
@@ -95,5 +98,31 @@ describe("asymmetric backlog throttle window", () => {
     // provider_threat_stats backs operator-facing provider rollups; the
     // failover must still land well inside a working day.
     expect(PROVIDER_STATS_BACKLOG_THROTTLE_MS).toBeLessThan(6 * 60 * 60_000);
+  });
+});
+
+// D1 read spend 2026-10 (~25M reads/24h): the stamp was written with
+// expirationTtl 3600, shorter than the 150-min backlog window, so after an
+// hour KV dropped it, every backlog instance read `null` ("never ran") and
+// re-ran the rollup — the throttle only held for the first 60 minutes.
+describe("last-run stamp outlives every throttle window", () => {
+  it("TTL covers the widest window", () => {
+    expect(PROVIDER_STATS_STAMP_TTL_S * 1000).toBeGreaterThanOrEqual(PROVIDER_STATS_BACKLOG_THROTTLE_MS);
+    expect(PROVIDER_STATS_STAMP_TTL_S * 1000).toBeGreaterThanOrEqual(PROVIDER_STATS_THROTTLE_MS);
+    expect(PROVIDER_STATS_STAMP_TTL_S).toBe(10800);
+  });
+
+  it("a stamp at the edge of its TTL still defers a backlog instance", () => {
+    // Just before KV would expire it, the stamp is older than the backlog
+    // window — i.e. the window decides, never the expiry.
+    const NOW = 1_800_000_000_000;
+    const justInsideWindow = String(NOW - (PROVIDER_STATS_BACKLOG_THROTTLE_MS - 60_000));
+    expect(shouldRunProviderStats(justInsideWindow, NOW, PROVIDER_STATS_BACKLOG_THROTTLE_MS)).toBe(false);
+  });
+
+  it("the stamp write uses the derived TTL, not a literal", () => {
+    const src = readFileSync(resolve(__dirname, "../src/agents/cartographer.ts"), "utf8");
+    const put = src.match(/CACHE\.put\(PROVIDER_STATS_LAST_RUN_KEY[\s\S]*?\}\)/);
+    expect(put?.[0]).toMatch(/expirationTtl: PROVIDER_STATS_STAMP_TTL_S/);
   });
 });

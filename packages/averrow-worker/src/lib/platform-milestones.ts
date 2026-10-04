@@ -30,7 +30,7 @@
 // table + ≤1 INSERT per crossing. Idempotent under the composite PK.
 
 import type { Env } from '../types';
-import { cachedCount } from './cached-count';
+import { cachedCount, THREATS_TOTAL_TTL_S } from './cached-count';
 
 // High-volume counters: threats, lifetime ingest, brand catalog.
 const LARGE_LADDER = [
@@ -94,11 +94,11 @@ const METRICS: readonly MetricDef[] = [
     metric: "threats_ingested",
     label: "threats ingested",
     ladder: LARGE_LADDER,
-    // TTL 3600s: shared with the dashboard/admin `count.threats.total` entry
-    // so all callers warm one cache. Milestones advance slowly, so a 1h lag
-    // is invisible to operators. Navigator fires every 300s → ~1 miss/hour.
+    // THREATS_TOTAL_TTL_S (6h): shared with the dashboard/admin
+    // `count.threats.total` entry so all callers warm one cache. Milestones
+    // advance slowly; a crossing is announced at most ~6h late.
     count: (env) =>
-      cachedCount(env, "count.threats.total", 3600, async () => {
+      cachedCount(env, "count.threats.total", THREATS_TOTAL_TTL_S, async () => {
         const row = await env.DB
           .prepare(`SELECT COUNT(*) AS n FROM threats`)
           .first<{ n: number }>();
