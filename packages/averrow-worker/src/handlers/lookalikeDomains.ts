@@ -3,8 +3,9 @@
  * Lookalike Domain API Handlers — CRUD and trigger endpoints for
  * continuous lookalike domain monitoring.
  *
- * Ownership: global-read roles (super_admin, auditor) see any brand;
- * org members see only brands in their org_brands. Replaces the old
+ * Ownership: READS — every staff role (isPlatformStaff, PR-F) sees any
+ * brand; WRITES — global-read roles (super_admin, auditor) touch any brand;
+ * otherwise org members see only brands in their org_brands. Replaces the old
  * user_id-via-brand_profiles scoping (R2 of brand_profiles
  * deprecation, 2026-05-07). Writes stay super_admin-or-org-member —
  * the read-only auditor seat is denied at the route layer by
@@ -16,7 +17,7 @@ import { generateAndStoreLookalikes, checkLookalikeBatchForBrand } from "../scan
 import { LOOKALIKE_RESCAN_ENQUEUE_LIMIT } from "../lib/lookalike-budget";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
-import { hasGlobalReadScope, type AuthContext } from "../middleware/auth";
+import { hasGlobalReadScope, isPlatformStaff, type AuthContext } from "../middleware/auth";
 
 /**
  * Explicit column allowlist for the staff lookalike list payload.
@@ -147,12 +148,20 @@ const LOOKALIKE_LIST_COLUMNS_SQL = LOOKALIKE_LIST_COLUMNS.join(", ");
 // which denies `auditor` by name before the handler runs. The
 // separate PATCH gate in `handleUpdateLookalike` below deliberately
 // keeps its narrower `super_admin` check as the inner net.
+//
+// PR-F (owner decision 2026-10-03): the `access` argument splits the
+// predicate. READ (`handleListLookalikes`) uses `isPlatformStaff` — every
+// staff role sees every brand, so an org-less admin/analyst no longer gets
+// 404 on the list. WRITE (generate/scan) keeps the pre-PR-F
+// `hasGlobalReadScope` bypass unchanged — mutation gates are out of scope.
 async function findBrandForCaller(
   env:     Env,
   brandId: string,
   ctx:     AuthContext,
+  access:  "read" | "write",
 ): Promise<{ id: string; canonical_domain: string } | null> {
-  if (hasGlobalReadScope(ctx.role)) {
+  const isGlobal = access === "read" ? isPlatformStaff(ctx.role) : hasGlobalReadScope(ctx.role);
+  if (isGlobal) {
     return env.DB.prepare(
       "SELECT id, canonical_domain FROM brands WHERE id = ?",
     ).bind(brandId).first<{ id: string; canonical_domain: string }>();
@@ -176,7 +185,7 @@ export async function handleListLookalikes(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "read");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
@@ -231,7 +240,7 @@ export async function handleGenerateLookalikes(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "write");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }
@@ -355,7 +364,7 @@ export async function handleScanLookalikes(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const brand = await findBrandForCaller(env, brandId, ctx);
+    const brand = await findBrandForCaller(env, brandId, ctx, "write");
     if (!brand) {
       return json({ success: false, error: "Brand not found" }, 404, origin);
     }

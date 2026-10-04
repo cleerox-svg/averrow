@@ -742,10 +742,37 @@ support      level 3  — read customer data + alerts (no edits)
 billing      level 3  — Stripe + pricing only
 auditor      level 3  — READ-ONLY global seat (AUTH_AUDIT_2026-06): sees
                         ALL backend + tenant data (getOrgScope returns null,
-                        like super_admin), mutates nothing, never reaches an
+                        like every staff role; and, with super_admin, it is
+                        one of the two roles that bypass the tenant-route
+                        backstop), mutates nothing, never reaches an
                         admin-only gate. Minted-only — see note below.
 client       level 1  — customer (lives at /tenant; never reaches /v2)
 ```
+
+**Staff are global; tenant isolation lives in the tenant app (PR-F,
+owner decision 2026-10-03).** A customer's people are always `client`
+users in the tenant app (`/tenant`, `/api/orgs/:orgId/*`), already
+org-scoped. Every staff role (`super_admin`, `admin`, `analyst`,
+`sales`, `support`, `billing`, `auditor`) is Averrow staff and sees ALL
+platform data on the ops surface; there are no tenant-affiliated staff.
+- `isPlatformStaff(role)` (`middleware/auth.ts`) is the single "global"
+  predicate for ops reads — exactly the set `requireStaff` admits
+  (shared `STAFF_TIER_ROLES`, so they can't drift). `getOrgScope` /
+  `loadOrgScopeForToken` return null for it, role check first, so a
+  staff JWT that still embeds an `org_scope` is global. `client` is
+  unchanged (embedded scope / first active org's brands).
+- `hasGlobalReadScope(role)` (`super_admin`, `auditor`) is NOT widened:
+  it is the TENANT-route exemption only (`requireOrgMember`,
+  `verifyOrgAccess` on `/api/orgs/:orgId/*`). An `admin`/`analyst`/etc.
+  is still 403 on another org's tenant route.
+- Ops monitor READ paths (dark web, app store, trademark, social, CT,
+  lookalikes) use `isPlatformStaff`; their MUTATION gates are unchanged
+  (admin/super_admin, super_admin, or `hasGlobalReadScope` respectively).
+- Account handling enforces "no tenant staff": the admin role PATCH
+  (`/api/admin/users/:id`) refuses a staff role for a user with an active
+  `org_members` row (400), and invite acceptance refuses an org invite for
+  an existing staff account (instead of demoting it to `client`) and a
+  staff invite for an existing active org member.
 
 **`auditor` is minted-only.** It's a real `UserRole` with a read-only
 permission set + global org scope, but it is NOT assignable to a stored
@@ -990,7 +1017,7 @@ behind a feature flag.
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
   - A2/B/C are skipped when the D1 read budget is over the soft-cap
-  - The brands-list and dashboard-overview warms write the `global` scope key, which only `super_admin`/`auditor` read (`getOrgScope` returns null); other staff roles read org-scoped keys those warms don't populate.
+  - The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for `isPlatformStaff`, PR-F); only `client` callers (which never reach these `requireStaff` routes) would read org-scoped keys.
 - **A warm must hit the exact KV key the live client request produces.** Warm
   the client's literal query string, and normalise "no filter" spellings in the
   handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key

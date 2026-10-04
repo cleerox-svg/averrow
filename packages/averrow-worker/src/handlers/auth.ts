@@ -6,7 +6,7 @@ import { signJWT, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL, ABSOLUTE_SESSION_TTL } fr
 import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
-import { loadOrgScopeForToken } from "../middleware/auth";
+import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
 import {
   generateMagicLinkToken, hashMagicLinkToken, checkRateLimit,
   persistMagicLinkRow, findMagicLinkByHash, markMagicLinkUsed,
@@ -460,7 +460,9 @@ export async function handleMe(request: Request, env: Env, userId: string, enrol
 
 // ─── Internal helpers ───────────────────────────────────────────
 
-async function handleInviteAcceptance(
+/** Exported for test/no-tenant-staff.test.ts; production entry is the OAuth
+ *  callback's invite branch (`__invite__:` state) above. */
+export async function handleInviteAcceptance(
   request: Request,
   env: Env,
   googleUser: { sub: string; email: string; name: string },
@@ -495,8 +497,48 @@ async function handleInviteAcceptance(
 
   // Check if user already exists
   let userId: string;
-  const existing = await env.DB.prepare("SELECT id FROM users WHERE google_sub = ? OR email = ?")
-    .bind(googleUser.sub, googleUser.email).first<{ id: string }>();
+  const existing = await env.DB.prepare("SELECT id, role FROM users WHERE google_sub = ? OR email = ?")
+    .bind(googleUser.sub, googleUser.email).first<{ id: string; role: string }>();
+
+  // PR-F — no tenant-affiliated staff (owner decision 2026-10-03).
+  // (a) An ORG invite (org_id set, role 'client') accepted by an existing
+  //     staff account used to overwrite users.role with 'client', silently
+  //     demoting the staff user. Refuse instead; users.role is untouched and
+  //     the invite stays pending.
+  // (b) A STAFF invite accepted by an existing account that is an active
+  //     customer-org member would create tenant-affiliated staff — the same
+  //     state the admin role PATCH refuses. Refuse it too.
+  if (existing) {
+    if (invite.org_id && isPlatformStaff(existing.role)) {
+      await audit(env, {
+        action: "invite_accept_refused_staff_account",
+        userId: existing.id,
+        resourceType: "invitation",
+        resourceId: invite.id,
+        details: { email: googleUser.email, org_id: invite.org_id, existing_role: existing.role },
+        outcome: "denied",
+        request,
+      });
+      return redirectWithError(siteOrigin, "This email belongs to an Averrow staff account, which cannot join a customer organization. Ask the organization to invite a different email address.");
+    }
+    if (isPlatformStaff(invite.role)) {
+      const membership = await env.DB.prepare(
+        "SELECT org_id FROM org_members WHERE user_id = ? AND status = 'active' LIMIT 1",
+      ).bind(existing.id).first<{ org_id: number }>();
+      if (membership) {
+        await audit(env, {
+          action: "invite_accept_refused_org_member",
+          userId: existing.id,
+          resourceType: "invitation",
+          resourceId: invite.id,
+          details: { email: googleUser.email, invite_role: invite.role, org_id: membership.org_id },
+          outcome: "denied",
+          request,
+        });
+        return redirectWithError(siteOrigin, "This email belongs to a member of a customer organization and cannot be given an Averrow staff role. Remove it from the organization first.");
+      }
+    }
+  }
 
   if (existing) {
     userId = existing.id;

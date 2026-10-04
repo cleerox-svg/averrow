@@ -16,7 +16,7 @@ import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { getCacheVersion, bumpCacheVersion } from "../lib/cache-version";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import type { Env } from "../types";
-import type { AuthContext } from "../middleware/auth";
+import { isPlatformStaff, type AuthContext } from "../middleware/auth";
 
 const VALID_CLASSIFICATIONS = [
   "official",
@@ -40,6 +40,7 @@ async function assertBrandAccess(
   env: Env,
   brandId: string,
   userId: string,
+  access: "read" | "write",
 ): Promise<{ brand: { id: string; name: string; domain: string | null } } | { error: Response }> {
   const origin: string | null = null; // caller supplies origin via the response wrapper
   const brand = await env.DB.prepare(
@@ -56,9 +57,14 @@ async function assertBrandAccess(
   const userRow = await env.DB.prepare(
     "SELECT role FROM users WHERE id = ?",
   ).bind(userId).first<{ role: string }>();
-  const isAdmin = userRow?.role === "admin" || userRow?.role === "super_admin";
+  // PR-F: READS bypass the monitored_brands check for every staff role
+  // (staff see all platform data). WRITES keep the pre-PR-F admin /
+  // super_admin bypass — mutation gates are deliberately unchanged.
+  const bypass = access === "read"
+    ? isPlatformStaff(userRow?.role)
+    : userRow?.role === "admin" || userRow?.role === "super_admin";
 
-  if (!ownership && !isAdmin) {
+  if (!ownership && !bypass) {
     return {
       error: json(
         { success: false, error: "Brand not in your monitored list" },
@@ -81,7 +87,7 @@ export async function handleListAppStoreListings(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const access = await assertBrandAccess(env, brandId, userId);
+    const access = await assertBrandAccess(env, brandId, userId, "read");
     if ("error" in access) return access.error;
 
     const url = new URL(request.url);
@@ -177,7 +183,7 @@ export async function handleTriggerAppStoreScan(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const access = await assertBrandAccess(env, brandId, userId);
+    const access = await assertBrandAccess(env, brandId, userId, "write");
     if ("error" in access) return access.error;
 
     const brandRow = await env.DB.prepare(
@@ -264,7 +270,7 @@ export async function handleUpdateAppStoreListing(
       return json({ success: false, error: "App store listing not found" }, 404, origin);
     }
 
-    const access = await assertBrandAccess(env, existing.brand_id, userId);
+    const access = await assertBrandAccess(env, existing.brand_id, userId, "write");
     if ("error" in access) return access.error;
 
     const body = await request.json().catch(() => null) as {
@@ -363,7 +369,7 @@ export async function handleUpdateOfficialApps(
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const access = await assertBrandAccess(env, brandId, userId);
+    const access = await assertBrandAccess(env, brandId, userId, "write");
     if ("error" in access) return access.error;
 
     const body = await request.json().catch(() => null) as {
@@ -456,9 +462,12 @@ export async function handleUpdateOfficialApps(
 // the shape of handleSocialOverview so the UI can reuse patterns.
 //
 // Scope rules:
-//   - super_admin / admin → see all monitored brands (platform-wide view)
+//   - every staff role (isPlatformStaff — PR-F) → all monitored brands
+//     (platform-wide view)
 //   - any other role with an org → see brands assigned to their org via org_brands
 //   - any other role without an org → see nothing
+//   (The route is requireStaff, so in practice only the first branch runs;
+//   the org branches stay as defense-in-depth for a future non-staff caller.)
 //
 // Replaces the legacy `monitored_brands.added_by = userId` filter, which only
 // surfaced brands the logged-in user personally added. Bulk-seeded or
@@ -477,13 +486,17 @@ export async function handleAppStoreOverview(
     const limit = Math.min(100, parseInt(url.searchParams.get("limit") ?? "50", 10));
     const offset = parseInt(url.searchParams.get("offset") ?? "0", 10);
 
-    const isAdmin = ctx.role === "admin" || ctx.role === "super_admin";
+    // PR-F: every staff role gets the platform-wide view (was admin +
+    // super_admin only; other staff fell to the org_brands branch and, being
+    // org-less, saw nothing). The `admin` cache-key segment is kept so the
+    // existing slot stays valid — its contents are the same global answer.
+    const isGlobal = isPlatformStaff(ctx.role);
 
     let scope: string;
     let scopeParams: unknown[];
     let scopeKey: string;
 
-    if (isAdmin) {
+    if (isGlobal) {
       scope = `INNER JOIN monitored_brands mb ON mb.brand_id = b.id`;
       scopeParams = [];
       scopeKey = "admin";

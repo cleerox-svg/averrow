@@ -14,7 +14,7 @@
 //   - the same org with a changed brand set gets a fresh key immediately
 //     instead of serving a stale brand set until TTL expiry.
 //
-// The null/undefined scope (global-read roles: super_admin, auditor —
+// The null/undefined scope (every staff role — `isPlatformStaff`, PR-F —
 // `getOrgScope` returns null) stays the literal "global" so the Navigator
 // pre-warms in cron/navigator.ts, which run unscoped, keep hitting the
 // exact keys live global requests read.

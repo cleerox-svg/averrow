@@ -641,7 +641,7 @@ HIGH/CRITICAL impersonation findings create `alerts` rows of type
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/appstore/overview` | Staff | Cross-brand app-store dashboard: one row per monitored brand with severity-bucketed counts and schedule info. |
+| GET | `/api/appstore/overview` | Staff | Cross-brand app-store dashboard: one row per monitored brand with severity-bucketed counts and schedule info. Every staff role (`isPlatformStaff`, PR-F) sees every monitored brand. |
 | GET | `/api/appstore/monitor/:brandId` | Staff | List app-store listings + schedule for a brand. Filters: `store`, `classification`, `severity`, `status`, `limit`, `offset`. |
 | POST | `/api/appstore/scan/:brandId` | Staff | Trigger an immediate iOS scan + AI drain for this brand. |
 | PATCH | `/api/appstore/:id` | Staff | Update a listing's `classification` or `status` (manual override, wins over AI/system). |
@@ -665,12 +665,12 @@ of type `dark_web_mention` and fire an `alert.created` webhook.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/darkweb/overview` | Staff | Cross-brand dashboard: one row per monitored brand with severity-bucketed counts and schedule info. Admin scope sees all; tenant scope sees `monitored_brands.added_by = :userId`. |
+| GET | `/api/darkweb/overview` | Staff | Cross-brand dashboard: one row per monitored brand with severity-bucketed counts and schedule info. Every staff role (`isPlatformStaff`, PR-F) sees every monitored brand; a non-staff org caller would see its `org_brands` subset. |
 | GET | `/api/darkweb/mentions` | Staff | Cross-brand mentions list (org-scope aware) |
 | GET | `/api/darkweb/mentions/:brandId` | Staff | List mentions + schedule for a brand. Filters: `source`, `classification`, `severity`, `match_type`, `status`, `limit`, `offset`. |
 | POST | `/api/darkweb/scan/:brandId` | Staff | Trigger an immediate scan + AI drain for this brand. |
 | PATCH | `/api/darkweb/:id` | Staff | Update a mention's `classification` or `status` (manual override, wins over AI/system). |
-| GET | `/api/trademarks/overview` | Staff | Cross-brand trademark rollup: per-brand active asset count + finding counts (total/confirmed/likely/unknown/high_critical) + cross-brand totals. Admin scope sees all brands with trademark data; org scope sees its `org_brands` subset. Default page KV-cached 120s. Data from the Phase 1 correlation scanner (`scanners/trademark-monitor.ts`). |
+| GET | `/api/trademarks/overview` | Staff | Cross-brand trademark rollup: per-brand active asset count + finding counts (total/confirmed/likely/unknown/high_critical) + cross-brand totals. Every staff role (`isPlatformStaff`, PR-F) sees all brands with trademark data; a non-staff org caller would see its `org_brands` subset. Default page KV-cached 120s. Data from the Phase 1 correlation scanner (`scanners/trademark-monitor.ts`). |
 
 **Classification values:** `confirmed`, `suspicious`, `false_positive`, `resolved`, `unknown`.
 **Status values:** `active`, `resolved`, `false_positive`, `investigating`.
@@ -943,7 +943,7 @@ All five `/api/threat-actors*` routes are `requireStaff` (analyst+, including th
 | GET | `/api/internal/budget/ledger-health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/admin/budget/ledger-health` for MCP server access. |
 | GET | `/api/internal/agents/:name/health` | AVERROW_INTERNAL_SECRET | Internal mirror of `/api/agents/:name/health` for MCP server access. |
 | GET | `/api/admin/users` | Admin | List users (`?q=` name/email search, `?role=`, `?status=`, `limit`/`offset`; `total` respects the active filters). Consumed by the Platform Users admin page (`/admin/platform-users`, Governance → Users tab) |
-| PATCH | `/api/admin/users/:id` | Admin | Update user |
+| PATCH | `/api/admin/users/:id` | Admin | Update user. 400 when assigning a staff role (anything but `client`) to a user with an active `org_members` row — no tenant-affiliated staff (PR-F). |
 | GET | `/api/admin/sessions` | Admin | Active sessions |
 | POST | `/api/admin/users/:id/force-logout` | Admin | Force logout user |
 | GET | `/api/admin/invites` | `manage_invites` (sales, admin, super_admin) | List invites |
