@@ -10,7 +10,7 @@
 // dumb — eg: "33+" for feeds, "18" for agents, "210K+" for threats.
 
 import type { Env } from "../types";
-import { cachedCount } from "./cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "./cached-count";
 import { agentModules } from "../agents";
 
 export interface PublicStats {
@@ -70,7 +70,7 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
         ).first<{ n: number }>();
         return r?.n ?? 0;
       }).then((n) => ({ n })),
-      cachedCount(env, 'count.threats.total', 3600, async () => {
+      cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
         const r = await env.DB.prepare(
           "SELECT COUNT(*) AS n FROM threats",
         ).first<{ n: number }>();

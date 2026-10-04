@@ -17,7 +17,7 @@ import { batchResolve } from "./dns";
 import { batchGeoLookup, normalizeProvider, upsertHostingProvider, isPrivateIP, getGeoUsage, PRIVATE_IP_SQL_FILTER } from "./geoip";
 import { batchRDAPLookup } from "./whois";
 import { enrichBrands } from "./brandDetect";
-import { cachedCount } from "./cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "./cached-count";
 
 export interface EnrichmentResult {
   dnsResolved: number;
@@ -82,7 +82,7 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
       ).first<{ n: number }>();
       return r?.n ?? 0;
     }),
-    cachedCount(env, 'count.threats.total', 3600, async () => {
+    cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
       const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
       return r?.n ?? 0;
     }),

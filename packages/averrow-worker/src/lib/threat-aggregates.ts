@@ -16,12 +16,15 @@
 // hitting 5+ brands · phishing surged +47% this week · 84% addressed."
 //
 // All filters from handleListThreats are honored so the aggregates
-// reflect the analyst's current slice. Wrapped in cachedValue (5min).
+// reflect the analyst's current slice. Wrapped in cachedValue (30min).
 
 import type { Env } from '../types';
 import type { OrgScope } from '../middleware/auth';
 import { cachedValue } from './cached-value';
 import { scopeCacheSegment } from './scope-cache-key';
+
+/** KV TTL for the per-slice threat aggregate (raised 300 → 1800, D1 read spend 2026-10). */
+export const THREAT_AGGREGATE_TTL_S = 1800;
 
 export interface ThreatAggregateFilters {
   severity?:  string;
@@ -152,7 +155,10 @@ export async function threatAggregate(
     filters.country ?? '', filters.since ?? '', filters.search ?? '',
   ].join(':');
 
-  return cachedValue<ThreatAggregate>(env, cacheKey, 300, async () => {
+  // 30 min (was 5): ~20 GROUP BY/JOIN queries over threats per miss, and
+  // the narrative numbers move slowly. Not Navigator-warmed, so there is
+  // no warm cadence to keep under the TTL.
+  return cachedValue<ThreatAggregate>(env, cacheKey, THREAT_AGGREGATE_TTL_S, async () => {
     // Headline counts in one query
     const headline = await env.DB.prepare(`
       SELECT
@@ -173,11 +179,17 @@ export async function threatAggregate(
     if (filters.actor_id) {
       attributed = headline?.total ?? 0;
     } else {
+      // Semi-join form of "threats whose ASN belongs to any actor".
+      // Equivalent to the former COUNT(DISTINCT t.id) over a JOIN (t.id is
+      // the PK), but the `t.asn IN (...)` term lets SQLite seek the partial
+      // idx_threats_asn (migration 0277 — IN implies asn IS NOT NULL)
+      // regardless of table stats, instead of scanning threats per
+      // threat_actor_infrastructure row (~70M reads/24h across the
+      // three ASN-joined queries in this function).
       const attrRow = await env.DB.prepare(`
-        SELECT COUNT(DISTINCT t.id) AS attributed
+        SELECT COUNT(*) AS attributed
         FROM threats t
-        JOIN threat_actor_infrastructure tai_attr ON tai_attr.asn = t.asn
-        ${where}
+        ${where ? `${where} AND` : 'WHERE'} t.asn IN (SELECT asn FROM threat_actor_infrastructure)
       `).bind(...params).first<{ attributed: number }>().catch(() => null);
       attributed = attrRow?.attributed ?? 0;
     }

@@ -31,7 +31,7 @@ import {
   countStatusCubeForHour,
   countArcsCubeForHour,
 } from "../../lib/cube-builder";
-import { runBrandMatchBackfill } from "./backfills";
+import { runBrandMatchRounds } from "./backfills";
 
 
 // ─── POST /api/admin/import-tranco ──────────────────────────────
@@ -198,11 +198,7 @@ export async function handleImportTranco(request: Request, env: Env): Promise<Re
     // Auto-run brand match backfill (10 rounds) to link existing threats to newly imported brands
     let backfillMatched = 0;
     if (imported > 0) {
-      for (let i = 0; i < 10; i++) {
-        const bf = await runBrandMatchBackfill(env);
-        backfillMatched += bf.matched;
-        if (bf.pending === 0 || bf.checked === 0) break;
-      }
+      backfillMatched = (await runBrandMatchRounds(env, 10)).matched;
     }
 
     return json({

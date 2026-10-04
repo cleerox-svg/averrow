@@ -299,12 +299,22 @@ async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: strin
     return { itemsFetched: domains.length, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
   }
 
-  // Build keyword list from brand names
-  const brandKeywords = brands.results.map((b) => ({
-    id: b.id,
-    keyword: b.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
-    domain: b.canonical_domain.toLowerCase(),
-  }));
+  // Build keyword list from brand names. Deduped by brand id (a brand
+  // monitored by several tenants appears once per monitored_brands row) and
+  // homoglyph variants precomputed ONCE per brand — the match loop below is
+  // domains × brands (~10^5 × ~10^3), so regenerating the variant array per
+  // (domain, brand) pair was ~10^8 needless allocations per run. Matching
+  // semantics are unchanged: same keyword, same variants, same order.
+  const seenBrandIds = new Set<string>();
+  const brandKeywords: Array<{ id: string; domain: string; needles: string[] }> = [];
+  for (const b of brands.results) {
+    if (seenBrandIds.has(b.id)) continue;
+    seenBrandIds.add(b.id);
+    const needles = brandNeedles(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    // A keyword under 3 chars can never match — drop it from the hot loop.
+    if (needles.length === 0) continue;
+    brandKeywords.push({ id: b.id, domain: b.canonical_domain.toLowerCase(), needles });
+  }
 
   let itemsNew = 0, itemsDuplicate = 0, itemsError = 0;
 
@@ -313,8 +323,7 @@ async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: strin
       // Skip if domain IS the brand's canonical domain
       if (domain === brand.domain) continue;
 
-      const matches = domainMatchesBrand(domain, brand.keyword);
-      if (!matches) continue;
+      if (!domainMatchesNeedles(domain, brand.needles)) continue;
 
       try {
         if (await isDuplicate(ctx.env, "domain", domain)) { itemsDuplicate++; break; }
@@ -341,10 +350,31 @@ async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: strin
 }
 
 /**
- * Store all NRDs in reference table for later analysis (infrastructure correlation, etc.).
- * Uses batched inserts with ON CONFLICT DO NOTHING to handle re-runs.
+ * Domains per INSERT statement in storeNrdReference. The rows travel as ONE
+ * JSON-array bind expanded server-side by `json_each(?)`, so each statement
+ * binds exactly 2 parameters regardless of row count — D1 caps a statement
+ * at 100 bound parameters (the old `VALUES (?, ?)×500` form bound 1000 and
+ * every pull died with "too many SQL variables at offset 418"). 1000 NRDs
+ * ≈ 25–30 KB of JSON: far under D1's 2 MB value cap and its 100 KB SQL-text
+ * cap (the JSON is a bound value, not SQL text).
  */
-async function storeNrdReference(db: D1Database, domains: string[], date: string): Promise<void> {
+export const NRD_DOMAINS_PER_STATEMENT = 1000;
+
+/**
+ * Statements per `db.batch()` call. One batch = one D1 round-trip (one
+ * subrequest) and one implicit transaction: 20 × 1000 = 20K rows/call, so a
+ * 180K-domain day is ~9 calls.
+ */
+export const NRD_STATEMENTS_PER_BATCH = 20;
+
+/**
+ * Store all NRDs in reference table for later analysis (infrastructure correlation, etc.).
+ * INSERT OR IGNORE keeps re-runs (and in-list duplicates) idempotent: the
+ * first registered_date written for a domain wins, exactly as before.
+ *
+ * Exported for the D1 bind-limit regression test.
+ */
+export async function storeNrdReference(db: D1Database, domains: string[], date: string): Promise<void> {
   // Ensure reference table exists
   await db.prepare(`
     CREATE TABLE IF NOT EXISTS nrd_domains (
@@ -355,34 +385,39 @@ async function storeNrdReference(db: D1Database, domains: string[], date: string
     )
   `).run();
 
-  // Batch insert in chunks of 500
-  const BATCH = 500;
-  for (let i = 0; i < domains.length; i += BATCH) {
-    const chunk = domains.slice(i, i + BATCH);
-    const placeholders = chunk.map(() => "(?, ?)").join(",");
-    const binds = chunk.flatMap((d) => [d, date]);
+  // json_each yields rows in array order, so in-statement duplicates resolve
+  // first-wins under OR IGNORE — identical to the old multi-row VALUES list.
+  const insertSql =
+    `INSERT OR IGNORE INTO nrd_domains (domain, registered_date)
+     SELECT value, ? FROM json_each(?)`;
 
-    await db.prepare(
-      `INSERT OR IGNORE INTO nrd_domains (domain, registered_date) VALUES ${placeholders}`
-    ).bind(...binds).run();
+  const stmts: D1PreparedStatement[] = [];
+  for (let i = 0; i < domains.length; i += NRD_DOMAINS_PER_STATEMENT) {
+    const chunk = domains.slice(i, i + NRD_DOMAINS_PER_STATEMENT);
+    stmts.push(db.prepare(insertSql).bind(date, JSON.stringify(chunk)));
+  }
+  for (let i = 0; i < stmts.length; i += NRD_STATEMENTS_PER_BATCH) {
+    await db.batch(stmts.slice(i, i + NRD_STATEMENTS_PER_BATCH));
   }
 
-  logger.info("nrd_reference_stored", { domains: domains.length, date });
+  logger.info("nrd_reference_stored", { domains: domains.length, date, statements: stmts.length });
 }
 
-/** Check if a domain contains a brand keyword or common homoglyph variants */
-function domainMatchesBrand(domain: string, keyword: string): boolean {
-  if (keyword.length < 3) return false; // Avoid false positives on short keywords
+/**
+ * Every substring that counts as a brand hit: the keyword itself followed by
+ * its homoglyph variants. Empty for keywords under 3 chars (false-positive
+ * guard). Computed once per brand per run.
+ */
+function brandNeedles(keyword: string): string[] {
+  if (keyword.length < 3) return [];
+  return [keyword, ...generateHomoglyphVariants(keyword)];
+}
 
-  // Direct substring match
-  if (domain.includes(keyword)) return true;
-
-  // Homoglyph variant matching
-  const variants = generateHomoglyphVariants(keyword);
-  for (const variant of variants) {
-    if (domain.includes(variant)) return true;
+/** True if the domain contains any of the brand's needles. */
+function domainMatchesNeedles(domain: string, needles: string[]): boolean {
+  for (const n of needles) {
+    if (domain.includes(n)) return true;
   }
-
   return false;
 }
 

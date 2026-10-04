@@ -1,7 +1,7 @@
 // TODO: Refactor to use handler-utils (Phase 6 continuation)
 import { json } from "../lib/cors";
 import type { Env } from "../types";
-import { cachedCount } from "../lib/cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 
 // The v1 scan aggregates (handleStats / handleSourceMix / handleQualityTrend,
 // behind /api/dashboard/{stats,sources,trend}) were retired with the URL-scan
@@ -42,7 +42,7 @@ export async function handlePublicStats(request: Request, env: Env): Promise<Res
         ).first<{ n: number }>().catch(() => null);
         return r?.n ?? 0;
       }).then((n) => ({ n })),
-      cachedCount(env, 'count.threats.total', 3600, async () => {
+      cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
         const r = await env.DB.prepare("SELECT COUNT(*) as n FROM threats")
           .first<{ n: number }>();
         return r?.n ?? 0;

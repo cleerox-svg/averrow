@@ -12,7 +12,7 @@ import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
-import { cachedCount } from "../../lib/cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
@@ -298,11 +298,11 @@ export async function handleSystemHealth(request: Request, env: Env): Promise<Re
     // total/today/week previously came from ONE bare COUNT/SUM(CASE…)
     // over ~694K raw threats on every uncached call. Split into three
     // cachedCount reads so the full-table scan isn't re-run per poll.
-    // count.threats.total reuses the canonical key + 3600s TTL shared by
+    // count.threats.total reuses the canonical key + THREATS_TOTAL_TTL_S shared by
     // handleAdminStats / dashboard / cartographer — a shorter TTL here
     // would reject their warmed entry and force a full-table recompute
     // (the exact regression flagged in handleAdminStats' PR-V comment).
-    cachedCount(env, "count.threats.total", 3600, async () => {
+    cachedCount(env, "count.threats.total", THREATS_TOTAL_TTL_S, async () => {
       const r = await session.prepare("SELECT COUNT(*) AS n FROM threats").first<{ n: number }>();
       return r?.n ?? 0;
     }),

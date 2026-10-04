@@ -1,7 +1,7 @@
 // Catalog-level aggregate queries for the Brands Intel page.
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
-// the catalog. Wrapped in cachedValue (5min TTL) so the Intel page
+// the catalog. Wrapped in cachedValue (5min TTL; email-security 30min, posture 1h) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
 // these aggregates use existing pre-computed columns where possible.
@@ -14,6 +14,7 @@
 
 import type { Env } from '../types';
 import { cachedValue } from './cached-value';
+import { cachedCount } from './cached-count';
 
 // ── Email Security ─────────────────────────────────────────────
 
@@ -27,7 +28,8 @@ export interface EmailSecurityAggregate {
 
 export async function emailSecurityAggregate(env: Env): Promise<EmailSecurityAggregate> {
   return cachedValue<EmailSecurityAggregate>(
-    env, 'brand-aggregate.email-security', 300,
+    // 30 min: the inputs move on the weekly email-security rescan cadence.
+    env, 'brand-aggregate.email-security', 1800,
     async () => {
       const grades = await env.DB.prepare(`
         SELECT email_security_grade AS grade, COUNT(*) AS count
@@ -49,21 +51,32 @@ export async function emailSecurityAggregate(env: Env): Promise<EmailSecurityAgg
         FROM brands
       `).first<{ graded: number; ungraded: number }>();
 
-      // DMARC enforcement from latest email_security_scans row per brand.
-      // Sub-select picks each brand's most recent scan; outer GROUP BY
-      // counts policies. Uses brand_id which is stored as INTEGER on
-      // that table — coerce join via canonical_domain for safety.
+      // DMARC enforcement from each brand's LATEST scan — read from the
+      // denormalized brands.email_security_dmarc_policy column (migration
+      // 0255), the same source handlers/emailSecurity.ts switched to in
+      // bdc0f0c3. The previous form ran ROW_NUMBER() OVER (PARTITION BY
+      // brand_id) across the whole insert-only email_security_scans
+      // history (~511K rows, ~125M reads/24h).
+      //
+      // Population: `email_security_score IS NOT NULL` = "brand has been
+      // scanned" — every scan writer (cartographer, curator, orchestrator,
+      // the three emailSecurity handlers) sets score + grade + dmarc_policy
+      // + scanned_at in one UPDATE right after saveEmailSecurityScan, so
+      // this matches the old "brand has ≥1 scan row" population.
+      //
+      // NULL policy → 'none'. The old query split a NULL policy into
+      // 'unspecified' (dmarc_exists=1) vs 'none' (no record). brands has no
+      // dmarc_exists column, but checkDmarc (email-security.ts) defaults an
+      // existing record without `p=` to 'none', so a scan that found a
+      // DMARC record never stores a NULL policy: NULL means "no record".
+      // Only legacy scan rows written before that default could have
+      // produced 'unspecified'; such brands report 'none' until their next
+      // (weekly) rescan.
       const dmarcRows = await env.DB.prepare(`
-        SELECT
-          COALESCE(s.dmarc_policy,
-                   CASE WHEN s.dmarc_exists=1 THEN 'unspecified' ELSE 'none' END) AS policy,
-          COUNT(*) AS count
-        FROM (
-          SELECT brand_id, dmarc_policy, dmarc_exists,
-                 ROW_NUMBER() OVER (PARTITION BY brand_id ORDER BY id DESC) rn
-          FROM email_security_scans
-        ) s
-        WHERE s.rn = 1
+        SELECT COALESCE(email_security_dmarc_policy, 'none') AS policy,
+               COUNT(*) AS count
+        FROM brands
+        WHERE email_security_score IS NOT NULL
         GROUP BY policy
         ORDER BY count DESC
       `).all<{ policy: string; count: number }>();
@@ -223,6 +236,53 @@ export async function compositionAggregate(env: Env): Promise<CompositionAggrega
 
 // ── Posture ─────────────────────────────────────────────
 
+/** Newest snapshot day counts as complete at this fraction of the previous day's rows. */
+export const SNAPSHOT_SETTLED_RATIO = 0.8;
+
+/** Minimum newest-day row count for it to count as settled against `previousCount`. */
+export function settledThreshold(previousCount: number): number {
+  return Math.max(1, Math.ceil(previousCount * SNAPSHOT_SETTLED_RATIO));
+}
+
+/**
+ * The snapshot day the movers list should treat as "latest": the newest
+ * day, unless it is still being written (fewer rows than
+ * SNAPSHOT_SETTLED_RATIO × the previous day's), in which case the previous
+ * day. Every read is index-only on idx_brand_score_snapshots_day:
+ *   - two MAX() seeks (newest day, and the day before it);
+ *   - the previous day's row count. A past day is never rewritten (the
+ *     batch only writes "today"), so its count is cached for 2 days under a
+ *     per-day key and computed once;
+ *   - the newest day's row count, capped at the threshold with LIMIT, so it
+ *     reads at most 0.8 × a day's rows.
+ * A deliberately smaller batch (one that hit its 12-min budget) still
+ * settles once it reaches 80% of the previous day's. One that stays below
+ * keeps the previous day as "latest" until the next batch.
+ */
+export async function settledSnapshotDay(env: Env): Promise<string | null> {
+  const newest = (await env.DB.prepare(
+    'SELECT MAX(snapshot_day) AS d FROM brand_score_snapshots',
+  ).first<{ d: string | null }>())?.d ?? null;
+  if (newest === null) return null;
+
+  const previous = (await env.DB.prepare(
+    'SELECT MAX(snapshot_day) AS d FROM brand_score_snapshots WHERE snapshot_day < ?',
+  ).bind(newest).first<{ d: string | null }>())?.d ?? null;
+  if (previous === null) return newest;
+
+  const previousCount = await cachedCount(env, `count.brand_score_snapshots.day.${previous}`, 172800, async () =>
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM brand_score_snapshots WHERE snapshot_day = ?',
+    ).bind(previous).first<{ n: number }>())?.n ?? 0);
+
+  const threshold = settledThreshold(previousCount);
+  const newestCount = (await env.DB.prepare(
+    'SELECT COUNT(*) AS n FROM (SELECT 1 FROM brand_score_snapshots WHERE snapshot_day = ? LIMIT ?)',
+  ).bind(newest, threshold).first<{ n: number }>())?.n ?? 0;
+
+  return newestCount >= threshold ? newest : previous;
+}
+
 export interface PostureAggregate {
   health_grade_distribution: Array<{ grade: string; count: number }>;
   health_score_buckets:      Array<{ bucket: string; count: number }>;
@@ -234,7 +294,8 @@ export interface PostureAggregate {
 
 export async function postureAggregate(env: Env): Promise<PostureAggregate> {
   return cachedValue<PostureAggregate>(
-    env, 'brand-aggregate.posture', 300,
+    // 1h: snapshots are written once a day (16 0 * * * brand_scores cron).
+    env, 'brand-aggregate.posture', 3600,
     async () => {
       const [healthGrades, healthBuckets, exposureBuckets, total] = await Promise.all([
         env.DB.prepare(`
@@ -313,22 +374,55 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
       // portfolio that day. Tie-break by latest DESC so when several
       // brands have identical small deltas we surface the higher-score
       // ones first.
-      const movers = await env.DB.prepare(`
+      //
+      // D1 read spend (2026-10, ~26M reads/24h): the previous form found
+      // each brand's latest row with a correlated
+      //   s.snapshot_day = (SELECT MAX(snapshot_day) ... WHERE brand_id = s.brand_id)
+      // evaluated for EVERY row of the ~616K-row history, and filtered the
+      // comparison row with julianday() on the column (not sargable).
+      // Now: one global MAX(snapshot_day) (min/max seek on
+      // idx_brand_score_snapshots_day), the latest rows read by equality
+      // on that day, and each brand's comparison row by a
+      // (brand_id, snapshot_day) PK range seek.
+      //
+      // Window: `julianday('now') - julianday(day) BETWEEN 1 AND 8` on a
+      // YYYY-MM-DD day is exactly `day BETWEEN date('now','-7 days') AND
+      // date('now','-1 day')` except at the single instant 00:00:00.000,
+      // where the old form also admitted day-8.
+      //
+      // Semantic difference (deliberate): "latest" is now the platform's
+      // latest snapshot day, not each brand's own. A brand missing from
+      // the newest batch (computeBrandScoresBatch hit its 12-min budget
+      // before reaching it) previously showed its older, stale latest as a
+      // "mover"; it is now left out until its next snapshot. For every
+      // brand present in the newest batch the output is identical.
+      //
+      // In-progress batch: while the 00:16 UTC brand_scores batch is still
+      // writing, the newest day holds only part of the catalog, and this
+      // result is cached for an hour. settledSnapshotDay() falls back to
+      // the previous day until the newest one has ≥80% of its row count.
+      const latestDay = await settledSnapshotDay(env);
+
+      type MoverRow = {
+        brand_id: string; brand_name: string; canonical_domain: string;
+        logo_url: string | null; latest: number; delta: number;
+      };
+      const movers: { results: MoverRow[] } = latestDay === null
+        ? { results: [] }
+        : await env.DB.prepare(`
         WITH paired AS (
           SELECT
             s.brand_id,
             s.brand_health_score AS latest,
-            (SELECT brand_health_score
+            (SELECT s2.brand_health_score
              FROM brand_score_snapshots s2
              WHERE s2.brand_id = s.brand_id
-               AND julianday('now') - julianday(s2.snapshot_day) BETWEEN 1 AND 8
-               AND s2.snapshot_day <> s.snapshot_day
+               AND s2.snapshot_day >= date('now', '-7 days')
+               AND s2.snapshot_day <= date('now', '-1 day')
+               AND s2.snapshot_day <> ?
              ORDER BY s2.snapshot_day ASC LIMIT 1) AS prev
           FROM brand_score_snapshots s
-          WHERE s.snapshot_day = (
-            SELECT MAX(snapshot_day) FROM brand_score_snapshots
-            WHERE brand_id = s.brand_id
-          )
+          WHERE s.snapshot_day = ?
             AND s.brand_health_score IS NOT NULL
         )
         SELECT
@@ -339,10 +433,7 @@ export async function postureAggregate(env: Env): Promise<PostureAggregate> {
         WHERE p.prev IS NOT NULL AND p.latest <> p.prev
         ORDER BY ABS(p.latest - p.prev) DESC, p.latest DESC
         LIMIT 20
-      `).all<{
-        brand_id: string; brand_name: string; canonical_domain: string;
-        logo_url: string | null; latest: number; delta: number;
-      }>();
+      `).bind(latestDay, latestDay).all<MoverRow>();
 
       const improving = movers.results.filter(m => m.delta > 0).slice(0, 5);
       const declining = movers.results.filter(m => m.delta < 0).slice(0, 5);

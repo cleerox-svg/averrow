@@ -211,7 +211,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1525,
+      "loc": 1535,
       "last_modified": "2026-10-04T04:18:21.149Z"
     },
     {
@@ -671,7 +671,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 755,
+      "loc": 756,
       "last_modified": "2026-10-04T04:18:21.149Z"
     },
     {
