@@ -768,12 +768,20 @@ platform data on the ops surface; there are no tenant-affiliated staff.
 - Ops monitor READ paths (dark web, app store, trademark, social, CT,
   lookalikes) use `isPlatformStaff`; their MUTATION gates are unchanged
   (admin/super_admin, super_admin, or `hasGlobalReadScope` respectively).
-- **Alerts are the exception — still per-user until PR-C.** Every
-  `/api/alerts*` query is pinned to `a.user_id = ?` (`handlers/alerts.ts`),
-  so staff do NOT yet see all alerts; they see their own. With a null scope,
-  `PATCH /api/alerts/:id` now reaches the caller's own alerts on ANY brand
-  (previously an org-scoped staff caller was limited to its org's brands and
-  an org-less one got 404) — a widened mutation path, not an unchanged one.
+- **Ops alerts are platform-wide for staff (PR-C).** `/api/alerts*`
+  (`handlers/alerts.ts`) no longer filters on `a.user_id` (alerts carry the
+  tenant org member's user_id from `lib/alert-fanout.ts`); the only filter
+  is the org-scope brand filter, null for every staff role, so every staff
+  role sees every alert in list/get/stats/triage-summary (reads stay
+  `requireStaff`). Mutations — `PATCH /api/alerts/:id`, `bulk-acknowledge`,
+  `bulk-takedown` — gate on `requirePermission('edit_alerts')`
+  (super_admin, admin, analyst, support); sales/billing/auditor get 403.
+  `bulk-takedown` creates `takedown_requests`, so it ALSO requires
+  `manage_takedowns` (route-level `roleHasPermission` check) — support
+  holds `edit_alerts` but not `manage_takedowns` and gets 403 there.
+  Each mutation writes `audit_log` (`alert_update` / `alert_bulk_*`, actor
+  = `ctx.userId`) and drops the `alerts_triage:` / `alerts_stats:` KV keys.
+  Tenant `/api/orgs/:orgId/alerts` routes are unchanged.
 - Account handling enforces "no tenant staff": the admin role PATCH
   (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
   for a user with an active `org_members` row (400; status-only PATCHes and
@@ -829,7 +837,9 @@ in `lib/role-permissions.ts` and is the single source of truth.
   sales and billing). Wired (M4, 2026-06-10 audit) onto: org reads
   (`read_customers`), pricing reads (`view_billing`), pricing
   mutations (`edit_pricing`), staff invites (`manage_invites`), and
-  the admin takedown queue (`manage_takedowns`).
+  the admin takedown queue (`manage_takedowns`), and the ops alert
+  mutations (`edit_alerts`, PR-C; `bulk-takedown` also checks
+  `manage_takedowns`).
 - `requireSales` / `requireSupport` / `requireBilling` — specialty
   sub-role guards (super_admin + admin always satisfy any sub-role
   guard since they grant everything). `requireSales` is wired onto
@@ -837,8 +847,8 @@ in `lib/role-permissions.ts` and is the single source of truth.
   permission flag; lead DELETE stays super_admin).
   `requireSupport` / `requireBilling` currently have no call sites:
   support's job (customer reads + alerts) is covered by
-  `read_customers` + the `requireStaff`-gated `/api/alerts/*`
-  surface, and billing's by `view_billing` / `edit_pricing`.
+  `read_customers` + the `requireStaff`-gated `/api/alerts/*` reads
+  and `edit_alerts`-gated alert mutations, and billing's by `view_billing` / `edit_pricing`.
 - `requireOrgMember` — route-layer org-isolation backstop, wired onto
   all ~77 `/api/orgs/:orgId/*` tenant routes (`routes/tenant.ts`).
   Runs `requireAuth`, then confirms the caller's JWT-derived
