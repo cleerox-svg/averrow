@@ -12,9 +12,9 @@
 
 import { Link } from 'react-router-dom';
 import { Inbox, Bot, ArrowRight, ShieldAlert, Send, CheckCircle2, type LucideIcon } from 'lucide-react';
-import { useTenantAlerts, useCanTriage, extractConfidence, type Alert, type AlertSeverity } from '@/lib/alerts';
+import { useTenantAlerts, useCanTriage, useIsStaff, extractConfidence, type Alert, type AlertSeverity } from '@/lib/alerts';
 import { useTenantTakedowns, takedownActionsFor, type TakedownListRow } from '@/lib/takedowns';
-import { AlertActions, AssigneeControl } from '@/features/alerts/AlertActions';
+import { AlertActions, AssigneeControl, StaffTriageNote } from '@/features/alerts/AlertActions';
 import { VerdictChip } from '@/features/alerts/AiAssessment';
 import { TakedownActions } from '@/features/takedowns/TakedownActions';
 import { AgePill } from '@/components/AgePill';
@@ -23,6 +23,7 @@ const PREVIEW = 5;
 
 export function Console() {
   const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
   const newSignals = useTenantAlerts({ status: 'new', limit: PREVIEW });
   const resolved   = useTenantAlerts({ status: 'resolved', limit: 6 });
   const drafts     = useTenantTakedowns({ status: 'draft' });
@@ -68,6 +69,8 @@ export function Console() {
       {/* ① Needs you */}
       <section className="space-y-3">
         <StreamHeader icon={Inbox} title="Needs you" subtitle="Approvals and new signals awaiting a human" count={needsValue} />
+
+        {isStaff && needsTotal > 0 && <StaffTriageNote />}
 
         {(newSignals.isLoading || drafts.isLoading) && <Loading />}
 

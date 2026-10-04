@@ -793,7 +793,16 @@ platform data on the ops surface; there are no tenant-affiliated staff.
   reads (`toTenantAlertView`, `handlers/tenantData.ts`) strip every
   `staff_*` key and show the assignee as "Averrow SOC" (+
   `handled_by_averrow`) when staff hold an alert the customer hasn't
-  assigned — a staff member is never named to a customer.
+  assigned — a staff member is never named to a customer. The tenant alert
+  WRITE routes (`PATCH /api/orgs/:orgId/alerts/:id`, `POST .../alerts/bulk`)
+  refuse every `isPlatformStaff` caller (403, incl. super_admin) so no staff
+  actor/notes reach the customer's audit log or webhooks; customers can't
+  assign to staff (400, incl. the lead-conversion placeholder); a staff user
+  in `assigned_to` and a staff actor in the tenant audit log both read as
+  "Averrow SOC" (`resolveTenantUserLabels`). Tenant alert responses omit
+  `user_id`; tenant audit-log `details` mask staff/deleted user ids
+  (`maskAuditDetails`); unresolvable users read "Former user". Tenant
+  takedown list/get/PATCH are scoped to `org_id IS NULL OR org_id = :orgId`.
 - Account handling enforces "no tenant staff": the admin role PATCH
   (`/api/admin/users/:id`) refuses an actual non-staff → staff role change
   for a user with an active `org_members` row (400; status-only PATCHes and

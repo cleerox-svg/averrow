@@ -584,6 +584,10 @@ export async function handleBulkAcknowledge(request: Request, env: Env, userId: 
 // eligible — never resolved / false_positive / investigating. At most
 // MAX_BULK_ALERTS per call; brand-wide calls return `remaining`.
 //
+// Each takedown inherits the alert's org_id (NULL for a brand-wide alert), so
+// a takedown spawned from an org-private alert (e.g. exec impersonation) stays
+// with that org and a co-monitoring org can't modify it.
+//
 // The takedown INSERTs and the acknowledge UPDATE run in ONE env.DB.batch
 // (a single D1 transaction): either every takedown lands and its alert is
 // acknowledged, or nothing changes. Each INSERT re-checks status + "no
@@ -633,8 +637,8 @@ export async function handleBulkTakedown(request: Request, env: Env, userId: str
 
     const inserts = candidateIds.map((alertId) =>
       env.DB.prepare(
-        `INSERT INTO takedown_requests (id, brand_id, target_type, target_value, target_platform, evidence_summary, severity, priority_score, source_type, source_id, status, created_at, updated_at)
-         SELECT ?, a.brand_id, 'social_profile', a.title, 'tiktok', a.summary, a.severity, 50, 'alert', a.id, 'draft', datetime('now'), datetime('now')
+        `INSERT INTO takedown_requests (id, org_id, brand_id, target_type, target_value, target_platform, evidence_summary, severity, priority_score, source_type, source_id, status, created_at, updated_at)
+         SELECT ?, a.org_id, a.brand_id, 'social_profile', a.title, 'tiktok', a.summary, a.severity, 50, 'alert', a.id, 'draft', datetime('now'), datetime('now')
            FROM alerts a
           WHERE a.id = ? AND ${eligible}`
       ).bind(crypto.randomUUID(), alertId),

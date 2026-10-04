@@ -22,7 +22,6 @@ export interface Alert {
   brand_id:            string;
   brand_name:          string;
   brand_domain:        string;
-  user_id:             string;
   alert_type:          string;
   severity:            AlertSeverity;
   title:               string;
@@ -38,7 +37,17 @@ export interface Alert {
   resolution_notes:    string | null;
   assigned_to:         string | null;
   assigned_to_name:    string | null;
+  /** True when Averrow staff hold the signal (assigned_to is null and
+   *  assigned_to_name is "Averrow SOC"). Staff are never named to customers. */
+  handled_by_averrow?: boolean;
   created_at:          string;
+}
+
+/** Display name for a signal's assignee, or null when truly unassigned.
+ *  Falls back to "Averrow SOC" when staff hold it but the name is missing. */
+export function alertAssigneeLabel(a: Pick<Alert, 'assigned_to_name' | 'handled_by_averrow'>): string | null {
+  if (a.assigned_to_name) return a.assigned_to_name;
+  return a.handled_by_averrow ? 'Averrow SOC' : null;
 }
 
 export interface SeverityBreakdown {
@@ -170,13 +179,29 @@ export function useAlert(alertId: string | undefined) {
   });
 }
 
-/** Org roles permitted to triage signals — mirrors the backend
- *  `canPerformHITL` gate (analyst+ in the viewer<analyst<admin<owner
- *  hierarchy). A global super_admin also qualifies. */
+/** Pure triage gate. Any global role other than `client` is Averrow staff and
+ *  is refused by the worker on tenant alert writes (403), so staff never get
+ *  triage controls here. Clients need an analyst+ org role — mirrors the
+ *  backend `canPerformHITL` gate (viewer<analyst<admin<owner). */
+export function canTriageFor(globalRole: string | null | undefined, orgRole: string | null | undefined): boolean {
+  if (globalRole && globalRole !== 'client') return false;
+  return orgRole === 'analyst' || orgRole === 'admin' || orgRole === 'owner';
+}
+
+/** True for any platform-staff global role (everything except `client`). */
+export function isStaffRole(globalRole: string | null | undefined): boolean {
+  return !!globalRole && globalRole !== 'client';
+}
+
 export function useCanTriage(): boolean {
   const { user } = useAuth();
-  const orgRole = user?.organization?.role ?? '';
-  return orgRole === 'analyst' || orgRole === 'admin' || orgRole === 'owner' || user?.role === 'super_admin';
+  return canTriageFor(user?.role, user?.organization?.role);
+}
+
+/** True when the signed-in user is Averrow staff viewing the tenant app. */
+export function useIsStaff(): boolean {
+  const { user } = useAuth();
+  return isStaffRole(user?.role);
 }
 
 /** Drive a signal's status lifecycle. Invalidates the signals list +

@@ -17,7 +17,8 @@ import {
   type InvestigationStatus, type InvestigationSeverity, type InvestigationItem,
   type InvestigationNote,
 } from '@/lib/investigations';
-import { useCanTriage } from '@/lib/alerts';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { useAuth } from '@/lib/auth';
 import { StatusPill, SeverityDot } from './pills';
 
@@ -27,6 +28,7 @@ const SEVERITIES: InvestigationSeverity[] = ['critical', 'high', 'medium', 'low'
 export function InvestigationDetail() {
   const { investigationId } = useParams<{ investigationId: string }>();
   const canEdit = useCanTriage();
+  const isStaff = useIsStaff();
   const { user } = useAuth();
   const { data: inv, isLoading, error } = useInvestigation(investigationId);
   const update = useUpdateInvestigation(investigationId ?? '');
@@ -67,6 +69,8 @@ export function InvestigationDetail() {
           {inv.closed_at ? ` · closed ${new Date(inv.closed_at).toLocaleDateString()}` : ''}
         </div>
       </header>
+
+      {isStaff && <StaffTriageNote />}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-5 items-start">
         {/* Main */}

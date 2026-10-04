@@ -117,7 +117,7 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - Apply it **before** the Worker. The ops alert list/detail (`GET /api/alerts`, `/api/alerts/:id`) join `users` on `a.staff_assigned_to`, and `PATCH /api/alerts/:id` reads and writes the new columns. Against the pre-0275 schema those routes return 500. Tenant alert routes keep working either way.
 - CI applies migrations before deploying. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first.
 - To verify, `PRAGMA table_info(alerts)` should list the three `staff_*` columns.
-- No backfill: existing staff assignments made via the old PATCH stay in `assigned_to`. Before this change, staff could only write that column on their own alerts, and the user_id pin meant few such alerts existed.
+- No backfill needed: verified read-only against prod on 2026-10-04 — zero alerts have a staff user in `assigned_to` and zero alerts carry a manual (non-`auto:`) `resolution_notes`, so there is nothing to move into the staff columns. The tenant read path additionally masks any staff `assigned_to` as "Averrow SOC" (`resolveTenantUserLabels` / `toTenantAlertView`, `handlers/tenantData.ts`), so a future stray row still can't name a staff member to a customer.
 
 ### First deploy of AI_STRATEGY Phase 0/1 — expected one-time effects
 

@@ -6,7 +6,7 @@ import { audit } from "../lib/audit";
 import { emitOrgEvent } from "../lib/org-events";
 import { cachedValue } from "../lib/cached-value";
 import type { Env, MonitoringConfigBody } from "../types";
-import { verifyOrgAccess, canPerformHITL, ORG_ROLE_HIERARCHY } from "../middleware/auth";
+import { verifyOrgAccess, canPerformHITL, isPlatformStaff, ORG_ROLE_HIERARCHY } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -21,6 +21,47 @@ function isOrgAdmin(ctx: AuthContext): boolean {
 /** Assignee label a customer sees while Averrow staff are handling an alert. */
 export const AVERROW_SOC_LABEL = "Averrow SOC";
 
+/** Label for a user id that no longer resolves to a users row. Never the raw
+ *  id (it could be a deleted staff account), and never "Averrow SOC" (we
+ *  can't tell it was staff). */
+export const FORMER_USER_LABEL = "Former user";
+
+/** Error a staff caller gets from the tenant alert WRITE routes. Staff triage
+ *  from the ops console, where their claim/notes land in the staff-only
+ *  columns — a tenant-route write would put a staff actor (and raw notes)
+ *  into the customer's resolution_notes, audit log and webhooks. */
+export const STAFF_TENANT_ALERT_WRITE_ERROR = "Staff must triage alerts from the Averrow console";
+
+/** A user as a CUSTOMER may see them: staff are always "Averrow SOC". */
+export interface TenantUserLabel {
+  name: string | null;
+  isStaff: boolean;
+}
+
+/**
+ * Resolve user ids to customer-facing labels. Platform staff (by their
+ * STORED users.role — covers the lead-conversion placeholder super_admin who
+ * holds an active org_members row) are labelled AVERROW_SOC_LABEL and never
+ * named. Unknown ids are absent from the map.
+ */
+export async function resolveTenantUserLabels(
+  env: Env,
+  ids: Array<string | null | undefined>,
+): Promise<Record<string, TenantUserLabel>> {
+  const unique = [...new Set(ids.filter((x): x is string => typeof x === "string" && x.length > 0))];
+  const out: Record<string, TenantUserLabel> = {};
+  if (unique.length === 0) return out;
+  const ph = unique.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT id, role, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${ph})`,
+  ).bind(...unique).all<{ id: string; role: string | null; name: string | null }>();
+  for (const u of rows.results ?? []) {
+    const isStaff = isPlatformStaff(u.role);
+    out[u.id] = { name: isStaff ? AVERROW_SOC_LABEL : (u.name ?? null), isStaff };
+  }
+  return out;
+}
+
 /**
  * Customer-facing view of an alert row (owner decision 2026-10-04: staff
  * actions are visible to customers, branded as Averrow).
@@ -29,25 +70,44 @@ export const AVERROW_SOC_LABEL = "Averrow SOC";
  * (staff_assigned_to, staff_assigned_at, staff_notes — migration 0275).
  * Every `staff_*` key is stripped here (a prefix strip, so a future staff
  * column can't leak either) and replaced by:
- *   - handled_by_averrow: true while a staff member holds the alert
- *   - assigned_to_name:   the customer's own assignee's name; when the
- *     customer has no assignee and staff hold it, "Averrow SOC". A staff
- *     member is never named. `assigned_to` itself is untouched (the
- *     customer's own assignee, null when unassigned).
+ *   - handled_by_averrow: true while a staff member holds the alert — via
+ *     staff_assigned_to, or (legacy / pre-0275) a staff user in assigned_to
+ *   - assigned_to_name:   the customer's own assignee's name; "Averrow SOC"
+ *     when that assignee is staff, or when the customer has no assignee and
+ *     staff hold it. A staff member is never named.
+ *   - assigned_to:        the customer's own assignee id; nulled when it is
+ *     a staff user so no staff identifier reaches the customer. Also nulled
+ *     (name FORMER_USER_LABEL) when it no longer resolves to a users row —
+ *     an unresolvable id is never echoed raw.
+ *   - user_id is dropped: it is the fan-out "owner" (lib/alert-fanout.ts
+ *     resolveOwnerUserId — can be the lead-conversion placeholder super_admin
+ *     or another org's member) or the staff user who ran a social scan
+ *     (handlers/socialMonitor.ts), never a customer-meaningful field.
  */
 export function toTenantAlertView(
   row: Record<string, unknown>,
-  ownAssigneeName: string | null,
+  ownAssignee: TenantUserLabel | null,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
     if (!k.startsWith("staff_")) out[k] = v;
   }
-  const handledByAverrow = typeof row.staff_assigned_to === "string" && row.staff_assigned_to.length > 0;
+  delete out.user_id;
+  const ownIsStaff = !!row.assigned_to && ownAssignee?.isStaff === true;
+  const handledByAverrow =
+    (typeof row.staff_assigned_to === "string" && row.staff_assigned_to.length > 0) || ownIsStaff;
   out.handled_by_averrow = handledByAverrow;
-  out.assigned_to_name = row.assigned_to
-    ? ownAssigneeName
-    : (handledByAverrow ? AVERROW_SOC_LABEL : null);
+  if (ownIsStaff) {
+    out.assigned_to = null;
+    out.assigned_to_name = AVERROW_SOC_LABEL;
+  } else if (row.assigned_to && !ownAssignee) {
+    out.assigned_to = null;
+    out.assigned_to_name = FORMER_USER_LABEL;
+  } else {
+    out.assigned_to_name = row.assigned_to
+      ? (ownAssignee?.name ?? null)
+      : (handledByAverrow ? AVERROW_SOC_LABEL : null);
+  }
   return out;
 }
 
@@ -229,21 +289,11 @@ export async function handleTenantAlerts(
     // Resolve assignee display names (cheap second query) so the queue can
     // show ownership without the client holding a member directory.
     const rawAlerts = (alertsResult.results || []) as Array<Record<string, unknown>>;
-    const assigneeIds = [...new Set(
-      rawAlerts.map((a) => a.assigned_to).filter((x): x is string => typeof x === "string" && !!x),
-    )];
-    const nameById: Record<string, string> = {};
-    if (assigneeIds.length > 0) {
-      const ph = assigneeIds.map(() => "?").join(",");
-      const us = await env.DB.prepare(
-        `SELECT id, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${ph})`,
-      ).bind(...assigneeIds).all<{ id: string; name: string }>();
-      for (const u of us.results ?? []) nameById[u.id] = u.name;
-    }
+    const labels = await resolveTenantUserLabels(env, rawAlerts.map((a) => a.assigned_to as string | null));
     // toTenantAlertView strips the staff-only columns (staff_*) and labels
     // staff-handled alerts "Averrow SOC" — staff are never named here.
     const data = rawAlerts.map((a) =>
-      toTenantAlertView(a, a.assigned_to ? (nameById[a.assigned_to as string] ?? null) : null),
+      toTenantAlertView(a, a.assigned_to ? (labels[a.assigned_to as string] ?? null) : null),
     );
 
     return json({
@@ -289,17 +339,12 @@ export async function handleTenantAlertDetail(
       return json({ success: false, error: "Signal not found" }, 404, origin);
     }
 
-    let assignedToName: string | null = null;
-    if (alert.assigned_to && typeof alert.assigned_to === "string") {
-      const u = await env.DB.prepare(
-        "SELECT COALESCE(display_name, name, email) AS name FROM users WHERE id = ?",
-      ).bind(alert.assigned_to).first<{ name: string }>();
-      assignedToName = u?.name ?? null;
-    }
+    const assignee = typeof alert.assigned_to === "string" ? alert.assigned_to : null;
+    const labels = await resolveTenantUserLabels(env, [assignee]);
 
     return json({
       success: true,
-      data: toTenantAlertView(alert, assignedToName),
+      data: toTenantAlertView(alert, assignee ? (labels[assignee] ?? null) : null),
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -350,31 +395,95 @@ export async function handleTenantAuditLog(
 
     const entries = rows.results ?? [];
 
-    // Resolve actor display names from the main DB (cross-DB, so a second query).
-    const userIds = [...new Set(entries.map((e) => e.user_id).filter((id): id is string => !!id))];
-    const nameById: Record<string, string> = {};
-    if (userIds.length > 0) {
-      const placeholders = userIds.map(() => "?").join(",");
-      const users = await env.DB.prepare(
-        `SELECT id, COALESCE(display_name, name, email) AS name FROM users WHERE id IN (${placeholders})`,
-      ).bind(...userIds).all<{ id: string; name: string }>();
-      for (const u of users.results ?? []) nameById[u.id] = u.name;
-    }
+    // Resolve actor display names from the main DB (cross-DB, so a second
+    // query). Platform-staff actors are shown as "Averrow SOC", never named;
+    // actors whose users row is gone show FORMER_USER_LABEL, never the raw id.
+    // For both, free-text notes are dropped from details (staff notes are
+    // internal — defense in depth for rows written before tenant alert writes
+    // refused staff callers; an unknown actor may have been staff). User ids
+    // INSIDE details (assigned_to, staff_assigned_to, *_user_id) are masked
+    // on every row, whoever the actor: see maskAuditDetails.
+    const parsedDetails = entries.map((e) => parseAuditDetails(e.details));
+    const detailUserIds = parsedDetails.flatMap((d) => (d ? auditDetailUserIds(d) : []));
+    const labels = await resolveTenantUserLabels(env, [...entries.map((e) => e.user_id), ...detailUserIds]);
 
-    const data = entries.map((e) => ({
-      id: e.id,
-      timestamp: e.timestamp,
-      actor: e.user_id ? (nameById[e.user_id] ?? e.user_id) : null,
-      action: e.action,
-      resource_type: e.resource_type,
-      outcome: e.outcome,
-      details: e.details,
-    }));
+    const data = entries.map((e, i) => {
+      const label = e.user_id ? labels[e.user_id] : undefined;
+      const untrustedActor = !!e.user_id && (!label || label.isStaff);
+      return {
+        id: e.id,
+        timestamp: e.timestamp,
+        actor: e.user_id ? (label?.name ?? FORMER_USER_LABEL) : null,
+        action: e.action,
+        resource_type: e.resource_type,
+        outcome: e.outcome,
+        details: maskAuditDetails(e.details, parsedDetails[i] ?? null, labels, untrustedActor),
+      };
+    });
 
     return json({ success: true, data, total: countRow?.total ?? 0 }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
+
+/** Audit-details keys whose value is a user id (assigned_to,
+ *  staff_assigned_to, user_id, new_owner_user_id, ...). */
+const AUDIT_USER_ID_KEY = /(^|_)(user_id|assigned_to)$/;
+
+/** Parse an audit details string to a plain object; null when absent or not
+ *  a JSON object. */
+function parseAuditDetails(details: string | null): Record<string, unknown> | null {
+  if (!details) return null;
+  try {
+    const parsed: unknown = JSON.parse(details);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function auditDetailUserIds(obj: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (AUDIT_USER_ID_KEY.test(k) && typeof v === "string" && v.length > 0) ids.push(v);
+  }
+  return ids;
+}
+
+/**
+ * Customer-facing audit details.
+ *  - Every user-id-valued key is masked on every row: a staff id becomes
+ *    null + `<key>_name: "Averrow SOC"`, an id with no users row becomes
+ *    null + `<key>_name: FORMER_USER_LABEL`. A customer member's id passes.
+ *  - When the actor is staff or unknown (`untrustedActor`), free-text notes
+ *    are dropped.
+ *  - A non-empty details string that isn't a JSON object is withheld
+ *    entirely (it can't be inspected for either rule).
+ */
+function maskAuditDetails(
+  raw: string | null,
+  parsed: Record<string, unknown> | null,
+  labels: Record<string, TenantUserLabel>,
+  untrustedActor: boolean,
+): string | null {
+  if (!raw) return raw;
+  if (!parsed) return null;
+  const obj = { ...parsed };
+  for (const [k, v] of Object.entries(parsed)) {
+    if (!AUDIT_USER_ID_KEY.test(k) || typeof v !== "string" || v.length === 0) continue;
+    const label = labels[v];
+    if (label && !label.isStaff) continue;
+    obj[k] = null;
+    obj[`${k}_name`] = label ? AVERROW_SOC_LABEL : FORMER_USER_LABEL;
+  }
+  if (untrustedActor) {
+    delete obj.notes;
+    delete obj.resolution_notes;
+    delete obj.staff_notes;
+  }
+  return JSON.stringify(obj);
 }
 
 // ─── GET /api/orgs/:orgId/threats ────────────────────────────
@@ -572,6 +681,26 @@ export async function handleTenantThreatDetail(
   }
 }
 
+/**
+ * A customer may assign an alert only to an active member of their org who
+ * is NOT Averrow staff. The staff check reads the stored users.role, so it
+ * also rejects the lead-conversion placeholder super_admin (an active org
+ * `owner` row with provisioned_by='lead_conversion') — staff hold alerts via
+ * the ops console's staff_assigned_to, never the customer's assigned_to.
+ * Returns an error message, or null when the assignee is valid.
+ */
+async function validateTenantAssignee(env: Env, orgId: string, userId: string): Promise<string | null> {
+  const member = await env.DB.prepare(
+    `SELECT u.role AS role
+       FROM org_members om
+       JOIN users u ON u.id = om.user_id
+      WHERE om.org_id = ? AND om.user_id = ? AND om.status = 'active'`,
+  ).bind(orgId, userId).first<{ role: string | null }>();
+  if (!member) return "Assignee must be an active member of this organization";
+  if (isPlatformStaff(member.role)) return "Cannot assign to Averrow staff";
+  return null;
+}
+
 // ─── PATCH /api/orgs/:orgId/alerts/:alertId ──────────────────
 
 export async function handleTenantUpdateAlert(
@@ -584,6 +713,12 @@ export async function handleTenantUpdateAlert(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+
+  // Staff never write through the tenant route (owner decision 2026-10-04):
+  // their status/notes/claim go through the ops console's staff-only columns.
+  if (isPlatformStaff(ctx.role)) {
+    return json({ success: false, error: STAFF_TENANT_ALERT_WRITE_ERROR }, 403, origin);
+  }
 
   // Require analyst+ org role for HITL actions
   if (!canPerformHITL(ctx)) {
@@ -619,14 +754,10 @@ export async function handleTenantUpdateAlert(
     }
 
     // Validate the assignee (when assigning to a user, not unassigning) — must
-    // be an active member of this org.
+    // be an active, non-staff member of this org.
     if (hasAssignee && body.assigned_to != null) {
-      const member = await env.DB.prepare(
-        "SELECT 1 FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active'",
-      ).bind(orgId, body.assigned_to).first();
-      if (!member) {
-        return json({ success: false, error: "Assignee must be an active member of this organization" }, 400, origin);
-      }
+      const assigneeErr = await validateTenantAssignee(env, orgId, body.assigned_to);
+      if (assigneeErr) return json({ success: false, error: assigneeErr }, 400, origin);
     }
 
     // Update alert
@@ -714,6 +845,10 @@ export async function handleTenantBulkUpdateAlerts(
   const origin = request.headers.get("Origin");
   const accessErr = verifyOrgAccess(ctx, orgId);
   if (accessErr) return json({ success: false, error: accessErr }, 403, origin);
+  // Same staff refusal as the single-alert PATCH above.
+  if (isPlatformStaff(ctx.role)) {
+    return json({ success: false, error: STAFF_TENANT_ALERT_WRITE_ERROR }, 403, origin);
+  }
   if (!canPerformHITL(ctx)) {
     return json({ success: false, error: "Requires org role: analyst or higher" }, 403, origin);
   }
@@ -736,12 +871,8 @@ export async function handleTenantBulkUpdateAlerts(
       return json({ success: false, error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` }, 400, origin);
     }
     if (hasAssignee && body.assigned_to != null) {
-      const member = await env.DB.prepare(
-        "SELECT 1 FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active'",
-      ).bind(orgId, body.assigned_to).first();
-      if (!member) {
-        return json({ success: false, error: "Assignee must be an active member of this organization" }, 400, origin);
-      }
+      const assigneeErr = await validateTenantAssignee(env, orgId, body.assigned_to);
+      if (assigneeErr) return json({ success: false, error: assigneeErr }, 400, origin);
     }
 
     // Restrict to alerts actually owned by this org — including the

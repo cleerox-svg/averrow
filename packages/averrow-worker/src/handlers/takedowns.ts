@@ -228,8 +228,11 @@ export const handleListTakedowns = orgHandler(async (request, env, orgId, ctx) =
     target_type: "tr.target_type",
   });
 
-  const bindings = [orgId, ...filterBindings];
-  const whereClause = `1=1 AND ${filterClause}`;
+  // Brand ownership alone isn't enough (same rule as the PATCH guard): a
+  // takedown stamped with ANOTHER org's org_id belongs to that org and must
+  // not be listed here. Bind order: org_brands JOIN, org predicate, filters.
+  const bindings: unknown[] = [orgId, Number(orgId), ...filterBindings];
+  const whereClause = `(tr.org_id IS NULL OR tr.org_id = ?) AND ${filterClause}`;
 
   const result = await env.DB.prepare(`
     SELECT tr.*, b.name AS brand_name
@@ -260,8 +263,9 @@ export const handleListTakedowns = orgHandler(async (request, env, orgId, ctx) =
     SELECT tr.status, COUNT(*) AS count
     FROM takedown_requests tr
     JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
+    WHERE (tr.org_id IS NULL OR tr.org_id = ?)
     GROUP BY tr.status
-  `).bind(orgId).all();
+  `).bind(orgId, Number(orgId)).all();
 
   return paginatedResponse(result.results || [], countResult?.total ?? 0, ctx.origin, {
     status_counts: statusCounts.results || [],
@@ -284,7 +288,8 @@ export async function handleGetTakedown(
       JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
       JOIN brands b ON b.id = tr.brand_id
       WHERE tr.id = ?
-    `).bind(orgId, takedownId).first();
+        AND (tr.org_id IS NULL OR tr.org_id = ?)
+    `).bind(orgId, takedownId, Number(orgId)).first();
 
     if (!takedown) return error("Takedown request not found", 404, origin);
 
@@ -306,12 +311,16 @@ export async function handleUpdateTakedown(
   try {
     const body = await parseBody<UpdateTakedownBody>(request);
 
+    // Brand ownership alone isn't enough: a takedown stamped with ANOTHER
+    // org's org_id (an org-private alert's takedown on a co-monitored brand)
+    // belongs to that org and must not be modified from here.
     const takedown = await env.DB.prepare(`
       SELECT tr.id, tr.status
       FROM takedown_requests tr
       JOIN org_brands ob ON ob.brand_id = tr.brand_id AND ob.org_id = ?
       WHERE tr.id = ?
-    `).bind(orgId, takedownId).first<{ id: string; status: string }>();
+        AND (tr.org_id IS NULL OR tr.org_id = ?)
+    `).bind(orgId, takedownId, Number(orgId)).first<{ id: string; status: string }>();
 
     if (!takedown) return error("Takedown request not found", 404, origin);
 

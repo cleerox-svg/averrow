@@ -5,7 +5,8 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { X, Plus } from 'lucide-react';
 import { useTenantDashboard } from '@/lib/dashboard';
-import { useCanTriage } from '@/lib/alerts';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import {
   useMonitoringConfig, useUpdateMonitoringConfig, SEVERITY_LEVELS,
   type MonitoringConfig,
@@ -66,6 +67,7 @@ export function MonitoringRules() {
 }
 
 function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }) {
+  const isStaff = useIsStaff();
   const { data, isLoading, error } = useMonitoringConfig(brandId);
   const update = useUpdateMonitoringConfig(brandId);
   const [cfg, setCfg] = useState<MonitoringConfig | null>(null);
@@ -170,7 +172,11 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
           {update.isError && <span className="text-[12px] text-sev-critical">{update.error instanceof Error ? update.error.message : 'Save failed'}</span>}
         </div>
       ) : (
-        <p className="text-[11px] text-white/45 font-mono">Analyst role required to edit.</p>
+        isStaff ? (
+          <StaffTriageNote />
+        ) : (
+          <p role="note" className="text-[11px] text-white/55">Analyst role required to edit.</p>
+        )
       )}
     </div>
   );

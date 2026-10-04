@@ -18,7 +18,8 @@ import {
   type TakedownTotals,
   type TakedownsFilters,
 } from '@/lib/takedowns';
-import { useCanTriage } from '@/lib/alerts';
+import { useCanTriage, useIsStaff } from '@/lib/alerts';
+import { StaffTriageNote } from '@/features/alerts/AlertActions';
 import { TakedownActions } from './TakedownActions';
 import { AgePill } from '@/components/AgePill';
 
@@ -26,6 +27,7 @@ export function Takedowns() {
   const [filters, setFilters] = useState<TakedownsFilters>({});
   const { data, isLoading, error } = useTenantTakedowns(filters);
   const canTriage = useCanTriage();
+  const isStaff = useIsStaff();
 
   const update = (patch: Partial<TakedownsFilters>) =>
     setFilters((f) => ({ ...f, ...patch }));
@@ -44,6 +46,8 @@ export function Takedowns() {
           Submission requests issued to providers on your behalf. Drafts await analyst approval; approved requests are submitted under your signed authorization. Status, provider, and response audit trail per request.
         </p>
       </header>
+
+      {isStaff && <StaffTriageNote />}
 
       {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading takedowns…</div>}
       {error && (
