@@ -128,6 +128,14 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - No backfill needed: verified read-only against prod on 2026-10-04 — 4,062 `takedown_requests` rows, 0 with a non-empty `notes`, so no staff note sits in the customer column.
 - **Post-deploy gate.** Between applying 0276 and the new Worker going live, the OLD Worker's ops PATCH still writes staff notes into `notes`, which the new tenant detail returns to the customer. Immediately after the Worker deploy, run (read-only) `SELECT id FROM takedown_requests WHERE notes IS NOT NULL AND notes <> ''`. For any rows, check the `audit_log` (`AUDIT_DB`) `admin_takedown_update` entries for those ids since 2026-10-04 to identify the staff-written ones, then move only those (manual, reviewed): `UPDATE takedown_requests SET staff_notes = notes, notes = NULL WHERE id IN (...)`. Customer-written notes (tenant `takedown_create` / `takedown_update`) stay put.
 
+### Migration 0277 — `threats` read-spend indexes (applied before the Worker)
+
+- `0277_threats_asn_gsb_indexes.sql` adds two partial indexes on `threats`: `idx_threats_asn` (`threats(asn) WHERE asn IS NOT NULL`, for the threat-actor ASN joins in `lib/threat-aggregates.ts`) and `idx_threats_gsb_pending` (`threats(first_seen DESC) WHERE gsb_checked = 0 AND (malicious_url IS NOT NULL OR malicious_domain IS NOT NULL)`, for the Google Safe Browsing work-queue SELECT and Flight Control's `backlog.gsb` count). `CREATE INDEX IF NOT EXISTS` only — no table or column changes.
+- Applied automatically: CI runs `db:migrate:prod` before `pnpm run deploy`. With a manual `npx wrangler deploy`, run `pnpm run db:migrate:prod` first.
+- Ordering is for cost, not correctness: the Worker's queries are valid with or without the indexes (without them they keep full-scanning `threats`, ~110M reads/24h between them). The `idx_threats_gsb_pending` predicate copies the two GSB queries' WHERE text exactly; SQLite only uses a partial index when the query's WHERE implies it, so a reworded GSB query silently falls back to a scan. `test/d1-read-spend-2026-10.test.ts` pins both plans.
+- One-time build cost: one pass over `threats` per index (~1.25M rows read each, ~2.5M total), paid back within the first hour.
+- To verify, `SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_threats_asn', 'idx_threats_gsb_pending')` returns both rows.
+
 ### `hosting_providers.is_bulletproof` — prod-only column now defined in 0078 (fresh-bootstrap fix)
 
 - `GET /api/providers/v2` (`handlers/providers.ts`) selects `hp.is_bulletproof`. Prod gained the column out of band (`INTEGER`, nullable, `DEFAULT 0`), and no migration defined it, so any DB built from `migrations/` (staging, dev, the derived-schema test harness) returned 500 on that route.

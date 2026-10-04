@@ -35,6 +35,19 @@ const CACHE_PREFIX = "cc:"; // namespace KV keys to avoid collision with other c
 const STATS_KEY = "cc:_stats"; // small ring-buffer for hit/miss observability
 const STATS_RING_SIZE = 50;
 
+/**
+ * Freshness budget for the shared `count.threats.total` key (6h).
+ *
+ * cachedCount checks freshness against the CALLER's TTL, so every caller of
+ * one key must pass the same TTL — a shorter one rejects entries the others
+ * warmed and forces a full-table COUNT(*) over threats (~1.25M rows). All
+ * callers import this constant so they cannot drift. Every caller uses the
+ * total for display or diagnostics (dashboard/admin/public tiles, health,
+ * milestones, sentinel + enrichment run summaries); none gates work on it,
+ * so a few hours of lag on a number that grows <1%/h is invisible.
+ */
+export const THREATS_TOTAL_TTL_S = 21600;
+
 interface CachedEntry {
   /** Integer value being cached. */
   v: number;

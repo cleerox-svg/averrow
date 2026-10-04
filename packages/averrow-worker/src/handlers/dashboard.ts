@@ -5,7 +5,7 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
-import { cachedCount } from "../lib/cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
@@ -70,17 +70,16 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
     // those would blow up the KV key space.
     const useGlobalCache = !scope;
 
-    // D1 spend-reduction: bumped TTLs from 1800s → 3600s on total/active
-    // and 600s → 1800s on last_24h. These keys are shared with admin.ts
-    // (which already uses 3600s for `count.threats.total`); because
-    // cachedCount uses per-caller TTL for freshness checks, dashboard's
-    // shorter window was rejecting admin-cached entries 1800-3600s old
-    // and recomputing them — even though admin had just populated them.
-    // Aligning TTLs lets dashboard accept admin's value and roughly
-    // halves dashboard's compute-path entries for these keys.
+    // D1 spend-reduction: TTLs on these shared keys must match every other
+    // caller's. `count.threats.total` uses THREATS_TOTAL_TTL_S (6h,
+    // lib/cached-count.ts), shared by all its callers; active is 21600s
+    // (matching admin/stats.ts) and last_24h 1800s.
+    // cachedCount checks freshness against the CALLER's TTL, so a shorter
+    // window here rejected entries admin had just populated and
+    // recomputed them. Aligned TTLs let dashboard accept admin's value.
     //
     // Drift cost is invisible on a homepage tile: total/active drift
-    // ~1000/hour at current scale, so 60-min lag still reads as fresh.
+    // ~1000/hour at current scale, a small fraction of a ~1.25M total.
     // last_24h is a rolling window that changes by the same rate, so
     // 30-min lag is also fine. PR-CD (priority 5 of the diagnostics
     // walk-through) — targeted bump to push `cached_count.hit_rate`
@@ -90,9 +89,9 @@ export async function handleDashboardOverview(request: Request, env: Env, scope?
     // threats` running 263×/24h × 338K rows = 89M rows/day on the
     // 300s TTL. The 1800s bump dropped that to ~48 calls/day = 16M
     // rows. This further bump to 3600s drops it to ~24 calls/day =
-    // 8M rows. Saves another ~8M rows/day ≈ 1% of plan.
+    // 8M rows. 2026-10: raised to the shared 6h THREATS_TOTAL_TTL_S.
     const threatCountP = useGlobalCache
-      ? cachedCount(env, 'count.threats.total', 3600, async () => {
+      ? cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
           const r = await session.prepare(`SELECT COUNT(*) AS n FROM threats`).first<{ n: number }>();
           return r?.n ?? 0;
         }).then((n) => ({ n }))

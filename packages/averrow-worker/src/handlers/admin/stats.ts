@@ -12,7 +12,7 @@ import { estimateCost } from "../../lib/budgetManager";
 import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
-import { cachedCount } from "../../lib/cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
@@ -71,7 +71,7 @@ export async function handleAdminStats(request: Request, env: Env): Promise<Resp
     // value, but a duplicate cache population. Sharing keys gives the
     // admin dashboard whichever value is freshest across all callers
     // and eliminates one compute path per TTL window.
-    adminCachedCount('count.threats.total', 3600, "SELECT COUNT(*) AS n FROM threats"),
+    adminCachedCount('count.threats.total', THREATS_TOTAL_TTL_S, "SELECT COUNT(*) AS n FROM threats"),
     // TTL aligned to 21600s (6h) to match every other frequent caller of
     // this shared key (dashboard.ts, cartographer.ts). A shorter TTL here
     // rejected entries the 6h callers had warmed, forcing a ~801K-row

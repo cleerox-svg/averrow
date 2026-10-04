@@ -23,7 +23,7 @@ import type { Env } from "../types";
 import { callAnthropicJSON, isAiRulesOnly } from "../lib/anthropic";
 import { classifySaasTechnique } from "../lib/saas-classifier";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
-import { cachedCount } from "../lib/cached-count";
+import { cachedCount, THREATS_TOTAL_TTL_S } from "../lib/cached-count";
 import { withD1Retry } from "../lib/d1-retry";
 
 // ─── Homoglyph & brand-squatting detection ──────────────────────
@@ -201,7 +201,8 @@ export const sentinelAgent: AgentModule = {
     // PR-AM: TTL bumped 900s → 3600s. Total threat count drifts very
     // slowly (~5% per hour during ingest peaks); a 1h cache window is
     // well within tolerance and quadruples the hit rate.
-    const totalCount = { n: await cachedCount(env, 'count.threats.total', 3600, async () => {
+    // 2026-10: shared THREATS_TOTAL_TTL_S (6h) — diagnostic-only here.
+    const totalCount = { n: await cachedCount(env, 'count.threats.total', THREATS_TOTAL_TTL_S, async () => {
       const row = await env.DB.prepare("SELECT COUNT(*) as n FROM threats").first<{ n: number }>();
       return row?.n ?? 0;
     }) };

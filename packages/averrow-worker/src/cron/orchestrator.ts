@@ -1037,20 +1037,18 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   }
 
   // Brand match backfill (2 rounds)
+  // No pre-count here: the bare COUNT(*) of unlinked threats (~1M rows,
+  // ~30M reads/24h) only fed a `> 0` gate, and runBrandMatchBackfill
+  // already opens with its own capped pending probe that returns before
+  // any other read when there is no work.
   try {
-    const { runBrandMatchBackfill } = await import('../handlers/admin');
-    const pendingRow = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)"
-    ).first<{ n: number }>();
-    const pending = pendingRow?.n ?? 0;
-    if (pending > 0) {
-      let totalMatched = 0;
-      for (let i = 0; i < 2; i++) {
-        const bf = await runBrandMatchBackfill(env);
-        totalMatched += bf.matched;
-        if (bf.pending === 0 || bf.checked === 0) break;
-      }
-      logger.info('threat_feed_scan_brand_match', { pending, matched: totalMatched });
+    // runBrandMatchRounds also stops after a round that matched nothing.
+    const { runBrandMatchRounds } = await import('../handlers/admin');
+    const bf = await runBrandMatchRounds(env, 2);
+    if (bf.checked > 0) {
+      logger.info('threat_feed_scan_brand_match', {
+        pending: bf.pending, pending_capped: bf.pending_capped, matched: bf.matched, rounds: bf.rounds_run,
+      });
     }
   } catch (err) {
     logger.error('threat_feed_scan_brand_match_error', { error: err instanceof Error ? err.message : String(err) });
@@ -1420,7 +1418,7 @@ async function runObserverBriefing(env: Env): Promise<void> {
   // skips + a small UPDATE pass for ranks that drifted week-over-week
   // (fast — single-digit seconds).
   try {
-    const { handleImportTranco, runBrandMatchBackfill } = await import('../handlers/admin');
+    const { handleImportTranco, runBrandMatchRounds } = await import('../handlers/admin');
     const fakeReq = new Request('https://localhost/api/admin/import-tranco', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1430,13 +1428,8 @@ async function runObserverBriefing(env: Env): Promise<void> {
     const trancoData = await trancoRes.json() as { success: boolean; data?: { imported: number; updated?: number; message: string } };
     logger.info('observer_briefing_tranco', { message: trancoData.data?.message ?? 'unknown' });
     if (trancoData.data?.imported && trancoData.data.imported > 0) {
-      let postImportMatched = 0;
-      for (let i = 0; i < 5; i++) {
-        const bf = await runBrandMatchBackfill(env);
-        postImportMatched += bf.matched;
-        if (bf.pending === 0 || bf.checked === 0) break;
-      }
-      logger.info('observer_briefing_post_tranco_match', { matched: postImportMatched });
+      const postImport = await runBrandMatchRounds(env, 5);
+      logger.info('observer_briefing_post_tranco_match', { matched: postImport.matched, rounds: postImport.rounds_run });
     }
   } catch (err) {
     logger.error('observer_briefing_tranco_error', { error: err instanceof Error ? err.message : String(err) });

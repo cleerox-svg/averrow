@@ -1070,7 +1070,12 @@ export const cartographerAgent: AgentModule = {
     const lastProviderStatsRun = await env.CACHE.get(PROVIDER_STATS_LAST_RUN_KEY);
     if (shouldRunProviderStats(lastProviderStatsRun, Date.now(), providerStatsWindowMs)) {
       statsCreated = await aggregateProviderStats(env);
-      await env.CACHE.put(PROVIDER_STATS_LAST_RUN_KEY, String(Date.now()), { expirationTtl: 3600 });
+      // TTL must outlive the WIDEST throttle window: a 3600s stamp expired
+      // before the 150-min backlog window elapsed, so every backlog
+      // instance after the first hour read `null` and re-ran the rollup.
+      await env.CACHE.put(PROVIDER_STATS_LAST_RUN_KEY, String(Date.now()), {
+        expirationTtl: PROVIDER_STATS_STAMP_TTL_S,
+      });
     }
     itemsCreated += statsCreated;
 
@@ -1342,6 +1347,11 @@ export const PROVIDER_STATS_THROTTLE_MS = 50 * 60_000;
 // has genuinely missed two consecutive hours — preserving the failover
 // the single-window design was protecting, without the herd.
 export const PROVIDER_STATS_BACKLOG_THROTTLE_MS = 150 * 60_000;
+// KV expirationTtl for the last-run stamp: the widest window above plus a
+// 30-min margin (= 10800s). The stamp has to survive the whole window, or
+// its absence reads as "never ran" and the throttle is void.
+export const PROVIDER_STATS_STAMP_TTL_S =
+  Math.max(PROVIDER_STATS_THROTTLE_MS, PROVIDER_STATS_BACKLOG_THROTTLE_MS) / 1000 + 30 * 60;
 
 /**
  * Pure decision for the Phase 5 provider-stats KV self-throttle.

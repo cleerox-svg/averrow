@@ -623,38 +623,53 @@ export async function handleBackfillBrandSector(
   }
 }
 
-// Core brand-match backfill logic — returns { matched, checked, pending }
-export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number; checked: number; pending: number }> {
+// Rows fuzzy-matched per runBrandMatchBackfill call.
+export const BRAND_MATCH_BATCH = 500;
+// Ceiling on the reported `pending` figure (see the probe below).
+export const BRAND_MATCH_PENDING_CAP = 500;
+
+export interface BrandMatchBackfillResult {
+  matched: number;
+  checked: number;
+  /** Unlinked threats left after this batch, exact up to BRAND_MATCH_PENDING_CAP. */
+  pending: number;
+  /** True when more than BRAND_MATCH_PENDING_CAP remain — `pending` is then a floor. */
+  pending_capped: boolean;
+}
+
+// Core brand-match backfill logic.
+export async function runBrandMatchBackfill(env: Env): Promise<BrandMatchBackfillResult> {
+  // Capped pending probe, run FIRST so a no-work call costs one cheap read.
+  // The previous full COUNT(*) over ~1M unlinked threats (cachedCount
+  // 'count.threats.unattributed_with_ioc', 600s) existed only to gate on zero and
+  // report `pending`; counting at most BATCH + CAP + 1 rows answers both:
+  // pending-after-this-batch is exact up to CAP, and anything beyond reads
+  // as CAP with `pending_capped: true`. Uncached on purpose — a ≤1001-row
+  // probe is cheap, and a fresh value keeps the callers' multi-round
+  // loops from looping on a stale pre-batch total.
+  const probeRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM (
+       SELECT 1 FROM threats
+       WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)
+       LIMIT ?
+     )`,
+  ).bind(BRAND_MATCH_BATCH + BRAND_MATCH_PENDING_CAP + 1).first<{ n: number }>();
+  const probed = probeRow?.n ?? 0;
+  if (probed === 0) return { matched: 0, checked: 0, pending: 0, pending_capped: false };
+
   const brandRows = await env.DB.prepare(
     "SELECT id, name, canonical_domain, tier FROM brands",
   ).all<{ id: string; name: string; canonical_domain: string; tier: string | null }>();
 
   const brands = brandRows.results;
-  if (brands.length === 0) return { matched: 0, checked: 0, pending: 0 };
-
-  // PR-BL: TTL bumped 60s → 600s. The diagnostics endpoint flagged
-  // this as the #3 D1 read offender (~17.8M rows / 87 calls / 24h)
-  // because runBrandMatchBackfill is called hourly from the orchestrator
-  // plus 1-2× from manual triggers. At 60s every call was a miss; at
-  // 600s only the first call per 10-min window hits the full scan.
-  // The downstream LIMIT 500 still bounds the work per call, and the
-  // count is only used as a gate (skip if 0 / report `remaining`), so
-  // sub-10-min staleness is harmless.
-  const totalPending = await cachedCount(env, 'count.threats.unattributed_with_ioc', 600, async () => {
-    const pendingRow = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM threats WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)",
-    ).first<{ n: number }>();
-    return pendingRow?.n ?? 0;
-  });
-
-  if (totalPending === 0) return { matched: 0, checked: 0, pending: 0 };
+  if (brands.length === 0) return { matched: 0, checked: 0, pending: 0, pending_capped: false };
 
   const rows = await env.DB.prepare(
     `SELECT id, malicious_domain, malicious_url, ioc_value FROM threats
      WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)
      ORDER BY created_at DESC
-     LIMIT 500`,
-  ).all<{ id: string; malicious_domain: string | null; malicious_url: string | null; ioc_value: string | null }>();
+     LIMIT ?`,
+  ).bind(BRAND_MATCH_BATCH).all<{ id: string; malicious_domain: string | null; malicious_url: string | null; ioc_value: string | null }>();
 
   let matched = 0;
 
@@ -686,8 +701,50 @@ export async function runBrandMatchBackfill(env: Env): Promise<{ matched: number
     }
   }
 
-  const pending = Math.max(0, totalPending - rows.results.length);
-  return { matched, checked: rows.results.length, pending };
+  const remaining = Math.max(0, probed - rows.results.length);
+  return {
+    matched,
+    checked: rows.results.length,
+    pending: Math.min(remaining, BRAND_MATCH_PENDING_CAP),
+    pending_capped: remaining > BRAND_MATCH_PENDING_CAP,
+  };
+}
+
+export interface BrandMatchRoundsResult {
+  matched: number;
+  checked: number;
+  pending: number;
+  pending_capped: boolean;
+  /** Rounds actually executed (≤ maxRounds). */
+  rounds_run: number;
+}
+
+/**
+ * Run up to `maxRounds` brand-match batches, stopping as soon as another
+ * round cannot do new work. Every caller loops this way (orchestrator
+ * hourly tick, post-Tranco import in both the orchestrator and
+ * brand-candidates, the admin endpoint), so the stop rules live here once.
+ *
+ * Stop rules:
+ *   - `checked === 0` / `pending === 0`: nothing left.
+ *   - `matched === 0`: each round reads the NEWEST 500 unlinked threats.
+ *     A round that linked nothing leaves that set unchanged, so the next
+ *     round would re-read and re-fuzz the identical 500 rows against the
+ *     identical brand list and match nothing again (~2.7M wasted
+ *     reads/day from the hourly tick's second round alone).
+ */
+export async function runBrandMatchRounds(env: Env, maxRounds: number): Promise<BrandMatchRoundsResult> {
+  const out: BrandMatchRoundsResult = { matched: 0, checked: 0, pending: 0, pending_capped: false, rounds_run: 0 };
+  for (let i = 0; i < maxRounds; i++) {
+    const bf = await runBrandMatchBackfill(env);
+    out.rounds_run++;
+    out.matched += bf.matched;
+    out.checked += bf.checked;
+    out.pending = bf.pending;
+    out.pending_capped = bf.pending_capped;
+    if (bf.pending === 0 || bf.checked === 0 || bf.matched === 0) break;
+  }
+  return out;
 }
 
 // POST /api/admin/backfill-brand-match
@@ -698,21 +755,11 @@ export async function handleBackfillBrandMatch(request: Request, env: Env): Prom
     const body = await request.json().catch(() => null) as { rounds?: number } | null;
     const rounds = Math.min(Math.max(body?.rounds ?? 1, 1), 20);
 
-    let totalMatched = 0;
-    let totalChecked = 0;
-    let lastPending = 0;
-
-    for (let i = 0; i < rounds; i++) {
-      const result = await runBrandMatchBackfill(env);
-      totalMatched += result.matched;
-      totalChecked += result.checked;
-      lastPending = result.pending;
-      if (result.pending === 0 || result.checked === 0) break;
-    }
+    const r = await runBrandMatchRounds(env, rounds);
 
     return json({
       success: true,
-      data: { matched: totalMatched, checked: totalChecked, pending: lastPending, rounds },
+      data: { matched: r.matched, checked: r.checked, pending: r.pending, pending_capped: r.pending_capped, rounds },
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
