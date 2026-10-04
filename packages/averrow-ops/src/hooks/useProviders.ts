@@ -12,7 +12,7 @@ export interface Provider {
   total_threat_count: number;
   trend_7d: number | null;
   trend_30d: number | null;
-  /** Only on sort=cooling rows: trend_7d − trend_30d·7/30 (negative when cooling). */
+  /** On every v2 row (not just sort=cooling): trend_7d − trend_30d·7/30 (negative when cooling). The UI shows it only in the Cooling view. */
   cooling_delta_7d?: number | null;
   reputation_score: number | null;
   avg_response_time: number | null;

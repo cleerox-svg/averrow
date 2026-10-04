@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { MultiFeedConsensusPanel } from './MultiFeedConsensusPanel';
@@ -46,7 +46,8 @@ describe('MultiFeedConsensusPanel', () => {
     expect(await screen.findByText('203.0.113.7')).toBeInTheDocument();
     expect(screen.getByText('5 feeds')).toBeInTheDocument();
     expect(screen.getByText('openphish')).toBeInTheDocument();
-    expect(screen.getByText(/12 threats · 3 brands/)).toBeInTheDocument();
+    expect(screen.getByText(/12 threats · 3 brands · newest threat/)).toBeInTheDocument();
+    expect(screen.queryByText(/first seen|last seen/i)).not.toBeInTheDocument();
     const link = screen.getByRole('link');
     const href = link.getAttribute('href') ?? '';
     expect(href).toContain('q=203.0.113.7');
@@ -61,5 +62,46 @@ describe('MultiFeedConsensusPanel', () => {
     await userEvent.setup().click(toggle);
     await waitFor(() => expect(screen.queryByText('203.0.113.7')).not.toBeInTheDocument());
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // aria-controls target stays in the DOM, hidden, while collapsed.
+    expect(document.getElementById('multi-feed-consensus-body')).toHaveAttribute('hidden');
+  });
+
+  it('has a Corroboration header and an h3 toggle with aria-controls', async () => {
+    get.mockResolvedValue({ success: true, data: [ROW] });
+    renderWithProviders(<MultiFeedConsensusPanel />);
+    await screen.findByText('203.0.113.7');
+    expect(screen.getByRole('heading', { level: 2, name: 'Corroboration' })).toBeInTheDocument();
+    const h3 = screen.getByRole('heading', { level: 3 });
+    const toggle = within(h3).getByRole('button', { name: /multi-feed consensus/i });
+    expect(toggle).toHaveClass('ds-focusable');
+    expect(toggle).toHaveAttribute('aria-controls', 'multi-feed-consensus-body');
+    expect(document.getElementById('multi-feed-consensus-body')).not.toBeNull();
+  });
+
+  it('uses singular copy for 1 threat / 1 brand / 1 feed', async () => {
+    get.mockResolvedValue({ success: true, data: [{ ...ROW, feed_count: 1, threat_count: 1, brand_count: 1 }] });
+    renderWithProviders(<MultiFeedConsensusPanel />);
+    expect(await screen.findByText(/1 threat · 1 brand · newest threat/)).toBeInTheDocument();
+    expect(screen.getByText('1 feed')).toBeInTheDocument();
+  });
+
+  it('caps at 5 rows with a Show all toggle', async () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ ...ROW, ip_address: `198.51.100.${i + 1}` }));
+    get.mockResolvedValue({ success: true, data: many });
+    renderWithProviders(<MultiFeedConsensusPanel />);
+    await screen.findByText('198.51.100.1');
+    expect(screen.getAllByRole('link')).toHaveLength(5);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Show all (8)' }));
+    expect(screen.getAllByRole('link')).toHaveLength(8);
+    await user.click(screen.getByRole('button', { name: 'Show fewer' }));
+    expect(screen.getAllByRole('link')).toHaveLength(5);
+  });
+
+  it('does not show the toggle for 5 or fewer rows', async () => {
+    get.mockResolvedValue({ success: true, data: [ROW] });
+    renderWithProviders(<MultiFeedConsensusPanel />);
+    await screen.findByText('203.0.113.7');
+    expect(screen.queryByRole('button', { name: /show all/i })).not.toBeInTheDocument();
   });
 });

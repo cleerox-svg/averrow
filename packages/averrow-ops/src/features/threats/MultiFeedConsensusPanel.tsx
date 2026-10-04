@@ -2,10 +2,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { Badge, Card, PageState } from '@/design-system/components';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { relativeTime } from '@/lib/time';
 import { tabUrl } from '@/lib/workspaceRoutes';
+import { PanelHeader } from './PanelHeader';
 import { useMultiFeedConsensus } from '@/hooks/useMultiFeedConsensus';
+
+const COLLAPSED_ROWS = 5;
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /**
  * Multi-feed consensus — IPs flagged by 4+ independent feeds. Each row links to
@@ -14,32 +18,37 @@ import { useMultiFeedConsensus } from '@/hooks/useMultiFeedConsensus';
  */
 export function MultiFeedConsensusPanel() {
   const [open, setOpen] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const { data, isLoading, isError, refetch } = useMultiFeedConsensus();
   const rows = data ?? [];
+  const visible = showAll ? rows : rows.slice(0, COLLAPSED_ROWS);
 
   return (
     <Card>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        aria-controls="multi-feed-consensus-body"
-        className="w-full flex items-center justify-between gap-2 text-left"
-        style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0 }}
-      >
-        <SectionLabel>Multi-feed consensus{data ? ` (${rows.length})` : ''}</SectionLabel>
-        <ChevronDown
-          size={14}
-          style={{
-            color: 'var(--text-tertiary)',
-            transform: open ? 'rotate(180deg)' : 'none',
-            transition: 'transform 0.15s',
-          }}
-        />
-      </button>
+      <PanelHeader title="Corroboration" subtitle="IPs flagged by 4+ independent feeds" />
+      <h3 className="mt-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-controls="multi-feed-consensus-body"
+          className="ds-focusable w-full flex items-center justify-between gap-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.2em]"
+          style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0, color: 'var(--text-secondary)' }}
+        >
+          <span>Multi-feed consensus{data ? ` (${rows.length})` : ''}</span>
+          <ChevronDown
+            size={14}
+            aria-hidden="true"
+            style={{
+              transform: open ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.15s',
+            }}
+          />
+        </button>
+      </h3>
 
-      {open && (
-        <div id="multi-feed-consensus-body" className="mt-2">
+      <div id="multi-feed-consensus-body" className="mt-2" hidden={!open}>
+        {open && (<>
           {isError && !data ? (
             <PageState
               kind="error"
@@ -58,11 +67,12 @@ export function MultiFeedConsensusPanel() {
               description="Independent feeds currently agree on no single IP."
             />
           ) : (
-            <ul className="space-y-1.5" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-              {rows.map((r) => (
+            <ul id="multi-feed-consensus-list" className="space-y-1.5" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+              {visible.map((r) => (
                 <li key={r.ip_address}>
                   <Link
                     to={tabUrl('threats', { q: r.ip_address })}
+                    state={{ focusTable: true }}
                     className="block hover:bg-white/[0.03] transition-colors"
                     style={{
                       padding: '8px 10px', borderRadius: 5, textDecoration: 'none',
@@ -73,16 +83,16 @@ export function MultiFeedConsensusPanel() {
                       <span className="text-xs font-mono font-semibold break-all" style={{ color: 'var(--text-primary)' }}>
                         {r.ip_address}
                       </span>
-                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-                        {r.threat_count} threats · {r.brand_count} brands · {r.last_seen ? relativeTime(r.last_seen) : '—'}
+                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+                        {plural(r.threat_count, 'threat')} · {plural(r.brand_count, 'brand')} · {r.last_seen ? `newest threat ${relativeTime(r.last_seen)}` : 'newest threat —'}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center gap-1 flex-wrap">
                       <span
                         className="text-[10px] font-mono font-bold mr-1"
-                        style={{ color: 'var(--amber)' }}
+                        style={{ color: 'var(--amber-text)' }}
                       >
-                        {r.feed_count} feeds
+                        {plural(r.feed_count, 'feed')}
                       </span>
                       {r.feeds.map((f) => (
                         <Badge key={f} label={f} size="xs" />
@@ -93,8 +103,20 @@ export function MultiFeedConsensusPanel() {
               ))}
             </ul>
           )}
-        </div>
-      )}
+          {rows.length > COLLAPSED_ROWS && (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              aria-expanded={showAll}
+              aria-controls="multi-feed-consensus-list"
+              className="ds-focusable mt-2 py-1.5 min-h-[24px] font-mono text-[10px] font-bold uppercase tracking-wider"
+              style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--amber-text)' }}
+            >
+              {showAll ? 'Show fewer' : `Show all (${rows.length})`}
+            </button>
+          )}
+        </>)}
+      </div>
     </Card>
   );
 }
