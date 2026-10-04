@@ -57,7 +57,7 @@ When grepping, use the file name; when querying D1, use the agent_id.
 | brand_enricher | brand-enricher.ts | Brand Enricher | — |
 | lookalike_scanner | lookalike-scanner.ts | Lookalike Scanner | — |
 | trustbot | trustbot.ts | TrustBot | — |
-| *retired (status flip 2026-05-14, files + routes intact):* admin_classify, brand_analysis, brand_deep_scan, brand_report, geo_campaign_assessment, honeypot_generator, public_trust_check, qualified_report, scan_report, social_ai_assessor, url_scan | hyphenated file names | plain names | — |
+| *retired (status flip 2026-05-14, files + routes intact):* admin_classify, brand_analysis, brand_deep_scan, brand_report, geo_campaign_assessment, honeypot_generator, public_trust_check, qualified_report, scan_report, social_ai_assessor (`url_scan` removed outright 2026-10-04 with the URL-scan feature) | hyphenated file names | plain names | — |
 
 ## Agent Infrastructure
 
@@ -553,7 +553,6 @@ The Phase 3 sync-agent class (AGENT_STANDARD §2). Each is HTTP-handler-driven (
 | **Honeypot Generator** (`honeypot_generator`) | Spam-trap renderer | Renders complete honeypot trap websites with embedded mailtos (Haiku × 3) |
 | **Brand Enricher** (`brand_enricher`) | Brand registration | Classifies brands into a fixed sector taxonomy (20-token bounded reply) |
 | **Admin Classify** (`admin_classify`) | Admin backfill | Haiku classifies threats with `NULL` confidence_score (batch, up to 200 calls per run, rule-based fallback) |
-| **URL Scan** (`url_scan`) | Public URL scan endpoint | Generates short security insights with structured JSON output |
 | **Scan Report** (`scan_report`) | Brand exposure report | Executive narrative for the public Brand Exposure Report (512-token bounded prose) |
 | **Social AI Assessor** (`social_ai_assessor`) | Mockingbird + brand detail | Haiku classifies social profiles for brand impersonation (called by both the scanner and on-demand reassessment) |
 | **Geo Campaign Assessment** (`geo_campaign_assessment`) | Geopolitical campaign page | 4-paragraph executive intel assessment (1024-token bounded prose) |

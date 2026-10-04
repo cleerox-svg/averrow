@@ -2,20 +2,13 @@ import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
 import { requireStaff, isAuthContext } from "../middleware/auth";
-import { handleExportScans, handleExportSignals, handleExportAlerts } from "../handlers/export";
+import { handleExportAlerts } from "../handlers/export";
 import { handleSTIXExport, handleSTIXIndicators } from "../handlers/stixExport";
 
 export function registerExportRoutes(router: RouterType<IRequest>): void {
-  router.get("/api/export/scans", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleExportScans(request, env, ctx.userId);
-  });
-  router.get("/api/export/signals", async (request: Request, env: Env) => {
-    const ctx = await requireStaff(request, env);
-    if (!isAuthContext(ctx)) return ctx;
-    return handleExportSignals(request, env);
-  });
+  // /api/export/scans and /api/export/signals exported `scans` rows; both
+  // were retired with the URL-scan feature (2026-10-04) and now 404 via the
+  // /api/* catch-all. Pinned by test/url-scan-retired.test.ts.
   router.get("/api/export/alerts", async (request: Request, env: Env) => {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;

@@ -213,7 +213,7 @@ Configured in `wrangler.toml` under `[[workflows]]`.
 
 | Binding | Purpose |
 |---------|---------|
-| `DB` | Primary database (users, brands, threats, scans) |
+| `DB` | Primary database (users, brands, threats, alerts, …) |
 | `AUDIT_DB` | Audit log (data mutations) |
 
 Read-heavy endpoints use the D1 Sessions API to route queries to read replicas. The implementation is in `src/lib/db.ts`. Write operations always use the primary `env.DB` handle.

@@ -142,7 +142,7 @@ All AI goes through `W/lib/anthropic.ts:280` (`callAnthropic`). There is no Work
 | 25 | `W/lib/agent-loop.ts:77` via `W/agents/campaign-hunter.ts:138` | Multi-turn tool-use investigation (Sonnet) | 0 | **CLAUDE** — becomes the agentic core (§5) |
 | 26 | `W/agents/pathfinder.ts:171` | Sales lead copy | 0 | CLAUDE, low priority |
 | 27 | `W/handlers/admin/backfills.ts:818` | Batch brand attribution | ~1 | **RULES** |
-| 28 | Retired-but-callable agents: `public-trust-check`, `honeypot-generator`, `brand-deep-scan` (up to 200 yes/no calls per click), `admin-classify`, `url-scan`, `scan-report`, report narratives | — | ~0 | Narratives → CLAUDE / WORKERS AI. public-trust, honeypot → **WORKERS AI**. deep-scan, admin-classify, url-scan, scan-report → **RULES**. `brand_deep_scan` is replaced by Campaign Hunter. |
+| 28 | Retired-but-callable agents: `public-trust-check`, `honeypot-generator`, `brand-deep-scan` (up to 200 yes/no calls per click), `admin-classify`, `scan-report`, report narratives (`url-scan` removed 2026-10-04 with the URL-scan feature) | — | ~0 | Narratives → CLAUDE / WORKERS AI. public-trust, honeypot → **WORKERS AI**. deep-scan, admin-classify, scan-report → **RULES**. `brand_deep_scan` is replaced by Campaign Hunter. |
 | 29 | `W/agents/architect/analysis/analyzer.ts:120`, `synthesis/synthesizer.ts:111` | Reachable only from the retired Architect agent (`agents/architect/index.ts`), which `agents/index.ts` does not register | 0 | **DELETE**, along with the dead `architect-analysis` queue |
 
 *Status of the rows above as of 2026-10-02: #1, #3, #4, #6, #8, #13, #18, #27 and #29 are done (see "Status (2026-10-02)"); #10's severity is rule-derived, its prose is not. All other rows are unchanged.*

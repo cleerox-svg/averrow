@@ -47,7 +47,6 @@ export type AgentName =
   | "lookalike_scanner"
   | "trademark_monitor"
   | "admin_classify"
-  | "url_scan"
   | "scan_report"
   | "social_ai_assessor"
   | "geo_campaign_assessment"

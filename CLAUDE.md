@@ -367,8 +367,15 @@ remain; only the status field was flipped:
 ```
 admin_classify, brand_analysis, brand_deep_scan, brand_report,
 geo_campaign_assessment, honeypot_generator, public_trust_check,
-qualified_report, scan_report, social_ai_assessor, url_scan
+qualified_report, scan_report, social_ai_assessor
 ```
+
+`url_scan` was the 11th and is now **removed** (2026-10-04, URL-scan
+feature retired): its agent file, registry entry and the
+`/api/scan`, `/api/scan/public`, `/api/scan/history` and `/scan/:id`
+handlers are gone. They used the `scans` / `domain_cache` tables, which
+never existed in prod. The `url_scan` takedown `source_type`
+(`url_scan_results`, Sparrow) is a different feature and stays.
 
 **Important caveat (WS-B truth-up):** these agents continue to be
 called from live handlers. `public_trust_check` is wired into the

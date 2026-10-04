@@ -115,7 +115,6 @@ const MANIFEST_NAME_OVERRIDES: Record<string, string> = {
   social_discovery: "socialDiscovery",
   social_monitor: "socialMonitor",
   trademark_monitor: "trademarkMonitor",
-  url_scan: "url-scan",
 };
 
 // Agents whose source isn't in agents/*.ts are skipped — the manifest

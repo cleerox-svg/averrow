@@ -60,7 +60,6 @@ const EXPECTED_LEDGER_AGENT_IDS = [
   "public-trust-check",
   "scan-report",
   "social_ai_assessor",
-  "url-scan",
 ] as const;
 
 /**

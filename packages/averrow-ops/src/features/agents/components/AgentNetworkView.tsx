@@ -104,7 +104,6 @@ const LAYOUT: Record<string, NodePos> = {
 
   // SYNC AI — bottom right 4×4-ish grid
   public_trust_check:       { x:  900, y: 480 },
-  url_scan:                 { x:  990, y: 480 },
   scan_report:              { x: 1080, y: 480 },
   brand_analysis:           { x: 1170, y: 480 },
   brand_report:             { x:  900, y: 560 },

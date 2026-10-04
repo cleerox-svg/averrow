@@ -924,47 +924,10 @@ export interface ThreatActorTarget {
 }
 
 // ─── v1 Legacy Types (used by existing handlers — remove during v2 migration) ──
-export type RiskLevel = "safe" | "low" | "medium" | "high" | "critical";
 export type UserPlan = "free" | "pro" | "enterprise";
 
-export interface ScanFlag {
-  type: string;
-  severity: RiskLevel;
-  detail: string;
-}
-
-export interface ScanMetadata {
-  ip?: string;
-  country?: string;
-  registrar?: string;
-  registered_at?: string;
-  ssl_valid?: boolean;
-  ssl_expiry?: string;
-  redirects?: string[];
-  virustotal?: {
-    malicious: number;
-    suspicious: number;
-    harmless: number;
-    undetected: number;
-  };
-  ai_insight?: {
-    summary: string;
-    explanation: string;
-    recommendations: string[];
-  };
-}
-
-export interface ScanResult {
-  id: string;
-  url: string;
-  domain: string;
-  trust_score: number;
-  risk_level: RiskLevel;
-  flags: ScanFlag[];
-  metadata: ScanMetadata;
-  cached: boolean;
-  created_at: string;
-}
+// ScanFlag / ScanMetadata / ScanResult / RiskLevel (the v1 URL-scan shapes)
+// were removed with the URL-scan feature (2026-10-04).
 
 // ─── Executive identity registry (EXEC_IMPERSONATION_2026-07 Stage 1) ──
 // Row shape of org_executives (migration 0244). official_handles and

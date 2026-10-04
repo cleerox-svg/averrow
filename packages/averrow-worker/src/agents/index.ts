@@ -47,7 +47,6 @@ import { brandEnricherAgent } from "./brand-enricher";
 import { lookalikeScannerAgent } from "./lookalike-scanner";
 import { trademarkMonitorAgent } from "./trademarkMonitor";
 import { adminClassifyAgent } from "./admin-classify";
-import { urlScanAgent } from "./url-scan";
 import { scanReportAgent } from "./scan-report";
 import { socialAiAssessorAgent } from "./social-ai-assessor";
 import { geoCampaignAssessmentAgent } from "./geo-campaign-assessment";
@@ -98,7 +97,6 @@ export const agentModules: Record<string, AgentModule> = {
   "lookalike_scanner": lookalikeScannerAgent,
   "trademark_monitor": trademarkMonitorAgent,
   "admin_classify": adminClassifyAgent,
-  "url_scan": urlScanAgent,
   "scan_report": scanReportAgent,
   "social_ai_assessor": socialAiAssessorAgent,
   "geo_campaign_assessment": geoCampaignAssessmentAgent,
