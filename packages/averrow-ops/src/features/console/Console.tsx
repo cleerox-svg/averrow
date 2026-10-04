@@ -55,7 +55,7 @@ export function Console() {
   // Derived from the URL (not mirrored into state) so redirects and links that
   // only change `?tab=` switch panes.
   const tab = tabFromParam(params.get('tab'));
-  const { data: openSignals = null, isError: signalsError } = useOpenAlertCount();
+  const { data: openSignals = null, isError: signalsError, enabled: canTriage } = useOpenAlertCount();
 
   // /api/admin/incidents is super_admin-only: other roles must not request it,
   // and get no incidents KPIs, tab or pane (a 403 would read as "0 incidents").
@@ -84,7 +84,9 @@ export function Console() {
 
       {/* KPI hero — glowing count-up numbers; each tile jumps to its queue. */}
       <div className="kpi-grid">
-        <StatTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />
+        {canTriage && (
+          <StatTile tone="amber" label="Open alerts"        value={openSignals}       sub="awaiting triage" onClick={() => selectTab('alerts')} error={signalsError} />
+        )}
         {isSuperAdmin && (
           <>
             <StatTile tone="red"   label="Critical incidents" value={criticalIncidents} sub="need eyes now"    onClick={() => selectTab('incidents')} error={incidentsError} />

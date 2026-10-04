@@ -11,18 +11,26 @@ import {
   PageHeader,
   DataRow,
   Badge,
+  Button,
   type Severity,
 } from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
 import {
   useAlerts, useAlert, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
-  type Alert, type AlertFilters,
+  BULK_BATCH, type Alert, type AlertFilters, type BulkAckResult, type BulkTakedownResult,
 } from '@/hooks/useAlerts';
 import { useSavedViews, type SavedView } from '@/hooks/useSavedViews';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import { parseInitials } from '@/lib/avatar';
 import { Bell, Star, X } from 'lucide-react';
+
+const prefersReducedMotion = (): boolean =>
+  typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+/** Cap on sequential bulk batches per click (20 x 90 alerts). */
+const MAX_BULK_BATCHES = 20;
+const READ_ONLY_NOTE_ID = 'alerts-readonly-note';
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -282,16 +290,19 @@ interface BrandGroupCardProps {
   currentUserId: string | null;
   onSelectAlert: (a: Alert) => void;
   canEdit: boolean;
+  canTakedown: boolean;
   onAcknowledgeAll: () => void;
   onCreateTakedowns: () => void;
-  isAcknowledging: boolean;
-  isCreatingTakedowns: boolean;
+  /** Progress of a running bulk action on THIS group ('Acknowledging 90 of 200…'). */
+  bulk: { kind: 'ack' | 'takedown'; text: string } | null;
+  /** Any bulk action running anywhere: all bulk buttons disable. */
+  bulkBusy: boolean;
 }
 
 function BrandGroupCard({
-  group, selectedAlertId, currentUserId, onSelectAlert, canEdit,
+  group, selectedAlertId, currentUserId, onSelectAlert, canEdit, canTakedown,
   onAcknowledgeAll, onCreateTakedowns,
-  isAcknowledging, isCreatingTakedowns,
+  bulk, bulkBusy,
 }: BrandGroupCardProps) {
   const [expanded, setExpanded] = useState(true);
   const [showAll, setShowAll] = useState(false);
@@ -318,10 +329,10 @@ function BrandGroupCard({
             </span>
             <Badge variant="critical">{group.alerts.length} alerts</Badge>
           </div>
-          <div className="font-mono text-[10px] text-white/40">{group.brand_domain ?? ''}</div>
+          <div className="font-mono text-[10px] text-[var(--text-secondary)]">{group.brand_domain ?? ''}</div>
         </div>
         <svg
-          className={cn('w-4 h-4 text-white/50 transition-transform', expanded && 'rotate-180')}
+          className={cn('w-4 h-4 text-[var(--text-secondary)] transition-transform', expanded && 'rotate-180')}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -331,7 +342,7 @@ function BrandGroupCard({
       {expanded && (
         <>
           {/* Alert rows */}
-          <div className="border-t border-white/[0.06]">
+          <div className="border-t border-[var(--border-base)]">
             {visibleAlerts.map(alert => {
               const score = extractScore(alert.summary);
               const handle = extractHandle(alert.title);
@@ -345,7 +356,7 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'bg-afterburner-muted')}
+                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--amber-glow)]')}
                 >
                   {/* Severity dot — uses the shared design-system
                       primitive so the dot color + pulse semantics
@@ -356,9 +367,17 @@ function BrandGroupCard({
                     pulse={alert.severity === 'critical' || alert.severity === 'high'}
                   />
 
-                  {/* Handle + platform */}
-                  <div className="flex-1 min-w-0">
-                    <div>
+                  {/* Handle + platform. The real <button> is the row's keyboard
+                      control (standard: row click is a mouse convenience only). */}
+                  <button
+                    type="button"
+                    id={`alert-row-${alert.id}`}
+                    aria-expanded={isSelected}
+                    aria-controls={`alert-detail-${alert.id}`}
+                    onClick={e => { e.stopPropagation(); onSelectAlert(alert); }}
+                    className="ds-focusable flex-1 min-w-0 text-left rounded-sm"
+                  >
+                    <span className="block">
                       <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
                       <span className="font-mono text-[10px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>on</span>
                       <span
@@ -367,9 +386,10 @@ function BrandGroupCard({
                       >
                         {platform}
                       </span>
-                    </div>
+                    </span>
                     {alert.saas_technique_name && alert.saas_technique_phase_label && (
-                      <div
+                      <span
+                        className="block"
                         style={{
                           fontSize:   9,
                           color:      'var(--text-muted)',
@@ -380,9 +400,9 @@ function BrandGroupCard({
                         }}
                       >
                         {alert.saas_technique_name} · {alert.saas_technique_phase_label}
-                      </div>
+                      </span>
                     )}
-                  </div>
+                  </button>
 
                   {/* Score */}
                   {score !== null && (
@@ -431,17 +451,17 @@ function BrandGroupCard({
                   />
 
                   {/* Owner — who has claimed this signal (W9). */}
-                  {alert.assigned_to && (
+                  {alert.staff_assigned_to && (
                     <span
                       className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
                       style={{ background: 'rgba(124,138,255,0.14)', color: '#9aa6ff' }}
-                      title={alert.assigned_to === currentUserId
+                      title={alert.staff_assigned_to === currentUserId
                         ? 'Assigned to you'
-                        : `Assigned to ${alert.assigned_to_name ?? alert.assigned_to_email ?? 'analyst'}`}
+                        : `Assigned to ${alert.staff_assigned_to_name ?? alert.staff_assigned_to_email ?? 'analyst'}`}
                     >
-                      {alert.assigned_to === currentUserId
+                      {alert.staff_assigned_to === currentUserId
                         ? 'You'
-                        : parseInitials(alert.assigned_to_name, alert.assigned_to_email)}
+                        : parseInitials(alert.staff_assigned_to_name, alert.staff_assigned_to_email)}
                     </span>
                   )}
 
@@ -466,7 +486,7 @@ function BrandGroupCard({
                   })()}
 
                   {/* Time */}
-                  <span className="font-mono text-[10px] text-white/50 tabular-nums w-14 text-right flex-shrink-0">
+                  <span className="font-mono text-[10px] text-[var(--text-secondary)] tabular-nums w-14 text-right flex-shrink-0">
                     {timeAgo(alert.created_at)}
                   </span>
                 </DataRow>
@@ -475,12 +495,12 @@ function BrandGroupCard({
           </div>
 
           {/* Show more + actions */}
-          <div className="flex items-center justify-between px-4 py-2.5 border-t border-white/[0.06]">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-t border-[var(--border-base)]">
             <div className="flex items-center gap-2">
               {remaining > 0 && !showAll && (
                 <button
                   onClick={() => setShowAll(true)}
-                  className="font-mono text-[10px] font-semibold hover:text-[#D49A28] transition-colors" style={{ color: 'var(--amber)' }}
+                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber)' }}
                 >
                   + {remaining} more
                 </button>
@@ -488,17 +508,18 @@ function BrandGroupCard({
               {showAll && remaining > 0 && (
                 <button
                   onClick={() => setShowAll(false)}
-                  className="font-mono text-[10px] font-semibold text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
+                  className="font-mono text-[10px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                 >
                   Show less
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {!canEdit && (
                 <span
-                  className="font-mono text-[10px] uppercase tracking-wide text-[var(--text-muted)]"
-                  title={READ_ONLY_COPY}
+                  role="note"
+                  aria-label={READ_ONLY_COPY}
+                  className="font-mono text-[10px] uppercase tracking-wide text-[var(--text-secondary)]"
                 >
                   Read-only
                 </span>
@@ -506,19 +527,19 @@ function BrandGroupCard({
               {canEdit && newCount > 0 && (
                 <button
                   onClick={onAcknowledgeAll}
-                  disabled={isAcknowledging}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all disabled:opacity-50"
+                  disabled={bulkBusy}
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
-                  {isAcknowledging ? 'Acknowledging...' : 'Acknowledge All'}
+                  {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge All'}
                 </button>
               )}
-              {canEdit && (
+              {canEdit && canTakedown && (
               <button
                 onClick={onCreateTakedowns}
-                disabled={isCreatingTakedowns}
+                disabled={bulkBusy}
                 className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-accent hover:bg-accent/80 transition-all disabled:opacity-50" style={{ color: 'var(--text-primary)' }}
               >
-                {isCreatingTakedowns ? 'Creating...' : 'Create Takedowns'}
+                {bulk?.kind === 'takedown' ? bulk.text : 'Create Takedowns'}
               </button>
               )}
             </div>
@@ -535,21 +556,33 @@ interface AlertDetailProps {
   alert: Alert;
   currentUserId: string | null;
   onClose: () => void;
-  onUpdate: (status: string, notes?: string) => void;
+  onUpdate: (status: string, notes?: string | null) => void;
   onAssign: (assignedTo: string | null) => void;
   isUpdating: boolean;
   isAssigning: boolean;
   canEdit: boolean;
+  cardRef?: React.Ref<HTMLDivElement>;
 }
 
-function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpdating, isAssigning, canEdit }: AlertDetailProps) {
-  const [notes, setNotes] = useState(alert.resolution_notes ?? '');
+function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpdating, isAssigning, canEdit, cardRef }: AlertDetailProps) {
+  const [notes, setNotes] = useState(alert.staff_notes ?? '');
   const score = extractScore(alert.summary);
   const handle = extractHandle(alert.title);
   const platform = extractPlatform(alert.title);
 
   return (
-    <Card variant="active" style={{ padding: '20px', marginTop: 4 }} data-testid="alert-detail">
+    <Card
+      ref={cardRef}
+      id={`alert-detail-${alert.id}`}
+      role="region"
+      aria-label={`Alert: ${alert.title}`}
+      aria-describedby={canEdit ? undefined : `alert-readonly-${alert.id}`}
+      tabIndex={-1}
+      variant="active"
+      style={{ padding: '20px', marginTop: 4 }}
+      className="outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber)]"
+      data-testid="alert-detail"
+    >
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
@@ -578,11 +611,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             <Badge status="inactive" label="Auto-triaged" size="xs" />
           )}
         </div>
-        <button onClick={onClose} className="text-white/50 hover:text-[var(--text-primary)] transition-colors p-1">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <Button variant="ghost" size="sm" aria-label="Close alert detail" onClick={onClose} icon={<X size={14} aria-hidden />} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -601,7 +630,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               className="w-4 h-4 rounded-sm"
             />
             <span className="font-display text-sm font-bold group-hover:text-[var(--amber)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
-            <span className="font-mono text-[10px] text-white/40">{alert.brand_domain ?? ''}</span>
+            <span className="font-mono text-[10px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
           </Link>
 
           {/* Outbound pivots — the detail used to be a dead-end (no links
@@ -625,7 +654,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Platform</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Platform</div>
             <span
               className="inline-flex items-center font-mono text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded"
               style={platformBadgeStyle(platform)}
@@ -635,13 +664,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Handle Detected</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Handle Detected</div>
             <span className="font-mono text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Impersonation Score</div>
+              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Impersonation Score</div>
               <div className="flex items-baseline gap-2">
                 <span
                   className="font-display text-[28px] font-extrabold tabular-nums leading-none"
@@ -656,12 +685,12 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           )}
 
           <div>
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Detected</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Detected</div>
             <span className="font-mono text-[11px] text-[var(--text-secondary)]">{timeAgo(alert.created_at)}</span>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-0.5">Source</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Source</div>
             <span className="font-mono text-[11px] text-[var(--text-tertiary)]">
               {alert.source_type ? humanizeType(alert.source_type) : 'Social Monitor Agent'}
             </span>
@@ -669,17 +698,17 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
         </div>
 
         {/* CENTER — Evidence & Assessment */}
-        <div className="space-y-3 border-l border-white/[0.06] pl-5">
+        <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
           <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Evidence & Assessment</div>
 
           <div>
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Summary</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Summary</div>
             <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.summary}</p>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Score</div>
+              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Score</div>
               <div className="w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all"
@@ -693,59 +722,70 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           )}
 
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">AI Assessment</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">AI Assessment</div>
             {alert.ai_assessment ? (
               <div className="space-y-2">
                 <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.ai_assessment}</p>
                 {alert.ai_recommendations && (
                   <div>
-                    <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Recommendations</div>
+                    <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Recommendations</div>
                     <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">{alert.ai_recommendations}</p>
                   </div>
                 )}
               </div>
             ) : (
-              <div className="text-[11px] text-white/50 italic">No AI assessment yet</div>
+              <div className="text-[11px] text-[var(--text-secondary)] italic">No AI assessment yet</div>
             )}
           </div>
         </div>
 
         {/* RIGHT — Actions */}
-        <div className="space-y-3 border-l border-white/[0.06] pl-5">
+        <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
           <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
 
           {!canEdit && (
-            <p id={`alert-readonly-${alert.id}`} className="text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+            <p id={`alert-readonly-${alert.id}`} className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
               {READ_ONLY_COPY}
             </p>
           )}
 
-          {/* Owner / assignment (W9) */}
-          <div className="flex items-center justify-between gap-2 pb-2 mb-1 border-b border-white/[0.06]">
-            <div className="min-w-0">
-              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide">Owner</div>
-              <div className="font-mono text-[11px] truncate" style={{ color: alert.assigned_to ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                {alert.assigned_to
-                  ? (alert.assigned_to === currentUserId ? 'You' : (alert.assigned_to_name || alert.assigned_to_email || 'Assigned'))
-                  : 'Unassigned'}
+          {/* Owner / assignment (W9). Staff owner only — the customer's own
+              assignee is a separate, read-only field. */}
+          <div className="pb-2 mb-1 border-b border-[var(--border-base)] space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Averrow owner</div>
+                <div className="font-mono text-[11px] truncate" style={{ color: alert.staff_assigned_to ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  {alert.staff_assigned_to
+                    ? (alert.staff_assigned_to === currentUserId ? 'You' : (alert.staff_assigned_to_name || alert.staff_assigned_to_email || 'Assigned'))
+                    : 'Unassigned'}
+                </div>
               </div>
+              {!canEdit ? null : alert.staff_assigned_to === currentUserId ? (
+                <button
+                  onClick={() => onAssign(null)}
+                  disabled={isAssigning}
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
+                >
+                  Unassign
+                </button>
+              ) : (
+                <button
+                  onClick={() => currentUserId && onAssign(currentUserId)}
+                  disabled={isAssigning || !currentUserId}
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
+                >
+                  {alert.staff_assigned_to ? 'Take over' : 'Assign to me'}
+                </button>
+              )}
             </div>
-            {!canEdit ? null : alert.assigned_to === currentUserId ? (
-              <button
-                onClick={() => onAssign(null)}
-                disabled={isAssigning}
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
-              >
-                Unassign
-              </button>
-            ) : (
-              <button
-                onClick={() => currentUserId && onAssign(currentUserId)}
-                disabled={isAssigning || !currentUserId}
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all disabled:opacity-50 flex-shrink-0"
-              >
-                {alert.assigned_to ? 'Take over' : 'Assign to me'}
-              </button>
+            {alert.assigned_to && (
+              <div className="min-w-0">
+                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Customer assignee</div>
+                <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
+                  {alert.assigned_to_name || alert.assigned_to_email || 'Assigned'}
+                </div>
+              </div>
             )}
           </div>
 
@@ -755,7 +795,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onUpdate('acknowledged')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
                   Acknowledge
                 </button>
@@ -808,21 +848,26 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
           {/* Notes */}
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">Notes</div>
+            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Internal notes — not visible to customers</div>
+            {!canEdit && !(alert.staff_notes ?? '') ? (
+              <p className="font-mono text-[11px] text-[var(--text-secondary)]">No notes</p>
+            ) : (
             <textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder={canEdit ? 'Add notes...' : 'No notes'}
+              placeholder="Add notes..."
+              aria-label="Internal notes — not visible to customers"
               readOnly={!canEdit}
               aria-describedby={canEdit ? undefined : `alert-readonly-${alert.id}`}
               rows={3}
-              className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-white/30 focus:outline-none focus:border-afterburner-border resize-none font-mono" style={{ color: 'var(--text-primary)' }}
+              className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--amber-border)] resize-none font-mono" style={{ color: 'var(--text-primary)' }}
             />
-            {canEdit && notes !== (alert.resolution_notes ?? '') && (
+            )}
+            {canEdit && notes !== (alert.staff_notes ?? '') && (
               <button
-                onClick={() => onUpdate(alert.status, notes)}
+                onClick={() => onUpdate(alert.status, notes.trim() ? notes : null)}
                 disabled={isUpdating}
-                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-afterburner-muted text-[#E5A832] border border-afterburner-border hover:bg-afterburner-muted transition-all disabled:opacity-50"
+                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
               >
                 Save Notes
               </button>
@@ -836,7 +881,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               auto-dismissed instead of it silently vanishing. */}
           {(alert.status === 'resolved' || alert.status === 'false_positive') && alert.resolution_notes && (
             <div className="pt-2">
-              <div className="font-mono text-[9px] text-white/40 uppercase tracking-wide mb-1">
+              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">
                 {alert.status === 'false_positive' ? 'Dismissal reason' : 'Resolution notes'}
                 {isAutoTriaged(alert.resolution_notes) && (
                   <span className="ml-1.5 text-[var(--text-muted)] normal-case">· auto-triaged</span>
@@ -878,7 +923,7 @@ export function Alerts() {
     }, { replace: true });
   };
   // Local optimistic overlay for assign (the list refetch then supersedes it).
-  const [assignOverlay, setAssignOverlay] = useState<Pick<Alert, 'id' | 'assigned_to' | 'assigned_to_name' | 'assigned_to_email'> | null>(null);
+  const [assignOverlay, setAssignOverlay] = useState<Pick<Alert, 'id' | 'staff_assigned_to' | 'staff_assigned_to_name' | 'staff_assigned_to_email'> | null>(null);
   const [search, setSearch] = useState('');
   // AI verdict filter is client-side: ai_assessment isn't an indexed
   // column on alerts, and the API doesn't accept a verdict param yet.
@@ -893,6 +938,8 @@ export function Alerts() {
   // Staff see every platform alert; only edit_alerts holders may act on them
   // (the worker 403s everyone else — this keeps the UI from offering it).
   const canEdit = roleHasPermission(user?.role, 'edit_alerts');
+  // Takedowns are a separate permission: support can triage but not file them.
+  const canTakedown = roleHasPermission(user?.role, 'manage_takedowns');
 
   const { data: statsData, isLoading: statsLoading, isError: statsError } = useAlertStats();
   const {
@@ -907,6 +954,68 @@ export function Alerts() {
   const assignAlert = useAssignAlert();
   const bulkAck = useBulkAcknowledge();
   const bulkTakedown = useBulkTakedown();
+  // Bulk actions run in batches of <= BULK_BATCH (the worker 400s above that and
+  // a brand_id call only processes one batch, reporting `remaining`).
+  const [bulkRun, setBulkRun] = useState<{ brandId: string; kind: 'ack' | 'takedown'; text: string } | null>(null);
+  const runBulk = async (
+    group: BrandGroup,
+    kind: 'ack' | 'takedown',
+    ackIds: string[],
+  ) => {
+    const verb = kind === 'ack' ? 'Acknowledging' : 'Creating';
+    const fail = kind === 'ack' ? "Couldn't acknowledge the alerts" : "Couldn't create takedowns";
+    const show = (done: number, total: number) =>
+      setBulkRun({ brandId: group.brand_id, kind, text: `${verb} ${done} of ${total}…` });
+    setActionError(null);
+    setBulkRun({ brandId: group.brand_id, kind, text: `${verb}…` });
+    try {
+      let done = 0;
+      let total = kind === 'ack' ? ackIds.length : 0;
+      let left = 0;
+      for (let i = 0; i < MAX_BULK_BATCHES; i++) {
+        let res;
+        if (kind === 'ack') {
+          const chunk = ackIds.slice(done, done + BULK_BATCH);
+          if (chunk.length === 0) break;
+          res = await bulkAck.mutateAsync({ alert_ids: chunk });
+        } else {
+          res = await bulkTakedown.mutateAsync({ brand_id: group.brand_id });
+        }
+        if (res.success === false) throw new Error(res.error ?? 'the request was rejected');
+        const data = res.data as BulkAckResult | BulkTakedownResult | undefined;
+        const processed = data?.alert_ids?.length ?? (kind === 'ack' ? Math.min(BULK_BATCH, ackIds.length - done) : 0);
+        done += processed;
+        left = kind === 'ack' ? ackIds.length - done : (data?.remaining ?? 0);
+        if (kind === 'takedown') total = done + left;
+        show(done, total);
+        if (left <= 0) return;
+        if (processed === 0) throw new Error(`no progress (${left} still pending)`);
+      }
+      if (left > 0) throw new Error(`stopped after ${MAX_BULK_BATCHES} batches; ${left} still pending — run it again`);
+    } catch (e) {
+      setActionError(`${fail}: ${e instanceof Error ? e.message : 'request failed'}`);
+    } finally {
+      setBulkRun(null);
+    }
+  };
+  // A JSON { success:false } resolves rather than throws, so both paths land
+  // here and surface as a visible inline error instead of failing silently.
+  const [actionError, setActionError] = useState<string | null>(null);
+  const mutationCallbacks = (label: string, onOk?: () => void, onFail?: () => void) => ({
+    onSuccess: (res: { success?: boolean; error?: string } | undefined) => {
+      if (res && res.success === false) {
+        setActionError(`${label}: ${res.error ?? 'the request was rejected'}`);
+        onFail?.();
+      } else {
+        setActionError(null);
+        onOk?.();
+      }
+    },
+    onError: (e: Error) => {
+      setActionError(`${label}: ${e.message}`);
+      onFail?.();
+    },
+  });
 
   const rawAlerts = Array.isArray(alertsData?.alerts) ? alertsData.alerts : [];
 
@@ -918,25 +1027,40 @@ export function Alerts() {
   const selectedAlert: Alert | null = baseSelected && assignOverlay?.id === baseSelected.id
     ? { ...baseSelected, ...assignOverlay }
     : baseSelected;
+  const selfSelected = useRef<string | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const detailCardRef = useRef<HTMLDivElement | null>(null);
+  const listHeadingRef = useRef<HTMLDivElement | null>(null);
+  const [announcement, setAnnouncement] = useState('');
   const selectAlert = (a: Alert | null) => {
     selfSelected.current = a?.id ?? null;
     writeParams({ alert: a?.id });
   };
+  // Closing returns focus to the row control that opened it, or the list
+  // heading when that row isn't on screen (fetched-by-id / filtered out).
+  const closeDetail = (id: string | null) => {
+    selectAlert(null);
+    setAnnouncement('');
+    const row = id ? document.getElementById(`alert-row-${id}`) : null;
+    (row ?? listHeadingRef.current)?.focus();
+  };
 
-  // Scroll a deep-linked alert into view once it has rendered. Clicks inside the
-  // list don't scroll (the row is already on screen).
-  const selfSelected = useRef<string | null>(null);
-  const pendingScroll = useRef<string | null>(alertParam);
-  const detailRef = useRef<HTMLDivElement | null>(null);
+  // Deep-link arrival (initial load, bell / Home links, back/forward) — NOT
+  // list clicks, which set selfSelected first. Those get scroll + focus +
+  // an announcement once the detail has rendered; clicks leave focus on the row.
+  const pendingFocus = useRef<string | null>(alertParam);
   useEffect(() => {
-    if (alertParam && alertParam !== selfSelected.current) pendingScroll.current = alertParam;
+    if (alertParam && alertParam !== selfSelected.current) pendingFocus.current = alertParam;
   }, [alertParam]);
+  const selectedId = selectedAlert?.id ?? null;
   useEffect(() => {
-    if (selectedAlert && pendingScroll.current === selectedAlert.id && detailRef.current) {
-      pendingScroll.current = null;
-      detailRef.current.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-    }
-  });
+    const card = detailCardRef.current;
+    if (!selectedId || pendingFocus.current !== selectedId || !card) return;
+    pendingFocus.current = null;
+    card.scrollIntoView?.({ block: 'center', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    card.focus({ preventScroll: true });
+    setAnnouncement('Alert opened');
+  }, [selectedId]);
   const alerts = rawAlerts.filter(a => {
     // AI verdict filter
     if (aiVerdictFilter !== 'all') {
@@ -951,7 +1075,7 @@ export function Alerts() {
       if (slaFilter === 'atrisk' && s === 'ok') return false; // warn or breach
     }
     // Mine — alerts this analyst owns
-    if (mineOnly && currentUserId && a.assigned_to !== currentUserId) return false;
+    if (mineOnly && currentUserId && a.staff_assigned_to !== currentUserId) return false;
     return true;
   });
   const stats = statsData && typeof statsData.total === 'number' ? statsData : undefined;
@@ -1012,27 +1136,36 @@ export function Alerts() {
   const detail = selectedAlert && (
     <div ref={detailRef}>
       <AlertDetail
+        key={selectedAlert.id}
+        cardRef={detailCardRef}
         alert={selectedAlert}
         currentUserId={currentUserId}
         canEdit={canEdit}
-        onClose={() => selectAlert(null)}
+        onClose={() => closeDetail(selectedAlert.id)}
         onUpdate={(status, notes) => {
           if (!canEdit) return;
           updateAlert.mutate(
             { id: selectedAlert.id, status, notes },
-            { onSuccess: () => selectAlert(null) },
+            mutationCallbacks("Couldn't update the alert", () => closeDetail(selectedAlert.id)),
           );
         }}
         onAssign={(assignedTo) => {
           if (!canEdit) return;
           // Keep the panel open and update in place so the operator
           // sees the owner change immediately.
-          assignAlert.mutate({ id: selectedAlert.id, assigned_to: assignedTo });
+          assignAlert.mutate(
+            { id: selectedAlert.id, staff_assigned_to: assignedTo },
+            {
+              ...mutationCallbacks("Couldn't change the owner"),
+              // Refetched data (or the pre-assign state after a failure) wins.
+              onSettled: () => setAssignOverlay(null),
+            },
+          );
           setAssignOverlay({
             id: selectedAlert.id,
-            assigned_to: assignedTo,
-            assigned_to_name: assignedTo === currentUserId ? (user?.name ?? null) : selectedAlert.assigned_to_name,
-            assigned_to_email: assignedTo === currentUserId ? (user?.email ?? null) : selectedAlert.assigned_to_email,
+            staff_assigned_to: assignedTo,
+            staff_assigned_to_name: assignedTo === currentUserId ? (user?.name ?? null) : selectedAlert.staff_assigned_to_name,
+            staff_assigned_to_email: assignedTo === currentUserId ? (user?.email ?? null) : selectedAlert.staff_assigned_to_email,
           });
         }}
         isUpdating={updateAlert.isPending}
@@ -1042,10 +1175,20 @@ export function Alerts() {
   );
   const detailInList = !!selectedAlert && alerts.some(a => a.id === selectedAlert.id);
   const detailFetchFailed = !!alertParam && !listed && fetchedAlert.isError;
+  const detailLoading = !!alertParam && !listed && fetchedAlert.isLoading;
+  useEffect(() => {
+    if (detailFetchFailed && pendingFocus.current === alertParam) {
+      pendingFocus.current = null;
+      setAnnouncement("Couldn't open that alert");
+    }
+  }, [detailFetchFailed, alertParam]);
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Alerts" subtitle="Brand alerts across all monitored brands — SOC triage view" />
+      <div ref={listHeadingRef} tabIndex={-1} className="outline-none">
+        <PageHeader title="Alerts" subtitle="Brand alerts across all monitored brands — SOC triage view" />
+      </div>
+      <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
 
       <StatGrid cols={4}>
         <StatTile
@@ -1110,7 +1253,7 @@ export function Alerts() {
       )}
 
       {!canEdit && (
-        <div className="font-mono text-[11px] text-[var(--text-tertiary)]" role="note">{READ_ONLY_COPY}</div>
+        <div id={READ_ONLY_NOTE_ID} className="font-mono text-[11px] text-[var(--text-secondary)]" role="note">{READ_ONLY_COPY}</div>
       )}
 
       {/* Saved views (W6) — presets + user-pinned filter sets */}
@@ -1274,13 +1417,27 @@ export function Alerts() {
 
       {/* A deep-linked alert that isn't in the (filtered) list below */}
       {selectedAlert && !detailInList && detail}
+      {actionError && (
+        <PageState
+          kind="error"
+          layout="inline"
+          assertive
+          title="Action failed"
+          description={actionError}
+          secondaryAction={{ label: 'Dismiss', onClick: () => setActionError(null) }}
+        />
+      )}
+
+      {detailLoading && <PageState kind="loading" layout="inline" title="Opening alert…" />}
       {detailFetchFailed && (
         <PageState
           kind="error"
           layout="inline"
+          assertive
           title="Couldn't open that alert"
           description="It may have been removed, or you may not have access to it."
           onRetry={() => { void fetchedAlert.refetch(); }}
+          secondaryAction={{ label: 'Clear', onClick: () => closeDetail(null) }}
         />
       )}
 
@@ -1311,23 +1468,21 @@ export function Alerts() {
                 group={group}
                 selectedAlertId={selectedAlert?.id ?? null}
                 currentUserId={currentUserId}
-                onSelectAlert={a => selectAlert(selectedAlert?.id === a.id ? null : a)}
+                onSelectAlert={a => (selectedAlert?.id === a.id ? closeDetail(a.id) : selectAlert(a))}
                 canEdit={canEdit}
+                canTakedown={canTakedown}
                 onAcknowledgeAll={() => {
                   // Acknowledge only the alerts visible in this group
-                  // (post-filter). Sending alert_ids[] respects the
-                  // active AI verdict + status filters; sending
-                  // brand_id alone would ignore them and ack
-                  // every 'new' alert for the brand. Operators
-                  // expect filter-aware bulk actions.
+                  // (post-filter), so the active AI verdict + status filters
+                  // are respected; chunked to the worker's per-call cap.
                   const ids = group.alerts
                     .filter(a => a.status === 'new')
                     .map(a => a.id);
-                  if (ids.length > 0) bulkAck.mutate({ alert_ids: ids });
+                  if (ids.length > 0) void runBulk(group, 'ack', ids);
                 }}
-                onCreateTakedowns={() => bulkTakedown.mutate({ brand_id: group.brand_id })}
-                isAcknowledging={bulkAck.isPending}
-                isCreatingTakedowns={bulkTakedown.isPending}
+                onCreateTakedowns={() => { void runBulk(group, 'takedown', []); }}
+                bulk={bulkRun?.brandId === group.brand_id ? bulkRun : null}
+                bulkBusy={bulkRun !== null}
               />
 
               {/* Detail panel - rendered below the group */}

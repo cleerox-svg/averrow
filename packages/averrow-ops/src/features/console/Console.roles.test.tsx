@@ -35,8 +35,13 @@ describe('Console incidents role gating', () => {
   it.each(['analyst', 'admin', 'sales', 'support', 'billing', 'auditor'])('%s never requests incidents and sees no incidents tab or KPIs', async (role) => {
     mocks.role = role;
     renderWithProviders(<Console />);
-    await screen.findByText('Open alerts');
+    await screen.findByText('SOC CONSOLE');
     await new Promise((r) => setTimeout(r, 30));
+    // The open-alerts tile (and its triage-summary request) only exists for
+    // roles that can act on alerts, matching Home and the bell.
+    const canTriage = ['analyst', 'admin', 'support'].includes(role);
+    expect(screen.queryByText('Open alerts') !== null).toBe(canTriage);
+    expect(get.mock.calls.some((c) => String(c[0]).startsWith('/api/alerts/triage-summary'))).toBe(canTriage);
     expect(get.mock.calls.filter((c) => String(c[0]).startsWith('/api/admin/incidents'))).toEqual([]);
     expect(screen.queryByRole('button', { name: /Incidents/ })).not.toBeInTheDocument();
     expect(screen.queryByText('Critical incidents')).not.toBeInTheDocument();

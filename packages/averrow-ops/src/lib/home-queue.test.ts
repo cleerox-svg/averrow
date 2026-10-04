@@ -201,7 +201,7 @@ describe('buildQueue', () => {
   });
 
   it('encodes the top alert id in the link', () => {
-    const top = { id: 'a b&c', title: 'x', severity: 'high', brand_id: null, brand_name: null, alert_type: 't', created_at: ago(1) };
+    const top = { id: 'a b&c', title: 'x', severity: 'high', brand_id: 'b1', brand_name: null, alert_type: 't', created_at: ago(1) };
     const item = buildQueue({ alerts: ok({ new_count: 1, critical_count: 0, top }) }, NOW).items[0]!;
     expect(item.action.to).toBe('/console?tab=alerts&status=new&alert=a%20b%26c');
   });
@@ -234,9 +234,13 @@ describe('buildQueue', () => {
     expect(noCrit.items.map((i) => i.source)).toEqual(['alerts']);
     const none = buildQueue({ alerts: ok({ new_count: 0, critical_count: 0 }), critical_intel: ok(critBanner(events)) }, NOW);
     expect(none.items).toEqual([]);
-    // Dropped while the alerts source is still loading or failed, too (it is enabled).
+    // Kept while the alerts source is still loading or has failed: the banner
+    // event is then the only critical-alert signal on screen.
     const loading = buildQueue({ alerts: { status: 'loading' }, critical_intel: ok(critBanner(events)) }, NOW);
-    expect(loading.items).toEqual([]);
+    expect(loading.items.map((i) => i.source)).toEqual(['critical_intel']);
+    const failed = buildQueue({ alerts: { status: 'error' }, critical_intel: ok(critBanner(events)) }, NOW);
+    expect(failed.items.map((i) => i.source)).toEqual(['critical_intel']);
+    expect(failed.failed).toEqual(['alerts']);
     // A role without the alerts source (sales/billing/auditor) keeps the banner event.
     const gated = buildQueue({ critical_intel: ok(critBanner(events)) }, NOW);
     expect(gated.items.map((i) => i.source)).toEqual(['critical_intel']);

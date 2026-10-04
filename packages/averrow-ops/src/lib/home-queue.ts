@@ -74,7 +74,8 @@ const STAFF_ROLES: ReadonlySet<string> = new Set([
  *   requireStaff        → critical_intel, agents
  *   edit_alerts         → alerts (super_admin, admin, analyst, support). The summary
  *                         is platform-wide and Home links into the alert to act on
- *                         it, so roles that cannot act on alerts never fetch it.
+ *                         it, so Home does not request it for roles that cannot act
+ *                         on alerts (other surfaces gate on their own).
  *   requireSuperAdmin   → incidents, approvals
  *   manage_takedowns    → takedowns (super_admin, admin, analyst)
  *   requireAdmin        → feeds (/api/admin/dashboard), attribution, brand_candidates
@@ -458,9 +459,11 @@ export function buildQueue(sources: QueueSources, now: number = Date.now()): Hom
   }
 
   // Both rows describe the same platform-wide critical alerts (same number), so
-  // whenever the alerts source is enabled the banner's "open critical alerts"
-  // event is dropped: the alerts row is the one that links to the alert to act on.
-  if (sources.alerts) {
+  // once the alerts source has loaded the banner's "open critical alerts" event
+  // is dropped: the alerts row is the one that links to the alert to act on.
+  // While that source is loading or failed the banner event is the only signal
+  // we have, so it stays.
+  if (sources.alerts?.status === 'ok') {
     items = items.filter(
       (i) => !(i.source === 'critical_intel' && i.id.startsWith('critical_intel:open_critical_alerts')),
     );

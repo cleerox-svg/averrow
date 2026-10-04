@@ -33,6 +33,14 @@ export interface Alert {
   assigned_at: string | null;
   assigned_to_name: string | null;
   assigned_to_email: string | null;
+  // Staff-only ownership + notes. `assigned_to*` above is the CUSTOMER's own
+  // assignee (staff never write it); staff work uses these. Customers see the
+  // staff side only as "Averrow SOC".
+  staff_assigned_to: string | null;
+  staff_assigned_at: string | null;
+  staff_assigned_to_name: string | null;
+  staff_assigned_to_email: string | null;
+  staff_notes: string | null;
 }
 
 export interface AlertStats {
@@ -46,14 +54,12 @@ export interface AlertStats {
   high: number;
   medium: number;
   low: number;
-  by_brand: {
-    brand_id: string;
-    brand_name: string | null;
-    brand_domain: string | null;
-    alert_count: number;
-    new_count: number;
-  }[];
 }
+
+/** Bulk endpoints process at most BULK_BATCH ids per call and report what is left. */
+export const BULK_BATCH = 90;
+export interface BulkAckResult { updated: number; alert_ids: string[]; remaining: number }
+export interface BulkTakedownResult { takedowns_created: number; alerts_acknowledged: number; alert_ids: string[]; remaining: number }
 
 export interface AlertFilters {
   status?: string;
@@ -127,10 +133,10 @@ export interface AlertTriageTop {
   id: string;
   title: string;
   severity: string;
-  brand_id: string | null;
+  brand_id: string;
   brand_name: string | null;
   alert_type: string;
-  created_at: string;
+  created_at: string | null;
 }
 
 export interface AlertTriageSummary {
@@ -158,7 +164,7 @@ export function useAlertTriageSummary(opts: { enabled?: boolean } = {}) {
 export function useUpdateAlert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, status, notes }: { id: string; status: string; notes?: string }) => {
+    mutationFn: async ({ id, status, notes }: { id: string; status: string; notes?: string | null }) => {
       return api.patch(`/api/alerts/${id}`, { status, notes });
     },
     onSuccess: () => {
@@ -172,14 +178,17 @@ export function useUpdateAlert() {
 export function useAssignAlert() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, assigned_to }: { id: string; assigned_to: string | null }) => {
-      return api.patch(`/api/alerts/${id}`, { assigned_to });
+    mutationFn: async ({ id, staff_assigned_to }: { id: string; staff_assigned_to: string | null }) => {
+      // Staff owner only: the worker 400s on `assigned_to` (customer-owned field).
+      return api.patch(`/api/alerts/${id}`, { staff_assigned_to });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['alerts'] });
-      qc.invalidateQueries({ queryKey: ['alert-stats'] });
-      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] });
-    },
+    // Returned so the mutation only settles once the refetch has landed; the
+    // page's optimistic overlay is cleared in onSettled and fresh data wins.
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ['alerts'] }),
+      qc.invalidateQueries({ queryKey: ['alert-stats'] }),
+      qc.invalidateQueries({ queryKey: ['alert-triage-summary'] }),
+    ]),
   });
 }
 
@@ -187,7 +196,7 @@ export function useBulkAcknowledge() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (params: { alert_ids?: string[]; brand_id?: string }) => {
-      return api.post('/api/alerts/bulk-acknowledge', params);
+      return api.post<BulkAckResult>('/api/alerts/bulk-acknowledge', params);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
@@ -201,7 +210,7 @@ export function useBulkTakedown() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (params: { alert_ids?: string[]; brand_id?: string }) => {
-      return api.post('/api/alerts/bulk-takedown', params);
+      return api.post<BulkTakedownResult>('/api/alerts/bulk-takedown', params);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });

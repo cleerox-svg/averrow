@@ -32,6 +32,8 @@ import {
   useSnoozeNotification, useMarkDone,
 } from '@/hooks/useNotifications';
 import { useAlertTriageSummary } from '@/hooks/useAlerts';
+import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import type { Notification } from '@/hooks/useNotifications';
 import { relativeTime } from '@/lib/time';
 import { Dropdown } from './Dropdown';
@@ -317,7 +319,10 @@ function NotificationList({
   // brand events (DMARC drift, lookalike registered) ring the tenant
   // SPA's bell, not this one.
   const { data } = useNotifications(true, OPS_AUDIENCE_FILTER);
-  const { data: triage } = useAlertTriageSummary();
+  // Same gate as Home: only edit_alerts roles triage, so others never fetch it.
+  const { user } = useAuth();
+  const canTriage = roleHasPermission(user?.role, 'edit_alerts');
+  const { data: triage } = useAlertTriageSummary({ enabled: canTriage });
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
   const snooze = useSnoozeNotification();
@@ -379,7 +384,7 @@ function NotificationList({
 
   const newCount = triage?.new_count ?? 0;
   const criticalCount = triage?.critical_count ?? 0;
-  const showTriage = newCount > 0;
+  const showTriage = canTriage && newCount > 0;
   const unreadCount = data?.unread_count ?? 0;
 
   return (
@@ -454,7 +459,7 @@ function NotificationList({
               className="text-[12px] font-semibold truncate"
               style={{ color: criticalCount > 0 ? 'var(--sev-critical)' : 'var(--sev-medium)' }}
             >
-              {newCount.toLocaleString()} signal{newCount === 1 ? '' : 's'} need triage
+              {newCount.toLocaleString()} alert{newCount === 1 ? '' : 's'} awaiting triage
             </span>
             {criticalCount > 0 && (
               <span
