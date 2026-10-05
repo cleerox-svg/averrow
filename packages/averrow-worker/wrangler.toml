@@ -311,6 +311,21 @@ binding = "TRADEMARK_ASSETS"
 # internal resource name kept intentionally — see CLAUDE.md §8
 bucket_name = "trust-radar-trademark-assets"
 
+# ─── R2 Storage (newly-registered-domain daily archive) ──────
+# Cold tier of nrd_domains (owner decision 2026-10-05): D1 keeps ~30 days
+# hot (lib/nrd-retention.ts), and every domain the nrd_hagezi feed inserts
+# is ALSO written here as one gzip'd, newline-separated object per run:
+#   daily/<registered_date>/<list version|unversioned>-<first domain>.txt.gz
+# with customMetadata { count, version, list_modified, registered_date }.
+# Written by feeds/nrd_hagezi.ts (nrdArchiveKey) before its R2 diff
+# snapshot advances. REQUIRED by that feed: unbound → the pull throws,
+# because retention purges D1 assuming the rows are archived. Top-level =
+# prod only (staging/dev bind neither this nor GEOIP_STAGING, so the feed
+# can't run there).
+[[r2_buckets]]
+binding = "NRD_ARCHIVE"
+bucket_name = "averrow-nrd-archive"
+
 # ─── Durable Objects (WebSocket push hub + CertStream monitor) ──
 [[durable_objects.bindings]]
 name = "THREAT_PUSH_HUB"

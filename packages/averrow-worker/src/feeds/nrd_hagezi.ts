@@ -41,14 +41,34 @@ import { logger } from "../lib/logger";
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
  *
+ * Daily archive (tiered retention, owner decision 2026-10-05): nrd_domains
+ * keeps only ~30 days hot in D1 (lib/nrd-retention.ts), so every domain this
+ * run FLUSHED (inserted — never a deferred/capped one) is also gzip-streamed
+ * into an archive object in the NRD_ARCHIVE R2 bucket, at
+ * `daily/<registered_date>/<version|unversioned>-<first domain>.txt.gz`
+ * (nrdArchiveKey). It is PUT once every nrd_domains write (storeNrdReference)
+ * succeeded — regardless of threat-insert errors, because those rows are
+ * already in D1 and will be purged — and BEFORE the snapshot put. A failed
+ * archive put throws, the snapshot does not advance, and the next run
+ * re-diffs, re-inserts (INSERT OR IGNORE) and rewrites the same key; the
+ * same happens after a threat-insert error holds the snapshot. The first
+ * domain in the key keeps a deferral catch-up run on the same list version
+ * from overwriting the previous run's object, while a retry of the same set
+ * overwrites itself idempotently. Zero inserted → no object. Bootstrap
+ * archives nothing. NRD_ARCHIVE is REQUIRED: unbound → the run throws
+ * before fetching, because retention purges D1 on the assumption that every
+ * row it deletes is archived.
+ *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
  * then yields just the new day.
  *
  * `registered_date` is a "first listed" approximation — (list
  * `# Last modified` date − 1 day), or UTC yesterday without the header —
- * not a WHOIS creation date. Nothing reads it today: the only nrd_domains
- * reader (lib/phantom-matcher.ts) cursors on `created_at`.
+ * not a WHOIS creation date. Both nrd_domains readers (lib/phantom-matcher.ts,
+ * lib/lookalike-nrd-matcher.ts) cursor on `created_at`; the lookalike
+ * matcher reads `registered_date` only to stamp `first_seen` and to apply
+ * its 30-day claim window. It is also the archive object's date partition.
  *
  * Snapshot lives in the GEOIP_STAGING R2 bucket under NRD_SNAPSHOT_KEY. The
  * GeoIP workflow only ever deletes its own staging key there, never lists
@@ -59,6 +79,24 @@ export const NRD_HAGEZI_URL = "https://raw.githubusercontent.com/hagezi/nrd/main
 
 /** R2 key (GEOIP_STAGING bucket) of the previous run's gzip'd domain list. */
 export const NRD_SNAPSHOT_KEY = "nrd/hagezi-nrd7.txt.gz";
+
+/** Key prefix of the daily archive objects in the NRD_ARCHIVE R2 bucket. */
+export const NRD_ARCHIVE_PREFIX = "daily/";
+
+/** Replace anything outside [A-Za-z0-9._-] so a key part never adds a
+ *  path segment or an awkward character to the R2 key. */
+function archiveKeyPart(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]/g, "_");
+}
+
+/**
+ * R2 key (NRD_ARCHIVE bucket) of one run's archived domains:
+ * `daily/<registered_date>/<version or "unversioned">-<first domain>.txt.gz`.
+ */
+export function nrdArchiveKey(registeredDate: string, version: string | null, firstDomain: string): string {
+  const v = version ? archiveKeyPart(version) : "unversioned";
+  return `${NRD_ARCHIVE_PREFIX}${archiveKeyPart(registeredDate)}/${v}-${archiveKeyPart(firstDomain)}.txt.gz`;
+}
 
 /** Max new domains inserted + matched per run (~2.3 days of list growth).
  *  The rest are deferred to the next run (kept out of the snapshot). */
@@ -133,6 +171,13 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     );
   }
 
+  const archiveBucket = ctx.env.NRD_ARCHIVE;
+  if (!archiveBucket) {
+    throw new Error(
+      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every inserted domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive) before nrd_domains retention may purge it`,
+    );
+  }
+
   const prevHead = await bucket.head(NRD_SNAPSHOT_KEY);
   const prevMeta = prevHead?.customMetadata ?? {};
 
@@ -158,6 +203,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
   const today = new SortedDomainReader(lineReader(res.body.pipeThrough(new TextDecoderStream()), BODY_IDLE_TIMEOUT_MS), "list");
   let prev: SortedDomainReader | null = null;
   const snapshot = new SnapshotWriter();
+  let archive: SnapshotWriter | null = null;
 
   try {
     const header = await today.readHeader();
@@ -207,6 +253,11 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       },
     );
 
+    const archiveWriter = new SnapshotWriter();
+    archive = archiveWriter; // aborted in `finally` unless finished
+    let archiveFirst: string | null = null;
+    let archived = 0;
+
     const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB));
     // Carried across flushes so an in-list repeat split over two chunks is
     // still one threat + one in-payload duplicate.
@@ -220,6 +271,10 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     const flush = async (): Promise<void> => {
       if (pending.length === 0) return;
       await storeNrdReference(ctx.env.DB, pending, registeredDate);
+      // Archive exactly what was flushed (never a deferred domain).
+      for (const d of pending) await archiveWriter.add(d);
+      archiveFirst ??= pending[0]!;
+      archived += pending.length;
       if (!matcher.empty) {
         const { rows, inPayloadDuplicates } = matcher.collect(pending, matched);
         // Dedup is the deterministic per-feed threatId PK (INSERT OR IGNORE);
@@ -261,6 +316,25 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       logger.warn("nrd_hagezi_deferred", { newTotal, inserted: newInserted, deferred, cap: maxNew });
     }
 
+    // Archive whenever every nrd_domains write landed (we got here, so
+    // storeNrdReference never threw) — independent of threat-insert errors:
+    // those rows are in D1 now and retention will purge them. BEFORE the
+    // snapshot: if this put throws, the snapshot stays and the next run
+    // re-diffs + rewrites the same archive key.
+    if (archived > 0 && archiveFirst !== null) {
+      const archiveKey = nrdArchiveKey(registeredDate, header.version, archiveFirst);
+      await archiveBucket.put(archiveKey, await archiveWriter.finish(), {
+        httpMetadata: { contentType: "application/gzip" },
+        customMetadata: {
+          count: String(archived),
+          version: header.version ?? "unversioned",
+          list_modified: header.lastModified ?? "",
+          registered_date: registeredDate,
+        },
+      });
+      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived });
+    }
+
     // Snapshot advances only when every D1 write landed. A failed threat
     // chunk (bulkInsertThreats reports it as itemsError rather than throwing)
     // must keep the old snapshot, or those matches would never be retried.
@@ -288,6 +362,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     return { itemsFetched: lines, itemsNew, itemsDuplicate, itemsError };
   } finally {
     snapshot.abort();
+    archive?.abort();
     await today.cancel();
     if (prev) await prev.cancel();
   }
@@ -565,7 +640,8 @@ class SortedDomainReader {
 }
 
 /**
- * Streams lines into a gzip CompressionStream, draining its readable
+ * Streams lines into a gzip CompressionStream (used for both the diff
+ * snapshot and the daily archive object), draining its readable
  * concurrently (awaiting write() without a reader deadlocks on backpressure)
  * into in-memory chunks; `finish()` returns them as a Blob for the R2 put.
  * Peak is still ~2× the ~17 MB gzip (the Blob copies its parts).

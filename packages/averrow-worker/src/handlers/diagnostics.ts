@@ -914,6 +914,10 @@ export interface NrdRetentionDiag {
   age_cutoff: string | null;
   cursor: string | null;
   held_by_matcher: boolean | null;
+  /** True when the phantom cursor was missing or older than the 30-day age
+   *  cutoff, so the rows being purged were never scanned by the manual
+   *  phantom matcher (lib/nrd-retention.ts). */
+  phantom_hold_clamped: boolean | null;
   /** created_at of the NRD <-> lookalike matcher's cursor (lib/lookalike-nrd-matcher.ts). */
   lookalike_cursor: string | null;
   /** True when that cursor, not the age window or the phantom cursor, set the cutoff. */
@@ -924,12 +928,16 @@ export interface NrdRetentionDiag {
 }
 
 /** Build the `nrd_retention` block from the KV last-result stamp ONLY —
- *  zero D1 reads. The purge never passes the phantom matcher's nrd cursor,
- *  which advances only when the matcher RUNS incrementally. So
- *  `skipped: 'no_cursor'` = the matcher has never run incrementally, and
- *  `held_by_matcher: true` = its last incremental run is older than the
- *  90-day window; either persisting across days means nrd_domains is
- *  growing again until the matcher runs. */
+ *  zero D1 reads. Retention is tiered: 30 days hot, `brand_matched = 1`
+ *  rows never purged, every row inserted since 2026-10-05 also archived
+ *  to R2 by the feed. The phantom matcher's nrd cursor is clamped AT the
+ *  30-day age cutoff, so it never extends retention:
+ *  `phantom_hold_clamped: true` = the manual matcher has not run
+ *  incrementally within 30 days (or ever) and the purged rows were never
+ *  scanned by it. `held_by_matcher` is therefore always false on new
+ *  stamps (kept for shape); `held_by_lookalike_matcher: true` = a stuck
+ *  lookalike matcher extended retention (to ≤ 37 days). A legacy
+ *  `skipped: 'no_cursor'` can only come from a pre-tiering stamp. */
 export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag> {
   let raw: string | null = null;
   try {
@@ -946,6 +954,7 @@ export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag>
     age_cutoff: last?.age_cutoff ?? null,
     cursor: last?.cursor ?? null,
     held_by_matcher: last?.held_by_matcher ?? null,
+    phantom_hold_clamped: last?.phantom_hold_clamped ?? null,
     lookalike_cursor: last?.lookalike_cursor ?? null,
     held_by_lookalike_matcher: last?.held_by_lookalike_matcher ?? null,
     more_remaining: last?.more_remaining ?? null,
@@ -2161,7 +2170,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // deploy does not serve the old shape out of KV for a TTL.
           // 12: additive `nrd_retention` block (KV last-result stamp of the
           // nrd_domains 90-day purge). No field removed.
-          endpoint_version: 12,
+          // 13: additive `nrd_retention.phantom_hold_clamped` (tiered
+          // retention: 30d hot, brand_matched kept, R2 archive). No field
+          // removed.
+          endpoint_version: 13,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2271,12 +2283,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // the two states. Same single scan; no extra COUNT(*) passes.
         velocity: velocity,
 
-        // nrd_domains 90-day retention (lib/nrd-retention.ts), read ONLY
-        // from its KV last-result stamp — no D1 reads. The purge never
-        // passes the phantom matcher's nrd cursor, which moves only when the
-        // matcher runs incrementally: `skipped: 'no_cursor'` (never run) or
-        // `held_by_matcher: true` (last run older than 90 days) persisting
-        // across days means nrd_domains is growing again until it runs.
+        // nrd_domains tiered retention (lib/nrd-retention.ts: 30 days hot,
+        // brand_matched rows kept, every row archived to the NRD_ARCHIVE R2
+        // bucket by the feed), read ONLY from its KV last-result stamp — no
+        // D1 reads. The phantom matcher's cursor is clamped AT the 30-day age
+        // cutoff (it never extends retention): `phantom_hold_clamped: true` =
+        // the manual matcher has not run incrementally within 30 days (or
+        // ever), so the rows being purged were never scanned by it (in R2
+        // unless ingested before 2026-10-05). Only a stuck lookalike matcher
+        // can extend retention (to ≤ 37 days, `held_by_lookalike_matcher`).
         nrd_retention: nrdRetention,
 
         alerts: {

@@ -85,6 +85,13 @@ export interface Env {
   // Optional so non-instrumented entry points (tests/scripts) needn't bind it;
   // the upload/serve handlers return a clear error when it's absent.
   TRADEMARK_ASSETS?: R2Bucket;
+  // Daily archive of every newly-registered domain the nrd_hagezi feed
+  // inserts (gzip objects under `daily/<registered_date>/`), so nrd_domains
+  // can keep only ~30 days hot in D1 (lib/nrd-retention.ts). Prod only
+  // (top-level wrangler binding). REQUIRED by the feed: unbound → the pull
+  // throws (staging/dev bind neither this nor GEOIP_STAGING, so the feed
+  // fails there either way).
+  NRD_ARCHIVE?: R2Bucket;
   // Threat intelligence feeds (optional)
   OTX_API_KEY?: string;
   ABUSEIPDB_API_KEY?: string;

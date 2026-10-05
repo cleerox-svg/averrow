@@ -276,13 +276,15 @@ describe.skipIf(!hasSqlite())("nrd-retention — the lookalike matcher's hold", 
   const now = Date.UTC(2026, 9, 5, 0, 7, 0);
   const old = (d: number) => toSqliteUtc(now - d * 86_400_000);
 
-  it("a STUCK lookalike cursor is clamped and cannot hold retention", async () => {
+  it("a STUCK lookalike cursor is clamped to now − 37 days — and with 30-day retention the clamp binds", async () => {
     // M2: the hold is clamped to no earlier than now − (30 + 7) days, so a
-    // matcher stuck 100 days ago does not pin the table. At 90-day
-    // retention the age cutoff binds first.
+    // matcher stuck 100 days ago does not pin the table. At 30-day
+    // retention the clamped hold (37 days) is EARLIER than the age cutoff,
+    // so it binds: rows 30–37 days old are held, older ones purged.
     const raw = openDb();
     nrd(raw, "a.com", "2026-06-01", old(120));
-    nrd(raw, "b.com", "2026-06-02", old(95));
+    nrd(raw, "b.com", "2026-06-02", old(40));
+    nrd(raw, "held.com", "2026-06-03", old(33));
     nrd(raw, "c.com", "2026-06-03", old(10));
     const kv = fakeKv({
       [PHANTOM_MATCHER_NRD_CURSOR_KEY]: old(0),
@@ -291,15 +293,31 @@ describe.skipIf(!hasSqlite())("nrd-retention — the lookalike matcher's hold", 
 
     const r = await purgeNrdDomains(envFor(raw, kv), { now: () => now });
 
-    expect(r.held_by_lookalike_matcher).toBe(false);
+    expect(r.held_by_lookalike_matcher).toBe(true);
     expect(r.lookalike_cursor).toBe(old(100));
-    expect(r.cutoff).toBe(old(90));
+    expect(r.cutoff).toBe(old(37));
     const left = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
       .map((x) => x.domain);
-    expect(left).toEqual(["c.com"]);
+    expect(left).toEqual(["c.com", "held.com"]);
   });
 
-  it("an absent lookalike cursor holds nothing (phantom cursor stays the floor)", async () => {
+  it("a lookalike cursor inside the clamp window holds exactly at its created_at", async () => {
+    const raw = openDb();
+    nrd(raw, "older.com", "2026-06-01", old(34));
+    nrd(raw, "unscanned.com", "2026-06-02", old(31));
+    const kv = fakeKv({
+      [PHANTOM_MATCHER_NRD_CURSOR_KEY]: old(0),
+      [LOOKALIKE_NRD_CURSOR_KEY]: JSON.stringify({ created_at: old(32), rowid: 1 }),
+    });
+    const r = await purgeNrdDomains(envFor(raw, kv), { now: () => now });
+    expect(r.held_by_lookalike_matcher).toBe(true);
+    expect(r.cutoff).toBe(old(32));
+    const left = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
+      .map((x) => x.domain);
+    expect(left).toEqual(["unscanned.com"]);
+  });
+
+  it("an absent lookalike cursor holds nothing (only the phantom hold / age cutoff apply)", async () => {
     const raw = openDb();
     nrd(raw, "a.com", "2026-06-01", old(120));
     const env = envFor(raw, fakeKv({ [PHANTOM_MATCHER_NRD_CURSOR_KEY]: toSqliteUtc(now) }));

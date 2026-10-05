@@ -107,7 +107,7 @@ function serve(domains: string[]): void {
 }
 
 async function ingest(kv: KVNamespace) {
-  const env = { DB: db, CACHE: kv, GEOIP_STAGING: r2.bucket } as unknown as Env;
+  const env = { DB: db, CACHE: kv, GEOIP_STAGING: r2.bucket, NRD_ARCHIVE: fakeR2Bucket().bucket } as unknown as Env;
   return nrd_hagezi.ingest({ env, feedName: "nrd_hagezi", feedUrl: "" });
 }
 
