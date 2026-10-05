@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { parseUserAgent } from '../../../../../shared/src/account/security/userAgent';
 import { normalizeSessions, maskIp } from '../../../../../shared/src/account/security/sessions';
-import { parseTimestamp, formatRelative, isActiveNow } from '../../../../../shared/src/account/security/time';
+import { toValidDate, parseTimestamp, formatRelativeTime as formatRelative, isActiveNow } from '../../../../../shared/src/account/time-format';
+import { describeUserAgent } from '../../../../../shared/src/account/security/userAgent';
 
 const UA = {
   chromeMac: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
@@ -86,10 +87,12 @@ describe('maskIp', () => {
 
 describe('time helpers', () => {
   it('reads D1 "YYYY-MM-DD HH:MM:SS" as UTC', () => {
-    expect(parseTimestamp('2026-10-04 12:00:00')?.toISOString()).toBe('2026-10-04T12:00:00.000Z');
-    expect(parseTimestamp('2026-10-04T12:00:00Z')?.toISOString()).toBe('2026-10-04T12:00:00.000Z');
-    expect(parseTimestamp('garbage')).toBeNull();
-    expect(parseTimestamp(null)).toBeNull();
+    expect(toValidDate('2026-10-04 12:00:00')?.toISOString()).toBe('2026-10-04T12:00:00.000Z');
+    expect(toValidDate('2026-10-04T12:00:00Z')?.toISOString()).toBe('2026-10-04T12:00:00.000Z');
+    expect(toValidDate('garbage')).toBeNull();
+    expect(toValidDate(null)).toBeNull();
+    // A zone-less "T" timestamp is UTC too, not viewer-local.
+    expect(parseTimestamp('2026-10-04T12:00:00').toISOString()).toBe('2026-10-04T12:00:00.000Z');
   });
 
   it('formats relative time', () => {
@@ -101,5 +104,22 @@ describe('time helpers', () => {
     expect(formatRelative(new Date(now - 2 * 86_400_000), now)).toBe('2 days ago');
     expect(isActiveNow(new Date(now - 60_000), now)).toBe(true);
     expect(isActiveNow(new Date(now - 10 * 60_000), now)).toBe(false);
+  });
+});
+
+describe('one wording for Security and Devices', () => {
+  it('describeUserAgent agrees with parseUserAgent (same device, same labels)', () => {
+    expect(describeUserAgent(UA.safariIphone)).toEqual({ browser: 'Safari', os: 'iOS', kind: 'phone' });
+    expect(describeUserAgent(UA.ipad).kind).toBe('tablet');
+    expect(describeUserAgent(UA.chromeMac)).toMatchObject({ os: 'macOS', kind: 'desktop' });
+    expect(describeUserAgent(null).kind).toBe('desktop');
+  });
+
+  it('relative times read "N hours ago" everywhere, and fall back to a date after 30 days', () => {
+    const now = Date.UTC(2026, 9, 4, 12, 0, 0);
+    expect(formatRelative('2026-10-04 09:00:00', now)).toBe('3 hours ago');
+    expect(formatRelative('2026-10-04T09:00:00', now)).toBe('3 hours ago');
+    expect(formatRelative('2026-07-01 09:00:00', now)).not.toMatch(/ago/);
+    expect(formatRelative('nope', now)).toBe('');
   });
 });

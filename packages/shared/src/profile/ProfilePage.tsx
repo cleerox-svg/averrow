@@ -22,7 +22,7 @@ import {
 } from './sections';
 import type { ProfilePageProps } from './types';
 
-const DEFAULT_NOTIFICATIONS_HREF = '/notifications/preferences';
+const DEFAULT_NOTIFICATIONS_HREF = '/settings/notifications';
 const DEFAULT_BILLING_HREF       = '/settings/billing';
 
 export function ProfilePage(props: ProfilePageProps) {

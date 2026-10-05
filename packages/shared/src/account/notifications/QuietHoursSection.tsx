@@ -16,7 +16,7 @@ import { SavedMark } from './useAutosave';
 import type { SectionCommon } from './ChannelsSection';
 import type { NotificationSettingsProps } from './types';
 
-type Props = SectionCommon & Pick<NotificationSettingsProps, 'prefs' | 'profileTimezone' | 'onUpdatePrefs'>;
+type Props = SectionCommon & Pick<NotificationSettingsProps, 'prefs' | 'profileTimezone' | 'onUpdatePrefs' | 'onDirtyChange'>;
 
 interface Draft {
   enabled: boolean;
@@ -40,7 +40,7 @@ function savedDraft(prefs: Props['prefs'], profileTimezone: string | null): Draf
 const same = (a: Draft, b: Draft) =>
   a.enabled === b.enabled && a.start === b.start && a.end === b.end && a.tz === b.tz && a.critical === b.critical;
 
-export function QuietHoursSection({ prefs, profileTimezone, autosave, online, onUpdatePrefs }: Props): ReactElement {
+export function QuietHoursSection({ prefs, profileTimezone, autosave, online, onUpdatePrefs, onDirtyChange }: Props): ReactElement {
   const saved = savedDraft(prefs, profileTimezone);
   const [draft, setDraft] = useState<Draft>(saved);
 
@@ -55,6 +55,8 @@ export function QuietHoursSection({ prefs, profileTimezone, autosave, online, on
   });
 
   const dirty = !same(draft, saved);
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const summary = draft.enabled ? describeQuietWindow(draft.start, draft.end) : null;
   const invalid = draft.enabled && (!draft.start || !draft.end || !summary);
   const saving = autosave.saving('quiet-save');

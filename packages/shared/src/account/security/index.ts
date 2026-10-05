@@ -2,7 +2,7 @@
 //   export * from './security';
 export { SecuritySettings } from '../SecuritySettings';
 export { createStrictPasskeyAdapter, type StrictPasskeyAdapterOptions } from './passkeyAdapter';
-export { parseUserAgent, type ParsedUserAgent, type DeviceClass } from './userAgent';
+export { parseUserAgent, describeUserAgent, type ParsedUserAgent, type ParsedDevice, type DeviceClass } from './userAgent';
 export { normalizeSessions, type NormalizedSessions } from './sessions';
 export {
   DEFAULT_SECURITY_ENDPOINTS,

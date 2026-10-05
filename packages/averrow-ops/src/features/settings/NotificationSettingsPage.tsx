@@ -12,7 +12,7 @@
 // :tab param (e.g. a test or another host) it falls back to local state.
 
 import { useCallback, useState, type ReactElement } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageState, useMediaQuery, type SettingsLinkRenderProps } from '@averrow/shared/ui';
 import {
@@ -20,6 +20,7 @@ import {
   type NotificationPrefsV2, type NotificationTabId, type PushState,
 } from '@averrow/shared/account';
 import { useAuth } from '@/lib/auth';
+import { useSettingsDirtyGuard, useSettingsRunGuarded } from './SettingsLayout';
 import { getPushStatus, sendTestPush, subscribePush, unsubscribePush } from '@/lib/push';
 import {
   useDeleteSubscription, useNotificationEventPreferences, useNotificationPreferencesV2,
@@ -77,14 +78,17 @@ export function NotificationSettingsPage({ tab: tabProp, onTabChange: onTabChang
   const { user } = useAuth();
   const { tab: routeTab } = useParams<{ tab?: string }>();
   const [localTab, setLocalTab] = useState<NotificationTabId>('channels');
+  const reportDirty = useSettingsDirtyGuard();
+  const runGuarded = useSettingsRunGuarded();
 
   const routed = routeTab !== undefined;
-  const tab: NotificationTabId = tabProp ?? (routed ? (isNotificationTab(routeTab) ? routeTab : 'channels') : localTab);
-  const onTabChange = (next: NotificationTabId) => {
+  const tab: NotificationTabId = tabProp ?? (routed && isNotificationTab(routeTab) ? routeTab : localTab);
+  // Switching sub-tabs unmounts the quiet-hours form, so ask first when it has unsaved edits.
+  const onTabChange = (next: NotificationTabId) => runGuarded(() => {
     if (onTabChangeProp) onTabChangeProp(next);
     else if (routed) navigate(`/settings/notifications/${next}`);
     else setLocalTab(next);
-  };
+  });
 
   const eventsQ = useNotificationEventPreferences();
   const v2Q = useNotificationPreferencesV2();
@@ -124,6 +128,11 @@ export function NotificationSettingsPage({ tab: tabProp, onTabChange: onTabChang
 
   // Don't render the controls until preferences have loaded: on a failed fetch
   // every switch used to render "off" and silently do nothing.
+  // An unknown sub-tab segment is a bad URL, not a silent alias for Channels.
+  if (tabProp === undefined && routed && !isNotificationTab(routeTab)) {
+    return <Navigate to="/settings/notifications/channels" replace />;
+  }
+
   const failed = (eventsQ.isError && !eventsQ.data) || (v2Q.isError && !v2Q.data);
   const pending = !failed && ((eventsQ.isLoading && !eventsQ.data) || (v2Q.isLoading && !v2Q.data));
 
@@ -179,6 +188,7 @@ export function NotificationSettingsPage({ tab: tabProp, onTabChange: onTabChang
         onEnablePush={enablePush}
         onDisablePush={disablePush}
         onSendTestPush={sendTestPush}
+        onDirtyChange={reportDirty}
         devicesHref={DEVICES_HREF}
         renderLink={renderRouterLink}
       />

@@ -87,6 +87,9 @@ export interface NotificationSettingsProps {
   onDisablePush: () => Promise<void>;
   onSendTestPush: () => Promise<{ attempted: number; delivered: number }>;
 
+  /** Reports unsaved quiet-hours edits so the host can guard navigation. */
+  onDirtyChange?: (dirty: boolean) => void;
+
   /** Where push devices are managed (Devices & App). Renders a link row when set. */
   devicesHref?: string;
   renderLink?: SettingsRenderLink;

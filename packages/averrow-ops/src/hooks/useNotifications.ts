@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useRef } from 'react';
+import { useQuery, useMutation, useQueryClient, keepPreviousData, type QueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { USER_TOGGLEABLE_EVENTS } from '@averrow/shared';
 // Types live in the shared kit (the settings sections are mounted from there).
@@ -193,7 +194,53 @@ function rollbackKeys<T extends object>(current: T | undefined, previous: T | un
   return next as T;
 }
 
+/**
+ * Per-field write versions. Every optimistic write bumps the version of the
+ * fields it touches; a failing write only rolls back fields whose version is
+ * still its own, so it can never undo a newer pending or successful write.
+ */
+function createFieldVersions() {
+  const versions = new Map<string, number>();
+  return {
+    /** Stamp `fields`; returns the stamps to hand back to `isLatest`. */
+    bump(fields: string[]): Record<string, number> {
+      const stamps: Record<string, number> = {};
+      for (const f of fields) {
+        const n = (versions.get(f) ?? 0) + 1;
+        versions.set(f, n);
+        stamps[f] = n;
+      }
+      return stamps;
+    },
+    isLatest(field: string, stamps: Record<string, number> | undefined): boolean {
+      return stamps !== undefined && versions.get(field) === stamps[field];
+    },
+  };
+}
+
+function useFieldVersions() {
+  const ref = useRef<ReturnType<typeof createFieldVersions>>();
+  ref.current ??= createFieldVersions();
+  return ref.current;
+}
+
+// Subscription update + delete rewrite the same list from different hook
+// instances, so they share one module-level version space.
+const subscriptionVersions = createFieldVersions();
+
 const PREFS_V2_KEY = ['notification-preferences-v2'] as const;
+const PREFS_V2_MUTATION = ['notification-preferences-v2', 'update'] as const;
+const EVENT_PREFS_MUTATION = ['notification-preferences', 'update'] as const;
+const SUBSCRIPTIONS_MUTATION = ['notification-subscriptions', 'update'] as const;
+
+/**
+ * Refetch only once the LAST in-flight write of a family settles (inside
+ * onSettled the settling mutation still counts, hence 1). Invalidating after
+ * each of several quick saves lets the first refetch land a stale value.
+ */
+function invalidateWhenIdle(queryClient: QueryClient, mutationKey: readonly unknown[], queryKey: readonly unknown[]): void {
+  if (queryClient.isMutating({ mutationKey }) <= 1) void queryClient.invalidateQueries({ queryKey });
+}
 
 export function useNotificationPreferencesV2() {
   return useQuery({
@@ -218,25 +265,29 @@ export interface UpdatePrefsV2Variables {
  */
 export function useUpdateNotificationPreferencesV2() {
   const queryClient = useQueryClient();
+  const versions = useFieldVersions();
   return useMutation({
+    mutationKey: PREFS_V2_MUTATION,
     mutationFn: async ({ patch }: UpdatePrefsV2Variables) => {
       assertWritten(await api.put('/api/notifications/preferences/v2', patch));
     },
     onMutate: async ({ patch, options }) => {
-      if (options?.optimistic === false) return { previous: undefined };
+      if (options?.optimistic === false) return { previous: undefined, stamps: undefined };
       await queryClient.cancelQueries({ queryKey: PREFS_V2_KEY });
       const previous = queryClient.getQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY) ?? undefined;
-      if (previous) queryClient.setQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY, { ...previous, ...patch });
-      return { previous };
+      const stamps = versions.bump(Object.keys(patch));
+      if (previous) queryClient.setQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY, (cur) => ({ ...(cur ?? previous), ...patch }));
+      return { previous, stamps };
     },
     onError: (_err, { patch }, ctx) => {
       if (!ctx?.previous) return;
+      // Skip fields a newer write has since claimed.
+      const keys = Object.keys(patch).filter((k) => versions.isLatest(k, ctx.stamps));
+      if (keys.length === 0) return;
       queryClient.setQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY, (cur) =>
-        rollbackKeys(cur ?? undefined, ctx.previous, Object.keys(patch)) ?? null);
+        rollbackKeys(cur ?? undefined, ctx.previous, keys) ?? null);
     },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: PREFS_V2_KEY });
-    },
+    onSettled: () => invalidateWhenIdle(queryClient, PREFS_V2_MUTATION, PREFS_V2_KEY),
   });
 }
 
@@ -268,7 +319,9 @@ export function useNotificationEventPreferences() {
 
 export function useUpdateNotificationEventPreferences() {
   const queryClient = useQueryClient();
+  const versions = useFieldVersions();
   return useMutation({
+    mutationKey: EVENT_PREFS_MUTATION,
     mutationFn: async (patch: EventPreferences) => {
       const body: EventPreferences = {};
       for (const key of EVENT_KEYS) if (key in patch) body[key] = patch[key] as boolean;
@@ -277,22 +330,22 @@ export function useUpdateNotificationEventPreferences() {
     onMutate: async (patch) => {
       await queryClient.cancelQueries({ queryKey: EVENT_PREFS_KEY });
       const previous = queryClient.getQueryData<EventPreferences>(EVENT_PREFS_KEY);
-      queryClient.setQueryData<EventPreferences>(EVENT_PREFS_KEY, { ...(previous ?? {}), ...patch });
-      return { previous };
+      const stamps = versions.bump(Object.keys(patch));
+      queryClient.setQueryData<EventPreferences>(EVENT_PREFS_KEY, (cur) => ({ ...(cur ?? previous ?? {}), ...patch }));
+      return { previous, stamps };
     },
     onError: (_err, patch, ctx) => {
       queryClient.setQueryData<EventPreferences>(EVENT_PREFS_KEY, (cur) => {
         const next = { ...(cur ?? {}) };
         for (const key of Object.keys(patch)) {
+          if (!versions.isLatest(key, ctx?.stamps)) continue; // a newer write owns this key
           if (ctx?.previous && key in ctx.previous) next[key] = ctx.previous[key] as boolean;
           else delete next[key];
         }
         return next;
       });
     },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: EVENT_PREFS_KEY });
-    },
+    onSettled: () => invalidateWhenIdle(queryClient, EVENT_PREFS_MUTATION, EVENT_PREFS_KEY),
   });
 }
 
@@ -403,7 +456,9 @@ export function useNotificationSubscriptions() {
 
 export function useUpdateSubscription() {
   const queryClient = useQueryClient();
+  const versions = subscriptionVersions;
   return useMutation({
+    mutationKey: SUBSCRIPTIONS_MUTATION,
     mutationFn: async ({ brandId, level, snoozedUntil }: {
       brandId: string;
       level: SubscriptionLevel;
@@ -417,41 +472,47 @@ export function useUpdateSubscription() {
     onMutate: async ({ brandId, level }) => {
       await queryClient.cancelQueries({ queryKey: SUBSCRIPTIONS_KEY });
       const previous = queryClient.getQueryData<Subscription[]>(SUBSCRIPTIONS_KEY);
+      const stamps = versions.bump([brandId]);
       queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
         (cur ?? []).map((s) => (s.brand_id === brandId ? { ...s, level } : s)));
-      return { previous };
+      return { previous, stamps };
     },
     onError: (_err, { brandId }, ctx) => {
+      if (!versions.isLatest(brandId, ctx?.stamps)) return;
       const before = ctx?.previous?.find((s) => s.brand_id === brandId);
       if (!before) return;
       queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
         (cur ?? []).map((s) => (s.brand_id === brandId ? { ...s, level: before.level } : s)));
     },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-    },
+    onSettled: () => invalidateWhenIdle(queryClient, SUBSCRIPTIONS_MUTATION, SUBSCRIPTIONS_KEY),
   });
 }
 
 export function useDeleteSubscription() {
   const queryClient = useQueryClient();
+  const versions = subscriptionVersions;
   return useMutation({
+    mutationKey: SUBSCRIPTIONS_MUTATION,
     mutationFn: async (brandId: string) => {
       assertWritten(await api.delete(`/api/notifications/subscriptions/${brandId}`));
     },
     onMutate: async (brandId) => {
       await queryClient.cancelQueries({ queryKey: SUBSCRIPTIONS_KEY });
       const previous = queryClient.getQueryData<Subscription[]>(SUBSCRIPTIONS_KEY);
+      const stamps = versions.bump([brandId]);
       queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
         (cur ?? []).filter((s) => s.brand_id !== brandId));
-      return { previous };
+      return { previous, stamps };
     },
-    onError: (_err, _brandId, ctx) => {
-      if (ctx?.previous) queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, ctx.previous);
+    onError: (_err, brandId, ctx) => {
+      if (!versions.isLatest(brandId, ctx?.stamps)) return;
+      const removed = ctx?.previous?.find((s) => s.brand_id === brandId);
+      if (!removed) return;
+      // Put back just the removed row; other brands' optimistic edits stay.
+      queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
+        (cur ?? []).some((s) => s.brand_id === brandId) ? (cur ?? []) : [...(cur ?? []), removed]);
     },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-    },
+    onSettled: () => invalidateWhenIdle(queryClient, SUBSCRIPTIONS_MUTATION, SUBSCRIPTIONS_KEY),
   });
 }
 

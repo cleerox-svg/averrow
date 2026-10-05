@@ -17,7 +17,7 @@ import {
 } from '../ui';
 import { KeyIcon, LaptopIcon, MoreIcon, PhoneIcon, PlusIcon, ShieldAlertIcon, ShieldCheckIcon, TrashIcon } from './security/icons';
 import { normalizeSessions, signInMethodLabel, type NormalizedSessions } from './security/sessions';
-import { formatAbsolute, formatRelative, formatShortDate, isActiveNow, parseTimestamp } from './security/time';
+import { formatAbsolute, formatRelativeTime, formatShortDate, isActiveNow, toValidDate } from './time-format';
 import {
   DEFAULT_SECURITY_ENDPOINTS,
   type PasskeyDevice, type SecurityApiResponse, type SecurityEndpoints, type SecuritySession,
@@ -92,7 +92,7 @@ function RowSkeleton({ label }: { label: string }) {
 }
 
 function When({ iso, children }: { iso: string | null; children: (d: Date) => ReactNode }) {
-  const d = parseTimestamp(iso);
+  const d = toValidDate(iso);
   if (!d) return null;
   return <time dateTime={d.toISOString()} title={formatAbsolute(d)}>{children(d)}</time>;
 }
@@ -108,18 +108,18 @@ function passkeyDescription(k: PasskeyDevice): ReactNode {
     <>
       <When iso={k.created_at}>{(d) => <>Added {formatShortDate(d)}</>}</When>
       {' · '}
-      {parseTimestamp(k.last_used_at)
-        ? <When iso={k.last_used_at}>{(d) => <>Last used {formatRelative(d)}</>}</When>
+      {toValidDate(k.last_used_at)
+        ? <When iso={k.last_used_at}>{(d) => <>Last used {formatRelativeTime(d)}</>}</When>
         : 'Not used yet'}
     </>
   );
 }
 
 function sessionDescription(s: SecuritySession): ReactNode {
-  const last = parseTimestamp(s.lastActiveAt);
+  const last = toValidDate(s.lastActiveAt);
   if (!last) return 'Signed in';
   if (s.isCurrent || isActiveNow(last)) return <When iso={s.lastActiveAt}>{() => <>Active now</>}</When>;
-  return <When iso={s.lastActiveAt}>{(d) => <>Last active {formatRelative(d)}</>}</When>;
+  return <When iso={s.lastActiveAt}>{(d) => <>Last active {formatRelativeTime(d)}</>}</When>;
 }
 
 // ─── the page ───────────────────────────────────────────────

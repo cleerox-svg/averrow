@@ -17,8 +17,7 @@ export {
   type DevicesSettingsProps, type DevicesInstallState, type DevicesPushAdapter, type PushDeviceRow,
 } from './DevicesSettings';
 export {
-  describeUserAgent, formatRelativeTime, formatShortDate, formatFullDate, parseTimestamp,
-  type ParsedDevice,
+  formatRelativeTime, formatShortDate, formatFullDate, formatAbsolute, isActiveNow, parseTimestamp, toValidDate,
 } from './time-format';
 export * from './security';
 export * from './notifications';

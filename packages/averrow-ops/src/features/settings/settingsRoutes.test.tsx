@@ -2,8 +2,9 @@
 // (only the shell chrome is stubbed).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { configure, render, screen, waitFor } from '@testing-library/react';
+import { configure, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Outlet, useLocation } from 'react-router-dom';
 import { installDomStubs, stubViewport } from './settingsTestUtils';
 
@@ -44,11 +45,14 @@ function Where() {
 }
 
 function renderAt(path: string) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Where />
-      <App />
-    </MemoryRouter>,
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <Where />
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -152,5 +156,39 @@ describe('settings routes', () => {
     renderAt('/settings/notifications');
     await waitFor(() =>
       expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/channels'));
+  });
+
+  it('redirects an unknown notifications sub-tab to Channels', async () => {
+    mocks.get.mockResolvedValue({ success: false, error: 'offline' });
+    renderAt('/settings/notifications/bogus');
+    await waitFor(() =>
+      expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/channels'));
+  });
+
+  it('guards switching notification sub-tabs while quiet hours has unsaved edits', async () => {
+    mocks.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/notifications/preferences/v2')) {
+        return Promise.resolve({ success: true, data: {
+          inapp_severity_floor: 'info', push_severity_floor: 'low', email_severity_floor: 'high',
+          digest_mode: 'daily', digest_severity_floor: 'medium',
+          quiet_hours_start: '22:00', quiet_hours_end: '07:00', quiet_hours_timezone: 'UTC',
+          critical_bypasses_quiet: 1, show_tenant_notifications: 0,
+          cadence_intel: 'realtime', cadence_platform: 'realtime',
+        } });
+      }
+      if (url.startsWith('/api/notifications/preferences')) return Promise.resolve({ success: true, data: {} });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    const user = userEvent.setup();
+    renderAt('/settings/notifications/quiet-hours');
+    const from = await screen.findByLabelText('From');
+    fireEvent.change(from, { target: { value: '21:00' } });
+    await user.click(screen.getByRole('tab', { name: 'Events' }));
+
+    await screen.findByRole('dialog', { name: 'Discard changes?' });
+    expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/quiet-hours');
+    await user.click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() =>
+      expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/events'));
   });
 });

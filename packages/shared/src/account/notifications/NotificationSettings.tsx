@@ -25,7 +25,7 @@ export function NotificationSettings(props: NotificationSettingsProps): ReactEle
   const {
     tab, onTabChange, role, email, profileTimezone, prefs, events, subscriptions, push,
     onUpdatePrefs, onUpdateEvents, onSetBrandLevel, onRemoveBrand,
-    onEnablePush, onDisablePush, onSendTestPush, devicesHref, renderLink, className,
+    onEnablePush, onDisablePush, onSendTestPush, onDirtyChange, devicesHref, renderLink, className,
   } = props;
 
   const autosave = useAutosave();
@@ -100,6 +100,7 @@ export function NotificationSettings(props: NotificationSettingsProps): ReactEle
             prefs={prefs}
             profileTimezone={profileTimezone}
             onUpdatePrefs={onUpdatePrefs}
+            onDirtyChange={onDirtyChange}
           />
         )}
       </div>

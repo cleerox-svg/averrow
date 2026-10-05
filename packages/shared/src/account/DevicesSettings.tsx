@@ -20,7 +20,8 @@ import {
 import {
   DownloadIcon, InfoCircleIcon, MonitorIcon, RefreshIcon, SendIcon, ShareIcon, SmartphoneIcon,
 } from './section-icons';
-import { describeUserAgent, formatRelativeTime, formatShortDate } from './time-format';
+import { formatRelativeTime, formatShortDate } from './time-format';
+import { parseUserAgent } from './security/userAgent';
 
 // ── contracts ───────────────────────────────────────────────
 
@@ -88,9 +89,10 @@ const MANUAL_STEPS: ReadonlyArray<{ where: string; how: ReactNode }> = [
 // ── helpers ─────────────────────────────────────────────────
 
 function deviceName(d: PushDeviceRow): string {
-  const ua = describeUserAgent(d.user_agent);
-  const label = d.device_label?.trim() || ua.os || 'Unnamed device';
-  return ua.browser && ua.browser !== label ? `${label} — ${ua.browser}` : label;
+  const ua = parseUserAgent(d.user_agent);
+  const given = d.device_label?.trim();
+  if (!given) return ua.label === 'Unknown device' ? 'Unnamed device' : ua.label;
+  return ua.browser && ua.browser !== given ? `${given} — ${ua.browser}` : given;
 }
 
 function deviceDescription(d: PushDeviceRow): string {
@@ -286,13 +288,13 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
           />
         )}
         {devices.map((d) => {
-          const ua = describeUserAgent(d.user_agent);
+          const ua = parseUserAgent(d.user_agent);
           const name = deviceName(d);
           return (
             <SettingsRow
               key={d.id}
               dense
-              icon={ua.kind === 'desktop' ? <MonitorIcon /> : <SmartphoneIcon />}
+              icon={ua.device === 'phone' || ua.device === 'tablet' ? <SmartphoneIcon /> : <MonitorIcon />}
               tone="violet"
               title={(
                 <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">

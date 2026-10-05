@@ -123,6 +123,34 @@ describe('ProfileSettings — appearance', () => {
     expect(props.onThemeChange).toHaveBeenNthCalledWith(2, 'dark');
   });
 
+  it('does not revert a later theme choice when an earlier save fails afterwards', async () => {
+    let failFirst: (v: { success: boolean }) => void = () => {};
+    const patch = vi.fn()
+      .mockImplementationOnce(() => new Promise((r) => { failFirst = r; }))
+      .mockResolvedValue({ success: true });
+    const { user, props } = setup({ apiClient: { patch } });
+    await user.click(screen.getByRole('radio', { name: 'Light' }));
+    await user.click(screen.getByRole('radio', { name: 'Auto' }));
+    failFirst({ success: false });
+    expect(await screen.findByText(/Couldn't save your theme/)).toBeInTheDocument();
+    expect(props.onThemeChange).toHaveBeenCalledTimes(2);
+    expect(props.onThemeChange).not.toHaveBeenCalledWith('dark');
+  });
+
+  it('saves the detected zone when the profile has none (picking the shown value is not a no-op)', async () => {
+    const spy = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions')
+      .mockReturnValue({ timeZone: 'Asia/Tokyo' } as Intl.ResolvedDateTimeFormatOptions);
+    try {
+      const { user, patch } = setup({ user: { ...USER, timezone: null } });
+      expect(screen.getByRole('button', { name: 'Time zone' })).toHaveTextContent('Tokyo');
+      await user.click(screen.getByRole('button', { name: 'Time zone' }));
+      await user.click(await screen.findByRole('option', { name: /Tokyo/ }));
+      expect(patch).toHaveBeenCalledWith('/api/profile', { timezone: 'Asia/Tokyo' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('PATCHes the time zone from the picker and toasts', async () => {
     const { user, patch } = setup();
     await user.click(screen.getByRole('button', { name: 'Time zone' }));

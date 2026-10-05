@@ -5,8 +5,12 @@
 //   · a shared ToastProvider for the subtree (ops' own Toast context is a
 //     different, simpler provider; the shared kit's toasts need theirs), and
 //   · a dirty-form guard: pages call `useSettingsDirtyGuard()` and report
-//     unsaved edits; navigating away through the settings rail / back link, or
-//     closing the tab, then asks first.
+//     unsaved edits; navigating away through the settings rail / back link, a
+//     page's own tabs (via `useGuardedNavigate`), or closing the tab, asks first.
+//     KNOWN GAP: the app has no data router (BrowserRouter), so `useBlocker` is
+//     unavailable. Navigation outside this subtree — the main sidebar, the user
+//     menu, the browser Back/Forward buttons — is NOT intercepted (only
+//     beforeunload covers tab close/reload).
 //
 // Routes (see App.tsx): /settings (index), /settings/profile, /settings/devices,
 // and security + notifications (wired by the orchestrator).
@@ -27,11 +31,22 @@ import { BUILD_SHA, VERSION_LABEL } from '@/lib/version';
 // ── dirty-form guard ────────────────────────────────────────
 
 type ReportDirty = (dirty: boolean) => void;
-const SettingsDirtyContext = createContext<ReportDirty>(() => undefined);
+/** Runs `go` now when the page is clean, else after the user confirms "Discard changes?". */
+type RunGuarded = (go: () => void) => void;
+interface DirtyGuardValue { reportDirty: ReportDirty; runGuarded: RunGuarded }
+const SettingsDirtyContext = createContext<DirtyGuardValue>({
+  reportDirty: () => undefined,
+  runGuarded: (go) => go(),
+});
 
 /** Settings pages report unsaved edits here; the layout guards navigation while dirty. Stable identity. */
 export function useSettingsDirtyGuard(): ReportDirty {
-  return useContext(SettingsDirtyContext);
+  return useContext(SettingsDirtyContext).reportDirty;
+}
+
+/** For in-page navigation (sub-tabs): wraps an action so a dirty form asks before it runs. */
+export function useSettingsRunGuarded(): RunGuarded {
+  return useContext(SettingsDirtyContext).runGuarded;
 }
 
 const DESKTOP_QUERY = '(min-width: 1024px)';
@@ -54,8 +69,13 @@ export function SettingsLayout() {
 
   // ── unsaved-changes guard ──
   const dirtyRef = useRef(false);
-  const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const reportDirty = useCallback<ReportDirty>((dirty) => { dirtyRef.current = dirty; }, []);
+  const runGuarded = useCallback<RunGuarded>((go) => {
+    if (dirtyRef.current) setPendingAction(() => go);
+    else go();
+  }, []);
+  const guardValue = useMemo<DirtyGuardValue>(() => ({ reportDirty, runGuarded }), [reportDirty, runGuarded]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -77,7 +97,7 @@ export function SettingsLayout() {
       onClick={(e) => {
         if (dirtyRef.current && isPlainLeftClick(e) && !e.defaultPrevented) {
           e.preventDefault();
-          setPendingHref(p.href);
+          setPendingAction(() => () => navigate(p.href));
           return;
         }
         p.onClick?.(e);
@@ -85,7 +105,7 @@ export function SettingsLayout() {
     >
       {p.children}
     </Link>
-  ), []);
+  ), [navigate]);
 
   const passkeys = user?.passkey_count;
   const sections = useMemo(() => getAccountSections({
@@ -111,7 +131,7 @@ export function SettingsLayout() {
 
   return (
     <ToastProvider>
-      <SettingsDirtyContext.Provider value={reportDirty}>
+      <SettingsDirtyContext.Provider value={guardValue}>
         <div className="min-[1024px]:px-6 min-[1024px]:py-4">
           <SettingsShell
             sections={sections}
@@ -141,17 +161,17 @@ export function SettingsLayout() {
         </div>
 
         <ConfirmDialog
-          open={pendingHref !== null}
-          onOpenChange={(o) => { if (!o) setPendingHref(null); }}
+          open={pendingAction !== null}
+          onOpenChange={(o) => { if (!o) setPendingAction(null); }}
           title="Discard changes?"
           description="You have unsaved changes on this page."
           consequence="If you leave now, your edits won't be saved."
           confirmLabel="Discard changes"
           onConfirm={() => {
-            const href = pendingHref;
+            const go = pendingAction;
             dirtyRef.current = false;
-            setPendingHref(null);
-            if (href) navigate(href);
+            setPendingAction(null);
+            go?.();
           }}
         />
       </SettingsDirtyContext.Provider>

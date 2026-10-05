@@ -1193,7 +1193,7 @@ export function AdminDashboard() {
                       <span style={{ ...mono, fontSize: 11, color: 'var(--green)' }}>✓ {classifyResult}</span>
                     )}
                     <Link
-                      to="/profile"
+                      to="/settings/security"
                       style={{ ...mono, fontSize: 11, color: 'var(--amber)', textDecoration: 'none' }}
                     >
                       Revoke all sessions →

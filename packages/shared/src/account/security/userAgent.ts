@@ -43,3 +43,16 @@ export function parseUserAgent(ua: string | null | undefined): ParsedUserAgent {
   const label = browser && os ? `${browser} on ${os}` : browser ?? os ?? 'Unknown device';
   return { browser, os, device, label };
 }
+
+export interface ParsedDevice {
+  browser: string | null;
+  os: string | null;
+  /** Coarse class for picking a glyph. */
+  kind: 'phone' | 'tablet' | 'desktop';
+}
+
+/** Glyph-oriented view of parseUserAgent (kept for existing callers). Never throws. */
+export function describeUserAgent(ua: string | null | undefined): ParsedDevice {
+  const p = parseUserAgent(ua);
+  return { browser: p.browser, os: p.os, kind: p.device === 'phone' || p.device === 'tablet' ? p.device : 'desktop' };
+}

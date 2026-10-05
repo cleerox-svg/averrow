@@ -144,16 +144,24 @@ export function ProfileSettings({
   const discard = () => setDraft(saved);
 
   // ── theme ──
+  // The theme the user chose most recently. An earlier PATCH that fails after a
+  // later choice must not revert that later choice.
+  const chosenThemeRef = useRef<string | null>(null);
   const changeTheme = async (value: string) => {
     if (!isTheme(value) || value === theme) return;
     const previous = theme;
+    chosenThemeRef.current = value;
     onThemeChange(value); // instant: the UI never waits on the network
     try {
       const res = await apiClient.patch('/api/profile', { theme_preference: value === 'auto' ? null : value });
       if (!res.success) throw new Error(res.error ?? 'save failed');
       await onUserUpdated();
     } catch {
-      onThemeChange(previous);
+      // Only revert if the user hasn't since picked something else.
+      if (chosenThemeRef.current === value) {
+        chosenThemeRef.current = null;
+        onThemeChange(previous);
+      }
       toast.error("Couldn't save your theme. Check your connection and try again.");
     }
   };
@@ -165,7 +173,9 @@ export function ProfileSettings({
   useEffect(() => { if (serverTz) setTimezone(serverTz); }, [serverTz]);
 
   const changeTimezone = async (next: string) => {
-    if (next === timezone) return;
+    // Compare with the SERVER value: with no saved zone the select shows the
+    // detected one, and choosing that same zone must still persist it.
+    if (next === serverTz) return;
     const previous = timezone;
     setTimezone(next);
     setTzSaving(true);

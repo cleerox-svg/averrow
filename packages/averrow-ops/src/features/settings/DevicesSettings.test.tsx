@@ -52,7 +52,7 @@ describe('DevicesSettings — push devices', () => {
     const rows = await screen.findAllByRole('button', { name: /^Remove / });
     expect(rows).toHaveLength(2);
     expect(screen.getByText('iPhone — Safari')).toBeInTheDocument();
-    expect(screen.getByText('macOS — Chrome')).toBeInTheDocument();
+    expect(screen.getByText('Chrome on macOS')).toBeInTheDocument();
     // Exactly one device matches this browser's UA -> exactly one badge.
     expect(screen.getAllByText('This device')).toHaveLength(1);
     expect(screen.getByText(/No push sent yet/)).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe('DevicesSettings — push devices', () => {
 
   it('removes a device only after confirming', async () => {
     const { push, user } = setup();
-    await user.click(await screen.findByRole('button', { name: 'Remove macOS — Chrome' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove Chrome on macOS' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Stop sending notifications to this device?' });
     expect(push.remove).not.toHaveBeenCalled();
@@ -74,7 +74,7 @@ describe('DevicesSettings — push devices', () => {
 
     await waitFor(() => expect(push.remove).toHaveBeenCalledWith('d2'));
     expect(await screen.findByText('Device removed.')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove macOS — Chrome' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove Chrome on macOS' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Remove iPhone — Safari' })).toBeInTheDocument();
   });
 
@@ -90,11 +90,11 @@ describe('DevicesSettings — push devices', () => {
 
   it('keeps the dialog open with an error when removal fails', async () => {
     const { user } = setup({ push: { remove: vi.fn().mockRejectedValue(new Error("Couldn't remove it. Try again.")) } });
-    await user.click(await screen.findByRole('button', { name: 'Remove macOS — Chrome' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove Chrome on macOS' }));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Remove device' }));
     expect(await within(dialog).findByText("Couldn't remove it. Try again.")).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove macOS — Chrome', hidden: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Chrome on macOS', hidden: true })).toBeInTheDocument();
   });
 
   it('sends a test and reports the outcome', async () => {
