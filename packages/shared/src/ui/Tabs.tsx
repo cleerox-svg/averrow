@@ -14,6 +14,11 @@ export interface TabsProps {
   activeTab: string;
   onChange: (id: string) => void;
   variant?: 'pills' | 'underline' | 'bar';
+  /**
+   * `sm` (default) is the compact dashboard size. `md` is the legible size for
+   * settings surfaces: 13px labels and a >=44px touch height.
+   */
+  size?: 'sm' | 'md';
   /** Sticky with blur backdrop. */
   sticky?: boolean;
   className?: string;
@@ -36,7 +41,7 @@ const FOCUS_RING_INSET =
   'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--amber-text)]';
 
 export function Tabs({
-  tabs, activeTab, onChange, variant = 'pills', sticky = false, className,
+  tabs, activeTab, onChange, variant = 'pills', size = 'sm', sticky = false, className,
   linkedPanels = false, activation = 'manual', 'aria-label': ariaLabel,
 }: TabsProps) {
   const refs = React.useRef<Map<string, HTMLButtonElement>>(new Map());
@@ -113,10 +118,11 @@ export function Tabs({
       onFocus: () => setRovingId(tab.id),
       onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => onKeyDown(e, index),
     };
+    const md = size === 'md';
     const count = tab.count !== undefined && (
       <span
         className="font-mono"
-        style={{ fontSize: variant === 'underline' ? 10 : 9, color: active ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: active ? 0.8 : 1 }}
+        style={{ fontSize: md ? 12 : variant === 'underline' ? 10 : 9, color: active ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: active ? 0.8 : 1 }}
       >
         {tab.count}
       </span>
@@ -135,7 +141,7 @@ export function Tabs({
         <button
           key={tab.id}
           {...common}
-          className={cn('shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-3 text-[11px] font-bold border-b-2 bg-transparent cursor-pointer', FOCUS_RING_INSET)}
+          className={cn('shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-3 text-[11px] font-bold border-b-2 bg-transparent cursor-pointer', md && 'min-h-[44px] text-[13px] max-[479px]:px-3', FOCUS_RING_INSET)}
           style={{
             borderBottomColor: active ? 'var(--amber)' : 'transparent',
             color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
@@ -151,7 +157,7 @@ export function Tabs({
         <button
           key={tab.id}
           {...common}
-          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', FOCUS_RING)}
+          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
           style={{
             border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
             background: active ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
@@ -168,7 +174,7 @@ export function Tabs({
       <button
         key={tab.id}
         {...common}
-        className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-[14px] py-[5px] font-mono text-[10px] font-bold uppercase tracking-[0.08em] cursor-pointer', FOCUS_RING)}
+        className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-[14px] py-[5px] font-mono text-[10px] font-bold uppercase tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
         style={{
           border: `1px solid ${active ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
           background: active ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))' : 'transparent',
@@ -208,12 +214,12 @@ export function Tabs({
           {tabs.map(renderTab)}
         </div>
         {edges.left && (
-          <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-6"
-            style={{ background: 'linear-gradient(90deg, var(--bg-page) 0%, transparent 100%)' }} />
+          <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 left-0', size === 'md' ? 'w-12' : 'w-6')}
+            style={{ background: 'linear-gradient(90deg, var(--bg-page) 20%, transparent 100%)' }} />
         )}
         {edges.right && (
-          <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-6"
-            style={{ background: 'linear-gradient(270deg, var(--bg-page) 0%, transparent 100%)' }} />
+          <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 right-0', size === 'md' ? 'w-12' : 'w-6')}
+            style={{ background: 'linear-gradient(270deg, var(--bg-page) 20%, transparent 100%)' }} />
         )}
       </div>
     );

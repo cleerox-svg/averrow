@@ -1,87 +1,87 @@
-// /v2/notifications — full notification archive.
+// /notifications — the full notification inbox (ACCOUNT_DESIGN_SPEC §5.6).
 //
-// Composition (matches the Profile page section style):
-//   PageHeader (back button + "All Notifications" title)
-//   Filters card  — type pills + severity pills + search input
-//   Results card  — paginated list, mark-as-read inline, pagination row
+//   PageHeader        title + Mark all read + settings gear
+//   Tabs              Inbox / Snoozed / Done / All (state machine tabs)
+//   Filters           desktop: compact FilterBar row; mobile: "Filters" button
+//                     opening a bottom Sheet (search, type, severity)
+//   List              grouped by day (sticky headings), shared row component
 //
-// Cursor-based pagination so the list stays stable as new
-// notifications arrive between page loads. Filter changes reset the
-// cursor (you start from the newest matching row).
+// Cursor pagination, filter semantics and every data hook are unchanged:
+// filter changes reset the cursor, rows from the previous filters stay on
+// screen (keepPreviousData) while the next page loads.
 
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Search, X, Clock, Check, Bell, ChevronDown, ChevronRight } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Bell, ChevronDown, ChevronRight, Settings, SlidersHorizontal } from 'lucide-react';
+import { NOTIFICATION_EVENTS, type NotificationEventKey, type NotificationSeverity } from '@averrow/shared';
 import {
-  USER_TOGGLEABLE_EVENTS,
-  NOTIFICATION_EVENTS,
-  type NotificationEventKey,
-  type NotificationSeverity,
-} from '@averrow/shared';
-import { Card, Badge, SectionLabel, Button, PageState } from '@/design-system/components';
-import { Input } from '@/components/ui/Input';
+  Button, Card, FilterBar, Input, PageHeader, PageState, Select, Sheet, SheetClose, SheetContent, Tabs,
+  ToastProvider, useToast,
+  type Tab,
+} from '@averrow/shared/ui';
 import {
   useNotificationsArchive, useMarkRead, useMarkAllRead, OPS_AUDIENCE_FILTER,
   useSnoozeNotification, useMarkDone,
   type Notification, type NotificationStateFilter,
 } from '@/hooks/useNotifications';
-import { relativeTime } from '@/lib/time';
+import { useIsMobile } from '@/hooks/useWindowWidth';
+import { snoozeUntilIso } from '@/lib/snooze';
+import { DayHeading, NotificationRow, NotificationRowSkeletons, typeLabel } from '@/components/notifications/NotificationRow';
+import { groupByDay } from '@/components/notifications/groupByDay';
 
 type TypeFilter = 'all' | NotificationEventKey;
 type SeverityFilter = 'all' | NotificationSeverity;
 
-const SEVERITY_OPTIONS: readonly { key: SeverityFilter; label: string }[] = [
-  { key: 'all',      label: 'All' },
-  { key: 'critical', label: 'Critical' },
-  { key: 'high',     label: 'High' },
-  { key: 'medium',   label: 'Medium' },
-  { key: 'low',      label: 'Low' },
-  { key: 'info',     label: 'Info' },
+const SEARCH_DEBOUNCE_MS = 350;
+
+const SEVERITY_OPTIONS: readonly { value: SeverityFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'critical', label: 'Critical' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+  { value: 'info', label: 'Info' },
 ];
 
-// N4: state-machine tabs (Linear-style triage). Maps 1:1 to the
-// backend ?state=... filter on the LIST endpoint.
-const STATE_TABS: readonly { key: NotificationStateFilter; label: string }[] = [
-  { key: 'inbox',   label: 'Inbox' },
-  { key: 'snoozed', label: 'Snoozed' },
-  { key: 'done',    label: 'Done' },
-  { key: 'all',     label: 'All' },
-];
+// Maps 1:1 to the backend ?state=... filter on the list endpoint.
+const STATE_LABEL: Record<NotificationStateFilter, string> = {
+  inbox: 'Inbox',
+  snoozed: 'Snoozed',
+  done: 'Done',
+  all: 'All',
+};
+const STATE_ORDER: readonly NotificationStateFilter[] = ['inbox', 'snoozed', 'done', 'all'];
 
-function severityToBadge(s: string): NotificationSeverity {
-  if (s === 'critical' || s === 'high' || s === 'medium' || s === 'low' || s === 'info') return s;
-  return 'info';
-}
+const EMPTY_COPY: Record<NotificationStateFilter, { title: string; description: string }> = {
+  inbox: { title: "You're all caught up", description: 'New notifications will show up here.' },
+  snoozed: { title: 'Nothing snoozed', description: 'Snoozed notifications come back when their time is up.' },
+  done: { title: 'Nothing marked done yet', description: 'Notifications you mark done move here.' },
+  all: { title: 'No notifications yet', description: 'New notifications will show up here.' },
+};
 
-// Resolve a notification type to its registry label so the UI shows
-// "Brand Threats" instead of the raw `brand_threat` key.
-function typeLabel(type: string): string {
-  const def = NOTIFICATION_EVENTS.find((e) => e.key === type);
-  return def?.label ?? type.replace(/_/g, ' ');
-}
-
+/** Mounts the kit ToastProvider for the inbox (ops' own Toast context is a different system). */
 export function Notifications() {
+  return (
+    <ToastProvider>
+      <NotificationsInbox />
+    </ToastProvider>
+  );
+}
+
+function NotificationsInbox() {
+  const toast = useToast();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [stateFilter, setStateFilter] = useState<NotificationStateFilter>('inbox');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
 
   const currentCursor = cursorStack[cursorStack.length - 1];
-
-  // Filter pills built from the registry (all 7 events — toggleable
-  // + system — surface here, unlike the bell which only shows
-  // user-toggleable). System events arrive in the feed; users should
-  // be able to filter them.
-  const typeOptions = useMemo(
-    () => [
-      { key: 'all' as const, label: 'All' },
-      ...NOTIFICATION_EVENTS.map((e) => ({ key: e.key, label: e.label })),
-    ],
-    [],
-  );
 
   const filters = {
     state: stateFilter,
@@ -89,263 +89,321 @@ export function Notifications() {
     ...(severityFilter !== 'all' ? { severity: severityFilter } : {}),
     ...(appliedSearch ? { q: appliedSearch } : {}),
     ...(currentCursor ? { cursor: currentCursor } : {}),
-    // N1: archive page scopes to the same audience set as the bell so
-    // navigating from bell -> full inbox doesn't suddenly reveal tenant
-    // brand events the operator opted not to see.
+    // N1: scope to the same audience set as the bell so bell -> inbox never
+    // reveals tenant brand events the operator opted not to see.
     audience: OPS_AUDIENCE_FILTER,
   };
 
-  const {
-    data, isLoading, isFetching, isError, isPlaceholderData, refetch,
-  } = useNotificationsArchive(filters);
-  // A failed fetch is an error, never "Inbox zero". keepPreviousData rows belong
-  // to the previous filters, so they don't count as data on failure.
+  const { data, isLoading, isFetching, isError, isPlaceholderData, refetch } = useNotificationsArchive(filters);
+  // A failed fetch is an error, never "all caught up". keepPreviousData rows
+  // belong to the previous filters, so they don't count as data on failure.
   const failed = isError && (!data || isPlaceholderData);
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
   const snooze = useSnoozeNotification();
   const markDone = useMarkDone();
 
-  // Filter changes reset pagination. Only re-runs when filter values
-  // actually change — `appliedSearch` (debounced submit) instead of
-  // raw `searchInput` (on every keystroke).
-  const onChangeStateFilter = (next: NotificationStateFilter) => {
-    setStateFilter(next);
+  const applySearch = (value: string) => {
+    const next = value.trim();
+    if (next === appliedSearch) return;
+    setAppliedSearch(next);
     setCursorStack([null]);
   };
-  const onChangeTypeFilter = (next: TypeFilter) => {
-    setTypeFilter(next);
-    setCursorStack([null]);
-  };
-  const onChangeSeverityFilter = (next: SeverityFilter) => {
-    setSeverityFilter(next);
-    setCursorStack([null]);
-  };
-  const submitSearch = () => {
-    setAppliedSearch(searchInput.trim());
-    setCursorStack([null]);
-  };
-  const clearSearch = () => {
+
+  // Typing stays instant-ish: debounced so a request isn't fired per key.
+  // Enter (FilterBar onSubmit) and Esc-to-clear apply immediately.
+  useEffect(() => {
+    const next = searchInput.trim();
+    if (next === appliedSearch) return;
+    const t = window.setTimeout(() => applySearch(next), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput, appliedSearch]);
+
+  const resetCursor = () => setCursorStack([null]);
+  const onChangeState = (next: NotificationStateFilter) => { setStateFilter(next); resetCursor(); };
+  const onChangeType = (next: TypeFilter) => { setTypeFilter(next); resetCursor(); };
+  const onChangeSeverity = (next: SeverityFilter) => { setSeverityFilter(next); resetCursor(); };
+  const clearFilters = () => {
+    setTypeFilter('all');
+    setSeverityFilter('all');
     setSearchInput('');
     setAppliedSearch('');
-    setCursorStack([null]);
+    resetCursor();
   };
 
   const goNextPage = () => {
-    if (data?.next_cursor) {
-      setCursorStack([...cursorStack, data.next_cursor]);
-    }
+    if (data?.next_cursor) setCursorStack([...cursorStack, data.next_cursor]);
   };
   const goPrevPage = () => {
-    if (cursorStack.length > 1) {
-      setCursorStack(cursorStack.slice(0, -1));
-    }
+    if (cursorStack.length > 1) setCursorStack(cursorStack.slice(0, -1));
   };
 
   const notifications = data?.notifications ?? [];
+  const unreadCount = data?.unread_count ?? 0;
   const isFirstPage = cursorStack.length === 1;
   const hasNextPage = data?.next_cursor != null;
+  const activeFilterCount =
+    (typeFilter !== 'all' ? 1 : 0) + (severityFilter !== 'all' ? 1 : 0) + (searchInput.trim() ? 1 : 0);
+  const filtered = activeFilterCount > 0;
+
+  const actionOpts = { onSuccess: () => setActionFailed(false), onError: () => setActionFailed(true) };
+  const handleActivate = (n: Notification) => {
+    if (n.state === 'unread') markRead.mutate(n.id, actionOpts);
+    if (n.link) navigate(n.link);
+  };
+  // Success toasts only: failures stay as the persistent inline error below.
+  // No Undo on snooze/done: the API has no un-snooze / un-done endpoint.
+  const handleSnooze = (id: string, hours: number) =>
+    snooze.mutate({ id, until: snoozeUntilIso(hours) }, {
+      ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('Snoozed'); },
+    });
+  const handleDone = (id: string) =>
+    markDone.mutate(id, { ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('Marked done'); } });
+  const handleMarkAllRead = () =>
+    markAllRead.mutate(undefined, {
+      ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('All notifications marked read'); },
+    });
+
+  const tabs: Tab[] = STATE_ORDER.map((id) => ({
+    id,
+    label: STATE_LABEL[id],
+    // Only the inbox has a known count (unread); other states have no count endpoint.
+    ...(id === 'inbox' && unreadCount > 0 ? { count: unreadCount } : {}),
+  }));
+
+  const typeOptions = useMemo(
+    () => NOTIFICATION_EVENTS.map((e) => ({ value: e.key, label: e.label })),
+    [],
+  );
+
+  const typeSelect = (id: string) => (
+    <Select
+      id={id}
+      aria-label="Type"
+      value={typeFilter}
+      onChange={(e) => onChangeType(e.target.value as TypeFilter)}
+    >
+      <option value="all">All types</option>
+      {typeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </Select>
+  );
+
+  const emptyCopy = EMPTY_COPY[stateFilter];
 
   return (
-    <div className="max-w-3xl mx-auto page-enter">
-      <div className="flex items-center justify-between gap-3 mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 rounded-lg touch-target"
-            style={{
-              background: 'transparent',
-              border: '1px solid var(--border-base)',
-              color: 'var(--text-secondary)',
-              transition: 'var(--transition-fast)',
-            }}
-            aria-label="Back"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <h1 className="font-mono text-[10px] uppercase tracking-[0.15em] font-bold" style={{ color: 'var(--text-muted)' }}>
-            Notifications
-          </h1>
-        </div>
-        {(data?.unread_count ?? 0) > 0 && stateFilter === 'inbox' && (
-          <Button variant="ghost" size="sm" onClick={() => markAllRead.mutate()}>
-            Mark all read ({data?.unread_count})
-          </Button>
-        )}
-      </div>
-
-      {/* State tabs — Inbox / Snoozed / Done / All */}
-      <div className="flex items-center gap-1 mb-4 border-b border-white/[0.06]">
-        {STATE_TABS.map(({ key, label }) => {
-          const active = stateFilter === key;
-          return (
-            <button
-              key={key}
-              onClick={() => onChangeStateFilter(key)}
-              className="px-3 py-2 font-mono text-[11px] uppercase tracking-wider transition-all touch-target"
-              style={{
-                color: active ? 'var(--amber)' : 'var(--text-secondary)',
-                borderBottom: active
-                  ? '2px solid var(--amber)'
-                  : '2px solid transparent',
-                fontWeight: active ? 700 : 400,
-                marginBottom: -1,
-              }}
+    <div className="page-enter mx-auto max-w-3xl pb-8">
+      <PageHeader
+        title="Notifications"
+        back={{ label: 'Back', onClick: () => navigate(-1) }}
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              size="md"
+              className="[@media(pointer:coarse)]:min-h-[44px]"
+              disabled={unreadCount === 0 || markAllRead.isPending}
+              onClick={handleMarkAllRead}
             >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+              Mark all read
+            </Button>
+            <Link
+              to="/settings/notifications"
+              aria-label="Notification settings"
+              title="Notification settings"
+              className="inline-flex h-11 w-11 items-center justify-center rounded-[10px] border border-[var(--border-base)] text-[var(--text-secondary)] no-underline transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
+            >
+              <Settings aria-hidden="true" className="h-[18px] w-[18px]" />
+            </Link>
+          </>
+        }
+      />
+
+      <Tabs
+        tabs={tabs}
+        activeTab={stateFilter}
+        onChange={(id) => onChangeState(id as NotificationStateFilter)}
+        variant="underline"
+        size="md"
+        aria-label="Notification state"
+        className="mb-4"
+      />
 
       {/* Filters */}
-      <Card className="mb-4">
-        <SectionLabel className="mb-3">Filters</SectionLabel>
-
-        <div className="space-y-3">
-          {/* Type pills */}
-          <div>
-            <div className="font-mono text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              Type
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {typeOptions.map(({ key, label }) => (
-                <FilterPill
-                  key={key}
-                  active={typeFilter === key}
-                  onClick={() => onChangeTypeFilter(key)}
-                >
-                  {label}
-                </FilterPill>
-              ))}
-            </div>
-          </div>
-
-          {/* Severity pills */}
-          <div>
-            <div className="font-mono text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              Severity
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {SEVERITY_OPTIONS.map(({ key, label }) => (
-                <FilterPill
-                  key={key}
-                  active={severityFilter === key}
-                  onClick={() => onChangeSeverityFilter(key)}
-                >
-                  {label}
-                </FilterPill>
-              ))}
-            </div>
-          </div>
-
-          {/* Search */}
-          <div>
-            <div className="font-mono text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              Search
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="relative flex-1">
-                <Search
-                  className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                  style={{ color: 'var(--text-tertiary)' }}
-                />
-                <Input
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') submitSearch();
-                    if (e.key === 'Escape') clearSearch();
-                  }}
-                  placeholder="Search title or message…"
-                  style={{ paddingLeft: 36 }}
-                />
-                {appliedSearch && (
-                  <button
-                    onClick={clearSearch}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded touch-target"
-                    style={{ color: 'var(--text-tertiary)' }}
-                    aria-label="Clear search"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              <Button variant="secondary" size="sm" onClick={submitSearch}>
-                Search
-              </Button>
-            </div>
-          </div>
+      {isMobile ? (
+        <div className="mb-4 flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="md"
+            className="min-h-[44px] gap-2"
+            onClick={() => setFiltersOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-[var(--amber)] px-1.5 font-mono text-[12px] font-bold text-[var(--text-on-amber)]">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+          {filtered && (
+            <Button variant="ghost" size="md" className="min-h-[44px]" onClick={clearFilters}>Clear</Button>
+          )}
         </div>
-      </Card>
+      ) : (
+        <FilterBar<SeverityFilter>
+          filters={SEVERITY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          active={severityFilter}
+          onChange={onChangeSeverity}
+          filterLabel="Severity"
+          size="md"
+          search={{
+            value: searchInput,
+            onChange: (v) => { setSearchInput(v); if (v === '') applySearch(''); },
+            onSubmit: applySearch,
+            placeholder: 'Search notifications',
+            label: 'Search notifications',
+          }}
+          actions={
+            filtered ? <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button> : undefined
+          }
+          className="mb-4"
+        >
+          <div className="mt-2 max-w-[260px]">{typeSelect('notif-type-desktop')}</div>
+        </FilterBar>
+      )}
+
+      <Sheet open={isMobile && filtersOpen} onOpenChange={setFiltersOpen}>
+        <SheetContent
+          title="Filters"
+          footer={
+            <>
+              <SheetClose asChild><Button variant="primary" size="lg">Show results</Button></SheetClose>
+              <Button variant="secondary" size="lg" onClick={clearFilters} disabled={!filtered}>Clear filters</Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
+              Search
+              <Input
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Title or message"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
+              Type
+              <Select value={typeFilter} onChange={(e) => onChangeType(e.target.value as TypeFilter)}>
+                <option value="all">All types</option>
+                {typeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+            </label>
+            <label className="flex flex-col gap-1.5 text-[14px] font-semibold text-[var(--text-primary)]">
+              Severity
+              <Select value={severityFilter} onChange={(e) => onChangeSeverity(e.target.value as SeverityFilter)}>
+                {SEVERITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+            </label>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Results */}
-      {isError && !failed && (
-        <PageState kind="error" layout="inline" title="Couldn't refresh notifications" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
-      )}
-      {failed ? (
-        <PageState kind="error" layout="card" title="Couldn't load notifications" onRetry={() => { void refetch(); }} />
-      ) : isLoading ? (
-        <PageState kind="loading" layout="card" title="Loading notifications…" />
-      ) : notifications.length === 0 ? (
+      {actionFailed && (
         <PageState
-          kind={
-            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
-              ? 'empty'
-              : stateFilter === 'inbox' ? 'clear' : 'empty'
-          }
-          layout="card"
-          icon={<Bell />}
-          title={
-            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
-              ? 'No notifications match these filters'
-              : stateFilter === 'inbox'
-                ? 'Inbox zero'
-                : stateFilter === 'snoozed'
-                  ? 'Nothing snoozed'
-                  : stateFilter === 'done'
-                    ? 'Nothing done yet'
-                    : 'No notifications yet'
-          }
-          description={
-            appliedSearch || typeFilter !== 'all' || severityFilter !== 'all'
-              ? 'Try a different filter or clear the search.'
-              : stateFilter === 'inbox'
-                ? 'You\'re all caught up.'
-                : 'Items move here as you triage them.'
-          }
+          kind="error"
+          layout="inline"
+          compact
+          title="Couldn't update that notification"
+          description="Check your connection and try again."
+          className="mb-3"
         />
-      ) : (
-        <Card>
-          <NotificationGroupedList
-            notifications={notifications}
-            onActivate={(n) => {
-              if (n.state === 'unread') markRead.mutate(n.id);
-              if (n.link) navigate(n.link);
-            }}
-            onSnooze={(id, hours) => {
-              const until = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-              snooze.mutate({ id, until });
-            }}
-            onDone={(id) => markDone.mutate(id)}
-          />
+      )}
+      {isError && !failed && (
+        <PageState
+          kind="error"
+          layout="inline"
+          compact
+          title="Couldn't refresh notifications"
+          description="Showing the last loaded list."
+          onRetry={() => { void refetch(); }}
+          className="mb-3"
+        />
+      )}
 
-          {/* Pagination */}
-          <div className="mt-4 pt-4 border-t border-white/[0.06] flex items-center justify-between">
+      {failed ? (
+        <PageState
+          kind="error"
+          layout="card"
+          title="Couldn't load notifications"
+          description="Check your connection and try again."
+          onRetry={() => { void refetch(); }}
+        />
+      ) : isLoading ? (
+        <Card padding="none"><NotificationRowSkeletons /></Card>
+      ) : notifications.length === 0 ? (
+        filtered ? (
+          <PageState
+            kind="empty"
+            layout="card"
+            compact
+            icon={<Bell />}
+            title="No notifications match these filters"
+            description="Try different filters or clear them."
+            action={{ label: 'Clear filters', onClick: clearFilters, variant: 'secondary' }}
+          />
+        ) : (
+          <PageState
+            kind={stateFilter === 'inbox' ? 'clear' : 'empty'}
+            layout="card"
+            compact
+            icon={<Bell />}
+            title={emptyCopy.title}
+            description={emptyCopy.description}
+            action={
+              <Link
+                to="/settings/notifications"
+                className="inline-flex min-h-[44px] items-center rounded-[10px] border border-[var(--border-base)] px-4 text-[14px] font-semibold text-[var(--text-primary)] no-underline hover:border-[var(--border-strong)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
+              >
+                Notification settings
+              </Link>
+            }
+          />
+        )
+      ) : (
+        <Card padding="none" overflow="clip" aria-busy={isFetching && isPlaceholderData}>
+          {groupByDay(notifications).map((day) => (
+            <section key={day.key} aria-labelledby={`notif-day-${day.key}`}>
+              <DayHeading id={`notif-day-${day.key}`} label={day.label} />
+              <GroupedRows
+                notifications={day.items}
+                onActivate={handleActivate}
+                onSnooze={handleSnooze}
+                onDone={handleDone}
+              />
+            </section>
+          ))}
+
+          <div className="flex items-center justify-between gap-2 border-t border-[var(--border-base)] px-2 py-2">
             <Button
               variant="ghost"
-              size="sm"
+              size="md"
+              className="[@media(pointer:coarse)]:min-h-[44px]"
               onClick={goPrevPage}
               disabled={isFirstPage || isFetching}
             >
               ← Newer
             </Button>
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            <span className="font-mono text-[12px] text-[var(--text-tertiary)]" aria-live="polite">
               {isFetching ? 'Loading…' : `Page ${cursorStack.length}`}
             </span>
             <Button
               variant="ghost"
-              size="sm"
+              size="md"
+              className="[@media(pointer:coarse)]:min-h-[44px]"
               onClick={goNextPage}
               disabled={!hasNextPage || isFetching}
             >
@@ -358,18 +416,14 @@ export function Notifications() {
   );
 }
 
-// ─── B3: Group-by-entity collapse ──────────────────────────────────
+// ─── Group-by-entity collapse ──────────────────────────────────────
 //
-// 3 notifications about Acme within an hour shouldn't render as 3 rows.
-// `group_key` (set by createNotification — e.g. `brand_threat:acme`)
-// drives the collapse: if a group has ≥2 members, render a head row
-// with a count badge and an expand toggle. Solo rows (no group_key, or
-// group_key with one member) render exactly like before.
-//
-// Per-row actions still operate on individual rows when expanded;
-// bulk actions on the whole group are §14 backlog.
+// 3 notifications about Acme within a day shouldn't render as 3 rows.
+// `group_key` (e.g. `brand_threat:acme`) drives the collapse inside each day
+// section: a group with >=2 members shows its newest row plus a toggle. Solo
+// rows render exactly like before. Per-row actions stay per notification.
 
-function NotificationGroupedList({
+function GroupedRows({
   notifications, onActivate, onSnooze, onDone,
 }: {
   notifications: Notification[];
@@ -379,280 +433,61 @@ function NotificationGroupedList({
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  // Build groups in order — preserve the original list ordering by
-  // anchoring each group at its FIRST occurrence. A group with 1
-  // member is rendered as a plain row.
   const groups = useMemo(() => {
-    const map = new Map<string, { key: string | null; members: Notification[] }>();
-    const order: string[] = [];
+    const map = new Map<string, Notification[]>();
     for (const n of notifications) {
       const k = n.group_key ?? `__solo__:${n.id}`;
-      const existing = map.get(k);
-      if (existing) {
-        existing.members.push(n);
-      } else {
-        map.set(k, { key: n.group_key, members: [n] });
-        order.push(k);
-      }
+      const list = map.get(k);
+      if (list) list.push(n); else map.set(k, [n]);
     }
-    return order.map((k) => ({ ...map.get(k)!, mapKey: k }));
+    return Array.from(map.entries()).map(([key, members]) => ({ key, members }));
   }, [notifications]);
 
+  const row = (n: Notification) => (
+    <NotificationRow
+      key={n.id}
+      notification={n}
+      actions="inline"
+      showType
+      showDetail
+      onActivate={() => onActivate(n)}
+      onSnooze={(h) => onSnooze(n.id, h)}
+      onDone={() => onDone(n.id)}
+    />
+  );
+
   return (
-    <div className="space-y-1 -mx-2">
-      {groups.map((g) => {
-        const isCollapsedGroup = g.members.length >= 2;
-        const isOpen = expanded.has(g.mapKey);
-        const head = g.members[0]!;
-
-        if (!isCollapsedGroup) {
-          return (
-            <NotificationRow
-              key={head.id}
-              notification={head}
-              onActivate={() => onActivate(head)}
-              onSnooze={(h) => onSnooze(head.id, h)}
-              onDone={() => onDone(head.id)}
-            />
-          );
-        }
-
+    <ul className="m-0 list-none p-0">
+      {groups.map(({ key, members }) => {
+        const head = members[0]!;
+        if (members.length < 2) return row(head);
+        const isOpen = expanded.has(key);
+        const toggle = () => {
+          const next = new Set(expanded);
+          if (next.has(key)) next.delete(key); else next.add(key);
+          setExpanded(next);
+        };
         return (
-          <div key={g.mapKey}>
-            <div className="flex items-center gap-2 px-3 -mb-1 mt-2">
-              <button
-                onClick={() => {
-                  const next = new Set(expanded);
-                  if (next.has(g.mapKey)) next.delete(g.mapKey); else next.add(g.mapKey);
-                  setExpanded(next);
-                }}
-                className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider touch-target"
-                style={{ color: 'var(--text-tertiary)' }}
-                aria-expanded={isOpen}
-                aria-controls={`group-${g.mapKey}`}
-              >
-                {isOpen
-                  ? <ChevronDown className="w-3 h-3" />
-                  : <ChevronRight className="w-3 h-3" />}
-                {/* Humanized group label — show "+ N similar (Brand Threats)"
-                    instead of the raw group_key like brand_threat:brand_acme. */}
-                {isOpen
-                  ? `Hide ${g.members.length} grouped`
-                  : `+ ${g.members.length - 1} similar · ${typeLabel(head.type)}`}
-              </button>
-            </div>
-            {isOpen ? (
-              g.members.map((n) => (
-                <NotificationRow
-                  key={n.id}
-                  notification={n}
-                  onActivate={() => onActivate(n)}
-                  onSnooze={(h) => onSnooze(n.id, h)}
-                  onDone={() => onDone(n.id)}
-                />
-              ))
-            ) : (
-              <NotificationRow
-                key={head.id}
-                notification={head}
-                onActivate={() => onActivate(head)}
-                onSnooze={(h) => onSnooze(head.id, h)}
-                onDone={() => onDone(head.id)}
-              />
-            )}
-          </div>
+          <li key={key} className="list-none">
+            <ul className="m-0 list-none p-0">
+              {isOpen ? members.map(row) : row(head)}
+              <li className="border-b border-[var(--border-base)]">
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-expanded={isOpen}
+                  className="flex min-h-[44px] w-full cursor-pointer items-center gap-1.5 border-0 bg-transparent px-4 text-left text-[13px] font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--focus-ring)]"
+                >
+                  {isOpen ? <ChevronDown aria-hidden="true" className="h-4 w-4" /> : <ChevronRight aria-hidden="true" className="h-4 w-4" />}
+                  {isOpen
+                    ? `Hide ${members.length - 1} similar`
+                    : `Show ${members.length - 1} more similar · ${typeLabel(head.type)}`}
+                </button>
+              </li>
+            </ul>
+          </li>
         );
       })}
-    </div>
-  );
-}
-
-// ─── Sub-components ─────────────────────────────────────────────────
-
-function FilterPill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider transition-all touch-target"
-      style={{
-        background: active
-          ? 'linear-gradient(135deg, var(--amber), var(--amber-dim))'
-          : 'transparent',
-        border: active
-          ? '1px solid rgba(229, 168, 50, 0.60)'
-          : '1px solid var(--border-base)',
-        color: active ? 'var(--text-on-amber, #0A0F1E)' : 'var(--text-secondary)',
-        fontWeight: 800,
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const SNOOZE_OPTIONS = [
-  { hours: 1,   label: '1h' },
-  { hours: 4,   label: '4h' },
-  { hours: 24,  label: '1d' },
-  { hours: 168, label: '7d' },
-] as const;
-
-function NotificationRow({
-  notification,
-  onActivate,
-  onSnooze,
-  onDone,
-}: {
-  notification: Notification;
-  onActivate: () => void;
-  onSnooze: (hours: number) => void;
-  onDone: () => void;
-}) {
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const isUnread = notification.state === 'unread';
-  const isSnoozed = notification.state === 'snoozed';
-  const isDone = notification.state === 'done';
-  const hasLink = !!notification.link;
-  const sev = severityToBadge(notification.severity);
-
-  return (
-    <div
-      className="group relative w-full px-3 py-3 rounded transition-colors hover:bg-white/[0.03]"
-      style={{
-        borderLeft: isUnread
-          ? `2px solid var(--sev-${sev}-border, var(--sev-info-border))`
-          : '2px solid transparent',
-        background: isUnread ? 'var(--border-base)' : 'transparent',
-        opacity: isDone ? 0.55 : isSnoozed ? 0.75 : 1,
-      }}
-    >
-      <div className="flex items-start gap-3">
-        <Badge severity={sev} size="xs" />
-
-        {/* Title + message + reason + recommended_action + meta */}
-        <button
-          onClick={onActivate}
-          className="flex-1 min-w-0 text-left touch-target"
-          style={{ cursor: hasLink ? 'pointer' : 'default' }}
-          aria-label={hasLink ? `Open "${notification.title}"` : notification.title}
-        >
-          <p className="text-[13px] leading-snug" style={{ color: 'var(--text-primary)' }}>
-            {notification.title}
-          </p>
-          <p className="text-[11px] mt-1 line-clamp-2" style={{ color: 'var(--text-tertiary)' }}>
-            {notification.message}
-          </p>
-
-          {/* Static template fields (Q5) — render only when populated */}
-          {notification.reason_text && (
-            <p className="text-[10px] mt-1.5 italic" style={{ color: 'var(--text-tertiary)' }}>
-              {notification.reason_text}
-            </p>
-          )}
-          {notification.recommended_action && (
-            <p className="text-[11px] mt-1.5 font-mono" style={{ color: 'var(--amber)' }}>
-              {'→ '}{notification.recommended_action}
-            </p>
-          )}
-
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
-              {typeLabel(notification.type)}
-            </span>
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>·</span>
-            <span className="text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-              {relativeTime(notification.created_at)}
-            </span>
-            {isSnoozed && notification.snoozed_until && (
-              <>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>·</span>
-                <span className="text-[10px] font-mono inline-flex items-center gap-1" style={{ color: 'var(--sev-medium)' }}>
-                  <Clock className="w-3 h-3" />
-                  until {relativeTime(notification.snoozed_until)}
-                </span>
-              </>
-            )}
-            {isDone && (
-              <>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>·</span>
-                <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>done</span>
-              </>
-            )}
-          </div>
-        </button>
-
-        {/* Action buttons (§7.7) — Snooze 1h + Done. Hidden when
-            already done. Visible always on touch; on hover for
-            mouse users. */}
-        {!isDone && (
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-            {!isSnoozed && (
-              <div className="relative">
-                <button
-                  onClick={() => setSnoozeOpen((v) => !v)}
-                  className="p-1.5 rounded touch-target hover:bg-white/[0.05] flex items-center gap-0.5"
-                  style={{ color: 'var(--text-tertiary)' }}
-                  aria-haspopup="menu"
-                  aria-expanded={snoozeOpen}
-                  aria-label="Snooze notification"
-                  title="Snooze"
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </button>
-                {snoozeOpen && (
-                  <>
-                    {/* Click-away overlay */}
-                    <div
-                      className="fixed inset-0 z-20"
-                      onClick={() => setSnoozeOpen(false)}
-                      aria-hidden
-                    />
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full mt-1 z-30 rounded-md shadow-lg overflow-hidden"
-                      style={{
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-base)',
-                        minWidth: 110,
-                      }}
-                    >
-                      {SNOOZE_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.hours}
-                          role="menuitem"
-                          onClick={() => { onSnooze(opt.hours); setSnoozeOpen(false); }}
-                          className="block w-full text-left px-3 py-1.5 text-[11px] font-mono hover:bg-white/[0.05] transition-colors"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          Snooze {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            <button
-              onClick={onDone}
-              className="p-1.5 rounded touch-target hover:bg-white/[0.05]"
-              style={{ color: 'var(--text-tertiary)' }}
-              aria-label="Mark done"
-              title="Done"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
+    </ul>
   );
 }

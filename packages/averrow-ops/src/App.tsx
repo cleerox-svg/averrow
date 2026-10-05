@@ -40,9 +40,13 @@ const CoverageWorkspace = React.lazy(() => import('@/features/coverage/CoverageW
 const OperationsWorkspace = React.lazy(() => import('@/features/operations/OperationsWorkspace').then(m => ({ default: m.OperationsWorkspace })));
 const GovernanceWorkspace = React.lazy(() => import('@/features/governance/GovernanceWorkspace').then(m => ({ default: m.GovernanceWorkspace })));
 const OverviewV4 = React.lazy(() => import('@/features/home/OverviewV4').then(m => ({ default: m.OverviewV4 })));
-const Profile = React.lazy(() => import('@/features/settings/Profile').then(m => ({ default: m.Profile })));
+const SettingsLayout = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsLayout })));
+const SettingsIndex = React.lazy(() => import('@/features/settings/SettingsLayout').then(m => ({ default: m.SettingsIndex })));
+const ProfileSettingsPage = React.lazy(() => import('@/features/settings/ProfileSettingsPage').then(m => ({ default: m.ProfileSettingsPage })));
+const DevicesSettingsPage = React.lazy(() => import('@/features/settings/DevicesSettingsPage').then(m => ({ default: m.DevicesSettingsPage })));
 const Notifications = React.lazy(() => import('@/features/settings/Notifications').then(m => ({ default: m.Notifications })));
-const NotificationPreferences = React.lazy(() => import('@/features/settings/NotificationPreferences').then(m => ({ default: m.NotificationPreferences })));
+const SecurityPage = React.lazy(() => import('@/features/settings/SecurityPage').then(m => ({ default: m.SecurityPage })));
+const NotificationSettingsPage = React.lazy(() => import('@/features/settings/NotificationSettingsPage').then(m => ({ default: m.NotificationSettingsPage })));
 const ObservatoryV3 = React.lazy(() => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 })));
 const SearchResults = React.lazy(() => import('@/features/search/SearchResults').then(m => ({ default: m.SearchResults })));
 
@@ -179,9 +183,22 @@ export default function App() {
         <Route path="admin/organizations" element={<Navigate to="/admin/customers" replace />} />
         <Route path="admin/incidents/:id" element={lazyRoute(<AdminIncidentDetail />)} />
         <Route path="admin/push" element={lazyRoute(<PushAdmin />)} />
-        <Route path="profile" element={lazyRoute(<Profile />)} />
+        {/* Account area (docs/ACCOUNT_DESIGN_SPEC.md §2). /settings is the mobile
+            section list; on desktop it redirects to /settings/profile. */}
+        <Route path="settings" element={lazyRoute(<SettingsLayout />)}>
+          <Route index element={lazyRoute(<SettingsIndex />)} />
+          <Route path="profile" element={lazyRoute(<ProfileSettingsPage />)} />
+          <Route path="devices" element={lazyRoute(<DevicesSettingsPage />)} />
+          <Route path="security" element={lazyRoute(<SecurityPage />)} />
+          <Route path="notifications" element={<Navigate to="/settings/notifications/channels" replace />} />
+          <Route path="notifications/:tab" element={lazyRoute(<NotificationSettingsPage />)} />
+          {/* Unknown settings paths land on the default section. */}
+          <Route path="*" element={<Navigate to="/settings/profile" replace />} />
+        </Route>
+        {/* Legacy account paths */}
+        <Route path="profile" element={<Navigate to="/settings/profile" replace />} />
         <Route path="notifications" element={lazyRoute(<Notifications />)} />
-        <Route path="notifications/preferences" element={lazyRoute(<NotificationPreferences />)} />
+        <Route path="notifications/preferences" element={<Navigate to="/settings/notifications/channels" replace />} />
         {/* Retired standalone list paths → workspace tabs. Generated from
             LEGACY_TAB_PATHS (lib/workspaceRoutes.ts), the single source. */}
         {Object.entries(LEGACY_TAB_PATHS).map(([path, tabKey]) => (

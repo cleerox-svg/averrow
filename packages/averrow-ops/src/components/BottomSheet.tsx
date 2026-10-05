@@ -41,11 +41,17 @@ export function BottomSheet({ open, onClose, children }: BottomSheetProps) {
       />
       <div
         ref={sheetRef}
-        className="absolute bottom-0 left-0 right-0 max-h-[85vh] rounded-t-2xl bg-instrument border-t border-white/10 flex flex-col animate-slide-up overflow-hidden"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        className="absolute bottom-0 left-0 right-0 max-h-[85vh] rounded-t-2xl border-t flex flex-col animate-slide-up overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        style={{
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          background: 'var(--bg-elevated)',
+          borderColor: 'var(--border-base)',
+        }}
       >
         <div className="flex justify-center pt-3 pb-2 flex-shrink-0">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full" style={{ background: 'var(--border-strong)' }} />
         </div>
         <div className="flex-1 overflow-y-auto">
           {children}

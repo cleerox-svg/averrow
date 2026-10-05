@@ -1,145 +1,137 @@
-import { useState, useCallback } from 'react';
+// Account / avatar menu (ACCOUNT_DESIGN_SPEC §4.12, §5.5), built on the shared
+// kit: Radix popover on desktop, the same items in a bottom Sheet on compact
+// screens. Initials only — never the Google profile picture.
+
+import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Building2, Key, LogOut, UserPlus } from 'lucide-react';
+import {
+  Bell, ShieldCheck, Smartphone, User, UserPlus, LogOut, Monitor, Moon, Sun,
+} from 'lucide-react';
+import { roleLabel } from '@averrow/shared';
+import {
+  Avatar, Badge, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, ResponsiveMenu,
+} from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
-import { useIsMobile } from '@/hooks/useWindowWidth';
-import { parseInitials, SELF_AVATAR_COLOR } from '@/lib/avatar';
-import { Dropdown } from './Dropdown';
-import { BottomSheet } from './BottomSheet';
+import { parseInitials } from '@/lib/avatar';
+import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
+import { useTheme } from '@/design-system/hooks/useTheme';
+import type { Theme } from '@/design-system/hooks/useTheme';
+import { useUnreadCount, OPS_AUDIENCE_FILTER } from '@/hooks/useNotifications';
 
-interface MenuItem {
-  label: string;
-  icon: typeof User;
-  path?: string;
-  onClick?: () => void;
-  danger?: boolean;
+const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof Monitor }> = [
+  { value: 'auto', label: 'Auto', Icon: Monitor },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+  { value: 'light', label: 'Light', Icon: Sun },
+];
+
+function isTheme(v: string): v is Theme {
+  return v === 'auto' || v === 'dark' || v === 'light';
 }
 
-function ProfileMenu({ onClose }: { onClose: () => void }) {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+const ACCOUNT_LINKS = [
+  { label: 'Profile', path: '/settings/profile', Icon: User, tone: 'amber' },
+  { label: 'Security', path: '/settings/security', Icon: ShieldCheck, tone: 'green' },
+  { label: 'Notifications', path: '/settings/notifications', Icon: Bell, tone: 'blue' },
+  { label: 'Devices & App', path: '/settings/devices', Icon: Smartphone, tone: 'violet' },
+] as const;
 
-  const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
-
-  const roleName = user?.role === 'super_admin' ? 'Super Admin'
-    : user?.role === 'admin' ? 'Admin'
-    : user?.role === 'analyst' ? 'Analyst'
-    : 'Client';
-
-  // Theme toggle lives in the sidebar header now (canonical
-  // quick-access surface) + Profile → Preferences (canonical
-  // explicit picker with Auto / Dark / Light). Removed from this
-  // dropdown to keep one toggle per product, no duplication.
-  const menuItems: MenuItem[] = [
-    { label: 'Profile & Settings', icon: User, path: '/profile' },
-    { label: 'Notification Preferences', icon: Bell, path: '/notifications/preferences' },
-    { label: 'Organization', icon: Building2, path: '/admin' },
-    { label: 'API Keys', icon: Key, path: '/admin' },
-  ];
-
-  const handleNav = (path: string) => {
-    navigate(path);
-    onClose();
-  };
-
-  return (
-    <div>
-      <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-white/5">
-        <div
-          className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-          style={{
-            background: SELF_AVATAR_COLOR,
-            color: 'var(--text-on-amber, #0A0F1E)',
-            border: '1px solid var(--border-strong)',
-          }}
-        >
-          {initials}
-        </div>
-        <div className="min-w-0">
-          <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-            {user?.display_name ?? user?.name ?? 'User'}
-          </p>
-          <p className="text-[11px] text-white/40 truncate">
-            {user?.email}
-          </p>
-          <p className="text-[10px] font-mono uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-            {roleName}
-          </p>
-        </div>
-      </div>
-
-      <div className="py-1">
-        {menuItems.map(item => (
-          <button
-            key={item.label}
-            onClick={() => {
-              if (item.onClick) item.onClick();
-              else if (item.path) handleNav(item.path);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-white/5 transition-colors touch-target border-b border-white/[0.04] md:border-b-0"
-          >
-            <item.icon size={15} className="text-white/40 flex-shrink-0" />
-            <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>{item.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="border-t border-white/5 py-1">
-        <button
-          onClick={() => { void logout(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-white/5 transition-colors touch-target"
-          title="Sign out then sign in as a different user"
-        >
-          <UserPlus size={15} className="text-white/40 flex-shrink-0" />
-          <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>Switch account</span>
-        </button>
-        <button
-          onClick={() => { void logout(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[#C83C3C]/10 transition-colors touch-target"
-        >
-          <LogOut size={15} className="text-[#C83C3C]/70 flex-shrink-0" />
-          <span className="text-[14px] md:text-[12px] text-[#C83C3C]/80">Logout</span>
-        </button>
-      </div>
-    </div>
-  );
-}
+const AvatarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { initials: string; name: string }>(
+  function AvatarTrigger({ initials, name, ...rest }, ref) {
+    return (
+      <button
+        ref={ref}
+        type="button"
+        aria-label={`Account menu for ${name}`}
+        aria-haspopup="menu"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] touch-target"
+        {...rest}
+      >
+        <Avatar name={name} initials={initials} tone="self" size={36} radius={18} />
+      </button>
+    );
+  },
+);
 
 export function UserAvatar() {
-  const [open, setOpen] = useState(false);
-  const { user } = useAuth();
-  const isMobile = useIsMobile();
+  const { user, logout, switchAccount } = useAuth();
+  const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
+  const { data: unread = 0 } = useUnreadCount(OPS_AUDIENCE_FILTER);
 
+  const name = user?.display_name ?? user?.name ?? user?.email ?? 'account';
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
-
-  const handleClose = useCallback(() => setOpen(false), []);
+  const hasPasskey = (user?.passkey_count ?? 0) > 0;
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-150 touch-target"
-        style={{
-          background: SELF_AVATAR_COLOR,
-          color: 'var(--text-on-amber, #0A0F1E)',
-          border: '1px solid var(--border-strong)',
-        }}
-        aria-label={`User menu, ${user?.display_name ?? user?.name ?? user?.email ?? 'account'}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {initials}
-      </button>
+    <ResponsiveMenu
+      title="Account menu"
+      trigger={<AvatarTrigger initials={initials} name={name} />}
+    >
+      <div className="flex items-center gap-3 px-3 pb-3 pt-2.5">
+        <Avatar name={name} initials={initials} tone="self" shape="squircle" size={40} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-bold leading-tight text-[var(--text-primary)]" title={name}>{name}</p>
+          {user?.email ? (
+            <p className="truncate text-[13px] text-[var(--text-secondary)]" title={user.email}>{user.email}</p>
+          ) : null}
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <Badge status="draft" size="md" font="sans">{roleLabel(user?.role)}</Badge>
+            {hasPasskey
+              ? <Badge status="active" size="md" font="sans">Passkey on</Badge>
+              : <Badge status="warning" size="md" font="sans">No passkey</Badge>}
+          </div>
+        </div>
+      </div>
 
-      {isMobile ? (
-        <BottomSheet open={open} onClose={handleClose}>
-          <ProfileMenu onClose={handleClose} />
-        </BottomSheet>
-      ) : (
-        <Dropdown open={open} onClose={handleClose} width={260}>
-          <ProfileMenu onClose={handleClose} />
-        </Dropdown>
-      )}
-    </div>
+      <MenuSeparator />
+
+      {ACCOUNT_LINKS.map(({ label, path, Icon, tone }) => (
+        <MenuItem
+          key={path}
+          icon={<Icon />}
+          tone={tone}
+          trailing={label === 'Notifications' && unread > 0
+            ? <Badge severity="medium" size="md" label={unread > 99 ? '99+' : String(unread)} />
+            : undefined}
+          onSelect={() => navigate(path)}
+        >
+          {label}
+        </MenuItem>
+      ))}
+
+      <MenuSeparator />
+
+      {/* Choice rows, not a SegmentedControl: they are real menu items, so arrow
+          keys reach them in the popover and the sheet. keepOpen: a theme change
+          is visible instantly behind the menu and people compare Dark/Light, so
+          closing after each pick would force a reopen; Esc / outside tap closes. */}
+      <MenuLabel>Appearance</MenuLabel>
+      <MenuRadioGroup
+        aria-label="Appearance"
+        value={theme}
+        onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}
+      >
+        {THEME_OPTIONS.map(({ value, label, Icon }) => (
+          <MenuRadioItem key={value} value={value} icon={<Icon />} keepOpen>{label}</MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+
+      <MenuSeparator />
+
+      <MenuItem
+        icon={<UserPlus />}
+        description="Use a different Google account"
+        onSelect={() => { void switchAccount(); }}
+      >
+        Switch account…
+      </MenuItem>
+      <MenuItem tone="danger" icon={<LogOut />} onSelect={() => { void logout(); }}>
+        Sign out
+      </MenuItem>
+
+      <p className="px-3 pb-1.5 pt-2 text-center font-mono text-[11px] text-[var(--text-muted)]">
+        {VERSION_LABEL} · {BUILD_SHA}
+      </p>
+    </ResponsiveMenu>
   );
 }

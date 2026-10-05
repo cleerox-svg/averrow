@@ -106,3 +106,26 @@ describe('shared FilterBar', () => {
     expect(screen.getByRole('searchbox').className).toContain('placeholder:text-[var(--text-secondary)]');
   });
 });
+
+describe('FilterBar search keys and size', () => {
+  it('Escape clears, Enter submits, md size is legible', async () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <FilterBar
+        size="md"
+        search={{ value: 'abc', onChange, onSubmit, label: 'Find' }}
+        filters={[{ value: 'a', label: 'All' }]}
+        active="a"
+      />,
+    );
+    const input = screen.getByLabelText('Find');
+    input.focus();
+    await user.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledWith('abc');
+    await user.keyboard('{Escape}');
+    expect(onChange).toHaveBeenCalledWith('');
+    expect(screen.getByRole('button', { name: 'All' }).className).toContain('text-[11px]');
+  });
+});

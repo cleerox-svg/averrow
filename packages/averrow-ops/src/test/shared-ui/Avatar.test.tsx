@@ -84,3 +84,55 @@ describe('shared Avatar', () => {
     expect(el.style.height).toBe('64px');
   });
 });
+
+describe('shared Avatar squircle / self', () => {
+  it('shape="squircle" uses ~30% radius and supports size 72', () => {
+    const { container } = render(<Avatar name="A" size={72} shape="squircle" />);
+    const el = container.firstChild as HTMLElement;
+    expect(el.style.width).toBe('72px');
+    expect(el.style.borderRadius).toBe('22px');
+  });
+
+  it('an explicit radius still wins over the squircle shape', () => {
+    const { container } = render(<Avatar name="A" size={72} shape="squircle" radius={10} />);
+    expect((container.firstChild as HTMLElement).style.borderRadius).toBe('10px');
+  });
+
+  it('tone="self" renders the supplied initials with on-amber ink and no image', () => {
+    const { container } = render(
+      <Avatar tone="self" shape="squircle" size={72} name="Claude Leroux" initials="CL" color="var(--amber)" />,
+    );
+    expect(screen.getByText('CL')).toBeInTheDocument();
+    expect(screen.getByText('CL').style.color).toBe('var(--text-on-amber)');
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('tone="self" never renders an image even if a URL is passed', () => {
+    const { container } = render(
+      <Avatar tone="self" name="Claude" faviconUrl="https://lh3.googleusercontent.com/pic.jpg" />,
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByText('C')).toBeInTheDocument();
+  });
+
+  it('tone="self" gets the outer glow by default; brand does not', () => {
+    const self = render(<Avatar tone="self" name="A" size={72} />);
+    expect((self.container.firstChild as HTMLElement).style.boxShadow).toContain('color-mix');
+    self.unmount();
+    const brand = render(<Avatar name="A" size={72} />);
+    expect((brand.container.firstChild as HTMLElement).style.boxShadow).not.toMatch(/0 0 32px/);
+  });
+});
+
+describe('shared Avatar tone=self (review fix)', () => {
+  it('defaults to the amber self colour when no colour is passed', () => {
+    const { container } = render(<Avatar tone="self" name="Claude Leroux" initials="CL" />);
+    expect((container.firstChild as HTMLElement).style.background).toContain('var(--amber)');
+  });
+
+  it('caps self initials at 2 characters', () => {
+    render(<Avatar tone="self" name="x" initials="ABC" />);
+    expect(screen.getByText('AB')).toBeInTheDocument();
+    expect(screen.queryByText('ABC')).toBeNull();
+  });
+});

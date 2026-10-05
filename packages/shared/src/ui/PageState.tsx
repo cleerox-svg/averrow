@@ -171,7 +171,7 @@ export function PageState({
     const text = title ?? 'Loading…';
     if (layout === 'inline') {
       return (
-        <div role="status" aria-busy="true" className={cn('flex items-center gap-2 py-2 font-mono text-xs text-[var(--text-secondary)]', className)}>
+        <div role="status" aria-busy="true" className={cn('flex items-center gap-2 py-2 font-mono text-[13px] text-[var(--text-secondary)]', className)}>
           <span aria-hidden className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--border-strong)] border-t-[var(--amber)]" />
           {text}
         </div>
@@ -207,13 +207,13 @@ export function PageState({
   // The accessible name carries the title so several error cards on one page
   // expose distinct "Try again" buttons (the visible label stays "Try again").
   const retry = kind === 'error' && onRetry
-    ? <Button size="sm" variant={primary ? 'secondary' : 'primary'} onClick={onRetry} aria-label={`Try again: ${heading}`}>Try again</Button>
+    ? <Button size="sm" className="[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-4" variant={primary ? 'secondary' : 'primary'} onClick={onRetry} aria-label={`Try again: ${heading}`}>Try again</Button>
     : null;
   const hasActions = !!(primary || secondary || retry);
 
   if (layout === 'inline') {
     return (
-      <div role={role} className={cn('flex flex-wrap items-center gap-2 py-2 text-xs', className)}>
+      <div role={role} className={cn('flex flex-wrap items-center gap-2 py-2 text-[13px]', className)}>
         {glyph != null && <span aria-hidden className="flex h-4 w-4 items-center justify-center [&>svg]:h-4 [&>svg]:w-4" style={{ color: tone.color }}>{glyph}</span>}
         <span className="font-semibold text-[var(--text-primary)]">{heading}</span>
         {description !== undefined && <span className="text-[var(--text-secondary)]">{body}</span>}
@@ -244,7 +244,7 @@ export function PageState({
         </div>
       )}
       <h3 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">{heading}</h3>
-      <p className="max-w-sm text-xs leading-relaxed text-[var(--text-secondary)]">{body}</p>
+      <p className="max-w-sm text-[13px] leading-relaxed text-[var(--text-secondary)]">{body}</p>
       {hasActions && (
         <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
           {retry}{primary}{secondary}

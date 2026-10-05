@@ -492,8 +492,8 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
  *   - v2 push_severity_floor != 'off' AND notification severity meets the floor, OR
  *   - v2 not present AND v1 push_notifications === 1 (legacy users).
  *
- * Quiet hours: v2 columns take precedence when present; v1 used as fallback.
- * Critical breakthrough: v2 critical_bypasses_quiet takes precedence.
+ * Quiet hours + critical breakthrough: resolved as one set by
+ * resolveQuietHours — v2's set whenever a v2 row exists, else v1's.
  */
 async function shouldSendPush(
   opts: CreateNotificationOpts,
@@ -515,25 +515,80 @@ async function shouldSendPush(
   const allowed = v2HasRow ? v2Allows : v1Allows;
   if (!allowed) return false;
 
-  // ── Quiet hours: prefer v2, fall back to v1 ──────────────────────
-  const quietStart = pref.v2_quiet_hours_start    ?? pref.quiet_hours_start    ?? null;
-  const quietEnd   = pref.v2_quiet_hours_end      ?? pref.quiet_hours_end      ?? null;
-  const quietTz    = pref.v2_quiet_hours_timezone ?? pref.quiet_hours_tz       ?? null;
-  const criticalBreakthrough = pref.v2_critical_bypasses_quiet != null
-    ? pref.v2_critical_bypasses_quiet === 1
-    : pref.critical_breakthrough === 1;
-
-  const quiet: QuietHoursPrefs = {
-    start: quietStart,
-    end: quietEnd,
-    tz: quietTz,
-    criticalBreakthrough,
-  };
-  if (isInQuietHours(quiet)) {
+  const quiet = resolveQuietHours(pref);
+  if (quiet && isInQuietHours(quiet)) {
     if (opts.severity === 'critical' && quiet.criticalBreakthrough) return true;
     return false;
   }
   return true;
+}
+
+/** The quiet-hours columns of the v1 ⋈ v2 preference join (plus the v2
+ *  push floor, used only as a "v2 row exists" signal). */
+export type QuietHoursPrefSource = Pick<UserPrefRow,
+  | 'quiet_hours_start' | 'quiet_hours_end' | 'quiet_hours_tz' | 'critical_breakthrough'
+  | 'v2_push_severity_floor'
+  | 'v2_quiet_hours_start' | 'v2_quiet_hours_end' | 'v2_quiet_hours_timezone'
+  | 'v2_critical_bypasses_quiet'>;
+
+/** True when the LEFT JOIN found a notification_preferences_v2 row. Its
+ *  push_severity_floor, quiet_hours_timezone and critical_bypasses_quiet
+ *  columns are NOT NULL, so any of them being non-null means the row exists. */
+function hasV2Row(pref: QuietHoursPrefSource): boolean {
+  return pref.v2_push_severity_floor != null
+    || pref.v2_quiet_hours_timezone != null
+    || pref.v2_critical_bypasses_quiet != null;
+}
+
+/** Pick the quiet-hours set ATOMICALLY from one table — never field-by-field.
+ *
+ *  A per-field `v2 ?? v1` merge once took start/end from v1 and the timezone
+ *  from the auto-seeded v2 row, evaluating the user's window in UTC, so the
+ *  set always comes whole from one table.
+ *
+ *  Which table: v2 whenever a v2 row EXISTS — the same rule as the push
+ *  channel gate in shouldSendPush. The settings UI writes quiet hours to v2
+ *  only (Phase 3, D4), and turning quiet hours off there writes a NULL v2
+ *  window; falling back to v1 on an incomplete v2 window would resurrect the
+ *  legacy window (migration 0281 copied v1 → v2 without clearing v1) and keep
+ *  suppressing a user who turned quiet hours off. The legacy v1 set is used
+ *  only for users with no v2 row at all.
+ *
+ *  Deploy dependency: migration 0281 must be applied before (or with) this
+ *  worker, so v1-only windows have been copied into existing v2 rows.
+ *
+ *  Returns null when the chosen set has no complete window (no quiet hours). */
+export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs | null {
+  if (hasV2Row(pref)) {
+    const v2Start = pref.v2_quiet_hours_start ?? null;
+    const v2End = pref.v2_quiet_hours_end ?? null;
+    if (!v2Start || !v2End) return null;
+    return {
+      start: v2Start,
+      end: v2End,
+      tz: pref.v2_quiet_hours_timezone ?? null,
+      criticalBreakthrough: pref.v2_critical_bypasses_quiet === 1,
+    };
+  }
+  const v1Start = pref.quiet_hours_start ?? null;
+  const v1End = pref.quiet_hours_end ?? null;
+  if (v1Start && v1End) {
+    return {
+      start: v1Start,
+      end: v1End,
+      tz: pref.quiet_hours_tz ?? null,
+      // Critical-breakthrough precedence (b0ce7f8) is unchanged: the v2 flag
+      // when a v2 row exists, else v1. This branch only runs without a v2
+      // row, so v2_critical_bypasses_quiet is null here and v1 decides; the
+      // `!= null` check is kept so the rule reads the same in both places.
+      // Legacy read kept for ONE release (old clients may PATCH v1 quiet
+      // fields for users who never got a v2 row), then removed.
+      criticalBreakthrough: pref.v2_critical_bypasses_quiet != null
+        ? pref.v2_critical_bypasses_quiet === 1
+        : pref.critical_breakthrough === 1,
+    };
+  }
+  return null;
 }
 
 function getRateKey(opts: CreateNotificationOpts): string | null {

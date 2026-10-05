@@ -1,9 +1,5 @@
 /* Shared styles for the PWA install surfaces (InstallAppBanner / InstallAppCard). */
 
-/* Ops-local token: ink colour on amber fills (matches the fallback the shared
-   Login/Profile primitives already use). */
-:root { --text-on-amber: #0A0F1E; }
-
 /* Gutter wrapper for the Overview banner — mirrors StatGrid/StatusRow
    (`@container home`, 24px -> 32px) so it lines up with the hero + KPI tiles. */
 .install-gutter { padding: 16px 24px 0; }

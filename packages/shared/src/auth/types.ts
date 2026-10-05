@@ -33,6 +33,8 @@ export interface SharedAuthUser {
    */
   passkey_required?: boolean;
   avatar_url?:      string;
+  /** Account creation time (/api/auth/me returns it). Shown as "Member since". */
+  created_at?:      string | null;
   organization?:    SharedAuthUserOrganization | null;
 }
 
@@ -134,6 +136,10 @@ export interface SharedAuthState {
   hasOrg:           boolean;
   login:            () => void;
   logout:           () => Promise<void>;
+  /** Sign out, then go straight to the OAuth login path (the worker
+   *  always sends Google `prompt=select_account`, so Google shows the
+   *  account chooser). */
+  switchAccount:    () => Promise<void>;
   /** Re-fetch /api/auth/me and refresh local state. */
   refreshUser:      () => Promise<void>;
 }

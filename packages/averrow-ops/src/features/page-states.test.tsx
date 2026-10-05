@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, Link } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -41,7 +41,8 @@ import { Feeds } from '@/features/feeds/Feeds';
 import { Providers } from '@/features/providers/Providers';
 import { Takedowns } from '@/features/takedowns/Takedowns';
 import { Trends } from '@/features/trends/Trends';
-import { NotificationPreferences } from '@/features/settings/NotificationPreferences';
+import { NotificationSettingsPage } from '@/features/settings/NotificationSettingsPage';
+import { ToastProvider as SharedToastProvider } from '@averrow/shared/ui';
 import { AttributionBacklog } from '@/features/admin/AttributionBacklog';
 import { AdminAudit } from '@/features/admin/AdminAudit';
 import { NotificationCenter } from '@/features/admin/NotificationCenter';
@@ -265,17 +266,17 @@ describe('Trends (infinite refetch loop)', () => {
   });
 });
 
-describe('NotificationPreferences', () => {
+describe('NotificationSettingsPage', () => {
   const v1 = '/api/notifications/preferences';
   const v2 = '/api/notifications/preferences/v2';
   const v2ok = { success: true, data: { digest_mode: 'daily' } };
 
   it('shows an error with retry and renders no toggles when prefs fail to load', async () => {
     routeApi([{ match: v2, result: v2ok }, { match: v1, result: 'reject' }]);
-    renderWithProviders(<NotificationPreferences />);
+    renderWithProviders(<SharedToastProvider><NotificationSettingsPage /></SharedToastProvider>);
     await waitFor(() => expect(errorAlert(/couldn't load your notification preferences/i)).toBeTruthy());
-    expect(screen.queryByText('Delivery')).not.toBeInTheDocument();
-    expect(screen.queryByText('Events')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Channels' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
 
     const before = callsTo(v1);
     await userEvent.setup().click(within(errorAlert(/couldn't load your notification/i)!).getByRole('button', { name: /^Try again/ }));
@@ -284,16 +285,17 @@ describe('NotificationPreferences', () => {
 
   it('does not render the toggles while prefs are still loading', () => {
     routeApi([{ match: v2, result: 'pending' }, { match: v1, result: 'pending' }]);
-    renderWithProviders(<NotificationPreferences />);
-    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
-    expect(screen.queryByText('Delivery')).not.toBeInTheDocument();
+    renderWithProviders(<SharedToastProvider><NotificationSettingsPage /></SharedToastProvider>);
+    // The toast provider keeps empty live regions mounted; the loader is the busy one.
+    expect(screen.getAllByRole('status').some((el) => el.getAttribute('aria-busy') === 'true')).toBe(true);
+    expect(screen.queryByRole('tab', { name: 'Channels' })).not.toBeInTheDocument();
   });
 
   it('renders the sections once both preference sets have loaded', async () => {
     routeApi([{ match: v2, result: v2ok }, { match: v1, result: { success: true, data: {} } }]);
-    renderWithProviders(<NotificationPreferences />);
-    expect(await screen.findByText('Delivery')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    renderWithProviders(<SharedToastProvider><NotificationSettingsPage /></SharedToastProvider>);
+    expect(await screen.findByRole('tab', { name: 'Channels' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('alert').filter((el) => (el.textContent ?? '').trim())).toHaveLength(0);
   });
 });
 
@@ -407,6 +409,21 @@ describe('Organization tabs', () => {
     await userEvent.setup().click(await screen.findByRole('tab', { name: /members/i }));
     await waitFor(() => expect(errorAlert(/couldn't load members/i)).toBeTruthy());
     expect(screen.queryByText('No members yet')).not.toBeInTheDocument();
+  });
+
+  it('follows a ?tab= change while already mounted (profile menu → API Keys)', async () => {
+    routeApi([{ match: '/api/orgs/org1/members', result: { success: true, data: [] } }, ...base, { match: '/api/orgs/org1', result: org }]);
+    window.history.replaceState(null, '', '/admin/users?tab=members');
+    renderWithProviders(
+      <>
+        <Organization />
+        <Link to="/admin/users?tab=api-keys">menu: api keys</Link>
+      </>,
+    );
+    expect(await screen.findByRole('tab', { name: /members/i })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.setup().click(screen.getByRole('link', { name: 'menu: api keys' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /api keys/i })).toHaveAttribute('aria-selected', 'true'));
+    window.history.replaceState(null, '', '/');
   });
 });
 

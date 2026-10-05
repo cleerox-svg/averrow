@@ -195,6 +195,14 @@ describe('shared Badge', () => {
       expect(styleOf('parked').style.color).toBe('var(--text-secondary)');
     });
 
+    it('md size text is 11px (account-surface legibility floor); sm stays 9px', () => {
+      const { unmount } = render(<Badge severity="high" size="md" />);
+      expect(styleOf('High').style.fontSize).toBe('11px');
+      unmount();
+      render(<Badge severity="high" size="sm" />);
+      expect(styleOf('High').style.fontSize).toBe('9px');
+    });
+
     it('xs size is at least 9px', () => {
       render(<Badge severity="high" size="xs" />);
       expect(parseFloat(styleOf('High').style.fontSize)).toBeGreaterThanOrEqual(9);
@@ -210,5 +218,18 @@ describe('shared Badge', () => {
       expect(html).toContain('var(--cyan-text)');
       expect(html).not.toMatch(/0,\s*212,\s*255|#00d4ff/i);
     });
+  });
+});
+
+describe('Badge font opt-in', () => {
+  it('defaults to uppercase mono; font="sans" is sentence-case sans', () => {
+    const { rerender, container } = render(<Badge status="active" label="This device" />);
+    expect((container.firstChild as HTMLElement).className).toContain('font-mono');
+    expect((container.firstChild as HTMLElement).className).toContain('uppercase');
+    rerender(<Badge status="active" label="This device" font="sans" />);
+    const cls = (container.firstChild as HTMLElement).className;
+    expect(cls).toContain('font-sans');
+    expect(cls).toContain('normal-case');
+    expect(cls).not.toContain('font-mono');
   });
 });

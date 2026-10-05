@@ -13,6 +13,10 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/auth/callback` | — | OAuth callback handler |
 | POST | `/api/auth/refresh` | Cookie | Refresh access token |
 | POST | `/api/auth/logout` | Cookie | Logout and clear session |
+| GET | `/api/auth/sessions` | JWT | Caller's own active sessions: `{ total, current_known, sessions[{ id, ip_masked, user_agent, issued_at, last_active_at, auth_method, is_current }] }`. Current session identified via the `radar_refresh` cookie. IP is masked server-side. |
+| DELETE | `/api/auth/sessions/:id` | JWT | Revoke one of the caller's own sessions: its refresh AND its live access tokens (rejected immediately, see "Session revocation" below). 200 `{ revoked: 1, revoked_current }` — `revoked_current` is `false` when the current session was identified (cookie, else the token's `sid`), `null` when it could not be (client should re-check via refresh and sign out locally if that fails). 400 for the current session, 404 if not theirs/already revoked, **403 for read-only identities** (`auditor`, incl. the MCP service account, and the UI-preview presets). `revocation_pending: true` if the KV write failed (refresh is still revoked; access tokens lapse within 30 min). |
+| POST | `/api/auth/sessions/revoke-others` | JWT + cookie (or token `sid`) | Revoke every caller session except this device's, including their live access tokens. 200 `{ revoked }`; 409 if the current session can't be identified from the cookie or the token's `sid`; **403 for read-only identities**; `revocation_pending: true` on KV failure. |
+| POST | `/api/auth/logout-all` | JWT | Sign out everywhere: revokes all caller sessions, stamps `forced_logout:<id>` (backdated 1s so a sign-in completed in the same second survives; every revoked session's id is also listed so its same-second tokens are still rejected), clears the refresh cookie. **403 for read-only identities**; `revocation_pending: true` on KV failure. |
 | GET | `/api/auth/me` | User | Get current user info |
 | POST | `/api/auth/magic-link/request` | — (rate-limited) | Request a magic sign-in link by email. Body: `{ email, return_to? }` |
 | GET | `/api/auth/magic-link/:token` | — (rate-limited) | Verify magic link from the email body; mints a session and 302s to the SPA like the OAuth callback |
@@ -20,6 +24,18 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | PATCH | `/api/profile` | User | Update a partial set of profile fields; pass `null` to clear a field back to its default |
 | GET | `/api/invites/:token` | — | Validate an invite token before acceptance |
 | GET | `/invite` | — | Invite landing page (HTML) |
+
+**Session revocation (2026-10):** access tokens minted at login (every
+method: OAuth, magic link, passkey, invite) and on refresh carry a `sid`
+claim = `sessions.id`. `forced_logout:<user_id>` in KV (read once per request
+by `requireAuth`, no extra read) accepts the legacy plain epoch number or
+`{"ts": <epoch>|null, "sids": {"<sid>": <expiry epoch>}}`: a token is
+rejected (401 `Session invalidated`) when `iat <= ts` or its `sid` is listed.
+The self-service session endpoints add revoked sids (kept ~32 min, pruned on
+write, never lowering `ts`); the admin force-logout, role PATCH, invite
+acceptance and refresh-reuse writers still write the plain number, which
+supersedes earlier sids. Tokens without `sid` (preview, service, pre-change)
+only face `ts`. See `lib/forced-logout.ts`.
 
 **Auth hardening (AUTH_AUDIT_2026-06):**
 - **Access token TTL** is **30 min** (was 12h). The SPA holds it in memory
@@ -750,7 +766,7 @@ free text. They remain on `lookalike_domains` for staff
 | GET | `/api/notifications` | User | List notifications. Query params: `state=inbox\|snoozed\|done\|all` (default `inbox` hides done + unexpired snoozed), `unread=true`, `type`, `severity`, `q`, `cursor`, `limit` |
 | GET | `/api/notifications/unread-count` | User | Unread count |
 | GET | `/api/notifications/preferences` | User | Notification preferences |
-| PATCH | `/api/notifications/preferences` | User | Update preferences |
+| PATCH | `/api/notifications/preferences` | User | Update preferences. Partial: only toggles present in the body are written; omitted toggles keep their stored values (a first write seeds the row with defaults). Quiet-hours fields likewise only when present. 400 for a non-object body |
 | POST | `/api/notifications/:id/read` | User | Mark as read |
 | POST | `/api/notifications/read-all` | User | Mark all as read |
 | POST | `/api/notifications/:id/snooze` | User | Snooze until ISO-8601 timestamp (body: `{until}`) |

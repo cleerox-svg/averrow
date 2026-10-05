@@ -298,15 +298,18 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     if (typeof window !== 'undefined') window.location.href = loginPath;
   }, [loginPath]);
 
-  const logout = useCallback(async () => {
+  const teardown = useCallback(async (destination: string) => {
     // Best-effort: a network error here still proceeds with local
     // teardown so the user isn't trapped on the shell.
     try { await httpClient.post(logoutPath, {}); } catch { /* swallow */ }
     httpClient.clearTokens();
     setUser(null);
     onLogoutCleanup?.();
-    if (typeof window !== 'undefined') window.location.href = logoutRedirectTo;
-  }, [httpClient, logoutPath, logoutRedirectTo, onLogoutCleanup, setUser]);
+    if (typeof window !== 'undefined') window.location.href = destination;
+  }, [httpClient, logoutPath, onLogoutCleanup, setUser]);
+
+  const logout = useCallback(() => teardown(logoutRedirectTo), [teardown, logoutRedirectTo]);
+  const switchAccount = useCallback(() => teardown(loginPath), [teardown, loginPath]);
 
   const value: SharedAuthState = {
     user,
@@ -316,6 +319,7 @@ export function AuthProvider({ children, httpClient, config }: AuthProviderProps
     hasOrg:          !!user?.organization,
     login,
     logout,
+    switchAccount,
     refreshUser:     checkAuth,
   };
 
