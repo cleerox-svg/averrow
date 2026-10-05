@@ -36,7 +36,6 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { audit } from "../lib/audit";
 import { scopeCacheSegment, GLOBAL_SCOPE_SEGMENT } from "../lib/scope-cache-key";
 import { isPlatformStaff } from "../middleware/auth";
-import { moduleKeyForTargetType } from "../lib/takedown-module-key";
 import type { AlertStatus, Severity } from "../lib/alerts";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
@@ -58,10 +57,6 @@ const SEVERITY_RANK_SQL = `CASE LOWER(a.severity)
  * UI can repeat.
  */
 export const MAX_BULK_ALERTS = 90;
-
-/** target_type every bulk-takedown draft is created with (see the KNOWN BUG
- *  note on handleBulkTakedown — it is not yet derived per alert type). */
-const BULK_TAKEDOWN_TARGET_TYPE = "social_profile";
 
 /** Staff note length cap (stored in alerts.staff_notes). */
 export const MAX_STAFF_NOTES_LENGTH = 4000;
@@ -640,17 +635,13 @@ export async function handleBulkTakedown(request: Request, env: Env, userId: str
       return json({ success: false, error: "No eligible alerts found" }, 404, origin);
     }
 
-    // module_key comes from the same shared target_type mapping every other
-    // writer uses; without it no send path (Phase G, staff mark-submitted,
-    // staff hand-submit) will ever accept the draft.
-    const bulkModuleKey = moduleKeyForTargetType(BULK_TAKEDOWN_TARGET_TYPE);
     const inserts = candidateIds.map((alertId) =>
       env.DB.prepare(
-        `INSERT INTO takedown_requests (id, org_id, brand_id, module_key, target_type, target_value, target_platform, evidence_summary, severity, priority_score, source_type, source_id, status, created_at, updated_at)
-         SELECT ?, a.org_id, a.brand_id, ?, ?, a.title, 'tiktok', a.summary, a.severity, 50, 'alert', a.id, 'draft', datetime('now'), datetime('now')
+        `INSERT INTO takedown_requests (id, org_id, brand_id, target_type, target_value, target_platform, evidence_summary, severity, priority_score, source_type, source_id, status, created_at, updated_at)
+         SELECT ?, a.org_id, a.brand_id, 'social_profile', a.title, 'tiktok', a.summary, a.severity, 50, 'alert', a.id, 'draft', datetime('now'), datetime('now')
            FROM alerts a
           WHERE a.id = ? AND ${eligible}`
-      ).bind(crypto.randomUUID(), bulkModuleKey, BULK_TAKEDOWN_TARGET_TYPE, alertId),
+      ).bind(crypto.randomUUID(), alertId),
     );
     const ack = env.DB.prepare(
       `UPDATE alerts SET status = 'acknowledged', acknowledged_at = datetime('now'), updated_at = datetime('now')
