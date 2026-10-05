@@ -13,6 +13,9 @@
   --bg-card:      rgba(22, 30, 48, 0.85);
   --bg-card-deep: rgba(12, 18, 32, 0.95);
   --bg-elevated:  rgba(18, 26, 44, 0.92);
+  /* Opaque twin of --bg-elevated: sticky headers/footers inside a scrolling
+     panel must not show rows through them. */
+  --bg-elevated-solid: #121A2C;
   --bg-sidebar:   rgba(10, 16, 30, 0.96);
   --bg-input:     rgba(15, 22, 38, 0.80);
 
@@ -269,6 +272,7 @@
   --bg-card:      #FFFFFF;
   --bg-card-deep: #F6F8FB;
   --bg-elevated:  #FFFFFF;
+  --bg-elevated-solid: #FFFFFF;
   --bg-sidebar:   #E5E9F0;
   --bg-input:     #FFFFFF;
 
@@ -957,7 +961,7 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
 .ds-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
 .ds-hero-body { flex: 1 1 200px; min-width: 0; }
 .ds-hero-name { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 800; letter-spacing: -0.3px; color: var(--text-primary); overflow-wrap: anywhere; }
-.ds-hero-email { margin: 2px 0 0; font-size: 14px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-hero-email { margin: 2px 0 0; font-size: 14px; color: var(--text-secondary); overflow-wrap: anywhere; word-break: break-all; }
 .ds-hero-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .ds-hero-scope { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; line-height: 1.4; color: var(--text-help); }
 .ds-hero-scope > svg { width: 14px; height: 14px; flex: 0 0 auto; }

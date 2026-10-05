@@ -33,8 +33,8 @@ import { MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 const ALL_MODULE_KEYS = Object.keys(MODULE_LABELS) as ModuleKey[];
 
 // User profile (display name, theme, timezone, passkeys, sessions)
-// lives at /profile per SHARED_LOGIN_SPEC §2 — rendered by the
-// shared @averrow/shared/profile ProfilePage. This page hosts
+// lives under /account/* (ACCOUNT_DESIGN_SPEC) — rendered by the
+// shared @averrow/shared/account pages. This page hosts
 // only the org-scoped settings: takedown authorization + billing.
 
 export function Settings() {

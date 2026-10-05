@@ -305,15 +305,26 @@ SELF_AVATAR_COLOR                           // var(--amber)
 
 **Never render `user.avatar_url` / Google profile picture.** Drop the prop from any `<img>` or Avatar call site that previously rendered it. Initials only. See `docs/SHARED_LOGIN_SPEC.md` §3.
 
-### Login + Profile composition
+### Login + Account composition
 
-Don't redesign the Login or Profile pages without checking
-`docs/SHARED_LOGIN_SPEC.md` first. Both must stay structurally
-identical to FarmTrack. Per-product deltas are limited to:
+**Login** — don't redesign it without checking `docs/SHARED_LOGIN_SPEC.md`
+first. It must stay structurally identical to FarmTrack. Per-product deltas
+are limited to:
 - Brand tile letters (`AV` here, `FT` on FarmTrack)
 - Tagline (`AI-FIRST THREAT INTELLIGENCE` here, `AN AVERROW PRODUCT` on FarmTrack)
 - Footer pillars (`DETECT · ANALYZE · CORRELATE · RESPOND` here)
 - OAuth `return_to` target
+
+**Profile / account** — Averrow-canonical (owner decision 2026-10-04): this is
+the reference other products copy, so there is no FarmTrack parity requirement
+here. Spec: `docs/ACCOUNT_DESIGN_SPEC.md`; adoption guide:
+`docs/SHARED_LOGIN_SPEC.md` §2. Pages live in `@averrow/shared/account`
+(`packages/shared/src/account/`) on the shared kit (`@averrow/shared/ui`
+`forms/`, `overlays/`, `settings/` — see `AVERROW_UI_STANDARD.md` "Account &
+Settings"). Ops mounts them at `/settings/*`, tenant at `/tenant/account/*`;
+legacy `/profile` and `/notifications/preferences` redirect. Edit the shared
+pages, not the per-app mounts. The old `packages/shared/src/profile/`
+(`ProfilePage`) was deleted on 2026-10-05.
 
 ### PWA install + biometric prompt
 
@@ -322,10 +333,10 @@ Two install affordances + one biometric auto-prompt:
 | Component | Where | When |
 |---|---|---|
 | `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
-| `<InstallAppCard />` | Profile page (`features/settings/Profile.tsx`, after the shared `ProfilePage`) | Always visible (when not installed); not dismissible |
+| Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile; the old `InstallAppCard` was deleted) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
 
-All three self-gate internally. Don't add per-route logic to control them.
+The banner and the passkey prompt self-gate internally. Don't add per-route logic to control them.
 
 **Scope note (2026-06-10):** this PWA flow is fully wired in `averrow-ops` only
 (hand-rolled SW at `/v2/sw.js`, registered via `src/lib/pwa.ts`, push in

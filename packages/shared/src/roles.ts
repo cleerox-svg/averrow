@@ -10,7 +10,7 @@ export const USER_ROLES = [
 export type UserRoleKey = (typeof USER_ROLES)[number];
 
 export const ROLE_LABELS: Record<UserRoleKey, string> = {
-  super_admin: 'Super Admin',
+  super_admin: 'Super admin',
   admin:       'Admin',
   analyst:     'Analyst',
   sales:       'Sales',

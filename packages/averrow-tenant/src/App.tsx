@@ -9,7 +9,7 @@ import { MonitoringRules } from '@/features/settings/MonitoringRules';
 import { AuditLog } from '@/features/settings/AuditLog';
 import { Members } from '@/features/settings/Members';
 import { Executives } from '@/features/executives/Executives';
-import { Profile } from '@/features/profile/Profile';
+import { accountRoutes } from '@/features/account/routes';
 import { Billing } from '@/features/billing/Billing';
 import { Alerts } from '@/features/alerts/Alerts';
 import { IntelligenceCard } from '@/features/alerts/IntelligenceCard';
@@ -85,7 +85,7 @@ export function App() {
               <Route path="modules/threat-actor"                 element={<ThreatActor />} />
               <Route path="modules/threat-actor/actors/:actorId" element={<ThreatActorDetail />} />
 
-              <Route path="profile" element={<Profile />} />
+              {accountRoutes}
               <Route path="automation-policy" element={<AutomationPolicy />} />
               <Route path="settings/monitoring" element={<MonitoringRules />} />
               <Route path="settings/executives" element={<Executives />} />

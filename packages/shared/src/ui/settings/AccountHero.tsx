@@ -10,24 +10,14 @@
 import type { ReactNode } from 'react';
 import { parseInitials, SELF_AVATAR_COLOR } from '../../avatar';
 import { Avatar } from '../Avatar';
-import { Badge, type BadgeProps } from '../Badge';
+import { Badge } from '../Badge';
 import { Card } from '../Card';
 import { cn } from '../cn';
 import { ShieldIcon } from './icons';
+import { roleBadgeProps } from './roleBadge';
 import { useMediaQuery } from './useMediaQuery';
 
 const STAFF_ROLES = ['super_admin', 'admin', 'analyst', 'sales', 'support', 'billing', 'auditor'] as const;
-
-/** Role -> badge text + tone (amber = platform admins, blue = analysts, neutral = the rest). */
-const ROLE_BADGE: Record<string, { label: string; tone: Pick<BadgeProps, 'severity' | 'status'> }> = {
-  super_admin: { label: 'Super admin', tone: { severity: 'medium' } },
-  admin:       { label: 'Admin',       tone: { severity: 'medium' } },
-  analyst:     { label: 'Analyst',     tone: { severity: 'low' } },
-  sales:       { label: 'Sales',       tone: { status: 'draft' } },
-  support:     { label: 'Support',     tone: { status: 'draft' } },
-  billing:     { label: 'Billing',     tone: { status: 'draft' } },
-  auditor:     { label: 'Auditor',     tone: { status: 'draft' } },
-};
 
 const titleCase = (s: string) => s.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 
@@ -45,8 +35,6 @@ export interface AccountHeroProps {
   email?: string | null;
   /** Raw global role (`super_admin`, `analyst`, `client`, ...). */
   role?: string | null;
-  /** Override the role badge text. */
-  roleLabel?: string;
   /** `true` -> "Passkey on" (green), `false` -> "No passkey" (amber), `null`/omitted -> hidden. */
   passkey?: boolean | null;
   /** Scope line under the chips; see `describeAccountScope`. */
@@ -61,7 +49,7 @@ export interface AccountHeroProps {
 }
 
 export function AccountHero({
-  name, email, role, roleLabel, passkey, scope, actions, compact = false, loading = false, className,
+  name, email, role, passkey, scope, actions, compact = false, loading = false, className,
 }: AccountHeroProps) {
   const wide = useMediaQuery('(min-width: 768px)', true);
   const avatarSize = compact ? 64 : wide ? 72 : 64;
@@ -87,9 +75,7 @@ export function AccountHero({
   }
 
   const roleKey = (role ?? '').toLowerCase();
-  const roleBadge = roleKey
-    ? ROLE_BADGE[roleKey] ?? { label: titleCase(roleKey), tone: { status: 'draft' as const } }
-    : null;
+  const roleBadge = roleKey ? roleBadgeProps(roleKey) : null;
   const display = (name ?? '').trim() || email || 'Your account';
 
   return (

@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Link } from 'react-router-dom';
+import { BrowserRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { ToastProvider } from '@/components/ui/Toast';
@@ -48,7 +48,6 @@ import { AdminAudit } from '@/features/admin/AdminAudit';
 import { NotificationCenter } from '@/features/admin/NotificationCenter';
 import { SpamTrap } from '@/features/spam-trap/SpamTrap';
 import { Leads } from '@/features/leads/Leads';
-import { Organization } from '@/features/settings/Organization';
 import { DarkWeb } from '@/features/dark-web/DarkWeb';
 
 const get = api.get as ReturnType<typeof vi.fn>;
@@ -383,47 +382,6 @@ describe('Leads pipeline tiles', () => {
     renderWithProviders(<Leads />);
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Sales Pipeline' }));
     await waitFor(() => expect(screen.getAllByText("Couldn't load").length).toBeGreaterThanOrEqual(1));
-  });
-});
-
-describe('Organization tabs', () => {
-  const org = { success: true, data: { id: 'org1', name: 'Acme', plan: 'enterprise', max_brands: 5, max_members: 10 } };
-
-  const base: Route[] = [
-    { match: '/api/orgs/org1/integrations', result: { success: true, data: [] } },
-    { match: '/api/orgs/org1/invites', result: { success: true, data: [] } },
-    { match: '/api/orgs/org1/brands', result: { success: true, data: [] } },
-    { match: '/api/orgs/org1/api-keys', result: { success: true, data: [] } },
-  ];
-
-  it('show a loading state (not the empty message) until the query settles, then error / empty correctly', async () => {
-    routeApi([{ match: '/api/orgs/org1/members', result: 'pending' }, ...base, { match: '/api/orgs/org1', result: org }]);
-    const { unmount } = renderWithProviders(<Organization />);
-    await userEvent.setup().click(await screen.findByRole('tab', { name: /members/i }));
-    expect(screen.getByText('Loading members…', { selector: '.sr-only' })).toBeInTheDocument();
-    expect(screen.queryByText('No members yet')).not.toBeInTheDocument();
-    unmount();
-
-    routeApi([{ match: '/api/orgs/org1/members', result: 'reject' }, ...base, { match: '/api/orgs/org1', result: org }]);
-    renderWithProviders(<Organization />);
-    await userEvent.setup().click(await screen.findByRole('tab', { name: /members/i }));
-    await waitFor(() => expect(errorAlert(/couldn't load members/i)).toBeTruthy());
-    expect(screen.queryByText('No members yet')).not.toBeInTheDocument();
-  });
-
-  it('follows a ?tab= change while already mounted (profile menu → API Keys)', async () => {
-    routeApi([{ match: '/api/orgs/org1/members', result: { success: true, data: [] } }, ...base, { match: '/api/orgs/org1', result: org }]);
-    window.history.replaceState(null, '', '/admin/users?tab=members');
-    renderWithProviders(
-      <>
-        <Organization />
-        <Link to="/admin/users?tab=api-keys">menu: api keys</Link>
-      </>,
-    );
-    expect(await screen.findByRole('tab', { name: /members/i })).toHaveAttribute('aria-selected', 'true');
-    await userEvent.setup().click(screen.getByRole('link', { name: 'menu: api keys' }));
-    await waitFor(() => expect(screen.getByRole('tab', { name: /api keys/i })).toHaveAttribute('aria-selected', 'true'));
-    window.history.replaceState(null, '', '/');
   });
 });
 

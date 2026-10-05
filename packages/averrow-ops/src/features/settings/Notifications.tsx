@@ -26,7 +26,7 @@ import {
 } from '@/hooks/useNotifications';
 import { useIsMobile } from '@/hooks/useWindowWidth';
 import { snoozeUntilIso } from '@/lib/snooze';
-import { DayHeading, NotificationRow, NotificationRowSkeletons, typeLabel } from '@/components/notifications/NotificationRow';
+import { DayHeading, NotificationRow, NotificationRowSkeletons, typeLabel, type RowActions } from '@/components/notifications/NotificationRow';
 import { groupByDay } from '@/components/notifications/groupByDay';
 
 type TypeFilter = 'all' | NotificationEventKey;
@@ -196,6 +196,7 @@ function NotificationsInbox() {
       <PageHeader
         title="Notifications"
         back={{ label: 'Back', onClick: () => navigate(-1) }}
+        backFont="sans"
         actions={
           <>
             <Button
@@ -265,13 +266,12 @@ function NotificationsInbox() {
             placeholder: 'Search notifications',
             label: 'Search notifications',
           }}
+          searchAccessory={<div className="w-[200px]">{typeSelect('notif-type-desktop')}</div>}
           actions={
             filtered ? <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button> : undefined
           }
           className="mb-4"
-        >
-          <div className="mt-2 max-w-[260px]">{typeSelect('notif-type-desktop')}</div>
-        </FilterBar>
+        />
       )}
 
       <Sheet open={isMobile && filtersOpen} onOpenChange={setFiltersOpen}>
@@ -380,6 +380,7 @@ function NotificationsInbox() {
               <DayHeading id={`notif-day-${day.key}`} label={day.label} />
               <GroupedRows
                 notifications={day.items}
+                actions={isMobile ? 'kebab' : 'inline'}
                 onActivate={handleActivate}
                 onSnooze={handleSnooze}
                 onDone={handleDone}
@@ -397,7 +398,7 @@ function NotificationsInbox() {
             >
               ← Newer
             </Button>
-            <span className="font-mono text-[12px] text-[var(--text-tertiary)]" aria-live="polite">
+            <span className="text-[13px] text-[var(--text-tertiary)]" aria-live="polite">
               {isFetching ? 'Loading…' : `Page ${cursorStack.length}`}
             </span>
             <Button
@@ -424,9 +425,10 @@ function NotificationsInbox() {
 // rows render exactly like before. Per-row actions stay per notification.
 
 function GroupedRows({
-  notifications, onActivate, onSnooze, onDone,
+  notifications, actions, onActivate, onSnooze, onDone,
 }: {
   notifications: Notification[];
+  actions: RowActions;
   onActivate: (n: Notification) => void;
   onSnooze: (id: string, hours: number) => void;
   onDone: (id: string) => void;
@@ -447,7 +449,7 @@ function GroupedRows({
     <NotificationRow
       key={n.id}
       notification={n}
-      actions="inline"
+      actions={actions}
       showType
       showDetail
       onActivate={() => onActivate(n)}

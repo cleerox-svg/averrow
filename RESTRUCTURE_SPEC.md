@@ -56,6 +56,21 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 > DimensionalButton}.tsx` + `index.ts`. The file-tree sketch below is the original
 > R-session plan, not the current layout; for what exists today read the barrel.
 > See `AVERROW_UI_STANDARD.md` "Shared kit" and `docs/UI_CONSOLIDATION_PLAN_2026-10.md`.
+>
+> **Account & Settings kit (2026-10-04):** the kit gained `ui/forms/` (Switch,
+> SegmentedControl, Field/Label/HelpText/FieldError, Input, Select, TimeInput),
+> `ui/overlays/` (Sheet, Dialog, ConfirmDialog, Menu family, ResponsiveMenu,
+> ToastProvider/useToast, TimezoneSelect) and `ui/settings/` (SettingsShell,
+> SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone, InlineBanner,
+> CopyField), on Radix primitives (owner-approved), plus new tokens and opt-in
+> props on Badge/Tabs/FilterBar/Card/Avatar. These are imported from
+> `@averrow/shared/ui` directly — the ops `design-system/components` barrel does
+> not re-export them. The account pages live in `@averrow/shared/account` and are
+> mounted by ops at `/settings/*` and tenant at `/tenant/account/*`; they replace
+> the old `features/settings/{Profile,NotificationPreferences,Organization}.tsx`
+> (the staff Organization page became "Users & Access",
+> `features/admin/UsersAccess.tsx`). Details: `AVERROW_UI_STANDARD.md` "Account &
+> Settings", `docs/ACCOUNT_DESIGN_SPEC.md`.
 
 ```
 packages/averrow-ops/src/
@@ -567,7 +582,7 @@ Status reflects what's landed in `packages/averrow-ops/` on `master`. Use this a
 | R1 — Design system foundation | ✅ Landed | `design-system/tokens.css`, `design-system/hooks/useTheme.ts`, `design-system/hooks/useBreakpoint.ts` present (`useBreakpoint.ts` removed in UI consolidation Phase 1 PR3, 2026-10) |
 | R2 — Rebuild Card + Button + Badge | ✅ Landed | `components/ui/Card.tsx`, `Button.tsx`, `Badge.tsx` rebuilt; re-exported via `design-system/components/index.ts` |
 | R3 — Unify StatCard + Avatar + GlowNumber | ✅ Landed | `components/brands/StatCard.tsx` deleted; single `components/ui/StatCard.tsx` with `SimpleStatCard` / `DetailStatCard`; `DimensionalAvatar` is now an alias for `Avatar` |
-| R4 — Tabs + DataRow + FilterBar + Modal | 🟡 Partial | Tabs, DataRow, FilterBar all present; Modal not yet exported from the barrel — confirm whether a new Modal shipped or the need was absorbed by Dropdown removal |
+| R4 — Tabs + DataRow + FilterBar + Modal | 🟡 Partial | Tabs, DataRow, FilterBar all present; Modal not yet exported from the barrel — the modal/sheet need is now met by the shared kit's `Dialog`/`ConfirmDialog`/`Sheet`/`Menu` (`@averrow/shared/ui`, 2026-10-04) rather than an ops `Modal.tsx` |
 | R5 — PageHeader + StatGrid + barrel | ✅ Landed | `PageHeader`, `StatGrid`, `design-system/components/index.ts` all present |
 | R6 — Feature folder structure | ✅ Landed | `src/features/` exists with `admin`, `agents`, `alerts`, `brands`, `campaigns`, `feeds`, `leads`, `observatory-v3`, `providers`, `settings`, `spam-trap`, `takedowns`, `threat-actors`, `threats`, `trends` (the `observatory` (v2) folder was deleted in #35 Phase D — see R10) |
 | R7 — Shell responsive + MobileNav | ✅ Landed | `src/mobile/` folder removed; Shell handles responsive layout (Shell/Sidebar/TopBar/MobileNav themselves removed in UI consolidation Phase 1 PR3, 2026-10; `components/layout/ShellV4.tsx` is the only shell) |
@@ -755,7 +770,7 @@ isCampaignSignificant(campaign) ⇒
 ### Session NX5 — Preferences UI + Notification Center admin page
 **What:** Two surfaces aligned with the new model.
 
-**Surface 1 — `/v2/notifications/preferences` rebuild.** Group event types into three sections:
+**Surface 1 — `/v2/notifications/preferences` rebuild.** *(Historical: superseded 2026-10-04 — the route redirects to `/settings/notifications/channels` and `NotificationPreferences.tsx` is gone; the page is `@averrow/shared/account` `NotificationSettings`, mounted by `features/settings/NotificationSettingsPage.tsx`. Quiet hours are on preferences v2; per-event toggles stay on the v1 endpoint.)* Group event types into three sections:
 1. **Platform alerts** (mandatory, can't be muted): `platform_d1_budget_breach`, `platform_feed_auto_paused`, `platform_agent_stalled`, `platform_cron_missed`, `platform_worker_cpu_burst`. UI shows them as "Always on — these only fire when the platform needs you."
 2. **Intelligence digest** (toggleable per type, default on): `intel_campaign_emerging`, `intel_threat_actor_surface`, `intel_cross_brand_pattern`, `intel_sector_trend`, `abuse_mailbox_flood_detected`, `spam_trap_surge`, `news_watcher_critical`.
 3. **Cadence** (radio per group): `realtime` | `daily_digest` | `weekly_digest`. Stored on the user row.

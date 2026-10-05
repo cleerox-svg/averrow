@@ -4,6 +4,67 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.3.0] — 2026-10-05
+
+Account-experience release (PR #1788 merged, PR #1789 on
+`ccr-ece1c3ba-nutr49`). Design source of truth: `docs/ACCOUNT_DESIGN_SPEC.md`.
+Tag `v4.3.0` on master after merge.
+
+### Account area (ops + tenant)
+- **One Settings area** — Profile, Security, Notifications, Devices & App.
+  Side rail on desktop, iOS-style grouped list on phones. Customers (tenant
+  app) get the same account area from the shared kit (`packages/shared/src/ui/`).
+- **Avatar menu** — built-in theme switch and "Switch account" (Google account
+  chooser). Menu is keyboard-reachable; profile-menu links fixed.
+- **Notification bell + inbox rebuilt** — day grouping, always-visible row
+  actions on phones, filters sheet, shared snooze options.
+
+### Security / sessions
+- Per-session list with "This device" marker; sign out one session, sign out
+  other devices, sign out everywhere.
+- New caller-scoped endpoints: `GET /api/auth/sessions`,
+  `DELETE /api/auth/sessions/:id`, `POST /api/auth/sessions/revoke-others`,
+  `POST /api/auth/logout-all` (IPs masked server-side; audited; 403 for
+  read-only/preview identities).
+- **Sign-outs take effect immediately** — access tokens carry a `sid` claim;
+  revoked sids are recorded in the existing per-user `forced_logout:<user>` KV
+  value (now backward-compatible JSON, `lib/forced-logout.ts`) that
+  `requireAuth` already reads, so no extra KV read per request. Previously a
+  signed-out device kept access until its 30-minute token expired.
+- Passkeys show real loading/error states (a failed load no longer reads as
+  "no passkeys"); removing the last passkey warns first.
+
+### Notifications
+- Preferences UI split into Channels / Events / Summary / Quiet hours. Changes
+  save instantly (optimistic, per-field versions) and roll back if the save fails.
+- **Fix:** quiet hours were evaluated in UTC — delivery mixed the v1 window with
+  the auto-seeded v2 `quiet_hours_timezone='UTC'`. `resolveQuietHours` now takes
+  window + time zone from one table: v2 whenever a v2 row exists, v1 only when
+  there is no v2 row. Migration `0281` copies v1 quiet hours into v2.
+- **Fix:** turning quiet hours off in the new UI did not stop an old v1 window.
+- **Fix:** `PATCH /api/notifications/preferences` is now a partial update —
+  changing one toggle no longer resets the others (and the push/browser flags)
+  to defaults.
+- Critical alerts continue to break through quiet hours (v2 flag over v1,
+  covered by tests).
+- **Fix:** the notification preferences page failed to load for every user —
+  `takedown_awaiting_approval` was user-toggleable but had no
+  `notification_preferences` column. Migration `0280` adds it; a test now pins
+  every toggleable event to a migration-defined column.
+- **Deploy order:** `0281` must apply before or with the worker (deploy-radar.yml
+  applies migrations before deploying).
+
+### Staff console
+- Organization page replaced by **Users & Access** (staff users + invites).
+- Role labels now correct for every staff role (super_admin, admin, analyst,
+  sales, support, billing, auditor).
+
+### Accessibility / mobile
+- 44px minimum touch targets, readable minimum text sizes, light/dark theme
+  parity, keyboard-reachable menus.
+
+---
+
 ## [Unreleased] — 2026-07-31
 
 AI-phishing-detection research follow-through (`docs/AI_PHISHING_DETECTION_RESEARCH_2026-07.md`,

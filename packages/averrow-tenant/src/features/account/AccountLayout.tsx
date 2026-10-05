@@ -1,32 +1,24 @@
-// /settings/* — the account area shell for averrow-ops (ACCOUNT_DESIGN_SPEC §2).
+// /account/* — the account area shell for averrow-tenant (ACCOUNT_DESIGN_SPEC §2).
 //
-// Mounts the shared <SettingsShell> (desktop rail + pane, mobile list -> detail)
-// with react-router links, and provides the two things every settings page needs:
-//   · a shared ToastProvider for the subtree (ops' own Toast context is a
-//     different, simpler provider; the shared kit's toasts need theirs), and
-//   · a dirty-form guard: pages call `useSettingsDirtyGuard()` and report
-//     unsaved edits; navigating away through the settings rail / back link, a
-//     page's own tabs (via `useGuardedNavigate`), or closing the tab, asks first.
-//     KNOWN GAP: the app has no data router (BrowserRouter), so `useBlocker` is
-//     unavailable. Navigation outside this subtree — the main sidebar, the user
-//     menu, the browser Back/Forward buttons — is NOT intercepted (only
-//     beforeunload covers tab close/reload).
-//
-// Routes (see App.tsx): /settings (index), /settings/profile, /settings/devices,
-// and security + notifications (wired by the orchestrator).
+// Same shape as the ops SettingsLayout, mounted at /account (NOT /settings: the
+// tenant's /settings/* is the organisation area). Differences from ops:
+//   · Devices & App is omitted — the tenant app has no service worker yet
+//     (CLAUDE.md §5, improvement-plan S12), so there is no install or push device
+//     to manage. Re-add it when the tenant SW lands.
+//   · The navigation guard has the same KNOWN GAP as ops (BrowserRouter, no
+//     useBlocker): only the rail/back link, a page's own tabs and tab close are guarded.
 
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
   type MouseEvent, type ReactNode,
 } from 'react';
 import { Link, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { accountSectionIdFromPath, getAccountSections, SignOutRow } from '@averrow/shared/account';
+import { accountSectionIdFromPath, getAccountSections, SignOutRow, type AccountSectionId } from '@averrow/shared/account';
 import {
   AccountHero, Button, ConfirmDialog, SettingsShell, ToastProvider, describeAccountScope, useMediaQuery,
   type SettingsRenderLink,
 } from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
-import { useAccountSummaries } from './useAccountSummaries';
 import { BUILD_SHA, VERSION_LABEL } from '@/lib/version';
 
 // ── dirty-form guard ────────────────────────────────────────
@@ -41,32 +33,37 @@ const SettingsDirtyContext = createContext<DirtyGuardValue>({
 });
 
 /** Settings pages report unsaved edits here; the layout guards navigation while dirty. Stable identity. */
-export function useSettingsDirtyGuard(): ReportDirty {
+export function useAccountDirtyGuard(): ReportDirty {
   return useContext(SettingsDirtyContext).reportDirty;
 }
 
 /** For in-page navigation (sub-tabs): wraps an action so a dirty form asks before it runs. */
-export function useSettingsRunGuarded(): RunGuarded {
+export function useAccountRunGuarded(): RunGuarded {
   return useContext(SettingsDirtyContext).runGuarded;
 }
 
 const DESKTOP_QUERY = '(min-width: 1024px)';
 
-/** /settings on its own: desktop never shows a blank home, it lands on Profile; mobile shows the section list (rendered by the shell). */
-export function SettingsIndex(): ReactNode {
+export const ACCOUNT_BASE_PATH = '/account';
+
+/** Sections the tenant app offers. Devices & App needs a service worker (see header). */
+export const TENANT_ACCOUNT_SECTIONS: readonly AccountSectionId[] = ['profile', 'security', 'notifications'];
+
+/** /account on its own: desktop never shows a blank home, it lands on Profile; mobile shows the section list (rendered by the shell). */
+export function AccountIndex(): ReactNode {
   const desktop = useMediaQuery(DESKTOP_QUERY, true);
-  return desktop ? <Navigate to="/settings/profile" replace /> : null;
+  return desktop ? <Navigate to="/account/profile" replace /> : null;
 }
 
 function isPlainLeftClick(e: MouseEvent<HTMLElement>): boolean {
   return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 }
 
-export function SettingsLayout() {
+export function AccountLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const activeId = accountSectionIdFromPath(location.pathname);
+  const activeId = accountSectionIdFromPath(location.pathname, ACCOUNT_BASE_PATH);
 
   // ── unsaved-changes guard ──
   const dirtyRef = useRef(false);
@@ -108,8 +105,15 @@ export function SettingsLayout() {
     </Link>
   ), [navigate]);
 
-  // Live one-liners on the home list; generic text until each one loads.
-  const sections = getAccountSections({ descriptions: useAccountSummaries() });
+  const passkeys = user?.passkey_count;
+  const sections = useMemo(() => getAccountSections({
+    basePath: ACCOUNT_BASE_PATH,
+    descriptions: {
+      security: typeof passkeys === 'number'
+        ? (passkeys > 0 ? `${passkeys} ${passkeys === 1 ? 'passkey' : 'passkeys'} · Active sessions` : 'No passkey yet · Add one')
+        : undefined,
+    },
+  }).filter((sec) => (TENANT_ACCOUNT_SECTIONS as readonly string[]).includes(sec.id)), [passkeys]);
 
   const signOut = () => { void logout(); };
 
@@ -131,8 +135,8 @@ export function SettingsLayout() {
           <SettingsShell
             sections={sections}
             activeId={activeId}
-            basePath="/settings"
-            title="Settings"
+            basePath={ACCOUNT_BASE_PATH}
+            title="Account"
             subtitle="Your profile, security and notifications."
             home={home}
             homeFooter={(

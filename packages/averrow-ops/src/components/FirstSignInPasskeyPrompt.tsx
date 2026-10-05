@@ -241,7 +241,7 @@ export function FirstSignInPasskeyPrompt() {
             margin: '12px 0 0',
           }}
         >
-          You can add or remove passkeys anytime from your Profile.
+          You can add or remove passkeys anytime in Settings → Security.
         </p>
       </div>
     </div>,

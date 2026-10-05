@@ -1,13 +1,20 @@
-# Shared Login Spec — Averrow ↔ FarmTrack
+# Shared Login & Account Spec — Averrow ↔ FarmTrack
 
-**Purpose:** keep the login + profile + PWA install + biometric flows
-identical across Averrow and FarmTrack so users get the same experience
-on both products. Each product carries the parent brand and ships
-independent backends; only the deltas listed at the bottom of this
-document are allowed to differ.
+**Purpose:** two things, with different rules.
 
-If you change anything in the "Required parity" sections below, update
-this doc and ping the sibling platform.
+1. **Login, PWA install prompts, biometric prompt, token model (§1, §3-§5, §8):**
+   keep these identical across Averrow and FarmTrack so users get the same
+   experience on both products. Only the per-product deltas listed in §1 may
+   differ.
+2. **Profile / account experience (§2):** Averrow is the **canonical reference
+   that other products copy**. FarmTrack structural parity for profile/account was
+   dropped by owner decision (2026-10-04): "make this the gold standard profile
+   and I will copy it for other platforms." Averrow leads; other products adopt
+   it (§2 "How another product adopts it"), not the other way round.
+
+If you change anything in the "Required parity" sections of §1/§3/§4/§5, update
+this doc and ping the sibling platform. Changes to the account experience are
+specified in `docs/ACCOUNT_DESIGN_SPEC.md`.
 
 ---
 
@@ -204,63 +211,99 @@ otherwise dark, dark-first product. **FarmTrack must mirror this.**
 
 ---
 
-## 2. Profile page
+## 2. Account & profile experience (Averrow-canonical)
 
-**The Profile page is now a single canonical component shared by
-both products.** Both `/v2/profile` (averrow-ops) and
-`/tenant/profile` (averrow-tenant) render
-`<ProfilePage>` from `@averrow/shared/profile`. Per-product deltas
-flow through props (api client, feature flags, callbacks, brand
-text). Edit the shared component, NOT the per-product wrappers.
+**Owner decision 2026-10-04:** Averrow's account experience is the gold-standard
+reference other products copy. It is specified in
+`docs/ACCOUNT_DESIGN_SPEC.md` (layout, copy, typography, touch floors) and built
+from two shared pieces:
+
+- the **kit** — `@averrow/shared/ui` (`packages/shared/src/ui/{forms,overlays,settings}/`);
+  see `AVERROW_UI_STANDARD.md` "Account & Settings".
+- the **pages** — `@averrow/shared/account` (`packages/shared/src/account/`).
+
+The pages take data and callbacks only (no router, no api module), so each
+product mounts them with its own adapters. Edit the shared pages, NOT the
+per-product mounts.
 
 ```
-packages/shared/src/profile/
-  ProfilePage.tsx       — composition + section order
-  sections.tsx          — IdentitySection, AccountSection, …
-  primitives.tsx        — Card, Button, Input, Pill, helpers
-  types.ts              — ProfilePageProps, ProfileApiClient,
-                          PasskeyAdapter, ProfileFeature
-  index.ts              — public exports
+packages/shared/src/account/
+  ProfileSettings.tsx     — name, appearance (Auto/Dark/Light), time zone
+  SecuritySettings.tsx    — passkeys + active sessions (security/ has the adapter + UA/session helpers)
+  notifications/          — NotificationSettings: Channels | Events | Digest | Quiet hours tabs
+  DevicesSettings.tsx     — install the app, push devices, version, clear cache
+  SignOutRow.tsx          — mobile sign-out row
+  sections.tsx            — getAccountSections / accountSectionIdFromPath (rail + list + menu stay in sync)
+  summaries.ts            — securitySummary / notificationsSummary / devicesSummary (live list descriptions)
+  index.ts                — public exports
 ```
 
-### Section order (canonical, enforced inside ProfilePage)
+The older `packages/shared/src/profile/` (`ProfilePage`) was deleted on
+2026-10-05; its API-client type now lives in `account/api-types.ts`
+(`AccountApiClient`).
 
-1. **Identity** — avatar (initials only) + display_name + email + role badge + org pill.
-2. **Account** — display_name editor + read-only email.
-3. **Preferences** — theme toggle (Dark / Light) + timezone select.
-4. **Passkeys** — per-device list with `BIOMETRIC` badge when `transports` includes `"internal"`. Add-on-this-device + per-row remove.
-5. **Notifications** — single-row card linking to the host app's notifications-preferences route.
-6. **Billing** (tenant only) — single-row card linking to `/settings/billing`. Plan badge inline.
-7. **Security** — active-sessions count + "Revoke other sessions" button + per-session list (top 5).
-8. **Sign out** — closing card with red button.
+### Where it is mounted
 
-Skipped sections render `null` based on the `features` prop. Future sections (e.g. **Install**, **Organization**, **2FA / TOTP**) plug into the same composition without changing per-product wrappers.
-
-### Per-product feature flags
-
-| Feature      | /v2 (staff) | /tenant (customer) |
+| | averrow-ops (staff) | averrow-tenant (customer) |
 |---|---|---|
-| `identity`     | ✓ | ✓ |
-| `account`      | ✓ | ✓ |
-| `preferences`  | ✓ | ✓ |
-| `passkeys`     | ✓ | ✓ |
-| `notifications`| ✓ | ✓ |
-| `billing`      | ✗ | ✓ |
-| `security`     | ✓ | (deferred — needs tenant-scoped sessions endpoint) |
+| Base path | `/settings/*` (`features/settings/SettingsLayout.tsx`) | `/tenant/account/*` (`features/account/AccountLayout.tsx`; `ACCOUNT_BASE_PATH`) |
+| Sections | Profile, Security, Notifications (`/channels \| /events \| /digest \| /quiet-hours`), Devices & App | Profile, Security, Notifications. **No Devices & App** (needs a service worker; tenant ships none) |
+| Route table | `App.tsx` | `features/account/routes.tsx` |
+| Legacy redirects | `/profile` → `/settings/profile`; `/notifications/preferences` → `/settings/notifications/channels` | `/profile` → `/account/profile` |
 
-### Required parity
+Desktop is a sticky rail + pane; below 1024px `/settings` (`/account`) is a
+grouped list that drills into each section. Both layouts come from
+`<SettingsShell>`. The avatar menu, bell and inbox are ops-only chrome and are
+not part of the portable account kit.
 
-| Element | Spec |
-|---|---|
-| Avatar size on Profile | 64×64, `border-radius: 50%`, background `SELF_AVATAR_COLOR` (`var(--amber)`) |
-| Avatar initials font | `fontSize: 24`, `fontWeight: bold`, color `var(--text-on-amber)` |
-| Each section | Wrapped in `<Card>` with `mb-4` |
-| Section headers | `<SectionLabel>` mono uppercase |
-| Display-name save | `PATCH /api/profile { display_name: <string\|null> }` |
-| Theme save | `PATCH /api/profile { theme_preference: 'dark'\|'light' }` |
-| Timezone save | `PATCH /api/profile { timezone: <IANA> }` |
-| Notification row icon | `Bell` from lucide-react |
-| BIOMETRIC badge | `<Badge variant="success">Biometric</Badge>`, only when `pk.transports.includes('internal')` |
+### Rules that carry over to any product
+
+- **Initials-only avatars** (§3) — `AccountHero` never renders a photo.
+- Autosave on change for toggles/selects (with an undo/failure toast); explicit
+  Save only for multi-field forms (display name, quiet hours).
+- Destructive actions go through `ConfirmDialog` and say what will happen.
+- Sans for prose, mono only for data; 13px prose / 12px mono / 11px badge floors;
+  44px touch targets; 16px input text on mobile (ACCOUNT_DESIGN_SPEC §6).
+- Quiet hours live on notification preferences **v2** only; per-event toggles
+  stay on the v1 endpoint (partial update). See `docs/API_REFERENCE.md`.
+
+### How another product adopts it
+
+1. **Dependencies and theme.** Depend on `@averrow/shared`; import
+   `@averrow/shared/theme.css` (the kit reads CSS custom properties only —
+   supply the same token file, including the account tokens listed in
+   `AVERROW_UI_STANDARD.md`) and make sure the host's Tailwind content globs
+   include `packages/shared/src/**` (`docs/LOGIN_AUDIT_2026-06.md` F1 — otherwise shared-only classes are purged).
+2. **Mount the shell.** Wrap the routes in a layout that renders
+   `<SettingsShell sections={getAccountSections({ basePath, descriptions, badges })} activeId={accountSectionIdFromPath(pathname, basePath)} basePath={basePath} …>`
+   inside a `<ToastProvider>`, with `<AccountHero compact>` in the shell's `home` slot (mobile list; the desktop hero is rendered by `ProfileSettings` itself) and a sign-out `railFooter` / `homeFooter` (`SignOutRow`). `basePath`
+   is yours (`/settings` default; tenant uses `/account`). Pass a `renderLink` (or `onNavigate`) adapter if your router needs its own link component; the default is a plain anchor.
+3. **Mount each page with adapters.** Pages receive data + callbacks:
+   - `ProfileSettings` — `user`, `apiClient` (`patch` → `PATCH /api/profile`), `theme` /
+     `onThemeChange` (your `useTheme()`), `onUserUpdated` (refresh the session
+     user), `onSignOut`.
+   - `SecuritySettings` — `api` (`get`/`post`/`delete`), `passkeys` from
+     `createStrictPasskeyAdapter({ api, isSupported, register })`,
+     `requiresPasskey` (true only where a passkey is mandatory, e.g. staff admins),
+     `onPasskeysChanged`, `onSignedOut`. Needs the caller-scoped
+     `/api/auth/sessions*` endpoints.
+   - `NotificationSettings` — `tab`/`onTabChange` (route segment), prefs, events,
+     subscriptions, push state and the `onUpdate*` / push callbacks; backed by
+     `/api/notifications/preferences` (events, partial PATCH) and
+     `/api/notifications/preferences/v2` (channels, digest, quiet hours).
+   - `DevicesSettings` — `install` state (`useInstallPrompt`), a `push` adapter
+     (list/remove/send test), `version`, `onClearCache`.
+4. **Optional sections.** Drop a section by not mounting its route and filtering
+   it out of `sections`. Devices & App requires a service worker + web-push
+   backend: omit it (as tenant does) until the product ships one. Notifications
+   needs only the preferences endpoints; push controls degrade when
+   `push.supported` is false.
+5. **Backend contract.** The pages need `/api/profile`, `/api/auth/sessions*`
+   (own sessions only), `/api/passkeys*`, `/api/notifications/preferences` +
+   `/v2`, and the `sid` claim / `forced_logout` KV semantics so revoking a
+   session also stops its live access tokens (see "Session revocation" in
+   `docs/API_REFERENCE.md`).
+6. **Redirect legacy routes** to the new section URLs, as the table above does.
 
 ---
 
@@ -299,10 +342,11 @@ platforms are independent repos for now).
   - Android Chrome / Edge: captured `beforeinstallprompt` → native install button.
   - iOS Safari: four-step Share → Add to Home Screen instructions inline.
 
-- **`<InstallAppCard />`** — always-visible affordance on Profile (Averrow ops: `features/settings/Profile.tsx`, after the shared `ProfilePage`).
-  - Hidden when `isStandalone()`.
-  - **Not dismissible** — user can always reach it from Profile.
-  - Includes a "Show manual steps" expander for desktop browsers that didn't fire `beforeinstallprompt`.
+- **Install card (Settings → Devices & App)** — the always-visible install affordance now lives in the shared `DevicesSettings` page (`packages/shared/src/account/DevicesSettings.tsx`, mounted by ops at `/settings/devices`), fed by `useInstallPrompt` and `IOS_INSTALL_STEPS` (`components/InstallSteps.tsx`). It replaced `<InstallAppCard />` on Profile (2026-10-04); that component was deleted on 2026-10-05.
+  - Hidden/replaced by "installed" state when `isStandalone()`.
+  - **Not dismissible** — always reachable from Settings.
+  - Includes a manual-steps list for desktop browsers that didn't fire `beforeinstallprompt`.
+  - Tenant has no Devices & App (no service worker).
 
 ### Required parity
 
@@ -310,7 +354,7 @@ platforms are independent repos for now).
 |---|---|
 | iOS step icons | 24×24 amber circles with white number, `box-shadow: 0 0 10px rgba(229,168,50,0.45)` |
 | iOS step text | 13px, `lineHeight: 1.5`, color `var(--text-secondary)` |
-| Manual-steps fallback | Bullet list of `Chrome / Edge (desktop)`, `Chrome (Android)`, `Firefox (Android)`, `Safari / Chrome (iOS)` |
+| Manual-steps fallback | `Chrome or Edge on a computer`, `Chrome on Android`, `Firefox on Android` (+ iOS Share steps) — `DevicesSettings` |
 | LocalStorage dismiss key | `<product>.install.dismissed` (e.g. `averrow.install.dismissed`) |
 
 ---
@@ -342,7 +386,7 @@ Mounted at the Shell layout root (Averrow ops: `components/layout/ShellV4.tsx`).
 | Body copy | Mentions Touch ID, Face ID, Windows Hello, fingerprint. Reassurance that biometric stays on-device. |
 | Primary button | "Set up biometric" (green gradient) |
 | Secondary button | "Maybe later" (transparent) |
-| Footer note | "You can add or remove passkeys anytime from your Profile." |
+| Footer note | "You can add or remove passkeys anytime in Settings → Security." (`FirstSignInPasskeyPrompt.tsx`) |
 | Auto-prompt delay | 1000ms after Shell mount (so it doesn't slam in mid-paint) |
 
 ---
@@ -427,16 +471,15 @@ this canonical shape.
 
 ## 7. Files to keep aligned
 
-When making changes to either platform, the following files should be
+The account/profile pages are NOT in this table — they are Averrow-canonical (§2) and
+live in `@averrow/shared/account`. For the login/PWA/biometric surfaces below, when
+making changes to either platform, the following files should be
 diffed against the sibling repo and kept structurally identical:
 
 | File | Notes |
 |---|---|
 | `pages/Login.tsx` (or `src/app/pages/Login.tsx`) | Brand tile letters + tagline + footer pillars are the only allowed deltas |
-| `features/settings/Profile.tsx` | Section order must match. Card composition identical. |
-| `components/InstallAppCard.tsx` | Verbatim, swap product name |
 | `components/InstallAppBanner.tsx` | Verbatim, swap product name + dismiss key |
-| `components/PasskeysCard.tsx` | Verbatim (Averrow ops: deleted 2026-10 — duplicated the shared `PasskeysSection`; ops Profile uses the shared one) |
 | `components/FirstSignInPasskeyPrompt.tsx` | Verbatim, swap product name in copy + dismiss key |
 | `hooks/useInstallPrompt.ts` | Verbatim |
 | `lib/avatar.ts` | Verbatim |
@@ -564,7 +607,7 @@ on-call instead.
 
 When changing any of the files above:
 
-- [ ] Did the change touch a "Required parity" element from §1–§5? If yes, port it to the sibling repo or update this spec.
+- [ ] Did the change touch a "Required parity" element from §1 or §3–§5? (§2 account pages are Averrow-canonical: update `docs/ACCOUNT_DESIGN_SPEC.md` instead.) If yes, port it to the sibling repo or update this spec.
 - [ ] Are the per-product deltas still limited to the list in §1?
 - [ ] Does the avatar still come from `parseInitials(displayName, email)`? Did anyone reintroduce a `pictureUrl` / `avatar_url` `<img>`?
 - [ ] Does `/api/auth/me` still return all the fields in §6's `MeResponse` shape?

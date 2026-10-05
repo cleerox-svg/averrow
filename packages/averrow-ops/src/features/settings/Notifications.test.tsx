@@ -122,7 +122,7 @@ describe('Notifications rows', () => {
     renderPage();
     const h = screen.getByRole('heading', { name: 'Today' });
     expect(h.className).toContain('sticky');
-    expect(h.className).toContain('var(--bg-sticky-deep)');
+    expect(h.className).toContain('var(--bg-elevated-solid)');
   });
 
   it('keeps Snooze and Done always visible (not hover-gated) and keyboard reachable', () => {

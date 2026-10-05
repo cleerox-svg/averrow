@@ -23,9 +23,15 @@ export interface FilterBarProps<V extends string = string> {
   };
   /**
    * `sm` (default, dashboard density): 10px mono pills. `md`: legible settings/inbox
-   * density — 11px pills, 13px search, >=44px touch height.
+   * density — sans 13px/600 sentence-case pills, 13px search, >=44px touch height.
    */
   size?: 'sm' | 'md';
+  /**
+   * Control shown on the search row, right after the search box (e.g. a type
+   * select). When set, search + accessory take the first row and the filter
+   * pills wrap onto their own row beneath it.
+   */
+  searchAccessory?: React.ReactNode;
   /** Right-side slot for action buttons. */
   actions?: React.ReactNode;
   /** Extra filter rows (e.g. a secondary group). */
@@ -43,7 +49,7 @@ const FOCUS_RING =
 // "show this subset" switches, not a form-style radio selection, and a
 // toggle reads naturally with a count in its name ("Critical, 12").
 export function FilterBar<V extends string = string>({
-  filters, active, onChange, search, actions, children, className, filterLabel, size = 'sm',
+  filters, active, onChange, search, searchAccessory, actions, children, className, filterLabel, size = 'sm',
 }: FilterBarProps<V>) {
   const searchId = React.useId();
   const md = size === 'md';
@@ -52,7 +58,7 @@ export function FilterBar<V extends string = string>({
     <Card variant="base" padding="10px 16px" className={cn('mb-3', className)}>
       <div className="flex flex-wrap items-center gap-2">
         {search && (
-          <>
+          <div className={cn('contents', searchAccessory && '!flex w-full items-center gap-2')}>
             <label htmlFor={searchId} className="sr-only">{searchLabel}</label>
             <input
               id={searchId}
@@ -65,16 +71,19 @@ export function FilterBar<V extends string = string>({
               }}
               placeholder={search.placeholder ?? 'Search...'}
               className={cn(
-                'h-[34px] min-w-[120px] max-w-[320px] flex-[1_1_180px] rounded-lg px-3 text-[12px] font-sans',
+                'h-[34px] min-w-[120px] flex-[1_1_180px] rounded-lg',
+                !searchAccessory && 'max-w-[320px]',
+                'rounded-lg px-3 text-[12px] font-sans',
                 md && 'h-[40px] text-[13px] [@media(pointer:coarse)]:h-11',
                 'bg-[var(--bg-input)] text-[var(--text-primary)] border border-[var(--border-base)] placeholder:text-[var(--text-secondary)]',
                 'focus-visible:outline-none focus-visible:border-[var(--amber-border)] focus-visible:ring-2 focus-visible:ring-[var(--amber)]',
               )}
             />
-          </>
+            {searchAccessory && <div className="shrink-0">{searchAccessory}</div>}
+          </div>
         )}
 
-        {search && filters && filters.length > 0 && (
+        {search && !searchAccessory && filters && filters.length > 0 && (
           <div aria-hidden className="h-5 w-px shrink-0 bg-[var(--border-base)]" />
         )}
 
@@ -90,8 +99,10 @@ export function FilterBar<V extends string = string>({
                   aria-label={f.count !== undefined ? `${f.label}, ${f.count}` : undefined}
                   onClick={() => onChange?.(f.value)}
                   className={cn(
-                    'shrink-0 inline-flex items-center gap-[5px] rounded-full px-[14px] py-[5px] font-mono text-[10px] font-bold uppercase tracking-[0.10em] cursor-pointer',
-                    md && 'min-h-[36px] text-[11px] [@media(pointer:coarse)]:min-h-11',
+                    'shrink-0 inline-flex items-center gap-[5px] rounded-full px-[14px] py-[5px] cursor-pointer',
+                    md
+                      ? 'min-h-[36px] font-sans text-[13px] font-semibold [@media(pointer:coarse)]:min-h-11'
+                      : 'font-mono text-[10px] font-bold uppercase tracking-[0.10em]',
                     FOCUS_RING,
                   )}
                   style={{
@@ -104,7 +115,7 @@ export function FilterBar<V extends string = string>({
                 >
                   {f.label}
                   {f.count !== undefined && (
-                    <span aria-hidden="true" className={md ? 'text-[10px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
+                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
                       {f.count}
                     </span>
                   )}

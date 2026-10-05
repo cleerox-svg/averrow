@@ -59,7 +59,7 @@ marketing islands. **Key guardrails:** import from `@/design-system/components` 
 `@averrow/shared/ui`, re-exported there from Phase 1 PR6);
 CSS custom properties, never old tokens; never refactor frozen components; never
 touch `public/` / `app.js` / `styles.css`; user avatars = initials only; light +
-dark theme; login/profile parity spec; `tsc --noEmit` clean.
+dark theme; login parity spec (profile/account is Averrow-canonical, `docs/ACCOUNT_DESIGN_SPEC.md`); `tsc --noEmit` clean.
 
 ### `test-engineer` — automated test coverage
 Writes and maintains vitest tests: backend logic in `packages/averrow-worker/test/`

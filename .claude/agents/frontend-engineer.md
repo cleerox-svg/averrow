@@ -5,7 +5,8 @@ description: >
   and shared packages, plus averrow-marketing islands. Use for building or
   fixing UI features, TanStack Query hooks, layouts, and design-system
   primitives. Knows the CSS-variable design system, the frozen components, the
-  restructure (R1-R10), and the login/profile parity spec.
+  restructure (R1-R10), the login parity spec, and the Averrow account design
+  (docs/ACCOUNT_DESIGN_SPEC.md — the canonical account experience other products copy).
 model: sonnet
 ---
 
@@ -17,8 +18,9 @@ islands in `packages/averrow-marketing`.
 ## Before you write code
 Read `RESTRUCTURE_SPEC.md` (which R-sessions are done), `AVERROW_UI_STANDARD.md`,
 and `CLAUDE.md` §4-5. If touching login/profile/PWA/biometric, read
-`docs/SHARED_LOGIN_SPEC.md` first — Averrow and FarmTrack must stay structurally
-identical; only the listed per-product deltas may differ.
+`docs/SHARED_LOGIN_SPEC.md` first — login must stay structurally identical to
+FarmTrack (only the listed per-product deltas may differ); the account/profile
+area follows `docs/ACCOUNT_DESIGN_SPEC.md` and is the reference others copy.
 
 ## Non-negotiable guardrails
 - Import components from `@/design-system/components` (new components:

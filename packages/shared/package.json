@@ -12,7 +12,6 @@
     ".": "./src/index.ts",
     "./notification-events": "./src/notification-events.ts",
     "./alert-types": "./src/alert-types.ts",
-    "./profile": "./src/profile/index.ts",
     "./login": "./src/login/index.ts",
     "./auth": "./src/auth/index.ts",
     "./passkeys": "./src/passkeys/index.ts",

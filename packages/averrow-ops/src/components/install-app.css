@@ -1,4 +1,4 @@
-/* Shared styles for the PWA install surfaces (InstallAppBanner / InstallAppCard). */
+/* Shared styles for the PWA install surfaces (InstallAppBanner + the install card in Settings → Devices & App). */
 
 /* Gutter wrapper for the Overview banner — mirrors StatGrid/StatusRow
    (`@container home`, 24px -> 32px) so it lines up with the hero + KPI tiles. */

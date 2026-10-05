@@ -8,6 +8,7 @@ export {
   getAccountSections, accountSectionIdFromPath,
   type AccountSectionId, type AccountSectionsOptions,
 } from './sections';
+export { securitySummary, notificationsSummary, devicesSummary } from './summaries';
 export { SignOutRow, type SignOutRowProps } from './SignOutRow';
 export {
   ProfileSettings, type ProfileSettingsProps, type ProfileSettingsUser,
@@ -21,3 +22,5 @@ export {
 } from './time-format';
 export * from './security';
 export * from './notifications';
+export type { AccountApiClient, AccountApiResponse } from './api-types';
+export { createFieldVersions, type FieldVersions } from './field-versions';

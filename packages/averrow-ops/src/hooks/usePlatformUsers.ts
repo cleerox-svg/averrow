@@ -15,7 +15,7 @@
 // stored users on prod (see CLAUDE.md §7), so this surface doesn't offer
 // them.
 
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export type PlatformUserRole = 'super_admin' | 'admin' | 'analyst' | 'client';
@@ -68,17 +68,83 @@ export function usePlatformUsers(query: UsersQuery) {
   });
 }
 
+export interface UpdatePlatformUserResult {
+  user: PlatformUser;
+  /** True when the role changed but live sessions could not be revoked (KV failure). */
+  revocationPending: boolean;
+  warning: string | null;
+}
+
 export function useUpdatePlatformUser() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { userId: string; role?: PlatformUserRole; status?: PlatformUserStatus }) => {
+    mutationFn: async (input: { userId: string; role?: PlatformUserRole; status?: PlatformUserStatus }): Promise<UpdatePlatformUserResult> => {
       const { userId, ...body } = input;
       const res = await api.patch<PlatformUser>(`/api/admin/users/${userId}`, body);
       if (!res.success || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'Update failed');
-      return res.data;
+      // The worker adds `revocation_pending` + `warning` beside `data` when the
+      // role write committed but the session-revocation stamp did not.
+      const extra = res as typeof res & { revocation_pending?: boolean; warning?: string };
+      return {
+        user: res.data,
+        revocationPending: extra.revocation_pending === true,
+        warning: typeof extra.warning === 'string' ? extra.warning : null,
+      };
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['platform-users'] });
+    },
+  });
+}
+
+/** Stored staff roles (the CHECK-valid non-client set). */
+export const STAFF_ROLES = ['super_admin', 'admin', 'analyst'] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
+export interface StaffUsersQuery {
+  q?: string;
+  /** One staff role, or '' for every staff role. */
+  role?: string;
+  status?: string;
+}
+
+const STAFF_FETCH_LIMIT = 200;
+
+/**
+ * Staff accounts only. GET /api/admin/users takes a single `role`, so "all
+ * staff" is one query per staff role, merged (no backend change; `client`
+ * accounts are customers and never appear here).
+ */
+export function useStaffUsers({ q = '', role = '', status = '' }: StaffUsersQuery) {
+  const roles: readonly string[] = role ? [role] : STAFF_ROLES;
+  return useQueries({
+    queries: roles.map((r) => ({
+      queryKey: ['platform-users', 'staff', q, r, status],
+      queryFn: async (): Promise<PlatformUsersResponse> => {
+        const params = new URLSearchParams();
+        if (q) params.set('q', q);
+        params.set('role', r);
+        if (status) params.set('status', status);
+        params.set('limit', String(STAFF_FETCH_LIMIT));
+        const res = await api.get<PlatformUsersResponse>(`/api/admin/users?${params}`);
+        if (!res.success || !res.data) throw new Error(res.error ?? 'Failed to load staff');
+        return res.data;
+      },
+      staleTime: 15_000,
+    })),
+    combine: (results) => {
+      const users = results.flatMap((r) => r.data?.users ?? []);
+      const total = results.reduce((n, r) => n + (r.data?.total ?? 0), 0);
+      const firstError = results.find((r) => r.error)?.error ?? null;
+      return {
+        users,
+        total,
+        truncated: total > users.length,
+        isLoading: results.some((r) => r.isLoading),
+        isError: results.some((r) => r.isError),
+        error: firstError as Error | null,
+        refetch: () => { results.forEach((r) => { void r.refetch(); }); },
+      };
     },
   });
 }

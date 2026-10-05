@@ -1,6 +1,7 @@
 # Notifications Audit & Redesign — Phase N0
 
 **Status:** draft
+**Update 2026-10-04:** historical audit. `features/settings/NotificationPreferences.tsx` no longer exists; `/notifications/preferences` redirects to `/settings/notifications/channels`, rendered by `@averrow/shared/account` `NotificationSettings`. Quiet hours live on preferences v2.
 **Date:** 2026-04-29
 **Standard:** none yet — this audit produces the first one.
 **Pattern:** mirrors [`AGENT_AUDIT.md`](./AGENT_AUDIT.md).

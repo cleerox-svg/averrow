@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { InstallAppBanner } from './InstallAppBanner';
-import { InstallAppCard } from './InstallAppCard';
 
 const mocks = vi.hoisted(() => ({ useInstallPrompt: vi.fn() }));
 vi.mock('@/hooks/useInstallPrompt', () => ({ useInstallPrompt: mocks.useInstallPrompt }));
@@ -36,14 +35,5 @@ describe('InstallAppBanner', () => {
     fireEvent.click(btn);
     expect(container.querySelector('.install-steps-wrap')).toHaveAttribute('data-open', 'true');
     expect(screen.getByRole('button', { name: /hide steps/i })).toHaveAttribute('aria-expanded', 'true');
-  });
-});
-
-describe('InstallAppCard', () => {
-  it('is a labelled section and shares the iOS steps component', () => {
-    mocks.useInstallPrompt.mockReturnValue(state({ isIos: true }));
-    const { container } = render(<InstallAppCard />);
-    expect(screen.getByRole('region', { name: /install averrow as an app/i })).toBeInTheDocument();
-    expect(container.querySelectorAll('.install-steps li')).toHaveLength(4);
   });
 });

@@ -107,3 +107,7 @@ export async function apiPatch<T, B = unknown>(path: string, body: B): Promise<A
 export async function apiDelete<T>(path: string): Promise<ApiSuccess<T>> {
   return apiFetch<T>('DELETE', path);
 }
+
+export async function apiPut<T, B = unknown>(path: string, body: B): Promise<ApiSuccess<T>> {
+  return apiFetch<T>('PUT', path, body);
+}

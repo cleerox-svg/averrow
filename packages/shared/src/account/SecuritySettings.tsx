@@ -403,9 +403,9 @@ export function SecuritySettings({
               trailing={!s.isCurrent && ep.session ? (
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
-                  className={TOUCH_MIN}
+                  className={`${TOUCH_MIN} hover:!border-[var(--sev-critical-border)] hover:!text-[var(--sev-critical-text)]`}
                   disabled={revokingId !== null}
                   aria-label={`Sign out ${label}`}
                   onClick={() => { void signOutSession(s); }}

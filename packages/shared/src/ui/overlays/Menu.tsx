@@ -232,7 +232,7 @@ export function ResponsiveMenu({
 // (arrow keys move through the menu, Space/Enter selects). Sheet: a plain
 // radiogroup with the same keys, since Radix menu parts need a menu root.
 
-interface RadioCtx { value: string; onValueChange: (v: string) => void }
+interface RadioCtx { value: string; onValueChange: (v: string) => void; layout: 'list' | 'segmented' }
 const RadioContext = React.createContext<RadioCtx | null>(null);
 
 function CheckGlyph() {
@@ -251,12 +251,22 @@ export interface MenuRadioGroupProps {
   'aria-label'?: string;
   children: React.ReactNode;
   className?: string;
+  /**
+   * `list` (default): stacked 44px rows with a trailing check. `segmented`: one
+   * compact inline control (equal-width segments, 36px in the popover, 44px in
+   * the sheet); every segment stays a real menu item / radio so arrows work.
+   */
+  layout?: 'list' | 'segmented';
 }
 
 export const MenuRadioGroup = React.forwardRef<HTMLDivElement, MenuRadioGroupProps>(
-  function MenuRadioGroup({ value, onValueChange, children, className, ...rest }, ref) {
+  function MenuRadioGroup({ value, onValueChange, children, className, layout = 'list', ...rest }, ref) {
     const mode = React.useContext(PresentationContext);
-    const ctx = React.useMemo(() => ({ value, onValueChange }), [value, onValueChange]);
+    const ctx = React.useMemo(() => ({ value, onValueChange, layout }), [value, onValueChange, layout]);
+    const trackCls = layout === 'segmented'
+      ? 'mx-1 mb-1 grid auto-cols-fr grid-flow-col gap-1 rounded-[12px] border border-[var(--border-base)] bg-[color-mix(in_srgb,var(--text-primary)_4%,transparent)] p-1'
+      : undefined;
+    const groupCls = cn(trackCls, className);
     if (mode === 'sheet') {
       const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
         const keys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'];
@@ -272,19 +282,41 @@ export const MenuRadioGroup = React.forwardRef<HTMLDivElement, MenuRadioGroupPro
       };
       return (
         <RadioContext.Provider value={ctx}>
-          <div ref={ref} role="radiogroup" className={className} onKeyDown={onKeyDown} {...rest}>{children}</div>
+          <div ref={ref} role="radiogroup" className={groupCls} onKeyDown={onKeyDown} {...rest}>{children}</div>
         </RadioContext.Provider>
       );
     }
+    // Radix menus only move with Up/Down; a horizontal control also takes Left/Right (focus only, like the menu's own arrows).
+    const onSegmentKeyDown = layout === 'segmented'
+      ? (e: React.KeyboardEvent<HTMLDivElement>) => {
+          if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+          const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitemradio"]:not([data-disabled])'));
+          const at = items.indexOf(document.activeElement as HTMLElement);
+          if (at < 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          items[(at + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]!.focus();
+        }
+      : undefined;
     return (
       <RadioContext.Provider value={ctx}>
-        <DropdownMenuPrimitive.RadioGroup ref={ref} value={value} onValueChange={onValueChange} className={className} {...rest}>
+        <DropdownMenuPrimitive.RadioGroup ref={ref} value={value} onValueChange={onValueChange} className={groupCls} onKeyDown={onSegmentKeyDown} {...rest}>
           {children}
         </DropdownMenuPrimitive.RadioGroup>
       </RadioContext.Provider>
     );
   },
 );
+
+const SEGMENT_CLASS =
+  'relative flex min-h-[36px] min-w-0 cursor-pointer select-none items-center justify-center gap-1.5 rounded-[8px] px-2 text-[13px] leading-none outline-none ' +
+  'transition-colors duration-[var(--dur-fast,120ms)] motion-reduce:transition-none ' + FOCUS_RING_INSET + ' ' +
+  'data-[disabled]:pointer-events-none data-[disabled]:opacity-50 disabled:pointer-events-none disabled:opacity-50';
+const SEGMENT_ON =
+  'font-semibold text-[var(--amber-text,var(--amber))] bg-[var(--bg-card-deep,var(--bg-card))] shadow-[0_0_0_1px_var(--amber-border,var(--border-strong))]';
+const SEGMENT_OFF =
+  'font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] data-[highlighted]:text-[var(--text-primary)] ' +
+  'data-[highlighted]:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)]';
 
 export interface MenuRadioItemProps {
   value: string;
@@ -305,8 +337,16 @@ export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(f
   const group = React.useContext(RadioContext);
   const closeSheet = useSheetClose();
   const checked = group?.value === value;
-  const cls = cn(ITEM_CLASS, checked && 'font-semibold', className);
-  const content = (
+  const segmented = group?.layout === 'segmented';
+  const cls = segmented
+    ? cn(SEGMENT_CLASS, checked ? SEGMENT_ON : SEGMENT_OFF, className)
+    : cn(ITEM_CLASS, checked && 'font-semibold', className);
+  const content = segmented ? (
+    <>
+      {icon ? <span aria-hidden="true" className="inline-flex shrink-0 [&>svg]:h-4 [&>svg]:w-4">{icon}</span> : null}
+      <span className="truncate">{children}</span>
+    </>
+  ) : (
     <ItemContent icon={icon} description={description} tone="default" trailing={checked ? <CheckGlyph /> : undefined}>
       {children}
     </ItemContent>
@@ -323,7 +363,7 @@ export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(f
         tabIndex={checked || !group?.value ? 0 : -1}
         disabled={disabled}
         onClick={() => { group?.onValueChange(value); if (!keepOpen) closeSheet?.(); }}
-        className={cn(cls, 'min-h-[48px]')}
+        className={cn(cls, segmented ? 'min-h-[44px]' : 'min-h-[48px]')}
       >
         {content}
       </button>

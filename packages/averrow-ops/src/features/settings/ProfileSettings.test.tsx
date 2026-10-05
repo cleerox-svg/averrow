@@ -173,7 +173,7 @@ describe('ProfileSettings — account facts + sign out', () => {
   it('shows role, access scope, member since and (staff) the copyable user id', () => {
     setup();
     const account = screen.getByRole('region', { name: 'Account' });
-    expect(within(account).getByText('Super Admin')).toBeInTheDocument();
+    expect(within(account).getByText('Super admin')).toBeInTheDocument();
     expect(within(account).getByText('Averrow staff · Full platform access')).toBeInTheDocument();
     expect(within(account).getByText(/2025/)).toBeInTheDocument();
     expect(within(account).getByText('usr_123')).toBeInTheDocument();

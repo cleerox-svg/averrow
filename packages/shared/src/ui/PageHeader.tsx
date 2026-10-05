@@ -23,6 +23,8 @@ export interface PageHeaderProps {
   /** Back control: `<a>` when `href` is given, otherwise a `<button>`. */
   back?: { label: string; onClick?: () => void; href?: string };
   actions?: React.ReactNode;
+  /** `mono` (default, dashboard pages) or `sans` 14px (settings/inbox, matches the "‹ Settings" back link). */
+  backFont?: 'mono' | 'sans';
   /** Badge next to the title (e.g. BETA). */
   badge?: React.ReactNode;
   /** Status line below the title. */
@@ -35,12 +37,13 @@ export interface PageHeaderProps {
 const FOCUS_RING =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
 
-export function PageHeader({ title, subtitle, back, actions, badge, meta, className, embedded }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, back, backFont = 'mono', actions, badge, meta, className, embedded }: PageHeaderProps) {
   const ctxEmbedded = useWorkspaceEmbed();
   const isEmbedded = embedded ?? ctxEmbedded;
 
   const backClass = cn(
-    'mb-3 inline-flex items-center gap-1.5 rounded font-mono text-[12px] tracking-[0.06em] text-[var(--text-secondary)] hover:text-[var(--amber-text)] bg-transparent border-0 p-0 cursor-pointer no-underline',
+    'mb-3 inline-flex items-center gap-1.5 rounded text-[var(--text-secondary)] hover:text-[var(--amber-text)] bg-transparent border-0 p-0 cursor-pointer no-underline',
+    backFont === 'sans' ? 'font-sans text-[14px] font-medium' : 'font-mono text-[12px] tracking-[0.06em]',
     FOCUS_RING,
   );
   const backContent = <><span aria-hidden="true">←</span> {back?.label}</>;

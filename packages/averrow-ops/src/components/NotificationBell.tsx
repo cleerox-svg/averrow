@@ -16,7 +16,7 @@ import {
 } from '@averrow/shared/ui';
 import { useIsMobile } from '@/hooks/useWindowWidth';
 import {
-  useUnreadCount, useNotifications, useMarkRead, useMarkAllRead, OPS_AUDIENCE_FILTER,
+  useNotifications, useMarkRead, useMarkAllRead, OPS_AUDIENCE_FILTER,
   useSnoozeNotification, useMarkDone,
 } from '@/hooks/useNotifications';
 import { useAlertTriageSummary } from '@/hooks/useAlerts';
@@ -24,6 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import type { Notification } from '@/hooks/useNotifications';
 import { snoozeUntilIso } from '@/lib/snooze';
+import { useUnreadSummary } from './notifications/useUnreadSummary';
 import { DayHeading, NotificationRow, NotificationRowSkeletons } from './notifications/NotificationRow';
 import { groupByDay } from './notifications/groupByDay';
 
@@ -102,7 +103,7 @@ function NotificationPanel({
     <div className="flex min-h-full flex-col">
       {/* Header — pinned while the list scrolls */}
       <div
-        className="sticky top-0 z-[2] border-b border-[var(--border-base)] bg-[var(--bg-elevated)]"
+        className="sticky top-0 z-[2] border-b border-[var(--border-base)] bg-[var(--bg-elevated-solid)]"
         style={isSheet ? { paddingTop: 'env(safe-area-inset-top, 0px)' } : undefined}
       >
         <div className="flex items-center gap-1 py-1 pl-4 pr-1.5">
@@ -122,15 +123,17 @@ function NotificationPanel({
           >
             Mark all read
           </button>
-          <Link
-            to="/settings/notifications"
-            onClick={onClose}
-            aria-label="Notification settings"
-            title="Notification settings"
-            className={ICON_LINK}
-          >
-            <Settings aria-hidden="true" className="h-[18px] w-[18px]" />
-          </Link>
+          {isSheet && (
+            <Link
+              to="/settings/notifications"
+              onClick={onClose}
+              aria-label="Notification settings"
+              title="Notification settings"
+              className={ICON_LINK}
+            >
+              <Settings aria-hidden="true" className="h-[18px] w-[18px]" />
+            </Link>
+          )}
           {isSheet && (
             <SheetClose asChild>
               <button
@@ -209,15 +212,6 @@ function NotificationPanel({
               icon={<Bell />}
               title={filter === 'unread' && notifications.length > 0 ? 'No unread notifications' : "You're all caught up"}
               description="New notifications will show up here."
-              action={
-                <Link
-                  to="/settings/notifications"
-                  onClick={onClose}
-                  className={`${TEXT_LINK} text-[var(--amber-text)]`}
-                >
-                  Notification settings
-                </Link>
-              }
             />
           )
         ) : (
@@ -243,7 +237,7 @@ function NotificationPanel({
 
       {/* Footer — pinned */}
       <div
-        className="sticky bottom-0 z-[2] flex items-center justify-between gap-2 border-t border-[var(--border-base)] bg-[var(--bg-elevated)] px-2"
+        className="sticky bottom-0 z-[2] flex items-center justify-between gap-2 border-t border-[var(--border-base)] bg-[var(--bg-elevated-solid)] px-2"
         style={isSheet ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' } : undefined}
       >
         <Link to="/notifications" onClick={onClose} className={`${TEXT_LINK} text-[var(--amber-text)]`}>
@@ -270,17 +264,8 @@ export function NotificationBell() {
 
   // N1: unread badge counts only operator-relevant unread, mirroring the
   // bell's scoped fetch so the badge can't blink on tenant-only events.
-  const { data: unreadData } = useUnreadCount(OPS_AUDIENCE_FILTER);
+  const { count: unreadData, hasCritical } = useUnreadSummary();
   const unreadCount = unreadData ?? 0;
-
-  // Whether an unread critical exists comes from the same list the panel
-  // shows (no new endpoint). Only fetched while something is unread, and
-  // re-fetched when the count moves so a fresh critical turns the badge red.
-  const { data: feed, refetch: refetchFeed } = useNotifications(unreadCount > 0, OPS_AUDIENCE_FILTER);
-  useEffect(() => {
-    if (unreadCount > 0) void refetchFeed();
-  }, [unreadCount, refetchFeed]);
-  const hasCritical = (feed?.notifications ?? []).some((n) => n.state === 'unread' && n.severity === 'critical');
 
   // Polite announcement of new arrivals, debounced so a burst reads once.
   const baseline = useRef<number | null>(null);

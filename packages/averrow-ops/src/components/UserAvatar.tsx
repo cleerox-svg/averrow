@@ -5,18 +5,17 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Bell, ShieldCheck, Smartphone, User, UserPlus, LogOut, Monitor, Moon, Sun,
+  Bell, ShieldCheck, ShieldAlert, Smartphone, User, UserPlus, LogOut, Monitor, Moon, Sun,
 } from 'lucide-react';
-import { roleLabel } from '@averrow/shared';
 import {
-  Avatar, Badge, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, ResponsiveMenu,
+  Avatar, Badge, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, ResponsiveMenu, roleBadgeProps,
 } from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
 import { parseInitials } from '@/lib/avatar';
 import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
 import { useTheme } from '@/design-system/hooks/useTheme';
 import type { Theme } from '@/design-system/hooks/useTheme';
-import { useUnreadCount, OPS_AUDIENCE_FILTER } from '@/hooks/useNotifications';
+import { useUnreadSummary } from '@/components/notifications/useUnreadSummary';
 
 const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof Monitor }> = [
   { value: 'auto', label: 'Auto', Icon: Monitor },
@@ -56,29 +55,47 @@ export function UserAvatar() {
   const { user, logout, switchAccount } = useAuth();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
-  const { data: unread = 0 } = useUnreadCount(OPS_AUDIENCE_FILTER);
+  const { count: unreadCount, hasCritical } = useUnreadSummary();
+  const unread = unreadCount ?? 0;
 
   const name = user?.display_name ?? user?.name ?? user?.email ?? 'account';
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const hasPasskey = (user?.passkey_count ?? 0) > 0;
+  const role = roleBadgeProps(user?.role);
 
   return (
     <ResponsiveMenu
       title="Account menu"
       trigger={<AvatarTrigger initials={initials} name={name} />}
     >
-      <div className="flex items-center gap-3 px-3 pb-3 pt-2.5">
+      <div className="flex items-start gap-3 px-3 pb-3 pt-2.5">
         <Avatar name={name} initials={initials} tone="self" shape="squircle" size={40} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] font-bold leading-tight text-[var(--text-primary)]" title={name}>{name}</p>
           {user?.email ? (
             <p className="truncate text-[13px] text-[var(--text-secondary)]" title={user.email}>{user.email}</p>
           ) : null}
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            <Badge status="draft" size="md" font="sans">{roleLabel(user?.role)}</Badge>
-            {hasPasskey
-              ? <Badge status="active" size="md" font="sans">Passkey on</Badge>
-              : <Badge status="warning" size="md" font="sans">No passkey</Badge>}
+          <div className="mt-1.5 flex items-center gap-2">
+            <Badge {...role.tone} size="md" font="sans">{role.label}</Badge>
+            {hasPasskey ? (
+              <span
+                role="img"
+                title="Passkey on"
+                aria-label="Passkey on"
+                className="inline-flex h-5 w-5 items-center justify-center text-[var(--green)]"
+              >
+                <ShieldCheck aria-hidden="true" className="h-[18px] w-[18px]" />
+              </span>
+            ) : (
+              <span
+                role="img"
+                title="No passkey"
+                aria-label="No passkey"
+                className="inline-flex h-5 w-5 items-center justify-center text-[var(--amber-text,var(--amber))]"
+              >
+                <ShieldAlert aria-hidden="true" className="h-[18px] w-[18px]" />
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -91,7 +108,13 @@ export function UserAvatar() {
           icon={<Icon />}
           tone={tone}
           trailing={label === 'Notifications' && unread > 0
-            ? <Badge severity="medium" size="md" label={unread > 99 ? '99+' : String(unread)} />
+            ? (
+            <Badge
+              {...(hasCritical ? { severity: 'critical' as const } : { status: 'warning' as const })}
+              size="md"
+              label={unread > 99 ? '99+' : String(unread)}
+            />
+          )
             : undefined}
           onSelect={() => navigate(path)}
         >
@@ -101,13 +124,14 @@ export function UserAvatar() {
 
       <MenuSeparator />
 
-      {/* Choice rows, not a SegmentedControl: they are real menu items, so arrow
-          keys reach them in the popover and the sheet. keepOpen: a theme change
-          is visible instantly behind the menu and people compare Dark/Light, so
-          closing after each pick would force a reopen; Esc / outside tap closes. */}
+      {/* One compact Auto | Dark | Light control. Segments are real menu radio
+          items, so arrow keys reach them in the popover and the sheet. keepOpen:
+          a theme change is visible instantly behind the menu and people compare
+          Dark/Light; Esc / outside tap closes. */}
       <MenuLabel>Appearance</MenuLabel>
       <MenuRadioGroup
         aria-label="Appearance"
+        layout="segmented"
         value={theme}
         onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}
       >
@@ -129,7 +153,7 @@ export function UserAvatar() {
         Sign out
       </MenuItem>
 
-      <p className="px-3 pb-1.5 pt-2 text-center font-mono text-[11px] text-[var(--text-muted)]">
+      <p className="px-3 pb-1.5 pt-2 text-center font-mono text-[12px] text-[var(--text-tertiary)]">
         {VERSION_LABEL} · {BUILD_SHA}
       </p>
     </ResponsiveMenu>
