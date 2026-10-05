@@ -259,12 +259,44 @@ test.describe("homepage: follow one operation", () => {
     const ctx = await browser.newContext({ reducedMotion: "no-preference" });
     const p = await ctx.newPage();
     await p.goto("/");
+    const tabs = p.locator("#operation-story").getByRole("tab");
     await p.locator("#operation-story [data-body]").scrollIntoViewIfNeeded();
-    await expect(p.locator("#operation-story").getByRole("tab").nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 9000 });
-    // Any interaction stops it.
-    await p.locator("#operation-story").getByRole("tab").nth(1).click();
-    await p.waitForTimeout(4600);
-    await expect(p.locator("#operation-story").getByRole("tab").nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(p.getByRole("button", { name: "Pause automatic advance" })).toBeVisible();
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 10000 });
+    // Any interaction stops it and hides the control.
+    await tabs.nth(1).click();
+    await p.mouse.move(0, 0);
+    await p.waitForTimeout(7200);
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(p.locator(".os-ctl")).toBeHidden();
+    await ctx.close();
+  });
+
+  test("pauses on hover and the pause control toggles", async ({ browser }, info) => {
+    test.skip(info.project.name === "mobile", "hover is a pointer affordance; the control scrolls the story out of view on a phone");
+    test.setTimeout(60_000);
+    const ctx = await browser.newContext({ reducedMotion: "no-preference" });
+    const p = await ctx.newPage();
+    await p.goto("/");
+    const s = p.locator("#operation-story");
+    const tabs = s.getByRole("tab");
+    await s.locator("[data-body]").scrollIntoViewIfNeeded();
+    // Hover pauses.
+    await s.locator("[data-stage]").hover();
+    await p.waitForTimeout(7200);
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    // Button: Pause -> Play, no advance while paused.
+    const btn = s.locator(".os-ctl");
+    await btn.click();
+    await expect(btn).toHaveText("Play");
+    await p.mouse.move(0, 0);
+    await p.waitForTimeout(7200);
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    // Play resumes.
+    await btn.click();
+    await expect(btn).toHaveText("Pause");
+    await p.mouse.move(0, 0);
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 10000 });
     await ctx.close();
   });
 
@@ -278,6 +310,7 @@ test.describe("homepage: follow one operation", () => {
     await expect(s.getByText("8 of 14")).toBeVisible();
     await expect(s.locator("svg[role=img]")).toHaveAttribute("aria-label", /14 domains/);
     await expect(s.getByRole("tab")).toHaveCount(0);
+    await expect(s.locator(".os-ctl")).toHaveCount(0);
     await ctx.close();
   });
 });

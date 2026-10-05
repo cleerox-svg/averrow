@@ -117,8 +117,8 @@ const steps: Step[] = [
         ["Domains removed", "8 of 14"],
         ["Pending with registrar", "4"],
         ["Queued", "2"],
-        ["Social profile", "pending review"],
-        ["App listing", "queued"],
+        ["Social profile", "report filed · pending platform review"],
+        ["App listing", "evidence in review · queued"],
       ],
       track: {
         removed: 57,
@@ -204,7 +204,7 @@ const finalLabel = steps[steps.length - 1].graphLabel;
     </ol>
 
     <div class="os-stage" data-stage>
-      <svg class="os-graph final" viewBox="110 10 400 300" role="img" aria-label={finalLabel} data-graph>
+      <svg class="os-graph final" viewBox="110 10 410 300" role="img" aria-label={finalLabel} data-graph>
         <g class="os-edges">
           {domains.map(d => (
             <line class="e" x1={d.x} y1={d.y} x2={HUB.x} y2={HUB.y} data-step={d.first === 1 ? 3 : d.first} />
@@ -231,17 +231,17 @@ const finalLabel = steps[steps.length - 1].graphLabel;
           </g>
         ))}
 
-        <circle class="n hub" cx={HUB.x} cy={HUB.y} r="34" data-step="3" />
+        <circle class="n hub" cx={HUB.x} cy={HUB.y} r="38" data-step="3" />
         <text class="lb lb-hub" x={HUB.x} y={HUB.y - 2} text-anchor="middle" data-step="3">OP-2291</text>
         <text class="lb lb-hubsub" x={HUB.x} y={HUB.y + 11} text-anchor="middle" data-step="3" data-counts="1,1,9,11,14">14 domains</text>
 
         <g class="lb lb-legend" data-step="5">
           <circle class="dom removed" cx="128" cy="300" r="4" />
           <text x="137" y="303.5">removed</text>
-          <circle class="dom pending" cx="196" cy="300" r="4" />
-          <text x="205" y="303.5">pending</text>
-          <circle class="dom queued" cx="263" cy="300" r="4" />
-          <text x="272" y="303.5">queued</text>
+          <circle class="dom pending" cx="205" cy="300" r="4" />
+          <text x="214" y="303.5">pending</text>
+          <circle class="dom queued" cx="282" cy="300" r="4" />
+          <text x="291" y="303.5">queued</text>
         </g>
       </svg>
       <div class="os-panels" data-panels></div>
@@ -249,7 +249,10 @@ const finalLabel = steps[steps.length - 1].graphLabel;
   </div>
 
   <div class="os-foot">
-    <span class="os-illus">Illustrative example · names and domains changed · timings vary by operation</span>
+    <span class="os-meta">
+      <span class="os-illus">Illustrative example · names and domains changed · timings vary by operation</span>
+      <span class="os-ctl-slot" data-ctl-slot></span>
+    </span>
     <span class="os-ctas">
       <a class="btn btn-primary" href={`${base}/scan`} data-cta="opstory-scan">Scan your domain</a>
       <a class="os-link" href={`${base}/resources/sample-operation-report`} data-cta="opstory-sample-report">View the sample report &rarr;</a>
@@ -370,35 +373,61 @@ const finalLabel = steps[steps.length - 1].graphLabel;
     root.setAttribute("data-enhanced", "");
     select(0, false);
 
-    // Auto-advance once through the steps, only when motion is allowed. Stops
-    // on any interaction or when the story leaves the viewport.
+    // Auto-advance once through the steps (WCAG 2.2.2: visible pause control,
+    // paused on hover, stopped on interaction or when the story leaves the
+    // viewport). Never runs when the visitor prefers reduced motion.
+    var INTERVAL = 6500;
     var timer = 0;
     var stopped = reduce;
     var started = false;
-    function stop() { stopped = true; clearTimeout(timer); }
-    function tick() {
-      if (stopped) return;
+    var userPaused = false;
+    var hoverPaused = false;
+    var ctl = null;
+    function schedule() {
+      clearTimeout(timer);
+      if (stopped || userPaused || hoverPaused) return;
       timer = setTimeout(function () {
-        if (stopped) return;
-        if (cur < tabs.length - 1) { select(cur + 1, false); tick(); } else stop();
-      }, 4000);
+        if (stopped || userPaused || hoverPaused) return;
+        if (cur < tabs.length - 1) { select(cur + 1, false); schedule(); } else stop();
+      }, INTERVAL);
     }
-    if (!stopped) {
-      ["pointerdown", "keydown", "focusin", "wheel", "touchstart"].forEach(function (ev) {
-        root.addEventListener(ev, stop, { passive: true });
+    function stop() {
+      stopped = true;
+      clearTimeout(timer);
+      if (ctl) ctl.hidden = true;
+    }
+    function setCtl() {
+      ctl.textContent = userPaused ? "Play" : "Pause";
+      ctl.setAttribute("aria-label", userPaused ? "Resume automatic advance" : "Pause automatic advance");
+    }
+    var slot = root.querySelector("[data-ctl-slot]");
+    if (!stopped && slot && "IntersectionObserver" in window) {
+      ctl = document.createElement("button");
+      ctl.type = "button";
+      ctl.className = "os-ctl";
+      ctl.hidden = true;
+      setCtl();
+      ctl.addEventListener("click", function () {
+        userPaused = !userPaused;
+        setCtl();
+        schedule();
       });
-      if ("IntersectionObserver" in window) {
-        new IntersectionObserver(function (entries) {
-          var e = entries[entries.length - 1];
-          if (e.isIntersecting) {
-            if (!started && !stopped) { started = true; tick(); }
-          } else if (started) {
-            stop();
-          }
-        }, { threshold: 0.5 }).observe(body);
-      } else {
-        stopped = true;
-      }
+      slot.appendChild(ctl);
+      ["pointerdown", "keydown", "focusin"].forEach(function (ev) {
+        root.addEventListener(ev, function (e) { if (!ctl.contains(e.target)) stop(); }, { passive: true });
+      });
+      root.addEventListener("mouseenter", function () { hoverPaused = true; clearTimeout(timer); });
+      root.addEventListener("mouseleave", function () { hoverPaused = false; schedule(); });
+      new IntersectionObserver(function (entries) {
+        var e = entries[entries.length - 1];
+        if (e.isIntersecting) {
+          if (!started && !stopped) { started = true; ctl.hidden = false; schedule(); }
+        } else if (started) {
+          stop();
+        }
+      }, { threshold: 0.5 }).observe(body);
+    } else {
+      stopped = true;
     }
   })();
 </script>
@@ -498,11 +527,12 @@ const finalLabel = steps[steps.length - 1].graphLabel;
   .os-graph .side.amber { stroke: var(--amber-text); }
   .os-graph .side.high { stroke: var(--sev-high-text); }
   .os-graph .hub { fill: var(--red-bg); stroke: var(--red-text); stroke-width: 1.5; }
+  .os-graph.final .lb-name[data-until] { display: none; }
   .os-graph .lb-name { font: 700 12px var(--font-display); fill: var(--text-primary); }
   .os-graph .lb-sub { font: 400 10px var(--font-mono); fill: var(--text-secondary); }
-  .os-graph .lb-hub { font: 600 10px var(--font-mono); fill: var(--red-text); }
+  .os-graph .lb-hub { font: 600 12px var(--font-mono); fill: var(--red-text); }
   .os-graph .lb-hubsub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
-  .os-graph .lb-legend text { font: 400 9.5px var(--font-mono); fill: var(--text-secondary); }
+  .os-graph .lb-legend text { font: 400 11px var(--font-mono); fill: var(--text-secondary); }
   .os-graph .lb-legend circle { fill: var(--bg-secondary); stroke-width: 2; }
   .os-graph .lb-legend .removed { stroke: var(--green-text); fill: var(--green-bg); }
   .os-graph .lb-legend .pending { stroke: var(--amber-text); }
@@ -565,13 +595,38 @@ const finalLabel = steps[steps.length - 1].graphLabel;
     padding-top: 16px;
     border-top: 1px solid var(--border-strong);
   }
+  .os-meta { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
+  .os-ctl {
+    font: 600 11px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .os-ctl:hover { border-color: var(--accent); }
+  .os-ctl:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .os-ctl[hidden] { display: inline-block; visibility: hidden; }
   .os-illus { font: 500 11.5px var(--font-mono); color: var(--text-secondary); }
   .os-ctas { display: flex; align-items: center; gap: 16px 20px; flex-wrap: wrap; }
   .os-link { color: var(--text-primary); font-weight: 700; font-size: 14px; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
   .os-link:hover { border-bottom-color: var(--accent); text-decoration: none; }
   .os-link:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 3px; }
 
+  @media (max-width: 1100px) {
+    .opstory[data-enhanced] .os-stage { grid-template-columns: minmax(0, 1fr); }
+    .os-graph { max-width: 560px; margin: 0 auto; }
+  }
+
   @media (max-width: 760px) {
+    .os-graph .lb-sub, .os-graph .lb-hubsub { display: none; }
+    .os-graph .lb-name { font-size: 13px; }
+    .os-graph .lb-hub { font-size: 13px; }
+    .os-graph .lb-legend text { font-size: 12.5px; }
+    .os-graph { max-width: none; }
     .opstory { padding: 2rem 16px; }
     .opstory[data-enhanced] .os-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
     .opstory[data-enhanced] .os-steps {
