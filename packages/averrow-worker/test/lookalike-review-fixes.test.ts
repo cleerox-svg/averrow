@@ -89,6 +89,12 @@ const DDL = `
     canonical_domain TEXT,
     tier TEXT
   );
+  -- The seeder's official-domain filter reads this (lib/safeDomains.ts).
+  CREATE TABLE brand_safe_domains (
+    id TEXT PRIMARY KEY,
+    brand_id TEXT NOT NULL,
+    domain TEXT NOT NULL
+  );
   CREATE TABLE takedown_requests (
     id TEXT PRIMARY KEY,
     status TEXT,

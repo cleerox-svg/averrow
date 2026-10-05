@@ -12,6 +12,7 @@ import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
+import { loadOfficialDomainMatches, matchOfficialDomain } from '../lib/safeDomains';
 import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
 import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
 import type { PagePhishingResult, PageThreatLevel } from '../lib/page-phishing-scorer';
@@ -1087,7 +1088,32 @@ export async function generateAndStoreLookalikes(
   brandId: string,
   domain: string,
 ): Promise<number> {
-  const permutations = generatePermutations(domain);
+  const generated = generatePermutations(domain);
+  if (generated.length === 0) return 0;
+
+  // A permutation that is ANY brand's official domain (brand_safe_domains
+  // or brands.canonical_domain) is not a squat — zoom.com is a TLD swap of
+  // zoom.us, cloud.com an omission of icloud.com — and must never become a
+  // lookalike row (it would alert HIGH on the other brand's own mail+web).
+  // Same matcher as the alert-time triage rule (lib/alert-triage.ts
+  // `decideLookalikeRegistrationTriage`), so the two cannot drift. Batched
+  // at <=99 binds per statement. FAIL-OPEN: a lookup error seeds every
+  // permutation, as before this filter; the triage rule still dismisses
+  // any alert one of them raises.
+  let permutations = generated;
+  let officialFiltered = 0;
+  try {
+    const official = await loadOfficialDomainMatches(env.DB, generated.map((p) => p.domain));
+    if (official.length > 0) {
+      permutations = generated.filter((p) => matchOfficialDomain(p.domain, official) === null);
+      officialFiltered = generated.length - permutations.length;
+    }
+  } catch (err) {
+    logger.warn('lookalike_official_domain_filter_failed', {
+      brand_id: brandId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   if (permutations.length === 0) return 0;
 
   let inserted = 0;
@@ -1114,7 +1140,8 @@ export async function generateAndStoreLookalikes(
   logger.info('lookalike_generate', {
     brand_id: brandId,
     domain,
-    total_permutations: permutations.length,
+    total_permutations: generated.length,
+    official_domains_filtered: officialFiltered,
     new_stored: inserted,
   });
 

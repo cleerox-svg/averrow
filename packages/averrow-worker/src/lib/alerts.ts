@@ -12,6 +12,7 @@ import type { Env } from '../types';
 import { emitOrgEvent } from './org-events';
 import { trackAlertEvent } from './alert-events';
 import { logger } from './logger';
+import type { LookalikeAlertDetails } from './alert-triage';
 
 /** @deprecated Use AlertTypeKey from @averrow/shared. */
 export type AlertType = AlertTypeKey;
@@ -214,7 +215,7 @@ export async function createAlert(
     params.orgId ?? null,
   ).run();
 
-  // Tier 1 + Tier 1.5 auto-triage: dispatch by alert source/type and
+  // Tier 1 + Tier 1.5 + lookalike auto-triage: dispatch by alert source/type and
   // immediately mark as `false_positive` when the new alert meets
   // its family's auto-dismiss criteria. Best-effort — any failure
   // here leaves the alert in 'new' status (the conservative
@@ -249,6 +250,13 @@ export async function createAlert(
         ? await triage.loadExecutiveAllowlist(db, executiveId)
         : { full_name: null, official_handles: null };
       decision = triage.decideExecutiveImpersonationTriage(params.details ?? null, allow);
+    } else if (triage.LOOKALIKE_TRIAGE_ALERT_TYPES.has(params.alertType)) {
+      // Lookalike family: dismiss when the alerted domain is ANY brand's
+      // official domain (brand_safe_domains / canonical_domain) — e.g.
+      // zoom.com flagged as a lookalike of zoom.us. One indexed lookup.
+      const details = (params.details ?? null) as LookalikeAlertDetails | null;
+      const rows = await triage.loadOfficialDomainRowsForAlert(db, details);
+      decision = triage.decideLookalikeRegistrationTriage(details, rows);
     }
 
     if (decision && decision.action === 'dismiss') {

@@ -1095,7 +1095,7 @@ swap to the pre-computed column or the matching cube.
 
 ### Alert auto-triage (`lib/alert-triage.ts`)
 
-`createAlert` dispatches to one of four decision rules based on
+`createAlert` dispatches to one of five decision rules based on
 the new alert's source/type:
 
 1. **Threat-sourced** (`source_type='threat'`, Tier 1) —
@@ -1135,6 +1135,24 @@ the new alert's source/type:
    (`org_executives`) rather than the brand's. Same two gates,
    same platform-aware rule B via `normalizeHandleForPlatform`.
 
+5. **Lookalike domain** (`alert_type='lookalike_domain_active'` from
+   every producer, including the confirmed-new-registration alert,
+   plus `typosquat_bimi`) — `decideLookalikeRegistrationTriage`
+   dismisses when the alerted domain (`details.lookalike_domain`, or
+   `details.domain` for the phantom-matcher/BIMI shape; lowercased, no
+   trailing dot, `www.` ignored) IS any brand's `brand_safe_domains`
+   entry or `brands.canonical_domain` (e.g. zoom.com flagged as a
+   lookalike of zoom.us), or a subdomain of one (incl. `*.x`
+   wildcard entries), because only that domain's registrant can create
+   names under it. The subdomain branch is skipped under
+   shared-hosting domains (`SHARED_HOSTING_DOMAINS`, e.g. github.io).
+   The matcher and the one indexed lookup
+   (`loadOfficialDomainMatches`, ≤99 binds/statement) live in
+   `lib/safeDomains.ts` and are shared with the seeder:
+   `generateAndStoreLookalikes` drops such permutations before insert
+   (fail-open on lookup error). Reason: `auto: <domain> is the
+   official domain of <brand>`.
+
 The `0.5` threshold is the platform default — tunable per call via
 the `impersonationThreshold` parameter on `runAlertTriageBackfill`.
 All decision functions are pure and unit-tested under
@@ -1148,7 +1166,7 @@ alert_type. Every dismissal stamps the rule reason into
 `resolution_notes` so the action is auditable and reversible.
 
 To add a new alert family's rule, write a new `decide…Triage`
-function alongside the existing four, add a case to
+function alongside the existing five, add a case to
 `runAlertTriageBackfill`'s dispatch switch and to `createAlert`'s
 real-time hook. Don't add a second classifier elsewhere; the
 rules should stay in one place.

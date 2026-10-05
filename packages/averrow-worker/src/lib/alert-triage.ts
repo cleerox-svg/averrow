@@ -1,4 +1,4 @@
-// Averrow — Alert auto-triage (Tier 1 + Tier 1.5)
+// Averrow — Alert auto-triage (Tier 1 + Tier 1.5 + lookalike official-domain)
 //
 // Conservative rule-based pass that auto-dismisses alerts where the
 // existing evidence is strong enough that a human doesn't need to
@@ -6,7 +6,7 @@
 // decision is deterministic, replayable from the source row, and
 // reversible (operator can flip status back to 'new' at any time).
 //
-// Three independent rule families dispatched by alert_type /
+// Five independent rule families dispatched by alert_type /
 // source_type:
 //
 //   1. THREAT-SOURCED ALERTS (source_type='threat'): all reputation
@@ -24,6 +24,16 @@
 //      noise threshold (rule A, default 0.5). See
 //      `decideAppStoreImpersonationTriage`.
 //
+//   4. EXECUTIVE IMPERSONATION (alert_type='executive_impersonation'):
+//      mirror of (2) against the executive's own official_handles. See
+//      `decideExecutiveImpersonationTriage`.
+//
+//   5. LOOKALIKE DOMAIN (alert_type='lookalike_domain_active' — every
+//      producer, including the confirmed-new-registration alert — and
+//      'typosquat_bimi'): the alerted domain is ANY brand's official
+//      domain (brand_safe_domains or brands.canonical_domain), or a
+//      subdomain of one. See `decideLookalikeRegistrationTriage`.
+//
 // Every decision stamps a stable, machine-readable `reason` into
 // `alerts.resolution_notes` so the dismissal trail is auditable.
 // The rules err heavily toward keeping ambiguous alerts open —
@@ -33,6 +43,12 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { isNewlyRegistered, NRD_MAX_AGE_DAYS } from './domain-age';
 import { normalizeHandleForPlatform } from './handle-normalize';
+import {
+  loadOfficialDomainMatches,
+  matchOfficialDomain,
+  normalizeHost,
+  type OfficialDomainRow,
+} from './safeDomains';
 
 export type AutoTriageDecision =
   | { action: 'dismiss'; reason: string }
@@ -440,6 +456,87 @@ export function decideExecutiveImpersonationTriage(
   return { action: 'keep', reason: 'high_impersonation_score' };
 }
 
+// ─── Lookalike-domain alerts (official-domain rule) ──────────────
+
+/** Alert types the official-domain rule applies to. The new-registration
+ *  alert (PR #1793) is `lookalike_domain_active` with `details.
+ *  new_registration = true`, so it is covered by the first entry. */
+export const LOOKALIKE_TRIAGE_ALERT_TYPES: ReadonlySet<string> = new Set([
+  'lookalike_domain_active',
+  'typosquat_bimi',
+]);
+
+/** The domain-bearing keys lookalike producers write into `details`. The
+ *  checker / page pass / claim backfill use `lookalike_domain`; the
+ *  phantom matcher and the BIMI alert use `domain`. */
+export interface LookalikeAlertDetails {
+  lookalike_domain?: string;
+  domain?: string;
+}
+
+/** The alerted host from a lookalike alert's details, or null. */
+export function lookalikeAlertDomain(details: LookalikeAlertDetails | null): string | null {
+  if (!details) return null;
+  const raw = typeof details.lookalike_domain === 'string' && details.lookalike_domain
+    ? details.lookalike_domain
+    : typeof details.domain === 'string' ? details.domain : '';
+  const host = normalizeHost(raw);
+  return host || null;
+}
+
+/**
+ * Decide auto-triage for a lookalike-domain alert. PURE — the caller
+ * passes the rows `loadOfficialDomainMatches` returned for the alerted
+ * domain.
+ *
+ *   Dismiss when the alerted domain (normalised: lowercase, no trailing
+ *   dot, www. ignored) IS any brand's `brand_safe_domains` entry or
+ *   `brands.canonical_domain` — zoom.com is not a squat of zoom.us, it is
+ *   Zoom's own domain.
+ *
+ *   Dismiss when it is a SUBDOMAIN of one (or matches a `*.x` wildcard
+ *   entry): only the registrant of x can create names under x, so a
+ *   subdomain of another brand's official domain is that brand's
+ *   infrastructure, not a lookalike registration. Not applied when x is a
+ *   shared-hosting domain (github.io, blogspot.com, …), whose subdomains
+ *   belong to third parties — see `SHARED_HOSTING_DOMAINS`.
+ *
+ * Any brand, including the alerted brand itself (its own safe domain is
+ * not a lookalike either). Otherwise keep.
+ *
+ * The reason keeps the `auto:` prefix every rule here uses:
+ * lib/notification-cleanup.ts clears notifications for alerts whose
+ * resolution_notes match `auto:%`.
+ */
+export function decideLookalikeRegistrationTriage(
+  details: LookalikeAlertDetails | null,
+  officialRows: readonly OfficialDomainRow[],
+): AutoTriageDecision {
+  if (!details) return { action: 'keep', reason: 'lookalike_details_missing' };
+  const host = lookalikeAlertDomain(details);
+  if (!host) return { action: 'keep', reason: 'lookalike_domain_missing' };
+
+  const match = matchOfficialDomain(host, officialRows);
+  if (!match) return { action: 'keep', reason: 'not_an_official_domain' };
+
+  const brand = match.brand_name ?? match.brand_id;
+  return match.exact
+    ? { action: 'dismiss', reason: `auto: ${host} is the official domain of ${brand}` }
+    : {
+        action: 'dismiss',
+        reason: `auto: ${host} is a subdomain of ${match.official_domain}, the official domain of ${brand}`,
+      };
+}
+
+/** Real-time convenience: one indexed statement for the alert's domain. */
+export async function loadOfficialDomainRowsForAlert(
+  db: D1Database,
+  details: LookalikeAlertDetails | null,
+): Promise<OfficialDomainRow[]> {
+  const host = lookalikeAlertDomain(details);
+  return host ? loadOfficialDomainMatches(db, [host]) : [];
+}
+
 // ─── Brand allowlist loading ─────────────────────────────────────
 
 /**
@@ -586,6 +683,9 @@ interface AlertRow {
  *   - 'threat'-sourced       → reputation-source check
  *   - 'social_impersonation' → official-handle + score-threshold
  *   - 'app_store_impersonation' → official-app + score-threshold
+ *   - 'executive_impersonation' → exec official-handle + score-threshold
+ *   - 'lookalike_domain_active' / 'typosquat_bimi'
+ *                              → alerted domain is any brand's official domain
  *   - any other type         → skipped (counted as `kept` so
  *                              operators see the queue isn't being
  *                              ignored silently)
@@ -633,6 +733,14 @@ export async function runAlertTriageBackfill(
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
   const executiveAllowlists = await loadExecutiveAllowlists(db, executiveIdsForAllowlist);
 
+  // Pre-load official-domain rows for the lookalike alerts in the batch
+  // (one indexed statement per 33 distinct lookup keys).
+  const lookalikeHosts = rows.results
+    .filter((r) => LOOKALIKE_TRIAGE_ALERT_TYPES.has(r.alert_type) && r.source_type !== 'threat')
+    .map((r) => lookalikeAlertDomain(parseDetails<LookalikeAlertDetails>(r.details)))
+    .filter((h): h is string => typeof h === 'string');
+  const officialRows = await loadOfficialDomainMatches(db, lookalikeHosts);
+
   let dismissed = 0;
   let kept = 0;
   let noThreat = 0;
@@ -672,6 +780,11 @@ export async function runAlertTriageBackfill(
       const allow = (execId ? executiveAllowlists.get(execId) : undefined) ??
         { full_name: null, official_handles: null };
       decision = decideExecutiveImpersonationTriage(details, allow, threshold);
+    } else if (LOOKALIKE_TRIAGE_ALERT_TYPES.has(alert.alert_type)) {
+      decision = decideLookalikeRegistrationTriage(
+        parseDetails<LookalikeAlertDetails>(alert.details),
+        officialRows,
+      );
     }
 
     if (decision.action === 'dismiss') {

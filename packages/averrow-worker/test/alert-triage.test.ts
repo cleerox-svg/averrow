@@ -4,11 +4,19 @@ import {
   decideSocialImpersonationTriage,
   decideAppStoreImpersonationTriage,
   decideExecutiveImpersonationTriage,
+  decideLookalikeRegistrationTriage,
+  lookalikeAlertDomain,
   normalizeCompanyName,
   type ThreatTriageSnapshot,
   type BrandAllowlist,
   type ExecutiveAllowlist,
 } from "../src/lib/alert-triage";
+import {
+  hostAndParents,
+  matchOfficialDomain,
+  normalizeHost,
+  type OfficialDomainRow,
+} from "../src/lib/safeDomains";
 
 // Default snapshot — passes every gate. Each test mutates one field
 // to verify the gate fires independently and the conjunction stays
@@ -778,5 +786,135 @@ describe("decideAutoTriage — page credential-harvest guard", () => {
     const d = decideAutoTriage({ ...cleanIpSnapshot, vt_malicious: 3, page_credential_harvest: 1 });
     expect(d.action).toBe('keep');
     expect(d.reason).toBe('vt_flagged');
+  });
+});
+
+// ─── Lookalike official-domain rule (rule family 5) ──────────────
+
+const safe = (domain: string, brand_id: string, brand_name: string | null): OfficialDomainRow =>
+  ({ domain, brand_id, brand_name, source: "safe_domain" });
+const canon = (domain: string, brand_id: string, brand_name: string | null): OfficialDomainRow =>
+  ({ domain, brand_id, brand_name, source: "canonical_domain" });
+
+describe("decideLookalikeRegistrationTriage — official domain of another brand", () => {
+  it("dismisses on a brand_safe_domains hit (zoom.com flagged as a lookalike of zoom.us)", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "zoom.com" },
+      [safe("zoom.com", "brand_zoom_com", "Zoom")],
+    );
+    expect(d).toEqual({ action: "dismiss", reason: "auto: zoom.com is the official domain of Zoom" });
+  });
+
+  it("dismisses on a canonical_domain hit (ing.com flagged as a lookalike of bing.com)", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "ing.com" },
+      [canon("ing.com", "brand_ing", "ING")],
+    );
+    expect(d).toEqual({ action: "dismiss", reason: "auto: ing.com is the official domain of ING" });
+  });
+
+  it("prefers the canonical-domain brand when both tables match", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "cloud.com" },
+      [safe("cloud.com", "brand_other", "Other"), canon("cloud.com", "brand_cloud_com", "Cloud")],
+    );
+    expect(d.reason).toBe("auto: cloud.com is the official domain of Cloud");
+  });
+
+  it("keeps a real squat (no rows)", () => {
+    expect(decideLookalikeRegistrationTriage({ lookalike_domain: "zoom-login.com" }, [])).toEqual({
+      action: "keep",
+      reason: "not_an_official_domain",
+    });
+  });
+
+  it("keeps when the only rows are for a different host (batch rows are shared)", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "zoom-login.com" },
+      [safe("zoom.com", "brand_zoom_com", "Zoom"), canon("ing.com", "brand_ing", "ING")],
+    );
+    expect(d.action).toBe("keep");
+  });
+
+  it("normalises case, trailing dot and www. before comparing", () => {
+    const rows = [canon("zoom.com", "brand_zoom_com", "Zoom")];
+    expect(decideLookalikeRegistrationTriage({ lookalike_domain: "ZOOM.COM." }, rows).action).toBe("dismiss");
+    expect(decideLookalikeRegistrationTriage({ lookalike_domain: "www.zoom.com" }, rows)).toEqual({
+      action: "dismiss",
+      reason: "auto: www.zoom.com is the official domain of Zoom",
+    });
+  });
+
+  it("reads details.domain (phantom matcher / typosquat_bimi shape) when lookalike_domain is absent", () => {
+    const d = decideLookalikeRegistrationTriage({ domain: "zoom.com" }, [canon("zoom.com", "b", "Zoom")]);
+    expect(d.action).toBe("dismiss");
+  });
+
+  it("falls back to the brand id when the brand name is unknown", () => {
+    const d = decideLookalikeRegistrationTriage({ lookalike_domain: "zoom.com" }, [safe("zoom.com", "brand_zoom_com", null)]);
+    expect(d.reason).toBe("auto: zoom.com is the official domain of brand_zoom_com");
+  });
+
+  it("keeps when details or the domain are missing", () => {
+    expect(decideLookalikeRegistrationTriage(null, [canon("zoom.com", "b", "Zoom")]).reason).toBe("lookalike_details_missing");
+    expect(decideLookalikeRegistrationTriage({}, [canon("zoom.com", "b", "Zoom")]).reason).toBe("lookalike_domain_missing");
+  });
+});
+
+describe("decideLookalikeRegistrationTriage — subdomains", () => {
+  // Only the registrant of zoom.com can create names under it, so a
+  // subdomain of another brand's official domain is that brand's own
+  // infrastructure, not a lookalike registration — dismiss.
+  it("dismisses a subdomain of another brand's official domain", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "us.zoom.com" },
+      [canon("zoom.com", "brand_zoom_com", "Zoom")],
+    );
+    expect(d).toEqual({
+      action: "dismiss",
+      reason: "auto: us.zoom.com is a subdomain of zoom.com, the official domain of Zoom",
+    });
+  });
+
+  it("dismisses on a *. wildcard safe-domain entry", () => {
+    const d = decideLookalikeRegistrationTriage(
+      { lookalike_domain: "a.b.zoom.com" },
+      [safe("*.zoom.com", "brand_zoom_com", "Zoom")],
+    );
+    expect(d.action).toBe("dismiss");
+  });
+
+  it("a wildcard entry does not cover the bare domain itself", () => {
+    expect(matchOfficialDomain("zoom.com", [safe("*.zoom.com", "b", "Zoom")])).toBeNull();
+  });
+
+  it("does NOT dismiss a subdomain under a shared-hosting domain (paypal-login.github.io)", () => {
+    const rows = [canon("github.io", "brand_github", "GitHub"), safe("*.github.io", "brand_github", "GitHub")];
+    expect(decideLookalikeRegistrationTriage({ lookalike_domain: "paypal-login.github.io" }, rows).action).toBe("keep");
+    // ...but github.io itself is still GitHub's official domain.
+    expect(decideLookalikeRegistrationTriage({ lookalike_domain: "github.io" }, rows).action).toBe("dismiss");
+  });
+
+  it("a brand's domain appearing as a LABEL elsewhere is not a match (zoom.com.evil.net)", () => {
+    expect(
+      decideLookalikeRegistrationTriage({ lookalike_domain: "zoom.com.evil.net" }, [canon("zoom.com", "b", "Zoom")]).action,
+    ).toBe("keep");
+  });
+});
+
+describe("official-domain helpers", () => {
+  it("normalizeHost strips scheme, path, port, trailing dot and lowercases", () => {
+    expect(normalizeHost(" HTTPS://Zoom.COM.:443/login?x=1 ")).toBe("zoom.com");
+  });
+
+  it("hostAndParents stops at the registrable domain", () => {
+    expect(hostAndParents("a.b.zoom.com")).toEqual(["a.b.zoom.com", "b.zoom.com", "zoom.com"]);
+    expect(hostAndParents("login.acme.co.uk")).toEqual(["login.acme.co.uk", "acme.co.uk"]);
+    expect(hostAndParents("com")).toEqual([]);
+  });
+
+  it("lookalikeAlertDomain prefers lookalike_domain over domain", () => {
+    expect(lookalikeAlertDomain({ lookalike_domain: "A.com", domain: "b.com" })).toBe("a.com");
+    expect(lookalikeAlertDomain(null)).toBeNull();
   });
 });

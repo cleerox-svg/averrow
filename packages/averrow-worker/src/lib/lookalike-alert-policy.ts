@@ -134,12 +134,11 @@ export function normalizeThreatLevel(raw: string | null): PageThreatLevel {
  * The reason is queue arithmetic, not taste. Measured in production:
  * 8,941 alerts already unworked, platform-wide intake ~36/week, and
  * all 56 lookalike alerts ever created still sitting at `status='new'`.
- * `createAlert` has no dedupe, and `lookalike_domain_active` matches no
- * branch of `createAlert`'s triage dispatch (that switches on
- * `sourceType === 'threat'` or on the three impersonation types; this
- * family is `sourceType: 'lookalike_scanner'`), so there is no rule that
- * can ever clear one automatically — see spec §11.1's verified note.
- * Every alert this family files is permanent manual work. A MEDIUM
+ * `createAlert` has no dedupe, and the only auto-triage rule for this
+ * family (`decideLookalikeRegistrationTriage`, lib/alert-triage.ts)
+ * dismisses just one narrow case: the lookalike is another brand's
+ * official or safe domain. Every other alert this family files is
+ * permanent manual work. A MEDIUM
  * finding does not earn that; it earns a row in the table an analyst can
  * sort and filter, which it still gets.
  *
@@ -330,8 +329,8 @@ export function pageVerdictClearsPhishingBar(phishing: PagePhishingResult): bool
  *
  * Purely descriptive — the alert's severity is the composed
  * `threat_level`, and nothing here is read by `createAlert`'s auto-triage
- * dispatch (see the floor's docstring for why that dispatch never
- * reaches this family). The Lane 3 shadow fields remain shadow:
+ * dispatch (the lookalike rule there only checks whether the domain is
+ * another brand's official domain). The Lane 3 shadow fields remain shadow:
  * `page_score` below is the pre-Lane-3 score and `page_score_delta` is
  * NOT folded into it.
  */
