@@ -26,38 +26,87 @@ import { logger } from "../lib/logger";
  *      merge-diffed; a domain present today but not in the snapshot is new.
  *      Both lists are in byte (LC_ALL=C) order, which matches JS `<` on
  *      ASCII; an out-of-order line is a format change and throws.
- *   3. New domains are flushed every NRD_FLUSH_EVERY into nrd_domains
- *      (storeNrdReference), brand-matched, and the matches inserted via
- *      bulkInsertThreats in the same flush — so memory stays bounded even
- *      if a generic brand keyword matches a large share of the day.
+ *   3. New domains are buffered and flushed every NRD_FLUSH_EVERY. Each
+ *      flush (a) stores in nrd_domains ONLY the "matchable" ones — see
+ *      "What lands in nrd_domains" below, (b) streams ALL of them into the
+ *      R2 archive, and (c) brand-matches ALL of them, inserting the matches
+ *      via bulkInsertThreats in the same flush — so memory stays bounded
+ *      even if a generic brand keyword matches a large share of the day.
  *   4. Every today-line that is old (in the snapshot) or was actually
  *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
  *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
  *      the snapshot, so the next run sees it as new again: the cap DEFERS,
  *      never drops, and successive runs converge. A run that deferred
  *      anything stores no etag/version on the snapshot, so the next 2-hourly
- *      run re-diffs instead of short-circuiting on an unchanged list.
+ *      run re-diffs instead of short-circuiting on an unchanged list. The
+ *      cap now bounds brand-matching CPU and archive memory per run (D1
+ *      writes are bounded by the matchable set instead).
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
  *
+ * What lands in nrd_domains (D1 write cut, owner decision 2026-10-05): only
+ * new domains that are byte-EQUAL to a `lookalike_domains.domain` or a
+ * `phantom_domains.domain`. Those are the only rows either nrd_domains
+ * reader can ever return: lib/lookalike-nrd-matcher.ts joins
+ * `lookalike_domains l ON l.domain = n.domain` and lib/phantom-matcher.ts
+ * joins `nrd_domains t ON t.domain = p.domain`, all three columns
+ * BINARY-collated TEXT, no normalisation in SQL. The feed stores the
+ * reader-normalised domain (trimmed + lowercased, exactly as before), and the
+ * filter is `Set.has(thatString)` over the RAW stored lookalike/phantom
+ * strings — the same equality the joins evaluate. (Both writers store
+ * lowercase ASCII, IDNs as `xn--` punycode, as the Hagezi list does, so
+ * nothing matchable is lost to normalisation; a row that SQL could not
+ * join is not stored either.) Storing every NRD (~443K/day) cost ~1.3M
+ * row-writes/day plus as many again for the 30-day purge; the filtered set
+ * is a handful of rows a day. The full day is in the R2 archive, and brand
+ * keyword matches go to `threats` regardless.
+ *
+ *   * The two domain sets are loaded once per run, LAZILY at the first
+ *     flush (≥1 new, non-deferred domain) — 304 / same-version / bootstrap /
+ *     zero-new runs never read them. Loaded through env.DB (the primary), not
+ *     a replica: a lookalike row missing from a lagging replica would be a
+ *     permanent miss (see the limitation below), and it is one bounded read
+ *     a day. `SELECT DISTINCT domain … WHERE domain > ? ORDER BY domain
+ *     LIMIT ?` keyset pages are covering-index range scans on
+ *     idx_lookalike_domain (0282) / idx_phantom_domain (0258) — ~1 row-read
+ *     per stored row, ~40K reads per load at today's 39,872 lookalike rows.
+ *   * Memory guard: above NRD_MATCHABLE_SET_MAX distinct domains the load
+ *     stops and the run FALLS BACK to storing every new domain (the
+ *     pre-filter behaviour: correct for both matchers, costly in writes),
+ *     logging `nrd_hagezi_matchable_set_too_large` at error level. Failing
+ *     the pull instead would also stop the brand-match threats.
+ *   * LIMITATION — matchability is decided at ingest. A lookalike
+ *     permutation or phantom created AFTER its domain's NRD listing was
+ *     diffed is never in nrd_domains; it can only be retro-matched from the
+ *     R2 archive. (Before, such a row was still matchable while the NRD row
+ *     sat in D1 — but the lookalike matcher's cursor had normally already
+ *     passed it, so in practice only the manual phantom `full=1` sweep loses
+ *     coverage.)
+ *
  * Daily archive (tiered retention, owner decision 2026-10-05): nrd_domains
- * keeps only ~30 days hot in D1 (lib/nrd-retention.ts), so every domain this
- * run FLUSHED (inserted — never a deferred/capped one) is also gzip-streamed
- * into an archive object in the NRD_ARCHIVE R2 bucket, at
+ * keeps only ~30 days hot in D1 (lib/nrd-retention.ts), and the archive is
+ * now the ONLY copy of an unmatchable NRD: every NEW domain this run
+ * processed (flushed — never a deferred/capped one), stored in D1 or not, is
+ * gzip-streamed into an archive object in the NRD_ARCHIVE R2 bucket, at
  * `daily/<registered_date>/<version|unversioned>-<first domain>.txt.gz`
- * (nrdArchiveKey). It is PUT once every nrd_domains write (storeNrdReference)
- * succeeded — regardless of threat-insert errors, because those rows are
- * already in D1 and will be purged — and BEFORE the snapshot put. A failed
+ * (nrdArchiveKey; customMetadata count / stored_in_d1 / version /
+ * list_modified / registered_date). It is PUT once every nrd_domains write
+ * (storeNrdReference) succeeded — regardless of threat-insert errors — and
+ * BEFORE the snapshot put. A failed
  * archive put throws, the snapshot does not advance, and the next run
  * re-diffs, re-inserts (INSERT OR IGNORE) and rewrites the same key; the
  * same happens after a threat-insert error holds the snapshot. The first
  * domain in the key keeps a deferral catch-up run on the same list version
  * from overwriting the previous run's object, while a retry of the same set
- * overwrites itself idempotently. Zero inserted → no object. Bootstrap
+ * overwrites itself idempotently. Zero new → no object. Bootstrap
  * archives nothing. NRD_ARCHIVE is REQUIRED: unbound → the run throws
- * before fetching, because retention purges D1 on the assumption that every
- * row it deletes is archived.
+ * before fetching, because the archive is the system of record for NRDs.
+ *
+ * FeedResult: itemsFetched = list domains read (as before); itemsNew /
+ * itemsDuplicate / itemsError = brand-match THREAT rows inserted / already
+ * present (or repeated in the list) / failed — not NRD counts. NRD counts
+ * (new, stored_in_d1, archived, deferred) are in the `nrd_hagezi_diffed` log.
  *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
@@ -98,8 +147,10 @@ export function nrdArchiveKey(registeredDate: string, version: string | null, fi
   return `${NRD_ARCHIVE_PREFIX}${archiveKeyPart(registeredDate)}/${v}-${archiveKeyPart(firstDomain)}.txt.gz`;
 }
 
-/** Max new domains inserted + matched per run (~2.3 days of list growth).
- *  The rest are deferred to the next run (kept out of the snapshot). */
+/** Max new domains processed (filtered into nrd_domains, archived and
+ *  brand-matched) per run (~2.3 days of list growth). Bounds matching CPU
+ *  and archive memory. The rest are deferred to the next run (kept out of
+ *  the snapshot). */
 export const NRD_MAX_NEW_PER_RUN = 1_000_000;
 
 /** Timeout for the response HEADERS. The body has its own idle timeout,
@@ -141,15 +192,90 @@ export const NRD_DOMAINS_PER_STATEMENT = 1000;
  */
 export const NRD_STATEMENTS_PER_BATCH = 20;
 
-/** New domains buffered before a storeNrdReference + brand-match flush:
- *  exactly one db.batch() call per flush. */
+/** New domains buffered before a flush (matchable filter + storeNrdReference
+ *  + archive + brand match). Sized so an unfiltered flush (the over-cap
+ *  fallback) is exactly one db.batch() call. */
 export const NRD_FLUSH_EVERY = NRD_DOMAINS_PER_STATEMENT * NRD_STATEMENTS_PER_BATCH;
+
+/**
+ * Ceiling on the combined distinct lookalike + phantom domain set held in
+ * memory. ~250K short strings in a Set is ~15–20 MB, beside the ~2× 17 MB
+ * snapshot writer and the archive buffer, inside the 128 MB isolate. Today:
+ * 39,872 lookalike + 0 phantom. Above it the run stores every new domain
+ * (see the module header).
+ */
+export const NRD_MATCHABLE_SET_MAX = 250_000;
+
+/** Rows per keyset page when loading a matchable-domain set (bounds each
+ *  D1 response; one bind pair per page). */
+export const NRD_MATCHABLE_PAGE_ROWS = 50_000;
+
+/**
+ * The keyset page reads for the matchable set. `SELECT DISTINCT domain`
+ * ordered by `domain` with `domain > ?` is a covering range scan of
+ * idx_lookalike_domain / idx_phantom_domain with no temp b-tree (pinned by
+ * EXPLAIN QUERY PLAN in test/nrd-hagezi-matchable.test.ts). No status filter:
+ * neither nrd_domains join filters the lookalike side, and the phantom
+ * join's `p.status = 'predicted'` is evaluated at MATCH time, so storing
+ * any phantom's domain keeps the superset (phantom_domains is tiny).
+ * Exported for the plan pin.
+ */
+export const NRD_MATCHABLE_SOURCES_SQL = {
+  lookalike_domains:
+    `SELECT DISTINCT domain FROM lookalike_domains WHERE domain > ? ORDER BY domain LIMIT ?`,
+  phantom_domains:
+    `SELECT DISTINCT domain FROM phantom_domains WHERE domain > ? ORDER BY domain LIMIT ?`,
+} as const;
 
 export interface NrdIngestOptions {
   /** Override NRD_MAX_NEW_PER_RUN (tests). */
   maxNewPerRun?: number;
   /** Override NRD_FLUSH_EVERY (tests). */
   flushEvery?: number;
+  /** Override NRD_MATCHABLE_SET_MAX (tests). */
+  matchableSetMax?: number;
+  /** Override NRD_MATCHABLE_PAGE_ROWS (tests). */
+  matchablePageRows?: number;
+}
+
+/** The loaded matchable set; `set: null` = over the cap → store everything. */
+export interface MatchableDomains {
+  set: Set<string> | null;
+  /** Distinct domains loaded (up to the cap + 1 when over). */
+  loaded: number;
+  /** Keyset page queries issued (≈ D1 round trips). */
+  pages: number;
+}
+
+/**
+ * Load every distinct `lookalike_domains.domain` and `phantom_domains.domain`
+ * — the raw stored strings, untransformed, because the matchers' joins are
+ * bare BINARY `=` on them. Stops as soon as the combined set exceeds `max`
+ * and returns `set: null`. Exported for tests.
+ */
+export async function loadMatchableDomains(
+  db: D1Database,
+  opts: { max?: number; pageRows?: number } = {},
+): Promise<MatchableDomains> {
+  const max = opts.max ?? NRD_MATCHABLE_SET_MAX;
+  const pageRows = Math.max(1, Math.floor(opts.pageRows ?? NRD_MATCHABLE_PAGE_ROWS));
+  const set = new Set<string>();
+  let pages = 0;
+  for (const sql of Object.values(NRD_MATCHABLE_SOURCES_SQL)) {
+    // '' sorts below every non-empty domain; an empty domain can never
+    // equal an NRD (the reader requires a '.').
+    let after = "";
+    for (;;) {
+      const res = await db.prepare(sql).bind(after, pageRows).all<{ domain: string }>();
+      pages++;
+      const rows = res.results;
+      for (const r of rows) set.add(r.domain);
+      if (set.size > max) return { set: null, loaded: set.size, pages };
+      if (rows.length < pageRows) break;
+      after = rows[rows.length - 1]!.domain;
+    }
+  }
+  return { set, loaded: set.size, pages };
 }
 
 type BrandKeyword = { id: string; domain: string; needles: string[] };
@@ -174,7 +300,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
   const archiveBucket = ctx.env.NRD_ARCHIVE;
   if (!archiveBucket) {
     throw new Error(
-      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every inserted domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive) before nrd_domains retention may purge it`,
+      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every new domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive); it is the only copy of the NRDs nrd_domains does not store`,
     );
   }
 
@@ -267,11 +393,33 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let lines = 0;
     let newTotal = 0;
     let newInserted = 0;
+    let storedInD1 = 0;
+    // Loaded at the first flush only (≥1 new, non-deferred domain).
+    let matchable = null as MatchableDomains | null;
 
     const flush = async (): Promise<void> => {
       if (pending.length === 0) return;
-      await storeNrdReference(ctx.env.DB, pending, registeredDate);
-      // Archive exactly what was flushed (never a deferred domain).
+      if (matchable === null) {
+        matchable = await loadMatchableDomains(ctx.env.DB, {
+          max: opts.matchableSetMax,
+          pageRows: opts.matchablePageRows,
+        });
+        if (matchable.set === null) {
+          logger.error("nrd_hagezi_matchable_set_too_large", {
+            loaded: matchable.loaded,
+            max: opts.matchableSetMax ?? NRD_MATCHABLE_SET_MAX,
+            fallback: "store_all_new_domains",
+          });
+        }
+      }
+      const set = matchable.set;
+      // Only domains a matcher join can return go to D1 (module header).
+      const toStore = set === null ? pending : pending.filter((d) => set.has(d));
+      if (toStore.length > 0) {
+        await storeNrdReference(ctx.env.DB, toStore, registeredDate);
+        storedInD1 += toStore.length;
+      }
+      // Archive EVERY flushed domain (never a deferred one), stored or not.
       for (const d of pending) await archiveWriter.add(d);
       archiveFirst ??= pending[0]!;
       archived += pending.length;
@@ -318,21 +466,23 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
 
     // Archive whenever every nrd_domains write landed (we got here, so
     // storeNrdReference never threw) — independent of threat-insert errors:
-    // those rows are in D1 now and retention will purge them. BEFORE the
-    // snapshot: if this put throws, the snapshot stays and the next run
-    // re-diffs + rewrites the same archive key.
+    // the archive is the only copy of the unstored domains, and a retry
+    // rewrites the same key anyway. BEFORE the snapshot: if this put throws,
+    // the snapshot stays and the next run re-diffs + rewrites the same
+    // archive key.
     if (archived > 0 && archiveFirst !== null) {
       const archiveKey = nrdArchiveKey(registeredDate, header.version, archiveFirst);
       await archiveBucket.put(archiveKey, await archiveWriter.finish(), {
         httpMetadata: { contentType: "application/gzip" },
         customMetadata: {
           count: String(archived),
+          stored_in_d1: String(storedInD1),
           version: header.version ?? "unversioned",
           list_modified: header.lastModified ?? "",
           registered_date: registeredDate,
         },
       });
-      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived });
+      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived, storedInD1 });
     }
 
     // Snapshot advances only when every D1 write landed. A failed threat
@@ -351,8 +501,11 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       registeredDate,
       lines,
       newTotal,
-      newInserted,
+      archived,
+      storedInD1,
       deferred,
+      matchableSetSize: matchable?.loaded ?? null,
+      matchableFallback: matchable !== null && matchable.set === null,
       matches: totals.matches,
       itemsNew,
       itemsDuplicate,
@@ -807,10 +960,11 @@ export function collectBrandMatchRows(
 }
 
 /**
- * Store NRDs in the reference table for later analysis (phantom matcher,
- * infrastructure correlation). INSERT OR IGNORE keeps re-runs (and in-list
- * duplicates) idempotent: the first registered_date written for a domain
- * wins.
+ * Store NRDs in the reference table read by the phantom matcher and the
+ * NRD <-> lookalike matcher. The feed passes only the matchable subset of
+ * each flush (see the module header); the full day is in the R2 archive.
+ * INSERT OR IGNORE keeps re-runs (and in-list duplicates) idempotent: the
+ * first registered_date written for a domain wins.
  *
  * Exported for the D1 bind-limit regression test.
  */

@@ -23,7 +23,19 @@
  * reaper → applyReapPenalty → the feed circuit-breaker auto-pause
  * (CLAUDE.md §6). The join is driven from the small `phantom_domains`
  * side (idx_phantom_domain), so its cost is bounded by the predicted
- * phantom count, not the millions of rows in nrd_domains.
+ * phantom count, not by the size of the source table.
+ *
+ * NRD source coverage (D1 write cut, 2026-10-05): feeds/nrd_hagezi.ts now
+ * stores in nrd_domains only the new NRDs that byte-equal a
+ * lookalike_domains or phantom_domains domain AT INGEST (the join here is
+ * the same `t.domain = p.domain`; the feed keeps any phantom's domain,
+ * whatever its status). So this nrd source — incremental AND `full=1` —
+ * only ever sees NRDs that already matched a phantom when they were
+ * ingested. A phantom enumerated AFTER its domain's NRD listing was ingested
+ * is NOT in nrd_domains, so no D1 sweep can find it: it must be
+ * retro-matched from the NRD_ARCHIVE R2 archive (`daily/<date>/…txt.gz`,
+ * every new NRD since 2026-10-05). The ct and lookalike sources are
+ * unaffected.
  *
  * At-most-once / idempotency (spec §6.4): the alert-creating transition is
  * a guarded `WHERE id=? AND status='predicted'` UPDATE that claims the row
@@ -44,7 +56,8 @@
  * monotonic with ingestion and never backdated. `full` ignores + does not
  * advance the cursor, for an operator's catch-up sweep (e.g. right after a
  * fresh enumeration, to match phantoms enumerated AFTER their source row
- * was ingested).
+ * was ingested — for the ct and lookalike sources; for nrd see "NRD source
+ * coverage" above: such a phantom's NRD was never stored).
  */
 
 import type { Env } from "../types";
@@ -78,7 +91,8 @@ export type PhantomMatchSource = "nrd" | "ct" | "lookalike";
  * whether or not this manual matcher has scanned them (reported as
  * `phantom_hold_clamped`). Rows ingested since 2026-10-05 remain in the
  * NRD_ARCHIVE R2 bucket (feeds/nrd_hagezi.ts daily archive); `full=1` sweeps
- * cover only the 30-day D1 window.
+ * cover only the 30-day D1 window, which holds only NRDs that were
+ * lookalike/phantom-equal at ingest.
  */
 export const PHANTOM_MATCHER_NRD_CURSOR_KEY = "phantom_matcher:nrd:cursor";
 

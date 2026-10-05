@@ -1,18 +1,23 @@
 // NRD retention — daily purge of old `nrd_domains` rows (tiered model).
 //
-// `nrd_domains` is the reference table every newly-registered domain lands
-// in (feeds/nrd_hagezi.ts storeNrdReference). A feed day is ~443K rows (the
-// Hagezi 7-day NRD list, diffed daily). Tiered retention (owner decision
-// 2026-10-05):
+// `nrd_domains` is the D1 reference table for newly-registered domains
+// (feeds/nrd_hagezi.ts storeNrdReference). Since the D1 write cut
+// (2026-10-05) the feed stores ONLY new NRDs byte-equal to a lookalike_domains
+// or phantom_domains domain — a handful of rows a day instead of ~443K (the
+// Hagezi 7-day NRD list, diffed daily); every new NRD goes to the R2 archive.
+// The table is therefore small, but retention still applies: phantom-only
+// rows (never brand_matched) age out, and rows stored before the cut (or by
+// the feed's over-cap store-everything fallback) drain through the same
+// purge. Tiered retention (owner decision 2026-10-05):
 //
 //   * HOT  — D1 keeps NRD_RETENTION_DAYS (30) days of rows.
 //   * KEPT — rows with `brand_matched = 1` (set by the lookalike NRD matcher
 //            on a hit) are NEVER purged, whatever their age.
-//   * COLD — every row the feed inserts is ALSO archived, per run, to the
-//            NRD_ARCHIVE R2 bucket (`daily/<registered_date>/…txt.gz`,
-//            feeds/nrd_hagezi.ts) before the feed's diff snapshot advances;
-//            the binding is required, so the feed fails rather than insert
-//            unarchived rows. So a purged row is preserved in R2 — EXCEPT
+//   * COLD — every NEW domain the feed processes (stored in D1 or not) is
+//            archived, per run, to the NRD_ARCHIVE R2 bucket
+//            (`daily/<registered_date>/…txt.gz`, feeds/nrd_hagezi.ts) before
+//            the feed's diff snapshot advances; the binding is required, so
+//            the feed fails rather than insert unarchived rows. So a purged row is preserved in R2 — EXCEPT
 //            rows ingested before the archive shipped (2026-10-05), which
 //            were never archived and are gone from the platform once
 //            purged (their brand matches are already in `threats`).

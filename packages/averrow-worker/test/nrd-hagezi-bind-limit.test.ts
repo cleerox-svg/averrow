@@ -1,5 +1,6 @@
-// nrd_hagezi stores every NEW domain of the daily diff (~443K/day) in
-// nrd_domains. The old insert bound 500 rows × 2 = 1000 params per statement
+// nrd_hagezi stores the NEW, matchable (lookalike/phantom-equal) domains of
+// the daily diff in nrd_domains — every new domain (~443K/day) when the
+// matchable set is over its cap. The old insert bound 500 rows × 2 = 1000 params per statement
 // and every prod pull died with "too many SQL variables at offset 418". The
 // SQLite harness allows ~32K binds, so the D1 here is wrapped to throw like
 // production D1 does above 100.
@@ -64,7 +65,7 @@ async function envWithEmptyPrior(): Promise<Env> {
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
   beforeEach(() => {
-    raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
+    raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
     stats = { maxBinds: 0, statements: 0, batchCalls: 0 };
     db = bindLimited(d1FromSqlite(raw), stats);
   });
@@ -106,7 +107,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
     expect(count("SELECT COUNT(*) AS n FROM nrd_domains WHERE registered_date = '2026-10-03'")).toBe(500);
   });
 
-  it("full ingest: 1000-domain list diffed against an empty snapshot lands, brand matching still fires", async () => {
+  it("full ingest: 1000 matchable domains diffed against an empty snapshot land, brand matching still fires", async () => {
     raw.exec(`
       INSERT INTO brands (id, name, canonical_domain) VALUES ('b_acme', 'Acme Bank', 'acmebank.com');
       INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b_acme', '__internal__', 'u1', 'active');
@@ -118,6 +119,12 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
       "acmeb4nk-secure.example", // homoglyph a→4 hit
       "acmebank.com", // the brand's own canonical domain — never a threat
     ];
+    // Every listed domain is a lookalike → all 1000 are stored (the load
+    // query and each nrd_domains statement must stay ≤100 binds too).
+    const ins = raw.prepare(
+      "INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type) VALUES (?, 'b_seed', ?, 'typosquat')",
+    );
+    domains.forEach((d, i) => ins.run(`la-${i}`, d));
     const body = `# header\n${[...domains].sort().join("\n")}\n`;
     vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
 
