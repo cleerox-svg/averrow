@@ -55,7 +55,7 @@ const {
   NRD_MATCH_PRIORITY_DUE_AT,
 } = await import("../src/lib/lookalike-nrd-matcher");
 const { checkLookalikeBatch, checkCadenceFor } = await import("../src/scanners/lookalike-domains");
-const { purgeNrdDomains, toSqliteUtc } = await import("../src/lib/nrd-retention");
+const { purgeNrdDomains, toSqliteUtc, NRD_RETENTION_UNSCANNED_SQL } = await import("../src/lib/nrd-retention");
 const { PHANTOM_MATCHER_NRD_CURSOR_KEY } = await import("../src/lib/phantom-matcher");
 const {
   newRegistrationAlertSeverity,
@@ -315,6 +315,51 @@ describe.skipIf(!hasSqlite())("nrd-retention — the lookalike matcher's hold", 
     const left = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
       .map((x) => x.domain);
     expect(left).toEqual(["unscanned.com"]);
+  });
+
+  it("a CAUGHT-UP cursor on a sparse table (nothing above it) holds nothing — not a stuck matcher", async () => {
+    // nrd_domains is sparse since the feed stores only lookalike/phantom-
+    // equal NRDs: the cursor can sit on an old row only because nothing
+    // newer was ingested. Every row is at/below the cursor key, i.e.
+    // scanned, so there is nothing to hold and the signal must stay false.
+    const raw = openDb();
+    nrd(raw, "older.com", "2026-06-01", old(40));
+    nrd(raw, "last.com", "2026-06-02", old(35));
+    const rid = (raw.prepare("SELECT rowid AS r FROM nrd_domains WHERE domain = 'last.com'").get() as { r: number }).r;
+    const kv = fakeKv({
+      [PHANTOM_MATCHER_NRD_CURSOR_KEY]: old(0),
+      [LOOKALIKE_NRD_CURSOR_KEY]: JSON.stringify({ created_at: old(35), rowid: rid }),
+    });
+    const r = await purgeNrdDomains(envFor(raw, kv), { now: () => now });
+    expect(r.held_by_lookalike_matcher).toBe(false);
+    expect(r.cutoff).toBe(old(30));
+    // The probe is a keyset seek on idx_nrd_domains_created, no temp sort.
+    const p = plan(raw, NRD_RETENTION_UNSCANNED_SQL);
+    expect(p).toMatch(/SEARCH nrd_domains USING (COVERING )?INDEX idx_nrd_domains_created/);
+    expect(p).not.toMatch(/TEMP B-TREE/);
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM nrd_domains").get()).toEqual({ n: 0 });
+  });
+
+  it("the unscanned-row probe failing keeps the hold (any doubt → hold)", async () => {
+    const raw = openDb();
+    nrd(raw, "last.com", "2026-06-02", old(35));
+    const kv = fakeKv({
+      [PHANTOM_MATCHER_NRD_CURSOR_KEY]: old(0),
+      [LOOKALIKE_NRD_CURSOR_KEY]: JSON.stringify({ created_at: old(35), rowid: 999 }),
+    });
+    const env = envFor(raw, kv);
+    const inner = env.DB;
+    const failing = {
+      ...inner,
+      prepare: (sql: string) => {
+        if (sql === NRD_RETENTION_UNSCANNED_SQL) throw new Error("D1_ERROR: probe failed");
+        return inner.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const r = await purgeNrdDomains({ ...env, DB: failing } as Env, { now: () => now });
+    expect(r.held_by_lookalike_matcher).toBe(true);
+    expect(r.cutoff).toBe(old(35));
+    expect(raw.prepare("SELECT COUNT(*) AS n FROM nrd_domains").get()).toEqual({ n: 1 });
   });
 
   it("an absent lookalike cursor holds nothing (only the phantom hold / age cutoff apply)", async () => {

@@ -32,10 +32,13 @@
  * whatever its status). So this nrd source — incremental AND `full=1` —
  * only ever sees NRDs that already matched a phantom when they were
  * ingested. A phantom enumerated AFTER its domain's NRD listing was ingested
- * is NOT in nrd_domains, so no D1 sweep can find it: it must be
- * retro-matched from the NRD_ARCHIVE R2 archive (`daily/<date>/…txt.gz`,
- * every new NRD since 2026-10-05). The ct and lookalike sources are
- * unaffected.
+ * would therefore have no nrd_domains row; agents/phantomEnumerator.ts
+ * closes most of that by back-checking the phantoms it writes against the
+ * last 8 days of the NRD_ARCHIVE R2 archive (lib/nrd-archive-backcheck.ts),
+ * storing any hit with created_at = now — above this source's incremental
+ * cursor, so the next incremental run (or `full=1`) finds it. A listing
+ * older than 8 days is not recovered (only a manual archive scan would).
+ * The ct and lookalike sources are unaffected.
  *
  * At-most-once / idempotency (spec §6.4): the alert-creating transition is
  * a guarded `WHERE id=? AND status='predicted'` UPDATE that claims the row

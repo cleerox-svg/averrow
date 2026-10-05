@@ -14,6 +14,7 @@ import { nrd_hagezi, collectBrandMatchRows, NRD_SNAPSHOT_KEY } from "../src/feed
 import { THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -121,6 +122,10 @@ function seedBrand(id: string, name: string, canonical: string): void {
 describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
   beforeEach(async () => {
     raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     stats = { maxBinds: 0, roundTrips: 0, batchCalls: 0 };
     db = instrumented(d1FromSqlite(raw), stats);
     r2 = await emptyPriorSnapshot();

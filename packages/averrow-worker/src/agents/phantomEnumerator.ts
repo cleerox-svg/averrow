@@ -41,6 +41,7 @@ import type {
 import type { Env } from "../types";
 import { callAnthropicJSON } from "../lib/anthropic";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
+import { runNrdArchiveBackcheck } from "../lib/nrd-archive-backcheck";
 import {
   filterPhantomCandidates,
   normalizePhantomDomain,
@@ -229,6 +230,10 @@ export const phantomEnumeratorAgent: AgentModule = {
     let brandsFailed = 0;
     let phantomsWritten = 0;
     let candidatesConsidered = 0;
+    // Domains of phantom rows written this run (insert OR conflict-touch;
+    // a touched row's domain is re-checked harmlessly) — for the NRD
+    // archive back-check below.
+    const writtenDomains: string[] = [];
 
     for (const brand of brands) {
       try {
@@ -282,9 +287,12 @@ export const phantomEnumeratorAgent: AgentModule = {
             ),
           );
           const results = await env.DB.batch(stmts);
-          for (const r of results) {
-            if ((r.meta?.changes ?? 0) > 0) phantomsWritten++;
-          }
+          results.forEach((r, j) => {
+            if ((r.meta?.changes ?? 0) > 0) {
+              phantomsWritten++;
+              writtenDomains.push(survivors[j]!.domain);
+            }
+          });
         }
 
         // Advance the 90-day rotation clock for THIS brand regardless of
@@ -318,6 +326,16 @@ export const phantomEnumeratorAgent: AgentModule = {
         );
       }
     }
+
+    // ── NRD archive back-check (lib/nrd-archive-backcheck.ts) ──
+    // feeds/nrd_hagezi.ts stores only NRDs that were ALREADY lookalike /
+    // phantom domains at ingest, so a phantom predicted now whose domain was
+    // NRD-listed in the last 8 days has no nrd_domains row. Look the new
+    // phantoms up in the R2 archive and store any hit (created_at = now) so
+    // the phantom matcher's nrd source finds it. Never throws.
+    const backcheck = writtenDomains.length > 0
+      ? await runNrdArchiveBackcheck(env, writtenDomains, "phantom")
+      : null;
 
     // ── Telemetry event (spec §8) — target_agent=NULL, no downstream ──
     // dispatch. Best-effort; never block the run on the emit.
@@ -356,6 +374,7 @@ export const phantomEnumeratorAgent: AgentModule = {
           brands_failed: brandsFailed,
           phantoms_written: phantomsWritten,
           candidates_considered: candidatesConsidered,
+          nrd_backcheck: backcheck,
         },
       });
     }

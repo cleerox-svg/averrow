@@ -1,24 +1,25 @@
 /**
  * nrd_hagezi matchable filter (D1 write cut, owner decision 2026-10-05).
  *
- * nrd_domains now stores only the NEW NRDs that are byte-equal to a
- * lookalike_domains.domain or a phantom_domains.domain — the only rows the
- * two readers' joins (`l.domain = n.domain`, `t.domain = p.domain`, BINARY
- * TEXT) can ever return. Everything new is still archived to R2 and still
- * brand-matched into threats.
+ * nrd_domains stores only the NEW NRDs equal to a lookalike_domains.domain
+ * or a phantom_domains.domain — the filter is IN the insert (NRD_INSERT_SQL:
+ * `… FROM json_each(?) j WHERE EXISTS (… l.domain = j.value) OR EXISTS (…
+ * p.domain = j.value)`), the matchers' own join predicate. Everything new is
+ * still archived to R2 and still brand-matched into threats.
  *
  * Pins:
- *   - the set-load queries are covering-index range scans (no temp b-tree);
- *   - the keyset loader pages correctly and falls back (set: null) over its cap;
- *   - the sets are NOT loaded on 304 / same-version / bootstrap / zero-new
- *     runs, and loaded exactly once per run across several flushes;
- *   - over the cap the run stores every new domain (pre-filter behaviour);
+ *   - both EXISTS probes are covering-index SEARCHes (no scan), 2 binds/stmt;
+ *   - storeNrdReference returns the rows actually inserted (meta.changes),
+ *     which feeds the archive's stored_in_d1;
+ *   - a failing filtered insert fails the pull with the archive AND the
+ *     snapshot untouched;
  *   - END TO END on real SQLite: lookalike rows written by the REAL seeder
- *     (generateAndStoreLookalikes — lowercase ASCII and xn-- punycode forms)
- *     and a phantom row land in nrd_domains, near-misses (www., trailing
- *     dot) and non-matchable domains do not, the archive holds every new
- *     domain, brand-keyword threats still fire for unstored domains, and the
- *     REAL lookalike-nrd-matcher and phantom matcher then claim the stored rows.
+ *     (lowercase ASCII and xn-- forms) and a phantom land, near-misses
+ *     (www., trailing dot) and non-matchable domains do not, the archive
+ *     holds every new domain, brand-keyword threats still fire for unstored
+ *     domains, and the REAL lookalike-nrd and phantom matchers claim the rows;
+ *   - EQUIVALENCE: the lookalike matcher's claims after the filtered ingest
+ *     equal its claims after storing every NRD (the old behaviour).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -27,12 +28,14 @@ vi.mock("../src/lib/alerts", () => ({ createAlert: createAlertSpy }));
 
 import {
   ingestNrdHagezi,
-  loadMatchableDomains,
-  NRD_MATCHABLE_SOURCES_SQL,
+  storeNrdReference,
+  NRD_INSERT_SQL,
   NRD_SNAPSHOT_KEY,
   nrdArchiveKey,
+  registeredDateFromHeader,
 } from "../src/feeds/nrd_hagezi";
 import { threatId } from "../src/feeds/types";
+import { generatePermutations } from "../src/lib/dnstwist";
 import { runLookalikeNrdMatch } from "../src/lib/lookalike-nrd-matcher";
 import { runPhantomMatch } from "../src/lib/phantom-matcher";
 import { generateAndStoreLookalikes } from "../src/scanners/lookalike-domains";
@@ -47,26 +50,23 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
  *  lookalike matcher's 30-day claim window. */
 const now = new Date();
 const MODIFIED = `${String(now.getUTCDate()).padStart(2, "0")} ${MONTHS[now.getUTCMonth()]} ${now.getUTCFullYear()} 06:11 UTC`;
+const REG_DATE = registeredDateFromHeader(MODIFIED);
 
-function listResponse(domains: string[], o: { version?: string } = {}): Response {
-  const head = [`# Version: ${o.version ?? VERSION}`, `# Last modified: ${MODIFIED}`, `# Number of entries: ${domains.length}`, "#"];
+function listResponse(domains: string[]): Response {
+  const head = [`# Version: ${VERSION}`, `# Last modified: ${MODIFIED}`, `# Number of entries: ${domains.length}`, "#"];
   return new Response(`${[...head, ...[...domains].sort()].join("\n")}\n`, {
     status: 200,
     headers: { etag: '"etag-today"', "content-type": "text/plain; charset=utf-8" },
   });
 }
 
-async function priorSnapshot(domains: string[] = [], meta: Record<string, string> = { version: "v0" }) {
+async function priorSnapshot(domains: string[] = []) {
   const text = domains.length ? `${[...domains].sort().join("\n")}\n` : "";
-  return { bytes: await gzipText(text), customMetadata: meta };
+  return { bytes: await gzipText(text), customMetadata: { version: "v0" } };
 }
 
-let raw: SqliteDb;
-let db: D1Database;
-
 function openDb(): SqliteDb {
-  const tables = ["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains", "nrd_domains"];
-  const r = openDerivedDb(tables);
+  const r = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains", "nrd_domains"]);
   for (const t of ["lookalike_domains", "phantom_domains", "nrd_domains"]) {
     for (const ddl of liveIndexDdl(t).values()) r.exec(ddl);
   }
@@ -78,142 +78,80 @@ function envOf(d1: D1Database, staging: FakeR2Bucket, archive: FakeR2Bucket, cac
 }
 const ctxOf = (env: Env) => ({ env, feedName: "nrd_hagezi", feedUrl: "" });
 
+let raw: SqliteDb;
+let db: D1Database;
 let seq = 0;
-function seedLookalike(domain: string, brandId = "b_seed"): void {
-  raw.prepare(
+
+function seedLookalike(r: SqliteDb, domain: string, brandId = "b_seed", id = `la-${++seq}`): void {
+  r.prepare(
     "INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type) VALUES (?, ?, ?, 'typosquat')",
-  ).run(`la-${++seq}`, brandId, domain);
+  ).run(id, brandId, domain);
 }
-function seedPhantom(domain: string, brandId = "b_seed"): string {
+function seedPhantom(r: SqliteDb, domain: string, brandId = "b_seed"): string {
   const id = `ph-${++seq}`;
-  raw.prepare(
+  r.prepare(
     "INSERT INTO phantom_domains (id, brand_id, domain, source_model) VALUES (?, ?, ?, 'test-model')",
   ).run(id, brandId, domain);
   return id;
 }
-
-const nrdDomains = (): string[] =>
-  (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>).map((r) => r.domain);
-
-/** Counts reads of each matchable source table through this D1. */
-function countingLoads(inner: D1Database): { d1: D1Database; loads: { lookalike: number; phantom: number } } {
-  const loads = { lookalike: 0, phantom: 0 };
-  const d1 = {
-    ...inner,
-    prepare: (sql: string) => {
-      if (sql === NRD_MATCHABLE_SOURCES_SQL.lookalike_domains) loads.lookalike++;
-      if (sql === NRD_MATCHABLE_SOURCES_SQL.phantom_domains) loads.phantom++;
-      return inner.prepare(sql);
-    },
-    batch: inner.batch,
-  } as D1Database;
-  return { d1, loads };
-}
+const nrdDomains = (r: SqliteDb): string[] =>
+  (r.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>).map((x) => x.domain);
 
 afterEach(() => {
   vi.unstubAllGlobals();
   createAlertSpy.mockReset();
 });
 
-describe.skipIf(!hasSqlite())("matchable-set load", () => {
+describe.skipIf(!hasSqlite())("NRD_INSERT_SQL — the filtered insert", () => {
   beforeEach(() => {
     raw = openDb();
     db = d1FromSqlite(raw);
   });
 
-  it("both page queries are covering-index range scans with no temp b-tree", () => {
-    const plan = (sql: string) =>
-      (raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("", 10) as Array<{ detail: string }>).map((r) => r.detail).join(" | ");
-    const lp = plan(NRD_MATCHABLE_SOURCES_SQL.lookalike_domains);
-    expect(lp).toMatch(/SEARCH lookalike_domains USING COVERING INDEX idx_lookalike_domain \(domain>\?\)/);
-    expect(lp).not.toMatch(/TEMP B-TREE/);
-    const pp = plan(NRD_MATCHABLE_SOURCES_SQL.phantom_domains);
-    expect(pp).toMatch(/SEARCH phantom_domains USING COVERING INDEX idx_phantom_domain \(domain>\?\)/);
-    expect(pp).not.toMatch(/TEMP B-TREE/);
+  it("both EXISTS probes are covering-index SEARCHes on idx_lookalike_domain / idx_phantom_domain — no table scan", () => {
+    const plan = (raw.prepare(`EXPLAIN QUERY PLAN ${NRD_INSERT_SQL}`).all("2026-10-04", "[]") as Array<{ detail: string }>)
+      .map((r) => r.detail);
+    const joined = plan.join(" | ");
+    expect(joined).toMatch(/SEARCH l USING COVERING INDEX idx_lookalike_domain \(domain=\?\)/);
+    expect(joined).toMatch(/SEARCH p USING COVERING INDEX idx_phantom_domain \(domain=\?\)/);
+    expect(joined).not.toMatch(/SCAN (l|p|lookalike_domains|phantom_domains)\b/);
+    // Exactly two bind parameters regardless of row count.
+    expect((NRD_INSERT_SQL.match(/\?/g) ?? []).length).toBe(2);
   });
 
-  it("keyset-pages both tables into one distinct set of the RAW stored strings", async () => {
-    for (const d of ["a.com", "b.com", "c.com", "d.com", "e.com"]) seedLookalike(d);
-    seedLookalike("c.com", "b_other"); // same permutation, second brand
-    seedLookalike("Mixed.COM"); // stored verbatim — never normalised
-    seedPhantom("p1.ai");
-    seedPhantom("p2.ai");
-    seedPhantom("c.com");
+  it("stores only lookalike/phantom-equal domains and returns the rows actually inserted", async () => {
+    seedLookalike(raw, "a.com");
+    seedLookalike(raw, "a.com", "b_other"); // same permutation, second brand → still one NRD row
+    seedLookalike(raw, "Mixed.COM"); // never equal to a lowercased NRD — not stored
+    seedPhantom(raw, "p.ai");
 
-    const m = await loadMatchableDomains(db, { pageRows: 2 });
+    const n1 = await storeNrdReference(db, ["a.com", "b.com", "mixed.com", "p.ai", "a.com"], "2026-10-03");
+    expect(n1).toBe(2);
+    expect(nrdDomains(raw)).toEqual(["a.com", "p.ai"]);
 
-    expect([...m.set!].sort()).toEqual(["Mixed.COM", "a.com", "b.com", "c.com", "d.com", "e.com", "p1.ai", "p2.ai"]);
-    expect(m.loaded).toBe(8);
-    // lookalike: 6 distinct → pages of 2,2,2,0 = 4; phantom: 3 → 2,1 = 2.
-    expect(m.pages).toBe(6);
+    // Re-run: INSERT OR IGNORE → 0 inserted, first registered_date kept.
+    expect(await storeNrdReference(db, ["a.com", "p.ai"], "2026-10-04")).toBe(0);
+    expect(raw.prepare("SELECT registered_date AS d FROM nrd_domains WHERE domain = 'a.com'").get()).toEqual({ d: "2026-10-03" });
+    expect(await storeNrdReference(db, [], "2026-10-04")).toBe(0);
   });
 
-  it("over the cap returns set: null (store-everything fallback)", async () => {
-    for (const d of ["a.com", "b.com", "c.com"]) seedLookalike(d);
-    const m = await loadMatchableDomains(db, { max: 2, pageRows: 1 });
-    expect(m.set).toBeNull();
-    expect(m.loaded).toBe(3);
-  });
-});
-
-describe.skipIf(!hasSqlite())("nrd_hagezi — sets loaded lazily, once", () => {
-  beforeEach(() => {
-    raw = openDb();
-    db = d1FromSqlite(raw);
-    seedLookalike("new-1.com");
-  });
-
-  it("not loaded on 304, same-version, bootstrap, or a diff with zero new domains", async () => {
-    const { d1, loads } = countingLoads(db);
-
-    // 304
-    let staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot(["a.com"], { etag: '"e"', version: "v0" }) });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 304 })));
-    await ingestNrdHagezi(ctxOf(envOf(d1, staging, fakeR2Bucket())));
-
-    // same version
-    staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot(["a.com"], { version: VERSION }) });
-    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "new-1.com"])));
-    await ingestNrdHagezi(ctxOf(envOf(d1, staging, fakeR2Bucket())));
-
-    // bootstrap (no snapshot)
-    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "new-1.com"])));
-    await ingestNrdHagezi(ctxOf(envOf(d1, fakeR2Bucket(), fakeR2Bucket())));
-
-    // new version, nothing new vs the snapshot
-    staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot(["a.com", "new-1.com"]) });
-    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "new-1.com"])));
-    await ingestNrdHagezi(ctxOf(envOf(d1, staging, fakeR2Bucket())));
-
-    expect(loads).toEqual({ lookalike: 0, phantom: 0 });
-    expect(nrdDomains()).toEqual([]);
-  });
-
-  it("loaded exactly once per run even across several flushes", async () => {
-    const { d1, loads } = countingLoads(db);
-    const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot(["a.com"]) });
-    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "new-1.com", "new-2.com", "new-3.com"])));
-
-    await ingestNrdHagezi(ctxOf(envOf(d1, staging, fakeR2Bucket())), { flushEvery: 1 });
-
-    expect(loads).toEqual({ lookalike: 1, phantom: 1 });
-    expect(nrdDomains()).toEqual(["new-1.com"]);
-  });
-
-  it("over the cap, every new domain is stored (pre-filter behaviour) and the run still succeeds", async () => {
-    seedLookalike("other-1.com");
-    seedLookalike("other-2.com");
-    const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot(["a.com"]) });
+  it("a failing filtered insert fails the pull; the archive is not written and the snapshot is untouched", async () => {
+    seedLookalike(raw, "b.com");
+    const prior = await priorSnapshot(["a.com"]);
+    const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: prior });
     const archive = fakeR2Bucket();
-    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "new-1.com", "x.net", "y.org"])));
+    const failing = {
+      prepare: (sql: string) => db.prepare(sql),
+      batch: async () => { throw new Error("D1_ERROR: simulated nrd insert failure"); },
+    } as unknown as D1Database;
+    vi.stubGlobal("fetch", vi.fn(async () => listResponse(["a.com", "b.com", "c.com"])));
 
-    const r = await ingestNrdHagezi(ctxOf(envOf(db, staging, archive)), { matchableSetMax: 2 });
+    await expect(ingestNrdHagezi(ctxOf(envOf(failing, staging, archive)))).rejects.toThrow(/simulated nrd insert failure/);
 
-    expect(r.itemsError).toBe(0);
-    expect(nrdDomains()).toEqual(["new-1.com", "x.net", "y.org"]);
-    const key = [...archive.store.keys()][0]!;
-    expect(archive.store.get(key)!.customMetadata).toMatchObject({ count: "3", stored_in_d1: "3" });
-    expect(staging.store.get(NRD_SNAPSHOT_KEY)!.customMetadata.version).toBe(VERSION);
+    expect(archive.ops.put).toBe(0);
+    expect(archive.store.size).toBe(0);
+    expect(staging.ops.put).toBe(0);
+    expect(staging.store.get(NRD_SNAPSHOT_KEY)).toBe(prior);
   });
 });
 
@@ -230,10 +168,9 @@ describe.skipIf(!hasSqlite())("nrd_hagezi → nrd_domains → real matchers, end
   });
 
   it("stores exactly the lookalike/phantom-equal NRDs, archives all, still brand-matches, and both matchers claim them", async () => {
-    const cache = fakeKv();
     const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot([]) });
     const archive = fakeR2Bucket();
-    const env = envOf(db, staging, archive, cache);
+    const env = envOf(db, staging, archive);
 
     // Lookalike rows in the exact form the scanner stores them: the REAL
     // seeder (lowercase ASCII; IDN permutations as xn-- ToASCII).
@@ -245,38 +182,26 @@ describe.skipIf(!hasSqlite())("nrd_hagezi → nrd_domains → real matchers, end
     const idn = stored.find((r) => r.t === "idn_homoglyph")!.domain;
     expect(idn.startsWith("xn--")).toBe(true);
     const phantom = "paypal-assist-ai.com";
-    const phantomId = seedPhantom(phantom, "b_pp");
+    const phantomId = seedPhantom(raw, phantom, "b_pp");
 
     const keywordOnly = "paypal-refund-desk.example"; // brand keyword, not a lookalike/phantom
-    const nearMisses = [`www.${typo}`, `${typo}.`]; // a join would not match these either
-    const noise = "unrelated-noise.net";
-    const today = [typo, idn, phantom, keywordOnly, noise, ...nearMisses];
-    for (const d of [keywordOnly, noise, ...nearMisses]) {
-      expect(stored.some((r) => r.domain === d)).toBe(false);
-    }
+    const nearMisses = [`www.${typo}`, `${typo}.`]; // the matchers' join would not match these either
+    const today = [typo, idn, phantom, keywordOnly, "unrelated-noise.net", ...nearMisses];
+    for (const d of [keywordOnly, ...nearMisses]) expect(stored.some((r) => r.domain === d)).toBe(false);
     vi.stubGlobal("fetch", vi.fn(async () => listResponse(today)));
 
     const r = await ingestNrdHagezi(ctxOf(env), { flushEvery: 2 });
 
-    // nrd_domains: exactly the matchable subset.
-    expect(nrdDomains()).toEqual([idn, phantom, typo].sort());
-    // Archive: every new domain, stored or not.
+    expect(nrdDomains(raw)).toEqual([idn, phantom, typo].sort());
     const sorted = [...today].sort();
-    const key = nrdArchiveKey(
-      (raw.prepare("SELECT registered_date AS d FROM nrd_domains LIMIT 1").all()[0] as { d: string }).d,
-      VERSION,
-      sorted[0]!,
-    );
+    const key = nrdArchiveKey(REG_DATE, VERSION, sorted[0]!);
     expect([...archive.store.keys()]).toEqual([key]);
     expect(await gunzipText(archive.store.get(key)!.bytes)).toBe(`${sorted.join("\n")}\n`);
     expect(archive.store.get(key)!.customMetadata).toMatchObject({ count: String(today.length), stored_in_d1: "3" });
-    // Brand-keyword threats still fire for domains that were NOT stored.
     expect(r.itemsError).toBe(0);
-    expect(r.itemsNew).toBeGreaterThanOrEqual(1);
     const threatIds = (raw.prepare("SELECT id FROM threats").all() as Array<{ id: string }>).map((x) => x.id);
     expect(threatIds).toContain(threatId("nrd_hagezi", "domain", keywordOnly));
 
-    // The REAL lookalike-nrd-matcher claims the stored lookalike NRDs.
     const m = await runLookalikeNrdMatch(env);
     expect(m.claim_errors).toBe(0);
     expect(m.claimed).toBeGreaterThanOrEqual(2);
@@ -285,11 +210,10 @@ describe.skipIf(!hasSqlite())("nrd_hagezi → nrd_domains → real matchers, end
         "SELECT registration_evidence AS ev, first_seen FROM lookalike_domains WHERE domain = ? AND brand_id = 'b_pp'",
       ).get(d) as { ev: string | null; first_seen: string | null };
       expect(row.ev, d).toBe("nrd");
-      expect(row.first_seen, d).not.toBeNull();
+      expect(row.first_seen, d).toBe(`${REG_DATE} 00:00:00`);
       expect((raw.prepare("SELECT brand_matched AS b FROM nrd_domains WHERE domain = ?").get(d) as { b: number }).b).toBe(1);
     }
 
-    // The REAL phantom matcher (nrd source) claims the stored phantom NRD.
     createAlertSpy.mockResolvedValue(null);
     const pm = await runPhantomMatch(env, db, { source: "nrd" });
     expect(pm.by_source.nrd.matched).toBe(1);
@@ -297,5 +221,56 @@ describe.skipIf(!hasSqlite())("nrd_hagezi → nrd_domains → real matchers, end
       status: "registered",
       matched_source: "nrd",
     });
+  });
+});
+
+describe.skipIf(!hasSqlite())("equivalence with storing every NRD", () => {
+  it("the lookalike matcher claims exactly what it would have claimed had every NRD been stored", async () => {
+    // Realistic lookalike rows (two brands, overlapping permutations, an IDN
+    // row, a never-matchable mixed-case row) with FIXED ids so the two
+    // databases are comparable.
+    const lookalikes: Array<[string, string, string]> = [];
+    let k = 0;
+    for (const [brand, domain] of [["b1", "paypal.com"], ["b2", "paypai.com"]] as const) {
+      for (const p of generatePermutations(domain)) lookalikes.push([`fix-${k++}`, brand, p.domain]);
+    }
+    lookalikes.push([`fix-${k++}`, "b1", "Mixed.COM"]);
+    const allLookalikeDomains = [...new Set(lookalikes.map((l) => l[2]))];
+    // The day's list: every other lookalike domain, near-misses, noise.
+    const listed = [
+      ...allLookalikeDomains.filter((_, i) => i % 2 === 0).map((d) => d.toLowerCase()),
+      "www.paypa1.com", "paypa1.com.", "unrelated-1.net", "unrelated-2.org", "mixed.com",
+    ];
+
+    const build = (): SqliteDb => {
+      const r = openDb();
+      for (const [id, brand, domain] of lookalikes) seedLookalike(r, domain, brand, id);
+      return r;
+    };
+    const claims = (r: SqliteDb) =>
+      r.prepare(
+        "SELECT id, first_seen, registration_evidence AS ev FROM lookalike_domains WHERE registration_evidence = 'nrd' ORDER BY id",
+      ).all();
+
+    // A: the filtered feed.
+    const rawA = build();
+    const envA = envOf(d1FromSqlite(rawA), fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await priorSnapshot([]) }), fakeR2Bucket());
+    vi.stubGlobal("fetch", vi.fn(async () => listResponse(listed)));
+    await ingestNrdHagezi(ctxOf(envA), { flushEvery: 7 });
+    await runLookalikeNrdMatch(envA);
+
+    // B: the old behaviour — every new NRD stored, same registered_date.
+    const rawB = build();
+    const ins = rawB.prepare("INSERT OR IGNORE INTO nrd_domains (domain, registered_date) VALUES (?, ?)");
+    for (const d of [...listed].sort()) ins.run(d, REG_DATE);
+    const envB = envOf(d1FromSqlite(rawB), fakeR2Bucket(), fakeR2Bucket());
+    await runLookalikeNrdMatch(envB);
+
+    const a = claims(rawA);
+    expect(a.length).toBeGreaterThan(10);
+    expect(a).toEqual(claims(rawB));
+    // And A stored only the matchable subset.
+    expect(nrdDomains(rawA).length).toBeLessThan(nrdDomains(rawB).length);
+    expect(nrdDomains(rawA)).not.toContain("mixed.com");
   });
 });

@@ -15,6 +15,7 @@ import {
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -52,6 +53,16 @@ let raw: SqliteDb;
 let stats: BindStats;
 let db: D1Database;
 
+/** Make `domains` matchable — storeNrdReference stores only lookalike/phantom-equal domains. */
+function seedLookalikes(domains: string[]): void {
+  const st = raw.prepare(
+    "INSERT OR IGNORE INTO lookalike_domains (id, brand_id, domain, permutation_type) VALUES (?, 'b_seed', ?, 'typosquat')",
+  );
+  raw.exec("BEGIN");
+  for (const d of domains) st.run(`la-${d}`, d);
+  raw.exec("COMMIT");
+}
+
 const count = (sql: string, ...p: unknown[]): number =>
   (raw.prepare(sql).all(...p)[0] as { n: number }).n;
 
@@ -66,6 +77,10 @@ async function envWithEmptyPrior(): Promise<Env> {
 describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
   beforeEach(() => {
     raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     stats = { maxBinds: 0, statements: 0, batchCalls: 0 };
     db = bindLimited(d1FromSqlite(raw), stats);
   });
@@ -75,7 +90,8 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
   });
 
   it("stores 1000 domains with no statement over 100 binds", async () => {
-    await storeNrdReference(db, domainList(1000), "2026-10-03");
+    seedLookalikes(domainList(1000));
+    expect(await storeNrdReference(db, domainList(1000), "2026-10-03")).toBe(1000);
 
     expect(stats.maxBinds).toBeLessThanOrEqual(D1_MAX_BINDS);
     expect(count("SELECT COUNT(*) AS n FROM nrd_domains")).toBe(1000);
@@ -84,7 +100,8 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
 
   it("a 180K-domain flush stays ≤100 binds and needs only a handful of batch calls", async () => {
     const n = 180_000;
-    await storeNrdReference(db, domainList(n), "2026-10-03");
+    seedLookalikes(domainList(n));
+    expect(await storeNrdReference(db, domainList(n), "2026-10-03")).toBe(n);
 
     const expectedStatements = Math.ceil(n / NRD_DOMAINS_PER_STATEMENT);
     expect(stats.maxBinds).toBeLessThanOrEqual(D1_MAX_BINDS);
@@ -94,6 +111,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
   });
 
   it("preserves INSERT OR IGNORE semantics: in-list duplicates + re-runs keep the first registered_date", async () => {
+    seedLookalikes([...domainList(1000), ...domainList(500, "fresh"), "dup.example"]);
     const first = [...domainList(1000), "dup.example", "dup.example"];
     await storeNrdReference(db, first, "2026-10-02");
     // Overlapping re-run on a later date: existing rows keep 2026-10-02,

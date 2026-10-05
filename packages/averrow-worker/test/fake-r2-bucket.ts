@@ -1,5 +1,5 @@
 /**
- * In-memory R2 bucket fake (head / get / put / delete) with customMetadata,
+ * In-memory R2 bucket fake (head / get / put / delete / list) with customMetadata,
  * enough for feeds that keep a snapshot object in R2. `put` accepts the
  * value shapes the Workers runtime does that tests actually use (string,
  * ArrayBuffer, ArrayBufferView, Blob).
@@ -13,7 +13,7 @@ export interface FakeR2Entry {
 export interface FakeR2Bucket {
   bucket: R2Bucket;
   store: Map<string, FakeR2Entry>;
-  ops: { head: number; get: number; put: number; delete: number };
+  ops: { head: number; get: number; put: number; delete: number; list: number };
 }
 
 function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -44,7 +44,7 @@ async function toBytes(value: unknown): Promise<Uint8Array> {
 
 export function fakeR2Bucket(seed: Record<string, FakeR2Entry> = {}): FakeR2Bucket {
   const store = new Map<string, FakeR2Entry>(Object.entries(seed));
-  const ops = { head: 0, get: 0, put: 0, delete: 0 };
+  const ops = { head: 0, get: 0, put: 0, delete: 0, list: 0 };
   const meta = (key: string, e: FakeR2Entry) => ({
     key,
     size: e.bytes.length,
@@ -75,6 +75,22 @@ export function fakeR2Bucket(seed: Record<string, FakeR2Entry> = {}): FakeR2Buck
     async delete(key: string) {
       ops.delete++;
       store.delete(key);
+    },
+    /** Prefix listing in key order, paginated by `limit` (default 1000). */
+    async list(options?: { prefix?: string; cursor?: string; limit?: number }) {
+      ops.list++;
+      const prefix = options?.prefix ?? "";
+      const limit = options?.limit ?? 1000;
+      const keys = [...store.keys()].filter((k) => k.startsWith(prefix)).sort();
+      const startAt = options?.cursor ? Number(options.cursor) : 0;
+      const page = keys.slice(startAt, startAt + limit);
+      const truncated = startAt + limit < keys.length;
+      return {
+        objects: page.map((k) => meta(k, store.get(k)!)),
+        truncated,
+        ...(truncated ? { cursor: String(startAt + limit) } : {}),
+        delimitedPrefixes: [],
+      };
     },
   };
   return { bucket: bucket as unknown as R2Bucket, store, ops };

@@ -15,11 +15,17 @@
  * daily) holds domains the registries report as NEWLY registered — since
  * 2026-10-05 ONLY the new ones byte-equal to a `lookalike_domains.domain` or
  * `phantom_domains.domain` at ingest (a handful a day; the full ~443K/day is
- * in the NRD_ARCHIVE R2 bucket). The feed's filter is a Set lookup over the
- * raw stored domains, i.e. exactly this join's `l.domain = n.domain`, so
- * every row this matcher could ever hit is still stored. A permutation
- * seeded AFTER its domain's NRD listing was diffed is not (it was already
- * behind this matcher's cursor in practice). Joining it to
+ * in the NRD_ARCHIVE R2 bucket). The feed's filter is IN its insert
+ * (NRD_INSERT_SQL: `WHERE EXISTS (… l.domain = j.value) OR EXISTS (…)`),
+ * i.e. this join's own `l.domain = n.domain`, so every NRD that is a
+ * lookalike at ingest is stored. A permutation seeded AFTER its domain's
+ * NRD listing was ingested would have no row; lib/nrd-archive-backcheck.ts
+ * closes that: agents/lookalike-scanner.ts back-checks the domains its
+ * seeder just inserted against the last 8 days of the R2 archive BEFORE
+ * calling this matcher, and stores any hit with the archive's date (and
+ * created_at = now, above this cursor), so the same run claims it. The
+ * manual generate endpoint does the same inline. A listing older than 8
+ * days is not recovered. Joining it to
  * `lookalike_domains` by domain turns "the checker will get to it in ~48
  * days" into "we know it was registered on <date>, check it now":
  *

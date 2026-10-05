@@ -51,7 +51,12 @@
 //    this hold binds only when that HOURLY matcher is more than 30 days
 //    behind (stuck), extending retention to at most 37 days.
 //    Absent (never run) → no hold; its first run starts at now − 30 days of
-//    ingest, so it never assumes a purged row still exists.
+//    ingest, so it never assumes a purged row still exists. Since nrd_domains
+//    became sparse (only lookalike/phantom-equal NRDs), a caught-up cursor
+//    can sit on an OLD row because nothing newer was ingested; the hold (and
+//    `held_by_lookalike_matcher`) therefore applies only when an unscanned
+//    row exists above the cursor key (NRD_RETENTION_UNSCANNED_SQL, one
+//    indexed seek, only when the hold would bind).
 //
 // Retention rule:
 //   age    = now − NRD_RETENTION_DAYS (30 days)
@@ -178,6 +183,14 @@ export function toSqliteUtc(ms: number): string {
   return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/**
+ * Does any nrd_domains row sit ABOVE the lookalike matcher's keyset cursor
+ * (i.e. not yet scanned by it)? Same row-value seek as the matcher's window
+ * probe (idx_nrd_domains_created).
+ */
+export const NRD_RETENTION_UNSCANNED_SQL =
+  `SELECT 1 AS one FROM nrd_domains WHERE (created_at, rowid) > (?, ?) ORDER BY created_at, rowid LIMIT 1`;
+
 /** Exported for the query-plan pin (test/nrd-retention.test.ts). */
 export const NRD_RETENTION_PURGE_SQL =
   `DELETE FROM nrd_domains WHERE rowid IN (SELECT rowid FROM nrd_domains WHERE created_at < ? AND brand_matched = 0 ORDER BY created_at LIMIT ?)`;
@@ -246,14 +259,15 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
   // A failed read here is NOT a skip: it would only make the purge less
   // conservative by its own hold, so treat it as "hold at the current
   // cutoff" — i.e. purge nothing this run, same any-doubt rule as step 1.
-  let lookalikeCursor: string | null = null;
+  let lookalikeKey: { created_at: string; rowid: number } | null = null;
   try {
-    lookalikeCursor = parseNrdCursor(await env.CACHE.get(LOOKALIKE_NRD_CURSOR_KEY))?.created_at ?? null;
+    lookalikeKey = parseNrdCursor(await env.CACHE.get(LOOKALIKE_NRD_CURSOR_KEY));
   } catch (err) {
     result.skipped = 'cursor_read_failed';
     result.error = err instanceof Error ? err.message : String(err);
     return finish();
   }
+  const lookalikeCursor = lookalikeKey?.created_at ?? null;
   result.lookalike_cursor = lookalikeCursor;
   result.held_by_lookalike_matcher = false;
   if (lookalikeCursor && !SQLITE_TS_RE.test(lookalikeCursor)) {
@@ -266,9 +280,27 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
   // matcher ever reads it.
   const holdFloor = toSqliteUtc(start - (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS) * 86_400_000);
   const lookalikeHold = lookalikeCursor && lookalikeCursor < holdFloor ? holdFloor : lookalikeCursor;
-  if (lookalikeHold && lookalikeHold < cutoff) {
-    cutoff = lookalikeHold;
-    result.held_by_lookalike_matcher = true;
+  if (lookalikeHold && lookalikeHold < cutoff && lookalikeKey) {
+    // A SPARSE nrd_domains (the feed stores only lookalike/phantom-equal
+    // NRDs since 2026-10-05) can leave the cursor parked on an old row
+    // simply because nothing newer was ingested — the matcher is caught
+    // up, not stuck, and every row is below its key and already scanned.
+    // Only hold when an UNSCANNED row exists above the cursor key. One
+    // keyset seek on idx_nrd_domains_created, only when the hold would
+    // bind. A failed probe keeps the hold (any doubt → hold).
+    let unscanned = true;
+    try {
+      const row = await env.DB.prepare(NRD_RETENTION_UNSCANNED_SQL)
+        .bind(lookalikeKey.created_at, lookalikeKey.rowid)
+        .first<{ one: number }>();
+      unscanned = row !== null;
+    } catch {
+      unscanned = true;
+    }
+    if (unscanned) {
+      cutoff = lookalikeHold;
+      result.held_by_lookalike_matcher = true;
+    }
   }
   result.cutoff = cutoff;
 

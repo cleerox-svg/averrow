@@ -1074,7 +1074,9 @@ export function classifyLookalikeTransitions(
 /**
  * Generate domain permutations for a brand and store them in the
  * lookalike_domains table. Uses INSERT OR IGNORE to avoid duplicates.
- * Returns the count of newly inserted permutations.
+ * Returns the count of newly inserted permutations; when `insertedDomains`
+ * is passed, the domain of every newly inserted row is appended to it (the
+ * caller hands them to lib/nrd-archive-backcheck.ts).
  *
  * `check_due_at = datetime('now')` makes a new candidate due
  * IMMEDIATELY. That is the only scheduling statement in the seeder, and
@@ -1087,6 +1089,7 @@ export async function generateAndStoreLookalikes(
   env: Env,
   brandId: string,
   domain: string,
+  insertedDomains?: string[],
 ): Promise<number> {
   const permutations = generatePermutations(domain);
   if (permutations.length === 0) return 0;
@@ -1142,9 +1145,12 @@ export async function generateAndStoreLookalikes(
     });
 
     const results = await env.DB.batch(stmts);
-    for (const r of results) {
-      if ((r.meta.changes ?? 0) > 0) inserted++;
-    }
+    results.forEach((r, j) => {
+      if ((r.meta.changes ?? 0) > 0) {
+        inserted++;
+        insertedDomains?.push(batch[j]!.domain);
+      }
+    });
   }
 
   logger.info('lookalike_generate', {
@@ -1166,7 +1172,9 @@ export async function generateAndStoreLookalikes(
  *
  * Generation is cheap (permutation inserts only — DNS happens later in
  * the throttled checker), so we seed up to `brandLimit` un-seeded brands
- * per tick. Returns brands + candidates seeded.
+ * per tick. Returns brands + candidates seeded, and `new_domains` — the
+ * domain of every newly inserted row, for the NRD archive back-check
+ * (lib/nrd-archive-backcheck.ts) the scanner runs before its NRD match.
  *
  * The population is `MONITORED_BRAND_PREDICATE_SQL`, NOT `org_brands` —
  * see that constant for why, and for the throughput ceiling that decides
@@ -1176,7 +1184,7 @@ export async function generateAndStoreLookalikes(
 export async function seedLookalikesForOrgBrands(
   env: Env,
   brandLimit = 10,
-): Promise<{ brands_seeded: number; candidates_created: number }> {
+): Promise<{ brands_seeded: number; candidates_created: number; new_domains: string[] }> {
   // NOT EXISTS keeps this one-shot per brand: regenerating identical
   // dnstwist permutations for an already-seeded brand is pure write cost.
   // With the tier predicate this is a self-draining backlog, `brandLimit`
@@ -1196,8 +1204,9 @@ export async function seedLookalikesForOrgBrands(
 
   let brandsSeeded = 0;
   let candidatesCreated = 0;
+  const newDomains: string[] = [];
   for (const b of brands.results) {
-    const created = await generateAndStoreLookalikes(env, b.brand_id, b.domain);
+    const created = await generateAndStoreLookalikes(env, b.brand_id, b.domain, newDomains);
     candidatesCreated += created;
     brandsSeeded++;
   }
@@ -1206,7 +1215,7 @@ export async function seedLookalikesForOrgBrands(
     logger.info('lookalike_seed_org_brands', { brands_seeded: brandsSeeded, candidates_created: candidatesCreated });
   }
 
-  return { brands_seeded: brandsSeeded, candidates_created: candidatesCreated };
+  return { brands_seeded: brandsSeeded, candidates_created: candidatesCreated, new_domains: newDomains };
 }
 
 // ─── The compositor ─────────────────────────────────────────────

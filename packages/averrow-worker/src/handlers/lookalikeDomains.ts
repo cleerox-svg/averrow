@@ -14,6 +14,11 @@
 
 import { json } from "../lib/cors";
 import { generateAndStoreLookalikes, checkLookalikeBatchForBrand } from "../scanners/lookalike-domains";
+import { runNrdArchiveBackcheck } from "../lib/nrd-archive-backcheck";
+
+/** Wall-clock budget for the inline NRD archive back-check on a manual
+ *  generate (a request, so tighter than the scanner's). */
+const GENERATE_BACKCHECK_SOFT_CAP_MS = 10_000;
 import { LOOKALIKE_RESCAN_ENQUEUE_LIMIT } from "../lib/lookalike-budget";
 import { logger } from "../lib/logger";
 import type { Env } from "../types";
@@ -265,7 +270,17 @@ export async function handleGenerateLookalikes(
       return json({ success: false, error: "Brand has no canonical domain configured" }, 400, origin);
     }
 
-    const newCount = await generateAndStoreLookalikes(env, brandId, brand.canonical_domain);
+    const newDomains: string[] = [];
+    const newCount = await generateAndStoreLookalikes(env, brandId, brand.canonical_domain, newDomains);
+    // NRD archive back-check (lib/nrd-archive-backcheck.ts): the NRD feed
+    // only stores NRDs that were lookalike domains at ingest, so look the
+    // just-seeded permutations up in the last 8 days of the R2 archive and
+    // store any hit for the hourly NRD matcher. Bounded (soft cap) and never
+    // throws. A brand seeded here is never re-seeded by the cron seeder
+    // (NOT EXISTS), so this is its only back-check.
+    const backcheck = newDomains.length > 0
+      ? await runNrdArchiveBackcheck(env, newDomains, "lookalike", { softCapMs: GENERATE_BACKCHECK_SOFT_CAP_MS })
+      : null;
 
     return json({
       success: true,
@@ -273,6 +288,9 @@ export async function handleGenerateLookalikes(
         brand_id: brandId,
         domain: brand.canonical_domain,
         new_permutations: newCount,
+        nrd_backcheck: backcheck
+          ? { hits: backcheck.hits, stored: backcheck.stored, timed_out: backcheck.timed_out, skipped: backcheck.skipped }
+          : null,
       },
     }, 200, origin);
   } catch (err) {

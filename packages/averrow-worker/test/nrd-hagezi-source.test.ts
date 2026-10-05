@@ -26,6 +26,7 @@ import {
 } from "../src/feeds/nrd_hagezi";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, gunzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -183,6 +184,10 @@ const nrdRows = (): Array<{ domain: string; registered_date: string }> =>
 describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => {
   beforeEach(() => {
     raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     db = d1FromSqlite(raw);
   });
 

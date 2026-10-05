@@ -23,6 +23,7 @@ import {
 } from "../scanners/lookalike-domains";
 import { analyzeLookalikePages } from "../scanners/lookalike-page-analysis";
 import { runLookalikeNrdMatch } from "../lib/lookalike-nrd-matcher";
+import { runNrdArchiveBackcheck } from "../lib/nrd-archive-backcheck";
 import { getReadSession } from "../lib/db";
 
 export const lookalikeScannerAgent: AgentModule = {
@@ -63,8 +64,10 @@ export const lookalikeScannerAgent: AgentModule = {
     // Seed candidates for tenant-monitored brands that have none yet, so the
     // checker below has a non-empty pool. Best-effort — a seeding failure must
     // not block the check pass.
+    let seededDomains: string[] = [];
     try {
-      const seed = await seedLookalikesForOrgBrands(ctx.env);
+      const { new_domains, ...seed } = await seedLookalikesForOrgBrands(ctx.env);
+      seededDomains = new_domains ?? [];
       candidatesCreated = seed.candidates_created;
       if (seed.brands_seeded > 0) {
         agentOutputs.push({
@@ -81,6 +84,29 @@ export const lookalikeScannerAgent: AgentModule = {
         severity: "low",
         details: { error: err instanceof Error ? err.message : String(err) },
       });
+    }
+
+    // NRD archive back-check (lib/nrd-archive-backcheck.ts). The NRD feed
+    // stores only NRDs that were ALREADY lookalike/phantom domains at
+    // ingest, so a permutation seeded above whose NRD listing came in
+    // earlier has no nrd_domains row. Scan the last 8 days of the R2 archive
+    // for the just-seeded domains and store any hit (created_at = now), so
+    // the matcher below claims it on THIS run. Skipped when nothing was
+    // seeded; never throws (archive trouble must not fail the scanner).
+    if (seededDomains.length > 0) {
+      const bc = await runNrdArchiveBackcheck(ctx.env, seededDomains, "lookalike");
+      if (bc.hits > 0 || bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped === "archive_unbound") {
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `NRD archive back-check: ${bc.domains} seeded domain(s), ${bc.hits} found in the last 8 days ` +
+            `(${bc.stored} stored)` +
+            `${bc.timed_out ? ", timed out" : ""}` +
+            `${bc.skipped ? `, skipped (${bc.skipped})` : ""}` +
+            `${bc.error || bc.object_errors > 0 ? `, ${bc.object_errors} object error(s)${bc.error ? `: ${bc.error}` : ""}` : ""}`,
+          severity: bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped ? "low" : "info",
+          details: { ...bc } as Record<string, unknown>,
+        });
+      }
     }
 
     // NRD <-> lookalike match (lib/lookalike-nrd-matcher.ts). BEFORE the
