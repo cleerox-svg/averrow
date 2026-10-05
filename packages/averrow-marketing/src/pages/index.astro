@@ -3,8 +3,8 @@
  * Homepage. Section 1 redesign (see docs/DISCLOSURE_REGISTER.md rows
  * L4/L10/L12/L13/L17/L21/L22): hero with scan form + an illustrative
  * operation card, a "from the platform" band of real build-time numbers,
- * coverage chips, then how it works / coverage / console preview /
- * trust / CTA.
+ * coverage chips, then the operation story / takedown flow /
+ * coverage / by-the-numbers / CTA.
  *
  * Every number in the band comes from src/data/stats.json, which
  * scripts/fetch-stats.mjs refreshes from /api/v1/public/stats on each
@@ -16,6 +16,7 @@ import Layout from "../layouts/Layout.astro";
 import ByTheNumbers from "../components/ByTheNumbers.astro";
 import OperationStory from "../components/OperationStory.astro";
 import Coverage from "../components/Coverage.astro";
+import TakedownFlow from "../components/TakedownFlow.astro";
 import { COVERAGE } from "../lib/coverage";
 import liveStats from "../data/stats.json";
 
@@ -69,7 +70,7 @@ const toneVar: Record<Tone, string> = {
 
 <Layout
   title="Averrow — Digital Risk Protection & Brand Protection"
-  description="Averrow finds lookalike domains, fake profiles, cloned apps and phishing kits aimed at your brand and executives, links them to the operation behind them, and files the takedowns. Free 30-second domain scan, no sign-up."
+  description="Averrow finds lookalike domains, fake profiles, cloned apps and phishing kits aimed at your brand and executives, links them to the operation behind them, and files takedowns for lookalike domains and phishing URLs under your authorization. Free 30-second domain scan, no sign-up."
 >
   <div class="hero-wrap">
   <section class="hero" aria-labelledby="hero-title">
@@ -79,7 +80,8 @@ const toneVar: Record<Tone, string> = {
       <p class="hero-lede">
         Averrow finds lookalike domains, fake profiles, cloned apps and phishing
         kits aimed at your brand and executives. It links them to the
-        infrastructure and operation behind them, then files the takedowns.
+        infrastructure and operation behind them, then files takedowns for lookalike
+        domains and phishing URLs under your authorization.
       </p>
       <p class="hero-lede hero-lede-short">
         Find the fakes, trace the operation behind them, and take them down.
@@ -190,34 +192,8 @@ const toneVar: Record<Tone, string> = {
 
   <hr class="tr-divider-animated" />
 
-  <section class="how-it-works">
-    <div class="section-label">How It Works</div>
-    <div class="steps-row">
-      <div class="step">
-        <div class="step-num">01</div>
-        <div class="step-title">Connect your brand</div>
-        <div class="step-desc">Enter any domain &mdash; no signup required. We start scanning immediately.</div>
-      </div>
-      <div class="step-arrow">&rarr;</div>
-      <div class="step">
-        <div class="step-num">02</div>
-        <div class="step-title">We scan everything</div>
-        <div class="step-desc">Automated monitoring covers threat feeds, email authentication, domains, certificates, and social platforms.</div>
-      </div>
-      <div class="step-arrow">&rarr;</div>
-      <div class="step">
-        <div class="step-num">03</div>
-        <div class="step-title">We link the evidence</div>
-        <div class="step-desc">Rule-based correlation groups related threats into operations and scores their severity.</div>
-      </div>
-      <div class="step-arrow">&rarr;</div>
-      <div class="step">
-        <div class="step-num">04</div>
-        <div class="step-title">Takedowns filed</div>
-        <div class="step-desc">You get the evidence, the operation behind it, and remediation steps. We file the takedowns.</div>
-      </div>
-    </div>
-  </section>
+  <!-- ── FROM FINDING TO TAKEDOWN — control, in five stages (Section 5) ── -->
+  <TakedownFlow />
 
   <hr class="tr-divider-animated" />
 
@@ -490,55 +466,6 @@ const toneVar: Record<Tone, string> = {
     .scan-box { flex-direction: column; }
     .scan-input { padding: 13px 14px; }
     .scan-btn { padding: 14px 18px; }
-  }
-
-  /* ── SECTION LABEL (shared by How it works / Capabilities) ── */
-  .section-label {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.2em;
-    color: var(--accent-section, var(--accent));
-    text-transform: uppercase;
-    margin-bottom: 10px;
-  }
-
-  /* ── HOW IT WORKS ── */
-  .how-it-works { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
-  .steps-row { display: flex; align-items: flex-start; gap: 0; margin-top: 20px; }
-  @media (max-width: 720px) {
-    .steps-row { flex-direction: column; gap: 32px; }
-    .step-arrow { display: none; }
-  }
-  .step { flex: 1; text-align: center; }
-  .step-num {
-    font-family: var(--font-display);
-    font-size: 40px;
-    font-weight: 700;
-    color: var(--accent);
-    line-height: 1;
-    margin-bottom: 10px;
-  }
-  .step-title {
-    font-family: var(--font-display);
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 6px;
-  }
-  .step-desc {
-    font-size: 14px;
-    color: var(--text-secondary);
-    line-height: 1.5;
-    max-width: 220px;
-    margin: 0 auto;
-  }
-  .step-arrow {
-    display: flex;
-    align-items: center;
-    padding-top: 12px;
-    color: var(--text-tertiary);
-    font-size: 24px;
   }
 
   /* ── CTA SECTION ── */

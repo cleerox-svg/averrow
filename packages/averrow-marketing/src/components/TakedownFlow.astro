@@ -1,0 +1,368 @@
+---
+/*
+ * "From finding to takedown" — homepage Section 5. Replaces the old
+ * "How it works" 01-04 strip, whose last step promised "we file the
+ * takedowns" without condition.
+ *
+ * The point of the section is control: the customer decides what gets filed
+ * in their name. Five stages (Found, Evidence, Your rules, Filed, Watched),
+ * each shown with the product-UI fragment a customer would see, in the same
+ * fictional world as the hero card and the "Follow one operation" section
+ * (brand Acme, `.example` domains, OP-2291, documentation ASN AS64500).
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md): no speed, success-rate, volume,
+ * cadence or batch-size claims; no provider or vendor names; no AI wording;
+ * "Evidence" lists outcomes only, never signals, thresholds or weights.
+ * Scope is stated plainly: Averrow submits for lookalike domains and phishing
+ * URLs under the customer's signed authorization at the level they choose;
+ * social profiles, apps and paste sites are drafted with evidence, ready to
+ * file with the platform. "Revoke any time" is true of the authorization.
+ * Fragments are labelled illustrative and carry no figures.
+ *
+ * Progressive enhancement: the server HTML is the "Approve first" state with
+ * the automation switch hidden (a switch that does nothing is worse than none).
+ * A small inline script reveals the switch as a radiogroup (roving tabindex,
+ * arrow keys) and swaps stage 3's card + caption. Hidden states use the
+ * `hidden` attribute and an explicit `[hidden]` rule, because the card/caption
+ * display rules would otherwise out-rank the UA stylesheet.
+ *
+ * <=640px: a vertical timeline, no switch. Both layouts are rendered and one
+ * is hidden by CSS (display:none also removes it from the accessibility tree).
+ */
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const modes = [
+  { key: "manual", label: "Manual" },
+  { key: "approve", label: "Approve first" },
+  { key: "auto", label: "Automatic" },
+];
+
+const timeline = [
+  { title: "Found", text: "Linked to the operation behind it.", hl: false },
+  { title: "Evidence", text: "Assembled automatically.", hl: false },
+  { title: "Your rules", text: "Manual, approve first or automatic.", hl: true },
+  { title: "Filed", text: "Every submission and reply in one history.", hl: false },
+  { title: "Watched", text: "Alerted if a removed domain returns.", hl: false },
+];
+---
+
+<section class="tf" id="takedown-flow" aria-labelledby="tf-title" data-tf>
+  <div class="tf-head">
+    <div>
+      <div class="tf-eyebrow">From finding to takedown</div>
+      <h2 class="tf-h" id="tf-title">You decide what gets filed. We do the filing.</h2>
+      <p class="tf-lede">
+        Every finding arrives with its evidence. Set your rules once, and Averrow submits abuse
+        reports for lookalike domains and phishing URLs to registrars and hosting providers on your
+        behalf. Revoke the authorization any time.
+      </p>
+    </div>
+    <div class="tf-mode" role="radiogroup" aria-label="Automation level" data-tf-mode hidden>
+      <span class="tf-k" aria-hidden="true">Your automation level</span>
+      {modes.map((m) => (
+        <button type="button" role="radio" aria-checked={m.key === "approve" ? "true" : "false"} tabindex={m.key === "approve" ? 0 : -1} data-mode={m.key}>{m.label}</button>
+      ))}
+    </div>
+  </div>
+
+  <ol class="tf-flow">
+    <li class="tf-st">
+      <div class="tf-sn"><span aria-hidden="true">1</span>Found</div>
+      <div class="tf-card">
+        <div class="tf-r"><span class="tf-mono">acme-payroll-login.example</span><span class="tf-pill high">High</span></div>
+        <div class="tf-cap">live login page · part of OP-2291</div>
+      </div>
+      <p>Lands in your queue, already linked to the operation behind it.</p>
+    </li>
+    <li class="tf-st">
+      <div class="tf-sn"><span aria-hidden="true">2</span>Evidence</div>
+      <div class="tf-card tf-ev">
+        <div><i aria-hidden="true"></i>Registered 2 days ago</div>
+        <div><i aria-hidden="true"></i>Login form imitating Acme</div>
+        <div><i aria-hidden="true"></i>Hosted on AS64500</div>
+        <div><i aria-hidden="true"></i>Shares a certificate with other domains in OP-2291</div>
+      </div>
+      <p>An evidence summary is assembled automatically for every draft.</p>
+    </li>
+    <li class="tf-st hl">
+      <div class="tf-sn"><span aria-hidden="true">3</span>Your rules</div>
+      <div class="tf-card" data-m="manual" hidden>
+        <div class="tf-r"><b>Draft ready</b><span class="tf-pill med">Yours to send</span></div>
+        <div class="tf-cap">nothing is filed until you choose to</div>
+      </div>
+      <div class="tf-card" data-m="approve">
+        <div class="tf-r"><b>Waiting for your approval</b></div>
+        <div class="tf-btns"><span class="tf-b pri">Approve</span><span class="tf-b">Withdraw</span></div>
+      </div>
+      <div class="tf-card" data-m="auto" hidden>
+        <div class="tf-r"><b>Within your monthly limit</b><span class="tf-cap">limit set by you</span></div>
+        <div class="tf-bar" aria-hidden="true"><i></i></div>
+      </div>
+      <p data-m="manual" hidden>You review and send each one yourself.</p>
+      <p data-m="approve">We hold every takedown until someone on your team approves it.</p>
+      <p data-m="auto" hidden>Filed automatically, up to the monthly limit you set.</p>
+    </li>
+    <li class="tf-st">
+      <div class="tf-sn"><span aria-hidden="true">4</span>Filed</div>
+      <div class="tf-card">
+        <div class="tf-r"><b>Report sent to the registrar</b></div>
+        <div class="tf-cap">ticket 48213 · awaiting response</div>
+      </div>
+      <p>Every submission and every provider reply, in one history.</p>
+    </li>
+    <li class="tf-st">
+      <div class="tf-sn"><span aria-hidden="true">5</span>Watched</div>
+      <div class="tf-card">
+        <div class="tf-r"><b>Removed</b><span class="tf-pill ok">Down</span></div>
+        <div class="tf-cap">re-checked · alert if it returns</div>
+      </div>
+      <p>Removed domains are re-checked, and you're alerted if one comes back.</p>
+    </li>
+  </ol>
+
+  <ol class="tf-mlist">
+    {timeline.map((t, i) => (
+      <li class:list={[{ hl: t.hl }]}>
+        <span aria-hidden="true">{i + 1}</span>
+        <div><b>{t.title}</b>{t.text}</div>
+      </li>
+    ))}
+  </ol>
+
+  <ul class="tf-who" role="list" aria-label="Who files what">
+    <li>
+      <b>Domains and phishing URLs</b>
+      <span>Submitted by Averrow under your authorization, at the level you choose.</span>
+    </li>
+    <li>
+      <b>Social profiles, apps and paste sites</b>
+      <span>Drafted with evidence, ready to file with the platform.</span>
+    </li>
+    <li>
+      <b>How you hear</b>
+      <span>In your console, and streamed to your webhook or SIEM as findings are created.</span>
+    </li>
+  </ul>
+
+  <div class="tf-foot">
+    <span class="tf-illus">Illustrative example · names and domains changed</span>
+    <span class="tf-ctas">
+      <a class="btn btn-primary" href={`${base}/scan`} data-cta="takedownflow-scan">Scan your domain</a>
+      <a class="tf-link" href={`${base}/platform/campaign-intelligence#takedowns`} data-cta="takedownflow-how">How takedowns work &rarr;</a>
+    </span>
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    var root = document.querySelector("[data-tf]");
+    if (!root) return;
+    var group = root.querySelector("[data-tf-mode]");
+    if (!group) return;
+    var btns = Array.prototype.slice.call(group.querySelectorAll("button"));
+    var parts = Array.prototype.slice.call(root.querySelectorAll("[data-m]"));
+
+    function set(mode) {
+      btns.forEach(function (b) {
+        var on = b.getAttribute("data-mode") === mode;
+        b.setAttribute("aria-checked", on ? "true" : "false");
+        b.tabIndex = on ? 0 : -1;
+      });
+      parts.forEach(function (el) {
+        el.hidden = el.getAttribute("data-m") !== mode;
+      });
+    }
+
+    btns.forEach(function (b, i) {
+      b.addEventListener("click", function () {
+        set(b.getAttribute("data-mode"));
+      });
+      b.addEventListener("keydown", function (e) {
+        var d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        var n = btns[(i + d + btns.length) % btns.length];
+        set(n.getAttribute("data-mode"));
+        n.focus();
+      });
+    });
+
+    set("approve");
+    group.hidden = false;
+  })();
+</script>
+
+<style is:global>
+  .tf { max-width: 1280px; margin: 0 auto; padding: 56px 24px 40px; display: grid; gap: 22px; }
+  .tf [hidden] { display: none !important; }
+  .tf-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  .tf-eyebrow {
+    font: 600 12px var(--font-mono);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-section, var(--accent));
+    margin-bottom: 10px;
+  }
+  .tf-h {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(24px, 3vw, 30px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    margin: 0;
+    text-wrap: balance;
+    color: var(--text-primary);
+  }
+  .tf-lede { margin: 10px 0 0; max-width: 62ch; font-size: 15px; line-height: 1.55; color: var(--text-secondary); }
+
+  .tf-mode {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 4px;
+    background: var(--bg-secondary);
+  }
+  .tf-k { font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); padding: 0 8px; }
+  .tf-mode button {
+    font: 600 12.5px var(--font-display);
+    color: var(--text-secondary);
+    background: none;
+    border: 0;
+    border-radius: 7px;
+    padding: 8px 12px;
+    min-height: 36px;
+    cursor: pointer;
+  }
+  .tf-mode button:hover { color: var(--text-primary); }
+  .tf-mode button[aria-checked="true"] { background: var(--btn-primary-bg); color: var(--btn-primary-ink); }
+  .tf-mode button:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+
+  .tf-flow, .tf-who, .tf-mlist { list-style: none; margin: 0; padding: 0; }
+  .tf-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+  .tf-st {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  .tf-st.hl { border-color: color-mix(in srgb, var(--amber) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 9%, transparent); }
+  .tf-sn { display: flex; align-items: center; gap: 8px; font: 700 14px var(--font-display); color: var(--text-primary); }
+  .tf-sn span {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    font: 600 10.5px var(--font-mono);
+    color: var(--text-secondary);
+  }
+  .tf-st.hl .tf-sn span { border-color: var(--amber-text); color: var(--amber-text); }
+  .tf-card {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-primary);
+    padding: 8px 10px;
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-height: 64px;
+    align-content: start;
+    min-width: 0;
+  }
+  .tf-card b { color: var(--text-primary); font-size: 12.5px; }
+  .tf-r { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-width: 0; }
+  .tf-mono { font-family: var(--font-mono); color: var(--text-primary); font-size: 11px; overflow-wrap: anywhere; min-width: 0; }
+  .tf-cap { font: 500 10.5px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .tf-ev { gap: 4px; }
+  .tf-ev div { display: flex; gap: 6px; align-items: baseline; font-size: 11.5px; }
+  .tf-ev i { width: 6px; height: 6px; border-radius: 2px; background: var(--amber); flex: none; transform: translateY(-1px); }
+  .tf-btns { display: flex; gap: 6px; }
+  .tf-b { font: 700 11.5px var(--font-display); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); color: var(--text-primary); }
+  .tf-b.pri { background: var(--btn-primary-bg); color: var(--btn-primary-ink); border-color: transparent; }
+  .tf-bar { height: 6px; border-radius: 999px; background: var(--border-strong); overflow: hidden; }
+  .tf-bar i { display: block; height: 100%; width: 48%; background: var(--amber); }
+  .tf-st p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+
+  .tf-pill {
+    font: 700 10px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    padding: 2px 8px;
+    white-space: nowrap;
+  }
+  .tf-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 14%, transparent); border-color: color-mix(in srgb, var(--sev-high) 38%, transparent); }
+  .tf-pill.med  { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 14%, transparent); border-color: color-mix(in srgb, var(--sev-medium) 38%, transparent); }
+  .tf-pill.ok   { color: var(--green-text); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 38%, transparent); }
+
+  .tf-who {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .tf-who li { background: var(--bg-secondary); padding: 12px 14px; display: grid; gap: 4px; align-content: start; }
+  .tf-who b { font: 700 13.5px var(--font-display); color: var(--text-primary); }
+  .tf-who span { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+
+  .tf-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .tf-ctas { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .tf-link { font: 700 13.5px var(--font-display); color: var(--text-primary); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+  .tf-link:hover { border-bottom-color: var(--accent); }
+  .tf-link:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+
+  /* Mobile timeline: hidden on desktop. */
+  .tf-mlist { display: none; }
+
+  @media (max-width: 1100px) {
+    .tf-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tf-who { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .tf { padding: 40px 16px 28px; gap: 16px; }
+    .tf-mode, .tf-flow { display: none !important; }
+    .tf-mlist { display: grid; border-left: 2px solid var(--border-strong); margin-left: 10px; }
+    .tf-mlist li { display: flex; gap: 12px; padding: 8px 0 10px; }
+    .tf-mlist li > span {
+      flex: none;
+      display: grid;
+      place-items: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-strong);
+      font: 600 11px var(--font-mono);
+      color: var(--text-secondary);
+      margin-left: -12px;
+    }
+    .tf-mlist li.hl > span { border-color: var(--amber-text); color: var(--amber-text); }
+    .tf-mlist div { display: grid; gap: 2px; font-size: 13px; color: var(--text-secondary); }
+    .tf-mlist b { color: var(--text-primary); font-size: 14px; }
+    .tf-ctas { width: 100%; }
+    .tf-ctas .btn { width: 100%; justify-content: center; }
+  }
+</style>
