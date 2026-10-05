@@ -36,6 +36,7 @@ their own context and only the tools their charter grants.
 | `content-strategist` | Content | Marketing copy, changelogs, positioning, version bumps; **editor-in-chief for the content roster** | sonnet | Copy/data |
 | `web-copywriter` | Content | Long-form marketing & company page copy, blog/thought-leadership (fan-out workhorse) | sonnet | Copy/MDX |
 | `market-analyst` | Content | Competitive/market intelligence, peer teardowns, positioning briefs | sonnet | Report only |
+| `disclosure-strategist` | Content | What the platform may say publicly (T1 show / T2 outcome-only / T3 never), competitor gaps to close before claiming; owns `docs/DISCLOSURE_REGISTER.md` | opus | Register only |
 | `seo-strategist` | Content | Meta/OG/Twitter/JSON-LD, sitemap/robots, keyword map, internal linking | sonnet | Metadata/config |
 | `legal-content-drafter` | Content | Draft Privacy/Terms/DPA/trust-center copy (always flagged for legal review) | sonnet | Drafts only |
 | `docs-maintainer` | Context | Keeps CLAUDE.md / API_REFERENCE / specs true | sonnet | Docs only |
@@ -157,6 +158,20 @@ sites 403 automated fetch — say so rather than guess); stays on CLAUDE.md §13
 positioning; never recommends claiming a capability the product doesn't ship.
 Distinct from `threat-intel-analyst` (external cyber threats, not market analysis).
 
+### `disclosure-strategist` — what we can say publicly
+Reads the code to verify each capability, then classifies it as **T1 Show**
+(say plainly, with numbers), **T2 Outcome only** (what it achieves, never the
+method), **T3 Never** (weights, thresholds, triage rules, feed vendors,
+evasion-relevant logic, architecture, codenames, customer data), **Gap** (a
+competitor is clearly ahead, so close it before claiming it) or **Not true**
+(claimed today but unsupported, so fix now). Maintains
+`docs/DISCLOSURE_REGISTER.md` and a ranked gap backlog. **Guardrails:** writes
+only the register; AI claims follow `AI_MODE`; staff-only isn't customer-facing;
+anything that would help an attacker evade detection is T3 even if peers
+publish theirs. Runs before `content-strategist` briefs any page that explains
+how the product works. Distinct from `market-analyst`, which researches peers
+but doesn't read our code.
+
 ### `seo-strategist` — technical + content SEO
 Owns discoverability/shareability: OG/Twitter/JSON-LD, sitemap/robots coverage,
 canonical/hreflang, keyword map, internal linking, per-page metadata. Edits
@@ -225,7 +240,9 @@ fan-out, since page-writing is the slow, parallelizable part:
 
 1. `content-strategist` (editor-in-chief) writes a **per-page brief** — voice,
    verified facts, structure — for each page, drawing competitive framing from
-   `market-analyst`.
+   `market-analyst` and the approved phrasing and tiers from
+   `disclosure-strategist`'s `docs/DISCLOSURE_REGISTER.md` (nothing T3 or
+   "Not true" goes into a brief).
 2. **Fan out `web-copywriter` × N in parallel**, one page each (launch multiple in
    a single message, or a Workflow with explicit user opt-in given token cost).
    Every writer gets the same brand-voice brief + the assessment's defect list so
@@ -253,7 +270,8 @@ fan-out, since page-writing is the slow, parallelizable part:
   component logic; `delivery-lead` never edits anything.
 - The content roster splits by artifact: `content-strategist` owns short copy +
   changelogs + the briefs; `web-copywriter` owns long-form page/blog copy;
-  `market-analyst` researches and reports only (no edits); `seo-strategist` owns
+  `market-analyst` researches and reports only (no edits); `disclosure-strategist`
+  writes only `docs/DISCLOSURE_REGISTER.md`; `seo-strategist` owns
   metadata/config (not body copy or components); `legal-content-drafter` owns
   legal-adjacent drafts only (always flagged, never finalized). None of them
   build components or restructure layout — that's `frontend-engineer`.
