@@ -198,7 +198,12 @@ export function useUpdateTakedown() {
       if (status) body.status = status;
       // Staff notes only — the customer's `notes` is never written from ops.
       if (staff_notes !== undefined) body.staff_notes = staff_notes;
-      return api.patch(`/api/admin/takedowns/${id}`, body);
+      const res = await api.patch(`/api/admin/takedowns/${id}`, body);
+      // api.patch resolves 4xx with the { success: false, error } envelope;
+      // throw so a refusal (403/409/422 — e.g. the G21 consent gate) lands in
+      // onError instead of reading as "Status updated".
+      if (!res.success) throw new Error(res.error || 'Update failed');
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-takedowns'] });

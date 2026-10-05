@@ -1070,8 +1070,10 @@ async function resolveOwningOrgId(env: Env, brandId: string | null): Promise<num
 //       semi_auto → submitted only when severity/target/provider match the
 //                   signed rules; otherwise held in 'draft' and the
 //                   customer is notified that it awaits approval. A
-//                   'requested' row is a human-approved takedown and
-//                   submits in any non-off posture.
+//                   CUSTOMER-approved 'requested' row (isCustomerApproved,
+//                   lib/takedown-customer-approval.ts — G21) submits in any
+//                   non-off posture; a staff-set 'requested' row does not
+//                   count as approved and is judged like a draft.
 //
 // Each match is dispatched via lib/takedown-submitters/. On any
 // non-failed outcome the takedown's status flips to 'submitted'
@@ -1095,17 +1097,22 @@ interface PhaseGRow {
   provider_method:        string | null;
   severity:               string;
   status:                 string;
+  requested_at:           string | null;
+  requested_by:           string | null;
 }
 
-async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipped: number }> {
+/** Exported for tests (test/sparrow-phase-g-approval.test.ts). */
+export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipped: number }> {
   // status='draft'     → policy decides (auto / approval-hold / off)
-  // status='requested' → human has approved; auto-submits in any non-off posture
+  // status='requested' → auto-submits in any non-off posture ONLY when the
+  //                      CUSTOMER approved it (isCustomerApproved — G21); a
+  //                      staff-set 'requested' is judged like a draft
   const candidates = await env.DB.prepare(
     `SELECT tr.id, tr.org_id, tr.brand_id, tr.module_key,
             tr.target_type, tr.target_value, tr.target_url,
             tr.evidence_summary, tr.evidence_detail,
             tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
-            tr.severity, tr.status
+            tr.severity, tr.status, tr.requested_at, tr.requested_by
      FROM takedown_requests tr
      WHERE tr.status IN ('draft', 'requested')
        AND tr.org_id IS NOT NULL
@@ -1122,6 +1129,7 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
   const { dispatchSubmission } = await import("../lib/takedown-submitters");
   const { isModuleEnabled }    = await import("../lib/entitlements");
   const { evaluateTakedownPolicy } = await import("../lib/takedown-policy");
+  const { isCustomerApproved }     = await import("../lib/takedown-customer-approval");
   type ModuleKey = Parameters<typeof isModuleAuthorized>[2];
 
   // Resolve each org's active authorization once per run (cached in KV
@@ -1205,8 +1213,11 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
       // semi_auto → auto-submits only when the takedown's characteristics
       //             match the signed rules; otherwise it's held in 'draft'
       //             until a human approves it (status → 'requested').
-      // A 'requested' row is a human-approved takedown and submits in any
-      // non-off posture.
+      // A CUSTOMER-approved 'requested' row submits in any non-off posture.
+      // G21: approval is provenance-checked (isCustomerApproved — the one
+      // definition shared with the staff send paths). A 'requested' row
+      // that staff set via the ops PATCH is NOT an approval and is judged on
+      // its characteristics like a draft.
       let auth = authByOrg.get(orgId);
       if (auth === undefined) {
         auth = await getActiveAuthorization(env, orgId);
@@ -1218,7 +1229,7 @@ async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipp
         severity:       row.severity,
         target_type:    row.target_type,
         provider_type:  providerRow.provider_type,
-        human_approved: row.status === "requested",
+        human_approved: await isCustomerApproved(env, row),
       });
 
       if (decision !== "auto") {

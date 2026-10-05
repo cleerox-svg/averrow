@@ -137,6 +137,28 @@ describe('Takedowns Page', () => {
     expect(screen.getByText('Evidence')).toBeInTheDocument();
   });
 
+  // G21 — a refused send (e.g. the customer-consent 409) must surface the
+  // server's reason, never a "Status updated" success toast.
+  it('Mark Submitted refusal shows the server error in the toast, not "Status updated"', async () => {
+    const refusal = "Waiting for the customer's approval under their automation policy (Semi-Auto) — this takedown is outside the rules the customer allows Averrow to file, so the customer must approve it first.";
+    const mutate = vi.fn((_vars: unknown, o?: { onError?: (e: Error) => void }) => o?.onError?.(new Error(refusal)));
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
+    renderWithProviders(<Takedowns />);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.click(screen.getByRole('button', { name: 'Mark Submitted' }));
+
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', status: 'submitted' }, expect.any(Object));
+    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    expect(screen.queryByText('Status updated')).not.toBeInTheDocument();
+  });
+
+  it('the draft card CTA reads "Mark Ready" and says it is not customer approval', () => {
+    renderWithProviders(<Takedowns />);
+    const cta = screen.getByRole('button', { name: 'Mark Ready →' });
+    expect(cta).toHaveAttribute('title', expect.stringMatching(/does not record customer approval/));
+    expect(screen.queryByRole('button', { name: 'Submit →' })).not.toBeInTheDocument();
+  });
+
   // Migration 0276 — customer `notes` read-only, internal `staff_notes` editable.
   it('detail panel shows the customer note read-only and edits staff_notes (internal)', async () => {
     const mutate = vi.fn();

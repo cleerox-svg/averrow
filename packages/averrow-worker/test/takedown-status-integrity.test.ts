@@ -36,9 +36,13 @@ class MockKV {
 interface TakedownRow {
   id: string; status: string;
   org_id: number | null; brand_id: string | null; module_key: string | null;
+  // G21 consent inputs (optional — absent = draft-like, not customer-approved).
+  severity?: string | null; requested_at?: string | null; requested_by?: string | null;
 }
 
-interface AuthRowScope { modules: string[] }
+// mode 'auto' by default so these TK1 tests isolate the STANDING gate; the
+// customer-consent (G21) matrix lives in takedown-staff-consent.test.ts.
+interface AuthRowScope { modules: string[]; mode: string }
 
 interface Fixture {
   takedownRow: TakedownRow | null;
@@ -54,7 +58,7 @@ function makeDb(fx: Fixture) {
   function prepare(sql: string) {
     return {
       bind: (...binds: unknown[]) => ({
-        run: async () => { runs.push({ sql, binds }); return { success: true }; },
+        run: async () => { runs.push({ sql, binds }); return { success: true, meta: { changes: 1 } }; },
         first: async <T>() => {
           // Primary load in the handler.
           if (sql.includes("FROM takedown_requests") && sql.includes("module_key") && sql.includes("WHERE id = ?")) {
@@ -71,7 +75,7 @@ function makeDb(fx: Fixture) {
           // Active authorization lookup (inside getActiveAuthorization).
           if (sql.includes("FROM takedown_authorizations")) {
             if (fx.authModules == null) return null;
-            const scope: AuthRowScope = { modules: fx.authModules };
+            const scope: AuthRowScope = { modules: fx.authModules, mode: "auto" };
             return {
               id: "auth-1", org_id: fx.takedownRow?.org_id ?? 0,
               agreement_version: "msa-2026-05", status: "active",
@@ -84,7 +88,19 @@ function makeDb(fx: Fixture) {
           }
           return null;
         },
-        all: async <T>() => ({ results: [] as T[] }),
+        // org_modules: the org is entitled to every module (M1 is covered in
+        // takedown-staff-consent.test.ts).
+        all: async <T>() => {
+          if (sql.includes("FROM org_modules")) {
+            return {
+              results: ["domain", "social", "app_store"].map((m) => ({
+                module_key: m, status: "active", activated_at: "2026-01-01T00:00:00Z",
+                suspended_at: null, trial_ends_at: null, config_json: null,
+              })) as unknown as T[],
+            };
+          }
+          return { results: [] as T[] };
+        },
       }),
     };
   }

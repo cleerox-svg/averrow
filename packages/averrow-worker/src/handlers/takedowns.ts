@@ -10,9 +10,12 @@ import {
   parseBody, success, error, paginatedResponse, requireFields,
 } from "../lib/handler-utils";
 import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonthlyTakedownCap } from "../lib/takedown-authorizations";
+import type { AuthorizationScope } from "../lib/takedown-authorizations";
+import { evaluateStaffSendConsent, type StaffSendRefusal } from "../lib/takedown-policy";
 import type { Env, CreateTakedownBody, UpdateTakedownBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
-import type { ModuleKey } from "../lib/entitlements";
+import { isCustomerApproved } from "../lib/takedown-customer-approval";
+import { isModuleEnabled, type ModuleKey } from "../lib/entitlements";
 import type { ProviderRecord } from "../lib/takedown-submitters";
 import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 import { AVERROW_SOC_LABEL } from "./tenantData";
@@ -521,11 +524,99 @@ export const handleAdminTakedownMetrics = handler(async (request, env, ctx) => {
   return attachBookmark(success(metrics, ctx.origin), session);
 });
 
+// ─── Staff-send gates (register gap G21, owner decision 2026-10-05) ──
+// Shared by BOTH staff send paths: the hand-submit (POST
+// /api/admin/takedowns/:id/submit) and the ops PATCH →submitted ("mark
+// submitted"). Averrow staff must not send a takedown the customer hasn't
+// authorized under their automation policy, and — like Sparrow Phase G — only
+// for a module the org is entitled to. The policy decision itself is
+// evaluateStaffSendConsent (lib/takedown-policy.ts), which reuses Sparrow's
+// evaluateTakedownPolicy rather than re-deriving it.
+
+type StaffSendPath = "hand_submit" | "mark_submitted";
+
+interface StaffSendRow {
+  id:           string;
+  status:       string;
+  org_id:       number;
+  module_key:   ModuleKey;
+  severity:     string | null;
+  target_type:  string | null;
+  requested_at: string | null;
+  requested_by: string | null;
+}
+
+const STAFF_SEND_MODE_LABEL: Record<AuthorizationScope["mode"], string> = {
+  off: "Manual", semi_auto: "Semi-Auto", auto: "Auto",
+};
+
+function staffSendRefusalMessage(reason: StaffSendRefusal, mode: AuthorizationScope["mode"]): string {
+  switch (reason) {
+    case "withdrawn_by_customer":
+      return "The customer withdrew this takedown — it cannot be submitted.";
+    case "manual_mode_requires_approval":
+      return `Waiting for the customer's approval under their automation policy (${STAFF_SEND_MODE_LABEL[mode]}) — only takedowns the customer has approved can be submitted.`;
+    case "awaiting_customer_approval":
+      return `Waiting for the customer's approval under their automation policy (${STAFF_SEND_MODE_LABEL[mode]}) — this takedown is outside the rules the customer allows Averrow to file, so the customer must approve it first.`;
+  }
+}
+
+/** M1 — entitlement gate (Sparrow Phase G parity). Returns a 403 or null. */
+async function refuseUnentitledStaffSend(
+  env: Env, request: Request, ctx: AuthContext, row: StaffSendRow, path: StaffSendPath, origin: string | null,
+): Promise<Response | null> {
+  if (await isModuleEnabled(env, row.org_id, row.module_key)) return null;
+  await audit(env, {
+    action: "takedown_submit_refused_entitlement",
+    userId: ctx.userId,
+    resourceType: "takedown_request",
+    resourceId: row.id,
+    details: { path, org_id: row.org_id, module_key: row.module_key, status: row.status },
+    outcome: "denied",
+    request,
+  });
+  return error(
+    `Org is not entitled to module '${row.module_key}' — cannot submit this takedown.`,
+    403, origin,
+  );
+}
+
+/** G21 — customer-consent gate. Returns a 409 (and writes audit_log) or null. */
+async function refuseUnconsentedStaffSend(
+  env: Env, request: Request, ctx: AuthContext, row: StaffSendRow,
+  scope: AuthorizationScope, providerType: string | null, path: StaffSendPath, origin: string | null,
+): Promise<Response | null> {
+  const consent = evaluateStaffSendConsent(scope, {
+    status:            row.status,
+    customer_approved: await isCustomerApproved(env, row),
+    severity:          row.severity,
+    target_type:       row.target_type,
+    provider_type:     providerType,
+  });
+  if (consent.allowed) return null;
+  await audit(env, {
+    action: "takedown_submit_refused_policy",
+    userId: ctx.userId,
+    resourceType: "takedown_request",
+    resourceId: row.id,
+    details: {
+      path, org_id: row.org_id, module_key: row.module_key, status: row.status,
+      mode: scope.mode, reason: consent.reason, policy_decision: consent.decision,
+      severity: row.severity, target_type: row.target_type, provider_type: providerType,
+    },
+    outcome: "denied",
+    request,
+  });
+  return error(staffSendRefusalMessage(consent.reason, scope.mode), 409, origin);
+}
+
 // ─── PATCH /api/admin/takedowns/:id ──────────────────────────
 // Route gate: requirePermission("manage_takedowns") — held by
 // super_admin, admin, AND analyst (see lib/role-permissions.ts), so
 // this is analyst-reachable, NOT super_admin-only. The →submitted
-// transition additionally enforces legal standing below (TK1).
+// transition additionally enforces legal standing below (TK1), the module
+// entitlement (M1) and the customer's consent under their automation policy
+// (G21 — refuseUnconsentedStaffSend; 409 + audit when refused).
 
 export async function handleAdminUpdateTakedown(
   request: Request, env: Env, takedownId: string, ctx: AuthContext,
@@ -536,10 +627,14 @@ export async function handleAdminUpdateTakedown(
     const body = await parseBody<UpdateTakedownBody>(request);
 
     const takedown = await env.DB.prepare(
-      "SELECT id, status, org_id, brand_id, module_key FROM takedown_requests WHERE id = ?"
+      `SELECT id, status, org_id, brand_id, module_key,
+              severity, target_type, provider_name, requested_at, requested_by
+       FROM takedown_requests WHERE id = ?`
     ).bind(takedownId).first<{
       id: string; status: string;
       org_id: number | null; brand_id: string | null; module_key: string | null;
+      severity: string | null; target_type: string | null; provider_name: string | null;
+      requested_at: string | null; requested_by: string | null;
     }>();
 
     if (!takedown) return error("Takedown request not found", 404, origin);
@@ -590,8 +685,9 @@ export async function handleAdminUpdateTakedown(
             422, origin,
           );
         }
+        let authScope: AuthorizationScope;
         try {
-          await requireAuthorizationForModule(env, takedown.org_id, takedown.module_key as ModuleKey);
+          authScope = (await requireAuthorizationForModule(env, takedown.org_id, takedown.module_key as ModuleKey)).scope;
         } catch (authErr) {
           if (authErr instanceof TakedownNotAuthorizedError) {
             return error(
@@ -601,6 +697,28 @@ export async function handleAdminUpdateTakedown(
           }
           throw authErr;
         }
+
+        // G21 + M1 — entitlement, then the customer's consent under their
+        // automation policy (see refuseUnconsentedStaffSend). provider_type
+        // feeds the semi-auto provider axis; an unknown provider is null,
+        // which fails a provider-restricted rule closed (held for approval).
+        const sendRow: StaffSendRow = {
+          id: takedown.id, status: takedown.status, org_id: takedown.org_id,
+          module_key: takedown.module_key as ModuleKey,
+          severity: takedown.severity, target_type: takedown.target_type,
+          requested_at: takedown.requested_at, requested_by: takedown.requested_by,
+        };
+        const entitlementErr = await refuseUnentitledStaffSend(env, request, ctx, sendRow, "mark_submitted", origin);
+        if (entitlementErr) return entitlementErr;
+        const providerType = takedown.provider_name
+          ? (await env.DB.prepare(
+              "SELECT provider_type FROM takedown_providers WHERE provider_name = ? LIMIT 1",
+            ).bind(takedown.provider_name).first<{ provider_type: string }>())?.provider_type ?? null
+          : null;
+        const consentErr = await refuseUnconsentedStaffSend(
+          env, request, ctx, sendRow, authScope, providerType, "mark_submitted", origin,
+        );
+        if (consentErr) return consentErr;
       }
 
       updates.push("status = ?");
@@ -655,9 +773,22 @@ export async function handleAdminUpdateTakedown(
     updates.push("updated_at = datetime('now')");
     values.push(takedownId);
 
-    await env.DB.prepare(
-      `UPDATE takedown_requests SET ${updates.join(", ")} WHERE id = ?`
+    // The →submitted flip is pinned to the status the consent gate judged:
+    // if the customer withdrew (or staff re-drafted) the row in between, the
+    // UPDATE matches nothing and we refuse instead of stamping 'submitted'.
+    const pinStatus = body.status === "submitted";
+    if (pinStatus) values.push(takedown.status);
+
+    const updateResult = await env.DB.prepare(
+      `UPDATE takedown_requests SET ${updates.join(", ")} WHERE id = ?${pinStatus ? " AND status = ?" : ""}`
     ).bind(...values).run();
+
+    if (pinStatus && updateResult.meta?.changes !== 1) {
+      return error(
+        "Takedown changed while it was being marked 'submitted' — reload and try again.",
+        409, origin,
+      );
+    }
 
     await audit(env, {
       action: "admin_takedown_update",
@@ -700,10 +831,16 @@ export async function handleAdminUpdateTakedown(
 // (agents/sparrow.ts:runPhaseGAutoSubmit) — for the "auto is on but THIS one
 // needs a human to push it" case. It dispatches a REAL external action, so it
 // re-runs the SAME standing/consent gates Phase G enforces and NEVER bypasses
-// them. The ONLY thing it drops is the automation decision: it does NOT
-// require takedown_providers.auto_submit_enabled=1 and does NOT consult the
-// auto/semi_auto automation policy — the staff user holding manage_takedowns
-// IS that decision (that is the entire point of TK2).
+// them. The ONLY thing it drops is the provider automation switch: it does
+// NOT require takedown_providers.auto_submit_enabled=1.
+//
+// It DOES honour the customer's automation policy (G21, owner decision
+// 2026-10-05 — this supersedes the original TK2 "staff IS the decision"
+// stance): staff may send only a takedown the customer has authorized —
+// one they approved, or (semi_auto / auto) one the policy would auto-file
+// via the same evaluateTakedownPolicy Sparrow uses. See
+// refuseUnconsentedStaffSend. Refusal is 409 + audit_log
+// `takedown_submit_refused_policy`.
 //
 // Standing gates enforced here (all fail-closed), mirroring Phase G + TK1
 // (handleAdminUpdateTakedown's →submitted gate):
@@ -718,8 +855,14 @@ export async function handleAdminUpdateTakedown(
 //   3. module_key present   — 422 (can't resolve authorization without it).
 //   4. requireAuthorizationForModule — active signed authorization covering
 //      the module; 403 otherwise. Canonical gate; subsumes isModuleAuthorized.
+//   4b. isModuleEnabled — the org is entitled to the module (org_modules);
+//      403 + audit `takedown_submit_refused_entitlement` otherwise (M1,
+//      Phase G parity).
 //   5. isUnderMonthlyTakedownCap     — signed monthly cap not spent; 409
 //      otherwise. Phase G's consent boundary.
+//   6. customer consent under the automation policy (G21) — 409 + audit
+//      `takedown_submit_refused_policy`. Runs after provider resolution
+//      because the semi-auto rules can restrict by provider_type.
 //
 // Dispatch inherits TAKEDOWN_SEND_MODE via dispatchSubmission → pickSubmitter
 // exactly like Phase G — no new send surface: whatever mode the platform runs
@@ -759,6 +902,8 @@ interface SubmitTakedownRow {
   provider_abuse_contact: string | null;
   provider_method:        string | null;
   severity:               string;
+  requested_at:           string | null;
+  requested_by:           string | null;
 }
 
 // Only draft/requested takedowns can be hand-submitted. Every other state
@@ -791,7 +936,8 @@ export async function handleAdminSubmitTakedown(
       `SELECT id, status, org_id, brand_id, module_key,
               target_type, target_value, target_url,
               evidence_summary, evidence_detail,
-              provider_name, provider_abuse_contact, provider_method, severity
+              provider_name, provider_abuse_contact, provider_method, severity,
+              requested_at, requested_by
        FROM takedown_requests WHERE id = ?`,
     ).bind(takedownId).first<SubmitTakedownRow>();
 
@@ -849,8 +995,9 @@ export async function handleAdminSubmitTakedown(
     const moduleKey = td.module_key as ModuleKey;
 
     // ── STANDING GATE 4: active signed authorization covers the module. ──
+    let authScope: AuthorizationScope;
     try {
-      await requireAuthorizationForModule(env, orgId, moduleKey);
+      authScope = (await requireAuthorizationForModule(env, orgId, moduleKey)).scope;
     } catch (authErr) {
       if (authErr instanceof TakedownNotAuthorizedError) {
         return error(
@@ -860,6 +1007,15 @@ export async function handleAdminSubmitTakedown(
       }
       throw authErr;
     }
+
+    // ── STANDING GATE 4b: entitlement to the module (M1, Phase G parity). ──
+    const sendRow: StaffSendRow = {
+      id: td.id, status: td.status, org_id: orgId, module_key: moduleKey,
+      severity: td.severity, target_type: td.target_type,
+      requested_at: td.requested_at, requested_by: td.requested_by,
+    };
+    const entitlementErr = await refuseUnentitledStaffSend(env, request, ctx, sendRow, "hand_submit", origin);
+    if (entitlementErr) return entitlementErr;
 
     // ── STANDING GATE 5: signed monthly cap not spent (Phase G parity). ──
     // F2 (residual window, accepted): the cap is READ here, not RESERVED. The
@@ -900,6 +1056,14 @@ export async function handleAdminSubmitTakedown(
       );
     }
 
+    // ── CONSENT GATE 6 (G21): the customer authorized THIS takedown under
+    // their automation policy — approved it, or the policy would auto-file
+    // it (same decision Sparrow uses, with the resolved provider_type). ──
+    const consentErr = await refuseUnconsentedStaffSend(
+      env, request, ctx, sendRow, authScope, provider.provider_type, "hand_submit", origin,
+    );
+    if (consentErr) return consentErr;
+
     // ── ATOMIC SINGLE-DISPATCH CLAIM (F1) ──────────────────────────────
     // Claim the row BEFORE dispatching. D1 serializes writes, so this
     // conditional UPDATE is a genuine atomic compare-and-swap: exactly one of
@@ -912,20 +1076,23 @@ export async function handleAdminSubmitTakedown(
     // (at-most-once): if the dispatch then fails/rejects we flip the row to
     // 'failed' rather than back to draft, so an ambiguous provider error can't
     // trigger an automatic re-send of a report that may already have gone out.
+    // The claim is pinned to the EXACT status the consent gate judged (not
+    // just draft/requested): a row that moved requested → draft (or was
+    // withdrawn) in between no longer carries the approval that allowed it.
     const claim = await env.DB.prepare(
       `UPDATE takedown_requests
        SET status = 'submitted',
            submitted_at = datetime('now'),
            submitted_by = ?,
            updated_at   = datetime('now')
-       WHERE id = ? AND status IN ('draft', 'requested')`,
-    ).bind(ctx.userId, takedownId).run();
+       WHERE id = ? AND status = ?`,
+    ).bind(ctx.userId, takedownId, td.status).run();
 
     if (!claim.meta || claim.meta.changes !== 1) {
-      // Another concurrent request won the claim, or the row left
-      // draft/requested between our read and now. Do NOT dispatch.
+      // Another concurrent request won the claim, or the row's status
+      // changed between our read and now. Do NOT dispatch.
       return error(
-        "Takedown was already claimed for submission by a concurrent request — refusing to double-dispatch.",
+        "Takedown was already claimed for submission or changed concurrently — refusing to dispatch. Reload and try again.",
         409, origin,
       );
     }

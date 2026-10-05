@@ -109,6 +109,7 @@ interface StatusConf {
   color: string;
   label: string;
   cta:   string; // primary action label
+  ctaTitle?: string; // tooltip for the primary action
   next:  string; // db status the CTA transitions to
 }
 
@@ -141,7 +142,11 @@ const PLATFORM_CONFIG: Record<string, PlatConf> = {
 // Workflow config keyed on the DB status values.
 // Draft → Pending → Submitted → Resolved
 const STATUS_CONFIG: Record<string, StatusConf> = {
-  draft:            { color: 'var(--amber)',      label: 'Draft',     cta: 'Submit →',         next: 'requested'  },
+  // draft → requested is the SOC's own "ready" step. It is NOT customer
+  // approval (G21): only the customer's approval in the tenant app lets a
+  // held takedown be sent under their automation policy.
+  draft:            { color: 'var(--amber)',      label: 'Draft',     cta: 'Mark Ready →',     next: 'requested',
+                      ctaTitle: 'Move to the ready queue. This does not record customer approval.' },
   requested:        { color: 'var(--sev-high)',   label: 'Pending',   cta: 'Mark Sent →',      next: 'submitted'  },
   submitted:        { color: 'var(--blue)',       label: 'Submitted', cta: 'Mark Resolved →',  next: 'taken_down' },
   pending_response: { color: 'var(--blue)',       label: 'Awaiting',  cta: 'Mark Resolved →',  next: 'taken_down' },
@@ -324,6 +329,7 @@ function TakedownCard({
             variant="primary"
             size="sm"
             onClick={() => onStatusChange(takedown.id, statusConf.next)}
+            title={statusConf.ctaTitle}
           >
             {statusConf.cta}
           </Button>
@@ -865,8 +871,10 @@ export function Takedowns() {
           setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
         }
       },
-      onError: () => {
-        showToast('Update failed', 'error');
+      // The server's refusal reason (e.g. "Waiting for the customer's approval
+      // under their automation policy …") — never a success toast on a 4xx.
+      onError: (err: Error) => {
+        showToast(err.message || 'Update failed', 'error');
         setUpdatingId(null);
       },
     });

@@ -9,17 +9,18 @@
 // pattern already used by useGlobalSearch.test.tsx / usePlatformStatus.test.tsx.
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { useAdminTakedowns } from './useTakedowns';
+import { useAdminTakedowns, useUpdateTakedown } from './useTakedowns';
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
+  patch: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
-  api: { get: mocks.get },
+  api: { get: mocks.get, patch: mocks.patch },
 }));
 
 function createWrapper() {
@@ -33,6 +34,39 @@ function createWrapper() {
 
 afterEach(() => {
   mocks.get.mockReset();
+  mocks.patch.mockReset();
+});
+
+// api.patch resolves 4xx with the { success: false, error } envelope; the
+// mutation must reject so a refusal (e.g. the G21 consent 409) reaches
+// onError instead of reading as a successful update.
+describe('useUpdateTakedown — refusal envelopes reject', () => {
+  it('rejects with the server error when the response has success: false', async () => {
+    const refusal = "Waiting for the customer's approval under their automation policy (Manual) — only takedowns the customer has approved can be submitted.";
+    mocks.patch.mockResolvedValue({ success: false, error: refusal });
+    const { result } = renderHook(() => useUpdateTakedown(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'td1', status: 'submitted' })).rejects.toThrow(refusal);
+    });
+    expect(mocks.patch).toHaveBeenCalledWith('/api/admin/takedowns/td1', { status: 'submitted' });
+  });
+
+  it('falls back to a generic message when the envelope carries no error', async () => {
+    mocks.patch.mockResolvedValue({ success: false });
+    const { result } = renderHook(() => useUpdateTakedown(), { wrapper: createWrapper() });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'td1', status: 'submitted' })).rejects.toThrow('Update failed');
+    });
+  });
+
+  it('resolves on success', async () => {
+    mocks.patch.mockResolvedValue({ success: true });
+    const { result } = renderHook(() => useUpdateTakedown(), { wrapper: createWrapper() });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'td1', status: 'submitted' })).resolves.toEqual({ success: true });
+    });
+  });
 });
 
 describe('useAdminTakedowns — querystring construction', () => {
