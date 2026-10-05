@@ -11,14 +11,14 @@
  * tp-ink.com (a Tp Link typosquat) was registered 2026-10-03, was in our
  * own `nrd_domains` from 2026-10-04, and was never checked.
  *
- * `nrd_domains` (feeds/nrd_hagezi.ts — the WhoisDS free-tier daily
- * sample, ~70K rows/day) is a list of
+ * `nrd_domains` (feeds/nrd_hagezi.ts — the Hagezi/Stamus NRD list,
+ * diffed daily, ~443K rows/day) is a list of
  * domains the registries report as NEWLY registered. Joining it to
  * `lookalike_domains` by domain turns "the checker will get to it in ~48
  * days" into "we know it was registered on <date>, check it now":
  *
  *   * `first_seen` is stamped from `nrd_domains.registered_date` (the
- *     WhoisDS list date; the ingest time when that is unparseable), with
+ *     NRD list date − 1 day; the ingest time when that is unparseable), with
  *     `registration_evidence = 'nrd'` (migration 0282).
  *   * `check_due_at` goes to the epoch, the front of the checker's queue
  *     (the same value the operator rescan uses). The checker then treats
@@ -44,9 +44,11 @@
  *     existed before it was "newly registered", so the listing says
  *     nothing new about it (typically a drop-catch the checker will see as
  *     a lapse + re-registration anyway). Skipped. The comparison carries
- *     2 days of slack: the WhoisDS list date is the day the domain was
- *     PUBLISHED as new, which trails the real registration by up to a day
- *     or so, and our baseline can legitimately land in between — that row
+ *     2 days of slack: registered_date is derived from the day the domain
+ *     was first PUBLISHED as new, which trails the real registration by up
+ *     to a day or so (more when the upstream lags — the Hagezi/Stamus list
+ *     can run a few days late), and our baseline can legitimately land in
+ *     between — that row
  *     is a new registration, not a pre-existing one.
  *   * A row baselined AFTER the date (the checker reached it, saw it
  *     registered, and could not date it) IS claimed: this is exactly the
@@ -92,11 +94,10 @@
  * W-1, falling back to the table's max key for a partial window), then one
  * join over (lo, hi]. Both bind 4-5 parameters (D1's limit is 100). The
  * nrd side costs ~2 index reads per row, plus one index probe into
- * lookalike_domains: ~3 reads per NRD row, ~210K/day at ~70K NRD rows a
+ * lookalike_domains: ~3 reads per NRD row, ~1.3M/day at ~443K NRD rows a
  * day. Bounded per run by `NRD_MATCH_MAX_WINDOWS_PER_RUN` x
- * `NRD_MATCH_WINDOW_ROWS` (50K rows — the feed lands once a day, so one
- * run normally absorbs a whole day's file) and a soft wall-clock cap, so a
- * larger backlog drains over several hourly runs.
+ * `NRD_MATCH_WINDOW_ROWS` (50K rows) and a soft wall-clock cap, so a day's
+ * file (~443K rows, landing once a day) drains over ~9 hourly runs.
  *
  * ── Retention ───────────────────────────────────────────────────────
  *
@@ -139,7 +140,7 @@ export const NRD_MATCH_MAX_AGE_DAYS = 30;
 
 /**
  * Slack, in days, on top of NRD_MATCH_MAX_AGE_DAYS before nrd-retention
- * stops honouring this matcher's cursor (ingest lag between the WhoisDS
+ * stops honouring this matcher's cursor (ingest lag between the NRD
  * list date and our created_at, plus a stalled week).
  */
 export const NRD_RETENTION_HOLD_MARGIN_DAYS = 7;
