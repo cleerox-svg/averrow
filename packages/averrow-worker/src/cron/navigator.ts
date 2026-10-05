@@ -357,7 +357,7 @@ async function runNavigatorImpl(
       }
     }
 
-    // ── 2d. nrd_domains retention (daily, 90d, matcher-cursor gated) ──
+    // ── 2d. nrd_domains retention (daily, 30d hot, matched rows kept, clamped matcher holds) ──
     // Hour-only gate (CLAUDE.md §6 cron-audit rule — no minute check).
     // Inside hour 0 it runs once per UTC day; a run that hit its soft cap
     // (more_remaining) or errored is continued on the next hour-0 tick.

@@ -28,6 +28,8 @@
  *   * `nrd_domains.brand_matched = 1` marks the NRD row as one that hit a
  *     monitored brand's permutation. Nothing else writes that column (it
  *     was declared by the feed's lazy DDL and left at its default).
+ *     lib/nrd-retention.ts never purges a `brand_matched = 1` row, so a
+ *     matched NRD stays hot in D1 past the 30-day retention window.
  *
  * ── When a hit counts as a NEW registration ─────────────────────────
  *
@@ -64,7 +66,8 @@
  *
  * A RE-registration of a domain that is still inside NRD retention. The
  * nrd_domains insert is `INSERT OR IGNORE` on `domain`, so a second NRD
- * listing of the same name (lapse + re-registration within ~90 days)
+ * listing of the same name (lapse + re-registration within the ~30-day
+ * retention window, or at any age for a `brand_matched` row)
  * writes nothing new, and this keyset never sees it. Re-registrations are
  * caught by the DNS checker's observed path instead (an answered NXDOMAIN
  * lapse followed by a 0 -> 1 transition), on the re-check cadence.
@@ -106,8 +109,10 @@
  * now − (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS), because
  * rows older than that can never be claimed anyway. The clamp is what stops
  * a stuck or disabled matcher from holding retention forever. With the
- * current 90-day retention the clamped hold sits well inside the window and
- * therefore never binds; it is a guard for a future shorter retention. Every
+ * 30-day retention (tiered model, 2026-10-05) the clamp actually binds: a
+ * matcher more than ~30 days behind holds the purge at now − 37 days, and
+ * rows below that are purged from D1 (they remain in the NRD_ARCHIVE R2
+ * bucket, and are unclaimable anyway). Every
  * row below the cursor's created_at has a smaller (created_at, rowid) key,
  * i.e. it has been scanned. If retention has purged rows below a stale
  * cursor, the next window simply starts at the oldest surviving row — the
@@ -401,7 +406,9 @@ async function claimHits(
     try {
       await env.DB.batch(markStmts.slice(i, i + CLAIM_BATCH));
     } catch {
-      // brand_matched is a convenience flag; a failed mark costs nothing.
+      // A failed mark only means retention may purge the NRD row after 30
+      // days (it stays in the NRD_ARCHIVE R2 object); the claim itself, the
+      // evidence that matters, already landed on lookalike_domains.
     }
   }
   return ok;

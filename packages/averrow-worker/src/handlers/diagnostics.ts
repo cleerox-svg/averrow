@@ -914,6 +914,9 @@ export interface NrdRetentionDiag {
   age_cutoff: string | null;
   cursor: string | null;
   held_by_matcher: boolean | null;
+  /** True when the phantom cursor was missing or older than now − 37 days,
+   *  so its hold was clamped to that floor (lib/nrd-retention.ts). */
+  phantom_hold_clamped: boolean | null;
   /** created_at of the NRD <-> lookalike matcher's cursor (lib/lookalike-nrd-matcher.ts). */
   lookalike_cursor: string | null;
   /** True when that cursor, not the age window or the phantom cursor, set the cutoff. */
@@ -924,12 +927,15 @@ export interface NrdRetentionDiag {
 }
 
 /** Build the `nrd_retention` block from the KV last-result stamp ONLY —
- *  zero D1 reads. The purge never passes the phantom matcher's nrd cursor,
- *  which advances only when the matcher RUNS incrementally. So
- *  `skipped: 'no_cursor'` = the matcher has never run incrementally, and
- *  `held_by_matcher: true` = its last incremental run is older than the
- *  90-day window; either persisting across days means nrd_domains is
- *  growing again until the matcher runs. */
+ *  zero D1 reads. Retention is tiered: 30 days hot, `brand_matched = 1`
+ *  rows never purged, every row also archived to R2 by the feed. The
+ *  phantom matcher's nrd cursor is a CLAMPED hold (never earlier than
+ *  now − 37 days; a missing cursor holds at that floor), so
+ *  `phantom_hold_clamped: true` = the manual matcher has not run
+ *  incrementally within 37 days (or ever) and unscanned rows below the
+ *  floor are purged from D1 (preserved in R2). `held_by_matcher: true` =
+ *  the phantom hold, not the 30-day age cutoff, set the cutoff. A legacy
+ *  `skipped: 'no_cursor'` can only come from a pre-tiering stamp. */
 export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag> {
   let raw: string | null = null;
   try {
@@ -946,6 +952,7 @@ export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag>
     age_cutoff: last?.age_cutoff ?? null,
     cursor: last?.cursor ?? null,
     held_by_matcher: last?.held_by_matcher ?? null,
+    phantom_hold_clamped: last?.phantom_hold_clamped ?? null,
     lookalike_cursor: last?.lookalike_cursor ?? null,
     held_by_lookalike_matcher: last?.held_by_lookalike_matcher ?? null,
     more_remaining: last?.more_remaining ?? null,
@@ -2161,7 +2168,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // deploy does not serve the old shape out of KV for a TTL.
           // 12: additive `nrd_retention` block (KV last-result stamp of the
           // nrd_domains 90-day purge). No field removed.
-          endpoint_version: 12,
+          // 13: additive `nrd_retention.phantom_hold_clamped` (tiered
+          // retention: 30d hot, brand_matched kept, R2 archive). No field
+          // removed.
+          endpoint_version: 13,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2271,12 +2281,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // the two states. Same single scan; no extra COUNT(*) passes.
         velocity: velocity,
 
-        // nrd_domains 90-day retention (lib/nrd-retention.ts), read ONLY
-        // from its KV last-result stamp — no D1 reads. The purge never
-        // passes the phantom matcher's nrd cursor, which moves only when the
-        // matcher runs incrementally: `skipped: 'no_cursor'` (never run) or
-        // `held_by_matcher: true` (last run older than 90 days) persisting
-        // across days means nrd_domains is growing again until it runs.
+        // nrd_domains tiered retention (lib/nrd-retention.ts: 30 days hot,
+        // brand_matched rows kept, every row archived to the NRD_ARCHIVE R2
+        // bucket by the feed), read ONLY from its KV last-result stamp — no
+        // D1 reads. The phantom matcher's cursor is a CLAMPED hold (≤ 37
+        // days): `phantom_hold_clamped: true` = the manual matcher has not
+        // run incrementally in that window (or ever), so unscanned rows
+        // below the floor are being purged from D1 (still in R2).
         nrd_retention: nrdRetention,
 
         alerts: {

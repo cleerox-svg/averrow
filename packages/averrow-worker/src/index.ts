@@ -494,9 +494,11 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
 
       // POST /api/internal/nrd-retention/run
       // On-demand trigger for the nrd_domains retention purge (normally
-      // Navigator-dispatched daily at UTC hour 0). Deletes rows older than
-      // 90 days on created_at, never past the phantom matcher's nrd cursor
-      // (no cursor → purges nothing). Chunked + soft-capped; safe to call
+      // Navigator-dispatched daily at UTC hour 0). Deletes unmatched
+      // (brand_matched = 0) rows older than 30 days on created_at, held by
+      // the phantom / lookalike matcher cursors clamped to ≤ 37 days (a
+      // missing phantom cursor holds at that floor; every row is also in
+      // the NRD_ARCHIVE R2 bucket). Chunked + soft-capped; safe to call
       // repeatedly while `more_remaining` is true. Never throws.
       if (url.pathname === '/api/internal/nrd-retention/run' && request.method === 'POST') {
         const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
