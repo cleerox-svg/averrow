@@ -2,17 +2,78 @@ import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId } from "./types";
 import { bulkInsertThreats } from "../lib/feedRunner";
 import { logger } from "../lib/logger";
-import {
-  findEocdOffset,
-  parseCentralDirectory,
-  parseLocalHeaderLength,
-  readUint32LE,
-} from "../lib/zip-internals";
 
-const WHOISDS_BASE_URL = "https://whoisds.com/whois-database/newly-registered-domains/";
+/**
+ * NRD Feed — Newly Registered Domains via Hagezi's NRD 7-day list.
+ *
+ * Source: https://raw.githubusercontent.com/hagezi/nrd/main/domains/nrd7.txt
+ * (GPL-3.0, data from Stamus Labs, regenerated daily ~06–07 UTC). ~3.1M
+ * domains for the trailing 7 days (~443K/day, ~175K/day .com), ~51 MB plain
+ * text (~17 MB gzip on the wire). Replaced the WhoisDS free daily ZIP on
+ * 2026-10-05: WhoisDS's free tier turned out to be a uniform random 70K
+ * sample of each day (prod nrd_domains held exactly 69,999 / 70,000 rows
+ * per day), and every one of a 108-domain sample of those rows is present
+ * in this list.
+ *
+ * The list is a ROLLING 7-day window with no per-domain dates, so each run
+ * DIFFS today's list against the previous run's snapshot:
+ *
+ *   1. Conditional GET (`If-None-Match` = the snapshot's stored ETag). 304,
+ *      or a `# Version:` header equal to the snapshot's, is a no-op — the
+ *      feed is scheduled every 2h but the list changes once a day.
+ *   2. Today's body (streamed, never materialised) and the snapshot (R2,
+ *      gzip, streamed) are read as two sorted line iterators and
+ *      merge-diffed; a domain present today but not in the snapshot is new.
+ *      Both lists are in byte (LC_ALL=C) order, which matches JS `<` on
+ *      ASCII; an out-of-order line is a format change and throws.
+ *   3. New domains are flushed every NRD_FLUSH_EVERY into nrd_domains
+ *      (storeNrdReference), brand-matched, and the matches inserted via
+ *      bulkInsertThreats in the same flush — so memory stays bounded even
+ *      if a generic brand keyword matches a large share of the day.
+ *   4. Every today-line that is old (in the snapshot) or was actually
+ *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
+ *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
+ *      the snapshot, so the next run sees it as new again: the cap DEFERS,
+ *      never drops, and successive runs converge. A run that deferred
+ *      anything stores no etag/version on the snapshot, so the next 2-hourly
+ *      run re-diffs instead of short-circuiting on an unchanged list.
+ *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
+ *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
+ *      IGNORE + deterministic threatId make that idempotent).
+ *
+ * First run (no snapshot): write the snapshot only and insert nothing, so
+ * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
+ * then yields just the new day.
+ *
+ * `registered_date` is a "first listed" approximation — (list
+ * `# Last modified` date − 1 day), or UTC yesterday without the header —
+ * not a WHOIS creation date. Nothing reads it today: the only nrd_domains
+ * reader (lib/phantom-matcher.ts) cursors on `created_at`.
+ *
+ * Snapshot lives in the GEOIP_STAGING R2 bucket under NRD_SNAPSHOT_KEY. The
+ * GeoIP workflow only ever deletes its own staging key there, never lists
+ * or sweeps the bucket.
+ */
 
-/** Per-request timeout for the (multi-MB) NRD archive download. */
-const FETCH_TIMEOUT_MS = 30_000;
+export const NRD_HAGEZI_URL = "https://raw.githubusercontent.com/hagezi/nrd/main/domains/nrd7.txt";
+
+/** R2 key (GEOIP_STAGING bucket) of the previous run's gzip'd domain list. */
+export const NRD_SNAPSHOT_KEY = "nrd/hagezi-nrd7.txt.gz";
+
+/** Max new domains inserted + matched per run (~2.3 days of list growth).
+ *  The rest are deferred to the next run (kept out of the snapshot). */
+export const NRD_MAX_NEW_PER_RUN = 1_000_000;
+
+/** Timeout for the response HEADERS. The body has its own idle timeout,
+ *  because the body is read across D1 flushes that can take minutes in
+ *  total — a whole-request AbortSignal.timeout would abort it mid-diff. */
+const FETCH_HEADERS_TIMEOUT_MS = 60_000;
+
+/** Abort the body if no chunk arrives for this long. */
+const BODY_IDLE_TIMEOUT_MS = 60_000;
+
+/** Characters buffered before a write into the snapshot CompressionStream. */
+const SNAPSHOT_WRITE_CHARS = 64 * 1024;
 
 /** Common homoglyph substitutions for brand matching */
 const HOMOGLYPHS: Record<string, string[]> = {
@@ -23,372 +84,6 @@ const HOMOGLYPHS: Record<string, string[]> = {
   e: ["3"],
   s: ["5", "$"],
 };
-
-/** YYYY-MM-DD for `n` days before today, in UTC. */
-function utcDaysAgo(n: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
-/**
- * Build the WhoisDS free-tier NRD download URL for a given day.
- *
- * PRODUCTION FIX (2026-09-11): the path segment is NOT the plain
- * `YYYY-MM-DD.zip` filename. WhoisDS keys the free download on
- * base64("YYYY-MM-DD.zip") with the '=' padding stripped, followed by the
- * literal `/nrd` segment:
- *
- *   https://whoisds.com/whois-database/newly-registered-domains/MjAyNi0wOS0xMC56aXA/nrd
- *
- * The old `.../2026-09-10.zip` form still resolves (the route matches the
- * date segment) but WhoisDS answers it with HTTP 200 and a ZERO-BYTE body —
- * which is exactly the production symptom: `res.ok` was true so the
- * day-before fallback never fired, and every pull died in
- * extractTextFromZip with "empty response body (0 bytes)" until the
- * circuit breaker auto-paused the feed.
- *
- * The encoding matches WhoisDS's own free-download links and the public
- * downloader scripts built against them; it could NOT be verified from the
- * repair session itself (whoisds.com is blocked by that session's egress
- * policy), so the first post-deploy pull is the confirmation — if it still
- * reports zero bytes, the source itself is gone and the feed parks as
- * `auto:upstream_dead` (see the throw at the end of `ingest`).
- *
- * Exported for unit tests — the encoding is the whole bug, so it is
- * asserted directly rather than through a fetch mock.
- */
-export function nrdDownloadUrl(date: string): string {
-  const infix = btoa(`${date}.zip`).replace(/=+$/, "");
-  return `${WHOISDS_BASE_URL}${infix}/nrd`;
-}
-
-/**
- * Decompress an entire in-memory buffer via the Workers-native
- * DecompressionStream. `deflate-raw` = a bare DEFLATE stream (what ZIP
- * entries hold); `gzip` = a gzip container.
- */
-async function inflateAll(bytes: Uint8Array<ArrayBuffer>, format: "deflate-raw" | "gzip"): Promise<Uint8Array> {
-  const ds = new DecompressionStream(format);
-  const writer = ds.writable.getWriter();
-  // Do NOT await write() before reading: for multi-MB inputs the writable
-  // applies backpressure until the readable is drained, so awaiting here
-  // would deadlock. Kick off write+close, then pull the output.
-  void writer.write(bytes);
-  void writer.close();
-  const reader = ds.readable.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) { chunks.push(value); total += value.length; }
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) { out.set(c, offset); offset += c.length; }
-  return out;
-}
-
-/** True if the buffer's first non-whitespace byte is '<' (HTML/XML error page). */
-function looksLikeHtml(bytes: Uint8Array): boolean {
-  let i = 0;
-  while (i < bytes.length && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
-  return bytes[i] === 0x3c;
-}
-
-/**
- * Extract the domain-list text from a WhoisDS NRD download.
- *
- * The archive is parsed via its END-OF-CENTRAL-DIRECTORY record, not the
- * local file header. This is the fix for the production
- * "unsupported compression" death-loop: WhoisDS writes the ZIP in a
- * streaming mode that sets general-purpose bit 3 (data descriptor), so the
- * LOCAL header reports compressedSize=0 and can misframe the method byte —
- * the old local-header reader either sliced zero bytes (silent empty pull)
- * or read a bogus method and bailed with "unsupported compression". The
- * central directory always carries the authoritative method + compressed
- * size, so we read from there.
- *
- * Throws a PRECISE error on any genuine failure (unknown container, HTML
- * error page, unsupported ZIP method, ZIP64, truncation) so runFeed stamps
- * the circuit breaker instead of the feed silently succeeding with 0 rows.
- */
-async function extractTextFromZip(buffer: ArrayBuffer): Promise<string> {
-  const bytes = new Uint8Array(buffer);
-  if (bytes.length === 0) {
-    throw new Error("NRD WhoisDS: empty response body (0 bytes)");
-  }
-
-  // gzip container — upstream occasionally serves a .gz, or a proxy hands
-  // back a gzip body the runtime didn't transparently decode.
-  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
-    return new TextDecoder().decode(await inflateAll(bytes, "gzip"));
-  }
-
-  // ZIP container (PK\x03\x04).
-  if (bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
-    return await extractFromZipBuffer(bytes);
-  }
-
-  // Not a known binary container. An HTML/error page must fail loudly —
-  // otherwise `.includes(".")` mines fake domains out of markup.
-  if (looksLikeHtml(bytes)) {
-    const snippet = new TextDecoder().decode(bytes.slice(0, 200)).replace(/\s+/g, " ").trim();
-    throw new Error(`NRD WhoisDS: expected ZIP, got HTML/error page — "${snippet}"`);
-  }
-
-  // Otherwise treat it as a plain-text domain list.
-  return new TextDecoder().decode(bytes);
-}
-
-/**
- * Parse a whole-buffer ZIP via its central directory and return the
- * decompressed text of its largest file entry (NRD archives hold a single
- * domain-list .txt).
- */
-async function extractFromZipBuffer(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
-  const eocd = findEocdOffset(bytes);
-  if (eocd === -1) {
-    throw new Error("NRD WhoisDS: ZIP end-of-central-directory not found (truncated or ZIP64 archive)");
-  }
-  const cdirSize = readUint32LE(bytes, eocd + 12);
-  const cdirOffset = readUint32LE(bytes, eocd + 16);
-  // 0xFFFFFFFF sentinels mean the real values live in a ZIP64 EOCD, which
-  // DecompressionStream + this reader don't handle — fail precisely.
-  if (cdirOffset === 0xffffffff || cdirSize === 0 || cdirOffset + cdirSize > bytes.length) {
-    throw new Error(
-      `NRD WhoisDS: invalid or ZIP64 central directory (offset=${cdirOffset}, size=${cdirSize}, total=${bytes.length})`,
-    );
-  }
-
-  const entries = parseCentralDirectory(bytes.subarray(cdirOffset, cdirOffset + cdirSize));
-  const files = entries.filter((e) => !e.name.endsWith("/") && e.uncompressedSize > 0);
-  if (files.length === 0) {
-    throw new Error("NRD WhoisDS: ZIP contained no non-empty file entries");
-  }
-  const entry = files.reduce((a, b) => (b.uncompressedSize > a.uncompressedSize ? b : a));
-
-  if (entry.compressionMethod !== 0 && entry.compressionMethod !== 8) {
-    throw new Error(
-      `NRD WhoisDS: entry "${entry.name}" uses unsupported ZIP compression method ${entry.compressionMethod} (only 0=stored / 8=deflate supported)`,
-    );
-  }
-
-  // Re-read the LOCAL header to compute the true data offset — its
-  // filename/extra lengths can differ from the central directory's.
-  const probeEnd = Math.min(bytes.length, entry.localHeaderOffset + 30 + 65535);
-  const lfh = bytes.subarray(entry.localHeaderOffset, probeEnd);
-  const headerLen = parseLocalHeaderLength(lfh, entry.name, lfh.length);
-  const dataStart = entry.localHeaderOffset + headerLen;
-  const dataEnd = dataStart + entry.compressedSize;
-  if (dataEnd > bytes.length) {
-    throw new Error(
-      `NRD WhoisDS: entry "${entry.name}" data runs past archive end (start=${dataStart}, size=${entry.compressedSize}, total=${bytes.length})`,
-    );
-  }
-  const data = bytes.subarray(dataStart, dataEnd);
-
-  if (entry.compressionMethod === 0) {
-    return new TextDecoder().decode(data);
-  }
-  return new TextDecoder().decode(await inflateAll(data, "deflate-raw"));
-}
-
-/**
- * NRD Feed — Newly Registered Domains via WhoisDS.com.
- *
- * Replaced xRuffKez/Hagezi (EOL Dec 2025) with WhoisDS daily NRD download.
- * Downloads yesterday's archive (see nrdDownloadUrl for the URL shape),
- * falling back to the day before, extracts the domain list, and matches it
- * against monitored brands.
- * Brand-matched domains are inserted as typosquatting threats, collected in
- * memory and flushed via bulkInsertThreats (chunked INSERT OR IGNORE).
- * All NRDs are stored in nrd_domains reference table for later analysis.
- *
- * Schedule: daily (WhoisDS publishes once per day).
- * Volume: 50,000–180,000 domains/day.
- */
-export const nrd_hagezi: FeedModule = {
-  async ingest(ctx: FeedContext): Promise<FeedResult> {
-    // WhoisDS publishes a day's archive some hours after UTC midnight, so a
-    // pull near the rollover legitimately finds yesterday missing. Walk back
-    // one more day before giving up.
-    //
-    // A zero-byte 200 is treated exactly like a non-2xx here: the previous
-    // code only fell back on `!res.ok`, so an empty-but-successful response
-    // (the symptom of the wrong URL shape above) short-circuited straight
-    // into a hard failure with no second attempt.
-    const attempts: Array<{ date: string; problem: string }> = [];
-
-    for (const daysAgo of [1, 2]) {
-      const date = utcDaysAgo(daysAgo);
-      const url = nrdDownloadUrl(date);
-      logger.info("nrd_whoisds_fetch", { url, date, daysAgo });
-
-      let res: Response;
-      try {
-        res = await fetch(url, {
-          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          headers: { "User-Agent": "Averrow-ThreatIntel/1.0" },
-        });
-      } catch (err) {
-        attempts.push({ date, problem: `fetch failed: ${err instanceof Error ? err.message : String(err)}` });
-        continue;
-      }
-
-      if (!res.ok) {
-        attempts.push({ date, problem: `HTTP ${res.status}` });
-        continue;
-      }
-
-      const buffer = await res.arrayBuffer();
-      if (buffer.byteLength === 0) {
-        attempts.push({ date, problem: "empty response body (0 bytes)" });
-        continue;
-      }
-
-      return await processArchive(buffer, ctx, date);
-    }
-
-    const detail = attempts.map((a) => `${a.date}: ${a.problem}`).join("; ");
-
-    // Every attempt came back 200-but-empty. That is not a transient blip:
-    // the route resolves and the upstream simply has nothing behind it. Say
-    // so in the wording autoPauseFeed's permanent-error taxonomy recognises
-    // (lib/feedRunner.ts) so the breaker parks the feed as
-    // `auto:upstream_dead` — sticky, operator-resumed — instead of
-    // `auto:consecutive_failures`, which the 4-hour auto-recovery sweep
-    // revives into an endless pause → 5 failures → pause loop. That loop is
-    // what produced 6 critical auto-pause alerts and 9 feed-silent alerts in
-    // a single day for a feed that had been dead for months.
-    if (attempts.every((a) => a.problem.startsWith("empty response body"))) {
-      throw new Error(
-        `NRD WhoisDS: upstream served no data on ${attempts.length} consecutive days — ${detail}`,
-      );
-    }
-
-    throw new Error(`NRD WhoisDS: no usable archive — ${detail}`);
-  },
-};
-
-async function processArchive(buffer: ArrayBuffer, ctx: FeedContext, date: string): Promise<FeedResult> {
-  // extractTextFromZip throws a precise Error on any genuine failure
-  // (unknown container, HTML error page, unsupported/ZIP64 method,
-  // truncation), which runFeed catches to stamp the circuit breaker.
-  const text = await extractTextFromZip(buffer);
-
-  const domains = text
-    .split("\n")
-    .map((l) => l.trim().toLowerCase())
-    .filter((l) => l && !l.startsWith("#") && l.includes("."));
-
-  logger.info("nrd_whoisds_parsed", { date, totalDomains: domains.length });
-
-  // Store all NRDs in reference table for later analysis
-  await storeNrdReference(ctx.env.DB, domains, date);
-
-  // Fetch monitored brands
-  const brands = await ctx.env.DB.prepare(
-    `SELECT b.id, b.name, b.canonical_domain
-     FROM brands b
-     INNER JOIN monitored_brands mb ON mb.brand_id = b.id
-     WHERE mb.status = 'active'`
-  ).all<{ id: string; name: string; canonical_domain: string }>();
-
-  if (!brands.results.length) {
-    return { itemsFetched: domains.length, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
-  }
-
-  // Build keyword list from brand names. Deduped by brand id (a brand
-  // monitored by several tenants appears once per monitored_brands row) and
-  // homoglyph variants precomputed ONCE per brand — the match loop below is
-  // domains × brands (~10^5 × ~10^3), so regenerating the variant array per
-  // (domain, brand) pair was ~10^8 needless allocations per run. Matching
-  // semantics are unchanged: same keyword, same variants, same order.
-  const seenBrandIds = new Set<string>();
-  const brandKeywords: Array<{ id: string; domain: string; needles: string[] }> = [];
-  for (const b of brands.results) {
-    if (seenBrandIds.has(b.id)) continue;
-    seenBrandIds.add(b.id);
-    const needles = brandNeedles(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
-    // A keyword under 3 chars can never match — drop it from the hot loop.
-    if (needles.length === 0) continue;
-    brandKeywords.push({ id: b.id, domain: b.canonical_domain.toLowerCase(), needles });
-  }
-
-  // Match in memory, then flush in bulk. The old loop did, per matched
-  // domain and in series: isDuplicate (KV GET) → insertThreat (D1 INSERT +
-  // brand-counter UPDATE) → markSeen (KV PUT) — ~4 round trips per match,
-  // so a busy day (short keywords + homoglyphs → thousands of matches)
-  // burned thousands of serial subrequests. Same pattern as
-  // phishing_database / phishdestroy / openphish: dedupe within the payload,
-  // then chunked INSERT OR IGNORE via bulkInsertThreats. Dedup is the
-  // deterministic per-feed threatId PK (authoritative, no 24h KV TTL), and
-  // bulkInsertThreats bumps brands.threat_count only for rows that actually
-  // landed (meta.changes > 0) — exactly what insertThreat did per row.
-  const { rows, inPayloadDuplicates } = collectBrandMatchRows(domains, brandKeywords);
-
-  // Outbound KV note: this path no longer calls markSeen, so no
-  // `dedup:domain:*` key is written. ct_logs (feeds/certstream.ts) still
-  // pre-checks those keys, so it will now add its own ct_logs row (with
-  // cert columns) for a domain this feed inserted the same day, and
-  // brands.threat_count is bumped once per source — intended
-  // one-row-per-source corroboration (docs/THREAT_FEEDS.md "Cross-feed note").
-  const { itemsNew, itemsDuplicate, itemsError } = await bulkInsertThreats(ctx.env.DB, rows);
-
-  logger.info("nrd_whoisds_matched", { date, matches: rows.length, itemsNew, itemsDuplicate, itemsError });
-
-  return {
-    itemsFetched: domains.length,
-    itemsNew,
-    itemsDuplicate: itemsDuplicate + inPayloadDuplicates,
-    itemsError,
-  };
-}
-
-/**
- * Pure domain × brand match pass — no I/O. One row per distinct matched
- * domain: the FIRST brand (in `brandKeywords` order) whose needles hit wins,
- * a brand's own canonical domain never matches that brand, and a domain
- * repeated in the list counts as an in-payload duplicate (the old loop's
- * KV pre-check caught the repeat after markSeen; here the Set does).
- *
- * Exported for unit tests.
- */
-export function collectBrandMatchRows(
-  domains: string[],
-  brandKeywords: Array<{ id: string; domain: string; needles: string[] }>,
-): { rows: ThreatRow[]; inPayloadDuplicates: number } {
-  const matched = new Set<string>();
-  const rows: ThreatRow[] = [];
-  let inPayloadDuplicates = 0;
-
-  for (const domain of domains) {
-    for (const brand of brandKeywords) {
-      // Skip if domain IS the brand's canonical domain
-      if (domain === brand.domain) continue;
-      if (!domainMatchesNeedles(domain, brand.needles)) continue;
-
-      if (matched.has(domain)) { inPayloadDuplicates++; break; }
-      matched.add(domain);
-      rows.push({
-        id: threatId("nrd_hagezi", "domain", domain),
-        source_feed: "nrd_hagezi",
-        threat_type: "typosquatting",
-        malicious_url: null,
-        malicious_domain: domain,
-        target_brand_id: brand.id,
-        ioc_value: domain,
-        severity: "medium",
-        confidence_score: 60,
-      });
-      break; // One brand match per domain is enough
-    }
-  }
-
-  return { rows, inPayloadDuplicates };
-}
 
 /**
  * Domains per INSERT statement in storeNrdReference. The rows travel as ONE
@@ -404,14 +99,642 @@ export const NRD_DOMAINS_PER_STATEMENT = 1000;
 /**
  * Statements per `db.batch()` call. One batch = one D1 round-trip (one
  * subrequest) and one implicit transaction: 20 × 1000 = 20K rows/call, so a
- * 180K-domain day is ~9 calls.
+ * ~443K-domain day is ~23 calls.
  */
 export const NRD_STATEMENTS_PER_BATCH = 20;
 
+/** New domains buffered before a storeNrdReference + brand-match flush:
+ *  exactly one db.batch() call per flush. */
+export const NRD_FLUSH_EVERY = NRD_DOMAINS_PER_STATEMENT * NRD_STATEMENTS_PER_BATCH;
+
+export interface NrdIngestOptions {
+  /** Override NRD_MAX_NEW_PER_RUN (tests). */
+  maxNewPerRun?: number;
+  /** Override NRD_FLUSH_EVERY (tests). */
+  flushEvery?: number;
+}
+
+type BrandKeyword = { id: string; domain: string; needles: string[] };
+
+export const nrd_hagezi: FeedModule = {
+  ingest: (ctx) => ingestNrdHagezi(ctx),
+};
+
+const NOOP: FeedResult = { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+
+/** Feed body, with test-tunable limits. */
+export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions = {}): Promise<FeedResult> {
+  const maxNew = opts.maxNewPerRun ?? NRD_MAX_NEW_PER_RUN;
+  const flushEvery = opts.flushEvery ?? NRD_FLUSH_EVERY;
+  const bucket = ctx.env.GEOIP_STAGING;
+  if (!bucket) {
+    throw new Error(
+      `NRD Hagezi: GEOIP_STAGING (R2) binding not configured — the diff snapshot is stored at ${NRD_SNAPSHOT_KEY} in that bucket`,
+    );
+  }
+
+  const prevHead = await bucket.head(NRD_SNAPSHOT_KEY);
+  const prevMeta = prevHead?.customMetadata ?? {};
+
+  const res = await fetchList(prevHead ? prevMeta.etag : undefined);
+  if (res.status === 304) {
+    await cancelBody(res);
+    logger.info("nrd_hagezi_not_modified", { etag: prevMeta.etag ?? null, version: prevMeta.version ?? null });
+    return { ...NOOP };
+  }
+  if (!res.ok) {
+    await cancelBody(res);
+    throw new Error(`NRD Hagezi: list fetch returned HTTP ${res.status}`);
+  }
+  if (!res.body) {
+    throw new Error("NRD Hagezi: list response has no body");
+  }
+  const contentType = res.headers.get("content-type") ?? "";
+  if (/text\/html/i.test(contentType)) {
+    await cancelBody(res);
+    throw new Error(`NRD Hagezi: expected a plain-text domain list, got content-type "${contentType}"`);
+  }
+
+  const today = new SortedDomainReader(lineReader(res.body.pipeThrough(new TextDecoderStream()), BODY_IDLE_TIMEOUT_MS), "list");
+  let prev: SortedDomainReader | null = null;
+  const snapshot = new SnapshotWriter();
+
+  try {
+    const header = await today.readHeader();
+    const etag = res.headers.get("etag");
+
+    if (prevHead && header.version !== null && header.version === (prevMeta.version ?? null)) {
+      logger.info("nrd_hagezi_same_version", { version: header.version });
+      return { ...NOOP };
+    }
+
+    const registeredDate = registeredDateFromHeader(header.lastModified);
+
+    // ── Bootstrap: no snapshot → write it, insert nothing. ──
+    if (!prevHead) {
+      let lines = 0;
+      for (let d = await today.next(); d !== null; d = await today.next()) {
+        lines++;
+        await snapshot.add(d);
+      }
+      assertListShape(lines, today.contentLines, header);
+      await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
+        customMetadata: snapshotMetadata(etag, header, 0),
+      });
+      logger.info("nrd_hagezi_bootstrap", { lines, version: header.version, snapshotKey: NRD_SNAPSHOT_KEY });
+      return { itemsFetched: lines, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    }
+
+    const prevObj = await bucket.get(NRD_SNAPSHOT_KEY);
+    if (!prevObj) {
+      throw new Error(`NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} vanished between head() and get() — retry`);
+    }
+    prev = new SortedDomainReader(
+      lineReader(prevObj.body.pipeThrough(new DecompressionStream("gzip")).pipeThrough(new TextDecoderStream()), 0),
+      `snapshot ${NRD_SNAPSHOT_KEY} (delete that R2 object to re-bootstrap)`,
+      (err) => {
+        logger.error("nrd_hagezi_snapshot_unreadable", {
+          key: NRD_SNAPSHOT_KEY,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // Keep the runtime cause (never upstream text) so a transient R2 read
+        // drop isn't mistaken for corruption — deleting a good snapshot loses
+        // every domain first listed since it was written.
+        const cause = err instanceof Error ? err.message : String(err);
+        return new Error(
+          `NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} could not be decompressed/read (${cause.slice(0, 120)}) — usually transient, the next run retries; only if this repeats across runs (corrupt or not gzip), delete that object from the GEOIP_STAGING R2 bucket to re-bootstrap`,
+        );
+      },
+    );
+
+    const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB));
+    // Carried across flushes so an in-list repeat split over two chunks is
+    // still one threat + one in-payload duplicate.
+    const matched = new Set<string>();
+    const totals = { matches: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
+    let pending: string[] = [];
+    let lines = 0;
+    let newTotal = 0;
+    let newInserted = 0;
+
+    const flush = async (): Promise<void> => {
+      if (pending.length === 0) return;
+      await storeNrdReference(ctx.env.DB, pending, registeredDate);
+      if (!matcher.empty) {
+        const { rows, inPayloadDuplicates } = matcher.collect(pending, matched);
+        // Dedup is the deterministic per-feed threatId PK (INSERT OR IGNORE);
+        // bulkInsertThreats bumps brands.threat_count only for rows that
+        // landed. No KV dedup keys are read or written by this feed.
+        const r = await bulkInsertThreats(ctx.env.DB, rows);
+        totals.matches += rows.length;
+        totals.itemsNew += r.itemsNew;
+        totals.itemsDuplicate += r.itemsDuplicate + inPayloadDuplicates;
+        totals.itemsError += r.itemsError;
+      }
+      pending = [];
+    };
+
+    // ── Merge-diff: emit today-lines absent from the snapshot. ──
+    let p = await prev.next();
+    for (let d = await today.next(); d !== null; d = await today.next()) {
+      lines++;
+      while (p !== null && p < d) p = await prev.next();
+      if (p === d) {
+        await snapshot.add(d);
+        continue;
+      }
+      newTotal++;
+      // Over the cap: leave it OUT of the new snapshot so the next run sees
+      // it as new again (deferred, not dropped).
+      if (newInserted >= maxNew) continue;
+      newInserted++;
+      await snapshot.add(d);
+      pending.push(d);
+      if (pending.length >= flushEvery) await flush();
+    }
+    await flush();
+    assertListShape(lines, today.contentLines, header);
+    const { itemsNew, itemsDuplicate, itemsError } = totals;
+    const deferred = newTotal - newInserted;
+
+    if (deferred > 0) {
+      logger.warn("nrd_hagezi_deferred", { newTotal, inserted: newInserted, deferred, cap: maxNew });
+    }
+
+    // Snapshot advances only when every D1 write landed. A failed threat
+    // chunk (bulkInsertThreats reports it as itemsError rather than throwing)
+    // must keep the old snapshot, or those matches would never be retried.
+    if (itemsError > 0) {
+      logger.warn("nrd_hagezi_snapshot_held", { reason: "threat_insert_errors", itemsError, version: header.version });
+    } else {
+      await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
+        customMetadata: snapshotMetadata(etag, header, deferred),
+      });
+    }
+
+    logger.info("nrd_hagezi_diffed", {
+      version: header.version,
+      registeredDate,
+      lines,
+      newTotal,
+      newInserted,
+      deferred,
+      matches: totals.matches,
+      itemsNew,
+      itemsDuplicate,
+      itemsError,
+    });
+
+    return { itemsFetched: lines, itemsNew, itemsDuplicate, itemsError };
+  } finally {
+    snapshot.abort();
+    await today.cancel();
+    if (prev) await prev.cancel();
+  }
+}
+
+async function fetchList(etag: string | undefined): Promise<Response> {
+  const headers: Record<string, string> = { "User-Agent": "Averrow-ThreatIntel/1.0" };
+  if (etag) headers["If-None-Match"] = etag;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_HEADERS_TIMEOUT_MS);
+  try {
+    return await fetch(NRD_HAGEZI_URL, { headers, signal: controller.signal });
+  } catch (err) {
+    const reason = controller.signal.aborted
+      ? `no response within ${FETCH_HEADERS_TIMEOUT_MS / 1000}s`
+      : err instanceof Error ? err.message : String(err);
+    throw new Error(`NRD Hagezi: list fetch failed — ${reason}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function cancelBody(res: Response): Promise<void> {
+  try { await res.body?.cancel(); } catch { /* already closed */ }
+}
+
+async function loadBrandKeywords(db: D1Database): Promise<BrandKeyword[]> {
+  const brands = await db.prepare(
+    `SELECT b.id, b.name, b.canonical_domain
+     FROM brands b
+     INNER JOIN monitored_brands mb ON mb.brand_id = b.id
+     WHERE mb.status = 'active'`
+  ).all<{ id: string; name: string; canonical_domain: string }>();
+
+  // Deduped by brand id (a brand monitored by several tenants appears once
+  // per monitored_brands row); homoglyph variants precomputed once per brand.
+  const seenBrandIds = new Set<string>();
+  const brandKeywords: BrandKeyword[] = [];
+  for (const b of brands.results) {
+    if (seenBrandIds.has(b.id)) continue;
+    seenBrandIds.add(b.id);
+    const needles = brandNeedles(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    // A keyword under 3 chars can never match.
+    if (needles.length === 0) continue;
+    brandKeywords.push({ id: b.id, domain: b.canonical_domain.toLowerCase(), needles });
+  }
+  return brandKeywords;
+}
+
+// ─── List header ─────────────────────────────────────────────────────
+
+export interface NrdListHeader {
+  version: string | null;
+  /** Raw `# Last modified:` value, e.g. "05 Oct 2026 06:11 UTC". */
+  lastModified: string | null;
+  /** `# Number of entries:` value. */
+  entries: number | null;
+}
+
+function parseHeaderLine(line: string, h: NrdListHeader): void {
+  const m = /^#\s*([^:]+):\s*(.*)$/.exec(line);
+  if (!m) return;
+  const key = m[1]!.trim().toLowerCase();
+  const value = m[2]!.trim();
+  if (key === "version") h.version = value || null;
+  else if (key === "last modified") h.lastModified = value || null;
+  else if (key === "number of entries") {
+    const n = Number(value.replace(/[,_\s]/g, ""));
+    h.entries = Number.isFinite(n) ? n : null;
+  }
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
 /**
- * Store all NRDs in reference table for later analysis (infrastructure correlation, etc.).
- * INSERT OR IGNORE keeps re-runs (and in-list duplicates) idempotent: the
- * first registered_date written for a domain wins, exactly as before.
+ * registered_date for rows from this list: the list's `Last modified` UTC
+ * date minus one day (the list is regenerated each morning from the previous
+ * day's registrations), else UTC yesterday. Exported for tests.
+ */
+export function registeredDateFromHeader(lastModified: string | null, now: Date = new Date()): string {
+  const m = lastModified ? /^(\d{1,2})\s+([A-Za-z]{3})[A-Za-z]*\s+(\d{4})/.exec(lastModified.trim()) : null;
+  const month = m ? MONTHS[m[2]!.toLowerCase()] : undefined;
+  const base = m && month !== undefined
+    ? new Date(Date.UTC(Number(m[3]), month, Number(m[1])))
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  base.setUTCDate(base.getUTCDate() - 1);
+  return base.toISOString().slice(0, 10);
+}
+
+/**
+ * Snapshot customMetadata. When the run deferred domains (per-run cap), the
+ * etag/version are deliberately omitted: the snapshot is then NOT a complete
+ * image of that list version, so the next run must neither send
+ * If-None-Match nor take the same-version shortcut — it re-diffs and picks
+ * up the deferred domains.
+ */
+function snapshotMetadata(etag: string | null, header: NrdListHeader, deferred: number): Record<string, string> {
+  const meta: Record<string, string> = {};
+  if (deferred === 0) {
+    if (etag) meta.etag = etag;
+    if (header.version) meta.version = header.version;
+  } else {
+    meta.deferred = String(deferred);
+  }
+  if (header.lastModified) meta.list_modified = header.lastModified;
+  return meta;
+}
+
+/**
+ * Integrity checks once the whole list has been read. An empty list never
+ * succeeds silently, and a body shorter than its own `Number of entries`
+ * header (a truncated download) fails before the snapshot is replaced.
+ *
+ * Wording is deliberate (and never includes upstream text): none of these match autoPauseFeed's permanent-error
+ * taxonomy (lib/feedRunner.ts — 404/410, "upstream archived", "no longer
+ * publishes", "Gone", "served no data on N consecutive days"). An empty or
+ * short list from a daily-regenerated GitHub file is a bad build, not a dead
+ * source, so it stays `auto:consecutive_failures` and the 4h sweep revives it.
+ */
+function assertListShape(lines: number, contentLines: number, header: NrdListHeader): void {
+  if (lines === 0) {
+    throw new Error(
+      `NRD Hagezi: list contained zero domains (version ${header.version ?? "unknown"}) — refusing to treat an empty list as success`,
+    );
+  }
+  // Compared against RAW non-comment, non-blank lines (not the post-filter
+  // domain count), so an entry the domain filter skips can't trip it.
+  if (header.entries !== null && header.entries !== contentLines) {
+    throw new Error(
+      `NRD Hagezi: list body has ${contentLines} entries but its header declares ${header.entries} — truncated or malformed download`,
+    );
+  }
+}
+
+// ─── Streaming line readers ──────────────────────────────────────────
+
+interface LineReader {
+  next(): Promise<string | null>;
+  cancel(): Promise<void>;
+}
+
+/** Split a text stream into lines without buffering it whole. `idleMs` > 0
+ *  aborts when no chunk arrives within that window. */
+function lineReader(stream: ReadableStream<string>, idleMs: number): LineReader {
+  const reader = stream.getReader();
+  let buf = "";
+  let lines: string[] = [];
+  let idx = 0;
+  let done = false;
+
+  const read = async (): Promise<ReadableStreamReadResult<string>> => {
+    if (idleMs <= 0) return reader.read();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`NRD Hagezi: list body stalled — no data for ${idleMs / 1000}s`)),
+        idleMs,
+      );
+    });
+    try {
+      return await Promise.race([reader.read(), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  return {
+    async next() {
+      for (;;) {
+        if (idx < lines.length) return lines[idx++]!;
+        if (done) {
+          if (buf.length > 0) { const last = buf; buf = ""; return last; }
+          return null;
+        }
+        const { done: d, value } = await read();
+        if (d) { done = true; continue; }
+        buf += value;
+        const parts = buf.split("\n");
+        buf = parts.pop() ?? "";
+        lines = parts;
+        idx = 0;
+      }
+    },
+    async cancel() {
+      try { await reader.cancel(); } catch { /* already closed/errored */ }
+    },
+  };
+}
+
+/**
+ * Yields normalised domains (trimmed, lowercased, must contain a '.') in
+ * non-decreasing order; skips `#` comment and blank lines. Throws on an
+ * out-of-order line — the merge-diff is only correct over sorted input — or
+ * on an HTML/markup first line. Equal adjacent lines are allowed (counted as
+ * in-payload duplicates downstream).
+ */
+class SortedDomainReader {
+  private last: string | null = null;
+  private pendingFirst: string | null = null;
+  private seenContent = false;
+  /** Raw non-comment, non-blank lines seen (before the '.' filter). */
+  contentLines = 0;
+
+  /**
+   * `label` must be FIXED text — it goes into thrown messages, which
+   * autoPauseFeed pattern-matches; upstream content is only ever logged.
+   * `onReadError` maps a stream read failure to a precise error.
+   */
+  constructor(
+    private readonly lines: LineReader,
+    private readonly label: string,
+    private readonly onReadError?: (err: unknown) => Error,
+  ) {}
+
+  private async readLine(): Promise<string | null> {
+    if (!this.onReadError) return this.lines.next();
+    try {
+      return await this.lines.next();
+    } catch (err) {
+      throw this.onReadError(err);
+    }
+  }
+
+  /** Consume leading `#` lines; stops at (and buffers) the first other line. */
+  async readHeader(): Promise<NrdListHeader> {
+    const h: NrdListHeader = { version: null, lastModified: null, entries: null };
+    for (let raw = await this.readLine(); raw !== null; raw = await this.readLine()) {
+      const line = raw.trim();
+      if (line === "") continue;
+      if (line.startsWith("#")) { parseHeaderLine(line, h); continue; }
+      this.pendingFirst = raw;
+      break;
+    }
+    return h;
+  }
+
+  async next(): Promise<string | null> {
+    for (;;) {
+      let raw: string | null;
+      if (this.pendingFirst !== null) { raw = this.pendingFirst; this.pendingFirst = null; }
+      else raw = await this.readLine();
+      if (raw === null) return null;
+      const line = raw.trim().toLowerCase();
+      if (line === "" || line.startsWith("#")) continue;
+      this.contentLines++;
+      if (!this.seenContent) {
+        this.seenContent = true;
+        if (line.startsWith("<")) {
+          logger.error("nrd_hagezi_html_body", { source: this.label, snippet: raw.trim().slice(0, 200) });
+          throw new Error(`NRD Hagezi: ${this.label} is HTML/markup, not a domain list`);
+        }
+      }
+      if (!line.includes(".")) continue;
+      if (this.last !== null && line < this.last) {
+        logger.error("nrd_hagezi_out_of_order", {
+          source: this.label,
+          line: line.slice(0, 200),
+          previous: this.last.slice(0, 200),
+          lineIndex: this.contentLines,
+        });
+        throw new Error(
+          `NRD Hagezi: ${this.label} is not sorted — source format changed; the merge-diff requires byte-sorted input`,
+        );
+      }
+      this.last = line;
+      return line;
+    }
+  }
+
+  cancel(): Promise<void> {
+    return this.lines.cancel();
+  }
+}
+
+/**
+ * Streams lines into a gzip CompressionStream, draining its readable
+ * concurrently (awaiting write() without a reader deadlocks on backpressure)
+ * into in-memory chunks; `finish()` returns them as a Blob for the R2 put.
+ * Peak is still ~2× the ~17 MB gzip (the Blob copies its parts).
+ */
+class SnapshotWriter {
+  private readonly cs = new CompressionStream("gzip");
+  private readonly writer = this.cs.writable.getWriter();
+  private readonly encoder = new TextEncoder();
+  private readonly chunks: Array<Uint8Array<ArrayBuffer>> = [];
+  private readonly drained: Promise<void>;
+  private buf = "";
+  private finished = false;
+
+  constructor() {
+    const reader = this.cs.readable.getReader();
+    this.drained = (async () => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        // Always a plain ArrayBuffer in practice; the guard satisfies the
+        // BlobPart type without copying (SharedArrayBuffer → copy).
+        if (value) this.chunks.push(isArrayBufferBacked(value) ? value : new Uint8Array(value));
+      }
+    })();
+    // Abort path rejects `drained`; observe it so it is never unhandled.
+    this.drained.catch(() => undefined);
+  }
+
+  async add(domain: string): Promise<void> {
+    this.buf += domain + "\n";
+    if (this.buf.length >= SNAPSHOT_WRITE_CHARS) {
+      const out = this.buf;
+      this.buf = "";
+      await this.writer.write(this.encoder.encode(out));
+    }
+  }
+
+  async finish(): Promise<Blob> {
+    if (this.buf.length > 0) {
+      await this.writer.write(this.encoder.encode(this.buf));
+      this.buf = "";
+    }
+    await this.writer.close();
+    await this.drained;
+    this.finished = true;
+    const out = new Blob(this.chunks);
+    this.chunks.length = 0;
+    return out;
+  }
+
+  abort(): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.writer.abort().catch(() => undefined);
+  }
+}
+
+function isArrayBufferBacked(u: Uint8Array): u is Uint8Array<ArrayBuffer> {
+  return u.buffer instanceof ArrayBuffer;
+}
+
+// ─── Brand matching ─────────────────────────────────────────────────
+
+/**
+ * Needle-indexed brand matcher. Semantics are identical to the naive
+ * domains × brands × needles `includes` scan (pinned by a property test):
+ * for each domain the LOWEST-index brand (in `brandKeywords` order) with a
+ * needle that is a substring of the domain wins, except that a brand never
+ * matches its own canonical domain (which then falls through to the next
+ * brand). Instead of scanning every brand, each domain's substrings of every
+ * distinct needle length are looked up in a Map<needle, brandIndex[]>, so the
+ * cost is ~O(domain length × distinct needle lengths), independent of the
+ * brand count.
+ */
+class BrandMatcher {
+  private readonly index = new Map<string, number[]>();
+  private readonly lengths: number[];
+  /** Brands holding an empty needle (`includes("")` is always true). */
+  private readonly always: number[] = [];
+
+  constructor(private readonly brands: BrandKeyword[]) {
+    const lengths = new Set<number>();
+    brands.forEach((b, bi) => {
+      for (const n of b.needles) {
+        if (n.length === 0) {
+          if (this.always[this.always.length - 1] !== bi) this.always.push(bi);
+          continue;
+        }
+        let list = this.index.get(n);
+        if (!list) { list = []; this.index.set(n, list); }
+        // Brands are visited in ascending order, so lists stay sorted.
+        if (list[list.length - 1] !== bi) list.push(bi);
+        lengths.add(n.length);
+      }
+    });
+    this.lengths = [...lengths].sort((a, b) => a - b);
+  }
+
+  get empty(): boolean {
+    return this.brands.length === 0;
+  }
+
+  /** Index of the winning brand for `domain`, or -1. */
+  private bestBrand(domain: string): number {
+    let best = Number.MAX_SAFE_INTEGER;
+    const consider = (list: number[]): void => {
+      for (const bi of list) {
+        if (bi >= best) return;
+        if (this.brands[bi]!.domain !== domain) { best = bi; return; }
+      }
+    };
+    consider(this.always);
+    for (const len of this.lengths) {
+      if (len > domain.length) break;
+      for (let i = 0; i + len <= domain.length; i++) {
+        const list = this.index.get(domain.substring(i, i + len));
+        if (list) consider(list);
+        if (best === 0) return 0;
+      }
+    }
+    return best === Number.MAX_SAFE_INTEGER ? -1 : best;
+  }
+
+  collect(domains: string[], matched: Set<string>): { rows: ThreatRow[]; inPayloadDuplicates: number } {
+    const rows: ThreatRow[] = [];
+    let inPayloadDuplicates = 0;
+    for (const domain of domains) {
+      const bi = this.bestBrand(domain);
+      if (bi < 0) continue;
+      if (matched.has(domain)) { inPayloadDuplicates++; continue; }
+      matched.add(domain);
+      rows.push({
+        id: threatId("nrd_hagezi", "domain", domain),
+        source_feed: "nrd_hagezi",
+        threat_type: "typosquatting",
+        malicious_url: null,
+        malicious_domain: domain,
+        target_brand_id: this.brands[bi]!.id,
+        ioc_value: domain,
+        severity: "medium",
+        confidence_score: 60,
+      });
+    }
+    return { rows, inPayloadDuplicates };
+  }
+}
+
+/**
+ * Pure domain × brand match pass — no I/O. One row per distinct matched
+ * domain: the FIRST brand (in `brandKeywords` order) whose needles hit wins,
+ * a brand's own canonical domain never matches that brand, and a domain
+ * repeated in the list counts as an in-payload duplicate. Pass `matched` to
+ * carry the seen-set across chunks of one run (the feed does).
+ *
+ * Exported for unit tests.
+ */
+export function collectBrandMatchRows(
+  domains: string[],
+  brandKeywords: Array<{ id: string; domain: string; needles: string[] }>,
+  matched: Set<string> = new Set<string>(),
+): { rows: ThreatRow[]; inPayloadDuplicates: number } {
+  return new BrandMatcher(brandKeywords).collect(domains, matched);
+}
+
+/**
+ * Store NRDs in the reference table for later analysis (phantom matcher,
+ * infrastructure correlation). INSERT OR IGNORE keeps re-runs (and in-list
+ * duplicates) idempotent: the first registered_date written for a domain
+ * wins.
  *
  * Exported for the D1 bind-limit regression test.
  */
@@ -452,14 +775,6 @@ export async function storeNrdReference(db: D1Database, domains: string[], date:
 function brandNeedles(keyword: string): string[] {
   if (keyword.length < 3) return [];
   return [keyword, ...generateHomoglyphVariants(keyword)];
-}
-
-/** True if the domain contains any of the brand's needles. */
-function domainMatchesNeedles(domain: string, needles: string[]): boolean {
-  for (const n of needles) {
-    if (domain.includes(n)) return true;
-  }
-  return false;
 }
 
 /** Generate simple homoglyph variants of a keyword */

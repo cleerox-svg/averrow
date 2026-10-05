@@ -10,10 +10,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { nrd_hagezi, collectBrandMatchRows } from "../src/feeds/nrd_hagezi";
+import { nrd_hagezi, collectBrandMatchRows, NRD_SNAPSHOT_KEY } from "../src/feeds/nrd_hagezi";
 import { THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { fakeR2Bucket, gzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
 const D1_MAX_BINDS = 100;
@@ -80,6 +81,18 @@ function countingKv(seed: Record<string, string> = {}): CountingKv {
 let raw: SqliteDb;
 let stats: Stats;
 let db: D1Database;
+let r2: FakeR2Bucket;
+
+/**
+ * The feed diffs the list against the previous run's R2 snapshot and, with
+ * no snapshot, only bootstraps. These tests are about the D1 write path, so
+ * they start from an EMPTY prior snapshot: every listed domain is "new".
+ */
+async function emptyPriorSnapshot(): Promise<FakeR2Bucket> {
+  return fakeR2Bucket({
+    [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(""), customMetadata: { version: "prior" } },
+  });
+}
 
 const count = (sql: string, ...p: unknown[]): number =>
   (raw.prepare(sql).all(...p)[0] as { n: number }).n;
@@ -87,12 +100,14 @@ const count = (sql: string, ...p: unknown[]): number =>
 const brandThreatCount = (id: string): number =>
   (raw.prepare("SELECT threat_count AS n FROM brands WHERE id = ?").all(id)[0] as { n: number }).n;
 
+/** Serve a list in the upstream's byte-sorted order (the diff requires it). */
 function serve(domains: string[]): void {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(`# header\n${domains.join("\n")}\n`, { status: 200 })));
+  const body = `# header\n${[...domains].sort().join("\n")}\n`;
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
 }
 
 async function ingest(kv: KVNamespace) {
-  const env = { DB: db, CACHE: kv } as unknown as Env;
+  const env = { DB: db, CACHE: kv, GEOIP_STAGING: r2.bucket } as unknown as Env;
   return nrd_hagezi.ingest({ env, feedName: "nrd_hagezi", feedUrl: "" });
 }
 
@@ -104,10 +119,11 @@ function seedBrand(id: string, name: string, canonical: string): void {
 }
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
     stats = { maxBinds: 0, roundTrips: 0, batchCalls: 0 };
     db = instrumented(d1FromSqlite(raw), stats);
+    r2 = await emptyPriorSnapshot();
   });
 
   afterEach(() => {
@@ -152,7 +168,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(brandThreatCount("b_acme")).toBe(3);
   });
 
-  it("re-running the same archive yields 0 new, all duplicates, and leaves threat_count unchanged", async () => {
+  it("a retry that re-diffs the same list (snapshot not advanced) yields 0 new, all duplicates, threat_count unchanged", async () => {
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
     const domains = [...Array.from({ length: 120 }, (_, i) => `acmebank-${i}.example`), "plain.example"];
     serve(domains);
@@ -161,7 +177,10 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(first).toEqual({ itemsFetched: 121, itemsNew: 120, itemsDuplicate: 0, itemsError: 0 });
     expect(brandThreatCount("b_acme")).toBe(120);
 
+    // Simulate a retry after a run whose snapshot PUT never happened: the
+    // same list is diffed against the same (empty) prior snapshot again.
     // Fresh KV (cold cache) — dedup is the PK, not the 24h KV key.
+    r2 = await emptyPriorSnapshot();
     const second = await ingest(countingKv().kv);
     expect(second).toEqual({ itemsFetched: 121, itemsNew: 0, itemsDuplicate: 120, itemsError: 0 });
     expect(brandThreatCount("b_acme")).toBe(120);
@@ -245,6 +264,9 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = 'acmebank-50.example'")).toBe(0);
     expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = 'acmebank-100.example'")).toBe(1);
     expect(brandThreatCount("b_acme")).toBe(70);
+    // The failed chunk must be retried: the snapshot is NOT advanced.
+    expect(r2.ops.put).toBe(0);
+    expect(r2.store.get(NRD_SNAPSHOT_KEY)?.customMetadata.version).toBe("prior");
   });
 
   it("writes the same threat fields the per-row path did", async () => {
