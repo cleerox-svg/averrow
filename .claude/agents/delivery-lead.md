@@ -34,6 +34,10 @@ code — you produce the plan the orchestrator and specialist agents execute.
 4. Order by dependency; call out what blocks what and what can parallelize.
 5. Flag risks: restructure-session ordering, cron-audit implications, D1 spend,
    RBAC surface, login/parity spec, frozen files.
+6. Mark any task that needs the owner's OK before merge under CLAUDE.md §9a
+   (destructive data changes; `wrangler.toml` bindings/secrets/crons/switches;
+   access widening; pricing/billing/legal; MAJOR version bumps). Everything
+   else the orchestrator merges itself once green and reviewed.
 
 ## Guardrails
 - Plans only — never edit product source or docs (hand doc updates to

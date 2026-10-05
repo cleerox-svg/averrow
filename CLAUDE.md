@@ -71,6 +71,10 @@ owns that surface.
    a draft PR. Then `content-strategist` (changelog + version for
    user-facing releases), `docs-maintainer` (any doc drift),
    `platform-sre` (confirm health) as applicable.
+7. **Merge** — the orchestrator merges the PR itself once it meets the
+   §9a merge criteria; the owner does not need to be asked. Subagents
+   never merge. After merge: confirm the deploy, then branch fresh from
+   `master` for any follow-up.
 
 **When you may skip the pipeline:** trivial mechanical edits (a typo, a
 one-line copy tweak, a comment), pure doc/changelog edits (still route
@@ -1403,6 +1407,72 @@ docs(claude): update standing instructions for restructure
 
 ---
 
+## 9a. Merge Policy — Claude Merges (owner decision 2026-10-05)
+
+The owner no longer merges PRs by hand. **The orchestrating Claude session
+decides when a PR merges and merges it.** This is standing authorization:
+don't ask "should I merge?" for a PR that meets the criteria below.
+
+**Who may merge**
+- Only the **orchestrator** (the main session driving the work), and only
+  PRs it opened or that the owner asked it to drive. Never someone else's PR.
+- **Subagents never merge**, never mark a PR ready for review, never tag
+  and never push to `master`. They build, test, review and report; the
+  orchestrator integrates, commits, and decides.
+
+**Merge when ALL of these hold on the current head SHA**
+1. Every CI check run is `completed` + `success`. No check still running,
+   no red, no skipped-to-pass. Never merge red; never skip, disable or
+   quarantine a test to get green (§1A: failures go back to the owner of
+   the code).
+2. `mergeable_state` is `clean`: no conflicts. Resolve conflicts by merging
+   `master` into the branch, then re-run the gate.
+3. The §1A pipeline ran for the change:
+   - the local gate passed (typecheck + `check:resource-drift` + tests for
+     every touched package; `qa-verifier` for non-trivial changes);
+   - the required review lanes ran: `code-reviewer` for any non-trivial
+     diff, `appsec-reviewer` when it touches auth/RBAC/sessions/data
+     exposure, `design-reviewer` when it changes UI;
+   - **no unresolved blocking finding**: every High/Medium correctness or
+     security finding is fixed and re-verified. Low/polish items may ship
+     only if they are listed as follow-ups in the PR description.
+4. No open human review thread and no "changes requested" review.
+5. The PR description matches what is actually in the diff.
+
+**How to merge**
+- Take the PR out of draft, then merge with `merge_method: "merge"`
+  (merge commits are this repo's convention) and `expectedHeadSha` set to
+  the SHA you verified, so a late push can't slip in unverified.
+- Prefer small PRs merged as each goes green over one long-lived PR.
+  Once a PR is merged it is finished: follow-up work restarts the branch
+  from the new `master` and opens a new PR.
+
+**After merge**
+- Check the `Deploy — Averrow Worker` run (`deploy-radar.yml`) for the
+  merge commit, including the migration step. A failed deploy is work
+  now: fix forward in a new PR, or tell the owner exactly what is blocked.
+- If `platform-version.json` changed, `tag-release.yml` creates the
+  `vX.Y.Z` tag automatically (no manual tagging). If the version bump
+  merged in an earlier PR, run the workflow manually (`workflow_dispatch`).
+- Tell the owner what merged, in one short summary.
+
+**Do NOT auto-merge; get the owner's explicit OK first** when the PR:
+- drops, rebuilds or rewrites existing tables/columns, or deletes or
+  overwrites user data (additive migrations — new tables, `ADD COLUMN`,
+  non-destructive backfills — are fine);
+- changes `wrangler.toml` bindings, secrets, cron schedules, or platform
+  switches (`AI_MODE`, `ABUSE_AI_PROVIDER`), or adds a paid external service;
+- widens access (a role gains permissions, an endpoint loses a guard, a
+  tenant boundary changes);
+- changes pricing, billing/Stripe behaviour, or legal/policy content
+  (privacy, terms, DPA);
+- bumps the MAJOR version;
+- is something the owner said to hold.
+For these, get the PR green and fully reviewed, then ask once, with
+the exact risk stated.
+
+---
+
 ## 9b. Versioning & Changelogs
 
 Single **platform version** `MAJOR.MINOR.PATCH`, source of truth
@@ -1427,7 +1497,8 @@ Single **platform version** `MAJOR.MINOR.PATCH`, source of truth
      history table are the remaining versioning slices.)*
 - When shipping a user-facing release: bump `/platform-version.json`, add a
   public + staff changelog entry (strip proprietary detail from the public
-  one), and tag `vX.Y.Z` on `master`.
+  one). The `vX.Y.Z` tag is created automatically on `master` by
+  `.github/workflows/tag-release.yml` when the version change merges (§9a).
 
 ---
 

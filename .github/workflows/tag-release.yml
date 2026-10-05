@@ -1,0 +1,52 @@
+name: Tag release
+
+# Creates the vX.Y.Z tag for a platform version as soon as it lands on
+# master (CLAUDE.md §9b / §9a). platform-version.json is the source of
+# truth: when a merge changes it, the merge commit that brought the change
+# onto master is tagged — unless that tag already exists. Idempotent, so a
+# re-run or an unrelated push never moves or duplicates a tag.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "platform-version.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag platform version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create tag if missing
+        run: |
+          set -euo pipefail
+          version=$(jq -r '.version' platform-version.json)
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::platform-version.json version '$version' is not MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists at $(git rev-list -n1 "$tag"); nothing to do."
+            exit 0
+          fi
+          # The first-parent commit on master that last changed the version
+          # file: the merge commit for a merged PR.
+          target=$(git log --first-parent -1 --format=%H -- platform-version.json)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" "$target" -m "$tag"
+          git push origin "refs/tags/$tag"
+          echo "Tagged $tag at $target"
