@@ -146,3 +146,24 @@ for (const width of [1024, 1280, 1440]) {
     });
   });
 }
+
+test("homepage story: tabs scroll in a row at 390 and the page does not overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const s = page.locator("#operation-story");
+  await s.scrollIntoViewIfNeeded();
+  const m = await page.evaluate(() => {
+    const ol = document.querySelector("#operation-story [data-steps]") as HTMLElement;
+    return { doc: document.documentElement.scrollWidth, vw: window.innerWidth, scrolls: ol.scrollWidth > ol.clientWidth, flex: getComputedStyle(ol).display };
+  });
+  expect(m.doc).toBeLessThanOrEqual(m.vw);
+  expect(m.flex).toBe("flex");
+  expect(m.scrolls).toBe(true);
+  // No layout shift between steps: the stage height is constant.
+  const h = async () => (await s.locator("[data-stage]").boundingBox())!.height;
+  const before = await h();
+  for (const i of [1, 2, 3, 4]) {
+    await s.getByRole("tab").nth(i).click();
+    expect(Math.abs((await h()) - before)).toBeLessThan(1);
+  }
+});

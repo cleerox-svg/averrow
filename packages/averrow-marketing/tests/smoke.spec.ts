@@ -196,3 +196,88 @@ test.describe("navigation (mobile menu)", () => {
     }
   });
 });
+
+test.describe("homepage: follow one operation", () => {
+  const TITLES = [
+    "A lookalike is registered",
+    "It goes live",
+    "It isn't alone",
+    "It spreads beyond domains",
+    "It comes down",
+  ];
+
+  test("renders five steps, the illustrative label and working links", async ({ page: p, request }) => {
+    await p.goto("/");
+    const s = p.locator("#operation-story");
+    await expect(s.getByRole("heading", { level: 2 })).toContainText("From one fake domain");
+    await expect(s.getByRole("tab")).toHaveCount(5);
+    await expect(s.getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
+    await expect(s.getByRole("tabpanel")).toHaveCount(1); // only the active panel is exposed
+    await expect(s).toContainText("Illustrative example · names and domains changed · timings vary by operation");
+    // The removed six-card section is gone.
+    await expect(p.getByText("Automated analysis", { exact: true })).toHaveCount(0);
+    // Step 1 makes no timing claim.
+    await expect(s.getByRole("tabpanel")).toContainText("new-registration data");
+    expect((await s.innerText()).toLowerCase()).not.toContain("within hours");
+
+    // /scan is served by the Worker (same href as the nav CTA), so the preview server can't resolve it.
+    await expect(s.getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", "/scan");
+    const sample = s.getByRole("link", { name: /View the sample report/ });
+    const href = await sample.getAttribute("href");
+    expect(href).toMatch(/\/resources\/sample-operation-report$/);
+    expect((await request.get(href!)).status()).toBeLessThan(400);
+  });
+
+  test("keyboard navigation changes the active step", async ({ page: p }) => {
+    await p.goto("/");
+    const tabs = p.locator("#operation-story").getByRole("tab");
+    await tabs.first().focus();
+    await p.keyboard.press("ArrowRight");
+    await expect(tabs.nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(tabs.nth(1)).toBeFocused();
+    await p.keyboard.press("End");
+    await expect(tabs.nth(4)).toHaveAttribute("aria-selected", "true");
+    await expect(p.locator("#operation-story [role=tabpanel]:visible")).toContainText("8 of 14");
+    await expect(p.locator("#operation-story [data-graph]")).toHaveAttribute("aria-label", /step 5 of 5/);
+    await p.keyboard.press("Home");
+    await expect(tabs.first()).toHaveAttribute("aria-selected", "true");
+    await p.keyboard.press("ArrowLeft"); // wraps
+    await expect(tabs.nth(4)).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("does not auto-advance under reduced motion", async ({ browser }) => {
+    const ctx = await browser.newContext({ reducedMotion: "reduce" });
+    const p = await ctx.newPage();
+    await p.goto("/");
+    await p.locator("#operation-story").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(6000);
+    await expect(p.locator("#operation-story").getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
+    await ctx.close();
+  });
+
+  test("auto-advances once, then stops, when motion is allowed", async ({ browser }) => {
+    const ctx = await browser.newContext({ reducedMotion: "no-preference" });
+    const p = await ctx.newPage();
+    await p.goto("/");
+    await p.locator("#operation-story [data-body]").scrollIntoViewIfNeeded();
+    await expect(p.locator("#operation-story").getByRole("tab").nth(1)).toHaveAttribute("aria-selected", "true", { timeout: 9000 });
+    // Any interaction stops it.
+    await p.locator("#operation-story").getByRole("tab").nth(1).click();
+    await p.waitForTimeout(4600);
+    await expect(p.locator("#operation-story").getByRole("tab").nth(1)).toHaveAttribute("aria-selected", "true");
+    await ctx.close();
+  });
+
+  test("is fully readable with JavaScript disabled", async ({ browser }) => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false });
+    const p = await ctx.newPage();
+    await p.goto("/");
+    const s = p.locator("#operation-story");
+    for (const t of TITLES) await expect(s.getByRole("heading", { level: 3, name: t })).toBeVisible();
+    await expect(s.getByText("OP-2291 · Payroll-portal phishing kit")).toBeVisible();
+    await expect(s.getByText("8 of 14")).toBeVisible();
+    await expect(s.locator("svg[role=img]")).toHaveAttribute("aria-label", /14 domains/);
+    await expect(s.getByRole("tab")).toHaveCount(0);
+    await ctx.close();
+  });
+});
