@@ -46,7 +46,7 @@ When multiple categories are flagged at once, prioritize in this order:
 1. **Email posture gaps you control.** Fix these first because they're free, fast, and they reduce the blast radius of everything else. A brand with strong DMARC enforcement makes every subsequent phishing attempt harder to pull off convincingly, even the ones using lookalike infrastructure.
 2. **Active, weaponized external threats.** A phishing domain with live content and an MX record beats a parked domain for urgency, every time. Averrow's risk scoring reflects this — activity level matters more than raw domain count.
 3. **Live social impersonation.** Especially anything actively engaging with real accounts, since the harm compounds with every interaction the fake account has before takedown.
-4. **Everything else in the queue.** Dormant registrations, low-confidence social matches, and stale threat feed mentions still deserve attention, but they're lower urgency than the three categories above.
+4. **Everything else in the queue.** Dormant registrations, low-confidence social matches, and stale threat signals still deserve attention, but they're lower urgency than the three categories above.
 
 This is also why Averrow writes plain-language summaries instead of just listing alerts. A newly registered domain sharing infrastructure with a domain already flagged in a threat feed, paired with a known DKIM gap on your side, isn't three separate line items — it's one compound risk that deserves to be read as a single story with a single next action.
 
@@ -54,4 +54,4 @@ This is also why Averrow writes plain-language summaries instead of just listing
 
 No score is ever "finished." Brand exposure changes with your DNS configuration, your social footprint, and what attackers are doing in the world that has nothing to do with you. The goal isn't to chase a perfect number — it's to know, continuously, which of the four categories needs attention this week, and to close the gaps you control before someone else finds them.
 
-If you want to see how your own brand breaks down across these categories, [scan your domain](/scan) — it takes a few minutes and requires no signup. For a deeper look at how the score is produced, see the [platform overview](/platform).
+If you want to see how your own brand breaks down across these categories, [scan your domain](/scan) — the free scan grades your email authentication and counts registered lookalike domains (it's a snapshot, not your full exposure score), and requires no signup. For a deeper look at how the score is produced, see the [platform overview](/platform).

@@ -12,7 +12,7 @@
  * Runs after astro build but BEFORE sync-to-worker (so the
  * sitemap files get copied into public/ along with the rest).
  *
- * Worker-served paths (privacy, terms, scan, status)
+ * Worker-served paths (privacy, terms, status)
  * are listed at the bottom — they're not in Astro's output but
  * still need to be in the sitemap so crawlers find them.
  */
@@ -32,7 +32,6 @@ const SITE = "https://averrow.com";
 const WORKER_ROUTES = [
   "/privacy",
   "/terms",
-  "/scan",
   "/status",
 ];
 
