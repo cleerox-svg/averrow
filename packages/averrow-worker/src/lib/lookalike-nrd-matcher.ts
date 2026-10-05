@@ -242,7 +242,14 @@ export const NRD_LOOKALIKE_JOIN_SQL =
       AND (n.created_at, n.rowid) <= (?, ?)`;
 
 /**
- * The claim. See the module header for each guard. Exported so the
+ * The claim. See the module header for each guard.
+ *
+ * It also reverts an AUTO-benign row (the official-domain rule's
+ * `status_reason LIKE 'auto:%'`, migration 0283) to `monitoring`: a
+ * registry listing of the domain as newly registered contradicts "this is
+ * an established brand's official domain", so the checker must see a
+ * normal row and file the new-registration alert. Both CASEs read the
+ * pre-update row. Human-set benign (no `auto:` reason) is untouched. Exported so the
  * real-SQLite test runs THIS text.
  */
 export const NRD_LOOKALIKE_CLAIM_SQL =
@@ -250,6 +257,10 @@ export const NRD_LOOKALIKE_CLAIM_SQL =
       SET first_seen = ?,
           registration_evidence = 'nrd',
           check_due_at = ?,
+          status = CASE WHEN status = 'benign' AND status_reason LIKE 'auto:%'
+                        THEN 'monitoring' ELSE status END,
+          status_reason = CASE WHEN status = 'benign' AND status_reason LIKE 'auto:%'
+                               THEN NULL ELSE status_reason END,
           updated_at = datetime('now')
     WHERE id = ?
       AND first_seen IS NULL

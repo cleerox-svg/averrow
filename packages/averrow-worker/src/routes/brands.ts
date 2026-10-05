@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireStaff, requireStaffMutation, requireAdmin, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireStaff, requireStaffMutation, requireAdmin, requirePermission, isAuthContext, getOrgScope } from "../middleware/auth";
 import {
   handleListBrands, handleTopTargetedBrands, handleMonitoredBrands,
   handleAddMonitoredBrand, handleRemoveMonitoredBrand, handleGetBrand,
@@ -195,20 +195,24 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleListSafeDomains(request, env, request.params["id"] ?? "");
   });
+  // Safe-domain WRITES gate on `manage_takedowns` (super_admin, admin,
+  // analyst): a manual/csv_upload row is trusted platform-wide by the
+  // lookalike official-domain rule and suppresses takedowns. See
+  // handlers/safeDomains.ts.
   router.post("/api/brands/:id/safe-domains", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleAddSafeDomain(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.post("/api/brands/:id/safe-domains/bulk", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleBulkAddSafeDomains(request, env, request.params["id"] ?? "", ctx.userId);
   });
   router.delete("/api/brands/:id/safe-domains/:domainId", async (request: Request & { params: Record<string, string> }, env: Env) => {
-    const ctx = await requireStaffMutation(request, env);
+    const ctx = await requirePermission("manage_takedowns")(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleDeleteSafeDomain(request, env, request.params["id"] ?? "", request.params["domainId"] ?? "");
+    return handleDeleteSafeDomain(request, env, request.params["id"] ?? "", request.params["domainId"] ?? "", ctx.userId);
   });
 
   // ─── Social Monitoring (integrated with brands) ───────────────────

@@ -204,12 +204,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </div>
       <div class="cap-visual">
         <div class="agent-grid-vert">
-          <div class="agent-row" style="border-left-color:#C83C3C;"><div class="ar-name" style="color:var(--red-text);">Threat Detection</div><div class="ar-role">Certificate &amp; domain surveillance</div></div>
-          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:var(--amber-text);">Scoring &amp; Triage</div><div class="ar-role">Composite exposure scoring</div></div>
-          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Infrastructure Correlation</div><div class="ar-role">Linking threats that share infrastructure</div></div>
-          <div class="agent-row" style="border-left-color:#065A78;"><div class="ar-name" style="color:var(--blue-text);">DNS Resolution</div><div class="ar-role">Infrastructure resolution</div></div>
-          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:var(--slate-text);">Timeline &amp; Narrative</div><div class="ar-role">Plain-language incident writeups</div></div>
-          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:var(--green-text);">Geo &amp; Provider Mapping</div><div class="ar-role">Hosting &amp; regional mapping</div></div>
+          <div class="agent-row" style="border-left-color:#C83C3C;"><div class="ar-name" style="color:var(--red-text);">Threat Detection</div><div class="ar-role">Certificate &amp; domain surveillance</div><div class="ar-desc">Continuous monitoring across threat feeds and certificate logs.</div></div>
+          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:var(--amber-text);">Scoring &amp; Triage</div><div class="ar-role">Composite exposure scoring</div><div class="ar-desc">Classifies, scores and prioritises threat severity.</div></div>
+          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Infrastructure Correlation</div><div class="ar-role">Linking shared infrastructure</div><div class="ar-desc">Groups threats into operations by shared hosting, certificates and registration patterns.</div></div>
+          <div class="agent-row" style="border-left-color:#065A78;"><div class="ar-name" style="color:var(--blue-text);">DNS Resolution</div><div class="ar-role">Infrastructure resolution</div><div class="ar-desc">Resolves domains to hosts as attackers rotate infrastructure.</div></div>
+          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:var(--slate-text);">Timeline &amp; Narrative</div><div class="ar-role">Plain-language incident writeups</div><div class="ar-desc">Captures threat timelines and plain-language summaries.</div></div>
+          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:var(--green-text);">Geo &amp; Provider Mapping</div><div class="ar-role">Hosting &amp; regional mapping</div><div class="ar-desc">Maps resolved infrastructure to provider and region.</div></div>
+          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Takedowns</div><div class="ar-role">Removal requests</div><div class="ar-desc">Files removal requests with hosts and registrars and tracks each one to resolution.</div></div>
         </div>
         <div class="narrative-block">
           <div class="narrative-label"><span class="narrative-dot"></span> Illustrative example</div>
@@ -630,9 +631,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-right: 1px solid rgba(255,255,255,0.03);
     border-bottom: 1px solid rgba(255,255,255,0.03);
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
+    gap: 0.25rem 0.75rem;
   }
+  .ar-desc { flex-basis: 100%; font-size: 0.82rem; line-height: 1.5; color: var(--text-secondary); }
   :global([data-theme="light"]) .agent-row { background: rgba(255,255,255,0.6); }
   .ar-name {
     font-family: var(--font-mono);

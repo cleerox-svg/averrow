@@ -65,6 +65,10 @@ const EXPECTED_COLUMNS = [
   // ('nrd' | 'observed') and when the new-registration alert was claimed.
   // Explains why a row did or did not alert. Added by hand.
   "registration_evidence", "registration_alerted_at",
+  // 0283 status reason — why a row is benign when nobody marked it by
+  // hand (another brand's trusted official domain). Fixed text + a brand
+  // name. Added by hand.
+  "status_reason",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

@@ -26,7 +26,7 @@
  * flight-control-ai-calls-failing.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { executeAgent } from "../src/lib/agentRunner";
 import { analystAgent } from "../src/agents/analyst";
 import { computeIsStalled, isOrphanedRun } from "../src/agents/flightControl";
@@ -46,6 +46,15 @@ interface Run {
 }
 
 describe.skipIf(!hasSqlite())("strictly-API counters and run status — analyst (real SQLite, stubbed fetch)", () => {
+  // Warm the agent registry once. lib/per-agent-budget.ts and this file lazily
+  // `import("../src/agents")` (~45 modules, circular so never static). Cold,
+  // that can outrun the 5s per-test timeout on a loaded machine and leave the
+  // module half-evaluated for later tests. Own generous budget -> cache hits.
+  beforeAll(async () => {
+    const mod = await import("../src/agents/index");
+    expect(Object.keys(mod.agentModules).length).toBeGreaterThan(0);
+  }, 120_000);
+
   let raw: SqliteDb;
   let net: RoutedFetch;
 

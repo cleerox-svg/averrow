@@ -30,7 +30,7 @@
  * (no such column, malformed JSON, syntax) propagates.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -69,6 +69,19 @@ const TABLES = [...ANALYST_TABLES];
 const swallowOnlyAbsentUnrelatedTables = (_sql: string, err: Error): boolean => /no such table/i.test(err.message);
 
 describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunction gate (real SQLite)", () => {
+  // FC's getAgentsToMonitor() lazily `import("./index")`es the whole agent
+  // registry (a circular dependency, so it cannot be a static import). Cold,
+  // that transforms ~45 modules and can exceed the 5s per-test timeout on a
+  // loaded machine; the first test then times out while the import is still
+  // in flight, and every later test's import observes the half-evaluated
+  // module (agentModules undefined -> "Cannot convert undefined or null to
+  // object"). Warming it once, with its own generous timeout, makes the
+  // per-test path a cache hit regardless of load.
+  beforeAll(async () => {
+    const mod = await import("../src/agents/index");
+    expect(Object.keys(mod.agentModules).length).toBeGreaterThan(0);
+  }, 120_000);
+
   let raw: SqliteDb;
   let log: StatementLogEntry[];
   let warn: { mock: { calls: unknown[][] } };

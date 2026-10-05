@@ -144,7 +144,7 @@ export interface Backlog {
   // source. There is no copy here — `check_due_at` lives on the rows it
   // schedules — so there is nothing to reconcile and nothing to reap.
   lookalikeDnsDue:  number;  // rows eligible for a DNS check right now
-  lookalikeParked:  number;  // rows the backoff ladder gave up on
+  lookalikeParked:  number;  // rows the backoff ladder gave up on (excludes auto-benign parks)
 }
 
 interface DegradedFeed {
@@ -2400,7 +2400,16 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     // Rows the backoff ladder PARKED (`check_due_at = NULL`) — the
     // ladder's terminal step after ~10 days of unanswerable DNS. Served
     // by `idx_lookalike_parked`, a partial index that is tiny by
-    // construction. Monitoring TTL: a parked row is by definition on a
+    // construction.
+    //
+    // `last_check_failed_at IS NOT NULL` restricts the count to LADDER
+    // parks: the ladder always stamps a failure (`stampCheckFailure`),
+    // while rows the official-domain rule parks as benign (another
+    // brand's trusted official domain, lib/alert-triage.ts
+    // `markLookalikeRowBenign` + the seeder) carry no failure stamp and
+    // stay parked by design — counting them would grow this gauge
+    // forever and trip the warning below falsely. The extra term is the
+    // index's own key, so it stays an index read. Monitoring TTL: a parked row is by definition on a
     // long cadence, so this does not need to be fresh every tick.
     //
     // Left EXACT rather than bounded like the due gauge above: the
@@ -2410,6 +2419,7 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     cacheCount('backlog.lookalike_parked', BACKLOG_TTL_MONITORING_S, `
       SELECT COUNT(*) as count FROM lookalike_domains
       WHERE check_due_at IS NULL
+        AND last_check_failed_at IS NOT NULL
     `, true),
   ]);
 

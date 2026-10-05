@@ -12,6 +12,7 @@ import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
+import { loadOfficialDomainMatches, officialDomainNote, resolveOfficialDomain } from '../lib/safeDomains';
 import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
 import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
 import type { PagePhishingResult, PageThreatLevel } from '../lib/page-phishing-scorer';
@@ -1090,6 +1091,33 @@ export async function generateAndStoreLookalikes(
   const permutations = generatePermutations(domain);
   if (permutations.length === 0) return 0;
 
+  // A permutation that is another brand's TRUSTED official domain
+  // (lib/safeDomains.ts — staff safe domains, or the canonical domain of a
+  // customer / manual / curated / Tranco top-20,000 brand) is not a squat:
+  // zoom.com is a TLD swap of zoom.us. It is still STORED — as
+  // status='benign' with a `status_reason`, parked (check_due_at NULL, so
+  // the checker never spends budget on it and the un-park sweep never
+  // re-admits it, having no failure stamp) — so the decision is auditable
+  // and reversible, and Sparrow (which skips benign) never drafts a
+  // takedown against it. Untrusted matches (ai_attributed / public /
+  // self-service brands, long-tail Tranco typosquats) seed normally.
+  // Same resolver as the alert-time rule (lib/alert-triage.ts
+  // `decideLookalikeRegistrationTriage`), so the two cannot drift.
+  // Batched at <=99 binds. FAIL-OPEN: a lookup error seeds everything
+  // normally, as before; the triage rule still handles any alert.
+  const benignReason = new Map<string, string>();
+  try {
+    const official = await loadOfficialDomainMatches(env.DB, permutations.map((p) => p.domain));
+    for (const p of permutations) {
+      const { trusted } = resolveOfficialDomain(p.domain, official);
+      if (trusted) benignReason.set(p.domain, officialDomainNote(p.domain, trusted));
+    }
+  } catch (err) {
+    logger.warn('lookalike_official_domain_filter_failed', {
+      brand_id: brandId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
   let inserted = 0;
 
   // Batch insert in groups of 10 to stay within D1 limits
@@ -1098,6 +1126,14 @@ export async function generateAndStoreLookalikes(
     const batch = permutations.slice(i, i + BATCH);
     const stmts = batch.map((perm) => {
       const id = crypto.randomUUID();
+      const reason = benignReason.get(perm.domain);
+      if (reason) {
+        return env.DB.prepare(
+          `INSERT OR IGNORE INTO lookalike_domains
+             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at)
+           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL)`,
+        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason);
+      }
       return env.DB.prepare(
         `INSERT OR IGNORE INTO lookalike_domains
            (id, brand_id, domain, permutation_type, unicode_domain, check_due_at)
@@ -1115,6 +1151,7 @@ export async function generateAndStoreLookalikes(
     brand_id: brandId,
     domain,
     total_permutations: permutations.length,
+    official_domains_benign: benignReason.size,
     new_stored: inserted,
   });
 
@@ -1627,8 +1664,30 @@ export function isNrdPending(
  * never given a new-registration alert — same rule as the mail+web catch-up:
  * a human decision outranks the exemption. Such a row, and a row whose
  * event already has its alert, falls back to the ordinary floored path
- * (HIGH+ only), so an operational escalation is still reported.
+ * (HIGH+ only), so an operational escalation is still reported. *
+ * EXCEPT an AUTO-benign row (`status_reason LIKE 'auto:%'` — the
+ * official-domain rule decided it is another brand's trusted official
+ * domain; no human did). A confirmed registration event contradicts that
+ * premise (an established brand's domain is not newly registered — the
+ * registry or DNS just saw it (re-)registered, e.g. after a lapse), so the
+ * row is reverted to `monitoring` (reason cleared) BEFORE the claim, the
+ * new-registration alert files, and Sparrow can act on it. The triage rule
+ * refuses to dismiss that alert (it carries new_registration). The NRD
+ * claim (lib/lookalike-nrd-matcher.ts) applies the same revert in SQL.
+ * Human-set benign (no `auto:` reason) stays benign.
  */
+async function revertAutoBenignOnRegistration(env: Env, row: LookalikeCheckRow): Promise<void> {
+  if (row.status !== 'benign') return;
+  const res = await env.DB.prepare(
+    `UPDATE lookalike_domains
+        SET status = 'monitoring',
+            status_reason = NULL,
+            updated_at = datetime('now')
+      WHERE id = ? AND status = 'benign' AND status_reason LIKE 'auto:%'`,
+  ).bind(row.id).run();
+  if ((res.meta?.changes ?? 0) > 0) row.status = 'monitoring';
+}
+
 async function fileConfirmedRegistration(
   env: Env,
   row: LookalikeCheckRow,
@@ -1642,6 +1701,9 @@ async function fileConfirmedRegistration(
     counters: LookalikeCheckSummary;
   },
 ): Promise<void> {
+  // See the block comment above: who gets the registration alert, and why
+  // an AUTO-benign row is reverted first.
+  await revertAutoBenignOnRegistration(env, row);
   const claimed = await claimRegistrationAlert(env, row.id);
   const dispositioned = row.status === 'benign' || row.status === 'taken_down';
   const alertState = { filed: false };

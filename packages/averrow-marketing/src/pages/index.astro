@@ -14,6 +14,7 @@
  */
 import Layout from "../layouts/Layout.astro";
 import ByTheNumbers from "../components/ByTheNumbers.astro";
+import OperationStory from "../components/OperationStory.astro";
 import liveStats from "../data/stats.json";
 
 const stats = liveStats;
@@ -191,86 +192,7 @@ const toneVar: Record<Tone, string> = {
 
   <hr class="tr-divider-animated" />
 
-  <section class="squadron">
-    <div class="section-label">Automated analysis</div>
-    <h2 class="squadron-title">Rule-based correlation. Evidence you can see.</h2>
-    <p class="squadron-subtitle">
-      Six automated stages cross-reference signals across email, domains,
-      social, and threat feeds. Correlation is rule-based and deterministic, so
-      every score traces back to the evidence behind it. Behind them, further
-      automated processes handle enrichment, infrastructure clustering, social
-      discovery, and platform health monitoring.
-    </p>
-    <div class="agent-grid">
-      <div class="agent-card" style="--agent-color: #C83C3C;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#C83C3C">
-          <circle cx="14" cy="14" r="5"  stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
-          <circle cx="14" cy="14" r="11" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>
-          <circle cx="14" cy="14" r="1.5" fill="currentColor"/>
-          <line x1="14" y1="14" x2="14" y2="3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          <circle cx="20.5" cy="7.5" r="1.5" fill="#C83C3C" opacity="0.95"/>
-        </svg>
-        <div class="agent-name">Threat Detection</div>
-        <div class="agent-role">Feed &amp; Certificate Monitoring</div>
-        <div class="agent-desc">Continuous monitoring across threat feeds and certificate logs</div>
-      </div>
-      <div class="agent-card" style="--agent-color: #E5A832;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#E5A832">
-          <path d="M14 3 L25 14 L14 25 L3 14 Z" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="14" y1="3"  x2="14" y2="25" stroke="currentColor" stroke-width="1" opacity="0.35"/>
-          <line x1="3"  y1="14" x2="25" y2="14" stroke="currentColor" stroke-width="1" opacity="0.35"/>
-          <circle cx="14" cy="14" r="3" stroke="currentColor" stroke-width="1.5" opacity="0.6"/>
-          <circle cx="14" cy="14" r="1.5" fill="currentColor"/>
-        </svg>
-        <div class="agent-name">Scoring &amp; Triage</div>
-        <div class="agent-role">Composite Exposure Scoring</div>
-        <div class="agent-desc">Classifies, scores, and prioritizes threat severity</div>
-      </div>
-      <div class="agent-card" style="--agent-color: #0A8AB5;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#0A8AB5">
-          <path d="M2 14 Q14 4 26 14 Q14 24 2 14 Z" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="14" cy="14" r="4.5" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="14" cy="14" r="2"   fill="currentColor"/>
-        </svg>
-        <div class="agent-name">Takedowns</div>
-        <div class="agent-role">Removal Requests</div>
-        <div class="agent-desc">Files removal requests with hosts and registrars and tracks each one to resolution</div>
-      </div>
-      <div class="agent-card" style="--agent-color: #065A78;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#065A78">
-          <circle cx="14" cy="16" r="10" stroke="currentColor" stroke-width="1.5"/>
-          <ellipse cx="14" cy="16" rx="4" ry="10" stroke="currentColor" stroke-width="1" opacity="0.5"/>
-          <line x1="4" y1="16" x2="24" y2="16" stroke="currentColor" stroke-width="1" opacity="0.5"/>
-          <line x1="14" y1="2"  x2="14" y2="9"  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          <circle cx="14" cy="5.5" r="2.5" fill="currentColor"/>
-        </svg>
-        <div class="agent-name">DNS Resolution</div>
-        <div class="agent-role">Infrastructure Resolution</div>
-        <div class="agent-desc">Resolves domains to hosts as attackers rotate infrastructure</div>
-      </div>
-      <div class="agent-card" style="--agent-color: #8A8F9C;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#8A8F9C">
-          <rect x="2" y="6" width="24" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/>
-          <polyline points="3,14 6,14 8,9 10.5,18.5 13,11 15,16 17,14 25,14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="23.5" cy="8.5" r="2" fill="#C83C3C" opacity="0.9"/>
-        </svg>
-        <div class="agent-name">Timeline &amp; Summaries</div>
-        <div class="agent-role">Incident Writeups</div>
-        <div class="agent-desc">Captures threat timelines and plain-language summaries</div>
-      </div>
-      <div class="agent-card" style="--agent-color: #3CB878;">
-        <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#3CB878">
-          <path d="M7 24 Q9 18 13 13 Q17 8 20 4" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2" stroke-linecap="round"/>
-          <circle cx="7"  cy="24" r="2.5" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="13" cy="13" r="2"   fill="currentColor" opacity="0.75"/>
-          <path d="M17.5 2.5 L20 5.5 L22.5 2.5 L20 0 Z" fill="currentColor"/>
-        </svg>
-        <div class="agent-name">Geo &amp; Provider Mapping</div>
-        <div class="agent-role">Hosting &amp; Regional Mapping</div>
-        <div class="agent-desc">Maps resolved infrastructure to provider and region</div>
-      </div>
-    </div>
-  </section>
+  <OperationStory />
 
   <hr class="tr-divider-animated" />
 
@@ -675,8 +597,7 @@ const toneVar: Record<Tone, string> = {
     .scan-btn { padding: 14px 18px; }
   }
 
-  /* ── SQUADRON ── */
-  .squadron { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
+  /* ── SECTION LABEL (shared by How it works / Capabilities) ── */
   .section-label {
     font-family: var(--font-mono);
     font-size: 12px;
@@ -686,53 +607,6 @@ const toneVar: Record<Tone, string> = {
     text-transform: uppercase;
     margin-bottom: 10px;
   }
-  .squadron-title {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 8px;
-  }
-  .squadron-subtitle {
-    font-size: 16px;
-    color: var(--text-secondary);
-    margin-bottom: 20px;
-    line-height: 1.7;
-  }
-  .agent-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-  }
-  @media (max-width: 720px) { .agent-grid { grid-template-columns: 1fr; } }
-  .agent-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 20px 20px 20px 24px;
-    border-left: 3px solid var(--agent-color, var(--border));
-    transition: transform 0.2s, box-shadow 0.2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-  }
-  .agent-card:hover { transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
-  .agent-icon { width: 28px; height: 28px; margin-bottom: 10px; display: block; flex-shrink: 0; }
-  .agent-name {
-    font-family: var(--font-mono);
-    font-size: 17px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 2px;
-  }
-  .agent-role {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-  }
-  .agent-desc { font-size: 15px; color: var(--text-secondary); line-height: 1.5; }
 
   /* ── HOW IT WORKS ── */
   .how-it-works { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
@@ -941,7 +815,6 @@ const toneVar: Record<Tone, string> = {
     z-index: 1;
   }
 
-  :global([data-theme="light"]) .agent-card,
   :global([data-theme="light"]) .cap-card,
   :global([data-theme="light"]) .cta-inner {
     background: rgba(255,255,255,0.6);

@@ -12,6 +12,7 @@ import type { Env } from '../types';
 import { emitOrgEvent } from './org-events';
 import { trackAlertEvent } from './alert-events';
 import { logger } from './logger';
+import type { AutoTriageDecision, LookalikeAlertDetails } from './alert-triage';
 
 /** @deprecated Use AlertTypeKey from @averrow/shared. */
 export type AlertType = AlertTypeKey;
@@ -214,7 +215,7 @@ export async function createAlert(
     params.orgId ?? null,
   ).run();
 
-  // Tier 1 + Tier 1.5 auto-triage: dispatch by alert source/type and
+  // Tier 1 + Tier 1.5 + lookalike auto-triage: dispatch by alert source/type and
   // immediately mark as `false_positive` when the new alert meets
   // its family's auto-dismiss criteria. Best-effort — any failure
   // here leaves the alert in 'new' status (the conservative
@@ -223,7 +224,8 @@ export async function createAlert(
   try {
     const triage = await import('./alert-triage');
 
-    let decision: { action: 'dismiss' | 'keep'; reason: string } | null = null;
+    let decision: AutoTriageDecision | null = null;
+    let lookalikeDetails: LookalikeAlertDetails | null = null;
 
     if (params.sourceType === 'threat' && params.sourceId) {
       const snapshot = await triage.loadThreatSnapshotForAlert(db, params.sourceId);
@@ -249,6 +251,14 @@ export async function createAlert(
         ? await triage.loadExecutiveAllowlist(db, executiveId)
         : { full_name: null, official_handles: null };
       decision = triage.decideExecutiveImpersonationTriage(params.details ?? null, allow);
+    } else if (triage.LOOKALIKE_TRIAGE_ALERT_TYPES.has(params.alertType)) {
+      // Lookalike family: dismiss only when the alerted domain is in the
+      // TRUSTED official-domain set (e.g. zoom.com flagged as a lookalike
+      // of zoom.us) and was not newly registered. See
+      // decideLookalikeRegistrationTriage. A lookup failure throws into the
+      // catch below and the alert stays 'new'.
+      lookalikeDetails = (params.details ?? null) as LookalikeAlertDetails | null;
+      decision = await triage.decideLookalikeAlert(db, lookalikeDetails);
     }
 
     if (decision && decision.action === 'dismiss') {
@@ -261,6 +271,15 @@ export async function createAlert(
         WHERE id = ?
       `).bind(decision.reason, id).run();
       dismissed = true;
+    }
+
+    // Lookalike side effects (benign + parked source row on dismiss;
+    // unverified possible-owner staff note on keep). After the alert
+    // write, so a failure here can't un-dismiss it.
+    if (decision && triage.LOOKALIKE_TRIAGE_ALERT_TYPES.has(params.alertType)) {
+      await triage.applyLookalikeTriageEffects(db, {
+        alertId: id, brandId: params.brandId, details: lookalikeDetails, decision,
+      });
     }
   } catch {
     // Auto-triage is non-fatal. Worst case the alert stays 'new'

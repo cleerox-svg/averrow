@@ -127,6 +127,14 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // OFF the tenant SELECT: the finding reaches the customer as the
   // alert, not as a pipeline column.
   "bimi_first_seen_at",
+  // ── 0283 status reason ──
+  // Why the row has its `status`. Today only the official-domain rule
+  // writes it ("auto: zoom.com is the official domain of Zoom" — the row is
+  // another brand's TRUSTED official domain, set benign + parked; see
+  // lib/safeDomains.ts). Fixed text + a brand name, no attacker-controlled
+  // content. Staff-visible because it explains a benign row nobody marked
+  // by hand. OFF the tenant SELECT.
+  "status_reason",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is
@@ -324,6 +332,18 @@ export async function handleUpdateLookalike(
       }
       updates.push("status = ?");
       values.push(body.status);
+      // A human status decision supersedes the auto reason (migration
+      // 0283). Reverting an auto-benign row (official-domain rule — parked
+      // with no failure stamp, so the un-park sweep never re-admits it) to
+      // `monitoring` also un-parks it, so the revert actually resumes
+      // checks. SET expressions read the pre-update row, so `status_reason`
+      // here is still the old value. Ladder-parked rows (no reason) are
+      // left to the un-park sweep as before.
+      updates.push(
+        "check_due_at = CASE WHEN ? = 'monitoring' AND status_reason IS NOT NULL AND check_due_at IS NULL THEN datetime('now') ELSE check_due_at END",
+      );
+      values.push(body.status);
+      updates.push("status_reason = NULL");
     }
 
     if (body.threat_level !== undefined) {
@@ -434,6 +454,11 @@ export async function handleScanLookalikes(
     //
     // `last_check_failed_at` is still cleared — it is a historical
     // record and an operator-triggered rescan supersedes it.
+    //
+    // `benign` rows are NOT enqueued: an analyst or the official-domain
+    // rule (migration 0283, parked on purpose) closed them, and reviving
+    // them would spend check budget on — and could re-alert — another
+    // brand's official domain. Revert the status (PATCH) to re-check one.
     const resetResult = await env.DB.prepare(
       `UPDATE lookalike_domains
        SET check_due_at = '1970-01-01 00:00:00',
@@ -444,6 +469,7 @@ export async function handleScanLookalikes(
          SELECT id FROM lookalike_domains
           WHERE brand_id = ?
             AND (check_due_at IS NULL OR check_due_at > '1970-01-01 00:00:00')
+            AND (status IS NULL OR status != 'benign')
           ORDER BY check_due_at ASC
           LIMIT ?
        )`,

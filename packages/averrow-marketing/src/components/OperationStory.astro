@@ -1,0 +1,653 @@
+---
+/*
+ * "Follow one operation" — homepage Section 3.
+ *
+ * One fictional operation, the same one as the hero card and
+ * /resources/sample-operation-report (OP-2291, the fictional brand Acme,
+ * `.example` domains, documentation ASNs AS64500/AS64501), walked through
+ * five moments. Each step pairs a growing SVG graph with the product-UI
+ * fragment you would see at that point.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md, infrastructure clustering = T2):
+ * we say threats are linked by "shared hosting, certificates and registration
+ * patterns" and never name signals, thresholds, weights, cadences or feeds.
+ * Step 1 makes no timing promise ("as soon as it appears in new-registration
+ * data"); the day markers are labelled illustrative.
+ *
+ * Progressive enhancement: the server HTML is a readable five-step list plus
+ * the final-state graph. A small inline script (inline so it runs before the
+ * section first paints) upgrades it to a tablist with arrow-key navigation, a
+ * graph that grows per step, and a single auto-advance pass when the visitor
+ * has not asked for reduced motion.
+ */
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+type Row = [string, string];
+interface Step {
+  when: string;
+  title: string;
+  text: string;
+  card: {
+    kind: string;
+    pill?: { tone: "med" | "high" | "crit" | "ok"; label: string };
+    heading?: string;
+    rows: Row[];
+    track?: { removed: number; pending: number; queued: number; label: string };
+  };
+  graphLabel: string;
+}
+
+const steps: Step[] = [
+  {
+    when: "Day 0",
+    title: "A lookalike is registered",
+    text: "acme-payroll-login.example is registered. Averrow spots it in new-registration data as soon as it appears there, and matches it to Acme.",
+    card: {
+      kind: "Alert",
+      pill: { tone: "med", label: "Medium" },
+      heading: "New lookalike domain: acme-payroll-login.example",
+      rows: [
+        ["Brand", "Acme"],
+        ["Seen in", "new-registration data"],
+        ["Status", "parked, no site yet"],
+      ],
+    },
+    graphLabel: "Operation graph, step 1 of 5: one lookalike domain, acme-payroll-login.example.",
+  },
+  {
+    when: "Day 1",
+    title: "It goes live",
+    text: "A TLS certificate is issued and the domain starts serving a copy of Acme's payroll sign-in page. Averrow reads what the page actually serves, and the alert is raised to high.",
+    card: {
+      kind: "Evidence",
+      pill: { tone: "high", label: "High" },
+      heading: "Sign-in page imitating Acme payroll",
+      rows: [
+        ["TLS certificate", "issued"],
+        ["Hosting", "AS64500 · 192.0.2.14"],
+        ["Page content", "payroll sign-in copy"],
+      ],
+    },
+    graphLabel:
+      "Operation graph, step 2 of 5: the domain is linked to one TLS certificate and one hosting network, AS64500.",
+  },
+  {
+    when: "Day 2",
+    title: "It isn't alone",
+    text: "Eight more lookalikes turn up on the same hosting network, all presenting the same TLS certificate. Averrow links them by shared hosting, certificates and registration patterns, and groups the nine into one operation: OP-2291. One campaign instead of nine separate alerts.",
+    card: {
+      kind: "Operation",
+      pill: { tone: "crit", label: "Active" },
+      heading: "OP-2291 · Payroll-portal phishing kit",
+      rows: [
+        ["Lookalike domains", "9"],
+        ["Hosting networks", "1"],
+        ["Shared certificate", "1"],
+        ["Linked by", "hosting, certificate, registration"],
+      ],
+    },
+    graphLabel:
+      "Operation graph, step 3 of 5: nine domains on one hosting network sharing one certificate are grouped into operation OP-2291.",
+  },
+  {
+    when: "Day 3",
+    title: "It spreads beyond domains",
+    text: "A second hosting network comes online with more domains. A fake HR-support profile, @acme_hr_support, and a copycat “Acme Pay” app turn up, and both are linked to the same operation.",
+    card: {
+      kind: "Linked findings",
+      heading: "OP-2291 · 16 linked findings",
+      rows: [
+        ["Lookalike domains", "11 on 2 networks"],
+        ["Social profile", "@acme_hr_support"],
+        ["App listing", "“Acme Pay”"],
+        ["Shared certificate", "1"],
+      ],
+    },
+    graphLabel:
+      "Operation graph, step 4 of 5: eleven domains on two hosting networks, a fake social profile and a copycat app, all linked to OP-2291.",
+  },
+  {
+    when: "Day 4 to 9",
+    title: "It comes down",
+    text: "Takedowns go to registrars, hosts and platforms, and three more domains join the operation along the way. By Day 9, 8 of the 14 domains are removed, 4 are pending and 2 are queued. Removed domains are re-checked to confirm they stay down.",
+    card: {
+      kind: "Takedowns",
+      pill: { tone: "ok", label: "8 removed" },
+      rows: [
+        ["Domains removed", "8 of 14"],
+        ["Pending with registrar", "4"],
+        ["Queued", "2"],
+        ["Social profile", "report filed · pending platform review"],
+        ["App listing", "evidence in review · queued"],
+      ],
+      track: {
+        removed: 57,
+        pending: 29,
+        queued: 14,
+        label: "Domain takedowns: 8 of 14 removed, 4 pending, 2 queued",
+      },
+    },
+    graphLabel:
+      "Operation graph, step 5 of 5: operation OP-2291 with 14 domains on 2 hosting networks, 1 shared certificate, a social profile and a copycat app. 8 domains are removed, 4 pending and 2 queued.",
+  },
+];
+
+// ── Graph geometry (viewBox "110 10 400 300") ───────────────────────────
+const HUB = { x: 290, y: 160 };
+const TOTAL = 14;
+// Domain i (report order) -> arc slot; the first domain sits mid-arc.
+const slotOf = (i: number) => (i === 0 ? 6 : i <= 6 ? i - 1 : i);
+const domains = Array.from({ length: TOTAL }, (_, i) => {
+  const a = ((115 + 10 * slotOf(i)) * Math.PI) / 180;
+  const x = +(HUB.x + 135 * Math.cos(a)).toFixed(1);
+  const y = +(HUB.y + 130 * Math.sin(a)).toFixed(1);
+  // First step the node appears on, and its final takedown state.
+  const first = i === 0 ? 1 : i <= 8 ? 3 : i <= 10 ? 4 : 5;
+  const state = i < 8 ? "removed" : i < 12 ? "pending" : "queued";
+  return { i, x, y, first, state };
+});
+const primary = domains[0];
+
+const cert = { x: 395, y: 170 };
+const hostA = { x: 395, y: 228 };
+const hostB = { x: 395, y: 284 };
+const social = { x: 395, y: 48 };
+const app = { x: 395, y: 108 };
+
+const side = [
+  { p: social, step: 4, tone: "blue", title: "Social profile", sub: "@acme_hr_support" },
+  { p: app, step: 4, tone: "blue", title: "Copycat app", sub: "“Acme Pay”" },
+  { p: cert, step: 2, tone: "amber", title: "TLS certificate", sub: "1 shared serial" },
+  { p: hostA, step: 2, tone: "high", title: "Hosting network", sub: "AS64500" },
+  { p: hostB, step: 4, tone: "high", title: "Hosting network", sub: "AS64501" },
+];
+const finalLabel = steps[steps.length - 1].graphLabel;
+---
+
+<section class="opstory" id="operation-story" aria-labelledby="opstory-title" data-opstory>
+  <div class="opstory-eyebrow">Follow one operation</div>
+  <h2 class="opstory-title" id="opstory-title">From one fake domain to the operation behind it.</h2>
+  <p class="opstory-lede">
+    Most tools hand you a list of alerts. Averrow shows you which ones belong
+    together, so you take down the whole operation instead of chasing it one
+    domain at a time.
+  </p>
+
+  <div class="os-body" data-body>
+    <ol class="os-steps" data-steps>
+      {steps.map((s, i) => (
+        <li class="os-step" data-i={i}>
+          <div class="os-step-head">
+            <span class="os-when">{s.when}</span>
+            <h3 class="os-ttl">{s.title}</h3>
+          </div>
+          <p class="os-txt">{s.text}</p>
+          <div class="os-ui" data-label={s.graphLabel}>
+            <div class="os-card">
+              <span class="os-k">{s.card.kind}</span>
+              {s.card.pill && <span class={`os-pill ${s.card.pill.tone}`}>{s.card.pill.label}</span>}
+              {s.card.heading && <span class="os-ct">{s.card.heading}</span>}
+              {s.card.rows.map(([k, v]) => (
+                <div class="os-row"><span>{k}</span><span>{v}</span></div>
+              ))}
+              {s.card.track && (
+                <div class="os-track" role="img" aria-label={s.card.track.label}>
+                  <i style={`width:${s.card.track.removed}%;background:var(--green)`}></i>
+                  <i style={`width:${s.card.track.pending}%;background:var(--amber)`}></i>
+                  <i style={`width:${s.card.track.queued}%;background:var(--border-strong)`}></i>
+                </div>
+              )}
+            </div>
+          </div>
+        </li>
+      ))}
+    </ol>
+
+    <div class="os-stage" data-stage>
+      <svg class="os-graph final" viewBox="110 10 410 300" role="img" aria-label={finalLabel} data-graph>
+        <g class="os-edges">
+          {domains.map(d => (
+            <line class="e" x1={d.x} y1={d.y} x2={HUB.x} y2={HUB.y} data-step={d.first === 1 ? 3 : d.first} />
+          ))}
+          <line class="e" x1={primary.x} y1={primary.y} x2={cert.x} y2={cert.y} data-step="2" data-until="3" />
+          <line class="e" x1={primary.x} y1={primary.y} x2={hostA.x} y2={hostA.y} data-step="2" data-until="3" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={cert.x} y2={cert.y} data-step="3" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={hostA.x} y2={hostA.y} data-step="3" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={hostB.x} y2={hostB.y} data-step="4" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={social.x} y2={social.y} data-step="4" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={app.x} y2={app.y} data-step="4" />
+        </g>
+
+        {domains.map(d => (
+          <circle class={`n dom ${d.state}`} cx={d.x} cy={d.y} r={d.i === 0 ? 8 : 5.5} data-step={d.first} />
+        ))}
+        <text class="lb lb-name" x={primary.x - 8} y={primary.y - 16} text-anchor="start" data-step="1" data-until="3">acme-payroll-login.example</text>
+
+        {side.map(n => (
+          <g>
+            <circle class={`n side ${n.tone}`} cx={n.p.x} cy={n.p.y} r="7" data-step={n.step} />
+            <text class="lb lb-name" x={n.p.x + 13} y={n.p.y - 1} data-step={n.step}>{n.title}</text>
+            <text class="lb lb-sub" x={n.p.x + 13} y={n.p.y + 11} data-step={n.step}>{n.sub}</text>
+          </g>
+        ))}
+
+        <circle class="n hub" cx={HUB.x} cy={HUB.y} r="38" data-step="3" />
+        <text class="lb lb-hub" x={HUB.x} y={HUB.y - 2} text-anchor="middle" data-step="3">OP-2291</text>
+        <text class="lb lb-hubsub" x={HUB.x} y={HUB.y + 11} text-anchor="middle" data-step="3" data-counts="1,1,9,11,14">14 domains</text>
+
+        <g class="lb lb-legend" data-step="5">
+          <circle class="dom removed" cx="128" cy="300" r="4" />
+          <text x="137" y="303.5">removed</text>
+          <circle class="dom pending" cx="205" cy="300" r="4" />
+          <text x="214" y="303.5">pending</text>
+          <circle class="dom queued" cx="282" cy="300" r="4" />
+          <text x="291" y="303.5">queued</text>
+        </g>
+      </svg>
+      <div class="os-panels" data-panels></div>
+    </div>
+  </div>
+
+  <div class="os-foot">
+    <span class="os-meta">
+      <span class="os-illus">Illustrative example · names and domains changed · timings vary by operation</span>
+      <span class="os-ctl-slot" data-ctl-slot></span>
+    </span>
+    <span class="os-ctas">
+      <a class="btn btn-primary" href={`${base}/scan`} data-cta="opstory-scan">Scan your domain</a>
+      <a class="os-link" href={`${base}/resources/sample-operation-report`} data-cta="opstory-sample-report">View the sample report &rarr;</a>
+    </span>
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    var root = document.querySelector("[data-opstory]");
+    if (!root) return;
+    var body = root.querySelector("[data-body]");
+    var ol = root.querySelector("[data-steps]");
+    var svg = root.querySelector("[data-graph]");
+    var panels = root.querySelector("[data-panels]");
+    var items = Array.prototype.slice.call(ol.children);
+    if (!items.length) return;
+
+    var reduce = false;
+    try {
+      reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch (e) {}
+
+    var tabs = [];
+    var panelEls = [];
+    var graphEls = Array.prototype.slice.call(svg.querySelectorAll("[data-step]"));
+    var counts = svg.querySelector("[data-counts]");
+    var countList = counts ? counts.getAttribute("data-counts").split(",") : [];
+    var cur = 0;
+
+    // Build the tablist from the server-rendered list.
+    ol.setAttribute("role", "tablist");
+    ol.setAttribute("aria-label", "Operation timeline, Day 0 to Day 9");
+    items.forEach(function (li, i) {
+      var when = li.querySelector(".os-when").textContent;
+      var ttl = li.querySelector(".os-ttl").textContent;
+      var txt = li.querySelector(".os-txt");
+      var ui = li.querySelector(".os-ui");
+
+      var tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "os-tab";
+      tab.id = "os-tab-" + i;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", "os-panel-" + i);
+      tab.innerHTML = '<span class="os-dn" aria-hidden="true">' + (i + 1) + '</span><span class="os-when"></span><span class="os-ttl"></span>';
+      tab.querySelector(".os-when").textContent = when;
+      tab.querySelector(".os-ttl").textContent = ttl;
+      tab.addEventListener("click", function () { select(i, false); });
+      tab.addEventListener("keydown", function (e) { onKey(e, i); });
+
+      var panel = document.createElement("div");
+      panel.className = "os-panel";
+      panel.id = "os-panel-" + i;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", tab.id);
+      panel.setAttribute("data-label", ui.getAttribute("data-label"));
+      panel.appendChild(txt);
+      panel.appendChild(ui);
+      panels.appendChild(panel);
+
+      li.setAttribute("role", "presentation");
+      li.className = "os-step";
+      li.textContent = "";
+      li.appendChild(tab);
+      tabs.push(tab);
+      panelEls.push(panel);
+    });
+
+    function onKey(e, i) {
+      var n = tabs.length, to = -1;
+      if (e.key === "ArrowRight" || e.key === "ArrowDown") to = (i + 1) % n;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowUp") to = (i - 1 + n) % n;
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = n - 1;
+      if (to < 0) return;
+      e.preventDefault();
+      select(to, true);
+    }
+
+    function select(k, focus) {
+      cur = k;
+      var step = k + 1;
+      tabs.forEach(function (t, i) {
+        t.setAttribute("aria-selected", String(i === k));
+        t.tabIndex = i === k ? 0 : -1;
+        if (i < k) t.classList.add("done"); else t.classList.remove("done");
+      });
+      panelEls.forEach(function (p, i) {
+        if (i === k) p.setAttribute("data-active", ""); else p.removeAttribute("data-active");
+      });
+      graphEls.forEach(function (el) {
+        var from = +el.getAttribute("data-step");
+        var until = el.getAttribute("data-until");
+        var on = step >= from && (!until || step < +until);
+        if (on) el.classList.add("on"); else el.classList.remove("on");
+      });
+      if (step >= 5) svg.classList.add("final"); else svg.classList.remove("final");
+      if (counts && countList[k]) counts.textContent = countList[k] + " domains";
+      svg.setAttribute("aria-label", panelEls[k].getAttribute("data-label"));
+      if (focus) tabs[k].focus();
+      // Keep the active tab visible in the mobile scroll row without moving the page.
+      var li = items[k];
+      if (ol.scrollWidth > ol.clientWidth + 1) {
+        var left = li.offsetLeft - (ol.clientWidth - li.offsetWidth) / 2;
+        try { ol.scrollTo({ left: left, behavior: reduce ? "auto" : "smooth" }); } catch (e) { ol.scrollLeft = left; }
+      }
+    }
+
+    var vertical = true;
+    try {
+      var mq = window.matchMedia("(max-width: 760px)");
+      var setO = function () { vertical = !mq.matches; ol.setAttribute("aria-orientation", vertical ? "vertical" : "horizontal"); };
+      setO();
+      if (mq.addEventListener) mq.addEventListener("change", setO);
+    } catch (e) {}
+
+    root.setAttribute("data-enhanced", "");
+    select(0, false);
+
+    // Auto-advance once through the steps (WCAG 2.2.2: visible pause control,
+    // paused on hover, stopped on interaction or when the story leaves the
+    // viewport). Never runs when the visitor prefers reduced motion.
+    var INTERVAL = 6500;
+    var timer = 0;
+    var stopped = reduce;
+    var started = false;
+    var userPaused = false;
+    var hoverPaused = false;
+    var ctl = null;
+    function schedule() {
+      clearTimeout(timer);
+      if (stopped || userPaused || hoverPaused) return;
+      timer = setTimeout(function () {
+        if (stopped || userPaused || hoverPaused) return;
+        if (cur < tabs.length - 1) { select(cur + 1, false); schedule(); } else stop();
+      }, INTERVAL);
+    }
+    function stop() {
+      stopped = true;
+      clearTimeout(timer);
+      if (ctl) ctl.hidden = true;
+    }
+    function setCtl() {
+      ctl.textContent = userPaused ? "Play" : "Pause";
+      ctl.setAttribute("aria-label", userPaused ? "Resume automatic advance" : "Pause automatic advance");
+    }
+    var slot = root.querySelector("[data-ctl-slot]");
+    if (!stopped && slot && "IntersectionObserver" in window) {
+      ctl = document.createElement("button");
+      ctl.type = "button";
+      ctl.className = "os-ctl";
+      ctl.hidden = true;
+      setCtl();
+      ctl.addEventListener("click", function () {
+        userPaused = !userPaused;
+        setCtl();
+        schedule();
+      });
+      slot.appendChild(ctl);
+      ["pointerdown", "keydown", "focusin"].forEach(function (ev) {
+        root.addEventListener(ev, function (e) { if (!ctl.contains(e.target)) stop(); }, { passive: true });
+      });
+      root.addEventListener("mouseenter", function () { hoverPaused = true; clearTimeout(timer); });
+      root.addEventListener("mouseleave", function () { hoverPaused = false; schedule(); });
+      new IntersectionObserver(function (entries) {
+        var e = entries[entries.length - 1];
+        if (e.isIntersecting) {
+          if (!started && !stopped) { started = true; ctl.hidden = false; schedule(); }
+        } else if (started) {
+          stop();
+        }
+      }, { threshold: 0.5 }).observe(body);
+    } else {
+      stopped = true;
+    }
+  })();
+</script>
+
+<style is:global>
+  .opstory { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
+  .opstory-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--accent-section, var(--accent));
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .opstory-title {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  .opstory-lede { max-width: 62ch; font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin-bottom: 24px; }
+
+  .os-body { display: grid; gap: 20px; min-width: 0; }
+
+  /* ── Without JS: a readable list, then the final-state graph ── */
+  .os-steps { list-style: none; display: grid; gap: 12px; min-width: 0; }
+  .os-step {
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: grid;
+    gap: 8px;
+  }
+  .os-step-head { display: grid; gap: 2px; }
+  .os-when { font: 600 10.5px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .os-ttl { font: 700 16px var(--font-display); color: var(--text-primary); }
+  .os-txt { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .os-stage {
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    align-items: center;
+  }
+  .os-panels:empty { display: none; }
+
+  /* ── Product-UI fragment ── */
+  .os-card {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    padding: 12px;
+    display: grid;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .os-k { font: 600 10px var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary); }
+  .os-ct { font-weight: 700; color: var(--text-primary); font-size: 13.5px; line-height: 1.35; overflow-wrap: anywhere; }
+  .os-row { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--border); padding-top: 7px; }
+  .os-row span:last-child { color: var(--text-primary); font: 500 11.5px var(--font-mono); text-align: right; overflow-wrap: anywhere; }
+  .os-pill {
+    display: inline-block;
+    justify-self: start;
+    font: 700 10px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 3px 8px;
+    border: 1px solid transparent;
+  }
+  .os-pill.med  { color: var(--sev-medium-text);   background: color-mix(in srgb, var(--sev-medium) 14%, transparent);   border-color: color-mix(in srgb, var(--sev-medium) 38%, transparent); }
+  .os-pill.high { color: var(--sev-high-text);     background: color-mix(in srgb, var(--sev-high) 14%, transparent);     border-color: color-mix(in srgb, var(--sev-high) 38%, transparent); }
+  .os-pill.crit { color: var(--sev-critical-text); background: color-mix(in srgb, var(--sev-critical) 14%, transparent); border-color: color-mix(in srgb, var(--sev-critical) 38%, transparent); }
+  .os-pill.ok   { color: var(--green-text);        background: color-mix(in srgb, var(--green) 14%, transparent);        border-color: color-mix(in srgb, var(--green) 38%, transparent); }
+  .os-track { margin-top: 2px; height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; display: flex; }
+  .os-track i { display: block; height: 100%; }
+
+  /* ── Graph ── */
+  .os-graph { display: block; width: 100%; height: auto; }
+  .os-graph .e { stroke: var(--text-tertiary); stroke-opacity: 0.45; stroke-width: 1.2; }
+  .os-graph .n { fill: var(--bg-secondary); stroke-width: 2; }
+  .os-graph .dom { stroke: var(--sev-critical-text); }
+  .os-graph.final .dom.removed { stroke: var(--green-text); fill: var(--green-bg); }
+  .os-graph.final .dom.pending { stroke: var(--amber-text); }
+  .os-graph.final .dom.queued { stroke: var(--text-secondary); stroke-dasharray: 3 2; }
+  .os-graph .side.blue { stroke: var(--blue-text); }
+  .os-graph .side.amber { stroke: var(--amber-text); }
+  .os-graph .side.high { stroke: var(--sev-high-text); }
+  .os-graph .hub { fill: var(--red-bg); stroke: var(--red-text); stroke-width: 1.5; }
+  .os-graph.final .lb-name[data-until] { display: none; }
+  .os-graph .lb-name { font: 700 12px var(--font-display); fill: var(--text-primary); }
+  .os-graph .lb-sub { font: 400 10px var(--font-mono); fill: var(--text-secondary); }
+  .os-graph .lb-hub { font: 600 12px var(--font-mono); fill: var(--red-text); }
+  .os-graph .lb-hubsub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
+  .os-graph .lb-legend text { font: 400 11px var(--font-mono); fill: var(--text-secondary); }
+  .os-graph .lb-legend circle { fill: var(--bg-secondary); stroke-width: 2; }
+  .os-graph .lb-legend .removed { stroke: var(--green-text); fill: var(--green-bg); }
+  .os-graph .lb-legend .pending { stroke: var(--amber-text); }
+  .os-graph .lb-legend .queued { stroke: var(--text-secondary); stroke-dasharray: 3 2; }
+
+  /* ── Enhanced: tablist + growing graph ── */
+  .opstory[data-enhanced] .os-body { grid-template-columns: minmax(0, 270px) minmax(0, 1fr); align-items: start; gap: 24px; }
+  .opstory[data-enhanced] .os-steps { display: grid; gap: 4px; }
+  .opstory[data-enhanced] .os-step { background: none; border: 0; padding: 0; border-radius: 0; display: block; }
+  .opstory[data-enhanced] .os-stage { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+  .opstory[data-enhanced] .os-graph [data-step] { opacity: 0; }
+  .opstory[data-enhanced] .os-graph [data-step].on { opacity: 1; }
+  .opstory[data-enhanced] .os-graph [data-step] { transition: opacity 0.45s ease; }
+
+  .os-tab {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 1px 10px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    color: var(--text-secondary);
+  }
+  .os-tab:hover { background: var(--bg-secondary); }
+  .os-tab:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .os-tab[aria-selected="true"] { background: var(--bg-secondary); border-color: var(--accent); color: var(--text-primary); }
+  .os-tab .os-dn {
+    grid-row: span 2;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    display: grid;
+    place-items: center;
+    font: 700 11px var(--font-mono);
+    color: var(--text-secondary);
+  }
+  .os-tab[aria-selected="true"] .os-dn, .os-tab.done .os-dn { border-color: var(--accent); color: var(--accent); }
+  .os-tab .os-ttl { font-size: 14px; color: inherit; }
+
+  /* Reserve the panel height: every panel shares one grid cell, so the
+     tallest sets it and switching steps never shifts the page. */
+  .os-panels { display: grid; min-width: 0; }
+  .os-panel { grid-area: 1 / 1; visibility: hidden; display: grid; gap: 10px; align-content: start; min-width: 0; }
+  .os-panel[data-active] { visibility: visible; }
+  .os-panel .os-txt { font-size: 13.5px; }
+
+  /* ── Footer ── */
+  .os-foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px 20px;
+    flex-wrap: wrap;
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-strong);
+  }
+  .os-meta { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
+  .os-ctl {
+    font: 600 11px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .os-ctl:hover { border-color: var(--accent); }
+  .os-ctl:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .os-ctl[hidden] { display: inline-block; visibility: hidden; }
+  .os-illus { font: 500 11.5px var(--font-mono); color: var(--text-secondary); }
+  .os-ctas { display: flex; align-items: center; gap: 16px 20px; flex-wrap: wrap; }
+  .os-link { color: var(--text-primary); font-weight: 700; font-size: 14px; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+  .os-link:hover { border-bottom-color: var(--accent); text-decoration: none; }
+  .os-link:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 3px; }
+
+  @media (max-width: 1100px) {
+    .opstory[data-enhanced] .os-stage { grid-template-columns: minmax(0, 1fr); }
+    .os-graph { max-width: 560px; margin: 0 auto; }
+  }
+
+  @media (max-width: 760px) {
+    .os-graph .lb-sub, .os-graph .lb-hubsub { display: none; }
+    .os-graph .lb-name { font-size: 13px; }
+    .os-graph .lb-hub { font-size: 13px; }
+    .os-graph .lb-legend text { font-size: 12.5px; }
+    .os-graph { max-width: none; }
+    .opstory { padding: 2rem 16px; }
+    .opstory[data-enhanced] .os-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    .opstory[data-enhanced] .os-steps {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      padding-bottom: 4px;
+      position: relative;
+      -webkit-overflow-scrolling: touch;
+    }
+    .opstory[data-enhanced] .os-step { flex: 0 0 auto; scroll-snap-align: start; }
+    .os-tab { display: block; width: auto; min-width: 140px; padding: 9px 11px; border-color: var(--border-strong); }
+    .os-tab .os-dn { display: none; }
+    .os-tab .os-when, .os-tab .os-ttl { display: block; }
+    .opstory[data-enhanced] .os-stage { grid-template-columns: minmax(0, 1fr); padding: 10px; }
+    .os-ctas .btn { width: 100%; justify-content: center; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .opstory[data-enhanced] .os-graph [data-step] { transition: none; }
+    .opstory[data-enhanced] .os-steps { scroll-behavior: auto; }
+  }
+</style>

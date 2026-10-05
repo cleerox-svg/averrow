@@ -45,7 +45,7 @@
  * silently in production.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
@@ -262,6 +262,16 @@ function makeEnv(opts: { dailySnapshotCount?: number } = {}): Env {
 }
 
 describe("S3.4b — orchestrator hour-gate dispatch table (src/cron/orchestrator.ts)", () => {
+  // Every test lazily `import("../src/cron/orchestrator")`s the cron mesh,
+  // which pulls the agent registry and feed modules (the vi.mock factories
+  // above also importActual their real modules). Cold, that exceeds the 5s
+  // per-test timeout on a loaded machine. Warm it once with its own budget so
+  // each test's import is a cache hit.
+  beforeAll(async () => {
+    const mod = await import("../src/cron/orchestrator");
+    expect(typeof mod.handleScheduled).toBe("function");
+  }, 120_000);
+
   beforeEach(() => {
     executeAgentCalls.length = 0;
     vi.clearAllMocks();
