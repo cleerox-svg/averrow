@@ -114,7 +114,7 @@ const checks = [
       <div class="num-bars" data-bars role="group" aria-label="Threats tracked, by type" set:html={renderBars(bars, classified)} />
       <div class="num-tip" data-tip hidden></div>
       <p class="num-cf">Counts since launch. Hover or focus a bar for its share of classified threats.</p>
-      <div class="num-sr">
+      <div class="num-sr" aria-hidden="true">
         <table aria-label="Threats tracked, by type (data table)">
           <thead><tr><th scope="col">Threat type</th><th scope="col">Threats</th><th scope="col">Share of classified</th></tr></thead>
           <tbody data-table set:html={renderTableRows(bars, classified)} />
@@ -194,6 +194,8 @@ const checks = [
   .num-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
   .num-chart {
     position: relative;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
@@ -203,7 +205,7 @@ const checks = [
   .num-ct { display: flex; justify-content: space-between; gap: 6px 10px; flex-wrap: wrap; margin-bottom: 14px; font-size: 13px; }
   .num-ct b { color: var(--text-primary); }
   .num-ct > span { color: var(--text-secondary); font: 500 11.5px var(--font-mono); }
-  .num-bars { display: grid; gap: 14px; }
+  .num-bars { display: grid; gap: 14px; flex: 1; align-content: space-between; }
   .num-bar {
     display: grid;
     grid-template-columns: 150px minmax(0, 1fr) 52px;
@@ -216,8 +218,10 @@ const checks = [
   }
   .num-bar-tr { display: block; height: 12px; border-radius: 0 4px 4px 0; background: var(--border); overflow: hidden; }
   .num-bar-f { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--amber); }
-  [data-theme="light"] .num-bar-f { background: var(--amber-dim); }
+  /* Light theme: fills must clear 3:1 against the track (#E2DDD5). */
+  [data-theme="light"] .num-bar-f { background: var(--accent-section, #8A5F0F); }
   .num-bar.grp .num-bar-f { background: var(--slate); }
+  [data-theme="light"] .num-bar.grp .num-bar-f { background: var(--slate-text); }
   .num-bar-v { font: 600 12px var(--font-mono); color: var(--text-primary); text-align: right; font-variant-numeric: tabular-nums; }
   .num-bar:hover .num-bar-f, .num-bar:focus-visible .num-bar-f { filter: brightness(1.15); }
   .num-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -385,9 +389,12 @@ const checks = [
           const total = typeTotal(n.threat_types);
           const host = root.querySelector<HTMLElement>("[data-bars]");
           const body = root.querySelector<HTMLElement>("[data-table]");
-          if (host) host.innerHTML = renderBars(bars, total);
           if (body) body.innerHTML = renderTableRows(bars, total);
-          hideTip();
+          // Don't yank focus: leave the bars alone while one of them is focused.
+          if (host && !host.contains(document.activeElement)) {
+            host.innerHTML = renderBars(bars, total);
+            hideTip();
+          }
         }
       }
 
