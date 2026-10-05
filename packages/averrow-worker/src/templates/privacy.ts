@@ -19,7 +19,7 @@ export function renderPrivacyPage(): string {
 
 <div class="legal-content">
   <h1>Privacy Policy</h1>
-  <p class="legal-updated">Last updated: October 4, 2026</p>
+  <p class="legal-updated">Last updated: October 5, 2026</p>
 
   <h2>Introduction</h2>
   <p>
@@ -55,14 +55,17 @@ export function renderPrivacyPage(): string {
   <h2>Data Retention</h2>
   <ul>
     <li><strong>Active Account Data:</strong> Your personal information and scan history are retained for as long as your subscription remains active.</li>
-    <li><strong>Free Scan Results:</strong> Results from one-time free scans are cached for 24 hours and then automatically purged.</li>
+    <li><strong>Free Scan Results:</strong> Results of free scans are kept for 90 days and then deleted. The results link for a scan works until then.</li>
+    <li><strong>Report Requests:</strong> If you ask for the report after a free scan, we keep the email address, domain and company you give us until you ask us to delete them or we no longer need them.</li>
     <li><strong>Account Deletion:</strong> Upon request, your account and all associated data will be permanently deleted within 30 days. To request deletion, contact us at <a href="mailto:privacy@averrow.com">privacy@averrow.com</a>.</li>
   </ul>
 
   <h2>Third-Party Processors</h2>
   <p>We use the following third-party service providers to operate Averrow:</p>
   <ul>
+    <li><strong>Public DNS resolvers:</strong> To run a free scan, the domain you enter, and lookalike variations of it, are looked up through public DNS resolvers (Cloudflare and Google). These lookups contain the domain names only, not your IP address or email address.</li>
     <li><strong>Cloudflare:</strong> Infrastructure, content delivery network (CDN), and edge compute services. Cloudflare processes requests on our behalf to ensure fast, secure delivery of the platform. Cloudflare also supplies the approximate country of a request.</li>
+    <li><strong>Resend:</strong> Transactional email delivery, including free-scan reports and confirmations sent to the email address you provide.</li>
     <li><strong>AI Provider:</strong> We use an artificial intelligence provider for threat analysis, content classification, and risk scoring. Data shared with this provider is limited to what is necessary for analysis and is processed in accordance with our data processing agreements.</li>
   </ul>
 

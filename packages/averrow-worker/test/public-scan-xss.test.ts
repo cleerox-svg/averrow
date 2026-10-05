@@ -3,10 +3,10 @@
 //
 //   1. POST /assess, POST /api/brand-scan/public and POST /api/leads reject
 //      a domain that is not a strict hostname, with no DB write.
-//   2. The public scan JSON no longer carries the feed-mention flag, and the
-//      public result lookup no longer selects feed_mentions.
-//   3. The /assess results page escapes the stored domain / error text it
-//      puts into innerHTML, and the scan id can't break out of <script>.
+//   2. The public scan JSON carries no feed-mention flag, and the public
+//      result lookup never selects feed_mentions.
+//   (The Worker-rendered /assess results page and /scan page were retired
+//   2026-10-05; results render on the Astro /scan page.)
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Router } from "itty-router";
@@ -16,8 +16,7 @@ import { registerPublicRoutes } from "../src/routes/public";
 import {
   handlePublicBrandScan, handlePublicBrandScanResult, handleLeadCapture,
 } from "../src/handlers/brandScan";
-import { renderAssessResults, renderHomepage } from "../src/templates/homepage";
-import { renderScanPage } from "../src/templates/scan";
+import { renderHomepage } from "../src/templates/homepage";
 import type { Env } from "../src/types";
 
 const MALICIOUS = "<img src=x onerror=alert(1)>.com";
@@ -97,7 +96,7 @@ describe("POST /api/brand-scan/public (handlePublicBrandScan)", () => {
     const body = await res.json() as { success: boolean; data: Record<string, unknown> };
     expect(body.success).toBe(true);
     expect(body.data.domain).toBe("acme.example");
-    expect(Object.keys(body.data).sort()).toEqual(["domain", "lookalikesPossible", "riskLevel", "trustScore"]);
+    expect(Object.keys(body.data).sort()).toEqual(["checked_at", "domain", "email", "id", "lookalikes"]);
     expect(JSON.stringify(body)).not.toMatch(/feed/i);
 
     // The staff-side count is still stored on the row.
@@ -110,20 +109,20 @@ describe("POST /api/brand-scan/public (handlePublicBrandScan)", () => {
 });
 
 describe("GET /api/brand-scan/public/:id (handlePublicBrandScanResult)", () => {
-  it("does not return feed_mentions (read server-side only to strip it from the score)", async () => {
-    const s = makeEnv([], {
-      id: "s1", domain: "acme.example", trust_score: 70, spf_policy: null, dmarc_policy: null,
-      feed_mentions: 3, lookalikes_found: 0, status: "completed", created_at: "2026-10-05",
-    });
-    const res = await handlePublicBrandScanResult(new Request("https://averrow.com/api/brand-scan/public/s1"), s.env, "s1");
-    expect(res.status).toBe(200);
-    const body = await res.json() as { data: Record<string, unknown> };
-    expect(body.data).not.toHaveProperty("feed_mentions");
+  it("404s a legacy row with no public view, and a non-UUID id without a query", async () => {
+    const id = "0b7d6f9e-1c2a-4b3c-8d4e-5f6a7b8c9d0e";
+    const s = makeEnv([], { id, domain: "acme.example", public_view: null });
+    const res = await handlePublicBrandScanResult(new Request(`https://averrow.com/api/brand-scan/public/${id}`), s.env, id);
+    expect(res.status).toBe(404);
+    const s2 = makeEnv();
+    const res2 = await handlePublicBrandScanResult(new Request("https://averrow.com/x"), s2.env, "</script>");
+    expect(res2.status).toBe(404);
+    expect(s2.sqls).toEqual([]);
   });
 });
 
 describe("POST /api/leads (handleLeadCapture)", () => {
-  const lead = { name: "Pat", email: "pat@acme.example", company: "Acme" };
+  const lead = { email: "pat@other.example", consent: true };
 
   it("rejects a malicious domain with 400 and writes nothing", async () => {
     const s = makeEnv();
@@ -132,15 +131,16 @@ describe("POST /api/leads (handleLeadCapture)", () => {
     expect(writes(s)).toEqual([]);
   });
 
-  it("stores the normalised domain when valid, and accepts a missing domain", async () => {
+  it("stores the normalised domain when valid, and rejects a missing domain", async () => {
     const s = makeEnv();
     const res = await handleLeadCapture(jsonReq("/api/leads", { ...lead, domain: " https://Acme.Example/ " }), s.env);
     expect(res.status).toBe(200);
-    const insert = s.binds.find((b) => b.includes("pat@acme.example"));
+    const insert = s.binds.find((b) => b.includes("pat@other.example"));
     expect(insert).toContain("acme.example");
 
     const s2 = makeEnv();
-    expect((await handleLeadCapture(jsonReq("/api/leads", lead), s2.env)).status).toBe(200);
+    expect((await handleLeadCapture(jsonReq("/api/leads", lead), s2.env)).status).toBe(400);
+    expect(writes(s2)).toEqual([]);
   });
 });
 
@@ -168,89 +168,11 @@ describe("POST /assess (form route)", () => {
   });
 });
 
-// ─── Results page: run the inline script against a tiny fake DOM ────────
-
-interface FakeEl { innerHTML: string; style: Record<string, string>; textContent: string; addEventListener: () => void }
-
-async function runAssessPage(scanId: string, apiResponse: unknown): Promise<{ results: string; fetchedUrl: string }> {
-  const html = renderAssessResults(scanId);
-  const m = html.match(/<script>([\s\S]*?)<\/script>/);
-  expect(m).not.toBeNull();
-  const els: Record<string, FakeEl> = {};
-  const document = {
-    getElementById(id: string): FakeEl {
-      els[id] ??= { innerHTML: "", style: {}, textContent: "", addEventListener() {} };
-      return els[id]!;
-    },
-  };
-  let fetchedUrl = "";
-  let done!: () => void;
-  const finished = new Promise<void>((r) => { done = r; });
-  const fakeFetch = (url: string) => {
-    fetchedUrl = url;
-    const p = Promise.resolve({ json: () => Promise.resolve(apiResponse) });
-    // Resolve after the page's .then chain has run.
-    p.then(() => setTimeout(done, 0));
-    return p;
-  };
-  new Function("document", "fetch", m![1]!)(document, fakeFetch);
-  await finished;
-  return { results: els["results"]?.innerHTML ?? "", fetchedUrl };
-}
-
-describe("renderAssessResults — output escaping", () => {
-  it("escapes a malicious stored domain everywhere it is rendered", async () => {
-    const { results } = await runAssessPage("s1", {
-      success: true,
-      data: { domain: MALICIOUS, trust_score: 30, spf_policy: '"><svg onload=alert(1)>', dmarc_policy: null, risk_level: "critical" },
-    });
-    expect(results).not.toContain("<img");
-    expect(results).not.toContain("<svg onload");
-    expect(results).toContain("&lt;img src=x onerror=alert(1)&gt;.com");
-    expect(results).toContain("&quot;&gt;&lt;svg onload=alert(1)&gt;");
-  });
-
-  it("escapes the API error text", async () => {
-    const { results } = await runAssessPage("s1", { success: false, error: "<img src=x onerror=alert(1)>" });
-    expect(results).not.toContain("<img");
-    expect(results).toContain("&lt;img");
-  });
-
-  it("does not render a feed-mention / active-threats pill", async () => {
-    const { results } = await runAssessPage("s1", {
-      success: true,
-      data: { domain: "acme.example", trust_score: 60, feed_mentions: 12, risk_level: "medium" },
-    });
-    expect(results).not.toMatch(/active threats/i);
-    expect(results).not.toContain("12");
-  });
-
-  it("encodes the scan id so a path param can't close the script element", async () => {
-    const evil = "</script><script>alert(1)</script>";
-    const html = renderAssessResults(evil);
-    const script = html.match(/<script>([\s\S]*?)<\/script>/)![1]!;
-    expect(script).not.toContain("</script");
-    expect(script).toContain("\\u003c/script\\u003e");
-    const { fetchedUrl } = await runAssessPage(evil, { success: false });
-    expect(fetchedUrl).toBe("/api/brand-scan/public/" + encodeURIComponent(evil));
-  });
-});
-
-describe("/scan and homepage widget templates", () => {
-  it("/scan page no longer renders a feed-mention pill and escapes with a full entity map", () => {
-    const html = renderScanPage();
-    expect(html).not.toContain("feedMentions");
-    expect(html).not.toMatch(/Active threats detected/);
-    expect(html).toContain("'<': '&lt;'");
-    expect(html).toContain("'\"': '&quot;'");
-  });
-
-  it("homepage scan widget escapes the domain, error text and pills, and drops the feed pill", () => {
+describe("homepage widget template", () => {
+  it("homepage scan widget escapes the domain and error text, and drops the feed pill", () => {
     const html = renderHomepage();
     expect(html).not.toContain("feedMentions");
     expect(html).toContain(">Scanning ' + esc(domain)");
     expect(html).toContain("esc(data.error || 'Unknown error')");
-    expect(html).toContain("'<div class=\"result-domain\">' + esc(domain)");
-    expect(html).toContain("esc(r.text)");
   });
 });

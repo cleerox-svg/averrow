@@ -1,10 +1,9 @@
 // Free / consumer email providers blocked from business-email gates.
 //
-// Mirrors the client-side list the public scan pages enforce
-// (templates/homepage.ts + templates/scan.ts) so the server reaches the
-// same verdict the visitor was shown — a direct POST to /api/leads can't
-// slip a personal address past the in-page check. Keep this list in sync
-// with those two templates if either changes.
+// Server-side business-email gate for POST /api/leads. If the free-scan page
+// (packages/averrow-marketing, /scan) checks free-mail client-side, keep
+// its list in sync with this one so the visitor sees the same verdict —
+// this check is the authority either way.
 
 export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
   "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",

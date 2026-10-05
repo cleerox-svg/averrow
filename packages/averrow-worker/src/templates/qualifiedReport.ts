@@ -1,36 +1,21 @@
-// Server-rendered HTML for the sales-qualified Brand Risk Plan.
+// Server-rendered HTML for the prospect scan report (Brand Risk Plan).
 //
 // Renders the snapshotted ReportPayload into a print-friendly page.
 // `@media print` rules collapse the chrome so users can save as PDF
 // without further tooling. No external CSS/JS — fully self-contained
 // so the share link works even when CDN access is restricted.
+//
+// Prospect-facing: no feed/source names, no ASNs, no vendor names, no
+// social-media section, no unsourced statistics.
 
-interface ReportPayload {
-  brand: { domain: string; name: string | null };
-  generated_at: string;
-  executive_summary: { risk_grade: string; key_findings: string[] };
-  email_security: { grade: string; spf: string | null; dmarc: string | null; dkim_found: boolean; mx_count: number };
-  active_threats: {
-    total: number;
-    by_severity: Record<string, number>;
-    samples: Array<{ id: string; threat_type: string; severity: string | null; source_feed: string; malicious_domain: string | null; ip_address: string | null; country_code: string | null; first_seen: string }>;
-  };
-  infrastructure: {
-    top_hosting_providers: Array<{ name: string; asn: string | null; threat_count: number }>;
-    top_countries: Array<{ country: string; threat_count: number }>;
-    campaigns_caught_in: Array<{ id: string; name: string; threat_count: number }>;
-  };
-  lookalikes: { registered_count: number; possible_count: number };
-  narrative: string;
-  remediation_plan: string;
-  roi: {
-    analyst_hours_saved_per_year: number;
-    analyst_dollars_saved_per_year: number;
-    takedowns_per_year_projected: number;
-    breach_prevention_value_per_year: number;
-    total_value_per_year: number;
-  };
-}
+import type { ReportPayload as ReportPayloadCurrent } from "../handlers/qualifiedReport";
+
+// Stored payloads from before the 2026-10-05 rework still carry
+// source_feed, ASN and breach-prevention fields; this renderer simply
+// never reads them, so old share links are clean too.
+type ReportPayload = Omit<ReportPayloadCurrent, "roi"> & {
+  roi: Pick<ReportPayloadCurrent["roi"], "analyst_hours_saved_per_year" | "analyst_dollars_saved_per_year" | "takedowns_per_year_projected">;
+};
 
 function escapeHtml(s: string | null | undefined): string {
   if (s == null) return "";
@@ -56,6 +41,26 @@ function severityChip(sev: string | null): string {
   return `<span style="background:${colors[v] ?? "#666"};color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:600;text-transform:uppercase;">${escapeHtml(v)}</span>`;
 }
 
+function spfLabel(v: string | null): string {
+  switch (v) {
+    case "-all": case "pass": case "hardfail": return "Enforced (-all)";
+    case "~all": case "soft": case "softfail": return "Soft fail (~all) — not enforced";
+    case "?all": case "neutral": case "+all": case "none": return "Neutral — does not restrict senders";
+    case null: case "missing": case "": return "Not configured";
+    default: return v;
+  }
+}
+
+function dmarcLabel(v: string | null): string {
+  switch (v) {
+    case "reject": return "Reject — spoofed mail is blocked";
+    case "quarantine": return "Quarantine — spoofed mail goes to spam";
+    case "none": return "None — monitoring only, nothing blocked";
+    case null: case "missing": case "": return "Not configured";
+    default: return v;
+  }
+}
+
 export function renderQualifiedReportHTML(p: ReportPayload): string {
   const brandName = p.brand.name ?? p.brand.domain;
   const generated = new Date(p.generated_at).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
@@ -69,27 +74,35 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       <td>${severityChip(t.severity)}</td>
       <td>${escapeHtml(t.threat_type)}</td>
       <td><code>${escapeHtml(t.malicious_domain ?? t.ip_address ?? "—")}</code></td>
-      <td>${escapeHtml(t.source_feed)}</td>
       <td>${escapeHtml(t.country_code ?? "—")}</td>
       <td>${escapeHtml(new Date(t.first_seen).toLocaleDateString())}</td>
     </tr>
   `).join("");
 
-  const providerRows = p.infrastructure.top_hosting_providers.map((hp) => `
-    <tr><td>${escapeHtml(hp.name)}</td><td>${escapeHtml(hp.asn ?? "—")}</td><td style="text-align:right;">${hp.threat_count}</td></tr>
-  `).join("") || `<tr><td colspan="3" style="color:#888;font-style:italic;">None observed</td></tr>`;
-
-  const countryRows = p.infrastructure.top_countries.map((c) => `
+  const providers = p.infrastructure.top_hosting_providers;
+  const countries = p.infrastructure.top_countries;
+  const campaigns = p.infrastructure.campaigns_caught_in;
+  const hasInfra = providers.length > 0 || countries.length > 0 || campaigns.length > 0;
+  const providerRows = providers.map((hp) => `
+    <tr><td>${escapeHtml(hp.name)}</td><td style="text-align:right;">${hp.threat_count}</td></tr>
+  `).join("") || `<tr><td colspan="2" style="color:#888;font-style:italic;">None recorded</td></tr>`;
+  const countryRows = countries.map((c) => `
     <tr><td>${escapeHtml(c.country)}</td><td style="text-align:right;">${c.threat_count}</td></tr>
-  `).join("") || `<tr><td colspan="2" style="color:#888;font-style:italic;">None</td></tr>`;
-
-  const campaignRows = p.infrastructure.campaigns_caught_in.map((c) => `
+  `).join("") || `<tr><td colspan="2" style="color:#888;font-style:italic;">None recorded</td></tr>`;
+  const campaignRows = campaigns.map((c) => `
     <tr><td>${escapeHtml(c.name)}</td><td style="text-align:right;">${c.threat_count}</td></tr>
-  `).join("") || `<tr><td colspan="2" style="color:#888;font-style:italic;">No active campaigns observed</td></tr>`;
+  `).join("");
+
+  const lookalikeNames = p.lookalikes.names ?? [];
+  const lookalikeList = lookalikeNames.map((d) => `<li><code>${escapeHtml(d)}</code></li>`).join("");
+  const watchItems = (p.watch_list ?? []).map((w) => `<li>${escapeHtml(w)}</li>`).join("");
 
   // Convert remediation plan markdown-ish numbered list to <ol>
   const planItems = p.remediation_plan.split(/\n+/).filter((l) => l.trim()).map((l) => l.replace(/^\d+[.)]\s*/, "").trim());
   const planList = planItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+
+  let n = 0;
+  const h = (title: string) => `<h2>${++n} · ${title}</h2>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -195,44 +208,59 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     </div>
 
     <section>
-      <h2>1 · Email Security Audit</h2>
+      ${h("Email Security")}
       <div class="grid-2">
         <div class="stat"><div class="label">Email Security Grade</div><div class="value">${escapeHtml(p.email_security.grade)}</div></div>
-        <div class="stat"><div class="label">MX Records</div><div class="value">${p.email_security.mx_count}</div></div>
+        <div class="stat"><div class="label">Mail Servers (MX)</div><div class="value">${p.email_security.mx_count > 0 ? "Present" : "Not found"}</div></div>
       </div>
       <div class="panel">
         <table>
           <tr><th>Control</th><th>Posture</th></tr>
-          <tr><td>SPF</td><td><code>${escapeHtml(p.email_security.spf ?? "Not configured")}</code></td></tr>
-          <tr><td>DMARC</td><td><code>${escapeHtml(p.email_security.dmarc ?? "Not configured")}</code></td></tr>
-          <tr><td>DKIM</td><td>${p.email_security.dkim_found ? "Configured" : "Not detected"}</td></tr>
+          <tr><td>SPF</td><td>${escapeHtml(spfLabel(p.email_security.spf))}</td></tr>
+          <tr><td>DMARC</td><td>${escapeHtml(dmarcLabel(p.email_security.dmarc))}</td></tr>
+          <tr><td>DKIM</td><td>${p.email_security.dkim_found ? "Found" : "Not found on common selectors"}</td></tr>
+          ${p.email_security.bimi_present == null ? "" : `<tr><td>BIMI</td><td>${p.email_security.bimi_present ? "Published" : "Not published"}</td></tr>`}
         </table>
       </div>
     </section>
 
     <section>
-      <h2>2 · Active Threats Targeting ${escapeHtml(p.brand.domain)}</h2>
+      ${h("Registered Lookalike Domains")}
+      ${lookalikeNames.length > 0 ? `
+      <div class="panel">
+        <div style="color:var(--text-secondary);margin-bottom:8px;font-size:13px;">These domains resemble ${escapeHtml(p.brand.domain)} and are registered. Registration alone is not proof of abuse.</div>
+        <ul style="margin:0;padding-left:20px;columns:2;">${lookalikeList}</ul>
+        ${p.lookalikes.registered_count > lookalikeNames.length ? `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Showing ${lookalikeNames.length} of ${p.lookalikes.registered_count}.</div>` : ""}
+      </div>` : p.lookalikes.registered_count > 0
+        ? `<div class="panel">${p.lookalikes.registered_count} registered lookalike domain${p.lookalikes.registered_count === 1 ? "" : "s"} found.</div>`
+        : `<div class="panel" style="color:var(--text-secondary);">No registered lookalike domains were found.</div>`}
+    </section>
+
+    <section>
+      ${h(`Active Threats Targeting ${escapeHtml(p.brand.domain)}`)}
+      ${p.active_threats.total > 0 ? `
       <div class="stat-grid">
-        <div class="stat"><div class="label">Total Active</div><div class="value ${p.active_threats.total > 0 ? "red" : "green"}">${p.active_threats.total}</div></div>
+        <div class="stat"><div class="label">Total Active</div><div class="value red">${p.active_threats.total}</div></div>
         <div class="stat"><div class="label">Critical / High</div><div class="value red">${(p.active_threats.by_severity.critical ?? 0) + (p.active_threats.by_severity.high ?? 0)}</div></div>
       </div>
       ${p.active_threats.samples.length > 0 ? `
       <div class="panel">
         <table>
-          <thead><tr><th>Severity</th><th>Type</th><th>Indicator</th><th>Source</th><th>Country</th><th>First Seen</th></tr></thead>
+          <thead><tr><th>Severity</th><th>Type</th><th>Indicator</th><th>Country</th><th>First Seen</th></tr></thead>
           <tbody>${threatRows}</tbody>
         </table>
-        ${p.active_threats.total > 25 ? `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Showing top 25 of ${p.active_threats.total} active threats. Full list available in customer dashboard.</div>` : ""}
-      </div>
-      ` : `<div class="panel" style="color:var(--text-secondary);">No active threats currently detected.</div>`}
+        ${p.active_threats.total > 25 ? `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Showing the 25 most recent of ${p.active_threats.total} active threats.</div>` : ""}
+      </div>` : ""}
+      ` : `<div class="panel" style="color:var(--text-secondary);">No active threats targeting this domain are on record.</div>`}
     </section>
 
+    ${hasInfra ? `
     <section>
-      <h2>3 · Infrastructure Map</h2>
+      ${h("Hosting Infrastructure")}
       <div class="grid-2">
         <div class="panel">
           <table>
-            <thead><tr><th>Hosting Provider</th><th>ASN</th><th style="text-align:right;">Threats</th></tr></thead>
+            <thead><tr><th>Hosting Provider</th><th style="text-align:right;">Threats</th></tr></thead>
             <tbody>${providerRows}</tbody>
           </table>
         </div>
@@ -243,48 +271,41 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
           </table>
         </div>
       </div>
+      ${campaigns.length > 0 ? `
       <div class="panel" style="margin-top: 16px;">
-        <div style="color:var(--text-secondary);margin-bottom:8px;font-size:13px;">Active campaign clusters this brand is targeted by:</div>
+        <div style="color:var(--text-secondary);margin-bottom:8px;font-size:13px;">Active campaigns these threats belong to:</div>
         <table>
           <thead><tr><th>Campaign</th><th style="text-align:right;">Threats</th></tr></thead>
           <tbody>${campaignRows}</tbody>
         </table>
-      </div>
-    </section>
+      </div>` : ""}
+    </section>` : ""}
 
     <section>
-      <h2>4 · Lookalike Domain Inventory</h2>
-      <div class="stat-grid">
-        <div class="stat"><div class="label">Registered Lookalikes</div><div class="value ${p.lookalikes.registered_count > 0 ? "red" : "green"}">${p.lookalikes.registered_count}</div></div>
-        <div class="stat"><div class="label">Permutations Tracked</div><div class="value">${p.lookalikes.possible_count}</div></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>5 · Threat Actor Briefing</h2>
+      ${h("Summary")}
       <div class="panel narrative">${escapeHtml(p.narrative).replace(/\n/g, "<br>")}</div>
     </section>
 
     <section>
-      <h2>6 · Recommended Remediation Plan</h2>
+      ${h("Recommended Next Steps")}
       <div class="panel">
         <ol class="plan-list">${planList}</ol>
       </div>
     </section>
 
+    ${watchItems ? `
     <section>
-      <h2>7 · Projected Annual Value (ROI)</h2>
+      ${h("What Averrow Would Watch")}
+      <div class="panel"><ul class="plan-list">${watchItems}</ul></div>
+    </section>` : ""}
+
+    <section>
+      ${h("Analyst Time (Estimate)")}
       <div class="stat-grid">
-        <div class="stat"><div class="label">Analyst Hours Saved / yr</div><div class="value green">${p.roi.analyst_hours_saved_per_year.toLocaleString()}</div></div>
-        <div class="stat"><div class="label">Analyst $ Saved / yr</div><div class="value green">${fmtUsd(p.roi.analyst_dollars_saved_per_year)}</div></div>
-        <div class="stat"><div class="label">Takedowns / yr Projected</div><div class="value">${p.roi.takedowns_per_year_projected}</div></div>
-        <div class="stat"><div class="label">Breach Prevention Value / yr</div><div class="value green">${fmtUsd(p.roi.breach_prevention_value_per_year)}</div></div>
+        <div class="stat"><div class="label">Analyst Hours / yr</div><div class="value green">${p.roi.analyst_hours_saved_per_year.toLocaleString()}</div></div>
+        <div class="stat"><div class="label">Analyst Cost / yr</div><div class="value green">${fmtUsd(p.roi.analyst_dollars_saved_per_year)}</div></div>
       </div>
-      <div class="panel" style="text-align:center;background:rgba(60,184,120,0.08);border-color:rgba(60,184,120,0.3);">
-        <div style="color:var(--text-tertiary);font-size:12px;text-transform:uppercase;letter-spacing:1px;">Total Projected Annual Value</div>
-        <div style="font-size:36px;font-weight:700;color:var(--green);margin-top:4px;">${fmtUsd(p.roi.total_value_per_year)}</div>
-        <div style="color:var(--text-secondary);font-size:12px;margin-top:8px;max-width:520px;margin-left:auto;margin-right:auto;">Calculation basis: replaces 2-3 SOC analyst headcount on impersonation/takedown work + measurable contribution to breach-prevention probability (IBM 2024 cost-of-breach reference: $4.45M average).</div>
-      </div>
+      <div style="color:var(--text-secondary);font-size:12px;">Illustrative estimate: about ${p.roi.analyst_hours_saved_per_year.toLocaleString()} hours a year of impersonation monitoring and takedown work at $75/hour. Your figures will depend on your team and volume.</div>
     </section>
 
     <div class="footer">
