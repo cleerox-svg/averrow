@@ -1,11 +1,8 @@
 ---
 /*
- * Pricing page. Plan grid + monthly/annual toggle (Item 4 UX),
- * "what you replace" value-prop, full feature comparison table,
- * trust signals strip, FAQ, CTA.
- *
- * The monthly/annual toggle is a tiny inline script — same
- * setPricing() function as the inline template.
+ * Plans page (URL stays /pricing). Plan grid, "what you replace"
+ * value-prop, full feature comparison table, trust signals strip,
+ * FAQ, CTA. No prices are shown anywhere (owner decision 2026-10-05).
  */
 import Layout from "../layouts/Layout.astro";
 import TrustSignals from "../components/TrustSignals.astro";
@@ -14,18 +11,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
 <Layout
-  title="Pricing — Averrow"
-  description="Published, monthly pricing. Professional $1,499/mo, Business $3,999/mo, Enterprise custom. Month-to-month, no minimum contract. Free domain scan, no signup."
+  title="Plans — Averrow"
+  description="Averrow plans are built around the coverage you need: Professional, Business and Enterprise. Run a free domain scan with no signup, or book a demo."
 >
   <section class="pricing-hero">
     <div class="container">
-      <div class="section-label" style="text-align:center;">Pricing</div>
-      <h1>One platform. One price.<br />Complete coverage.</h1>
+      <div class="section-label" style="text-align:center;">Plans</div>
+      <h1>Plans built around<br />what you need watched.</h1>
       <p>
         Brand protection, email-security monitoring, and threat
         intelligence are usually bought as separate tools &mdash; and
-        staffed separately. Averrow brings all three into one platform,
-        with published prices and a 14-day trial.
+        staffed separately. Averrow brings all three into one platform.
+        Start with a free scan, then book a demo and we&rsquo;ll scope
+        the right plan with you.
       </p>
     </div>
   </section>
@@ -66,32 +64,26 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
+
   <section class="pricing-section">
-    <div class="pricing-toggle">
-      <button id="pricing-monthly" class="pricing-toggle-btn active" data-mode="monthly">MONTHLY</button>
-      <button id="pricing-annual" class="pricing-toggle-btn" data-mode="annual">
-        ANNUAL
-        <span class="pricing-save-badge">Save $3.6K&ndash;$9.6K/yr</span>
-      </button>
-    </div>
     <div class="pricing-grid-hint">
       Start with the free scan
       <span class="pricing-grid-hint-arrow">&rarr;</span>
-      pick a plan when you&rsquo;re ready
+      book a demo when you&rsquo;re ready
     </div>
     <div class="pricing-grid">
       <div class="price-card free-scan">
         <div class="price-not-a-plan">Free Scan &middot; Not a plan</div>
         <div class="price-tier">Free Scan</div>
         <div class="price-desc">Brand Exposure Report</div>
-        <div class="price-amount">$0</div>
+        <div class="price-amount">Free</div>
         <div class="price-billing">One-time, no signup</div>
         <div class="price-divider"></div>
         <ul class="price-features">
-          <li>Email-authentication grade</li>
-          <li>Lookalike domain scan</li>
-          <li>Social handle check</li>
           <li>Exposure score</li>
+          <li>Email authentication check (SPF, DMARC)</li>
+          <li>Count of possible lookalike spellings</li>
+          <li>Full report on request</li>
         </ul>
         <div class="price-cta">
           <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-free">Scan your domain</a>
@@ -102,17 +94,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <span class="popular-badge">POPULAR</span>
         <div class="price-tier">Professional</div>
         <div class="price-desc">For growing companies</div>
-        <div class="price-monthly">
-          <div class="price-amount">$1,499<span>/mo</span></div>
-          <div class="price-billing">Billed monthly</div>
-        </div>
-        <div class="price-annual" style="display:none">
-          <div class="price-amount">$1,199<span>/mo</span></div>
-          <div class="price-billing">
-            Billed annually ($14,388/yr) &middot;
-            <strong>Save $3,600/yr</strong>
-          </div>
-        </div>
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in the free scan, monitored continuously</li>
@@ -122,27 +103,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Look-alike apps on the Apple App Store</li>
           <li>Takedowns for lookalike domains and phishing URLs, submitted under an authorization you sign</li>
           <li>Email security posture monitoring</li>
-          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-professional">Get Started</a>
+          <a href={`${base}/demo`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-professional">Book a demo</a>
         </div>
       </div>
 
       <div class="price-card">
         <div class="price-tier">Business</div>
         <div class="price-desc">Full-spectrum brand defense</div>
-        <div class="price-monthly">
-          <div class="price-amount">$3,999<span>/mo</span></div>
-          <div class="price-billing">Billed monthly</div>
-        </div>
-        <div class="price-annual" style="display:none">
-          <div class="price-amount">$3,199<span>/mo</span></div>
-          <div class="price-billing">
-            Billed annually ($38,388/yr) &middot;
-            <strong>Save $9,600/yr</strong>
-          </div>
-        </div>
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Professional</li>
@@ -151,18 +120,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Trademark monitoring: misuse of your name across domains, social and apps in one view</li>
           <li>Webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors &mdash; set up with our team</li>
           <li>STIX 2.1 export, available on request</li>
-          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-business">Contact Sales</a>
+          <a href={`${base}/demo`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-business">Book a demo</a>
         </div>
       </div>
 
       <div class="price-card">
         <div class="price-tier">Enterprise</div>
-        <div class="price-desc">Annual commitment</div>
-        <div class="price-amount" style="font-size:2.5rem;">Custom</div>
-        <div class="price-billing">Tailored to your organization</div>
+        <div class="price-desc">Tailored to your organization</div>
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Business</li>
@@ -171,10 +137,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>SLA guarantees</li>
           <li>Dedicated support</li>
           <li>Onboarding &amp; training</li>
-          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
+          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Talk to sales</a>
         </div>
       </div>
     </div>
@@ -199,8 +164,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <tbody>
           <tr><td>Monitoring</td><td>One-time</td><td>Continuous 24/7</td><td>Continuous 24/7</td><td>Continuous 24/7</td></tr>
           <tr><td>Email Security Posture</td><td>Grade only</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td></tr>
-          <tr><td>Domain Monitoring (lookalikes, certificate transparency)</td><td>Lookalike scan</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Social Media Monitoring</td><td>Handle check</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Domain Monitoring (lookalikes, certificate transparency)</td><td>Possible-lookalike count</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Social Media Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>Executive Impersonation</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>Apple App Store Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>Dark Web Monitoring (paste sites, ransomware leak sites)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
@@ -211,7 +176,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <tr><td>Abuse Mailbox</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>Threat-Actor Intelligence (operations &amp; campaigns)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>SLA Guarantees</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>14-day trial</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
         </tbody>
       </table>
     </div>
@@ -228,31 +192,23 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="faq-list">
       <div class="faq-item">
         <button class="faq-q" data-faq-toggle>How does the free scan work? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Enter any domain. We check email authentication, lookalike domains, and social handles, and give you an exposure score in minutes. No account, no credit card.</div>
+        <div class="faq-a">Enter any domain for an exposure score and email-authentication check in under a minute, no signup. Ask for the full report for lookalike and social findings.</div>
       </div>
       <div class="faq-item">
         <button class="faq-q" data-faq-toggle>What&rsquo;s included in continuous monitoring? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Professional and above monitor continuously across the modules in your plan, with in-app, email and push alerts when something new lands.</div>
+        <div class="faq-a">Professional and above monitor continuously across the modules in your plan, Alerts land in your Averrow console; Business and Enterprise can also send them to a webhook or SIEM, set up with our team.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>Can I switch plans? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Yes &mdash; upgrade or downgrade any time. Changes take effect at the next billing cycle. No penalties.</div>
+        <button class="faq-q" data-faq-toggle>How is Averrow priced? <span class="faq-arrow">&#9660;</span></button>
+        <div class="faq-a">By the coverage you need. Book a demo and we&rsquo;ll scope it with you.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>How does annual billing work? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Annual saves 20%: Professional is $1,199/mo ($14,388/yr) and Business is $3,199/mo ($38,388/yr). That&rsquo;s $3,600 off Professional and $9,600 off Business each year.</div>
+        <button class="faq-q" data-faq-toggle>Can I change plans later? <span class="faq-arrow">&#9660;</span></button>
+        <div class="faq-a">Yes &mdash; talk to us and we&rsquo;ll change your coverage.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>What payment methods do you accept? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">All major credit cards. Enterprise can pay by invoice or wire.</div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>Is there a minimum contract? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">No. Professional and Business are month-to-month. Enterprise is custom.</div>
-      </div>
-      <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>Is there a free trial? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Yes. Every plan starts with a 14-day trial. Separately, the domain scan is free with no signup &mdash; it is a free scan, not a plan.</div>
+        <button class="faq-q" data-faq-toggle>How do I get started? <span class="faq-arrow">&#9660;</span></button>
+        <div class="faq-a">Run the free domain scan on your own domain &mdash; no signup. When you want continuous monitoring, book a demo and our team will set you up.</div>
       </div>
     </div>
   </section>
@@ -260,10 +216,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="cta-block">
     <div class="container">
       <h2>Ready to protect your brand?</h2>
-      <p>Start with the free domain scan or talk to our team about the right plan for you.</p>
+      <p>Start with the free domain scan or book a demo to find the right plan for you.</p>
       <div class="cta-actions">
         <a href={`${base}/scan`} class="btn btn-primary" data-cta="run-scan">Scan your domain</a>
-        <a href={`${base}/contact`} class="btn btn-outline" data-cta="contact-sales">Contact Sales</a>
+        <a href={`${base}/demo`} class="btn btn-outline" data-cta="book-demo">Book a demo</a>
       </div>
     </div>
   </section>
@@ -355,40 +311,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 
-  .pricing-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-bottom: 0.85rem;
-  }
-  .pricing-toggle-btn {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 0.5rem 1.25rem;
-    border-radius: 100px;
-    border: 1px solid var(--border);
-    background: var(--bg-secondary);
-    color: var(--text-tertiary);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  .pricing-toggle-btn.active {
-    background: var(--btn-primary-bg);
-    color: var(--btn-primary-ink);
-    border-color: var(--accent);
-  }
-  .pricing-save-badge {
-    background: rgba(60, 184, 120, 0.14);
-    color: var(--green-text);
-    font-size: 10px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    margin-left: 6px;
-  }
   .pricing-grid-hint {
     text-align: center;
     font-family: var(--font-mono);
@@ -604,24 +526,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 </style>
 
 <script>
-  // Monthly/annual toggle. Mirror of the inline-template setPricing().
-  (function () {
-    const monthlyBtn = document.getElementById("pricing-monthly");
-    const annualBtn = document.getElementById("pricing-annual");
-    const monthlyEls = document.querySelectorAll<HTMLElement>(".price-monthly");
-    const annualEls = document.querySelectorAll<HTMLElement>(".price-annual");
-
-    function setPricing(mode: "monthly" | "annual") {
-      monthlyEls.forEach(el => (el.style.display = mode === "monthly" ? "block" : "none"));
-      annualEls.forEach(el => (el.style.display = mode === "annual" ? "block" : "none"));
-      monthlyBtn?.classList.toggle("active", mode === "monthly");
-      annualBtn?.classList.toggle("active", mode === "annual");
-    }
-
-    monthlyBtn?.addEventListener("click", () => setPricing("monthly"));
-    annualBtn?.addEventListener("click", () => setPricing("annual"));
-  })();
-
   // FAQ toggle.
   document.querySelectorAll<HTMLButtonElement>("[data-faq-toggle]").forEach(btn => {
     btn.addEventListener("click", () => btn.parentElement?.classList.toggle("open"));

@@ -47,7 +47,7 @@ export const NAV_LINKS: NavLink[] = [
       { href: "/solutions/mssp", label: "MSSPs and partners" },
     ],
   },
-  { href: "/pricing", label: "Pricing" },
+  { href: "/pricing", label: "Plans" },
   {
     href: "/resources",
     label: "Research",
