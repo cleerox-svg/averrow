@@ -12,10 +12,11 @@ const PAGES: Array<{
   title: RegExp;
   heading: RegExp;
 }> = [
-  { path: "/",             title: /Averrow/,             heading: /under attack/i },
+  { path: "/",             title: /Averrow/,             heading: /who is attacking your brand/i },
   { path: "/platform",     title: /Platform/,            heading: /one platform/i },
   { path: "/pricing",      title: /Pricing/,             heading: /one platform\. one price/i },
-  { path: "/about",        title: /About/,               heading: /built from a heritage/i },
+  // Keep this loose: copy on About changes, the page's subject (threat actors) does not.
+  { path: "/about",        title: /About/,               heading: /threat actors/i },
   { path: "/security",     title: /Security/,            heading: /security & trust/i },
   { path: "/contact",      title: /Contact/,             heading: /get in touch/i },
   { path: "/report-abuse", title: /Report Brand Abuse/,  heading: /saw something suspicious/i },
@@ -26,8 +27,20 @@ const PAGES: Array<{
 for (const page of PAGES) {
   test(`${page.path} loads with correct title + heading`, async ({ page: p }) => {
     const consoleErrors: string[] = [];
+    const brokenLocal: string[] = [];
     p.on("console", msg => {
       if (msg.type() === "error") consoleErrors.push(msg.text());
+    });
+    // "Failed to load resource" console lines carry no URL, so judge broken
+    // resources by response instead: any same-origin 4xx/5xx counts, except
+    // the analytics beacon and brand/icon files (served by the Worker's static
+    // assets, not by the preview server). Third-party failures (fonts blocked in a
+    // sandbox, cert errors) are not this site's regressions.
+    p.on("response", res => {
+      const url = new URL(res.url());
+      if (url.origin === new URL(p.url() === "about:blank" ? res.url() : p.url()).origin && res.status() >= 400 && !/^\/(api\/track|favicon|icon-|brand\/)/.test(url.pathname)) {
+        brokenLocal.push(`${res.status()} ${url.pathname}`);
+      }
     });
 
     const response = await p.goto(page.path);
@@ -35,12 +48,11 @@ for (const page of PAGES) {
     await expect(p).toHaveTitle(page.title);
     await expect(p.locator("h1").first()).toContainText(page.heading);
 
-    // No console errors except favicon-related noise local browsers
-    // sometimes emit (mark them as expected).
     const real = consoleErrors.filter(
-      e => !/favicon|net::ERR_BLOCKED/i.test(e),
+      e => !/favicon|net::ERR_BLOCKED|Failed to load resource/i.test(e),
     );
     expect(real, `Console errors on ${page.path}:\n${real.join("\n")}`).toHaveLength(0);
+    expect(brokenLocal, `Broken same-origin resources on ${page.path}`).toHaveLength(0);
   });
 }
 
@@ -78,21 +90,87 @@ test("/sitemap.xml lists at least the ported routes", async ({ request }) => {
   }
 });
 
-test("theme cycle button switches between auto/dark/light", async ({ page: p }) => {
-  await p.goto("/");
-  const html = p.locator("html");
-  const button = p.locator(".theme-toggle").first();
-  await expect(button).toBeVisible();
+test.describe("theme", () => {
+  test("defaults to dark even when the OS prefers light", async ({ browser }) => {
+    const ctx = await browser.newContext({ colorScheme: "light" });
+    const p = await ctx.newPage();
+    await p.goto("/");
+    await expect(p.locator("html")).toHaveAttribute("data-theme", "dark");
+    await ctx.close();
+  });
 
-  const before = await html.getAttribute("data-theme");
-  expect(before).toMatch(/dark|light/);
+  test("footer toggle switches dark <-> light and persists", async ({ page: p }) => {
+    await p.goto("/");
+    const html = p.locator("html");
+    // The toggle moved out of the nav and into the footer.
+    await expect(p.locator("nav .theme-toggle")).toHaveCount(0);
+    const button = p.locator("footer .theme-toggle");
+    await expect(button).toBeVisible();
+    await expect(html).toHaveAttribute("data-theme", "dark");
 
-  await button.click();
-  await p.waitForTimeout(50);
-  const after = await html.getAttribute("data-theme");
-  // We can't predict the next value without knowing OS theme, but it
-  // must be one of dark|light and the localStorage entry should be set.
-  expect(after).toMatch(/dark|light/);
-  const stored = await p.evaluate(() => localStorage.getItem("averrow-theme"));
-  expect(stored).toMatch(/auto|dark|light/);
+    await button.click();
+    await expect(html).toHaveAttribute("data-theme", "light");
+    expect(await p.evaluate(() => localStorage.getItem("averrow-theme"))).toBe("light");
+
+    await p.reload();
+    await expect(html).toHaveAttribute("data-theme", "light");
+
+    await p.locator("footer .theme-toggle").click();
+    await expect(html).toHaveAttribute("data-theme", "dark");
+  });
+});
+
+test.describe("homepage hero", () => {
+  test("H1, lede and scan form", async ({ page: p }) => {
+    await p.goto("/");
+    await expect(p.locator("h1")).toHaveCount(1);
+    await expect(p.locator("h1")).toHaveText(/See who is attacking your brand, and shut them down\./);
+
+    const form = p.locator("form#scanForm");
+    await expect(form).toHaveAttribute("action", /\/assess$/);
+    await expect(form).toHaveAttribute("method", /post/i);
+    await expect(form.locator('input[name="domain"]')).toBeVisible();
+    await expect(form.getByRole("button", { name: /scan free/i })).toBeVisible();
+  });
+
+  test("no fake live feed, no retired claims", async ({ page: p }) => {
+    await p.goto("/");
+    const text = (await p.locator("body").innerText()).toLowerCase();
+    expect(text).not.toContain("live threat feed");
+    expect(text).not.toContain("<5min");
+    expect(text).not.toContain("ai agents");
+    expect(text).not.toContain("42-agent");
+    expect(text).not.toContain("beavertooth");
+    await expect(p.getByText("Illustrative example · names changed")).toBeVisible();
+  });
+
+  test("platform band is dated and shows real numbers", async ({ page: p }) => {
+    await p.goto("/");
+    const band = p.locator(".band-grid");
+    await expect(band.locator(".band-lbl")).toContainText(/From the platform · updated \d{1,2} \w{3} \d{4}/);
+    await expect(band.locator(".band-m")).toHaveCount(5);
+    await expect(band).toContainText("40+");
+    await expect(p.locator(".cover-chip")).toHaveCount(8);
+  });
+});
+
+test.describe("navigation", () => {
+  test("has exactly 5 top-level links and the three actions", async ({ page: p }) => {
+    await p.goto("/");
+    const nav = p.getByRole("navigation", { name: "Main" });
+    const links = nav.locator("ul.nav-links > li.nav-item > a.nav-link");
+    await expect(links).toHaveText(["Platform", "Solutions", "Pricing", "Research", "Company"]);
+    await expect(nav.getByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
+    await expect(nav.getByRole("link", { name: "Book a demo" })).toHaveAttribute("href", "/demo");
+    await expect(nav.getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", "/scan");
+  });
+
+  test("dropdown opens on keyboard focus", async ({ page: p }) => {
+    await p.goto("/");
+    const menu = p.locator("li.nav-item", { hasText: "Platform" }).first().locator(".nav-menu");
+    await expect(menu).toBeHidden();
+    await p.locator("a.nav-link", { hasText: "Platform" }).focus();
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("link", { name: /Email security/ })).toBeVisible();
+  });
 });

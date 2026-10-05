@@ -1,155 +1,205 @@
 ---
 /*
- * Homepage. Hero with radar SVG + synthetic intercept ticker + scan
- * form, stat row, agent mesh, how-it-works, capabilities, trust
- * signals, CTA. Ported from
- * packages/averrow-worker/src/templates/homepage.ts.
+ * Homepage. Section 1 redesign (see docs/DISCLOSURE_REGISTER.md rows
+ * L4/L10/L12/L13/L17/L21/L22): hero with scan form + an illustrative
+ * operation card, a "from the platform" band of real build-time numbers,
+ * coverage chips, then how it works / capabilities / console preview /
+ * trust / CTA.
  *
- * The ticker is pure CSS keyframe animation — no React island needed.
- * @media (prefers-reduced-motion) freezes it. Stats are hardcoded
- * placeholders matching the existing inline-template fallback;
- * production will keep its dynamic source until R6 cutover at which
- * point we can wire in a build-time fetch from /api/public/stats.
+ * Every number in the band comes from src/data/stats.json, which
+ * scripts/fetch-stats.mjs refreshes from /api/v1/public/stats on each
+ * build. Nothing here is "live": the band says when it was last updated.
+ * The operation card and the console preview are explicitly labelled
+ * illustrative.
  */
 import Layout from "../layouts/Layout.astro";
 import TrustSignals from "../components/TrustSignals.astro";
 import liveStats from "../data/stats.json";
 
-// stats.json is refreshed by scripts/fetch-stats.mjs before each
-// astro build. If the fetch failed (offline / API down), the file
-// keeps its previous values and the build still produces a clean
-// homepage. R6 lost the per-request Worker fetch; this gets us
-// build-time-fresh numbers without paying that cost.
 const stats = liveStats;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+// "5 Oct 2026" — UTC so the label doesn't depend on the build machine's zone.
+const updated = new Date(stats.generated_at).toLocaleDateString("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+// The register says "40+", never the exact feed count. Fall back to the
+// real number if the platform ever reports fewer than 40.
+const sources = stats.active_feeds && stats.active_feeds >= 40 ? "40+" : String(stats.active_feeds ?? "");
+
+const bandTiles = [
+  { value: stats.threats_detected, label: "threats tracked" },
+  { value: stats.campaigns, label: "campaigns tracked" },
+  { value: stats.providers_mapped, label: "hosting providers mapped" },
+  { value: stats.countries, label: "countries" },
+  ...(sources ? [{ value: sources, label: "intelligence sources" }] : []),
+];
+
+const coverage = [
+  "Lookalike domains",
+  "TLS certificates",
+  "Social profiles",
+  "App stores",
+  "Executive impersonation",
+  "Dark web",
+  "Email authentication",
+  "Abuse mailbox",
+];
+
+// Illustrative operation graph. Coordinates are in the SVG's 400x190 space.
+// tone -> colour token: crit = critical severity, high = high severity,
+// amber / blue / green = platform palette.
+type Tone = "crit" | "high" | "amber" | "blue" | "green";
+const opNodes: Array<{ x: number; y: number; tone: Tone; title: string; sub: string }> = [
+  { x: 70, y: 40, tone: "crit", title: "14 domains", sub: "acme-payroll-login.com" },
+  { x: 60, y: 120, tone: "high", title: "2 hosting ASNs", sub: "AS-209 · AS-174" },
+  { x: 95, y: 168, tone: "amber", title: "1 TLS cert", sub: "shared serial" },
+  { x: 330, y: 38, tone: "blue", title: "Social profile", sub: "@acme_hr_support" },
+  { x: 345, y: 110, tone: "blue", title: "Cloned app", sub: "\"Acme Pay\"" },
+  { x: 305, y: 168, tone: "green", title: "Email", sub: "DMARC p=none" },
+];
+const toneVar: Record<Tone, string> = {
+  crit: "var(--sev-critical)",
+  high: "var(--sev-high)",
+  amber: "var(--amber)",
+  blue: "var(--blue)",
+  green: "var(--green)",
+};
 ---
 
 <Layout
   title="Averrow — Digital Risk Protection & Brand Protection"
-  description="Averrow — a Digital Risk Protection (DRPS) platform for brand protection. Detect impersonation, phishing, domain abuse, and social threats. Free scan, no signup required."
+  description="Averrow finds lookalike domains, fake profiles, cloned apps and phishing kits aimed at your brand and executives, links them to the operation behind them, and files the takedowns. Free 30-second domain scan, no sign-up."
 >
-  <section class="hero">
-    <div class="hero-bg"></div>
-    <div class="hero-radar" aria-hidden="true">
-      <svg viewBox="0 0 500 400" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
-        <defs>
-          <radialGradient id="sweepGrad" cx="250" cy="200" r="195" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#C83C3C" stop-opacity="0.9"/>
-            <stop offset="100%" stop-color="#C83C3C" stop-opacity="0"/>
-          </radialGradient>
-        </defs>
-        <line x1="0" y1="100" x2="500" y2="100" stroke="var(--accent)" stroke-width="0.5" opacity="0.15"/>
-        <line x1="0" y1="200" x2="500" y2="200" stroke="var(--accent)" stroke-width="0.5" opacity="0.2"/>
-        <line x1="0" y1="300" x2="500" y2="300" stroke="var(--accent)" stroke-width="0.5" opacity="0.15"/>
-        <line x1="125" y1="0" x2="125" y2="400" stroke="var(--accent)" stroke-width="0.5" opacity="0.15"/>
-        <line x1="250" y1="0" x2="250" y2="400" stroke="var(--accent)" stroke-width="0.5" opacity="0.2"/>
-        <line x1="375" y1="0" x2="375" y2="400" stroke="var(--accent)" stroke-width="0.5" opacity="0.15"/>
-        <circle cx="250" cy="200" r="50"  stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="4 3" fill="none" opacity="0.4"/>
-        <circle cx="250" cy="200" r="95"  stroke="var(--accent)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.5"/>
-        <circle cx="250" cy="200" r="140" stroke="var(--accent)" stroke-width="1.8" stroke-dasharray="5 4" fill="none" opacity="0.45"/>
-        <circle cx="250" cy="200" r="192" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4" fill="none" opacity="0.35"/>
-        <g class="radar-sweep-arm" style="transform-origin: 250px 200px; transform-box: view-box;">
-          <line x1="250" y1="200" x2="250" y2="8" stroke="#C83C3C" stroke-width="2" opacity="0.75" stroke-linecap="round"/>
-          <path d="M250 200 L250 8 A192 192 0 0 0 58 200 Z" fill="url(#sweepGrad)" opacity="0.12"/>
-        </g>
-        <circle cx="312" cy="118" r="5"   fill="#C83C3C" opacity="0.85"/>
-        <circle cx="176" cy="148" r="4.5" fill="#78A0C8" opacity="0.8"/>
-        <circle cx="342" cy="265" r="4.5" fill="#28A050" opacity="0.8"/>
-        <circle cx="158" cy="282" r="5"   fill="#C83C3C" opacity="0.85"/>
-        <circle cx="384" cy="178" r="4"   fill="#28A050" opacity="0.8"/>
-        <circle cx="196" cy="88"  r="4"   fill="#78A0C8" opacity="0.8"/>
-        <circle cx="290" cy="240" r="4"   fill="#C83C3C" opacity="0.75"/>
-        <circle cx="210" cy="180" r="3.5" fill="#78A0C8" opacity="0.7"/>
-        <path d="M250 172 L268 222 L250 214 L232 222 Z" fill="#F0EDE8" opacity="0.8"/>
-        <line x1="250" y1="190" x2="250" y2="206" stroke="#C83C3C" stroke-width="2" opacity="0.8"/>
-      </svg>
-    </div>
-
-    <div class="hero-content">
-      <div class="hero-tag">AI Threat Intelligence &amp; Brand Protection</div>
-      <h1 class="hero-h1">Your brand is under attack<br />right now.</h1>
-      <p class="hero-p">
-        Averrow is a Digital Risk Protection (DRPS) platform that detects and shuts
-        down impersonation, phishing, and brand abuse across domains, email, and
-        social &mdash; before it reaches your customers.
+  <div class="hero-wrap">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <div class="hero-eyebrow">Brand protection · threat-actor intelligence</div>
+      <h1 class="hero-h1" id="hero-title">See <em>who</em> is attacking your brand, and shut them down.</h1>
+      <p class="hero-lede">
+        Averrow finds lookalike domains, fake profiles, cloned apps and phishing
+        kits aimed at your brand and executives. It links them to the
+        infrastructure and operation behind them, then files the takedowns.
+      </p>
+      <p class="hero-lede hero-lede-short">
+        Find the fakes, trace the operation behind them, and take them down.
       </p>
 
-      <div class="hero-ticker" role="img" aria-label="Sample of recent threat detections">
-        <div class="hero-ticker-label">
-          Live Threat Feed <span class="hero-ticker-dot"></span>
-        </div>
-        <div class="hero-ticker-viewport">
-          <ul class="hero-ticker-list">
-            <li><span class="ti-time">14:08:22Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">phish-azure-mfa.com</span><span class="ti-tag">Phishing kit</span></li>
-            <li><span class="ti-time">14:08:11Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">paypal-secure-verify.net</span><span class="ti-tag">Lookalike domain</span></li>
-            <li><span class="ti-time">14:07:58Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">@yourbrand_support</span><span class="ti-tag">Social impersonation</span></li>
-            <li><span class="ti-time">14:07:42Z</span><span class="ti-sev ti-medium">MED</span><span class="ti-target">yourbrand.com</span><span class="ti-tag">SPF record drift</span></li>
-            <li><span class="ti-time">14:07:30Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">acct.yourbrand.com.io</span><span class="ti-tag">Cert anomaly</span></li>
-            <li><span class="ti-time">14:07:14Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">chase-banking-alert.app</span><span class="ti-tag">Malware delivery</span></li>
-            <!-- Duplicate first three for seamless loop -->
-            <li aria-hidden="true"><span class="ti-time">14:08:22Z</span><span class="ti-sev ti-critical">CRIT</span><span class="ti-target">phish-azure-mfa.com</span><span class="ti-tag">Phishing kit</span></li>
-            <li aria-hidden="true"><span class="ti-time">14:08:11Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">paypal-secure-verify.net</span><span class="ti-tag">Lookalike domain</span></li>
-            <li aria-hidden="true"><span class="ti-time">14:07:58Z</span><span class="ti-sev ti-high">HIGH</span><span class="ti-target">@yourbrand_support</span><span class="ti-tag">Social impersonation</span></li>
-          </ul>
-        </div>
-      </div>
-
       <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
-        <input class="scan-input" id="domainInput" name="domain" placeholder="Enter any domain" autocomplete="off" aria-label="Domain to scan for brand threats" />
-        <button class="scan-btn" type="submit" data-cta="run-scan">Scan My Brand &mdash; Free</button>
+        <label class="sr-only" for="domainInput">Domain to scan for brand threats</label>
+        <input
+          class="scan-input"
+          id="domainInput"
+          name="domain"
+          type="text"
+          inputmode="url"
+          placeholder="yourcompany.com"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          required
+        />
+        <button class="scan-btn" type="submit" data-cta="hero-scan">Scan free &rarr;</button>
       </form>
-      <div class="scan-hint">
-        Enter any domain &mdash; no signup required &middot;
-        <span class="scan-hint-emphasis">Threat feed above is illustrative</span>
+      <p class="scan-meta">
+        <span>30-second scan &middot; no sign-up</span>
+        <span class="scan-meta-dot" aria-hidden="true"></span>
+        <span>Plans from $1,499/mo</span>
+        <span class="scan-meta-dot" aria-hidden="true"></span>
+        <a href={`${base}/demo`} data-cta="hero-demo">Book a demo</a>
+      </p>
+    </div>
+
+    <figure class="op" aria-labelledby="op-title">
+      <div class="op-hd">
+        <span class="op-id">OPERATION · EXAMPLE</span>
+        <span class="op-tag">Active</span>
       </div>
+      <div class="op-title" id="op-title">Payroll-portal phishing kit</div>
+      <svg class="op-graph" viewBox="0 0 400 190" role="img" aria-labelledby="op-svg-title op-svg-desc">
+        <title id="op-svg-title">Example operation graph</title>
+        <desc id="op-svg-desc">
+          One operation linking 14 lookalike domains, 2 hosting networks, a shared
+          TLS certificate, a fake social profile, a cloned app and a weak email
+          authentication record. Illustrative example with names changed.
+        </desc>
+        <g stroke="var(--border-strong)" stroke-width="1.2" fill="none">
+          {opNodes.map(n => <path d={`M200 95 L${n.x} ${n.y}`} />)}
+          <path d="M70 40 L25 22" stroke-dasharray="3 3" />
+          <path d="M70 40 L32 62" stroke-dasharray="3 3" />
+          <path d="M60 120 L22 140" stroke-dasharray="3 3" />
+          <path d="M60 120 L28 100" stroke-dasharray="3 3" />
+        </g>
+        <circle cx="200" cy="95" r="30" fill="var(--sev-critical-bg, rgba(239,68,68,0.10))" stroke="var(--red)" stroke-width="1.5" />
+        <text x="200" y="92" text-anchor="middle" class="op-hub-id">OP-2291</text>
+        <text x="200" y="105" text-anchor="middle" class="op-hub-sub">19 linked</text>
+        {opNodes.map(n => {
+          const right = n.x > 200;
+          const tx = n.x + (right ? -12 : 12);
+          const anchor = right ? "end" : "start";
+          return (
+            <Fragment>
+              <circle cx={n.x} cy={n.y} r="7" fill="var(--bg-secondary)" stroke={toneVar[n.tone]} stroke-width="2" />
+              <text x={tx} y={n.y - 1} text-anchor={anchor} class="op-node-title">{n.title}</text>
+              <text x={tx} y={n.y + 11} text-anchor={anchor} class="op-node-sub">{n.sub}</text>
+            </Fragment>
+          );
+        })}
+        <g fill="var(--sev-critical)" opacity="0.7"><circle cx="25" cy="22" r="3" /><circle cx="32" cy="62" r="3" /></g>
+        <g fill="var(--sev-high)" opacity="0.7"><circle cx="22" cy="140" r="3" /><circle cx="28" cy="100" r="3" /></g>
+      </svg>
+      <div class="op-stats">
+        <div><b>9 days</b><span>First seen</span></div>
+        <div><b>3</b><span>Surfaces</span></div>
+        <div><b>14 &rarr; 6</b><span>Domains live</span></div>
+      </div>
+      <div class="op-bar">
+        <div class="op-bar-row"><span>Takedowns</span><span>8 removed · 4 pending · 2 queued</span></div>
+        <div class="op-track" role="img" aria-label="Takedown progress: 8 of 14 removed, 4 pending, 2 queued">
+          <i style="width:57%;background:var(--green)"></i>
+          <i style="width:29%;background:var(--amber)"></i>
+          <i style="width:14%;background:var(--border-strong)"></i>
+        </div>
+      </div>
+      <figcaption class="op-foot">
+        <span>Illustrative example · names changed</span>
+        <span>Grouped by shared infrastructure</span>
+      </figcaption>
+    </figure>
+  </section>
+  </div>
+
+  <section class="band" aria-label="Platform numbers">
+    <div class="band-grid">
+      <div class="band-lbl">From the platform · updated {updated}</div>
+      {bandTiles.map(t => (
+        <div class="band-m"><b>{t.value}</b><span>{t.label}</span></div>
+      ))}
+    </div>
+    <div class="cover" aria-label="What Averrow watches">
+      <span class="cover-k">Watches</span>
+      <ul class="cover-list">
+        {coverage.map(c => <li class="cover-chip">{c}</li>)}
+      </ul>
     </div>
   </section>
 
   <hr class="tr-divider-animated" />
 
-  <div class="stat-row">
-    <div class="stat-item">
-      <div class="stat-value">{stats.uptime_label}</div>
-      <div class="stat-label">Continuous monitoring</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-value">{stats.agents_deployed}</div>
-      <div class="stat-label">AI agents deployed</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-value" set:html={stats.detection_time_label.replace("<", "&lt;")} />
-      <div class="stat-label">Threat detection time</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-value">{stats.feeds_protecting}</div>
-      <div class="stat-label">Brand protection feeds</div>
-    </div>
-  </div>
-
-  <div class="stat-row trust-stat-row">
-    <div class="stat-item">
-      <div class="stat-value">{stats.threats_detected}</div>
-      <div class="stat-label">Threats detected to date</div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-value">{stats.brands_monitored}</div>
-      <div class="stat-label">Brands in coverage</div>
-    </div>
-  </div>
-
   <section class="squadron">
-    <div class="section-label">The Agent Mesh</div>
-    <h2 class="squadron-title">SQL correlates. AI narrates. Nothing&rsquo;s hidden.</h2>
+    <div class="section-label">Automated analysis</div>
+    <h2 class="squadron-title">Rule-based correlation. Evidence you can see.</h2>
     <p class="squadron-subtitle">
-      Six core agents cross-reference signals across email, domains, social,
-      and threat feeds &mdash; deterministic correlation first, AI narrative
-      second, so every score traces back to evidence you can see. They&rsquo;re
-      the visible layer of a {stats.agents_deployed}-agent mesh that also runs
-      enrichment, infrastructure clustering, takedowns, social discovery, and
-      continuous health monitoring &mdash; all on Cloudflare&rsquo;s edge,
-      which is why continuous protection costs a fraction of legacy DRP
-      platforms.
+      Six automated stages cross-reference signals across email, domains,
+      social, and threat feeds. Correlation is rule-based and deterministic, so
+      every score traces back to the evidence behind it. Behind them, further
+      automated processes handle enrichment, infrastructure clustering, social
+      discovery, and platform health monitoring.
     </p>
     <div class="agent-grid">
       <div class="agent-card" style="--agent-color: #C83C3C;">
@@ -162,7 +212,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </svg>
         <div class="agent-name">Threat Detection</div>
         <div class="agent-role">Feed &amp; Certificate Monitoring</div>
-        <div class="agent-desc">Continuous monitoring across all threat feeds</div>
+        <div class="agent-desc">Continuous monitoring across threat feeds and certificate logs</div>
       </div>
       <div class="agent-card" style="--agent-color: #E5A832;">
         <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#E5A832">
@@ -204,9 +254,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <polyline points="3,14 6,14 8,9 10.5,18.5 13,11 15,16 17,14 25,14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           <circle cx="23.5" cy="8.5" r="2" fill="#C83C3C" opacity="0.9"/>
         </svg>
-        <div class="agent-name">Timeline &amp; Narrative</div>
+        <div class="agent-name">Timeline &amp; Summaries</div>
         <div class="agent-role">Incident Writeups</div>
-        <div class="agent-desc">Captures threat timelines and narratives</div>
+        <div class="agent-desc">Captures threat timelines and plain-language summaries</div>
       </div>
       <div class="agent-card" style="--agent-color: #3CB878;">
         <svg class="agent-icon" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" style="color:#3CB878">
@@ -236,19 +286,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="step">
         <div class="step-num">02</div>
         <div class="step-title">We scan everything</div>
-        <div class="step-desc">Six AI agents monitor threat feeds, email authentication, domains, and social platforms.</div>
+        <div class="step-desc">Automated monitoring covers threat feeds, email authentication, domains, certificates, and social platforms.</div>
       </div>
       <div class="step-arrow">&rarr;</div>
       <div class="step">
         <div class="step-num">03</div>
-        <div class="step-title">AI agents investigate</div>
-        <div class="step-desc">Cross-referencing signals to produce actionable intelligence and severity scoring.</div>
+        <div class="step-title">We link the evidence</div>
+        <div class="step-desc">Rule-based correlation groups related threats into operations and scores their severity.</div>
       </div>
       <div class="step-arrow">&rarr;</div>
       <div class="step">
         <div class="step-num">04</div>
-        <div class="step-title">Threats neutralized</div>
-        <div class="step-desc">You get actionable intelligence with takedown evidence and remediation steps.</div>
+        <div class="step-title">Takedowns filed</div>
+        <div class="step-desc">You get the evidence, the operation behind it, and remediation steps. We file the takedowns.</div>
       </div>
     </div>
   </section>
@@ -258,6 +308,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="capabilities">
     <div class="section-label">Capabilities</div>
     <h2 class="capabilities-title">Full-spectrum brand protection</h2>
+    <p class="capabilities-note">Sample output below is illustrative.</p>
     <div class="capabilities-grid">
       <div class="cap-card">
         <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -298,7 +349,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <circle cx="16" cy="16" r="1.5" fill="currentColor"/>
         </svg>
         <div class="cap-title">Social Media Monitoring</div>
-        <div class="cap-desc">Fake accounts, handle squatting, and unauthorized brand usage across six platforms.</div>
+        <div class="cap-desc">Fake accounts, handle squatting, and unauthorized brand usage on X, LinkedIn, Instagram, TikTok, GitHub, and YouTube.</div>
         <div class="cap-mock" aria-label="Sample social impersonation match">
           <div class="cap-mock-social">
             <div class="cap-mock-social-avatar">Y</div>
@@ -334,7 +385,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <line x1="11" y1="14" x2="21" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
         <div class="cap-title">Certificate Transparency</div>
-        <div class="cap-desc">Real-time monitoring of SSL certificate issuance across brand-adjacent domains.</div>
+        <div class="cap-desc">Hourly certificate-transparency checks for certificates issued to brand-adjacent domains.</div>
         <div class="cap-mock" aria-label="Sample CT log entry">
           <div class="cap-mock-row"><span class="cap-mock-target">acct.yourbrand.com.io</span><span class="cap-mock-badge high">NEW</span></div>
           <div class="cap-mock-row"><span class="cap-mock-target">Let&rsquo;s Encrypt &middot; 14:07:30Z</span><span class="cap-mock-badge med">ANOM</span></div>
@@ -346,11 +397,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <rect x="4" y="6" width="24" height="20" rx="2" stroke="currentColor" stroke-width="1.5"/>
           <polyline points="4,18 8,18 10,12 13,22 16,14 19,20 21,16 24,16 28,16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        <div class="cap-title">AI Threat Narratives</div>
-        <div class="cap-desc">Human-readable threat timelines and remediation steps so your team can act fast.</div>
-        <div class="cap-mock cap-mock-narrative" aria-label="Sample threat narrative">
-          &ldquo;A single actor registered three lookalikes in 72 hours, all behind the same Cloudflare account. Pattern matches the &lsquo;BeaverTooth&rsquo; phishing kit.&rdquo;
-          <div class="nm-meta">AI-generated narrative &middot; 2 min read</div>
+        <div class="cap-title">Plain-language summaries</div>
+        <div class="cap-desc">Readable threat timelines and remediation steps so your team can act fast.</div>
+        <div class="cap-mock cap-mock-narrative" aria-label="Sample threat summary">
+          &ldquo;Three lookalike domains were registered within 72 hours and share one hosting network and one TLS certificate. They are grouped as a single operation.&rdquo;
+          <div class="nm-meta">Illustrative example &middot; automated summary</div>
         </div>
       </div>
     </div>
@@ -362,13 +413,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="showcase">
     <div class="showcase-label">Inside the platform</div>
     <h2 class="showcase-title">One console. Every signal.</h2>
-    <p class="showcase-sub">Live threat corridors, brand-by-brand exposure scoring, and a continuous intelligence feed — the same surfaces your analysts work in.</p>
+    <p class="showcase-sub">Threat corridors, brand-by-brand exposure scoring, and an intelligence feed &mdash; the kind of surfaces your analysts work in. <strong>Illustrative preview with example data.</strong></p>
 
-    <div class="showcase-panel" role="img" aria-label="Averrow console preview: global threat map, brand exposure score, and a live intelligence feed">
+    <div class="showcase-panel" role="img" aria-label="Illustrative Averrow console preview with example data: threat corridor map, brand exposure score, and an intelligence feed">
       <div class="sp-grid">
         <!-- Global threat corridors -->
         <div class="sp-card sp-map">
-          <div class="sp-card-head"><span class="sp-dot" /> Global threat corridors <span class="sp-live">LIVE</span></div>
+          <div class="sp-card-head"><span class="sp-dot" /> Global threat corridors <span class="sp-live">EXAMPLE</span></div>
           <svg class="sp-map-svg" viewBox="0 0 560 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
             <defs>
               <radialGradient id="sp-node-crit" cx="50%" cy="50%" r="50%">
@@ -409,7 +460,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
               <circle cx="180" cy="230" r="7"  fill="url(#sp-node-crit)" /><circle cx="180" cy="230" r="2" fill="var(--sev-medium)" />
             </g>
           </svg>
-          <div class="sp-map-foot"><span><b>7,412</b> active threats</span><span><b>38</b> countries</span><span><b>112</b> corridors</span></div>
+          <div class="sp-map-foot"><span>Example data &middot; not live</span></div>
         </div>
 
         <!-- Brand exposure score (ExposureGauge recreation) -->
@@ -430,11 +481,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
       <!-- Intel feed ticker (EventTicker recreation) -->
       <div class="sp-ticker" aria-hidden="true">
-        <div class="sp-ticker-label"><span class="sp-dot" /> INTEL FEED</div>
+        <div class="sp-ticker-label"><span class="sp-dot" /> EXAMPLE FEED</div>
         <div class="sp-ticker-mask">
           <div class="sp-ticker-track">
             <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>DET</b> ▸ New lookalike detected: acme-login.com</span>
-            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>GEO</b> ▸ Enriched 1,204 threats with geo + provider data</span>
+            <span class="sp-ti"><span class="sp-ti-dot info"></span><b>GEO</b> ▸ Threats enriched with geo + provider data</span>
             <span class="sp-ti"><span class="sp-ti-dot warn"></span><b>CAMP</b> ▸ Pivot detected — infrastructure cluster expanding</span>
             <span class="sp-ti"><span class="sp-ti-dot crit"></span><b>INT</b> ▸ Coordinated phishing wave targeting finance sector</span>
             <span class="sp-ti"><span class="sp-ti-dot high"></span><b>NAR</b> ▸ Infrastructure cluster shifted to a new ASN</span>
@@ -471,17 +522,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <style>
   /* ── INSIDE THE PLATFORM (dashboard preview) ── */
-  .showcase { padding: 3rem 2rem; max-width: 1200px; margin: 0 auto; text-align: center; }
-  .showcase-label { font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  .showcase { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; text-align: center; }
+  .showcase-label { font-family: var(--font-mono); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent-section, var(--accent)); margin-bottom: 10px; }
   .showcase-title { font-family: var(--font-display); font-size: clamp(24px, 4vw, 34px); font-weight: 800; color: var(--text-primary); margin: 0 0 8px; }
-  .showcase-sub { font-size: 15px; color: var(--text-secondary); max-width: 620px; margin: 0 auto 28px; line-height: 1.55; }
+  .showcase-sub { font-size: 15px; color: var(--text-secondary); max-width: 640px; margin: 0 auto 28px; line-height: 1.55; }
   .showcase-panel { background: var(--glass-card-bg); border: 1px solid var(--glass-card-border); border-radius: var(--radius-lg); box-shadow: var(--glass-card-shadow); padding: 16px; }
   .sp-grid { display: grid; grid-template-columns: 1fr 240px; gap: 16px; }
   @media (max-width: 760px) { .sp-grid { grid-template-columns: 1fr; } }
   .sp-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; text-align: left; }
   .sp-card-head { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-tertiary); margin-bottom: 10px; }
-  .sp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: sp-pulse 2s ease-in-out infinite; }
-  .sp-live { margin-left: auto; color: var(--sev-critical-text); font-weight: 700; }
+  .sp-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); }
+  .sp-live { margin-left: auto; color: var(--text-secondary); font-weight: 700; }
   .sp-map-svg { width: 100%; height: auto; display: block; }
   .sp-map-grid line { stroke: var(--border); stroke-width: 1; }
   .sp-arc { stroke-dasharray: 6 6; animation: sp-dash 3s linear infinite; }
@@ -494,7 +545,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .sp-gauge-meta { font-size: 12px; color: var(--text-secondary); margin-top: 8px; max-width: 200px; }
   .sp-ticker { display: flex; align-items: center; gap: 12px; margin-top: 16px; background: var(--bg-code); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; overflow: hidden; }
   .sp-ticker-label { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; color: var(--text-tertiary); white-space: nowrap; }
-  .sp-ticker-mask { overflow: hidden; flex: 1; }
+  .sp-ticker-mask { overflow: hidden; flex: 1; min-width: 0; }
   .sp-ticker-track { display: inline-flex; gap: 28px; white-space: nowrap; animation: sp-marquee 32s linear infinite; }
   .sp-ti { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-secondary); }
   .sp-ti b { color: var(--text-primary); }
@@ -503,252 +554,255 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .sp-ti-dot.warn { background: var(--sev-medium); } .sp-ti-dot.info { background: var(--blue); }
   @keyframes sp-dash { to { stroke-dashoffset: -120; } }
   @keyframes sp-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-  @keyframes sp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
-  @media (prefers-reduced-motion: reduce) { .sp-ticker-track, .sp-arc, .sp-dot { animation: none !important; } }
+  @media (prefers-reduced-motion: reduce) { .sp-ticker-track, .sp-arc { animation: none !important; } }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
   /* ── HERO ── */
+  .hero-wrap { position: relative; isolation: isolate; overflow: hidden; }
   .hero {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 5rem 2rem 2.5rem;
     position: relative;
-    overflow: hidden;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 48px;
+    align-items: center;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 64px 24px 48px;
   }
-  .hero-bg {
+  /* Faint grid + amber glow behind the operation card. */
+  .hero-wrap::before {
+    content: "";
     position: absolute;
     inset: 0;
-    background: radial-gradient(ellipse at 50% 30%, rgba(200, 60, 60, 0.04) 0%, transparent 70%);
-    pointer-events: none;
+    z-index: -1;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 60% 70% at 70% 40%, #000 25%, transparent 75%);
+    mask-image: radial-gradient(ellipse 60% 70% at 70% 40%, #000 25%, transparent 75%);
   }
-  .hero-radar {
+  .hero-wrap::after {
+    content: "";
     position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 700px;
-    height: 560px;
+    right: 0;
+    top: -15%;
+    width: 55%;
+    height: 120%;
+    z-index: -1;
+    background: radial-gradient(closest-side, rgba(229, 168, 50, 0.11), transparent);
     pointer-events: none;
-    z-index: 1;
   }
-  :global([data-theme="dark"]) .hero-radar { opacity: 0.42; }
-  :global([data-theme="light"]) .hero-radar { opacity: 0.2; }
-  .radar-sweep-arm { animation: radar-sweep 8s linear infinite; }
-  @keyframes radar-sweep {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-  }
-  @media (prefers-reduced-motion: reduce) { .radar-sweep-arm { animation: none; } }
-
-  .hero-content { position: relative; z-index: 2; max-width: 720px; }
-  .hero-tag {
+  .hero-copy { min-width: 0; }
+  .hero-eyebrow {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.3em;
-    color: var(--accent-section, var(--accent));
-    margin-bottom: 16px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
+    color: var(--amber-text);
+    margin-bottom: 18px;
   }
   .hero-h1 {
     font-family: var(--font-display);
-    font-size: clamp(36px, 5vw, 64px);
+    font-size: clamp(32px, 3.6vw, 50px);
     font-weight: 800;
-    line-height: 1.15;
-    letter-spacing: -0.03em;
-    margin-bottom: 20px;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    margin-bottom: 18px;
     color: var(--text-primary);
+    text-wrap: balance;
   }
-  .hero-p {
-    font-size: 20px;
+  .hero-h1 em { font-style: normal; color: var(--amber-text); }
+  .hero-lede {
+    font-size: 16.5px;
+    line-height: 1.6;
     color: var(--text-secondary);
-    line-height: 1.65;
-    max-width: 580px;
-    margin: 0 auto 28px;
+    max-width: 54ch;
+    margin-bottom: 26px;
   }
+  .hero-lede-short { display: none; }
 
-  /* ── INTERCEPT TICKER ── */
-  .hero-ticker {
-    max-width: 560px;
-    margin: 0 auto 28px;
-    padding: 14px 18px 16px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--glass-card-bg, rgba(22,30,48,0.55));
-    backdrop-filter: blur(12px) saturate(160%);
-    -webkit-backdrop-filter: blur(12px) saturate(160%);
-    text-align: left;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    line-height: 1.5;
-  }
-  .hero-ticker-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--font-display);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--amber);
-    margin-bottom: 10px;
-  }
-  .hero-ticker-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--amber);
-    box-shadow: 0 0 0 0 rgba(229,168,50,0.6);
-    animation: ticker-pulse 1.8s ease-out infinite;
-  }
-  @keyframes ticker-pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(229,168,50,0.55); }
-    70%  { box-shadow: 0 0 0 8px rgba(229,168,50,0); }
-    100% { box-shadow: 0 0 0 0 rgba(229,168,50,0); }
-  }
-  .hero-ticker-viewport {
-    height: 84px;
-    overflow: hidden;
-    position: relative;
-    mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
-  }
-  .hero-ticker-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    animation: ticker-scroll 18s linear infinite;
-  }
-  .hero-ticker-list li {
-    display: grid;
-    grid-template-columns: 80px 56px 1fr auto;
-    align-items: center;
-    gap: 12px;
-    height: 28px;
-    white-space: nowrap;
-  }
-  .ti-time { color: var(--text-tertiary); font-size: 11px; }
-  .ti-sev {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-align: center;
-    padding: 2px 0;
-    border-radius: 3px;
-  }
-  .ti-critical { color: var(--sev-critical-text); background: rgba(248,113,113,0.10); }
-  .ti-high     { color: var(--sev-high-text);     background: rgba(251,146,60,0.10); }
-  .ti-medium   { color: var(--sev-medium-text);   background: rgba(251,191,36,0.10); }
-  .ti-target   { color: var(--text-primary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
-  .ti-tag      { color: var(--text-secondary); font-size: 11px; }
-  @keyframes ticker-scroll {
-    0%   { transform: translateY(0); }
-    100% { transform: translateY(-168px); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .hero-ticker-list { animation: none; }
-    .hero-ticker-dot  { animation: none; box-shadow: 0 0 0 4px rgba(229,168,50,0.20); }
-  }
-  @media (max-width: 560px) {
-    .hero-ticker { font-size: 12px; padding: 12px 14px; }
-    .hero-ticker-list li { grid-template-columns: 64px 48px 1fr; }
-    .hero-ticker-list li .ti-tag { display: none; }
-  }
-
-  /* ── SCAN INPUT ── */
+  /* ── SCAN FORM ── */
   .scan-box {
     display: flex;
-    gap: 0;
-    max-width: 520px;
-    margin: 0 auto;
-    border-radius: var(--radius-sm);
-    overflow: hidden;
+    max-width: 470px;
     border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    overflow: hidden;
     background: var(--bg-secondary);
     transition: border-color 0.2s, box-shadow 0.2s;
   }
   .scan-box:focus-within {
-    border-color: var(--accent);
-    box-shadow: 0 0 30px rgba(200, 60, 60, 0.1);
+    border-color: var(--amber);
+    box-shadow: 0 0 0 3px var(--accent-bg-strong);
   }
   .scan-input {
     flex: 1;
+    min-width: 0;
     font-family: var(--font-mono);
-    font-size: 16px;
-    padding: 14px 18px;
+    font-size: 16px; /* >=16px stops iOS zooming the page on focus */
+    padding: 13px 14px;
     border: none;
     background: transparent;
     color: var(--text-primary);
     outline: none;
-    letter-spacing: 0.02em;
   }
   .scan-input::placeholder { color: var(--text-tertiary); }
   .scan-btn {
-    font-family: var(--font-mono);
+    white-space: nowrap;
+    font-family: var(--font-body);
     font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    padding: 14px 28px;
+    font-weight: 700;
+    padding: 13px 18px;
     border: none;
-    background: var(--accent);
-    color: #fff;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-ink);
     cursor: pointer;
-    transition: all 0.2s;
-    text-transform: uppercase;
+    transition: filter 0.2s;
   }
-  .scan-btn:hover { background: var(--accent-hover); box-shadow: 0 0 20px rgba(200, 60, 60, 0.35); }
-  .scan-hint {
+  .scan-btn:hover { background: var(--btn-primary-bg-hover); }
+  .scan-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: -4px; }
+  .scan-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    align-items: center;
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+  .scan-meta a {
+    color: var(--text-primary);
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-strong);
+  }
+  .scan-meta a:hover { text-decoration: none; border-bottom-color: var(--amber); }
+  .scan-meta-dot { width: 3px; height: 3px; border-radius: 50%; background: var(--text-tertiary); }
+
+  /* ── OPERATION CARD ── */
+  .op {
+    min-width: 0;
+    margin: 0;
+    background: var(--glass-card-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    padding: 16px 16px 14px;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    box-shadow: var(--shadow-lg);
+  }
+  .op-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+  .op-id { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--text-secondary); }
+  .op-tag {
     font-family: var(--font-mono);
     font-size: 10px;
-    color: var(--text-tertiary);
-    margin-top: 12px;
-    letter-spacing: 0.04em;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--sev-critical-text);
+    background: var(--sev-critical-bg, rgba(239, 68, 68, 0.10));
+    border: 1px solid var(--sev-critical-border, rgba(239, 68, 68, 0.30));
+    border-radius: 999px;
+    padding: 3px 8px;
   }
-  .scan-hint-emphasis {
-    color: var(--text-tertiary);
-    font-style: italic;
+  .op-title { font-weight: 700; font-size: 16px; margin: 2px 0 10px; color: var(--text-primary); }
+  .op-graph { display: block; width: 100%; height: auto; }
+  .op-hub-id { font: 600 9.5px var(--font-mono); fill: var(--sev-critical-text); }
+  .op-hub-sub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
+  .op-node-title { font: 700 10.5px var(--font-display); fill: var(--text-primary); }
+  .op-node-sub { font: 400 8.5px var(--font-mono); fill: var(--text-secondary); }
+  .op-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 10px;
   }
+  .op-stats div { background: var(--bg-secondary); padding: 9px 10px; }
+  .op-stats b { display: block; font: 700 17px/1.1 var(--font-display); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .op-stats span { font: 500 10.5px var(--font-mono); color: var(--text-secondary); letter-spacing: 0.04em; text-transform: uppercase; }
+  .op-bar { margin-top: 10px; display: grid; gap: 6px; font: 500 11px var(--font-mono); color: var(--text-secondary); }
+  .op-bar-row { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
+  .op-track { height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; display: flex; }
+  .op-track i { display: block; height: 100%; }
+  .op-foot { margin-top: 10px; font: 500 10.5px var(--font-mono); color: var(--text-secondary); display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 
-  /* ── STAT ROW ── */
-  .stat-row {
-    padding: 1rem 2rem 1.5rem;
-    max-width: 1400px;
+  /* ── PLATFORM BAND + COVERAGE ── */
+  .band { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+  .band-grid {
+    max-width: 1280px;
     margin: 0 auto;
-    display: flex;
-    justify-content: space-around;
+    display: grid;
+    grid-template-columns: auto repeat(5, minmax(0, 1fr));
     align-items: center;
-    gap: 2rem;
-    flex-wrap: wrap;
-    border-bottom: 1px solid var(--border);
   }
-  .trust-stat-row {
-    margin-top: -0.5rem;
-    opacity: 0.85;
-    border-bottom: 0;
-  }
-  .stat-item { text-align: center; flex: 1; min-width: 120px; }
-  .stat-value {
-    font-family: var(--font-display);
-    font-size: clamp(32px, 4vw, 48px);
-    font-weight: 800;
-    color: var(--accent);
-    line-height: 1;
-    margin-bottom: 6px;
-    letter-spacing: -0.02em;
-  }
-  .stat-label {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-secondary);
+  .band-lbl {
+    padding: 16px 22px 16px 24px;
+    font: 600 10.5px var(--font-mono);
     letter-spacing: 0.12em;
     text-transform: uppercase;
+    color: var(--text-secondary);
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .band-m { padding: 14px 18px; border-right: 1px solid var(--border); }
+  .band-m:last-child { border-right: 0; }
+  .band-m b { display: block; font: 800 20px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .band-m span { font-size: 12px; color: var(--text-secondary); }
+  .cover {
+    max-width: 1280px;
+    margin: 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    padding: 0 24px 22px;
+    border-top: 1px solid var(--border);
+    padding-top: 18px;
+  }
+  .cover-k { font: 600 10.5px var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-secondary); margin-right: 6px; }
+  .cover-list { display: contents; list-style: none; }
+  .cover-chip {
+    list-style: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 5px 11px;
+  }
+
+  @media (max-width: 1099px) {
+    .band-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .band-lbl { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--border); }
+  }
+  @media (max-width: 959px) {
+    .hero { grid-template-columns: minmax(0, 1fr); padding: 32px 16px 28px; gap: 28px; }
+    .hero-lede { font-size: 14.5px; }
+    .hero-lede-short { display: block; }
+    .hero-lede:not(.hero-lede-short) { display: none; }
+    .band-lbl { padding: 12px 16px; white-space: normal; }
+    .cover { padding: 16px 16px 20px; }
+  }
+  @media (max-width: 699px) {
+    .band-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .band-m { border-bottom: 1px solid var(--border); }
+    .band-m:nth-child(even) { border-right: 0; }
+    .band-m:last-child { grid-column: 1 / -1; border-bottom: 0; }
+  }
+  @media (max-width: 479px) {
+    .scan-box { flex-direction: column; }
+    .scan-input { padding: 13px 14px; }
+    .scan-btn { padding: 14px 18px; }
   }
 
   /* ── SQUADRON ── */
-  .squadron { padding: 3rem 2rem; max-width: 1400px; margin: 0 auto; }
+  .squadron { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
   .section-label {
     font-family: var(--font-mono);
     font-size: 12px;
@@ -807,7 +861,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   .agent-desc { font-size: 15px; color: var(--text-secondary); line-height: 1.5; }
 
   /* ── HOW IT WORKS ── */
-  .how-it-works { padding: 3rem 2rem; max-width: 1400px; margin: 0 auto; }
+  .how-it-works { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
   .steps-row { display: flex; align-items: flex-start; gap: 0; margin-top: 20px; }
   @media (max-width: 720px) {
     .steps-row { flex-direction: column; gap: 32px; }
@@ -845,7 +899,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   /* ── CAPABILITIES ── */
-  .capabilities { padding: 3rem 2rem; max-width: 1400px; margin: 0 auto; }
+  .capabilities { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
   .capabilities-title {
     font-family: var(--font-display);
     font-size: clamp(24px, 3vw, 36px);
@@ -853,6 +907,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-primary);
     margin-bottom: 8px;
   }
+  .capabilities-note { font-size: 13px; color: var(--text-tertiary); margin-bottom: 4px; }
   .capabilities-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -971,7 +1026,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
 
   /* ── CTA SECTION ── */
-  .cta-section { padding: 3rem 2rem; max-width: 1400px; margin: 0 auto; text-align: center; }
+  .cta-section { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; text-align: center; }
   .cta-inner {
     background: var(--bg-secondary);
     border: 1px solid var(--border-strong);
@@ -984,7 +1039,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     content: "";
     position: absolute;
     inset: 0;
-    background: radial-gradient(ellipse at 50% 0%, rgba(200, 60, 60, 0.07) 0%, transparent 65%);
+    background: radial-gradient(ellipse at 50% 0%, rgba(229, 168, 50, 0.08) 0%, transparent 65%);
     pointer-events: none;
   }
   .cta-inner::after {
@@ -992,7 +1047,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(200, 60, 60, 0.5), transparent);
+    background: linear-gradient(90deg, transparent, rgba(229, 168, 50, 0.5), transparent);
   }
   .cta-headline {
     font-family: var(--font-display);

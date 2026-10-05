@@ -107,3 +107,39 @@ for (const vp of VIEWPORTS) {
     }
   });
 }
+
+/*
+ * The nav must stay on ONE row at every desktop width we care about.
+ * (It used to wrap "Why Averrow" / "Free Scan" / "Get a Demo" at 1440.)
+ * 1024 is below the point where the secondary "Book a demo" button is
+ * dropped, so it is checked separately for overflow only.
+ */
+for (const width of [1024, 1280, 1440]) {
+  test.describe(`nav on one row @${width}`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test(`nav does not wrap or overflow`, async ({ page }) => {
+      await page.goto("/", { waitUntil: "load" });
+      const m = await page.evaluate(() => {
+        const inner = document.querySelector(".nav-inner") as HTMLElement;
+        const items = Array.from(
+          document.querySelectorAll<HTMLElement>(".nav-inner .nav-brand, .nav-link, .nav-login, .nav-cta"),
+        ).filter((el) => el.offsetParent !== null);
+        const tops = items.map((el) => Math.round(el.getBoundingClientRect().top + el.getBoundingClientRect().height / 2));
+        const maxHeight = Math.max(...items.map((el) => el.getBoundingClientRect().height));
+        return {
+          navHeight: inner.getBoundingClientRect().height,
+          centreSpread: Math.max(...tops) - Math.min(...tops),
+          maxItemHeight: maxHeight,
+          overflow: inner.scrollWidth - inner.clientWidth,
+          count: items.length,
+        };
+      });
+      expect(m.count).toBeGreaterThanOrEqual(8);
+      expect(m.navHeight, "nav bar height").toBeLessThanOrEqual(64);
+      expect(m.centreSpread, "all nav items share one row").toBeLessThanOrEqual(6);
+      expect(m.maxItemHeight, "no nav item wraps to two lines").toBeLessThanOrEqual(44);
+      expect(m.overflow, "nav content overflows its container").toBeLessThanOrEqual(0);
+    });
+  });
+}

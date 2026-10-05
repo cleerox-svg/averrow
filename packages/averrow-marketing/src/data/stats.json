@@ -1,10 +1,9 @@
 {
-  "agents_deployed": "42",
-  "feeds_protecting": "45+",
-  "threats_detected": "210K+",
-  "brands_monitored": "9.6K+",
-  "uptime_label": "24/7",
-  "detection_time_label": "<5min",
-  "generated_at": "2026-01-01T00:00:00.000Z",
-  "source": "static-fallback"
+  "threats_detected": "1.1M+",
+  "campaigns": "6,000+",
+  "providers_mapped": "12,000+",
+  "countries": "215",
+  "active_feeds": 46,
+  "generated_at": "2026-10-05T03:43:14.959Z",
+  "source": "snapshot-2026-10-05"
 }

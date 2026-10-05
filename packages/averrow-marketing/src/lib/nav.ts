@@ -1,69 +1,86 @@
 /*
- * Shared nav metadata + inline icons. Imported by Nav.astro and
- * MobileMenu.astro so the link list, icons, and labels live in one
- * place. To add a new top-level page, add a row here.
+ * Shared nav metadata. Imported by Nav.astro (desktop bar + mobile menu)
+ * and Footer.astro so the link list lives in one place.
  *
- * Icons are inline SVG strings (Lucide-style). Stroke uses
- * currentColor so the CSS active treatment can flip color without
- * re-rendering.
+ * Five hub items. Platform, Solutions and Company carry a dropdown of
+ * their child pages; Pricing and Research are plain links. To add a page,
+ * add it to the right hub's `children` and (if it lives outside the hub's
+ * URL prefix) to that hub's `also` list so the hub lights up when active.
  */
+
+export interface NavChild {
+  href: string;
+  label: string;
+  /** One-line description shown under the label in the dropdown. */
+  desc?: string;
+}
 
 export interface NavLink {
   href: string;
   label: string;
-  icon: string;
+  children?: NavChild[];
+  /** Extra path prefixes that should light this hub up. */
+  also?: string[];
 }
-
-const ICON_BASE =
-  'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
 
 export const NAV_LINKS: NavLink[] = [
   {
     href: "/platform",
     label: "Platform",
-    icon: `<svg ${ICON_BASE}><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>`,
+    also: ["/abuse-mailbox"],
+    children: [
+      { href: "/platform", label: "Platform overview", desc: "Everything Averrow watches, in one place" },
+      { href: "/platform/threat-detection", label: "Threat detection", desc: "Domains, certificates, feeds" },
+      { href: "/platform/social-monitoring", label: "Social monitoring", desc: "Fake profiles on six platforms" },
+      { href: "/platform/email-security", label: "Email security", desc: "SPF, DKIM and DMARC posture" },
+      { href: "/platform/campaign-intelligence", label: "Campaign intelligence", desc: "Operations behind the attacks" },
+      { href: "/abuse-mailbox", label: "Abuse mailbox", desc: "Triage reported phishing" },
+    ],
   },
   {
     href: "/solutions",
     label: "Solutions",
-    icon: `<svg ${ICON_BASE}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+    children: [
+      { href: "/solutions", label: "All solutions" },
+      { href: "/solutions/startups", label: "Startups" },
+      { href: "/solutions/mid-market", label: "Mid-market" },
+      { href: "/solutions/mssp", label: "MSSPs and partners" },
+    ],
   },
-  {
-    href: "/why-averrow",
-    label: "Why Averrow",
-    icon: `<svg ${ICON_BASE}><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>`,
-  },
-  {
-    href: "/pricing",
-    label: "Pricing",
-    icon: `<svg ${ICON_BASE}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1.25" fill="currentColor"/></svg>`,
-  },
+  { href: "/pricing", label: "Pricing" },
   {
     href: "/resources",
-    label: "Resources",
-    icon: `<svg ${ICON_BASE}><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+    label: "Research",
+    also: ["/blog", "/docs", "/changelog"],
   },
   {
-    href: "/contact",
-    label: "Contact",
-    icon: `<svg ${ICON_BASE}><path d="M3 5h18v14H3z"/><path d="M3 5l9 8 9-8"/></svg>`,
+    href: "/company",
+    label: "Company",
+    also: ["/about", "/why-averrow", "/careers", "/press", "/partners", "/contact", "/security"],
+    children: [
+      { href: "/company", label: "Company overview" },
+      { href: "/why-averrow", label: "Why Averrow" },
+      { href: "/about", label: "About" },
+      { href: "/security", label: "Security and trust" },
+      { href: "/partners", label: "Partners" },
+      { href: "/careers", label: "Careers" },
+      { href: "/press", label: "Press" },
+      { href: "/contact", label: "Contact" },
+    ],
   },
 ];
 
-/**
- * Hub-children: pages that live at their own top-level URL (not under
- * their hub's own href prefix) but should still light up that hub's
- * nav item. `/docs`, `/docs/getting-started`, and `/partners` are all
- * Resources destinations, and `/blog/<slug>` is too (there's no
- * standalone "Blog" nav item) — none of them start with `/resources/`
- * so the plain prefix match below never catches them.
- */
-const RESOURCES_HUB_CHILDREN = ["/docs", "/partners"];
+/** Customer sign-in. See Nav.astro: the shared sign-in page routes `client` users to /tenant/. */
+export const LOGIN_HREF = "/login";
+
+function matches(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(prefix + "/");
+}
 
 /**
  * Decide which top-level link should be marked active for a given
- * current path. Sub-pages activate their parent (`/blog/<slug>` lights
- * up Resources; see RESOURCES_HUB_CHILDREN above for the rest).
+ * current path. Sub-pages activate their hub (`/blog/<slug>` lights up
+ * Research, `/platform/email-security` lights up Platform, ...).
  *
  * @param currentPath - The current pathname (e.g. "/platform" or
  *   "/blog/my-post"). May be empty for the index route.
@@ -78,12 +95,8 @@ export function activeFor(currentPath: string): string | null {
   let stripped = currentPath.replace(/^\/marketing/, "");
   stripped = stripped.replace(/\/$/, "") || "/";
   for (const link of NAV_LINKS) {
-    if (link.href === stripped) return link.href;
-    if (link.href !== "/" && stripped.startsWith(link.href + "/")) return link.href;
+    if (matches(stripped, link.href)) return link.href;
+    if (link.also?.some(prefix => matches(stripped, prefix))) return link.href;
   }
-  for (const prefix of RESOURCES_HUB_CHILDREN) {
-    if (stripped === prefix || stripped.startsWith(prefix + "/")) return "/resources";
-  }
-  if (stripped.startsWith("/blog/")) return "/resources";
   return null;
 }
