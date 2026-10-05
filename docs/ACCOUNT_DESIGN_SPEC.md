@@ -596,3 +596,20 @@ Error/empty micro-copy: lead with the fact, then the next step, max 2 short sent
 - Extend `Avatar` (squircle, size 72, self tone), `Tabs` (`size="md"` 13px), `Badge` md -> 11px (check other call sites; opt-in prop `legible` if risky).
 - Delete `profile/primitives.tsx` re-implementations once migrated; no ad-hoc Card/Button/Input.
 - Verify with Lighthouse a11y at 390 and 1280 in both themes; no horizontal body scroll.
+
+---
+
+## As built (2026-10-05) — deltas from the design above
+
+Factual notes only; the sections above remain the design intent.
+
+- **Shell name and location.** The shell is `SettingsShell` (`packages/shared/src/ui/settings/SettingsShell.tsx`), not `account/AccountShell`. Its props include `sections`, `activeId`, `basePath`, `home`, `homeFooter`, `railFooter`, `renderLink`, `onNavigate`. `getAccountSections` / `accountSectionIdFromPath` (`packages/shared/src/account/sections.tsx`) describe the rail/list/menu entries once.
+- **Kit layout.** Primitives are split across `ui/forms/` (Switch, SegmentedControl, Field/Label/HelpText/FieldError, Input, Select, TimeInput), `ui/overlays/` (Sheet, Dialog, ConfirmDialog, Menu/ResponsiveMenu/MenuRadioGroup/MenuRadioItem, ToastProvider/useToast, TimezoneSelect) and `ui/settings/` (SettingsShell, SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone, InlineBanner, CopyField), all re-exported from `@averrow/shared/ui`. Pages are in `packages/shared/src/account/` (`@averrow/shared/account`).
+- **Extra tokens beyond §4.0:** `--text-help`, `--card-shadow-elevated`, `--card-rim-elevated`, `--z-popover`, `--switch-off-border`, `--switch-knob-off` (`theme/tokens.css`).
+- **Opt-in props shipped:** `Badge font="sans"`, `Tabs size="md"`, `FilterBar size="md"`, `Card overflow`, `SheetContent labelledBy`, `Avatar shape="squircle"` / `tone="self"`.
+- **Mounts.** Ops: `/settings/{profile,security,notifications/:tab,devices}` (`features/settings/`). Tenant: `/tenant/account/{profile,security,notifications/:tab}` (`features/account/`, `ACCOUNT_BASE_PATH = '/account'`; there is no Devices & App because the tenant has no service worker). Legacy `/profile` and `/notifications/preferences` redirect in ops; `/profile` redirects in tenant. `/notifications` (the inbox) is unchanged in ops.
+- **Users & Access** is `/admin/users` (`features/admin/UsersAccess.tsx`, sidebar admin group), not `/settings/access`. No `/organization` redirect exists in ops `App.tsx` (the old page and route are gone).
+- **Install card.** `InstallAppCard` is no longer mounted on Profile; install lives in `DevicesSettings` (`/settings/devices`). `InstallAppBanner` (Overview) and `FirstSignInPasskeyPrompt` (ShellV4) are unchanged.
+- **Notifications data.** Quiet hours are read/written on preferences v2; per-event toggles stay on `/api/notifications/preferences` (partial PATCH). Delivery's `resolveQuietHours` uses the v2 window whenever a v2 row exists (migration 0281 backfills v1 windows).
+- **Sessions.** The Security page uses the caller-scoped `/api/auth/sessions*` endpoints (`handlers/account-sessions.ts`); revoking a session also rejects its live access tokens via the `sid` claim + `forced_logout:<id>` (`lib/forced-logout.ts`).
+- **Old profile code.** `packages/shared/src/profile/` is unused by both apps (only `account/ProfileSettings.tsx` still imports its `ProfileApiClient` type) and is pending deletion.

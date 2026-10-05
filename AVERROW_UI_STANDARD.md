@@ -740,6 +740,63 @@ data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
 
 ---
 
+## Account & Settings (kit + pages)
+
+Owner-approved 2026-10-04 (Radix primitives allowed in the shared kit; Averrow's
+account experience is the canonical reference other products copy). Full
+design: `docs/ACCOUNT_DESIGN_SPEC.md`. Adoption guide: `docs/SHARED_LOGIN_SPEC.md` §2.
+
+**Pages** — `@averrow/shared/account` (`packages/shared/src/account/`):
+`ProfileSettings`, `SecuritySettings`, `NotificationSettings`, `DevicesSettings`,
+`getAccountSections`. They take data + callbacks (no router, no api module).
+Ops mounts them at `/settings/*`, tenant at `/tenant/account/*`.
+
+**Kit pieces** (all re-exported from `@averrow/shared/ui`; named exports, no `@/`
+or router imports):
+
+| Folder | Components |
+|---|---|
+| `ui/forms/` | `Switch`, `SegmentedControl`, `Field` / `Label` / `HelpText` / `FieldError`, `Input`, `Select` (native, styled), `TimeInput` |
+| `ui/overlays/` | `Sheet`, `Dialog`, `ConfirmDialog`, `Menu` / `MenuRadioGroup` / `MenuRadioItem` / `ResponsiveMenu`, `ToastProvider` + `useToast`, `TimezoneSelect` (searchable) |
+| `ui/settings/` | `SettingsShell` (desktop rail + pane, mobile list -> detail), `SettingsGroup`, `SettingsRow`, `IconTile`, `AccountHero`, `DangerZone`, `InlineBanner`, `CopyField` |
+
+Radix underneath: `react-switch`, `react-dropdown-menu`, `react-dialog`,
+`react-radio-group` (+ `react-slot`), declared in `packages/shared/package.json`.
+Don't re-implement these inline; use the kit.
+
+**Tokens** (`packages/shared/src/theme/tokens.css`, theme-aware where noted):
+`--violet`, `--violet-text` (Devices & App tint; light text variant),
+`--tile-tint-pct` (IconTile fill, 16% dark / 20% light), `--focus-ring` (amber on
+dark, `--amber-text` on light), `--scrim` (dialog/sheet backdrop), `--text-help`
+(help copy at >= 4.5:1; `--text-tertiary` stays for dashboards),
+`--text-on-amber` (ink on amber fills, `#0A0F1E` in both themes),
+`--card-shadow-elevated` / `--card-rim-elevated` (dialog, sheet, menu, toast),
+`--z-popover` (450; menus opened from inside a dialog/sheet),
+`--switch-off-border` / `--switch-knob-off` (>= 3:1 off state).
+
+**Floors on this surface** (ACCOUNT_DESIGN_SPEC §6):
+- Typography: sans for prose and titles; mono only for data (times, IDs, IPs,
+  counts). Prose >= 13px, mono >= 12px, badge text >= 11px.
+- Touch: every interactive element >= 44x44 CSS px on touch (hit area may extend
+  past the visual), rows >= 56px, adjacent targets >= 8px apart; Input/Select 44px
+  tall with 16px text below 768px (no iOS zoom).
+- Contrast: required text uses `--text-secondary` or higher; `--text-tertiary`
+  only for help/meta, `--text-muted` only decorative.
+
+**Opt-in props added for this surface** (defaults leave every existing call site
+unchanged):
+
+| Component | Prop | Effect |
+|---|---|---|
+| `Badge` | `font="sans"` | sentence-case sans label at +1px (default `mono`, uppercase) |
+| `Tabs` | `size="md"` | 13px text, 44px min height (default `sm`) |
+| `FilterBar` | `size="md"` | sans 13px pills, 36px (44px on coarse pointers) |
+| `Card` | `overflow` | `hidden` (default) \| `visible` \| `clip`; use `clip` when a descendant needs `position: sticky` |
+| `SheetContent` | `labelledBy` | id of an existing heading to use as the accessible name (replaces the built-in title) |
+| `Avatar` | `shape="squircle"`, `tone="self"` | ~30% radius tile; self tone for the signed-in user (initials only, `parseInitials`) |
+
+---
+
 ## SIDEBAR STANDARD
 
 The sidebar uses the same 5 depth rules. This replaces the current Phase 8a treatment.
