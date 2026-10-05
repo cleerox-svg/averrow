@@ -26,9 +26,11 @@ import {
 import {
   buildPageEvidenceDetails,
   clearsLookalikeAlertFloor,
+  newRegistrationAlertSeverity,
   normalizeThreatLevel,
   THREAT_LEVEL_RANK,
   LOOKALIKE_ALERT_SEVERITY_FLOOR,
+  type RegistrationEvidence,
 } from '../lib/lookalike-alert-policy';
 import type { Env } from '../types';
 
@@ -92,6 +94,50 @@ const RECHECK_SLOTS = LOOKALIKE_BATCH_LIMIT - FIRST_CONTACT_SLOTS;
  * handler came to encode it as the magic number `-25 hours`.
  */
 const CHECK_CADENCE_MODIFIER = '+24 hours';
+
+/**
+ * The success cadence for a row that IS registered (2026-10-05 rebalance).
+ *
+ * ── Why registered rows wait longer ─────────────────────────────────
+ *
+ * The re-check cohort gets a 20-row/tick floor (480/day) against a
+ * 30-row/tick first-contact inflow (720 newly baselined rows/day), so with
+ * one 24 h cadence for everything the cohort was already ~2.9K rows
+ * overdue (oldest ~53 h late) at ~4K baselined rows, and the backlog
+ * grows by ~240 rows/day until the first-contact drain ends. A due
+ * timestamp is the priority (migration 0269), so the cadence is how the
+ * scarce capacity is SHARED:
+ *
+ *   * An UNREGISTERED row (registered = 0, ~65-90% of the population)
+ *     can only change by being registered. The DNS re-check is the only
+ *     detector for ccTLD permutations (the NRD list,
+ *     lib/lookalike-nrd-matcher.ts, covers gTLDs), so these keep 24 h.
+ *   * A REGISTERED row's interesting changes are mail/web appearing, a
+ *     BIMI record and a lapse. Web CONTENT is already re-read every 24 h
+ *     by the separate page pass (`analyzeLookalikePages`, its own budget),
+ *     and Sparrow verifies taken-down domains on its own 7-day cadence.
+ *     So a weekly DNS look costs little detection and frees ~6/7 of the
+ *     registered share for the unregistered rows.
+ *
+ * Expected cycle times (re-check capacity 480/day while the first-contact
+ * drain runs, ~1,200/day after it; r = registered share ~10-35%):
+ *   today (~4K baselined, r~25%): registered ~1K rows need ~145/day,
+ *     leaving ~335/day for ~3K unregistered rows -> ~9-day effective cycle
+ *     instead of ~8.5 days for EVERY row; registered rows on 7 days.
+ *   end of drain (~56K, r~25%): 14K registered need 2K/day at 7 d, which
+ *     exceeds capacity — both cohorts then run capacity-bound, oldest due
+ *     first, with unregistered rows due 7x as often. Raising throughput
+ *     needs a bigger DNS budget (lib/lookalike-budget.ts), not a cadence.
+ * The cohort split itself (30/20) is unchanged: with gTLD registrations
+ * now dated from NRD, a queued first-contact row no longer loses its
+ * registration date, so the split no longer trades detections away.
+ */
+const REGISTERED_CHECK_CADENCE_MODIFIER = '+7 days';
+
+/** The cadence a successful check schedules, by what it observed. */
+export function checkCadenceFor(registered: boolean): string {
+  return registered ? REGISTERED_CHECK_CADENCE_MODIFIER : CHECK_CADENCE_MODIFIER;
+}
 
 /**
  * HARD CEILING on BIMI DNS lookups ONE run may make.
@@ -206,6 +252,13 @@ export interface LookalikeCheckSummary {
   checked: number;
   /** `registered 0 -> 1` transitions WE observed. */
   new_registrations: number;
+  /**
+   * Rows carrying NRD registration evidence (lib/lookalike-nrd-matcher.ts)
+   * that this run resolved as a confirmed registration.
+   */
+  nrd_registrations: number;
+  /** Confirmed-new-registration alerts filed (any severity). */
+  registration_alerts: number;
   baselines_established: number;
   baselines_suppressed: number;
   /** `typosquat_bimi` alerts filed by the recurring BEC lane. */
@@ -265,6 +318,8 @@ function emptySummary(): LookalikeCheckSummary {
   return {
     checked: 0,
     new_registrations: 0,
+    nrd_registrations: 0,
+    registration_alerts: 0,
     baselines_established: 0,
     baselines_suppressed: 0,
     bimi_alerts: 0,
@@ -370,6 +425,12 @@ interface LookalikeCheckRow {
    * never re-raise a row an analyst marked benign or already actioned.
    */
   status: string | null;
+  /** Migration 0282 — the confirmed registration date, carried onto the alert. */
+  first_seen: string | null;
+  /** Migration 0282 — 'nrd' | 'observed' | NULL. */
+  registration_evidence: string | null;
+  /** Migration 0282 — the new-registration alert's claim; NULL = not filed. */
+  registration_alerted_at: string | null;
 }
 
 /**
@@ -399,7 +460,8 @@ function selectFirstContactRows(env: Env, limit: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status,
+            ld.first_seen, ld.registration_evidence, ld.registration_alerted_at
      FROM lookalike_domains ld
      WHERE ld.baseline_established_at IS NULL
        AND ld.check_due_at IS NOT NULL
@@ -422,7 +484,8 @@ function selectRecheckRows(env: Env, limit: number, offset: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status,
+            ld.first_seen, ld.registration_evidence, ld.registration_alerted_at
      FROM lookalike_domains ld
      WHERE ld.baseline_established_at IS NOT NULL
        AND ld.check_due_at IS NOT NULL
@@ -448,7 +511,8 @@ function selectBrandDueRows(env: Env, brandId: string, limit: number) {
     `SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type, ld.registered,
             ld.unicode_domain, ld.has_mx, ld.has_web, ld.threat_level,
             ld.ai_assessment, ld.alert_id, ld.baseline_established_at,
-            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status
+            ld.bimi_first_seen_at, ld.check_attempts, ld.takedown_id, ld.status,
+            ld.first_seen, ld.registration_evidence, ld.registration_alerted_at
      FROM lookalike_domains ld
      WHERE ld.brand_id = ?
        AND ld.check_due_at IS NOT NULL
@@ -1172,11 +1236,21 @@ async function compositeAndPersist(
      * so a failed alert never costs the row its level (Sparrow reads it).
      */
     alertFirst?: boolean;
+    /**
+     * A CONFIRMED NEW REGISTRATION (owner decision 2026-10-05). The alert
+     * is filed at `newRegistrationAlertSeverity(effective)` — MEDIUM even
+     * below the HIGH floor, the composed level above it — with the title
+     * "New lookalike domain registered: <domain>". The caller has already
+     * won the `registration_alerted_at` claim; see
+     * `NEW_REGISTRATION_ALERT_SEVERITY` for the bound.
+     */
+    registration?: { evidence: RegistrationEvidence; registeredAt: string | null };
   },
-): Promise<void> {
+): Promise<{ alerted: boolean }> {
   const { budgets, counters } = opts;
+  let alerted = false;
   const brandRow = await loadBrandContext(env, row.brand_id);
-  if (!brandRow) return;
+  if (!brandRow) return { alerted };
   const brand = { ...brandRow, user_id: 'system' };
 
   const storedLevel = normalizeThreatLevel(row.threat_level);
@@ -1298,7 +1372,13 @@ async function compositeAndPersist(
     // Scoped to this alert type only, and NOT an early return: the BEC
     // lane's `typosquat_bimi` alert is a different finding at a fixed HIGH
     // severity, filed independently above.
-    if (!clearsLookalikeAlertFloor(effective)) {
+    //
+    // A CONFIRMED NEW REGISTRATION is the second documented exemption
+    // (lib/lookalike-alert-policy.ts `NEW_REGISTRATION_ALERT_SEVERITY`):
+    // it files below the floor at MEDIUM instead of being withheld.
+    const clearsFloor = clearsLookalikeAlertFloor(effective);
+    const registration = opts.registration;
+    if (!clearsFloor && !registration) {
       counters.alerts_withheld_below_floor += 1;
       logger.info('lookalike_alert_withheld_below_floor', {
         domain: row.domain,
@@ -1308,14 +1388,32 @@ async function compositeAndPersist(
       return;
     }
 
+    const severity: PageThreatLevel = registration
+      ? newRegistrationAlertSeverity(effective)
+      : effective;
+    const infraNote = `${observed.hasWeb ? 'It has a web server.' : ''} ${observed.hasMx ? 'It has MX records configured for email.' : ''}`.trim();
+    const registeredOn = registration?.registeredAt ? registration.registeredAt.slice(0, 10) : null;
+
     const alertId = await createAlert(env.DB, {
       brandId: row.brand_id,
       userId: brand.user_id,
       alertType: 'lookalike_domain_active',
-      severity: effective,
-      title: `Lookalike domain registered: ${displayDomain}`,
-      summary: `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${observed.hasWeb ? 'It has a web server.' : ''} ${observed.hasMx ? 'It has MX records configured for email.' : ''}`.trim(),
+      severity,
+      title: registration
+        ? `New lookalike domain registered: ${displayDomain}`
+        : `Lookalike domain registered: ${displayDomain}`,
+      summary: registration
+        ? `A domain similar to ${brand.domain} (${row.permutation_type} variant) was newly registered${registeredOn ? ` on ${registeredOn}` : ''}. ` +
+          (infraNote || 'It is not yet serving web or mail.')
+        : `A domain similar to ${brand.domain} (${row.permutation_type} variant) has been registered and is now active. ${infraNote}`.trim(),
       details: {
+        ...(registration
+          ? {
+              new_registration: true,
+              registration_evidence: registration.evidence,
+              registered_at: registration.registeredAt ?? undefined,
+            }
+          : {}),
         lookalike_domain: row.domain,
         unicode_domain: row.unicode_domain ?? undefined,
         original_domain: brand.domain,
@@ -1333,7 +1431,7 @@ async function compositeAndPersist(
       sourceId: row.id,
       // Historical note from the retired Haiku pass, when one exists.
       aiAssessment: row.ai_assessment ?? undefined,
-      aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(effective)
+      aiRecommendations: (['CRITICAL', 'HIGH'] as string[]).includes(severity)
         ? [
             'Investigate the domain for brand impersonation content',
             'Consider filing a UDRP complaint or takedown request',
@@ -1346,11 +1444,22 @@ async function compositeAndPersist(
           ],
     }, { env });
 
+    if (alertId) alerted = true;
+
     // Link the alert back to the lookalike record. Guarded on a non-null
     // id: both the floor above and `createAlert`'s NX2 tier gate can
     // legitimately produce no alert, and `alert_id IS NULL` is precisely
     // the state `analyzeLookalikePages` keys its own alert path on.
-    if (alertId) {
+    //
+    // A BELOW-FLOOR new-registration alert is deliberately NOT linked:
+    // `alert_id` means "this row has its operational (HIGH+) alert", and
+    // both the page pass and the mx/web pair-completion path key on its
+    // absence. Linking a MEDIUM "it was registered" alert there would
+    // suppress the later "it is now serving a phishing page / mail+web"
+    // alert, which is the escalation the registration alert exists to
+    // precede. The registration alert is bounded by
+    // `registration_alerted_at` instead.
+    if (alertId && clearsFloor) {
       await env.DB.prepare(
         `UPDATE lookalike_domains SET alert_id = ? WHERE id = ?`,
       ).bind(alertId, row.id).run();
@@ -1367,6 +1476,87 @@ async function compositeAndPersist(
   } else {
     await persistLevel();
     await fileAlert();
+  }
+  return { alerted };
+}
+
+/**
+ * Claim the right to file THIS registration event's alert.
+ *
+ * Guarded on `registration_alerted_at IS NULL` and run BEFORE
+ * `createAlert`, so two passes (or the NRD-confirmation and an observed
+ * transition of the same registration) cannot both file. Cleared only by
+ * `releaseRegistrationClaim` — on a lapse (a later re-registration is a
+ * new event) or when the alert attempt itself threw (so it is retried).
+ */
+async function claimRegistrationAlert(env: Env, id: string): Promise<boolean> {
+  const res = await env.DB.prepare(
+    `UPDATE lookalike_domains
+     SET registration_alerted_at = datetime('now')
+     WHERE id = ? AND registration_alerted_at IS NULL`,
+  ).bind(id).run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+function releaseRegistrationClaim(env: Env, id: string) {
+  return env.DB.prepare(
+    `UPDATE lookalike_domains SET registration_alerted_at = NULL WHERE id = ?`,
+  ).bind(id).run();
+}
+
+/**
+ * A confirmed registration: claim, then composite + alert. A throw after
+ * the claim releases it so the next pass retries instead of losing the
+ * notification; the release itself failing leaves the claim set (counted
+ * as a row error by the caller's catch, which re-throws here).
+ */
+async function fileConfirmedRegistration(
+  env: Env,
+  row: LookalikeCheckRow,
+  observed: LookalikeObservedState & { ip?: string },
+  evidence: RegistrationEvidence,
+  opts: {
+    /** False = mark the event handled without alerting (see the NRD path). */
+    alert: boolean;
+    bimiKnown: boolean;
+    budgets: RunBudgets;
+    counters: LookalikeCheckSummary;
+  },
+): Promise<void> {
+  const claimed = await claimRegistrationAlert(env, row.id);
+  try {
+    if (!claimed) {
+      // This registration event already has its alert (e.g. the NRD
+      // listing filed it while DNS still had nothing, and DNS has now
+      // caught up). No second new-registration alert. The ordinary
+      // floored path still runs, bounded on `alert_id` like the mx/web
+      // pair path: an event that has since become operational (HIGH+)
+      // escalates ONCE, which the unlinked MEDIUM alert deliberately left
+      // room for.
+      await compositeAndPersist(env, row, observed, {
+        allowAlert: opts.alert && row.alert_id === null,
+        bimiKnown: opts.bimiKnown,
+        budgets: opts.budgets,
+        counters: opts.counters,
+      });
+      return;
+    }
+    const { alerted } = await compositeAndPersist(env, row, observed, {
+      allowAlert: opts.alert,
+      bimiKnown: opts.bimiKnown,
+      budgets: opts.budgets,
+      counters: opts.counters,
+      registration: {
+        evidence,
+        // The NRD matcher stamped first_seen before this pass; an
+        // observed transition was stamped just now (not in the snapshot).
+        registeredAt: row.first_seen ?? new Date().toISOString().slice(0, 19).replace('T', ' '),
+      },
+    });
+    if (alerted) opts.counters.registration_alerts += 1;
+  } catch (err) {
+    if (claimed) await releaseRegistrationClaim(env, row.id);
+    throw err;
   }
 }
 
@@ -1460,7 +1650,16 @@ async function runCheckRows(
       try {
         counters.checked += 1;
 
+        // `firstContact` drives ONLY the baseline stamp below (the column
+        // is single-write and records our coverage). Classification uses
+        // `classifyAsFirstContact`: a row carrying NRD registration
+        // evidence whose alert has not been filed is an OBSERVED
+        // registration even when we have never looked at it — the
+        // registry dated it, so "registered, date unknown" (baseline) is
+        // exactly the wrong reading. See lib/lookalike-nrd-matcher.ts.
         const firstContact = row.baseline_established_at === null;
+        const nrdPending = row.registration_evidence === 'nrd' && row.registration_alerted_at === null;
+        const classifyAsFirstContact = firstContact && !nrdPending;
         const result = await checkDomain(row.domain);
 
         // ── THE CHECK FAILED — NOT "nothing found" ────────────────
@@ -1514,7 +1713,7 @@ async function runCheckRows(
 
         const transitions = classifyLookalikeTransitions(
           {
-            baselineEstablished: !firstContact,
+            baselineEstablished: !classifyAsFirstContact,
             registered: row.registered === 1,
             hasMx: row.has_mx === 1,
             hasWeb: row.has_web === 1,
@@ -1571,6 +1770,28 @@ async function runCheckRows(
           return;
         }
 
+        // ── NRD-CONFIRMED REGISTRATION ────────────────────────────
+        // The registry listed this permutation as newly registered
+        // (lib/lookalike-nrd-matcher.ts stamped `first_seen` from the
+        // listing date and moved the row to the front of the queue). That
+        // is a confirmed registration whatever DNS shows today — a fresh
+        // registration often has no A or MX record yet — so it files the
+        // new-registration alert unless:
+        //   * DNS answered a 1 -> 0 LAPSE (handled below as a lapse), or
+        //   * the row already carries its operational alert (`alert_id`),
+        //     i.e. a first-contact baseline already alerted on it at HIGH:
+        //     the claim is still taken, so the event is marked handled.
+        // An unresolved check never reaches here (backoff above), so the
+        // event waits for an answer rather than alerting blind.
+        if (nrdPending && !transitions.includes('registration_lost')) {
+          counters.nrd_registrations += 1;
+          if (transitions.includes('registration_gained')) counters.new_registrations += 1;
+          await fileConfirmedRegistration(env, row, observed, 'nrd', {
+            alert: row.alert_id === null, bimiKnown, budgets, counters,
+          });
+          return;
+        }
+
         if (transitions.includes('registration_gained')) {
           // ── OBSERVED TRANSITION ────────────────────────────────
           // We checked this row before and it did not resolve; now it
@@ -1596,14 +1817,27 @@ async function runCheckRows(
           // true of the MX/WEB path, not of the row. No comment in this
           // file should claim otherwise. Pinned by a lapse ->
           // re-registration test in `test/lookalike-review-fixes.test.ts`.
+          //
+          // ── CONFIRMED NEW REGISTRATION (owner decision 2026-10-05) ──
+          // This IS the confirmed-new-registration finding, so it files
+          // at MEDIUM even below the HIGH floor (the composed level when
+          // that is higher) — `NEW_REGISTRATION_ALERT_SEVERITY`. Bounded
+          // per registration EVENT by the `registration_alerted_at` claim,
+          // which the lapse branch below clears; that is what keeps the
+          // one-alert-per-cycle behaviour described above.
           counters.new_registrations += 1;
+          // `registration_evidence` is stamped with `first_seen` and under
+          // the same lifetime guard: the evidence describes the stored
+          // date, so a row that keeps its earlier first_seen keeps its
+          // earlier evidence too.
           await env.DB.prepare(
             `UPDATE lookalike_domains
-             SET first_seen = datetime('now')
+             SET first_seen = datetime('now'),
+                 registration_evidence = 'observed'
              WHERE id = ? AND first_seen IS NULL`,
           ).bind(row.id).run();
-          await compositeAndPersist(env, row, observed, {
-            allowAlert: true, bimiKnown, budgets, counters,
+          await fileConfirmedRegistration(env, row, observed, 'observed', {
+            alert: true, bimiKnown, budgets, counters,
           });
           return;
         }
@@ -1614,6 +1848,11 @@ async function runCheckRows(
           // lapsed is still evidence of who targeted this brand, and
           // `agents/sparrow.ts` reads that level for takedown priority.
           counters.registrations_lost += 1;
+          // A lapse ends the registration EVENT: the next registration of
+          // this domain (typically a new registrant) may alert again.
+          if (row.registration_alerted_at !== null) {
+            await releaseRegistrationClaim(env, row.id);
+          }
           if (row.takedown_id) {
             if (await recordTakedownDown(env, row.takedown_id)) {
               counters.takedowns_verified_down += 1;
@@ -1779,7 +2018,8 @@ async function runCheckRows(
  * amendment it is also the first-contact DISCRIMINATOR, so that guard is
  * what makes first contact unforgeable by any scheduling operation.
  *
- * `check_due_at` advances by the cadence and `check_attempts` resets: a
+ * `check_due_at` advances by the cadence (`checkCadenceFor`: 24 h for an
+ * unregistered row, 7 days for a registered one) and `check_attempts` resets: a
  * successful observation supersedes any run of failures, which is also
  * what un-parks a row that got there the hard way.
  * `last_check_failed_at` is cleared for the same reason.
@@ -1814,7 +2054,7 @@ function persistCheckFacts(
     result.webAnswered ? 1 : 0,
     result.hasWeb ? 1 : 0,
     firstContact ? 1 : 0,
-    CHECK_CADENCE_MODIFIER,
+    checkCadenceFor(result.registered),
     id,
   ).run();
 }

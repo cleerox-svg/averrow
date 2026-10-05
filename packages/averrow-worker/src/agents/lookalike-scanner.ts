@@ -22,6 +22,8 @@ import {
   seedLookalikesForOrgBrands,
 } from "../scanners/lookalike-domains";
 import { analyzeLookalikePages } from "../scanners/lookalike-page-analysis";
+import { runLookalikeNrdMatch } from "../lib/lookalike-nrd-matcher";
+import { getReadSession } from "../lib/db";
 
 export const lookalikeScannerAgent: AgentModule = {
   name: "lookalike_scanner",
@@ -37,7 +39,8 @@ export const lookalikeScannerAgent: AgentModule = {
   // regression that reintroduces a model call.
   costGuard: "exempt",
   budget: { monthlyTokenCap: 0 },
-  // Delegates to scanners/lookalike-domains.ts checkLookalikeBatch.
+  // Delegates to scanners/lookalike-domains.ts checkLookalikeBatch and
+  // lib/lookalike-nrd-matcher.ts.
   reads: [],
   writes: [],
   outputs: [{ type: "diagnostic" }],
@@ -48,12 +51,21 @@ export const lookalikeScannerAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const agentOutputs: AgentOutputEntry[] = [];
     let scanError: string | null = null;
+    // Real work counters for agent_runs.records_processed (was a hardcoded
+    // 0): rows DNS-checked + rows page-analysed this run. NRD rows scanned
+    // by the matcher are NOT records — they are index reads, and at ~180K
+    // a day they would drown the number operators actually read.
+    let rowsChecked = 0;
+    let pagesAnalyzed = 0;
+    let candidatesCreated = 0;
+    let nrdClaimed = 0;
 
     // Seed candidates for tenant-monitored brands that have none yet, so the
     // checker below has a non-empty pool. Best-effort — a seeding failure must
     // not block the check pass.
     try {
       const seed = await seedLookalikesForOrgBrands(ctx.env);
+      candidatesCreated = seed.candidates_created;
       if (seed.brands_seeded > 0) {
         agentOutputs.push({
           type: "diagnostic",
@@ -71,8 +83,41 @@ export const lookalikeScannerAgent: AgentModule = {
       });
     }
 
+    // NRD <-> lookalike match (lib/lookalike-nrd-matcher.ts). BEFORE the
+    // checker: a permutation the registries just listed as newly
+    // registered is stamped with its registration date and moved to the
+    // front of the queue, so the checker below resolves it — and files the
+    // new-registration alert — on THIS tick. Best-effort: a failure leaves
+    // the KV cursor at the last fully processed window and the next run
+    // resumes there.
+    try {
+      const nrd = await runLookalikeNrdMatch(ctx.env, {
+        read: getReadSession(ctx.env, { bookmark: null }),
+      });
+      nrdClaimed = nrd.claimed;
+      if (nrd.windows > 0 || nrd.claim_errors > 0) {
+        agentOutputs.push({
+          type: "diagnostic",
+          summary: `NRD match: ${nrd.windows} window(s), ${nrd.hits} lookalike hit(s), ` +
+            `${nrd.claimed} new registration(s) dated from NRD, ${nrd.stale} stale` +
+            `${nrd.more_remaining ? " (more remaining)" : ""}` +
+            `${nrd.claim_errors > 0 ? `, ${nrd.claim_errors} claim error(s)` : ""}`,
+          severity: nrd.claim_errors > 0 ? "high" : "info",
+          details: { ...nrd } as Record<string, unknown>,
+        });
+      }
+    } catch (err) {
+      agentOutputs.push({
+        type: "diagnostic",
+        summary: `NRD lookalike match failed: ${err instanceof Error ? err.message : String(err)}`,
+        severity: "high",
+        details: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+
     try {
       const check = await checkLookalikeBatch(ctx.env);
+      rowsChecked = check.checked;
       // Surface the run's counters as a diagnostic so they reach
       // `agent_runs` / `agent_outputs` and the /v2/agents page, not only
       // the log stream. `row_errors` is the reason this exists: with
@@ -97,6 +142,8 @@ export const lookalikeScannerAgent: AgentModule = {
           type: "diagnostic",
           summary: `Checked ${check.checked} lookalike domain(s): ` +
             `${check.new_registrations} observed registration(s), ` +
+            `${check.nrd_registrations} NRD-confirmed registration(s), ` +
+            `${check.registration_alerts} new-registration alert(s), ` +
             `${check.registrations_lost} lapse(s), ` +
             `${check.mx_gained} MX / ${check.web_gained} web appearance(s), ` +
             `${check.baselines_established} baseline(s) established ` +
@@ -132,6 +179,7 @@ export const lookalikeScannerAgent: AgentModule = {
     // are already page_fetched_at-stamped and skipped here.
     try {
       const pages = await analyzeLookalikePages(ctx.env);
+      pagesAnalyzed = pages.analyzed;
       if (pages.analyzed > 0) {
         agentOutputs.push({
           type: "diagnostic",
@@ -159,9 +207,9 @@ export const lookalikeScannerAgent: AgentModule = {
     }
 
     return {
-      itemsProcessed: 0,
-      itemsCreated: 0,
-      itemsUpdated: 0,
+      itemsProcessed: rowsChecked + pagesAnalyzed,
+      itemsCreated: candidatesCreated,
+      itemsUpdated: nrdClaimed,
       output: { error: scanError },
       agentOutputs,
     };

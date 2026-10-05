@@ -111,6 +111,15 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // in flight, or has been failing). OFF the tenant SELECT with the rest
   // of the pipeline detail.
   "ai_claimed_at",
+  // ── 0282 confirmed-registration evidence ──
+  // `registration_evidence` says HOW `first_seen` was learned ('nrd' =
+  // dated by the registries' newly-registered list, 'observed' = we saw
+  // registered 0 -> 1) and `registration_alerted_at` when the
+  // new-registration alert was claimed. Closed vocabulary + a timestamp,
+  // no attacker-controlled content. Staff-visible because together they
+  // explain why a row did or did not raise "New lookalike domain
+  // registered". OFF the tenant SELECT with the rest of the pipeline detail.
+  "registration_evidence", "registration_alerted_at",
   // `bimi_first_seen_at` is presence-only: when we OBSERVED a BIMI
   // record on this squat, never a record of absence (migration 0269 §2).
   // Staff-visible because it is the evidence behind a `typosquat_bimi`

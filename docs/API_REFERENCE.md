@@ -89,7 +89,7 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/public/stats` | Platform statistics (disclosure register L4/L12/L20, G1). **Threat total:** `total_threats` (number) and `threats_detected` (formatted string, e.g. "1.3M+") are the SAME all-time `COUNT(*) FROM threats` (cachedCount `count.threats.total`) — one published total. Other numeric fields: `active_threats`, `brands_monitored` (active `monitored_brands` rows; legacy SPA count-up), `brands_tracked` (alias), `active_feeds` (feeds with healthy/degraded status), `threat_campaigns`, `countries`, `providers_mapped`, `threats_today` (threats bucketed since 00:00 UTC, from `threat_cube_status`), `threats_classified_today` (= `threats_today`), `threat_types[]`. `certificates_today` is a **deprecated** alias of `threats_today` kept only for the frozen legacy SPA — it is not a certificate count. Formatted strings: `agents_deployed`, `feeds_protecting`, `threats_detected`, `brands_monitored_label` (the brand **catalog** size incl. passive `tier='tracked'` — not monitored coverage), `uptime_label`. **Removed:** `detection_time_label` (hard-coded, unmeasured) and `latest_insight_summary` (internal agent text). **`proof`** (cached 1h; `lib/public-proof.ts`): `lookalikes_found_30d` (int — `lookalike_domains` with `registered = 1` and `first_seen` — the observed 0→1 registration, not our baseline check — in the last 30d), `operations_tracked` (int — distinct `COALESCE(component_id, id)` over `infrastructure_clusters` with status `active`/`accelerating`/`pivot` and `last_seen` in 30d, i.e. a NEXUS component counts once), `monitored_brands` (int — `tier IN ('monitored','customer')`, `MONITORED_BRAND_PREDICATE_SQL`), `brands_in_catalog` (int — all `brands` rows), `generated_at` (ISO — when the block was computed). All four counts are `null` when the compute failed; a failure is negative-cached for 10 min. (A registration→live velocity share was considered and is NOT published — disclosure register G16.) **D1 outage:** `total_threats`, `threats_detected`, `feeds_protecting` and `brands_monitored_label` fall back to the last successfully computed values (KV, 30-day expiry), else `null` — never an invented number. TTLs: base 5 min, proof 1h, marketing strings 10 min. |
+| GET | `/api/v1/public/stats` | Platform statistics (disclosure register L4/L12/L20, G1). **Threat total:** `total_threats` (number) and `threats_detected` (formatted string, e.g. "1.3M+") are the SAME all-time `COUNT(*) FROM threats` (cachedCount `count.threats.total`) — one published total. Other numeric fields: `active_threats`, `brands_monitored` (active `monitored_brands` rows; legacy SPA count-up), `brands_tracked` (alias), `active_feeds` (feeds with healthy/degraded status), `threat_campaigns`, `countries`, `providers_mapped`, `threats_today` (threats bucketed since 00:00 UTC, from `threat_cube_status`), `threats_classified_today` (= `threats_today`), `threat_types[]`. `certificates_today` is a **deprecated** alias of `threats_today` kept only for the frozen legacy SPA — it is not a certificate count. Formatted strings: `agents_deployed`, `feeds_protecting`, `threats_detected`, `brands_monitored_label` (the brand **catalog** size incl. passive `tier='tracked'` — not monitored coverage), `uptime_label`. **Removed:** `detection_time_label` (hard-coded, unmeasured) and `latest_insight_summary` (internal agent text). **`proof`** (cached 1h; `lib/public-proof.ts`): `lookalikes_found_30d` (int — registered lookalikes DISCOVERED in the last 30d: `registered = 1` and `COALESCE(first_seen, baseline_established_at)` in the last 30d, excluding the pre-seeder legacy rows created before 2026-09-30; key name kept for compatibility), `new_registrations_30d` (int — CONFIRMED new lookalike registrations in the last 30d: `registration_evidence IN ('nrd','observed')` (migration 0282) and `first_seen` in the last 30d — `observed` = a 0→1 transition on an already-baselined row, `nrd` = dated by the registries' newly-registered list, claimed only when we had not already seen the domain registered before that date), `operations_tracked` (int — distinct `COALESCE(component_id, id)` over `infrastructure_clusters` with status `active`/`accelerating`/`pivot` and `last_seen` in 30d, i.e. a NEXUS component counts once), `monitored_brands` (int — `tier IN ('monitored','customer')`, `MONITORED_BRAND_PREDICATE_SQL`), `brands_in_catalog` (int — all `brands` rows), `generated_at` (ISO — when the block was computed). All five counts are `null` when the compute failed; a failure is negative-cached for 10 min. (A registration→live velocity share was considered and is NOT published — disclosure register G16.) **D1 outage:** `total_threats`, `threats_detected`, `feeds_protecting` and `brands_monitored_label` fall back to the last successfully computed values (KV, 30-day expiry), else `null` — never an invented number. TTLs: base 5 min, proof 1h, marketing strings 10 min. |
 | GET | `/api/v1/public/geo` | Recent threat coordinates (latest 500 `lat`/`lng` + severity band) for the legacy SPA map |
 | GET | `/api/v1/public/feeds` | Aggregate source counts only (disclosure register L19). Returns `{ success, data: [], total_sources, by_category }` — `data` is always an empty array (the legacy SPA renders nothing), `total_sources` = enabled `feed_configs`, `by_category` = counts by generic `feed_type` (`ingest` / `enrichment` / `social`, anything else → `other`). Never returns feed names, vendors, descriptions, health or per-feed volumes. KV-cached 1h. |
 | POST | `/api/v1/public/assess` | Domain assessment (rate-limited by `CF-Connecting-IP` in KV only; the requester IP is not stored in `assessments` — PR-E, 2026-10) |
@@ -446,6 +446,33 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 > `phantom_enumerator`. Applying the floor would instead either delete the
 > phantom lane's only output or force a `high` severity that contradicts what
 > a phantom hit means (W2.3 spec §6.1/§6.2).
+
+> **Confirmed new registrations: the SECOND documented floor exemption
+> (owner decision 2026-10-05, migration 0282).** Producer (1) now files a
+> `lookalike_domain_active` alert titled **"New lookalike domain registered:
+> <domain>"** at **MEDIUM even below the HIGH floor** (the composed level when
+> that is higher — `NEW_REGISTRATION_ALERT_SEVERITY` /
+> `newRegistrationAlertSeverity` in `lib/lookalike-alert-policy.ts`) for a
+> CONFIRMED registration only: `registration_evidence = 'observed'` (the
+> checker saw `registered 0 → 1` on an already-baselined row) or `'nrd'` (the
+> registries' newly-registered list, joined by
+> `lib/lookalike-nrd-matcher.ts` on every `lookalike_scanner` run, dated it
+> within the last 30 days and we had not already seen it registered before
+> that date). A first-contact baseline is still NOT a registration and stays
+> under the floor. Bound: at most one such alert per lookalike row per
+> registration event — `lookalike_domains.registration_alerted_at` is claimed
+> (`WHERE … IS NULL`) before `createAlert` and cleared only by an answered
+> `1 → 0` lapse. The alert goes through `createAlert` (tier gate, triage hook,
+> `alert.created` webhook) and carries `details.new_registration = true`,
+> `details.registration_evidence`, `details.registered_at`. A below-floor
+> registration alert is NOT linked into `lookalike_domains.alert_id`, so the
+> page pass and the mail+web path can still raise the operational HIGH alert
+> later. An NRD hit stamps `first_seen` from `nrd_domains.registered_date`,
+> sets `nrd_domains.brand_matched = 1`, and moves the row to the front of the
+> checker's queue (`check_due_at` = epoch). No new endpoint; the matcher's
+> keyset cursor (KV `lookalike_nrd_matcher:cursor`) also holds the 90-day
+> `nrd_domains` retention purge (`nrd_retention.lookalike_cursor` /
+> `held_by_lookalike_matcher` in `/api/internal/platform-diagnostics`).
 
 > **`last_check_failed_at` (migration 0268, additive).** The DNS-check cooldown
 > for an attempt that produced NO answer (resolver timeout / non-ok DoH

@@ -100,6 +100,11 @@ interface StoredRow {
   resolves_to: string | null;
   has_mx: number | null;
   has_web: number | null;
+  /** Migration 0282 — 'nrd' | 'observed' | NULL. */
+  registration_evidence: string | null;
+  /** Migration 0282 — the new-registration alert's claim. */
+  registration_alerted_at: string | null;
+  status?: string | null;
 }
 
 const NOW = "MOCK_NOW";
@@ -129,6 +134,8 @@ function makeRow(over: Partial<StoredRow> = {}): StoredRow {
     resolves_to: null,
     has_mx: null,
     has_web: null,
+    registration_evidence: null,
+    registration_alerted_at: null,
     ...over,
   };
 }
@@ -236,7 +243,25 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow>; 
             const row = store.get(id);
             // `WHERE id = ? AND first_seen IS NULL` — same caveat as
             // above; the guard is pinned in the real-SQLite lane.
-            if (row && row.first_seen === null) row.first_seen = NOW;
+            if (row && row.first_seen === null) {
+              row.first_seen = NOW;
+              row.registration_evidence = "observed";
+            }
+          } else if (sql.includes("SET registration_alerted_at = datetime('now')")) {
+            // The new-registration alert's guarded claim (migration 0282):
+            // 0 changes on an already-claimed row. Executed against real
+            // SQLite in test/lookalike-nrd-matcher.test.ts.
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row && row.registration_alerted_at === null) {
+              row.registration_alerted_at = NOW;
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          } else if (sql.includes("SET registration_alerted_at = NULL")) {
+            const [id] = args as [string];
+            const row = store.get(id);
+            if (row) row.registration_alerted_at = null;
           } else if (sql.includes("SET threat_level = CASE")) {
             // The compositor's MONOTONIC persist. Bind order: newRank,
             // newLevel, id. Re-stated with the same caveat; the rank CASE
@@ -458,20 +483,35 @@ describe("checkLookalikeBatch — the boundary is baseline_established_at", () =
     expect(row.baseline_established_at).toBe("2026-09-01 00:00:00");
   });
 
-  it("a transition with neither mail nor web keeps the stored level and files nothing", async () => {
+  it("a transition with neither mail nor web keeps the stored level and files ONE MEDIUM new-registration alert", async () => {
     // No rule fires (no mail+web, no BIMI, no web server to fetch), so
-    // the level is the STORED one and stays below the floor. What covers
-    // a bare registration is the deterministic page pass, which sees any
-    // row with a web server one pass later and can raise the alert.
+    // the level is the STORED one and stays below the HIGH floor. Before
+    // 2026-10-05 that meant NO alert — the platform had no "newly
+    // registered lookalike" notification at all. A confirmed (observed)
+    // registration is now the second documented floor exemption: it files
+    // at MEDIUM, and the row's level is NOT raised by it.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: false }));
     const { env, store } = makeEnv([makeRow({ ...observedAbsent, threat_level: "LOW" })]);
 
-    await checkLookalikeBatch(env);
+    const summary = await checkLookalikeBatch(env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({
+      alertType: "lookalike_domain_active",
+      severity: "MEDIUM",
+      title: "New lookalike domain registered: acm3.example",
+      details: { new_registration: true, registration_evidence: "observed" },
+    });
+    expect(summary.registration_alerts).toBe(1);
     expect(store.get("l1")!.threat_level).toBe("LOW");
-    // The transition is still RECORDED.
+    // The transition is still RECORDED, with its evidence.
     expect(store.get("l1")!.first_seen).toBe(NOW);
+    expect(store.get("l1")!.registration_evidence).toBe("observed");
+    expect(store.get("l1")!.registration_alerted_at).toBe(NOW);
+    // A below-floor registration alert is NOT linked: alert_id keeps
+    // meaning "this row has its operational alert", so the page pass and
+    // the mail+web pair path can still raise the HIGH one later.
+    expect(store.get("l1")!.alert_id).toBeNull();
   });
 
   it("does not re-stamp baseline_established_at on a later check", async () => {
@@ -937,18 +977,20 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     baseline_established_at: "2026-09-01 00:00:00",
   };
 
-  it("withholds a LOW alert on a genuine transition, but persists everything else", async () => {
-    // THE BEHAVIOUR CHANGE. Before the floor this produced an alert that
-    // no triage rule could ever clear. It now produces a fully-populated
-    // row and no alert. With the level rule-composed, a sub-HIGH level on
-    // a transition is the no-mail+web / no-BIMI / no-page-verdict case.
+  it("a genuine transition below the floor files MEDIUM (the new-registration exemption), and persists everything else", async () => {
+    // TWO BEHAVIOUR CHANGES, in order. The floor (2026-09) stopped this
+    // producing a LOW alert no triage rule could clear. The
+    // new-registration exemption (2026-10-05, owner decision) brings back
+    // ONE alert for a CONFIRMED registration, at MEDIUM, bounded per
+    // registration event — the floor still governs every other path.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: false, hasWeb: true }));
     pageAnalysisSpy.mockResolvedValue({ result: { ok: false }, phishing: null });
     const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({ severity: "MEDIUM" });
     const row = store.get("l1")!;
     // The data is the deliverable; the alert is the notification.
     expect(row.threat_level).toBe("LOW");
@@ -960,9 +1002,11 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     expect(row.alert_id).toBeNull();
   });
 
-  it("withholds a stored MEDIUM carried into a re-entrant pass", async () => {
+  it("a stored MEDIUM carried into a re-entrant transition files at MEDIUM, not above", async () => {
     // The compositor's base is the STORED level, and a mail-only
-    // transition cannot lift it (the mail+web rule needs both).
+    // transition cannot lift it (the mail+web rule needs both). The
+    // registration alert carries that level — MEDIUM is a floor for the
+    // finding, never a raise of the row.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }));
     const { env, store } = makeEnv([makeRow({
       ...observed, threat_level: "MEDIUM", ai_assessment: "assessed MEDIUM",
@@ -970,8 +1014,10 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
 
     await checkLookalikeBatch(env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({ severity: "MEDIUM" });
     expect(store.get("l1")!.threat_level).toBe("MEDIUM");
+    expect(store.get("l1")!.alert_id).toBeNull();
   });
 
   it("lets CRITICAL through", async () => {
@@ -1017,19 +1063,33 @@ describe("checkLookalikeBatch — HIGH/CRITICAL severity floor", () => {
     expect(store.get("l1")!.alert_id).toBe("alert_1");
   });
 
-  it("withholds the primary alert when BIMI is absent and only MX is present", async () => {
-    // The floor's own behaviour, isolated from the BIMI boost: mail with
-    // no web and no BIMI record composes to the stored LOW and files
-    // NOTHING.
+  it("BIMI absent, MX only: the registration files at MEDIUM and the level stays LOW", async () => {
+    // Isolated from the BIMI boost: mail with no web and no BIMI record
+    // composes to the stored LOW. The confirmed registration still files
+    // its one MEDIUM alert; the row's level and alert_id are untouched.
     checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }));
     checkBIMISpy.mockResolvedValue(false);
     const { env, store } = makeEnv([makeRow(observed)]);
 
     await checkLookalikeBatch(env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({ severity: "MEDIUM" });
     expect(store.get("l1")!.threat_level).toBe("LOW");
     expect(store.get("l1")!.alert_id).toBeNull();
+  });
+
+  it("the floor still withholds every NON-registration path below HIGH", async () => {
+    // An mx gain on an already-registered, baselined row is not a
+    // registration. With no web it cannot complete the mail+web pair, so
+    // nothing alerts — the exemption is scoped to confirmed registrations.
+    checkDomainSpy.mockResolvedValue(dnsAnswer({ registered: true, resolved: true, ip: "5.6.7.8", hasMx: true, hasWeb: false }));
+    const { env } = makeEnv([makeRow({ ...observed, registered: 1, has_mx: 0, has_web: 0 })]);
+
+    const summary = await checkLookalikeBatch(env);
+
+    expect(summary.mx_gained).toBe(1);
+    expect(createAlertSpy).not.toHaveBeenCalled();
   });
 
   it("does not write alert_id when createAlert declines (NX2 tier gate)", async () => {

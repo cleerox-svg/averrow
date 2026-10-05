@@ -914,6 +914,10 @@ export interface NrdRetentionDiag {
   age_cutoff: string | null;
   cursor: string | null;
   held_by_matcher: boolean | null;
+  /** created_at of the NRD <-> lookalike matcher's cursor (lib/lookalike-nrd-matcher.ts). */
+  lookalike_cursor: string | null;
+  /** True when that cursor, not the age window or the phantom cursor, set the cutoff. */
+  held_by_lookalike_matcher: boolean | null;
   more_remaining: boolean | null;
   skipped: string | null;
   error: string | null;
@@ -942,6 +946,8 @@ export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag>
     age_cutoff: last?.age_cutoff ?? null,
     cursor: last?.cursor ?? null,
     held_by_matcher: last?.held_by_matcher ?? null,
+    lookalike_cursor: last?.lookalike_cursor ?? null,
+    held_by_lookalike_matcher: last?.held_by_lookalike_matcher ?? null,
     more_remaining: last?.more_remaining ?? null,
     skipped: last?.skipped ?? null,
     error: last?.error ?? null,

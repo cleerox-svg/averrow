@@ -403,7 +403,8 @@ export const observerAgent: AgentModule = {
           SELECT ld.domain, b.name AS brand_name
           FROM lookalike_domains ld
           JOIN brands b ON b.id = ld.brand_id
-          WHERE ld.first_seen >= datetime('now', '-24 hours') AND ld.registered = 1
+          WHERE ld.first_seen >= datetime('now', '-24 hours')
+            AND (ld.registered = 1 OR ld.registration_evidence = 'nrd')
           ORDER BY ld.first_seen DESC
           LIMIT 10
         `).all<{ domain: string; brand_name: string }>();

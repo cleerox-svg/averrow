@@ -376,6 +376,12 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     // only on a `registered 0 -> 1` transition we observed — first
     // contact with an already-registered squat leaves it NULL by design
     // (migration 0267), so this counts appearances and nothing else.
+    // Since migration 0282 the NRD matcher (lib/lookalike-nrd-matcher.ts)
+    // also stamps it, from the registries' newly-registered list — which
+    // is what makes this window non-empty: the observed 0 -> 1 path alone
+    // needs a DNS re-check the backlog rarely reaches. An NRD-dated row is
+    // a registration even while DNS has nothing for it yet, hence the OR.
+    // The 45 pre-0267 first_seen artifacts are months outside the window.
     // ── COLUMNS THAT DO NOT EXIST ─────────────────────────────────
     // This selected `dns_active`, `has_content` and `mx_records`. None
     // of the three is in ANY migration for `lookalike_domains`; the real
@@ -389,7 +395,7 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
     env.DB.prepare(
       `SELECT domain, registered, resolves_to, has_web, has_mx, first_seen
        FROM lookalike_domains
-       WHERE brand_id = ? AND registered = 1 AND first_seen >= datetime('now', '-7 days')
+       WHERE brand_id = ? AND (registered = 1 OR registration_evidence = 'nrd') AND first_seen >= datetime('now', '-7 days')
        ORDER BY first_seen DESC LIMIT 30`
     ).bind(brandId).all<NarrativeLookalikeRow>().catch(() => ({ results: [] as NarrativeLookalikeRow[] })),
 
@@ -624,7 +630,9 @@ export const narratorAgent: AgentModule = {
         -- created_at this subquery would have counted seeder output, so
         -- every freshly-seeded brand would have gained a phantom signal
         -- type and cleared the signalTypes >= 2 gate on nothing.
-        (SELECT COUNT(*) FROM lookalike_domains ld WHERE ld.brand_id = b.id AND ld.registered = 1 AND ld.first_seen >= datetime('now', '-7 days')) as lookalike_count,
+        -- (registered = 1 OR NRD-dated): an NRD-listed registration is a
+        -- registry fact even before DNS answers for it (migration 0282).
+        (SELECT COUNT(*) FROM lookalike_domains ld WHERE ld.brand_id = b.id AND (ld.registered = 1 OR ld.registration_evidence = 'nrd') AND ld.first_seen >= datetime('now', '-7 days')) as lookalike_count,
         (SELECT COUNT(*) FROM ct_certificates ct WHERE ct.brand_id = b.id AND ct.suspicious = 1 AND ct.not_before >= datetime('now', '-7 days')) as ct_count,
         (SELECT COUNT(*) FROM app_store_listings asl WHERE asl.brand_id = b.id AND asl.status = 'active'
            AND asl.classification IN ('impersonation','suspicious')

@@ -282,10 +282,15 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     // "proved" it was hand-typing a `bimiSql` that existed nowhere in
     // `src/`, in the one file whose whole contract is that extracting
     // beats retyping.
+    //
+    // Plus 0282's TWO: `idx_lookalike_domain` (the NRD join's probe) and
+    // the partial `idx_lookalike_first_seen` (the public-proof
+    // new-registrations count). Both are plan-pinned in
+    // test/lookalike-nrd-matcher.test.ts.
     expect(
       lookalikeSchema().indexes.length,
       "expected index DDL to be extracted from the migrations",
-    ).toBe(9);
+    ).toBe(11);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 

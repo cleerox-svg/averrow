@@ -480,21 +480,34 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
     expect(h.row(never).baseline_established_at).toBeNull();
   });
 
-  it("a BARE registration keeps the stored level and files no alert", async () => {
+  it("a BARE registration keeps the stored level and files ONE MEDIUM new-registration alert, never twice", async () => {
     // Neither mail nor web: no rule fires, so the level is the stored
-    // one and stays below the floor. What covers this case is the
-    // deterministic page pass, which sees any row with a web server one
-    // pass later and can raise the alert itself.
+    // one and stays below the HIGH floor. A CONFIRMED registration is
+    // the floor's second documented exemption (owner decision
+    // 2026-10-05): it files "New lookalike domain registered" at MEDIUM.
     const h = harness();
     const id = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
 
     await checkLookalikeBatch(h.env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({
+      severity: "MEDIUM",
+      title: "New lookalike domain registered: " + String(h.row(id).domain),
+    });
     expect(h.row(id).threat_level).toBe("LOW");
-    // The transition itself is still RECORDED.
+    // The transition itself is still RECORDED, with its evidence.
     expect(h.row(id).first_seen).not.toBeNull();
+    expect(h.row(id).registration_evidence).toBe("observed");
+    expect(h.row(id).registration_alerted_at).not.toBeNull();
+
+    // The re-check of the SAME registration (still registered, nothing
+    // changed) files nothing more: `none` transition, and the claim is
+    // held. Real SQLite, so this is the guarded UPDATE itself.
+    await makeDue(h, id);
+    await checkLookalikeBatch(h.env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a never-checked row at first contact", async () => {

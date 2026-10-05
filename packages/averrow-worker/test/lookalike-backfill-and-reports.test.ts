@@ -483,7 +483,7 @@ describe.skipIf(!hasSqlite())("the 'newly registered' readings key on first_seen
     for (const [label, sql] of ALL_FOUR()) {
       expect(sql, label).not.toMatch(/ld\.created_at|lookalike_domains\s+WHERE\s+created_at/);
     }
-    expect(NARRATOR_SIGNALS()).toMatch(/FROM lookalike_domains ld WHERE ld\.brand_id = b\.id AND ld\.registered = 1 AND ld\.first_seen >=/);
+    expect(NARRATOR_SIGNALS()).toMatch(/FROM lookalike_domains ld WHERE ld\.brand_id = b\.id AND \(ld\.registered = 1 OR ld\.registration_evidence = 'nrd'\) AND ld\.first_seen >=/);
   });
 
   // ─────────────────────────────────────────────────────────────────

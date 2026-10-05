@@ -55,11 +55,24 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
   const brand = (id: string, tier: string) =>
     raw.prepare("INSERT INTO brands (id, name, canonical_domain, tier) VALUES (?, ?, ?, ?)")
       .run(id, `Brand ${id}`, `${id}.example`, tier);
-  const lookalike = (id: string, registered: number, firstSeenHoursAgo: number | null) =>
+  const lookalike = (
+    id: string,
+    registered: number,
+    firstSeenHoursAgo: number | null,
+    extra: { evidence?: string | null; baselineHoursAgo?: number | null; createdAt?: string } = {},
+  ) =>
     raw.prepare(
-      `INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type, registered, first_seen)
-       VALUES (?, 'b1', ?, 'typosquat', ?, ?)`,
-    ).run(id, `${id}.example`, registered, firstSeenHoursAgo === null ? null : sqliteTimestampHoursAgo(firstSeenHoursAgo));
+      `INSERT INTO lookalike_domains
+         (id, brand_id, domain, permutation_type, registered, first_seen,
+          registration_evidence, baseline_established_at, created_at)
+       VALUES (?, 'b1', ?, 'typosquat', ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+    ).run(
+      id, `${id}.example`, registered,
+      firstSeenHoursAgo === null ? null : sqliteTimestampHoursAgo(firstSeenHoursAgo),
+      extra.evidence ?? null,
+      extra.baselineHoursAgo == null ? null : sqliteTimestampHoursAgo(extra.baselineHoursAgo),
+      extra.createdAt ?? null,
+    );
   const cluster = (id: string, status: string, component: string | null, lastSeenHoursAgo = 1) =>
     raw.prepare(
       `INSERT INTO infrastructure_clusters (id, status, component_id, last_seen) VALUES (?, ?, ?, ?)`,
@@ -98,11 +111,19 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     brand("b3", "tracked");
     brand("b4", "tracked");
 
-    lookalike("l1", 1, 24);          // registered, first seen 1d ago   → counts
-    lookalike("l2", 1, 24 * 10);     // registered, 10d ago             → counts
-    lookalike("l3", 1, 24 * 45);     // registered, 45d ago             → outside window
-    lookalike("l4", 0, 24);          // not registered                  → no
-    lookalike("l5", 1, null);        // baselined, never seen appearing → no
+    // lookalikes_found_30d = registered + COALESCE(first_seen, baseline)
+    // in 30d + created on/after 2026-09-30. new_registrations_30d =
+    // evidence IN ('nrd','observed') + first_seen in 30d.
+    //                                                            found  new
+    lookalike("l1", 1, 24, { evidence: "observed" });         //    yes    yes
+    lookalike("l2", 1, 24 * 10, { evidence: "nrd" });         //    yes    yes
+    lookalike("l3", 1, 24 * 45, { evidence: "observed" });    //    no     no  (outside window)
+    lookalike("l4", 0, 24, { evidence: "nrd" });              //    no     yes (NRD-dated, DNS not yet)
+    lookalike("l5", 1, null, { baselineHoursAgo: 48 });       //    yes    no  (baseline discovery)
+    lookalike("l6", 1, null, {                                //    no     no  (legacy backfill)
+      baselineHoursAgo: 48, createdAt: "2026-05-01 00:00:00",
+    });
+    lookalike("l7", 1, 24);                                   //    yes    no  (no evidence: legacy first_seen)
 
     cluster("c1", "active", "component_A");
     cluster("c2", "accelerating", "component_A"); // same operation as c1
@@ -115,9 +136,10 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
 
     expect(Object.keys(proof).sort()).toEqual([
       "brands_in_catalog", "generated_at", "lookalikes_found_30d", "monitored_brands",
-      "operations_tracked",
+      "new_registrations_30d", "operations_tracked",
     ]);
-    expect(proof.lookalikes_found_30d).toBe(2);
+    expect(proof.lookalikes_found_30d).toBe(4);
+    expect(proof.new_registrations_30d).toBe(3);
     expect(proof.operations_tracked).toBe(2);
     expect(proof.monitored_brands).toBe(2);
     expect(proof.brands_in_catalog).toBe(4);
@@ -144,10 +166,13 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     expect(p1.monitored_brands).toBeNull();
     expect(p1.brands_in_catalog).toBeNull();
     const attempts = () => log.filter((l) => l.sql.includes("FROM lookalike_domains")).length;
-    expect(attempts()).toBe(1);
+    expect(p1.new_registrations_30d).toBeNull();
+    // Two lookalike statements per compute (found + new registrations),
+    // both attempted once in parallel.
+    expect(attempts()).toBe(2);
 
     await getStats(env);
-    expect(attempts()).toBe(1); // second request served by the negative cache
+    expect(attempts()).toBe(2); // second request served by the negative cache
   });
 
   it("serves proof from KV on the second call (no re-query)", async () => {

@@ -61,6 +61,10 @@ const EXPECTED_COLUMNS = [
   // ai_assessment is still NULL is capped, in flight, or failing).
   // Added by hand, which is the review step this file exists to force.
   "ai_claimed_at",
+  // 0282 confirmed-registration evidence — how first_seen was learned
+  // ('nrd' | 'observed') and when the new-registration alert was claimed.
+  // Explains why a row did or did not alert. Added by hand.
+  "registration_evidence", "registration_alerted_at",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */
