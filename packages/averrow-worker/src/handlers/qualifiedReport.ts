@@ -117,7 +117,12 @@ export interface ReportPayload {
     top_countries: Array<{ country: string; threat_count: number }>;
     campaigns_caught_in: Array<{ id: string; name: string; threat_count: number }>;
   };
-  lookalikes: { registered_count: number; possible_count: number; names?: string[] };
+  /**
+   * `checked: false` (scan-only reports only) — no lookalike check backs
+   * this report (no stored scan view), so it makes no lookalike claim and
+   * the template omits the section. Absent → checked.
+   */
+  lookalikes: { registered_count: number; possible_count: number; names?: string[]; checked?: boolean };
   narrative: string;
   remediation_plan: string;
   watch_list?: string[];
@@ -206,11 +211,17 @@ export async function buildReportPayload(
 }
 
 /** Deterministic summary for a scan-only report. Makes no claim about Averrow threat data. */
-export function scanOnlyNarrative(domain: string, registeredLookalikes: number, emailGrade: string): string {
+export function scanOnlyNarrative(
+  domain: string, registeredLookalikes: number, emailGrade: string, lookalikesChecked = true,
+): string {
   const parts: string[] = [
-    `This report covers what the free scan of ${domain} checked from public DNS: email authentication and registered lookalike domains.`,
+    lookalikesChecked
+      ? `This report covers what the free scan of ${domain} checked from public DNS: email authentication and registered lookalike domains.`
+      : `This report covers what was checked for ${domain} from public DNS: email authentication.`,
   ];
-  if (registeredLookalikes > 0) {
+  if (!lookalikesChecked) {
+    // No lookalike check backs this report — make no claim either way.
+  } else if (registeredLookalikes > 0) {
     parts.push(`${registeredLookalikes} lookalike domain${registeredLookalikes === 1 ? " is" : "s are"} registered that could be used to impersonate ${domain}; registration alone is not proof of abuse, but each one is worth watching.`);
   } else {
     parts.push("None of the lookalike domains the scan checked are registered.");
@@ -249,6 +260,10 @@ async function buildScanOnlyReportPayload(
 
   const view = parseStoredPublicView(scanRow?.public_view ?? null);
   const email = view ? emailFromView(view) : emailFromEngine(await runEmailSecurityScanWithin(domain, EMAIL_SCAN_BUDGET_MS));
+  // A lookalike claim ("none registered") needs a scan that actually ran
+  // the lookalike check. Without one the report says nothing about
+  // lookalikes rather than implying a clean result.
+  const lookalikesChecked = view !== null && view.lookalikes.checked > 0;
 
   // Only names the scan itself found registered, re-validated as plain hostnames.
   const names = [...new Set(
@@ -261,7 +276,11 @@ async function buildScanOnlyReportPayload(
   const keyFindings: string[] = [];
   if (registeredLookalikes > 0) keyFindings.push(`${registeredLookalikes} registered lookalike domain${registeredLookalikes === 1 ? "" : "s"} resembling ${domain}`);
   if (emailGrade !== "A" && emailGrade !== "A+") keyFindings.push(`Email security grade ${emailGrade} — gaps in email authentication make ${domain} easier to spoof`);
-  if (keyFindings.length === 0) keyFindings.push(`Email authentication for ${domain} is strong and none of the lookalike domains the scan checked are registered`);
+  if (keyFindings.length === 0) {
+    keyFindings.push(lookalikesChecked
+      ? `Email authentication for ${domain} is strong and none of the lookalike domains the scan checked are registered`
+      : `Email authentication for ${domain} is strong`);
+  }
 
   const plan = deterministicPlan({
     domain,
@@ -282,8 +301,10 @@ async function buildScanOnlyReportPayload(
     generated_at: new Date().toISOString(),
     executive_summary: { risk_grade: riskGradeFor(0, emailGrade, registeredLookalikes), key_findings: keyFindings },
     email_security: email,
-    lookalikes: { registered_count: registeredLookalikes, possible_count: view?.lookalikes.checked ?? 0, names },
-    narrative: scanOnlyNarrative(domain, registeredLookalikes, emailGrade),
+    lookalikes: lookalikesChecked
+      ? { registered_count: registeredLookalikes, possible_count: view?.lookalikes.checked ?? 0, names, checked: true }
+      : { registered_count: 0, possible_count: 0, names: [], checked: false },
+    narrative: scanOnlyNarrative(domain, registeredLookalikes, emailGrade, lookalikesChecked),
     remediation_plan: plan,
     watch_list: buildWatchList(domain, registeredLookalikes),
     roi: roiBlock(),
@@ -482,6 +503,8 @@ export interface CreatedReport {
   shareUrl: string;
   expiresAt: string;
   riskGrade: string;
+  /** The stored snapshot. */
+  payload: ReportPayload;
 }
 
 /**
@@ -521,6 +544,7 @@ export async function createQualifiedReport(
     shareUrl: `${p.appOrigin}/qualified-report/${shareToken}`,
     expiresAt,
     riskGrade: payload.executive_summary.risk_grade,
+    payload,
   };
 }
 
@@ -591,9 +615,10 @@ export async function handleRenewQualifiedReport(
     // Most recent report regardless of expiry — renewing a lapsed link is
     // the whole point.
     const existing = await env.DB.prepare(`
-      SELECT id, share_token, generated_by FROM qualified_reports
+      SELECT id, share_token, generated_by, json_extract(payload_json, '$.content') AS content
+      FROM qualified_reports
       WHERE lead_id = ? ORDER BY created_at DESC LIMIT 1
-    `).bind(leadId).first<{ id: string; share_token: string; generated_by: string | null }>();
+    `).bind(leadId).first<{ id: string; share_token: string; generated_by: string | null; content: string | null }>();
 
     if (!existing) {
       return json({
@@ -602,20 +627,26 @@ export async function handleRenewQualifiedReport(
       }, 404, origin);
     }
 
-    // The share link may already be in the prospect's inbox: an auto-
-    // delivered (scan-only) report stays scan-only when renewed. Staff who
+    // The share link may already be in the prospect's inbox: a scan-only
+    // report (auto-delivered, or staff-sent to an address that does not
+    // match the scanned domain) stays scan-only when renewed. Staff who
     // want the full content generate a new report.
-    const content: ReportContent = existing.generated_by === AUTO_REPORT_GENERATED_BY ? "scan_only" : "full";
+    const content: ReportContent =
+      existing.generated_by === AUTO_REPORT_GENERATED_BY || existing.content === "scan_only" ? "scan_only" : "full";
     const payload = await buildReportPayload(
       env, { domain: lead.domain, company: lead.company, scanId: lead.scan_id }, { content },
     );
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
+    // An auto report's retention (lib/brand-scan-retention.ts, 90 days on
+    // created_at) runs from its latest snapshot, so renewing it resets
+    // created_at; staff reports keep their original creation time.
     await env.DB.prepare(`
       UPDATE qualified_reports
-      SET payload_json = ?, expires_at = ?
+      SET payload_json = ?, expires_at = ?,
+          created_at = CASE WHEN generated_by = ? THEN datetime('now') ELSE created_at END
       WHERE id = ?
-    `).bind(JSON.stringify(payload), expiresAt, existing.id).run();
+    `).bind(JSON.stringify(payload), expiresAt, AUTO_REPORT_GENERATED_BY, existing.id).run();
 
     const url = new URL(request.url);
     const shareUrl = `${url.origin}/qualified-report/${existing.share_token}`;

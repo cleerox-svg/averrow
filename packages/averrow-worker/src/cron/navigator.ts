@@ -392,7 +392,8 @@ async function runNavigatorImpl(
 
     // ── 2e. brand_scans + auto-report retention (free-scan results, 90 days) ──
     // Hour-only gate (CLAUDE.md §6 cron-audit rule). Runs on every hour-0
-    // tick: when nothing is due it is one indexed read, and a backlog over
+    // tick: when nothing is due it is two indexed reads (one per table —
+    // brand_scans, then auto-delivered qualified_reports), and a backlog over
     // one run's batch cap drains on the next tick. Never throws.
     if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
       brandScanPurgeResult = await purgeExpiredBrandScans(env, {

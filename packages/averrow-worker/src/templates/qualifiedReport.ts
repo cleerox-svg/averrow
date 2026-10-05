@@ -232,7 +232,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       </div>
     </section>
 
-    <section>
+    ${p.lookalikes.checked === false ? "" : `<section>
       ${h("Registered Lookalike Domains")}
       ${lookalikeNames.length > 0 ? `
       <div class="panel">
@@ -242,7 +242,7 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
       </div>` : p.lookalikes.registered_count > 0
         ? `<div class="panel">${p.lookalikes.registered_count} registered lookalike domain${p.lookalikes.registered_count === 1 ? "" : "s"} found.</div>`
         : `<div class="panel" style="color:var(--text-secondary);">No registered lookalike domains were found.</div>`}
-    </section>
+    </section>`}
 
     ${threats ? `
     <section>

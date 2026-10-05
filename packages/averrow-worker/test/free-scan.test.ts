@@ -15,7 +15,7 @@ vi.mock("../src/lib/agentRunner", async (orig) => {
 
 const {
   handlePublicBrandScan, handlePublicBrandScanResult, handleLeadCapture,
-  normalizeEmailForCap, leadMailAddressKey, leadMailDomainKey, salesNotifyKey,
+  normalizeEmailForCap, normalizeLeadEmail, leadMailAddressKey, leadMailDomainKey, salesNotifyKey,
   LEAD_MAIL_DOMAIN_DAILY_CAP, LEAD_SALES_NOTIFY_DAILY_CAP,
 } = await import("../src/handlers/brandScan");
 const { buildReportPayload, handleRenewQualifiedReport, AUTO_REPORT_GENERATED_BY } = await import("../src/handlers/qualifiedReport");
@@ -27,7 +27,8 @@ const {
   toScanDomain, runEmailSecurityScanWithin, EmailScanTimeoutError,
 } = await import("../src/lib/free-scan-view");
 const { registrableDomain } = await import("../src/lib/registrable-domain");
-const { isFreemailEmail, isMailOrSaasProviderDomain } = await import("../src/lib/freemail");
+const { isFreemailEmail, isFreemailDomain, isMailOrSaasProviderDomain, isSaasTenantDomain } = await import("../src/lib/freemail");
+const { handleSendLeadOutreach } = await import("../src/handlers/leadConversion");
 const {
   selectLikelyLookalikes, getScanLookalikes, checkRegistrations, lookalikeCacheKey, LOOKALIKE_CACHE_TTL_SECONDS,
   LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS,
@@ -696,7 +697,7 @@ describe("registrable domain + scan input reduction (code M1)", () => {
     expect(registrableDomain("a.b.acme.co.uk")).toBe("acme.co.uk");
     expect(registrableDomain("acme.com.au")).toBe("acme.com.au");
     expect(registrableDomain("x.acme.uk.com")).toBe("acme.uk.com");
-    expect(registrableDomain("tenant.zendesk.com")).toBe("zendesk.com");
+    expect(registrableDomain("tenant.zendesk.com")).toBe("tenant.zendesk.com"); // SaaS tenant host stays whole (L-a)
     expect(registrableDomain("shop.acme.com.tr")).toBe("acme.com.tr"); // generic second level heuristic
     expect(registrableDomain("co.uk")).toBeNull();
     expect(registrableDomain("com")).toBeNull();
@@ -840,5 +841,270 @@ describe("route rate-limit buckets", () => {
     const s2 = makeEnv(() => null, { [`rl:leads:203.0.113.7:${win}`]: "10" });
     const limited = (await router().fetch(jsonReq("/api/leads", { email: "pat@agency.example", domain: "acme.example", consent: true }), s2.env, ctx)) as Response;
     expect(limited.status).toBe(429);
+  });
+});
+
+// ─── 9. Final review round (PR #1805) ──────────────────────────────────
+
+describe("registrable domain heuristic (L-a)", () => {
+  it("unlisted second levels under structured ccTLDs keep 3 labels; listed ones are suffixes", () => {
+    expect(registrableDomain("acme.adv.br")).toBe("acme.adv.br");
+    expect(registrableDomain("www.acme.eng.br")).toBe("acme.eng.br");
+    expect(registrableDomain("acme.art.br")).toBe("acme.art.br");
+    expect(registrableDomain("acme.qc.ca")).toBe("acme.qc.ca");
+    expect(registrableDomain("shop.acme.on.ca")).toBe("acme.on.ca");
+    expect(registrableDomain("acme.bc.ca")).toBe("acme.bc.ca");
+    expect(registrableDomain("acme.ab.ca")).toBe("acme.ab.ca");
+    expect(registrableDomain("acme.tokyo.jp")).toBe("acme.tokyo.jp"); // prefecture via the 3-label rule
+    expect(registrableDomain("a.b.acme.tokyo.jp")).toBe("acme.tokyo.jp");
+    expect(registrableDomain("acme.weird.br")).toBe("acme.weird.br"); // unlisted br category
+    expect(registrableDomain("adv.br")).toBeNull();
+    expect(registrableDomain("qc.ca")).toBeNull();
+  });
+
+  it("ccTLDs open at the second level reduce to 2 labels", () => {
+    expect(registrableDomain("shop.acme.de")).toBe("acme.de");
+    expect(registrableDomain("shop.acme.ca")).toBe("acme.ca");
+    expect(registrableDomain("app.acme.io")).toBe("acme.io");
+    expect(registrableDomain("acme.jp")).toBe("acme.jp");
+    expect(registrableDomain("mail.acme.co.jp")).toBe("acme.co.jp");
+    expect(toScanDomain("https://www.shop.acme.de/x")).toBe("acme.de");
+  });
+
+  it("generic-second-level false positives return themselves", () => {
+    expect(registrableDomain("nic.io")).toBe("nic.io");
+    expect(registrableDomain("co.de")).toBe("co.de");
+    expect(registrableDomain("mil.ru")).toBe("mil.ru");
+    expect(registrableDomain("www.nic.io")).toBe("nic.io");
+    // ...while the heuristic still covers structured ccTLDs.
+    expect(registrableDomain("shop.acme.com.tr")).toBe("acme.com.tr");
+    expect(registrableDomain("com.tr")).toBeNull();
+  });
+
+  it("SaaS tenant hosts are scanned as themselves; the provider domain stays registrable", () => {
+    expect(registrableDomain("shop.myshopify.com")).toBe("shop.myshopify.com");
+    expect(registrableDomain("cdn.shop.myshopify.com")).toBe("shop.myshopify.com");
+    expect(registrableDomain("acme.github.io")).toBe("acme.github.io");
+    expect(registrableDomain("acme.herokuapp.com")).toBe("acme.herokuapp.com");
+    expect(registrableDomain("help.acme.zendesk.com")).toBe("acme.zendesk.com");
+    expect(registrableDomain("myshopify.com")).toBe("myshopify.com");
+    expect(registrableDomain("zendesk.com")).toBe("zendesk.com");
+    expect(toScanDomain("https://shop.myshopify.com/products")).toBe("shop.myshopify.com");
+  });
+
+  it("auto-delivery still refuses a tenant host: the SaaS check sees its parent", () => {
+    for (const host of ["shop.myshopify.com", "acme.github.io", "acme.herokuapp.com", "evil.zendesk.com", "x.my.salesforce.com"]) {
+      expect(isSaasTenantDomain(host)).toBe(true);
+      expect(isMailOrSaasProviderDomain(host)).toBe(true);
+      expect(emailMatchesScannedDomain(`pat@${host}`, toScanDomain(host)!)).toBe(false);
+    }
+    expect(isSaasTenantDomain("acme.example")).toBe(false);
+    expect(emailMatchesScannedDomain("pat@acme.adv.br", "acme.adv.br")).toBe(true);
+  });
+});
+
+describe("free-mail provider-name match (L-d)", () => {
+  it("does not refuse real businesses on new gTLDs that share a provider's name", () => {
+    for (const d of ["outlook.agency", "live.events", "gmx.consulting", "yahoo.photography"]) {
+      expect(isFreemailDomain(d)).toBe(false);
+      expect(isFreemailEmail(`pat@${d}`)).toBe(false);
+    }
+  });
+
+  it("still matches the providers' own ccTLD / com / co.xx variants", () => {
+    for (const d of ["yahoo.com", "yahoo.co.uk", "outlook.com.br", "hotmail.fr", "gmx.de", "gmx.net", "yandex.kz",
+      "live.ca", "outlook.co.th", "hotmail.com.tr", "mail.yahoo.co.jp"]) {
+      expect(isFreemailDomain(d)).toBe(true);
+    }
+  });
+});
+
+describe("lead email host must already be canonical (appsec Low)", () => {
+  it("rejects URL syntax in the host", () => {
+    for (const e of ["x@acme.example/evil", "x@acme.example?x", "x@acme.example#f", "x@acme.example:25",
+      "x@acme.example.", "x@http://acme.example", "x@bücher.example/evil"]) {
+      expect(normalizeLeadEmail(e)).toBeNull();
+    }
+    expect(normalizeLeadEmail(" Pat@Acme.Example ")).toBe("pat@acme.example");
+  });
+
+  it("an IDN host is normalised to punycode for storage, match and caps", () => {
+    expect(normalizeLeadEmail("pat@bücher.example")).toBe("pat@xn--bcher-kva.example");
+  });
+
+  it("POST /api/leads: x@acme.example/evil → 400, nothing written or sent", async () => {
+    const net = stubNetwork();
+    const s = makeEnv();
+    const res = await handleLeadCapture(jsonReq("/api/leads", {
+      email: "x@acme.example/evil", domain: "acme.example", scan_id: SCAN_ID, consent: true,
+    }), s.env);
+    expect(res.status).toBe(400);
+    expect(s.calls.filter((c) => /^\s*(INSERT|UPDATE)/i.test(c.sql))).toEqual([]);
+    expect(net.sent).toEqual([]);
+  });
+
+  it("POST /api/leads: IDN address is stored and capped under its punycode host", async () => {
+    stubNetwork();
+    const s = makeEnv();
+    const res = await handleLeadCapture(jsonReq("/api/leads", {
+      email: "pat@bücher.example", domain: "acme.example", consent: true,
+    }), s.env);
+    expect(res.status).toBe(200);
+    const lead = s.calls.find((c) => /INSERT INTO scan_leads/.test(c.sql))!;
+    expect(lead.binds[1]).toBe("pat@xn--bcher-kva.example");
+    expect(s.puts.map((p) => p.key)).toContain(leadMailDomainKey("xn--bcher-kva.example"));
+    expect(s.puts.map((p) => p.key)).toContain(leadMailAddressKey("pat@xn--bcher-kva.example"));
+  });
+});
+
+describe("scan-only report without a lookalike check (L-b)", () => {
+  it("makes no lookalike claim when there is no stored scan view", async () => {
+    stubNetwork();
+    const s = makeEnv(() => null); // no brand_scans row → live email scan only
+    const payload = await buildReportPayload(s.env, { domain: "acme.example", company: null, scanId: null }, { content: "scan_only" });
+    expect(payload.lookalikes.checked).toBe(false);
+    expect(payload.narrative).not.toMatch(/lookalike/i);
+    expect(payload.executive_summary.key_findings.join(" ")).not.toMatch(/lookalike/i);
+    const html = renderQualifiedReportHTML(payload);
+    expect(html).not.toContain("No registered lookalike domains were found");
+    expect(html).not.toContain("Registered Lookalike Domains");
+  });
+
+  it("a view whose lookalike check did not run is treated the same way", async () => {
+    stubNetwork();
+    const noCheck = JSON.stringify({ ...JSON.parse(STORED_VIEW) as object, lookalikes: { checked: 0, registered: 0 } });
+    const s = makeEnv((sql) => (/registered_lookalikes, public_view FROM brand_scans/.test(sql)
+      ? { registered_lookalikes: "[]", public_view: noCheck } : null));
+    const payload = await buildReportPayload(s.env, { domain: "acme.example", company: null, scanId: SCAN_ID }, { content: "scan_only" });
+    expect(payload.lookalikes.checked).toBe(false);
+    expect(renderQualifiedReportHTML(payload)).not.toContain("No registered lookalike domains were found");
+  });
+
+  it("with a stored view, a clean result is still stated", async () => {
+    stubNetwork();
+    const s = makeEnv((sql) => (/registered_lookalikes, public_view FROM brand_scans/.test(sql)
+      ? { registered_lookalikes: "[]", public_view: STORED_VIEW } : null));
+    const payload = await buildReportPayload(s.env, { domain: "acme.example", company: null, scanId: SCAN_ID }, { content: "scan_only" });
+    expect(payload.lookalikes.checked).toBe(true);
+    expect(renderQualifiedReportHTML(payload)).toContain("No registered lookalike domains were found");
+  });
+});
+
+describe("renew retention + content (L-c)", () => {
+  function renewEnv(existing: Record<string, unknown>) {
+    return makeEnv((sql) => {
+      if (/FROM scan_leads WHERE id = \?/.test(sql)) return { id: "l1", company: null, domain: "acme.example", scan_id: SCAN_ID };
+      if (/FROM qualified_reports/.test(sql)) return existing;
+      return reportResponder({ brand: true, threats: 5 })(sql, []);
+    });
+  }
+
+  it("renewing an auto report resets created_at (retention runs from the new snapshot)", async () => {
+    stubNetwork();
+    const s = renewEnv({ id: "r1", share_token: "tok", generated_by: AUTO_REPORT_GENERATED_BY, content: "scan_only" });
+    await handleRenewQualifiedReport(new Request("https://averrow.com/x", { method: "POST" }), s.env, "l1");
+    const update = s.calls.find((c) => /UPDATE qualified_reports/.test(c.sql))!;
+    expect(update.sql).toMatch(/created_at = CASE WHEN generated_by = \? THEN datetime\('now'\) ELSE created_at END/);
+    expect(update.binds).toEqual([expect.any(String), expect.any(String), AUTO_REPORT_GENERATED_BY, "r1"]);
+    // The purge still filters on created_at alone (index range).
+    expect(AUTO_REPORT_PURGE_SQL).toMatch(/created_at < datetime\('now', \?\) ORDER BY created_at/);
+  });
+
+  it("a staff-generated scan-only report stays scan-only when renewed", async () => {
+    stubNetwork();
+    const s = renewEnv({ id: "r2", share_token: "tok", generated_by: "usr_1", content: "scan_only" });
+    await handleRenewQualifiedReport(new Request("https://averrow.com/x", { method: "POST" }), s.env, "l1");
+    const update = s.calls.find((c) => /UPDATE qualified_reports/.test(c.sql))!;
+    expect((JSON.parse(update.binds[0] as string) as { content: string }).content).toBe("scan_only");
+    expect(s.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+  });
+});
+
+describe("staff outreach domain check (appsec Medium)", () => {
+  const FULL_PAYLOAD = JSON.stringify({
+    content: "full", brand: { domain: "acme.example", name: "Acme" },
+    executive_summary: { risk_grade: "HIGH", key_findings: ["12 active threats"] },
+  });
+  const SCAN_ONLY_PAYLOAD = JSON.stringify({
+    content: "scan_only", brand: { domain: "acme.example", name: null },
+    executive_summary: { risk_grade: "MODERATE", key_findings: ["Email security grade C"] },
+  });
+
+  /** qualified_reports SELECT honours the "verified or scan-only" bind like D1 would. */
+  function outreachEnv(email: string, reports: { full?: boolean; scanOnly?: boolean; ignoreFilter?: boolean }) {
+    return makeEnv((sql, binds) => {
+      if (/FROM scan_leads WHERE id = \?/.test(sql)) {
+        return { id: "l1", email, name: null, company: null, domain: "acme.example", scan_id: SCAN_ID };
+      }
+      if (/SELECT share_token, payload_json\s+FROM qualified_reports/.test(sql)) {
+        const verifiedFlag = binds[1];
+        if (reports.ignoreFilter && reports.full) return { share_token: "full_tok", payload_json: FULL_PAYLOAD };
+        if (verifiedFlag === 1 && reports.full) return { share_token: "full_tok", payload_json: FULL_PAYLOAD };
+        if (reports.scanOnly) return { share_token: "scan_tok", payload_json: SCAN_ONLY_PAYLOAD };
+        return null;
+      }
+      return reportResponder({ brand: true, threats: 5 })(sql, []);
+    });
+  }
+  const req = () => new Request("https://averrow.com/api/admin/leads/l1/outreach", { method: "POST" });
+
+  it("verified address → the latest (full) report is emailed", async () => {
+    const net = stubNetwork();
+    const s = outreachEnv("pat@acme.example", { full: true });
+    const res = await handleSendLeadOutreach(req(), s.env, "l1", "usr_1");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { data: { content: string; domain_verified: boolean; share_url: string } };
+    expect(body.data).toMatchObject({ content: "full", domain_verified: true, share_url: "https://averrow.com/qualified-report/full_tok" });
+    expect(net.sent.some((m) => m.html.includes("full_tok"))).toBe(true);
+  });
+
+  it("unverified address → never the full report; an existing scan-only report is reused", async () => {
+    const net = stubNetwork();
+    const s = outreachEnv("pat@agency.example", { full: true, scanOnly: true });
+    const res = await handleSendLeadOutreach(req(), s.env, "l1", "usr_1");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { data: { content: string; domain_verified: boolean } };
+    expect(body.data).toMatchObject({ content: "scan_only", domain_verified: false });
+    expect(net.sent.some((m) => m.html.includes("full_tok"))).toBe(false);
+    expect(net.sent.some((m) => m.html.includes("scan_tok"))).toBe(true);
+  });
+
+  it("unverified address with only a full report → a scan-only report is built and emailed", async () => {
+    const net = stubNetwork();
+    const s = outreachEnv("pat@agency.example", { full: true });
+    const res = await handleSendLeadOutreach(req(), s.env, "l1", "usr_1");
+    expect(res.status).toBe(200);
+    const insert = s.calls.find((c) => /INSERT INTO qualified_reports/.test(c.sql))!;
+    const stored = JSON.parse(insert.binds[4] as string) as Record<string, unknown>;
+    expect(stored.content).toBe("scan_only");
+    expect(stored).not.toHaveProperty("active_threats");
+    expect(insert.binds[6]).toBe("usr_1");
+    expect(net.sent.some((m) => m.html.includes(insert.binds[3] as string))).toBe(true);
+    expect(net.sent.some((m) => m.html.includes("full_tok"))).toBe(false);
+    expect(s.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+  });
+
+  it("report-and-outreach (freshScanOnly) builds a fresh scan-only report for an unverified address", async () => {
+    stubNetwork();
+    const s = outreachEnv("pat@agency.example", { full: true, scanOnly: true });
+    const res = await handleSendLeadOutreach(req(), s.env, "l1", "usr_1", { freshScanOnly: true });
+    expect(res.status).toBe(200);
+    expect(s.calls.some((c) => /SELECT share_token, payload_json\s+FROM qualified_reports/.test(c.sql))).toBe(false);
+    const insert = s.calls.find((c) => /INSERT INTO qualified_reports/.test(c.sql))!;
+    expect((JSON.parse(insert.binds[4] as string) as { content: string }).content).toBe("scan_only");
+  });
+
+  it("defence in depth: a full payload reaching the unverified path is refused (409), nothing sent", async () => {
+    const net = stubNetwork();
+    const s = outreachEnv("pat@agency.example", { full: true, ignoreFilter: true });
+    const res = await handleSendLeadOutreach(req(), s.env, "l1", "usr_1");
+    expect(res.status).toBe(409);
+    expect(net.sent).toEqual([]);
+  });
+
+  it("the report-and-outreach route passes freshScanOnly", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(new URL("../src/routes/admin.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/handleSendLeadOutreach\(request, env, id, ctx\.userId, \{ freshScanOnly: true \}\)/);
   });
 });

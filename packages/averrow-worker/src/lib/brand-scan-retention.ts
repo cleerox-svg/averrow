@@ -4,13 +4,17 @@
 // Runs from Navigator's existing hour-0 maintenance block (no new cron):
 // every hour-0 tick calls it, so a backlog larger than one run's cap is
 // drained by the next tick. Each run is a few batched DELETEs riding
-// idx_brand_scans_created_at; when nothing is due it costs one indexed
-// read. Covers every brand_scans row (public and staff scans).
+// idx_brand_scans_created_at / idx_qualified_reports_created; when nothing
+// is due it costs two indexed reads (one per table). Covers every
+// brand_scans row (public and staff scans).
 //
 // Auto-delivered reports: a scan-only qualified_reports row produced by
 // the lead form (generated_by = AUTO_REPORT_GENERATED_BY) snapshots the
 // scan's results (posture + registered lookalike names), so it follows
 // the same 90-day rule. Identified by generated_by — no new column.
+// Renewing an auto report re-snapshots its payload and resets created_at
+// (handleRenewQualifiedReport), so the 90 days run from the latest
+// snapshot and the purge stays a plain created_at range on the index.
 // Staff-generated reports (generated_by = a user id) are sales records
 // and are not touched. The public scan path writes no
 // email_security_scans rows (runPublicScan / the scan-only report never

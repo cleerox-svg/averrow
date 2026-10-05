@@ -517,6 +517,34 @@ export async function handlePublicBrandScanResult(request: Request, env: Env, sc
 //     notification is still created).
 
 const EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
+
+/**
+ * The lead's email, lowercased, with its host in canonical form — or null
+ * when it is not a plain address. EMAIL_RE alone lets `/ ? # :` into the
+ * host (`x@acme.com/evil`), which normalizePublicHostname would strip
+ * when matching the scanned domain while the raw string was still used
+ * as the send address and cap key. So the host must already BE its
+ * normalised form: an ASCII host byte-for-byte, an internationalised host
+ * up to IDNA (it is rewritten to the punycode A-label, the form used for
+ * sending, the domain match and the mail caps alike).
+ */
+export function normalizeLeadEmail(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const email = input.trim().toLowerCase();
+  if (!email || email.length > 254 || !EMAIL_RE.test(email)) return null;
+  const at = email.lastIndexOf("@");
+  const rawHost = email.slice(at + 1);
+  const host = normalizePublicHostname(rawHost);
+  if (!host) return null;
+  if (/[^\x00-\x7f]/.test(rawHost)) {
+    // IDN: only the IDNA mapping may differ — no URL/port syntax, no trailing dot.
+    if (/[/?#:\\]/.test(rawHost) || rawHost.endsWith(".")) return null;
+  } else if (rawHost !== host) {
+    return null;
+  }
+  const normalised = `${email.slice(0, at)}@${host}`;
+  return normalised.length <= 254 ? normalised : null;
+}
 export const LEAD_MAIL_DAILY_CAP = 3;
 export const LEAD_MAIL_DOMAIN_DAILY_CAP = 10;
 export const LEAD_SALES_NOTIFY_DAILY_CAP = 50;
@@ -628,8 +656,8 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
     if (body.consent !== true) {
       return json({ success: false, error: "Please confirm we may email you about this scan" }, 400, origin);
     }
-    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    if (!email || email.length > 254 || !EMAIL_RE.test(email)) {
+    const email = normalizeLeadEmail(body.email);
+    if (!email) {
       return json({ success: false, error: "Please enter a valid email address" }, 400, origin);
     }
     // Business-email gate — mirrors the in-page check so a direct POST

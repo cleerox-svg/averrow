@@ -15,7 +15,7 @@
 // Matching is on the REGISTRABLE domain (lib/registrable-domain.ts), so
 // mail.yandex.ru, yahoo.co.uk and outlook.com.br are all covered.
 
-import { registrableDomain } from "./registrable-domain";
+import { registrableDomain, TENANT_HOST_SUFFIXES } from "./registrable-domain";
 
 /** Exact registrable mail-provider domains. */
 export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
@@ -55,12 +55,18 @@ export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
 /**
  * Provider names registered under many TLDs (yahoo.co.uk, hotmail.fr,
  * outlook.com.br, gmx.de, yandex.kz …). Matched against the first label
- * of the registrable domain.
+ * of the registrable domain, only when the rest of it is the kind of
+ * suffix the providers actually use (PROVIDER_NAME_SUFFIX_RE) — so real
+ * businesses on new gTLDs (outlook.agency, live.events, gmx.consulting)
+ * are not refused as free mail.
  */
 export const FREEMAIL_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "yahoo", "ymail", "rocketmail", "hotmail", "outlook", "live", "windowslive",
   "yandex", "gmx", "tutanota", "tutamail", "protonmail", "aol",
 ]);
+
+/** com / net / org, a two-letter ccTLD, or a co.xx / com.xx / net.xx / org.xx second level. */
+const PROVIDER_NAME_SUFFIX_RE = /^(?:com|net|org|[a-z]{2}|(?:co|com|net|org)\.[a-z]{2})$/;
 
 /** Multi-tenant SaaS / hosting domains: a mailbox or subdomain there is not domain ownership. */
 export const SAAS_TENANT_DOMAINS: ReadonlySet<string> = new Set([
@@ -96,15 +102,21 @@ export function isFreemailDomain(domain: string): boolean {
   const reg = registrableDomain(host);
   if (!reg) return false;
   if (FREEMAIL_DOMAINS.has(reg)) return true;
-  return FREEMAIL_PROVIDER_NAMES.has(reg.split(".")[0]!);
+  const dot = reg.indexOf(".");
+  return FREEMAIL_PROVIDER_NAMES.has(reg.slice(0, dot)) && PROVIDER_NAME_SUFFIX_RE.test(reg.slice(dot + 1));
 }
 
 /** True when `domain` is a multi-tenant SaaS / hosting domain (or a tenant under one). */
 export function isSaasTenantDomain(domain: string): boolean {
   const host = domain.toLowerCase().trim().replace(/\.$/, "");
-  if (SAAS_TENANT_DOMAINS.has(host)) return true;
-  const reg = registrableDomain(host);
-  return reg != null && SAAS_TENANT_DOMAINS.has(reg);
+  // The host and every parent: registrableDomain keeps a tenant host whole
+  // (shop.myshopify.com), so the provider is found by walking up.
+  const labels = host.split(".");
+  for (let i = 0; i < labels.length - 1; i++) {
+    const name = labels.slice(i).join(".");
+    if (SAAS_TENANT_DOMAINS.has(name) || TENANT_HOST_SUFFIXES.has(name)) return true;
+  }
+  return false;
 }
 
 /** Mailbox provider or SaaS tenant host — never eligible for report auto-delivery. */
