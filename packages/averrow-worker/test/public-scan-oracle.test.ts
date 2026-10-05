@@ -2,8 +2,9 @@
 //
 // An anonymous caller must not be able to learn whether a domain is in
 // Averrow's threat data from any public scan surface:
-//   1. /api/brand-scan/public (+ the /assess results lookup): the score has
-//      no feed-mention component; the stored staff score still does.
+//   1. /api/brand-scan/public (+ its result lookup): the response is public
+//      DNS facts only and is identical whether or not the domain is in
+//      threat data; the stored staff score/feed count still are.
 //   2. POST /api/v1/public/assess: no threat/provider/campaign counts,
 //      threat types, monitored status or spam-trap data, and the score /
 //      grade / text are email-posture only.
@@ -33,14 +34,11 @@ vi.mock("../src/lib/agentRunner", async (orig) => {
   };
 });
 
-const {
-  handlePublicBrandScan, handlePublicBrandScanResult, publicScoreFromStored, feedMentionPenalty,
-} = await import("../src/handlers/brandScan");
+const { handlePublicBrandScan, handlePublicBrandScanResult } = await import("../src/handlers/brandScan");
 const { handlePublicAssess, handlePublicLeadCapture, handlePublicMonitor } = await import("../src/handlers/public");
 const { registerScanRoutes } = await import("../src/routes/scan");
 const { registerPublicRoutes } = await import("../src/routes/public");
-const { renderAssessResults, renderHomepage } = await import("../src/templates/homepage");
-const { renderScanPage } = await import("../src/templates/scan");
+const { renderHomepage } = await import("../src/templates/homepage");
 
 // ─── D1 stub driven by a per-test responder ────────────────────────────
 
@@ -86,13 +84,13 @@ function jsonReq(path: string, body: unknown, ip = "203.0.113.7"): Request {
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     const u = String(url);
-    if (u.includes("type=TXT") && !u.includes("_dmarc")) {
-      return new Response(JSON.stringify({ Answer: [{ data: "\"v=spf1 include:x ~all\"" }] }));
+    if (u.includes("type=TXT") && !u.includes("_dmarc") && !u.includes("_domainkey") && !u.includes("_bimi")) {
+      return new Response(JSON.stringify({ Status: 0, Answer: [{ type: 16, data: "\"v=spf1 include:x ~all\"" }] }));
     }
     if (u.includes("type=MX")) {
-      return new Response(JSON.stringify({ Answer: [{ data: "10 mx.acme.example." }] }));
+      return new Response(JSON.stringify({ Status: 0, Answer: [{ type: 15, data: "10 mx.acme.example." }] }));
     }
-    return new Response(JSON.stringify({}));
+    return new Response(JSON.stringify({ Status: 3 }));
   }));
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -102,69 +100,56 @@ const threatRows = (n: number) =>
 
 // ─── 1. /api/brand-scan/public ─────────────────────────────────────────
 
-describe("public brand scan score has no feed component", () => {
+describe("free scan response carries no threat-data signal", () => {
   async function scan(feedHits: number) {
     const s = makeEnv((sql) => (/FROM threats/.test(sql) ? threatRows(feedHits) : null));
     const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "acme.example" }), s.env);
-    const body = await res.json() as { data: { trustScore: number; riskLevel: string } };
+    const body = await res.json() as { data: Record<string, unknown> };
     const insert = s.calls.find((c) => /INSERT INTO brand_scans/.test(c.sql))!;
-    return { data: body.data, storedScore: insert.binds[2], storedFeed: insert.binds[5] };
+    return { data: body.data, insert, calls: s.calls };
   }
+  const strip = ({ id: _id, checked_at: _at, ...rest }: Record<string, unknown>) => rest;
 
-  it("returns the same score/risk whether or not the domain is in threat data", async () => {
+  it("returns the same data whether or not the domain is in threat data", async () => {
     const clean = await scan(0);
     const hit = await scan(12);
-    expect(hit.data).toEqual(clean.data);
-    // softfail SPF (-10) + no DMARC (-25) → 65; feed never applied publicly.
-    expect(clean.data.trustScore).toBe(65);
+    expect(strip(hit.data)).toEqual(strip(clean.data));
+    expect(JSON.stringify(hit.data)).not.toMatch(/feed|threat|score/i);
   });
 
-  it("still stores the staff score (with the feed deduction) and the feed count", async () => {
+  it("never reads threat data; trust_score and feed_mentions are NULL on public rows (appsec M2)", async () => {
     const hit = await scan(12);
-    expect(hit.storedScore).toBe(65 - 20);
-    expect(hit.storedFeed).toBe(12);
+    expect(hit.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+    expect(hit.insert.sql).toMatch(/'completed', NULL, \?, \?, NULL,/);
   });
 });
 
-describe("public scan result lookup", () => {
-  it("adds the feed deduction back and never returns feed_mentions", async () => {
-    const row = {
-      id: "s1", domain: "acme.example", trust_score: 45, spf_policy: "softfail", dmarc_policy: null,
-      feed_mentions: 12, lookalikes_found: 0, status: "completed", created_at: "2026-10-05",
+describe("free scan result lookup", () => {
+  it("returns only the stored public view, never feed_mentions/trust_score", async () => {
+    const view = {
+      v: 1, checked_at: "2026-10-05T00:00:00.000Z",
+      email: { grade: "C", spf: { status: "soft" }, dkim: { found: false }, dmarc: { policy: "missing" }, mx: { present: true }, bimi: { present: false } },
+      lookalikes: { checked: 40, registered: 2 },
+      feed_mentions: 12,
     };
-    const s = makeEnv(() => row);
-    const res = await handlePublicBrandScanResult(new Request("https://averrow.com/x"), s.env, "s1");
+    const id = "0b7d6f9e-1c2a-4b3c-8d4e-5f6a7b8c9d0e";
+    const s = makeEnv(() => ({ id, domain: "acme.example", public_view: JSON.stringify(view) }));
+    const res = await handlePublicBrandScanResult(new Request("https://averrow.com/x"), s.env, id);
     const body = await res.json() as { data: Record<string, unknown> };
-    expect(body.data.trust_score).toBe(65);
-    expect(body.data.risk_level).toBe("medium");
-    expect(body.data).not.toHaveProperty("feed_mentions");
-    expect(JSON.stringify(body)).not.toMatch(/feed/i);
-  });
-
-  it("publicScoreFromStored exactly inverts the feed deduction for every reachable stored score", () => {
-    // Non-feed deductions: SPF {0,10,15,25} + DMARC {0,8,25} + MX {0,10} + lookalikes {0,5,10,15,20}.
-    for (const spf of [0, 10, 15, 25]) for (const dmarc of [0, 8, 25]) for (const mx of [0, 10])
-      for (const look of [0, 5, 10, 15, 20]) for (const feed of [0, 1, 3, 6, 11, 50]) {
-        const base = 100 - spf - dmarc - mx - look;
-        const stored = Math.max(0, base - feedMentionPenalty(feed));
-        expect(publicScoreFromStored(stored, feed)).toBe(base);
-      }
+    expect(Object.keys(body.data).sort()).toEqual(["checked_at", "domain", "email", "id", "lookalikes"]);
+    expect(JSON.stringify(body)).not.toMatch(/feed|trust_score/i);
+    // The SELECT never reads the staff columns.
+    expect(s.calls[0]!.sql).not.toMatch(/feed_mentions|trust_score/);
   });
 });
 
-describe("public summary copy is posture-only", () => {
-  const threatClaim = /threat activity|active threats|threats detected|detected active/i;
-
-  it("assess results page, homepage widget and /scan make no threat claims", () => {
-    const pageScripts = [renderAssessResults("s1"), renderHomepage()].map((h) => {
-      const i = h.indexOf("function summaryFor");
-      return h.slice(i, h.indexOf("\n}", i));
-    });
-    for (const fn of pageScripts) {
-      expect(fn.length).toBeGreaterThan(50);
-      expect(fn).not.toMatch(threatClaim);
-    }
-    expect(renderScanPage()).not.toMatch(/Active brand abuse/);
+describe("legacy homepage widget", () => {
+  it("hands results to /scan and renders no score/threat copy itself", () => {
+    const html = renderHomepage();
+    expect(html).toContain("window.location.href = '/scan/?id=' + encodeURIComponent(data.data.id)");
+    expect(html).not.toContain("function summaryFor");
+    expect(html).not.toContain("feedMentions");
+    expect(html).not.toContain("/api/leads");
   });
 });
 

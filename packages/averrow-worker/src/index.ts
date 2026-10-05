@@ -969,7 +969,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
       }
 
       const response = await router.fetch(request, env, ctx);
-      return applySecurityHeaders(response);
+      return applySecurityHeaders(response, url.pathname);
     } catch (e: unknown) {
       const err = e instanceof Error ? e : new Error(String(e));
       // Log internally but never expose details to client

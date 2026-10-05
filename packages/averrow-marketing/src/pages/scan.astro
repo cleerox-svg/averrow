@@ -1,0 +1,748 @@
+---
+/*
+ * Free domain scan (Section 7). Static shell + one client script that
+ * calls the same-origin scan API served by the Worker:
+ *   POST /api/brand-scan/public      { domain, turnstileToken? }
+ *   GET  /api/brand-scan/public/:id
+ *   POST /api/leads                  { email, domain, scan_id, consent, turnstileToken? }
+ *
+ * All markup is static; the script only toggles `hidden` and sets
+ * textContent / data attributes, so nothing from the API is ever parsed
+ * as HTML and the scoped styles below apply to every element.
+ *
+ * Turnstile: site key comes from PUBLIC_TURNSTILE_SITE_KEY at build time.
+ * Without it the widget is skipped and no token is sent.
+ */
+import Layout from "../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
+---
+
+<Layout
+  title="Free Domain Scan — Averrow"
+  description="Free domain scan: email authentication graded A+ to F, and how many likely lookalikes of your domain are already registered. No sign-up."
+>
+  <section class="scan-page" data-sitekey={siteKey} data-base={base} id="scanRoot">
+    <div class="container">
+      <div class="section-label" id="scanEyebrow">Free domain scan</div>
+      <h1 class="scan-title" id="scanTitle" tabindex="-1">How exposed is your domain?</h1>
+
+      <!-- Polite live region for state changes (loading / results / report sent). -->
+      <p class="sr-only" id="scanLive" role="status" aria-live="polite"></p>
+
+      <!-- INPUT STATE -->
+      <div id="scanInput">
+        <p class="scan-lede">
+          Free domain scan: email authentication graded A+ to F, and how many
+          likely lookalikes of your domain are already registered. No sign-up.
+        </p>
+        <form class="scan-form" id="scanForm" action={`${base}/assess`} method="POST" novalidate>
+          <label for="scanDomain">Domain to scan</label>
+          <div class="scan-row">
+            <input
+              class="scan-field"
+              id="scanDomain"
+              name="domain"
+              type="text"
+              inputmode="url"
+              placeholder="yourcompany.com"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              required
+              aria-describedby="scanError"
+            />
+            <button class="btn btn-primary" type="submit" id="scanSubmit">Scan <span aria-hidden="true">&rarr;</span></button>
+          </div>
+          <div id="scanTurnstile" class="scan-turnstile"></div>
+          <p class="scan-error" id="scanError" role="alert" hidden></p>
+        </form>
+      </div>
+
+      <!-- LOADING STATE -->
+      <div id="scanLoading" class="scan-loading" tabindex="-1" aria-busy="false" hidden>
+        <span class="scan-spinner" aria-hidden="true"></span>
+        <div>
+          <p class="scan-loading-main" id="scanLoadingText">Checking email authentication&hellip;</p>
+          <p class="scan-loading-sub">Usually under a minute.</p>
+        </div>
+      </div>
+
+      <!-- RESULTS STATE -->
+      <div id="scanResults" hidden>
+        <p class="scan-meta"><span id="scanMeta"></span><span>no sign-up</span><span>results stay private to this link</span></p>
+
+        <div class="scan-grid">
+          <article class="scan-card scan-card-grade" aria-labelledby="cardEmailTitle">
+            <h2 class="scan-k" id="cardEmailTitle">Email authentication</h2>
+            <div class="scan-grade-row">
+              <span class="scan-grade" id="gradeLetter" data-tone="" aria-hidden="true"></span>
+              <span class="sr-only" id="gradeSr"></span>
+            </div>
+            <ul class="scan-pills">
+              <li data-check="spf">SPF <b></b></li>
+              <li data-check="dkim">DKIM <b></b></li>
+              <li data-check="dmarc">DMARC <b></b></li>
+              <li data-check="mx">MX <b></b></li>
+              <li data-check="bimi">BIMI <b></b></li>
+            </ul>
+            <p id="emailSentence"></p>
+            <a class="scan-link" href={`${base}/platform/email-security`}>How to fix this &rarr;</a>
+          </article>
+
+          <article class="scan-card" aria-labelledby="cardLookTitle">
+            <h2 class="scan-k" id="cardLookTitle">Lookalike domains</h2>
+            <div class="scan-num"><span id="lookRegistered">0</span> <small>registered</small></div>
+            <div class="scan-bar" aria-hidden="true"><i id="lookBar"></i></div>
+            <p id="lookSentence"></p>
+          </article>
+
+          <article class="scan-card" aria-labelledby="cardNextTitle">
+            <h2 class="scan-k" id="cardNextTitle">What Averrow would watch</h2>
+            <ul class="scan-watch">
+              <li>New lookalike registrations, as they appear</li>
+              <li>Certificates issued to brand-like names</li>
+              <li>Fake profiles and cloned apps</li>
+            </ul>
+
+            <form class="scan-gate" id="leadForm" novalidate>
+              <label for="leadEmail">Work email for the full report</label>
+              <div class="scan-row">
+                <input
+                  class="scan-field"
+                  id="leadEmail"
+                  name="email"
+                  type="email"
+                  inputmode="email"
+                  placeholder="you@yourcompany.com"
+                  autocomplete="email"
+                  required
+                  aria-describedby="leadError"
+                />
+              </div>
+              <label class="scan-consent" for="leadConsent">
+                <input type="checkbox" id="leadConsent" name="consent" required />
+                <span>Email me the report. Averrow may follow up once. <a href={`${base}/privacy`}>Privacy</a></span>
+              </label>
+              <div id="leadTurnstile" class="scan-turnstile"></div>
+              <button class="btn btn-primary scan-lead-btn" type="submit" id="leadSubmit">Send me the report</button>
+              <p class="scan-error" id="leadError" role="alert" hidden></p>
+            </form>
+            <p class="scan-success" id="leadDone" tabindex="-1" hidden></p>
+          </article>
+        </div>
+
+        <div class="scan-foot">
+          <p>Results are a snapshot from public DNS and our own lookups. They don't include any threat intelligence about your domain.</p>
+          <div class="scan-foot-links">
+            <button type="button" class="scan-again" id="scanAgain">Scan another domain</button>
+            <a class="scan-link" href={`${base}/pricing`}>See plans &rarr;</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .scan-page { padding: 56px 0 80px; }
+  .scan-title {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin: 0 0 14px;
+    overflow-wrap: anywhere;
+  }
+  .scan-title { width: fit-content; max-width: 100%; }
+  /* Programmatic focus (tabindex=-1) shows no ring; keyboard focus would. */
+  .scan-title:focus, #scanLoading:focus, #leadDone:focus { outline: none; }
+  .scan-title:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 4px; }
+  #leadDone:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .scan-lede { color: var(--text-secondary); max-width: 620px; margin: 0 0 28px; font-size: 1.05rem; line-height: 1.55; }
+
+  .scan-form { max-width: 620px; display: grid; gap: 8px; }
+  .scan-form label,
+  .scan-gate label:not(.scan-consent) { font-size: 0.85rem; font-weight: 700; color: var(--text-primary); }
+  .scan-row { display: flex; gap: 8px; }
+  .scan-field {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 1rem;
+    padding: 12px 14px;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--text-tertiary);
+    border-radius: var(--radius-sm);
+  }
+  .scan-field[aria-invalid="true"] { border-color: var(--sev-critical-text); }
+  .scan-field::placeholder { color: var(--text-tertiary); }
+  .scan-field:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 1px; }
+  .scan-lead-btn { justify-self: start; justify-content: center; }
+  .scan-row .btn { white-space: nowrap; justify-content: center; }
+  .scan-page .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+  .scan-turnstile:empty { display: none; }
+  .scan-error {
+    margin: 0;
+    padding: 10px 12px;
+    font-size: 0.9rem;
+    color: var(--sev-critical-text);
+    background: var(--sev-critical-bg);
+    border: 1px solid var(--sev-critical-border);
+    border-radius: var(--radius-sm);
+  }
+  .scan-error[hidden], .scan-success[hidden] { display: none; }
+  /* Beat `.scan-card p` (0,1,1) so alert/success colours win inside cards. */
+  .scan-card .scan-error { color: var(--sev-critical-text); }
+  .scan-card .scan-success { color: var(--green-text); }
+
+  .scan-loading { display: flex; gap: 16px; align-items: center; padding: 24px 0; }
+  .scan-loading[hidden] { display: none; }
+  .scan-loading-main { margin: 0; font-weight: 700; color: var(--text-primary); }
+  .scan-loading-sub { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.9rem; }
+  .scan-spinner {
+    width: 28px; height: 28px; flex: none;
+    border: 3px solid var(--border-strong);
+    border-top-color: var(--amber);
+    border-radius: 50%;
+    animation: scan-spin 0.9s linear infinite;
+  }
+  @keyframes scan-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .scan-spinner { animation: none; border-top-color: var(--border-strong); border-right-color: var(--amber); }
+  }
+
+  .scan-meta { color: var(--text-secondary); margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .scan-meta span { white-space: nowrap; }
+  .scan-meta span + span::before { content: "\00b7"; margin: 0 8px; }
+  .scan-grid { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 16px; align-items: start; }
+  .scan-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: 20px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    min-width: 0;
+  }
+  .scan-card p { margin: 0; font-size: 0.92rem; line-height: 1.55; color: var(--text-secondary); }
+  .scan-k {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .scan-grade {
+    font-family: var(--font-display);
+    font-size: 3.4rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--text-primary);
+  }
+  .scan-grade[data-tone="ok"] { color: var(--green-text); }
+  .scan-grade[data-tone="mid"] { color: var(--amber-text); }
+  .scan-grade[data-tone="bad"] { color: var(--sev-critical-text); }
+
+  .scan-pills { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+  .scan-pills li {
+    font-size: 0.8rem;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+  }
+  .scan-pills b { font-weight: 700; }
+  .scan-pills li[data-tone="ok"] { color: var(--green-text); border-color: color-mix(in srgb, var(--green-text) 40%, transparent); }
+  .scan-pills li[data-tone="mid"] { color: var(--amber-text); border-color: color-mix(in srgb, var(--amber-text) 40%, transparent); }
+  .scan-pills li[data-tone="bad"] { color: var(--sev-critical-text); border-color: color-mix(in srgb, var(--sev-critical-text) 40%, transparent); }
+
+  .scan-link { color: var(--amber-text); font-weight: 600; text-decoration: none; font-size: 0.92rem; display: inline-flex; align-items: center; min-height: 24px; padding-block: 4px; }
+  .scan-link:hover { text-decoration: underline; }
+  .scan-link:focus-visible, .scan-again:focus-visible, .scan-consent a:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+
+  .scan-num { font-family: var(--font-display); font-size: 2.4rem; font-weight: 800; line-height: 1; color: var(--text-primary); }
+  .scan-num small { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); }
+  .scan-bar { height: 6px; border-radius: 999px; background: var(--border-strong); overflow: hidden; }
+  .scan-bar i { display: block; height: 100%; width: 0; background: var(--amber); }
+
+  .scan-watch { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 0.92rem; color: var(--text-secondary); }
+  .scan-gate { display: grid; gap: 8px; border-top: 1px solid var(--border-strong); padding-top: 14px; }
+  .scan-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; color: var(--text-secondary); }
+  .scan-consent input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; accent-color: var(--amber); }
+  .scan-consent a { color: var(--amber-text); }
+  .scan-success {
+    margin: 0;
+    padding: 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--green-text);
+    border: 1px solid color-mix(in srgb, var(--green-text) 40%, transparent);
+    border-radius: var(--radius-sm);
+  }
+
+  .scan-foot { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-strong); display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; align-items: center; }
+  .scan-foot p { margin: 0; font-size: 0.85rem; color: var(--text-tertiary); max-width: 640px; }
+  .scan-foot-links { display: flex; gap: 18px; align-items: center; }
+  .scan-again { background: none; border: 0; padding: 4px 0; min-height: 24px; display: inline-flex; align-items: center; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; text-decoration: underline; }
+
+  @media (max-width: 1100px) {
+    .scan-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .scan-page { padding: 36px 0 56px; }
+    .scan-row { flex-direction: column; }
+    .scan-lead-btn { justify-self: stretch; }
+    .scan-row .btn { width: 100%; padding: 13px 18px; }
+    .scan-foot-links { flex-wrap: wrap; }
+    .scan-meta { flex-direction: column; }
+    .scan-meta span + span::before { content: none; }
+  }
+</style>
+
+<script>
+  /* ---- Types ---------------------------------------------------------- */
+  type Grade = "A+" | "A" | "B" | "C" | "D" | "F";
+  interface ScanData {
+    id: string;
+    domain: string;
+    checked_at?: string;
+    email: {
+      grade: Grade;
+      spf: { status: "pass" | "soft" | "neutral" | "missing" };
+      dkim: { found: boolean };
+      dmarc: { policy: "reject" | "quarantine" | "none" | "missing" };
+      mx: { present: boolean };
+      bimi: { present: boolean };
+    };
+    lookalikes: { checked: number; registered: number };
+  }
+  interface ApiEnvelope<T> { success: boolean; data?: T; error?: string }
+  interface TurnstileApi {
+    render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+    reset: (id?: string) => void;
+  }
+  type Tone = "ok" | "mid" | "bad";
+
+  const FREEMAIL = new Set([
+    "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com",
+    "icloud.com", "mail.com", "protonmail.com", "proton.me", "yandex.com",
+    "zoho.com", "gmx.com", "fastmail.com", "tutanota.com", "hey.com",
+    "live.com", "msn.com", "me.com", "qq.com", "163.com",
+  ]);
+
+  /* ---- DOM ------------------------------------------------------------ */
+  function el<T extends HTMLElement>(id: string): T {
+    const node = document.getElementById(id);
+    if (!node) throw new Error(`#${id} missing`);
+    return node as T;
+  }
+  const root = el<HTMLElement>("scanRoot");
+  const siteKey = root.dataset.sitekey ?? "";
+  const title = el<HTMLElement>("scanTitle");
+  const eyebrow = el<HTMLElement>("scanEyebrow");
+  const live = el<HTMLElement>("scanLive");
+  const inputPane = el<HTMLElement>("scanInput");
+  const loadingPane = el<HTMLElement>("scanLoading");
+  const loadingText = el<HTMLElement>("scanLoadingText");
+  const resultsPane = el<HTMLElement>("scanResults");
+  const scanForm = el<HTMLFormElement>("scanForm");
+  const domainInput = el<HTMLInputElement>("scanDomain");
+  const scanSubmit = el<HTMLButtonElement>("scanSubmit");
+  const scanError = el<HTMLElement>("scanError");
+  const leadForm = el<HTMLFormElement>("leadForm");
+  const leadEmail = el<HTMLInputElement>("leadEmail");
+  const leadConsent = el<HTMLInputElement>("leadConsent");
+  const leadSubmit = el<HTMLButtonElement>("leadSubmit");
+  const leadError = el<HTMLElement>("leadError");
+  const leadDone = el<HTMLElement>("leadDone");
+
+  const DEFAULT_TITLE = "How exposed is your domain?";
+  let current: ScanData | null = null;
+  let busy = false;
+
+  /* ---- Turnstile ------------------------------------------------------ */
+  const tokens: Record<"scan" | "lead", string> = { scan: "", lead: "" };
+  const widgetIds: Partial<Record<"scan" | "lead", string>> = {};
+  let tsApi: TurnstileApi | null = null;
+  let tsLoading: Promise<TurnstileApi | null> | null = null;
+  let onScanToken: (() => void) | null = null;
+
+  function loadTurnstile(): Promise<TurnstileApi | null> {
+    if (!siteKey) return Promise.resolve(null);
+    if (tsLoading) return tsLoading;
+    tsLoading = new Promise((resolve) => {
+      const s = document.createElement("script");
+      s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      s.async = true;
+      s.defer = true;
+      s.onload = () => {
+        tsApi = (window as unknown as { turnstile?: TurnstileApi }).turnstile ?? null;
+        resolve(tsApi);
+      };
+      s.onerror = () => resolve(null);
+      document.head.appendChild(s);
+    });
+    return tsLoading;
+  }
+
+  async function renderWidget(kind: "scan" | "lead", container: HTMLElement) {
+    if (!siteKey || widgetIds[kind]) return;
+    const api = await loadTurnstile();
+    if (!api || widgetIds[kind]) return;
+    widgetIds[kind] = api.render(container, {
+      sitekey: siteKey,
+      action: kind,
+      callback: (t: string) => {
+        tokens[kind] = t;
+        if (kind === "scan" && onScanToken) onScanToken();
+      },
+      "expired-callback": () => { tokens[kind] = ""; },
+      "error-callback": () => { tokens[kind] = ""; },
+    });
+  }
+  function resetWidget(kind: "scan" | "lead") {
+    tokens[kind] = "";
+    const id = widgetIds[kind];
+    if (id && tsApi) tsApi.reset(id);
+  }
+
+  /* ---- Helpers -------------------------------------------------------- */
+  function show(pane: HTMLElement, on: boolean) {
+    pane.hidden = !on;
+    if (pane === loadingPane) pane.setAttribute("aria-busy", on ? "true" : "false");
+  }
+  function announce(msg: string) { live.textContent = ""; window.setTimeout(() => { live.textContent = msg; }, 30); }
+  function showError(node: HTMLElement, msg: string) { node.textContent = msg; node.hidden = false; }
+  function clearError(node: HTMLElement) { node.textContent = ""; node.hidden = true; }
+  function setInvalid(field: HTMLElement, on: boolean) {
+    if (on) field.setAttribute("aria-invalid", "true");
+    else field.removeAttribute("aria-invalid");
+  }
+  function clearLeadInvalid() {
+    setInvalid(leadEmail, false);
+    setInvalid(leadConsent, false);
+    leadConsent.removeAttribute("aria-describedby");
+  }
+  function focusTitle() { title.focus({ preventScroll: false }); }
+
+  function normalizeDomain(raw: string): string {
+    let d = raw.trim().toLowerCase();
+    d = d.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+    d = d.replace(/^[^@/]*@/, "");
+    d = d.split(/[/?#]/)[0] ?? "";
+    d = d.replace(/:\d+$/, "").replace(/\.$/, "");
+    return d;
+  }
+  const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
+
+  function setUrl(qs: string) {
+    try { history.replaceState(null, "", `${location.pathname}${qs}`); } catch { /* ignore */ }
+  }
+  function markNoindex() {
+    if (document.querySelector('meta[name="robots"]')) return;
+    const m = document.createElement("meta");
+    m.name = "robots";
+    m.content = "noindex,nofollow";
+    document.head.appendChild(m);
+  }
+
+  async function callApi<T>(url: string, init?: RequestInit, timeoutMs = 90000): Promise<T> {
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(url, { ...init, signal: ctrl.signal });
+    } catch {
+      throw new Error("We couldn't reach the scan service. Check your connection and try again.");
+    } finally {
+      window.clearTimeout(timer);
+    }
+    let body: ApiEnvelope<T> | null = null;
+    try { body = (await res.json()) as ApiEnvelope<T>; } catch { body = null; }
+    if (res.ok && body && body.success === true && body.data !== undefined) return body.data;
+    const fallback: Record<number, string> = {
+      400: "That doesn't look like a valid domain. Try something like yourcompany.com.",
+      403: "Verification failed. Please try again.",
+      404: "We couldn't find that scan. It may have expired.",
+      429: "Too many requests. Please wait a little and try again.",
+      503: "Verification is unavailable right now. Please try again shortly.",
+    };
+    const msg = body && typeof body.error === "string" && body.error
+      ? body.error
+      : fallback[res.status] ?? "Something went wrong. Please try again.";
+    throw new Error(msg);
+  }
+
+  /* ---- Rendering ------------------------------------------------------ */
+  function gradeTone(g: Grade): Tone { return g === "A+" || g === "A" ? "ok" : g === "B" || g === "C" ? "mid" : "bad"; }
+
+  function pill(check: string, tone: Tone, word: string) {
+    const li = resultsPane.querySelector<HTMLElement>(`[data-check="${check}"]`);
+    if (!li) return;
+    li.dataset.tone = tone;
+    const b = li.querySelector("b");
+    if (b) b.textContent = word;
+  }
+
+  function emailSentence(d: ScanData): string {
+    const e = d.email;
+    const dm = e.dmarc.policy;
+    if (dm === "missing") return `Anyone can send email that looks like it comes from ${d.domain}, because there's no DMARC record.`;
+    if (dm === "none") return `Anyone can send email that looks like it comes from ${d.domain}, because DMARC isn't enforcing.`;
+    if (e.spf.status === "missing") return `${d.domain} has no SPF record, so receivers can't tell which servers may send its email.`;
+    if (!e.mx.present) return `${d.domain} has no mail servers (MX) published, so it can't receive email.`;
+    if (e.spf.status === "soft" || e.spf.status === "neutral") return `DMARC is enforcing, but the SPF policy is loose, so some forged mail may still be accepted.`;
+    if (!e.dkim.found) return `DMARC is enforcing, but we didn't find DKIM signing on the common selectors we checked.`;
+    return `SPF, DKIM and DMARC are in place, so receivers can reject forged email from ${d.domain}.`;
+  }
+
+  function render(d: ScanData) {
+    current = d;
+    title.textContent = d.domain;
+    eyebrow.textContent = "Free domain scan";
+    const when = d.checked_at ? new Date(d.checked_at) : null;
+    const whenText = when && !isNaN(when.getTime())
+      ? `Checked ${when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+      : "Checked just now";
+    el("scanMeta").textContent = whenText;
+
+    const g = d.email.grade;
+    const gl = el("gradeLetter");
+    gl.textContent = g;
+    gl.dataset.tone = gradeTone(g);
+    el("gradeSr").textContent = `Email authentication grade: ${g}`;
+
+    const spf = d.email.spf.status;
+    pill("spf", spf === "pass" ? "ok" : spf === "missing" ? "bad" : "mid", spf === "pass" ? "pass" : spf === "soft" ? "soft fail" : spf);
+    pill("dkim", d.email.dkim.found ? "ok" : "mid", d.email.dkim.found ? "found" : "not found");
+    const dm = d.email.dmarc.policy;
+    pill("dmarc", dm === "reject" || dm === "quarantine" ? "ok" : "bad", dm === "missing" ? "missing" : dm === "none" ? "none" : dm);
+    pill("mx", d.email.mx.present ? "ok" : "bad", d.email.mx.present ? "set" : "none");
+    pill("bimi", d.email.bimi.present ? "ok" : "mid", d.email.bimi.present ? "set" : "not set");
+    el("emailSentence").textContent = emailSentence(d);
+
+    const { checked, registered } = d.lookalikes;
+    el("lookRegistered").textContent = String(registered);
+    const pct = checked > 0 ? Math.min(100, Math.round((registered / checked) * 100)) : 0;
+    el("lookBar").style.width = `${pct}%`;
+    el("lookSentence").textContent = checked > 0
+      ? `${registered} of ${checked} likely lookalikes of your domain ${registered === 1 ? "is" : "are"} registered. Some may be yours; the full report lists them.`
+      : "We couldn't check lookalike names for this scan.";
+
+    leadForm.hidden = false;
+    leadDone.hidden = true;
+    leadDone.textContent = "";
+    clearError(leadError);
+    clearLeadInvalid();
+    leadForm.reset();
+    resetWidget("lead");
+    void renderWidget("lead", el("leadTurnstile"));
+
+    show(inputPane, false);
+    show(loadingPane, false);
+    show(resultsPane, true);
+    markNoindex();
+    announce(`Scan complete for ${d.domain}. Email authentication grade ${g}. ${registered} of ${checked} likely lookalike domains registered.`);
+    focusTitle();
+  }
+
+  function toInput(message?: string) {
+    current = null;
+    title.textContent = DEFAULT_TITLE;
+    show(resultsPane, false);
+    show(loadingPane, false);
+    show(inputPane, true);
+    scanSubmit.disabled = false;
+    void renderWidget("scan", el("scanTurnstile"));
+    if (message) {
+      // #scanError is role=alert, so it announces itself; no live-region echo.
+      showError(scanError, message);
+    } else {
+      clearError(scanError);
+    }
+  }
+
+  /* ---- Flows ---------------------------------------------------------- */
+  const PHASES = ["Checking email authentication…", "Checking likely lookalike names…", "Still working. Usually under a minute."];
+
+  async function runScan(rawDomain: string) {
+    if (busy) return;
+    clearError(scanError);
+    setInvalid(domainInput, false);
+    const domain = normalizeDomain(rawDomain);
+    domainInput.value = domain || rawDomain;
+    if (!DOMAIN_RE.test(domain)) {
+      showError(scanError, "Enter a valid domain, like yourcompany.com.");
+      setInvalid(domainInput, true);
+      domainInput.focus();
+      return;
+    }
+    if (siteKey && !tokens.scan) {
+      showError(scanError, "Please wait for the verification check to finish, then press Scan again.");
+      void renderWidget("scan", el("scanTurnstile"));
+      return;
+    }
+    busy = true;
+    scanSubmit.disabled = true;
+    show(inputPane, false);
+    show(loadingPane, true);
+    title.textContent = domain;
+    let phase = 0;
+    loadingText.textContent = PHASES[0] ?? "";
+    announce(`Scanning ${domain}. Usually under a minute.`);
+    loadingPane.focus();
+    const ticker = window.setInterval(() => {
+      phase = Math.min(phase + 1, PHASES.length - 1);
+      loadingText.textContent = PHASES[phase] ?? "";
+    }, 9000);
+    try {
+      const payload: { domain: string; turnstileToken?: string } = { domain };
+      if (siteKey && tokens.scan) payload.turnstileToken = tokens.scan;
+      const data = await callApi<ScanData>("/api/brand-scan/public", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setUrl(`?id=${encodeURIComponent(data.id)}`);
+      resetWidget("scan");
+      render(data);
+    } catch (err) {
+      resetWidget("scan");
+      toInput(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      domainInput.focus();
+    } finally {
+      window.clearInterval(ticker);
+      busy = false;
+    }
+  }
+
+  async function loadExisting(id: string) {
+    busy = true;
+    show(inputPane, false);
+    show(loadingPane, true);
+    loadingText.textContent = "Loading your results…";
+    announce("Loading your results.");
+    loadingPane.focus();
+    try {
+      const data = await callApi<ScanData>(`/api/brand-scan/public/${encodeURIComponent(id)}`, undefined, 30000);
+      render(data);
+    } catch (err) {
+      setUrl("");
+      toInput(err instanceof Error ? err.message : "We couldn't load that scan.");
+      domainInput.focus();
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function submitLead() {
+    if (!current || busy) return;
+    clearError(leadError);
+    clearLeadInvalid();
+    const email = leadEmail.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      showError(leadError, "Enter a valid work email address.");
+      setInvalid(leadEmail, true);
+      leadEmail.focus();
+      return;
+    }
+    const emailDomain = email.split("@")[1]?.toLowerCase() ?? "";
+    if (FREEMAIL.has(emailDomain)) {
+      showError(leadError, "Please use a business email address (no free email providers).");
+      setInvalid(leadEmail, true);
+      leadEmail.focus();
+      return;
+    }
+    if (!leadConsent.checked) {
+      showError(leadError, "Please tick the box to agree to receive the report.");
+      setInvalid(leadConsent, true);
+      leadConsent.setAttribute("aria-describedby", "leadError");
+      leadConsent.focus();
+      return;
+    }
+    if (siteKey && !tokens.lead) {
+      showError(leadError, "Please wait for the verification check to finish, then try again.");
+      return;
+    }
+    busy = true;
+    leadSubmit.disabled = true;
+    try {
+      const payload: { email: string; domain: string; scan_id: string; consent: true; turnstileToken?: string } = {
+        email, domain: current.domain, scan_id: current.id, consent: true,
+      };
+      if (siteKey && tokens.lead) payload.turnstileToken = tokens.lead;
+      const data = await callApi<{ delivery: "emailed" | "team_follow_up" }>("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }, 30000);
+      const msg = data.delivery === "emailed"
+        ? `Report sent to ${email}.`
+        : "Our team will follow up with your report.";
+      leadForm.hidden = true;
+      leadDone.textContent = msg;
+      leadDone.hidden = false;
+      announce(msg);
+      leadDone.focus();
+    } catch (err) {
+      resetWidget("lead");
+      showError(leadError, err instanceof Error ? err.message : "We couldn't send your request. Please try again.");
+      leadSubmit.disabled = false;
+      leadSubmit.focus();
+    } finally {
+      busy = false;
+      leadSubmit.disabled = false;
+    }
+  }
+
+  /* ---- Wiring --------------------------------------------------------- */
+  scanForm.addEventListener("submit", (e) => { e.preventDefault(); void runScan(domainInput.value); });
+  leadForm.addEventListener("submit", (e) => { e.preventDefault(); void submitLead(); });
+  domainInput.addEventListener("input", () => setInvalid(domainInput, false));
+  leadEmail.addEventListener("input", () => setInvalid(leadEmail, false));
+  leadConsent.addEventListener("change", () => { setInvalid(leadConsent, false); leadConsent.removeAttribute("aria-describedby"); });
+  el("scanAgain").addEventListener("click", () => {
+    setUrl("");
+    domainInput.value = "";
+    toInput();
+    announce("Ready to scan another domain.");
+    focusTitle();
+    domainInput.focus();
+  });
+
+  const params = new URLSearchParams(location.search);
+  const qId = params.get("id");
+  const qDomain = params.get("domain");
+  // Auto-run only when the visit came from our own homepage hero (it adds
+  // go=1). A bare/shared /scan/?domain=X link only pre-fills the input, so a
+  // third-party page can't make a visitor's browser fire scans.
+  let fromHero = false;
+  try { fromHero = params.get("go") === "1" && !!document.referrer && new URL(document.referrer).origin === location.origin; } catch { /* ignore */ }
+  if (qId) {
+    void loadExisting(qId);
+  } else {
+    void renderWidget("scan", el("scanTurnstile"));
+    if (qDomain) {
+      domainInput.value = qDomain;
+      if (!fromHero) {
+        scanSubmit.focus();
+      } else if (siteKey) {
+        // Run as soon as the verification token arrives.
+        show(inputPane, true);
+        onScanToken = () => { onScanToken = null; void runScan(domainInput.value); };
+        announce("Verifying, then scanning.");
+      } else {
+        void runScan(qDomain);
+      }
+    }
+  }
+</script>

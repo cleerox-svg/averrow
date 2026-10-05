@@ -38,6 +38,7 @@ import {
   NRD_RETENTION_SOFT_CAP_MS,
   type NrdRetentionResult,
 } from '../lib/nrd-retention';
+import { purgeExpiredBrandScans, type BrandScanPurgeResult } from '../lib/brand-scan-retention';
 import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
@@ -195,6 +196,8 @@ interface NavigatorImplResult {
   /** nrd_domains retention outcome — only on hour-0 ticks where the
    *  once-per-day / continuation gate opened. null otherwise. */
   nrdRetentionResult: NrdRetentionResult | null;
+  /** brand_scans 90-day retention outcome — hour-0 ticks only. */
+  brandScanPurgeResult: BrandScanPurgeResult | null;
 }
 
 async function runNavigatorImpl(
@@ -216,6 +219,7 @@ async function runNavigatorImpl(
   };
   let reaperResult: ReaperResult | null = null;
   let nrdRetentionResult: NrdRetentionResult | null = null;
+  let brandScanPurgeResult: BrandScanPurgeResult | null = null;
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -384,6 +388,17 @@ async function runNavigatorImpl(
       } catch (err) {
         console.error('[navigator] nrd-retention escape:', err);
       }
+    }
+
+    // ── 2e. brand_scans + auto-report retention (free-scan results, 90 days) ──
+    // Hour-only gate (CLAUDE.md §6 cron-audit rule). Runs on every hour-0
+    // tick: when nothing is due it is two indexed reads (one per table —
+    // brand_scans, then auto-delivered qualified_reports), and a backlog over
+    // one run's batch cap drains on the next tick. Never throws.
+    if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
+      brandScanPurgeResult = await purgeExpiredBrandScans(env, {
+        softCapMs: Math.max(0, NAVIGATOR_SOFT_CAP_MS - (Date.now() - start)),
+      });
     }
   } catch (err) {
     status = 'failed';
@@ -713,6 +728,7 @@ async function runNavigatorImpl(
     reconcileResult,
     reaperResult,
     nrdRetentionResult,
+    brandScanPurgeResult,
   };
 }
 
@@ -936,6 +952,18 @@ export const navigatorAgent: AgentModule = {
           : `nrd-retention: deleted=${nr.deleted} cutoff=${nr.cutoff ?? 'none'} held_by_matcher=${nr.held_by_matcher ? 'yes' : 'no'} more=${nr.more_remaining ? 'yes' : 'no'} ${nr.duration_ms}ms${errSuffix}`,
         severity: nr.error ? 'medium' : 'info',
         details: { ...nr },
+      });
+    }
+
+    // brand_scans retention diagnostic — only when it did something or
+    // failed, so the 12 empty hour-0 runs a day don't add noise.
+    if (result.brandScanPurgeResult && (result.brandScanPurgeResult.deleted > 0 || result.brandScanPurgeResult.reports_deleted > 0 || result.brandScanPurgeResult.error)) {
+      const bp = result.brandScanPurgeResult;
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `brand-scan-retention: deleted=${bp.deleted} reports=${bp.reports_deleted} batches=${bp.batches} more=${bp.more_remaining ? 'yes' : 'no'}${bp.error ? ` err="${bp.error.slice(0, 120)}"` : ''}`,
+        severity: bp.error ? 'medium' : 'info',
+        details: { ...bp },
       });
     }
 

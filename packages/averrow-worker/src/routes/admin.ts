@@ -425,7 +425,9 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
   });
 
   // Send templated outreach email with the qualified-report share URL.
-  // Requires a previously-generated qualified report (404s otherwise).
+  // Requires a previously-generated qualified report (400 otherwise) when
+  // the lead's email host is the scanned domain; any other address only
+  // ever receives a scan-only report (reused or built on demand).
   router.post("/api/admin/leads/:id/outreach", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
@@ -443,7 +445,10 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
 
   // One-click: generate a fresh qualified report AND email it to the
   // prospect in a single call. Composes the generate + outreach handlers;
-  // neither reads the request body, so reusing `request` is safe.
+  // neither reads the request body, so reusing `request` is safe. The
+  // generated report is FULL (staff view it in the console); when the
+  // lead's email host is not exactly the scanned domain, the outreach
+  // handler emails a fresh SCAN-ONLY report instead, never the full one.
   router.post("/api/admin/leads/:id/report-and-outreach", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
@@ -451,7 +456,7 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const genRes = await handleGenerateQualifiedReport(request, env, id, ctx.userId);
     const genData = await genRes.clone().json() as { success: boolean };
     if (!genData.success) return genRes; // surface the generate error as-is
-    return handleSendLeadOutreach(request, env, id, ctx.userId);
+    return handleSendLeadOutreach(request, env, id, ctx.userId, { freshScanOnly: true });
   });
 
   // Convert a qualified lead to a tenant organization. Creates org +

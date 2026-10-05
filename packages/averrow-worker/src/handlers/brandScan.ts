@@ -16,79 +16,17 @@
 import { json } from "../lib/cors";
 import { isFreemailEmail } from "../lib/freemail";
 import { normalizePublicHostname } from "../lib/public-hostname";
+import { registrableDomain } from "../lib/registrable-domain";
+import { generateLookalikes, getScanLookalikes } from "../lib/scan-lookalikes";
+import {
+  emailMatchesScannedDomain, isScanId, parseStoredPublicView, toPublicEmailView, toPublicScanData, toScanDomain,
+  runEmailSecurityScanWithin, EmailScanTimeoutError, EMAIL_SCAN_BUDGET_MS,
+  type PublicScanData, type StoredPublicView,
+} from "../lib/free-scan-view";
 import type { Env } from "../types";
 
-// ─── Typosquat / Lookalike Domain Generation ────────────────────
-
-function generateLookalikes(domain: string): string[] {
-  const parts = domain.split(".");
-  if (parts.length < 2) return [];
-  const name = parts[0]!;
-  const tld = parts.slice(1).join(".");
-  const lookalikes: string[] = [];
-
-  // Character substitution (homoglyphs)
-  const homoglyphs: Record<string, string[]> = {
-    a: ["@", "4", "à", "á", "â", "ã", "ä"],
-    e: ["3", "è", "é", "ê", "ë"],
-    i: ["1", "l", "!", "ì", "í"],
-    o: ["0", "ò", "ó", "ô", "õ", "ö"],
-    l: ["1", "i", "|"],
-    s: ["5", "$"],
-    t: ["7", "+"],
-    g: ["9", "q"],
-    n: ["m"],
-    m: ["n", "rn"],
-  };
-
-  // Transpositions (swap adjacent chars)
-  for (let i = 0; i < name.length - 1; i++) {
-    const swapped = name.slice(0, i) + name[i + 1] + name[i] + name.slice(i + 2);
-    if (swapped !== name) lookalikes.push(`${swapped}.${tld}`);
-  }
-
-  // Missing character
-  for (let i = 0; i < name.length; i++) {
-    const missing = name.slice(0, i) + name.slice(i + 1);
-    if (missing.length >= 2) lookalikes.push(`${missing}.${tld}`);
-  }
-
-  // Extra character (double a letter)
-  for (let i = 0; i < name.length; i++) {
-    const doubled = name.slice(0, i + 1) + name[i] + name.slice(i + 1);
-    lookalikes.push(`${doubled}.${tld}`);
-  }
-
-  // Homoglyph substitution (first occurrence only)
-  for (const [char, subs] of Object.entries(homoglyphs)) {
-    const idx = name.indexOf(char);
-    if (idx >= 0) {
-      for (const sub of subs.slice(0, 2)) {
-        const variant = name.slice(0, idx) + sub + name.slice(idx + 1);
-        lookalikes.push(`${variant}.${tld}`);
-      }
-    }
-  }
-
-  // TLD variations
-  const altTlds = ["com", "net", "org", "info", "xyz", "io", "co", "biz", "site", "online", "app"];
-  for (const alt of altTlds) {
-    if (alt !== tld) lookalikes.push(`${name}.${alt}`);
-  }
-
-  // Hyphen insertion
-  for (let i = 1; i < name.length; i++) {
-    lookalikes.push(`${name.slice(0, i)}-${name.slice(i)}.${tld}`);
-  }
-
-  // Prefix/suffix attacks
-  const prefixes = ["secure-", "login-", "my", "account-", "www-", "mail-", "update-"];
-  const suffixes = ["-secure", "-login", "-verify", "-support", "-online"];
-  for (const p of prefixes) lookalikes.push(`${p}${name}.${tld}`);
-  for (const s of suffixes) lookalikes.push(`${name}${s}.${tld}`);
-
-  return [...new Set(lookalikes)].slice(0, 100);
-}
+// Lookalike permutation generation lives in lib/scan-lookalikes.ts
+// (shared with the free scan).
 
 // ─── DNS Resolution Check ───────────────────────────────────────
 
@@ -261,22 +199,6 @@ export function feedMentionPenalty(feedMentions: number): number {
   if (feedMentions > 2) return 10;
   if (feedMentions > 0) return 5;
   return 0;
-}
-
-/**
- * Public-facing score for a stored brand_scans row: the stored (staff)
- * score with the feed-mention deduction added back, so an anonymous caller
- * can't infer threat-data hits from the number. Exact, never clamped: the
- * other components deduct at most 80 (SPF 25 + DMARC 25 + MX 10 +
- * lookalikes 20), so the stored score never bottoms out at 0 before the
- * feed component is applied.
- */
-export function publicScoreFromStored(storedScore: number, feedMentions: number | null): number {
-  return Math.min(100, storedScore + feedMentionPenalty(feedMentions ?? 0));
-}
-
-function riskLevelFor(score: number): "low" | "medium" | "high" | "critical" {
-  return score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
 }
 
 /**
@@ -468,232 +390,380 @@ export async function handleBrandScanHistory(request: Request, env: Env): Promis
   }
 }
 
-// ─── Public Brand Scan (Trust Score Only + Lead Capture) ────────
+// ─── Public Free Scan (/scan) ───────────────────────────────────
+//
+// Anonymous. Returns ONLY public-DNS facts (lib/free-scan-view.ts): the
+// email-security grade + SPF/DKIM/DMARC/MX/BIMI flags, and how many of a
+// sample of lookalike domains are registered. It never reads Averrow
+// threat data: no threats query (the old crossReferenceFeedData was an
+// unindexable leading-wildcard LIKE over threats on every anonymous scan),
+// so brand_scans.feed_mentions and trust_score stay NULL on public rows.
+// The input is reduced to its registrable domain before anything else
+// (toScanDomain): shop.acme.com scans acme.com.
+
+/** checkDNS's SPF vocabulary, kept for the stored staff columns. */
+function legacySpfPolicy(exists: boolean, policy: string | null): string | null {
+  if (!exists) return null;
+  if (policy === "-all") return "hardfail";
+  if (policy === "~all") return "softfail";
+  if (policy === "?all") return "neutral";
+  return "none";
+}
+
+/**
+ * Run and store a public scan. `domain` should already be a registrable
+ * domain (toScanDomain); a subdomain passed here is reduced defensively.
+ * Throws EmailScanTimeoutError when the email-security scan exceeds its
+ * wall-clock budget (nothing is stored then).
+ */
+export async function runPublicScan(env: Env, domain: string): Promise<PublicScanData> {
+  const scanDomain = toScanDomain(domain) ?? domain;
+  const startTime = Date.now();
+  const [email, lookalikes] = await Promise.all([
+    runEmailSecurityScanWithin(scanDomain, EMAIL_SCAN_BUDGET_MS),
+    getScanLookalikes(env, scanDomain),
+  ]);
+
+  const spfPolicy = legacySpfPolicy(email.spf.exists, email.spf.policy);
+  const dmarcPolicy = email.dmarc.exists ? (email.dmarc.policy ?? "none") : null;
+
+  const id = crypto.randomUUID();
+  const view: StoredPublicView = {
+    v: 1,
+    checked_at: new Date().toISOString(),
+    email: toPublicEmailView(email),
+    lookalikes: { checked: lookalikes.checked, registered: lookalikes.registered.length },
+  };
+
+  await env.DB.prepare(
+    `INSERT INTO brand_scans (id, domain, status, trust_score, spf_policy, dmarc_policy, feed_mentions,
+                              lookalikes_found, registered_lookalikes, public_view, scan_duration_ms,
+                              scanned_by, created_at, updated_at)
+     VALUES (?, ?, 'completed', NULL, ?, ?, NULL, ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
+  ).bind(
+    id, scanDomain, spfPolicy, dmarcPolicy,
+    lookalikes.registered.length, JSON.stringify(lookalikes.registered), JSON.stringify(view),
+    Date.now() - startTime,
+  ).run();
+
+  return toPublicScanData(id, scanDomain, view);
+}
 
 export async function handlePublicBrandScan(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     const body = await request.json().catch(() => null) as { domain?: unknown } | null;
     // Strict hostname check — the domain is stored in brand_scans and
-    // rendered back on the public /assess results page (stored-XSS fix).
-    const domain = normalizePublicHostname(body?.domain);
+    // rendered back on the public results page (stored-XSS fix) — then
+    // reduced to the registrable domain. The response's `domain` is the
+    // reduced one.
+    const domain = toScanDomain(body?.domain);
     if (!domain) {
       return json({ success: false, error: "Valid domain required" }, 400, origin);
     }
-
-    // Run a lighter-weight scan (DNS only + feed check, no lookalike resolution)
-    const [dnsResult, feedResult] = await Promise.all([
-      checkDNS(domain),
-      crossReferenceFeedData(domain, env.DB),
-    ]);
-
-    const lookalikeDomains = generateLookalikes(domain);
-
-    // Staff score (stored) includes the feed-mention component; the public
-    // score is the same formula without it, so the number returned to an
-    // anonymous caller says nothing about Averrow's threat data.
-    const scoreInputs = {
-      spfPolicy: dnsResult.spf.policy,
-      dmarcPolicy: dnsResult.dmarc.policy,
-      dkimFound: false,
-      lookalikeCount: 0, // Don't check registration for public scan
-      mxCount: dnsResult.mx.length,
-    };
-    const staffScore = calculateBrandTrustScore({ ...scoreInputs, feedMentions: feedResult.mentions });
-    const trustScore = calculateBrandTrustScore({ ...scoreInputs, feedMentions: 0 });
-    const riskLevel = riskLevelFor(trustScore);
-
-    // Record in brand_scans
-    await env.DB.prepare(
-      `INSERT INTO brand_scans (id, domain, status, trust_score, spf_policy, dmarc_policy, feed_mentions, scanned_by, created_at, updated_at)
-       VALUES (?, ?, 'completed', ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
-    ).bind(crypto.randomUUID(), domain, staffScore, dnsResult.spf.policy, dnsResult.dmarc.policy, feedResult.mentions).run();
-
-    // Return ONLY the score (not details) for the public endpoint.
-    // No feed-mention flag: an anonymous caller must not be able to ask
-    // "is this domain in Averrow's threat data?" (detection oracle). The
-    // count stays in brand_scans.feed_mentions for staff.
-    return json({
-      success: true,
-      data: {
-        domain,
-        trustScore,
-        riskLevel,
-        lookalikesPossible: lookalikeDomains.length,
-      },
-    }, 200, origin);
+    const data = await runPublicScan(env, domain);
+    return json({ success: true, data }, 200, origin);
   } catch (err) {
+    if (err instanceof EmailScanTimeoutError) {
+      return json({ success: false, error: "The scan took too long. Please try again." }, 504, origin);
+    }
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
-// ─── Public Brand Scan Result Lookup ─────────────────────────────
+// ─── Public Free Scan Result Lookup ──────────────────────────────
 
 export async function handlePublicBrandScanResult(request: Request, env: Env, scanId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // This lookup is public (no auth). feed_mentions is read only to strip
-    // its deduction back out of the stored staff score; it is never
-    // returned, and the response is an explicit allowlist.
-    const row = await env.DB.prepare(
-      `SELECT id, domain, trust_score, spf_policy, dmarc_policy, feed_mentions,
-              lookalikes_found, status, created_at
-       FROM brand_scans WHERE id = ? AND status = 'completed'`
-    ).bind(scanId).first<{
-      id: string; domain: string; trust_score: number | null; spf_policy: string | null;
-      dmarc_policy: string | null; feed_mentions: number | null; lookalikes_found: number | null;
-      status: string; created_at: string;
-    }>();
-
-    if (!row) {
-      return json({ success: false, error: "Assessment not found" }, 404, origin);
+    if (!isScanId(scanId)) {
+      return json({ success: false, error: "Scan not found" }, 404, origin);
     }
-
-    const score = publicScoreFromStored(row.trust_score ?? 0, row.feed_mentions);
-
-    return json({
-      success: true,
-      data: {
-        id: row.id,
-        domain: row.domain,
-        trust_score: score,
-        spf_policy: row.spf_policy,
-        dmarc_policy: row.dmarc_policy,
-        lookalikes_found: row.lookalikes_found,
-        status: row.status,
-        created_at: row.created_at,
-        risk_level: riskLevelFor(score),
-      },
-    }, 200, origin);
-  } catch (err) {
+    // Reads only the stored public view. Rows without one (written before
+    // the free-scan rebuild, or staff scans) are not public → 404.
+    const row = await env.DB.prepare(
+      `SELECT id, domain, public_view FROM brand_scans WHERE id = ? AND status = 'completed'`
+    ).bind(scanId).first<{ id: string; domain: string; public_view: string | null }>();
+    const view = row ? parseStoredPublicView(row.public_view) : null;
+    if (!row || !view) {
+      return json({ success: false, error: "Scan not found" }, 404, origin);
+    }
+    return json({ success: true, data: toPublicScanData(row.id, row.domain, view) }, 200, origin);
+  } catch {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
 
 // ─── Lead Capture ──────────────────────────────────────────────
+//
+// POST /api/leads {email, domain, scan_id, consent:true}. Delivery:
+//   - email host is EXACTLY the scanned registrable domain, and that
+//     domain is not a mailbox provider or SaaS tenant host
+//     (emailMatchesScannedDomain): a SCAN-ONLY report is generated now
+//     (email posture + the scan's own registered lookalike names — no
+//     Averrow threat data, see buildReportPayload) and its link emailed
+//     to that address → delivery "emailed". Receiving it proves the mailbox.
+//   - otherwise (or if generating/sending fails): sales is notified and
+//     the prospect gets a short "the team will follow up" confirmation
+//     that does not repeat the scanned domain → delivery "team_follow_up".
+//     The response never claims an email was sent unless it was.
+// Mail-bombing caps (KV, best effort, fail CLOSED for the email — the
+// lead row is always recorded):
+//   - one prospect email per lead, ≤ LEAD_MAIL_DAILY_CAP per normalised
+//     address and ≤ LEAD_MAIL_DOMAIN_DAILY_CAP per recipient domain per
+//     UTC day;
+//   - the internal sales alert email ≤ LEAD_SALES_NOTIFY_DAILY_CAP per
+//     UTC day platform-wide, dropped silently beyond that (the in-app
+//     notification is still created).
+
+const EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
+
+/**
+ * The lead's email, lowercased, with its host in canonical form — or null
+ * when it is not a plain address. EMAIL_RE alone lets `/ ? # :` into the
+ * host (`x@acme.com/evil`), which normalizePublicHostname would strip
+ * when matching the scanned domain while the raw string was still used
+ * as the send address and cap key. So the host must already BE its
+ * normalised form: an ASCII host byte-for-byte, an internationalised host
+ * up to IDNA (it is rewritten to the punycode A-label, the form used for
+ * sending, the domain match and the mail caps alike).
+ */
+export function normalizeLeadEmail(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const email = input.trim().toLowerCase();
+  if (!email || email.length > 254 || !EMAIL_RE.test(email)) return null;
+  const at = email.lastIndexOf("@");
+  const rawHost = email.slice(at + 1);
+  const host = normalizePublicHostname(rawHost);
+  if (!host) return null;
+  if (/[^\x00-\x7f]/.test(rawHost)) {
+    // IDN: only the IDNA mapping may differ — no URL/port syntax, no trailing dot.
+    if (/[/?#:\\]/.test(rawHost) || rawHost.endsWith(".")) return null;
+  } else if (rawHost !== host) {
+    return null;
+  }
+  const normalised = `${email.slice(0, at)}@${host}`;
+  return normalised.length <= 254 ? normalised : null;
+}
+export const LEAD_MAIL_DAILY_CAP = 3;
+export const LEAD_MAIL_DOMAIN_DAILY_CAP = 10;
+export const LEAD_SALES_NOTIFY_DAILY_CAP = 50;
+const DAILY_COUNTER_TTL_SECONDS = 2 * 24 * 60 * 60;
+
+/**
+ * The mailbox an address delivers to, for rate caps: lowercase, `+tag`
+ * dropped from the local part, and for gmail/googlemail the dots dropped
+ * and the domain folded to gmail.com (they are the same inbox).
+ */
+export function normalizeEmailForCap(email: string): string {
+  const lower = email.trim().toLowerCase();
+  const at = lower.lastIndexOf("@");
+  if (at <= 0) return lower;
+  let local = lower.slice(0, at);
+  let domain = lower.slice(at + 1).replace(/\.$/, "");
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.replace(/\./g, "");
+    domain = "gmail.com";
+  }
+  return `${local}@${domain}`;
+}
+
+const utcDay = () => new Date().toISOString().slice(0, 10);
+export const leadMailAddressKey = (normalisedEmail: string, day = utcDay()) => `lead:mail:addr:${day}:${normalisedEmail}`;
+export const leadMailDomainKey = (domain: string, day = utcDay()) => `lead:mail:domain:${day}:${domain}`;
+export const salesNotifyKey = (day = utcDay()) => `lead:notify:sales:${day}`;
+
+const readCounter = async (env: Env, key: string) => parseInt((await env.CACHE.get(key)) ?? "0", 10) || 0;
+
+/**
+ * Reserve one prospect email for this recipient today, against both the
+ * per-address and the per-recipient-domain cap. Not atomic (KV), so a
+ * burst can overshoot by a few — the per-IP route limit bounds that.
+ * Fails CLOSED: any KV error means no email.
+ */
+async function reserveLeadMail(env: Env, email: string): Promise<boolean> {
+  try {
+    const normalised = normalizeEmailForCap(email);
+    const host = normalised.slice(normalised.lastIndexOf("@") + 1);
+    const recipientDomain = registrableDomain(host) ?? host;
+    const addrKey = leadMailAddressKey(normalised);
+    const domainKey = leadMailDomainKey(recipientDomain);
+    const [addrSent, domainSent] = await Promise.all([readCounter(env, addrKey), readCounter(env, domainKey)]);
+    if (addrSent >= LEAD_MAIL_DAILY_CAP || domainSent >= LEAD_MAIL_DOMAIN_DAILY_CAP) return false;
+    await Promise.all([
+      env.CACHE.put(addrKey, String(addrSent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS }),
+      env.CACHE.put(domainKey, String(domainSent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Reserve one internal sales alert email today. Fails CLOSED on KV error. */
+async function reserveSalesNotify(env: Env): Promise<boolean> {
+  try {
+    const key = salesNotifyKey();
+    const sent = await readCounter(env, key);
+    if (sent >= LEAD_SALES_NOTIFY_DAILY_CAP) return false;
+    await env.CACHE.put(key, String(sent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function autoDeliverReport(
+  env: Env,
+  p: { leadId: string; email: string; domain: string; scanId: string | null; appOrigin: string },
+): Promise<boolean> {
+  try {
+    const [{ createQualifiedReport, AUTO_REPORT_GENERATED_BY }, { sendScanReportLink }] = await Promise.all([
+      import("./qualifiedReport"),
+      import("../lib/scan-lead-notify"),
+    ]);
+    // Scan-only content: what the public scan shows plus the scan's own
+    // registered lookalike names. Never threats/IPs/providers/campaigns.
+    const report = await createQualifiedReport(env, {
+      leadId: p.leadId,
+      domain: p.domain,
+      company: null,
+      scanId: p.scanId,
+      generatedBy: AUTO_REPORT_GENERATED_BY,
+      appOrigin: p.appOrigin,
+      content: "scan_only",
+    });
+    const sent = await sendScanReportLink(env, {
+      email: p.email, domain: p.domain, shareUrl: report.shareUrl, expiresAt: report.expiresAt,
+    });
+    return sent.ok;
+  } catch {
+    return false;
+  }
+}
 
 export async function handleLeadCapture(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as {
-      name?: string; email?: string; domain?: string; phone?: string;
-      company?: string; message?: string;
-    };
-
-    // Optional domain, but when present it must be a real hostname: it is
-    // stored on scan_leads, correlated against brands and echoed into the
-    // sales + prospect emails.
-    if (body.domain !== undefined && body.domain !== null && body.domain !== "") {
-      const normalized = normalizePublicHostname(body.domain);
-      if (!normalized) {
-        return json({ success: false, error: "Please enter a valid domain (e.g. example.com)" }, 400, origin);
-      }
-      body.domain = normalized;
-    } else {
-      body.domain = undefined;
+    const raw: unknown = await request.json().catch(() => null);
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return json({ success: false, error: "Invalid request" }, 400, origin);
     }
+    const body = raw as Record<string, unknown>;
 
-    if (!body.email || !body.name) {
-      return json({ success: false, error: "Name and email are required" }, 400, origin);
+    if (body.consent !== true) {
+      return json({ success: false, error: "Please confirm we may email you about this scan" }, 400, origin);
     }
-
-    // Business-email gate — mirrors the in-page check so a direct POST
-    // can't slip a personal/free address past the client validation.
-    if (!body.email.includes("@") || !body.email.split("@")[1]?.includes(".")) {
+    const email = normalizeLeadEmail(body.email);
+    if (!email) {
       return json({ success: false, error: "Please enter a valid email address" }, 400, origin);
     }
-    if (isFreemailEmail(body.email)) {
+    // Business-email gate — mirrors the in-page check so a direct POST
+    // can't slip a personal/free address past the client validation.
+    if (isFreemailEmail(email)) {
       return json({ success: false, error: "Please use a business email address (no free email providers)" }, 400, origin);
     }
+    // Stored on scan_leads, correlated against brands and echoed into the
+    // sales email, so it must be a real hostname. Reduced to the
+    // registrable domain, the same way the scan itself is.
+    const domain = toScanDomain(body.domain);
+    if (!domain) {
+      return json({ success: false, error: "Please enter a valid domain (e.g. example.com)" }, 400, origin);
+    }
+    let scanId: string | null = null;
+    if (body.scan_id !== undefined && body.scan_id !== null && body.scan_id !== "") {
+      if (!isScanId(body.scan_id)) {
+        return json({ success: false, error: "Invalid scan id" }, 400, origin);
+      }
+      // Linked only when it is a scan of this domain.
+      const scan = await env.DB.prepare(
+        "SELECT id FROM brand_scans WHERE id = ? AND domain = ?",
+      ).bind(body.scan_id, domain).first<{ id: string }>();
+      scanId = scan?.id ?? null;
+    }
+    const company = typeof body.company === "string" ? (body.company.trim().slice(0, 120) || null) : null;
 
     const id = crypto.randomUUID();
 
     // Brand correlation: if a brands row already exists for this domain,
-    // attach its id to the lead so sales can see "this prospect is asking
-    // about a brand we already monitor" without a JOIN at read time.
-    // Column is nullable so platforms scanning brand-new domains still
-    // capture cleanly.
-    let correlatedBrandId: string | null = null;
-    if (body.domain) {
-      const existing = await env.DB.prepare(
-        "SELECT id FROM brands WHERE canonical_domain = ?",
-      ).bind(body.domain).first<{ id: string }>();
-      if (existing) correlatedBrandId = existing.id;
-    }
+    // attach its id so sales sees "already monitored" without a JOIN.
+    const existing = await env.DB.prepare(
+      "SELECT id FROM brands WHERE canonical_domain = ?",
+    ).bind(domain).first<{ id: string }>();
+    const correlatedBrandId = existing?.id ?? null;
 
     await env.DB.prepare(`
-      INSERT INTO scan_leads (id, email, name, company, phone, domain, form_type, source, message, status, correlated_brand_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'brand_scan', 'public_scan', ?, 'new', ?, datetime('now'), datetime('now'))
-    `).bind(
-      id, body.email, body.name, body.company ?? null,
-      body.phone ?? null, body.domain ?? null, body.message ?? null,
-      correlatedBrandId,
-    ).run();
+      INSERT INTO scan_leads (id, email, name, company, phone, domain, form_type, source, message, status,
+                              correlated_brand_id, scan_id, consent_at, created_at, updated_at)
+      VALUES (?, ?, NULL, ?, NULL, ?, 'brand_scan', 'public_scan', NULL, 'new', ?, ?, datetime('now'), datetime('now'), datetime('now'))
+    `).bind(id, email, company, domain, correlatedBrandId, scanId).run();
 
-    // Fire-and-forget side effects. All wrapped so the prospect's
-    // submission isn't impacted by a downstream hiccup (the lead row is
-    // already committed). Logged on failure (lib/logger).
-    //   1. Internal alert email to sales@averrow.com.
-    //   2. Prospect-facing acknowledgement — the scan-results page tells
-    //      the visitor "check your inbox" the instant they submit, so we
-    //      owe them an actual email. The full report is still delivered by
-    //      sales; this confirms receipt and sets that expectation.
-    //   3. In-app notification (audience 'team') so the lead surfaces in
-    //      the platform notification bell for sales/support/admins — not
-    //      only in the sales@ inbox. group_key is per-lead so distinct
-    //      leads never dedup against each other.
+    const appOrigin = new URL(request.url).origin;
+    const mailAllowed = await reserveLeadMail(env, email);
+    let delivery: "emailed" | "team_follow_up" = "team_follow_up";
+    if (mailAllowed && emailMatchesScannedDomain(email, domain)) {
+      if (await autoDeliverReport(env, { leadId: id, email, domain, scanId, appOrigin })) delivery = "emailed";
+    }
+
+    // Side effects are best-effort: the lead row is committed, and the
+    // visitor must not see an error because a downstream send failed.
+    //   1. Prospect confirmation (team_follow_up only, within the caps).
+    //   2. Internal alert email to sales@averrow.com (global daily cap).
+    //   3. In-app notification (audience 'team'); group_key per lead.
     try {
-      const [{ notifySalesOfNewLead, sendScanReportAcknowledgement }, { createNotification }] =
+      const [{ notifySalesOfNewLead, sendScanFollowUpConfirmation }, { createNotification }] =
         await Promise.all([
           import("../lib/scan-lead-notify"),
           import("../lib/notifications"),
         ]);
-      const url = new URL(request.url);
-      const leadLabel = body.name?.trim() || body.email;
-      const scannedDomain = body.domain?.trim() || "their domain";
+      const salesAllowed = await reserveSalesNotify(env);
       await Promise.allSettled([
-        notifySalesOfNewLead(env, {
-          leadId: id,
-          email: body.email,
-          name: body.name ?? null,
-          company: body.company ?? null,
-          domain: body.domain ?? null,
-          phone: body.phone ?? null,
-          message: body.message ?? null,
-          correlatedBrandId,
-          adminUrlBase: url.origin,
-        }),
-        sendScanReportAcknowledgement(env, {
-          email: body.email,
-          name: body.name ?? null,
-          domain: body.domain ?? null,
-        }),
+        delivery === "team_follow_up" && mailAllowed
+          ? sendScanFollowUpConfirmation(env, { email })
+          : Promise.resolve(null),
+        salesAllowed
+          ? notifySalesOfNewLead(env, {
+              leadId: id,
+              email,
+              company,
+              domain,
+              correlatedBrandId,
+              delivery,
+              adminUrlBase: appOrigin,
+            })
+          : Promise.resolve(null),
         createNotification(env, {
           type: "new_lead",
           audience: "team",
           severity: "low",
-          title: `New lead — ${leadLabel}`,
-          message: `${leadLabel} scanned ${scannedDomain}${body.company ? ` (${body.company})` : ""} and requested the full report.`,
-          // Basename-relative (SPA mounts at /v2) and deep-links straight
-          // to this lead's drill-down. group_key is per-lead so distinct
-          // leads never dedup against each other.
+          title: `New lead — ${email}`,
+          message: delivery === "emailed"
+            ? `${email} scanned ${domain}; the scan-only report was emailed to them automatically.`
+            : `${email} scanned ${domain} and asked for the report. Follow up needed.`,
+          // Basename-relative (SPA mounts at /v2), deep-links to the lead.
           link: `/leads?view=scan&lead=${id}`,
           groupKey: `new_lead:${id}`,
-          reasonText: "A visitor submitted the public domain-scan lead form.",
-          recommendedAction: "Review the lead and generate a qualified report or reach out.",
+          reasonText: "A visitor submitted the free-scan report form.",
+          recommendedAction: delivery === "emailed"
+            ? "Review the lead; the prospect already has their scan-only report."
+            : "Review the lead and generate a report or reach out.",
           metadata: {
             lead_id: id,
-            email: body.email,
-            domain: body.domain ?? null,
-            company: body.company ?? null,
+            email,
+            domain,
+            company,
+            scan_id: scanId,
+            delivery,
             correlated_brand_id: correlatedBrandId,
           },
         }),
       ]);
     } catch { /* swallow — lead capture is the priority */ }
 
-    return json({ success: true, data: { id, message: "Thank you! Our team will contact you shortly." } }, 200, origin);
-  } catch (err) {
+    return json({ success: true, data: { delivery } }, 200, origin);
+  } catch {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
@@ -813,7 +883,6 @@ async function buildLeadIntel(
   domain: string,
   correlatedBrandId: string | null,
 ): Promise<LeadIntel> {
-  const keyword = domain.split(".")[0] ?? domain;
 
   // Resolve the brand once (indexed: PK or idx_brands_domain). All threat
   // aggregation below is scoped by target_brand_id so it rides
@@ -873,7 +942,7 @@ async function buildLeadIntel(
 
   // All bounded/indexed reads:
   //  - email_security_scans by domain (idx_ess_domain, migration 0216)
-  //  - lookalike_domains by keyword (small table)
+  //  - lookalike_domains by brand_id (idx_lookalike_brand_domain prefix)
   //  - assessments by domain (idx_assessments_domain)
   //  - qualified_reports by lead_id
   const [emailScan, lookalikes, priorAssessment, latestReport] = await Promise.all([
@@ -885,9 +954,13 @@ async function buildLeadIntel(
       spf_policy: string | null; dmarc_policy: string | null;
       mx_exists: number | null; mx_providers: string | null; email_security_grade: string | null;
     }>(),
-    env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM lookalike_domains WHERE target_brand LIKE ?`,
-    ).bind(`%${keyword}%`).first<{ n: number }>(),
+    // lookalike_domains is keyed by brand_id (there is no target_brand
+    // column); no brand row → nothing tracked.
+    brandId
+      ? env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM lookalike_domains WHERE brand_id = ?`,
+        ).bind(brandId).first<{ n: number }>()
+      : Promise.resolve(null),
     env.DB.prepare(
       `SELECT trust_score, grade, completed_at FROM assessments
         WHERE domain = ? AND completed_at IS NOT NULL

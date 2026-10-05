@@ -226,7 +226,9 @@ const ENDPOINTS: Endpoint[] = [
   },
   { name: "POST /api/brand-scan/public (body)", build: (t) => jsonPost("/api/brand-scan/public", { domain: "acme.example" }, t, "body") },
   { name: "POST /api/brand-scan/public (header)", build: (t) => jsonPost("/api/brand-scan/public", { domain: "acme.example" }, t, "header") },
-  { name: "POST /api/leads", build: (t) => jsonPost("/api/leads", { ...lead, domain: "acme.example" }, t, "body") },
+  // Domain differs from the email's so the lead takes the follow-up path
+  // (no auto report) — this suite is about the Turnstile gate only.
+  { name: "POST /api/leads", build: (t) => jsonPost("/api/leads", { email: lead.email, domain: "other.example", consent: true }, t, "body") },
   { name: "POST /api/v1/public/assess", build: (t) => jsonPost("/api/v1/public/assess", { domain: "acme.example" }, t, "body") },
   { name: "POST /api/v1/public/leads", build: (t) => jsonPost("/api/v1/public/leads", lead, t, "body") },
   { name: "POST /api/v1/public/monitor", build: (t) => jsonPost("/api/v1/public/monitor", { domain: "acme.example" }, t, "header") },

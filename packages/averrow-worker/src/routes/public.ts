@@ -10,9 +10,9 @@ import { json } from "../lib/cors";
 // (auth, scan, status incidents, etc.).
 //
 // homepage.ts is kept to power /legacy (renderHomepage wrapped with a
-// banner) and the /assess/:id/results scan-results page.
-import { renderHomepage, renderAssessResults } from "../templates/homepage";
-import { renderScanPage } from "../templates/scan";
+// banner). The free scan page (/scan) is the Astro page in
+// packages/averrow-marketing, served by ASSETS.
+import { renderHomepage } from "../templates/homepage";
 import { renderStatusPage } from "../templates/status";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
@@ -23,8 +23,8 @@ import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
 import { handleContactSubmission } from "../handlers/contact";
 import { handleTrackEvent } from "../handlers/track";
 import { logMarketingEdgeView } from "../lib/marketing-event-logger";
-import { handlePublicBrandScan } from "../handlers/brandScan";
-import { normalizePublicHostname } from "../lib/public-hostname";
+import { runPublicScan } from "../handlers/brandScan";
+import { toScanDomain } from "../lib/free-scan-view";
 import {
   evaluateTurnstile, turnstileBlockedRedirectPath, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
 } from "../lib/turnstile";
@@ -127,9 +127,9 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
 
   // ─── Public Assessment ───────────────────────────────────────────
   router.post("/assess", async (request: Request, env: Env) => {
-    // H4(c): this form path triggers the same paid AI scan as
-    // /api/v1/public/assess, so it shares the same per-IP 10/hour
-    // KV bucket instead of the looser shared 30/min 'scan' preset.
+    // No-JS hero form: runs the free scan, then 303 → /scan/?id=<id>.
+    // Shares /api/v1/public/assess's per-IP 10/hour KV bucket instead of
+    // the looser shared 30/min 'scan' preset (H4(c)).
     const limited = await publicAssessIpLimit(request, env);
     if (limited) return limited;
     try {
@@ -158,34 +158,25 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
       }
       // Strict hostname check (stored-XSS fix): anything that isn't a plain
       // DNS hostname goes back to the homepage with no scan and no row.
-      const domain = normalizePublicHostname(rawDomain);
+      // Reduced to the registrable domain (shop.acme.com → acme.com).
+      const domain = toScanDomain(rawDomain);
       if (!domain) {
         return Response.redirect(new URL("/", request.url).toString(), 302);
       }
-      const scanRequest = new Request(request.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Origin": request.headers.get("Origin") ?? "" },
-        body: JSON.stringify({ domain }),
-      });
-      const scanRes = await handlePublicBrandScan(scanRequest, env);
-      const scanData = await scanRes.json() as { success: boolean; data?: { domain: string; trustScore: number } };
-      if (!scanData.success) {
-        return Response.redirect(new URL("/", request.url).toString(), 302);
-      }
-      const row = await env.DB.prepare(
-        "SELECT id FROM brand_scans WHERE domain = ? ORDER BY created_at DESC LIMIT 1"
-      ).bind(domain).first<{ id: string }>();
-      const id = row?.id ?? "unknown";
-      return Response.redirect(new URL(`/assess/${id}/results`, request.url).toString(), 303);
+      const scan = await runPublicScan(env, domain);
+      return Response.redirect(new URL(`/scan/?id=${encodeURIComponent(scan.id)}`, request.url).toString(), 303);
     } catch {
       return Response.redirect(new URL("/", request.url).toString(), 302);
     }
   });
 
+  // Old results links → the Astro free-scan page (it reads the same id via
+  // GET /api/brand-scan/public/:id).
   router.get("/assess/:id/results", (request: Request & { params: Record<string, string> }) =>
-    new Response(renderAssessResults(request.params["id"] ?? ""), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    })
+    Response.redirect(
+      new URL(`/scan/?id=${encodeURIComponent(request.params["id"] ?? "")}`, request.url).toString(),
+      301,
+    )
   );
 
   // ─── Redirect ────────────────────────────────────────────────────
@@ -320,12 +311,10 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     return handleContactSubmission(request, env);
   });
 
-  // ─── Public Brand Exposure Scan Page ─────────────────────────────
-  router.get("/scan", () =>
-    new Response(renderScanPage(), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    })
-  );
+  // ─── /scan — served by ASSETS (Astro, packages/averrow-marketing) ──
+  // The Worker-rendered /scan page (templates/scan.ts) was retired with the
+  // free-scan rebuild (2026-10-05). No route here: ASSETS serves
+  // /scan/index.html before the Worker runs (no run_worker_first).
 
   // /scan/:id (the URL-scan share page) was retired with the URL-scan
   // feature (2026-10-04): it read the `scans` table, which never existed

@@ -3,16 +3,22 @@
 //   2. Convert a qualified lead into a tenant organization
 //
 // Both endpoints are super_admin-only. The outreach endpoint requires a
-// previously-generated qualified report (404s otherwise) so the email
-// always carries a real share link. The convert endpoint is independent
+// previously-generated qualified report (400 otherwise) so the email
+// always carries a real share link — except for an address that does not
+// match the scanned domain, which only ever gets a scan-only report
+// (built on demand; see the outreach handler). The convert endpoint is independent
 // of outreach — admin can spin up a tenant without sending mail (e.g.
 // when the deal closes on a call).
 
 import { json } from "../lib/cors";
+import { emailMatchesScannedDomain } from "../lib/free-scan-view";
 import { sendLeadOutreachEmail } from "../lib/lead-outreach-email";
+import { createQualifiedReport } from "./qualifiedReport";
+import { normalizeLeadEmail } from "./brandScan";
 import type { Env } from "../types";
 
 interface QualifiedReportPayload {
+  content?: "full" | "scan_only";
   brand: { domain: string; name: string | null };
   executive_summary: { risk_grade: string; key_findings: string[] };
 }
@@ -37,12 +43,30 @@ function generateInviteCode(): string {
 }
 
 // ─── Outreach handler ─────────────────────────────────────────────
+//
+// Domain check (same rule as lead-form auto-delivery, H1): a FULL report
+// (Averrow threat data) is only ever emailed to an address whose host is
+// exactly the lead's scanned domain (emailMatchesScannedDomain). For any
+// other address the email carries a SCAN-ONLY report — the lead's most
+// recent active scan-only report, or a fresh one built here (no AI, no
+// threats reads). Staff still generate and view full reports in the
+// console; they are just never mailed to an unverified address.
+
+export interface LeadOutreachOptions {
+  /**
+   * For an unverified address, build a fresh scan-only report even when
+   * an active one exists (the one-click report-and-outreach route, which
+   * has just generated a fresh full report for the console).
+   */
+  freshScanOnly?: boolean;
+}
 
 export async function handleSendLeadOutreach(
   request: Request,
   env: Env,
   leadId: string,
   userId: string,
+  opts: LeadOutreachOptions = {},
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -51,20 +75,59 @@ export async function handleSendLeadOutreach(
     }
 
     const lead = await env.DB.prepare(
-      "SELECT id, email, name, company, domain FROM scan_leads WHERE id = ?",
-    ).bind(leadId).first<{ id: string; email: string; name: string | null; company: string | null; domain: string | null }>();
+      "SELECT id, email, name, company, domain, scan_id FROM scan_leads WHERE id = ?",
+    ).bind(leadId).first<{
+      id: string; email: string; name: string | null; company: string | null; domain: string | null; scan_id: string | null;
+    }>();
 
     if (!lead) return json({ success: false, error: "Lead not found" }, 404, origin);
 
-    // Find the most recent qualified report for this lead — share URL must
-    // be a real one we previously generated. If none, instruct the admin to
-    // generate first (separates concerns: outreach reuses what's there).
-    const report = await env.DB.prepare(`
-      SELECT share_token, payload_json, expires_at
-      FROM qualified_reports
-      WHERE lead_id = ? AND expires_at > datetime('now')
-      ORDER BY created_at DESC LIMIT 1
-    `).bind(leadId).first<{ share_token: string; payload_json: string; expires_at: string }>();
+    const url = new URL(request.url);
+    // Rows captured before strict host validation may hold a malformed
+    // address (e.g. `x@acme.com/foo`); never send to one.
+    const recipient = normalizeLeadEmail(lead.email);
+    if (!recipient) {
+      return json({ success: false, error: "Lead email address is not valid" }, 409, origin);
+    }
+    const domainVerified = lead.domain != null && emailMatchesScannedDomain(recipient, lead.domain);
+
+    // Verified address: the most recent active report, any content (share
+    // URL must be one we previously generated — if none, the admin
+    // generates first). Unverified address: scan-only reports only.
+    let report: { share_token: string; payload_json: string } | null = null;
+    if (domainVerified || !opts.freshScanOnly) {
+      report = await env.DB.prepare(`
+        SELECT share_token, payload_json
+        FROM qualified_reports
+        WHERE lead_id = ? AND expires_at > datetime('now')
+          AND (? = 1 OR json_extract(payload_json, '$.content') = 'scan_only')
+        ORDER BY created_at DESC, rowid DESC LIMIT 1
+      `).bind(leadId, domainVerified ? 1 : 0).first<{ share_token: string; payload_json: string }>();
+    }
+
+    if (!report && !domainVerified) {
+      if (!lead.domain) return json({ success: false, error: "Lead has no domain to scan" }, 400, origin);
+      try {
+        const created = await createQualifiedReport(env, {
+          leadId,
+          domain: lead.domain,
+          company: lead.company,
+          scanId: lead.scan_id,
+          generatedBy: userId,
+          appOrigin: url.origin,
+          content: "scan_only",
+        });
+        report = { share_token: created.shareToken, payload_json: JSON.stringify(created.payload) };
+      } catch {
+        report = null;
+      }
+      if (!report) {
+        return json({
+          success: false,
+          error: "The lead's email address does not match the scanned domain, so only a scan-only report may be emailed, and one could not be built. Follow up manually.",
+        }, 409, origin);
+      }
+    }
 
     if (!report) {
       return json({
@@ -79,13 +142,17 @@ export async function handleSendLeadOutreach(
       "SELECT name FROM users WHERE id = ?",
     ).bind(userId).first<{ name: string | null }>();
 
-    const url = new URL(request.url);
     const shareUrl = `${url.origin}/qualified-report/${report.share_token}`;
     const unsubscribeUrl = `${url.origin}/unsubscribe?email=${encodeURIComponent(lead.email)}`;
     const payload = JSON.parse(report.payload_json) as QualifiedReportPayload;
+    // Defence in depth: never email full content to an unverified address.
+    const content = payload.content === "scan_only" ? "scan_only" : "full";
+    if (!domainVerified && content !== "scan_only") {
+      return json({ success: false, error: "Refusing to email a full report to an address that does not match the scanned domain" }, 409, origin);
+    }
 
     const result = await sendLeadOutreachEmail(env.RESEND_API_KEY, {
-      recipientEmail: lead.email,
+      recipientEmail: recipient,
       recipientName: lead.name,
       brandName: payload.brand.name ?? payload.brand.domain,
       brandDomain: payload.brand.domain,
@@ -114,6 +181,8 @@ export async function handleSendLeadOutreach(
         sent_to: lead.email,
         email_id: result.id,
         share_url: shareUrl,
+        content,
+        domain_verified: domainVerified,
       },
     }, 200, origin);
   } catch (err) {

@@ -10,6 +10,7 @@ import {
 } from "../handlers/brandScan";
 import { handleHealthCheck } from "../handlers/health";
 import { turnstileGuardJson } from "../lib/turnstile";
+import { publicAssessIpLimit } from "../handlers/public";
 
 export function registerScanRoutes(router: RouterType<IRequest>): void {
   // ─── Health ─────────────────────────────────────────────────────
@@ -48,9 +49,11 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
     return handleBrandScanHistory(request, env);
   });
 
-  // Public brand scan (no auth, rate-limited)
+  // Public brand scan (no auth). Same per-IP 10/hour KV bucket as the
+  // /assess form and /api/v1/public/assess (appsec M2): every one of them
+  // runs the same anonymous scan, so they draw from one budget.
   router.post("/api/brand-scan/public", async (request: Request, env: Env) => {
-    const limited = await rateLimit(request, env, "scan");
+    const limited = await publicAssessIpLimit(request, env);
     if (limited) return limited;
     // Turnstile (TURNSTILE_MODE): JSON `turnstileToken` or CF-Turnstile-Response header.
     const blocked = await turnstileGuardJson(request, env, {
@@ -65,9 +68,11 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
     handlePublicBrandScanResult(request, env, request.params["id"] ?? "")
   );
 
-  // Lead capture (no auth, rate-limited)
+  // Lead capture (no auth, rate-limited). Own 'leads' bucket (appsec M3) —
+  // it used to share the 'auth' bucket, so lead submissions and login
+  // attempts from one IP throttled each other.
   router.post("/api/leads", async (request: Request, env: Env) => {
-    const limited = await rateLimit(request, env, "auth");
+    const limited = await rateLimit(request, env, "leads");
     if (limited) return limited;
     const blocked = await turnstileGuardJson(request, env, {
       route: "POST /api/leads", expectedAction: "lead",
