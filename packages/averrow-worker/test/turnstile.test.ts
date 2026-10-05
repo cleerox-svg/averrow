@@ -3,8 +3,9 @@
 //   1. verifyTurnstile: siteverify request shape, success, rejection,
 //      hostname allowlist, action check, non-2xx / bad body, timeout,
 //      network error, missing secret / token, oversize token.
-//   2. resolveTurnstileMode: unset/off/unknown → off; monitor/enforce
-//      without TURNSTILE_SECRET_KEY → off with a one-time warning.
+//   2. resolveTurnstileMode: unset/off/unknown → off; monitor without
+//      TURNSTILE_SECRET_KEY → off, enforce without it → enforce_unconfigured
+//      (fail closed), with a one-time warning.
 //   3. Every protected endpoint under off / monitor / enforce: off never
 //      calls siteverify; monitor verifies but never blocks; enforce blocks
 //      a missing / rejected / wrong-host token and a siteverify outage, and
@@ -149,12 +150,14 @@ describe("resolveTurnstileMode", () => {
     expect(resolveTurnstileMode({ TURNSTILE_MODE: " Enforce ", TURNSTILE_SECRET_KEY: SECRET })).toBe("enforce");
   });
 
-  it("falls back to off without the secret and warns exactly once", () => {
+  it("without the secret: monitor → off, enforce → enforce_unconfigured; warns exactly once per isolate", () => {
     const warn = vi.spyOn(logger, "warn");
-    expect(resolveTurnstileMode({ TURNSTILE_MODE: "enforce" })).toBe("off");
+    expect(resolveTurnstileMode({ TURNSTILE_MODE: "enforce" })).toBe("enforce_unconfigured");
+    expect(resolveTurnstileMode({ TURNSTILE_MODE: "enforce" })).toBe("enforce_unconfigured");
     expect(resolveTurnstileMode({ TURNSTILE_MODE: "monitor" })).toBe("off");
     const calls = warn.mock.calls.filter(([e]) => e === "turnstile_secret_missing");
     expect(calls).toHaveLength(1);
+    expect(calls[0]![1]).toMatchObject({ configured_mode: "enforce", effective_mode: "enforce_unconfigured" });
   });
 });
 
@@ -262,9 +265,24 @@ describe.each(ENDPOINTS)("$name", (ep) => {
     expect(siteverifyCalls).toHaveLength(0);
   });
 
-  it("enforce without TURNSTILE_SECRET_KEY behaves as off", async () => {
-    const { res, s } = await call(ep, { TURNSTILE_MODE: "enforce" }, null);
+  it("monitor without TURNSTILE_SECRET_KEY behaves as off", async () => {
+    const { res, s } = await call(ep, { TURNSTILE_MODE: "monitor" }, null);
     expectProceeded(ep, res, s);
+    expect(siteverifyCalls).toHaveLength(0);
+  });
+
+  it("enforce without TURNSTILE_SECRET_KEY fails closed (503 / unavailable redirect), even with a token", async () => {
+    for (const token of [null, GOOD_TOKEN]) {
+      const { res, s } = await call(ep, { TURNSTILE_MODE: "enforce" }, token);
+      if (ep.form) {
+        expect(res.status).toBe(302);
+        expect(res.headers.get("Location")).toBe("https://averrow.com/?error=verification_unavailable");
+      } else {
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ success: false, error: "Verification unavailable" });
+      }
+      expect(s.sqls).toEqual([]);
+    }
     expect(siteverifyCalls).toHaveLength(0);
   });
 

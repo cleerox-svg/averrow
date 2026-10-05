@@ -26,7 +26,7 @@ import { logMarketingEdgeView } from "../lib/marketing-event-logger";
 import { handlePublicBrandScan } from "../handlers/brandScan";
 import { normalizePublicHostname } from "../lib/public-hostname";
 import {
-  evaluateTurnstile, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
+  evaluateTurnstile, turnstileBlockedRedirectPath, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
 } from "../lib/turnstile";
 import {
   handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
@@ -154,7 +154,7 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
         { route: "POST /assess", expectedAction: "scan" },
       );
       if (turnstile.blocked) {
-        return Response.redirect(new URL("/?error=verification_failed", request.url).toString(), 302);
+        return Response.redirect(new URL(turnstileBlockedRedirectPath(turnstile), request.url).toString(), 302);
       }
       // Strict hostname check (stored-XSS fix): anything that isn't a plain
       // DNS hostname goes back to the homepage with no scan and no row.

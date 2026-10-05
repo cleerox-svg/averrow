@@ -167,8 +167,9 @@ export interface Env {
    *  (lib/turnstile.ts). 'off' (default when unset / unrecognised) → no
    *  verification. 'monitor' → verify + log, never block. 'enforce' → block
    *  failed / missing tokens (403, or redirect for the POST /assess form);
-   *  siteverify errors fail closed. monitor/enforce need
-   *  TURNSTILE_SECRET_KEY, else the gate behaves as 'off'. Plain var. */
+   *  siteverify errors fail closed. Without TURNSTILE_SECRET_KEY,
+   *  'monitor' behaves as 'off' and 'enforce' refuses every guarded
+   *  request (503 "Verification unavailable"). Plain var. */
   TURNSTILE_MODE?: 'off' | 'monitor' | 'enforce' | (string & {});
   /** Turnstile widget secret key (siteverify). Set via
    *  `wrangler secret put TURNSTILE_SECRET_KEY`. */

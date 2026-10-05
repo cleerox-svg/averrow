@@ -29,7 +29,7 @@ Copy `.env.example` to `.env` and configure:
 | `ANTHROPIC_API_KEY` | Claude Haiku API key | Yes |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | Yes |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Yes |
-| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile widget secret (Worker secret — `wrangler secret put TURNSTILE_SECRET_KEY`). Needed only when `TURNSTILE_MODE` is `monitor`/`enforce` | No |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile widget secret (Worker secret — `wrangler secret put TURNSTILE_SECRET_KEY`). Needed for `TURNSTILE_MODE=monitor`; **required** for `enforce` (missing → every guarded public form request is refused 503) | No |
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
@@ -210,7 +210,7 @@ Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside 
 
 Server-side verification (`packages/averrow-worker/src/lib/turnstile.ts`) gates `POST /assess`, `POST /api/brand-scan/public`, `POST /api/leads`, `POST /api/v1/public/assess`, `POST /api/v1/public/leads` and `POST /api/v1/public/monitor`. Existing rate limits are unchanged and run first.
 
-- **Switch:** `TURNSTILE_MODE` Worker `[vars]` entry — `off` (default when unset/unrecognised: no siteverify call), `monitor` (verify + log a `turnstile_verdict` line, never block), `enforce` (missing/failed token → 403 `{"success":false,"error":"Verification failed"}`; `POST /assess` instead redirects to `/?error=verification_failed`; a siteverify timeout (3 s), network error or non-2xx **blocks**). `monitor`/`enforce` without `TURNSTILE_SECRET_KEY` behave as `off` and log `turnstile_secret_missing` once per isolate.
+- **Switch:** `TURNSTILE_MODE` Worker `[vars]` entry — `off` (default when unset/unrecognised: no siteverify call), `monitor` (verify + log a `turnstile_verdict` line, never block), `enforce` (missing/failed token → 403 `{"success":false,"error":"Verification failed"}`; `POST /assess` instead redirects to `/?error=verification_failed`; a siteverify timeout (3 s), network error or non-2xx **blocks**). Without `TURNSTILE_SECRET_KEY` (logged as `turnstile_secret_missing` once per isolate): `monitor` behaves as `off`, but `enforce` **fails closed** — every guarded request gets **503** `{"success":false,"error":"Verification unavailable"}` (`POST /assess` redirects to `/?error=verification_unavailable`). Always set the secret before switching to `enforce`.
 - **Checks:** siteverify `success`, `hostname` ∈ `averrow.com`, `www.averrow.com`, `averrow.ca`, `www.averrow.ca`, and — when the widget sets `data-action` — `action` must be `scan` (scan/assess endpoints), `lead` (`/api/leads`, `/api/v1/public/leads`) or `monitor` (`/api/v1/public/monitor`). The client IP (`CF-Connecting-IP`) is sent as `remoteip`.
 - **Token transport:** header `CF-Turnstile-Response`, JSON body `turnstileToken` (or `cf-turnstile-response`), or the widget's default form field `cf-turnstile-response` on `POST /assess`.
 - **Owner setup:**

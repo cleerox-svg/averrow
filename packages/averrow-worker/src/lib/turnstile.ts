@@ -9,8 +9,13 @@
  *     to confirm the marketing widget is sending valid tokens before enforcing.
  *   - `enforce`: block a request whose token is missing or fails verification.
  *     A siteverify network error / timeout BLOCKS (fail closed).
- * `monitor` / `enforce` also require the `TURNSTILE_SECRET_KEY` secret; without
- * it the gate behaves as `off` and logs a one-line warning (once per isolate).
+ * Missing `TURNSTILE_SECRET_KEY` (logged once per isolate as
+ * `turnstile_secret_missing`):
+ *   - `monitor` → behaves as `off` (monitoring never blocks anyway);
+ *   - `enforce` → FAILS CLOSED: every guarded request is refused with 503
+ *     `Verification unavailable` (form route: redirect with
+ *     `?error=verification_unavailable`). A missing secret must never
+ *     silently disable enforcement.
  *
  * Token sources (the gate never consumes the request body — it reads a clone):
  *   - header `CF-Turnstile-Response`
@@ -55,6 +60,10 @@ export const TURNSTILE_FORM_FIELD = "cf-turnstile-response";
 export const TURNSTILE_JSON_FIELD = "turnstileToken";
 
 export type TurnstileMode = "off" | "monitor" | "enforce";
+
+/** Effective gate state: a mode, or `enforce_unconfigured` (enforce requested
+ *  but TURNSTILE_SECRET_KEY missing → refuse every guarded request). */
+export type TurnstileEffectiveMode = TurnstileMode | "enforce_unconfigured";
 
 /** Widget `data-action` values each protected endpoint expects. */
 export type TurnstileAction = "scan" | "lead" | "monitor";
@@ -164,9 +173,11 @@ export function resetTurnstileWarningsForTest(): void {
   warnedUnknownMode = false;
 }
 
-/** Effective mode: `off` unless TURNSTILE_MODE is monitor/enforce AND the
- *  secret is present. */
-export function resolveTurnstileMode(env: Pick<Env, "TURNSTILE_MODE" | "TURNSTILE_SECRET_KEY">): TurnstileMode {
+/** Effective mode: `off` unless TURNSTILE_MODE is monitor/enforce. Without
+ *  the secret, monitor → `off`; enforce → `enforce_unconfigured` (fail closed). */
+export function resolveTurnstileMode(
+  env: Pick<Env, "TURNSTILE_MODE" | "TURNSTILE_SECRET_KEY">,
+): TurnstileEffectiveMode {
   const raw = (env.TURNSTILE_MODE ?? "").trim().toLowerCase();
   if (raw !== "monitor" && raw !== "enforce") {
     if (raw !== "" && raw !== "off" && !warnedUnknownMode) {
@@ -176,11 +187,12 @@ export function resolveTurnstileMode(env: Pick<Env, "TURNSTILE_MODE" | "TURNSTIL
     return "off";
   }
   if (!env.TURNSTILE_SECRET_KEY) {
+    const effective: TurnstileEffectiveMode = raw === "enforce" ? "enforce_unconfigured" : "off";
     if (!warnedMissingSecret) {
       warnedMissingSecret = true;
-      logger.warn("turnstile_secret_missing", { configured_mode: raw, effective_mode: "off" });
+      logger.warn("turnstile_secret_missing", { configured_mode: raw, effective_mode: effective });
     }
-    return "off";
+    return effective;
   }
   return raw;
 }
@@ -188,9 +200,13 @@ export function resolveTurnstileMode(env: Pick<Env, "TURNSTILE_MODE" | "TURNSTIL
 // ─── Request gate ────────────────────────────────────────────────
 
 export interface TurnstileDecision {
-  mode: TurnstileMode;
-  /** True only in enforce mode with a failed verification. */
+  mode: TurnstileEffectiveMode;
+  /** True in enforce mode with a failed verification, and always in
+   *  enforce_unconfigured. */
   blocked: boolean;
+  /** True when blocked because verification is impossible (enforce with no
+   *  secret) — callers answer 503 instead of 403. */
+  unavailable: boolean;
   /** null when mode is off (nothing was verified). */
   result: TurnstileResult | null;
 }
@@ -228,7 +244,12 @@ export async function evaluateTurnstile(
   opts: TurnstileGateOptions,
 ): Promise<TurnstileDecision> {
   const mode = resolveTurnstileMode(env);
-  if (mode === "off") return { mode, blocked: false, result: null };
+  if (mode === "off") return { mode, blocked: false, unavailable: false, result: null };
+  if (mode === "enforce_unconfigured") {
+    // Fail closed. The once-per-isolate turnstile_secret_missing warning
+    // already fired in resolveTurnstileMode; no per-request log line.
+    return { mode, blocked: true, unavailable: true, result: { ok: false, reason: "missing-secret" } };
+  }
 
   const token = await getToken();
   const ip = request.headers.get("CF-Connecting-IP");
@@ -249,16 +270,25 @@ export async function evaluateTurnstile(
     else logger.warn("turnstile_verdict", data);
   }
 
-  return { mode, blocked, result };
+  return { mode, blocked, unavailable: false, result };
 }
 
-/** The 403 every blocked JSON endpoint returns. */
-export function turnstileBlockedResponse(request: Request): Response {
-  return json({ success: false, error: "Verification failed" }, 403, request.headers.get("Origin"));
+/** The response every blocked JSON endpoint returns: 403 for a failed
+ *  verification, 503 when enforce is on but the secret is missing. */
+export function turnstileBlockedResponse(request: Request, decision: Pick<TurnstileDecision, "unavailable">): Response {
+  const origin = request.headers.get("Origin");
+  return decision.unavailable
+    ? json({ success: false, error: "Verification unavailable" }, 503, origin)
+    : json({ success: false, error: "Verification failed" }, 403, origin);
+}
+
+/** Redirect target for a blocked browser form post (POST /assess). */
+export function turnstileBlockedRedirectPath(decision: Pick<TurnstileDecision, "unavailable">): string {
+  return decision.unavailable ? "/?error=verification_unavailable" : "/?error=verification_failed";
 }
 
 /**
- * Gate for a JSON endpoint: returns the 403 Response when enforce mode
+ * Gate for a JSON endpoint: returns the 403/503 Response when enforce mode
  * blocks the request, null when it may proceed (off, monitor, or verified).
  */
 export async function turnstileGuardJson(
@@ -269,5 +299,5 @@ export async function turnstileGuardJson(
   const decision = await evaluateTurnstile(
     request, env, () => extractTurnstileTokenFromJsonRequest(request), opts,
   );
-  return decision.blocked ? turnstileBlockedResponse(request) : null;
+  return decision.blocked ? turnstileBlockedResponse(request, decision) : null;
 }
