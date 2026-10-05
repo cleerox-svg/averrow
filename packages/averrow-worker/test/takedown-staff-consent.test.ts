@@ -62,6 +62,7 @@ interface Row {
   provider_name: string | null; provider_abuse_contact: string | null;
   provider_method: string | null; severity: string;
   requested_at: string | null; requested_by: string | null;
+  staff_severity_set_at: string | null;
 }
 
 interface Fixture {
@@ -106,7 +107,8 @@ function makeEnv(fx: Fixture) {
             if (sql.includes("SELECT COUNT(*)")) return ({ n: 0 } as unknown) as T;
             if (sql.includes("FROM org_brands")) return ({ 1: 1 } as unknown) as T;
             if (sql.includes("FROM users")) {
-              const role = users[binds[0] as string];
+              // isCustomerApproved binds (org_id, requested_by).
+              const role = users[binds[1] as string];
               return (role ? { role } : null) as T | null;
             }
             if (sql.includes("FROM takedown_authorizations")) {
@@ -173,7 +175,8 @@ function row(overrides: Partial<Row> = {}): Row {
     module_key: "domain", target_type: "domain", target_value: "evil.example",
     target_url: null, evidence_summary: "phish", evidence_detail: null,
     provider_name: "GoDaddy", provider_abuse_contact: null, provider_method: "email",
-    severity: "LOW", requested_at: null, requested_by: null, ...overrides,
+    severity: "LOW", requested_at: null, requested_by: null,
+    staff_severity_set_at: null, ...overrides,
   };
 }
 
@@ -341,15 +344,11 @@ describe.each(PATHS)("G21 consent matrix — %s", (path) => {
 });
 
 describe("G21 — mark-submitted path specifics", () => {
-  it("withdrawn → submitted is refused even under Auto (the customer withdrew it)", async () => {
-    const { env, runs, audits } = makeEnv({ row: row({ status: "withdrawn" }), mode: "auto" });
+  it("withdrawn → submitted is refused even under Auto — withdrawn is terminal for staff (400, nothing written)", async () => {
+    const { env, runs } = makeEnv({ row: row({ status: "withdrawn" }), mode: "auto" });
     const res = await handleAdminUpdateTakedown(patchReq(), env, "td1", ANALYST);
-    const body = await res.json() as { error: string };
-    expect(res.status).toBe(409);
-    expect(body.error).toMatch(/withdrew/);
+    expect(res.status).toBe(400);
     expect(runs.some((x) => x.sql.includes("UPDATE takedown_requests"))).toBe(false);
-    const refusal = audits.find((a) => a.binds[2] === "takedown_submit_refused_policy")!;
-    expect(JSON.parse(refusal.binds[5] as string)).toMatchObject({ reason: "withdrawn_by_customer" });
   });
 
   it("no provider directory row → provider_type null → provider-restricted semi-auto rule holds (409)", async () => {
@@ -380,7 +379,10 @@ describe("G21 — mark-submitted path specifics", () => {
 describe("evaluateStaffSendConsent — pure decision", () => {
   const scope = (mode: Mode, rules: SemiAutoRules = DEFAULT_SEMI_AUTO_RULES): AuthorizationScope =>
     normalizeScope({ modules: ["domain"], mode, semi_auto_rules: rules });
-  const base = { status: "draft", customer_approved: false, severity: "LOW", target_type: "domain", provider_type: "registrar" };
+  const base = {
+    status: "draft", customer_approved: false, severity: "LOW", severity_set_by_staff: false,
+    target_type: "domain", provider_type: "registrar",
+  };
 
   it("customer approval wins in every mode, including off", () => {
     for (const m of ["off", "semi_auto", "auto"] as Mode[]) {
@@ -404,6 +406,13 @@ describe("evaluateStaffSendConsent — pure decision", () => {
   it("off without approval → manual_mode_requires_approval", () => {
     expect(evaluateStaffSendConsent(scope("off"), base))
       .toEqual({ allowed: false, reason: "manual_mode_requires_approval", decision: "off" });
+  });
+
+  it("a staff-set severity is treated as unknown: never semi-auto-eligible, auto unaffected", () => {
+    expect(evaluateStaffSendConsent(scope("semi_auto"), { ...base, severity_set_by_staff: true }))
+      .toEqual({ allowed: false, reason: "awaiting_customer_approval", decision: "approval" });
+    expect(evaluateStaffSendConsent(scope("auto"), { ...base, severity_set_by_staff: true }))
+      .toEqual({ allowed: true, basis: "policy_auto" });
   });
 
   it("auto allows unapproved rows via policy", () => {

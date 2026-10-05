@@ -1,0 +1,28 @@
+-- Migration 0284: mark takedowns whose severity was changed by Averrow staff
+-- (G21 follow-up, appsec M2, 2026-10-05).
+--
+-- Under a customer's Semi-Auto automation policy, severity is the required
+-- axis that decides whether a takedown is filed automatically or held for the
+-- customer's approval (lib/takedown-policy.ts). The ops PATCH
+-- /api/admin/takedowns/:id lets staff change severity, so a staff edit
+-- (e.g. CRITICAL → LOW) could by itself make a held takedown eligible for
+-- automatic filing — by Sparrow Phase G or a staff send — without the
+-- customer approving it.
+--
+--   staff_severity_set_at  set (datetime('now')) by the ops PATCH whenever it
+--                          CHANGES severity; never cleared. While set, the
+--                          policy treats the severity as unknown, so the row
+--                          never qualifies for Semi-Auto filing — the customer
+--                          must approve it (Auto mode does not use severity
+--                          and is unaffected; Manual files nothing anyway).
+--
+-- The `staff_` prefix keeps it out of tenant reads: the tenant detail strips
+-- every `staff_*` key (toTenantTakedownView) and the tenant list selects an
+-- explicit column list.
+--
+-- Additive only (ADD COLUMN), NULL for every existing row — no backfill.
+-- DEPLOY ORDER: apply BEFORE the Worker — Sparrow Phase G, the ops PATCH and
+-- the staff hand-submit SELECT this column and fail against the pre-0284
+-- schema.
+
+ALTER TABLE takedown_requests ADD COLUMN staff_severity_set_at TEXT;

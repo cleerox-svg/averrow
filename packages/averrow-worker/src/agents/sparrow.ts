@@ -1099,6 +1099,7 @@ interface PhaseGRow {
   status:                 string;
   requested_at:           string | null;
   requested_by:           string | null;
+  staff_severity_set_at:  string | null;
 }
 
 /** Exported for tests (test/sparrow-phase-g-approval.test.ts). */
@@ -1112,7 +1113,8 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
             tr.target_type, tr.target_value, tr.target_url,
             tr.evidence_summary, tr.evidence_detail,
             tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
-            tr.severity, tr.status, tr.requested_at, tr.requested_by
+            tr.severity, tr.status, tr.requested_at, tr.requested_by,
+            tr.staff_severity_set_at
      FROM takedown_requests tr
      WHERE tr.status IN ('draft', 'requested')
        AND tr.org_id IS NOT NULL
@@ -1146,6 +1148,9 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
   const capNotifiedOrgs = new Set<number>();
 
   for (const row of candidates.results ?? []) {
+    // Set while this row is claimed ('submitted') but the dispatch outcome is
+    // not yet known — see the catch below.
+    let claimedId: string | null = null;
     try {
       const orgId   = row.org_id;
       const modKey  = row.module_key as ModuleKey | null;
@@ -1211,13 +1216,15 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
       // off       → never auto-submits (fully manual).
       // auto      → always auto-submits.
       // semi_auto → auto-submits only when the takedown's characteristics
-      //             match the signed rules; otherwise it's held in 'draft'
-      //             until a human approves it (status → 'requested').
-      // A CUSTOMER-approved 'requested' row submits in any non-off posture.
+      //             match the signed rules; otherwise it's held until the
+      //             CUSTOMER approves it in the tenant app (tenant PATCH
+      //             draft → 'requested', stamping requested_at/requested_by).
+      // A customer-approved 'requested' row submits in any non-off posture.
       // G21: approval is provenance-checked (isCustomerApproved — the one
-      // definition shared with the staff send paths). A 'requested' row
-      // that staff set via the ops PATCH is NOT an approval and is judged on
-      // its characteristics like a draft.
+      // definition shared with the staff send paths); a 'requested' row
+      // without a valid customer stamp is judged on its characteristics like
+      // a draft. A staff-edited severity (staff_severity_set_at, migration
+      // 0284) counts as unknown, so it never qualifies for semi_auto.
       let auth = authByOrg.get(orgId);
       if (auth === undefined) {
         auth = await getActiveAuthorization(env, orgId);
@@ -1226,10 +1233,11 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
       if (!auth) { skipped++; continue; }
 
       const decision = evaluateTakedownPolicy(auth.scope, {
-        severity:       row.severity,
-        target_type:    row.target_type,
-        provider_type:  providerRow.provider_type,
-        human_approved: await isCustomerApproved(env, row),
+        severity:              row.severity,
+        severity_set_by_staff: row.staff_severity_set_at !== null,
+        target_type:           row.target_type,
+        provider_type:         providerRow.provider_type,
+        human_approved:        await isCustomerApproved(env, row),
       });
 
       if (decision !== "auto") {
@@ -1255,6 +1263,20 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
         continue;
       }
 
+      // ── Atomic claim BEFORE dispatch (appsec M1; mirrors the staff
+      // hand-submit). The policy was judged on the status read above; pin the
+      // claim to exactly that status so a customer withdrawal (or any other
+      // status change) between the read and now means changes=0 → no send.
+      const claim = await env.DB.prepare(
+        `UPDATE takedown_requests
+         SET status = 'submitted',
+             submitted_at = datetime('now'),
+             updated_at   = datetime('now')
+         WHERE id = ? AND status = ?`,
+      ).bind(row.id, row.status).run();
+      if (!claim.meta || claim.meta.changes !== 1) { skipped++; continue; }
+      claimedId = row.id;
+
       const { result } = await dispatchSubmission(
         env,
         {
@@ -1276,17 +1298,21 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
       );
 
       if (result.outcome === "failed" || result.outcome === "rejected") {
+        // The provider did not accept the report: release the claim back to
+        // the status we took it from so the next tick can retry (Sparrow's
+        // long-standing retry semantics; the takedown_submissions row records
+        // the attempt). Pinned to 'submitted' so it never clobbers a change
+        // made after our claim.
+        await env.DB.prepare(
+          `UPDATE takedown_requests
+           SET status = ?, submitted_at = NULL, updated_at = datetime('now')
+           WHERE id = ? AND status = 'submitted'`,
+        ).bind(row.status, row.id).run();
+        claimedId = null;
         skipped++;
         continue;
       }
-
-      await env.DB.prepare(
-        `UPDATE takedown_requests
-         SET status = 'submitted',
-             submitted_at = datetime('now'),
-             updated_at   = datetime('now')
-         WHERE id = ? AND status IN ('draft', 'requested')`,
-      ).bind(row.id).run();
+      claimedId = null;
       submitted++;
 
       // Notify the org's data-out destinations (webhook + SIEM + ticketing)
@@ -1314,8 +1340,20 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
         capStatus.under = capStatus.used < capStatus.cap;
       }
     } catch (err) {
-      console.error(`[Sparrow] Phase G dispatch failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Sparrow] Phase G dispatch failed for ${row.id}: ${message}`);
       skipped++;
+      // Dispatch threw after the claim: we can't tell whether the report went
+      // out, so — like the staff hand-submit — record it as 'failed'
+      // (at-most-once) rather than release it for an automatic re-send.
+      if (claimedId !== null) {
+        await env.DB.prepare(
+          `UPDATE takedown_requests
+           SET status = 'failed', resolved_at = datetime('now'),
+               response_notes = ?, updated_at = datetime('now')
+           WHERE id = ? AND status = 'submitted'`,
+        ).bind(`Auto-submit dispatch error: ${message}`.slice(0, 1000), claimedId).run().catch(() => {});
+      }
     }
   }
 
@@ -1361,7 +1399,8 @@ interface PhaseHRow {
   prior_ticket_id:        string | null;
 }
 
-async function runPhaseHAutoFollowup(env: Env): Promise<{ followups: number; skipped: number }> {
+/** Exported for tests (test/takedown-consent-integration.test.ts). */
+export async function runPhaseHAutoFollowup(env: Env): Promise<{ followups: number; skipped: number }> {
   // Find breached takedowns by joining each row to the org's active
   // authorization, extracting the SLA hours from scope_json, and
   // excluding rows that already have a follow-up since the last

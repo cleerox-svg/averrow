@@ -184,7 +184,8 @@ describe.skipIf(!hasSqlite())("takedown notes split — real routers", () => {
     });
 
     it("a status-only ops PATCH does not flag staff_notes_changed", async () => {
-      expect((await call("analyst", "PATCH", "/api/admin/takedowns/td7", { status: "requested" })).status).toBe(200);
+      // draft → withdrawn: staff can no longer move a row INTO 'requested' (G21).
+      expect((await call("analyst", "PATCH", "/api/admin/takedowns/td7", { status: "withdrawn" })).status).toBe(200);
       const u = auditRows.find((r) => r.action === "admin_takedown_update");
       expect(u?.details).not.toHaveProperty("staff_notes_changed");
     });

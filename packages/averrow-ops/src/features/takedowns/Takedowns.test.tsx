@@ -152,11 +152,43 @@ describe('Takedowns Page', () => {
     expect(screen.queryByText('Status updated')).not.toBeInTheDocument();
   });
 
-  it('the draft card CTA reads "Mark Ready" and says it is not customer approval', () => {
+  // G21 / code review — staff can't move a row INTO the customer-approval
+  // state, so there is no draft → requested CTA anywhere.
+  it('a draft offers no "Mark Ready" / draft → requested action', async () => {
+    const mutate = vi.fn();
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
     renderWithProviders(<Takedowns />);
-    const cta = screen.getByRole('button', { name: 'Mark Ready →' });
-    expect(cta).toHaveAttribute('title', expect.stringMatching(/does not record customer approval/));
+    expect(screen.queryByRole('button', { name: /Mark Ready/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Submit →' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    // The draft detail panel offers only Mark Submitted (policy-gated) + Dismiss.
+    expect(screen.getByRole('button', { name: 'Mark Submitted' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ready|request/i })).not.toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('a requested row with no customer stamp offers "Return to draft"', async () => {
+    const mutate = vi.fn();
+    (useUpdateTakedown as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
+    (useAdminTakedowns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { ...mockData, takedowns: [createMockTakedown({ status: 'requested', requested_at: null })] },
+      isLoading: false,
+    });
+    renderWithProviders(<Takedowns />);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    await userEvent.click(screen.getByRole('button', { name: 'Return to draft' }));
+    expect(mutate).toHaveBeenCalledWith({ id: 'td-001', status: 'draft' }, expect.any(Object));
+  });
+
+  it('a customer-approved requested row does not offer "Return to draft"', async () => {
+    (useAdminTakedowns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { ...mockData, takedowns: [createMockTakedown({ status: 'requested', requested_at: '2026-10-04T12:00:00Z' })] },
+      isLoading: false,
+    });
+    renderWithProviders(<Takedowns />);
+    await userEvent.click(screen.getAllByText('View Detail')[0]);
+    expect(screen.queryByRole('button', { name: 'Return to draft' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark Submitted' })).toBeInTheDocument();
   });
 
   // Migration 0276 — customer `notes` read-only, internal `staff_notes` editable.

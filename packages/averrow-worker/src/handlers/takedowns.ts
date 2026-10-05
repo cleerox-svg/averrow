@@ -11,7 +11,7 @@ import {
 } from "../lib/handler-utils";
 import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonthlyTakedownCap } from "../lib/takedown-authorizations";
 import type { AuthorizationScope } from "../lib/takedown-authorizations";
-import { evaluateStaffSendConsent, type StaffSendRefusal } from "../lib/takedown-policy";
+import { evaluateStaffSendConsent, POLICY_SEVERITIES, type StaffSendRefusal } from "../lib/takedown-policy";
 import type { Env, CreateTakedownBody, UpdateTakedownBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import { isCustomerApproved } from "../lib/takedown-customer-approval";
@@ -67,11 +67,30 @@ const TENANT_ALLOWED_TRANSITIONS: Record<string, string[]> = {
   draft: ["requested", "withdrawn"],
   requested: ["withdrawn"],
 };
+/**
+ * Staff (ops PATCH) state machine. EVERY status has an entry and a status
+ * without one is refused (default-deny) — G21 / appsec H1-H2, 2026-10-05.
+ * Rules that keep "send only with the customer's consent" airtight:
+ *   - staff never move a row INTO 'requested' (the customer-approval state;
+ *     only the tenant PATCH does, stamping requested_at/requested_by);
+ *   - requested → draft only when the row carries NO customer approval
+ *     (recovers rows staff parked in 'requested' before this rule) —
+ *     enforced in the handler;
+ *   - 'withdrawn' is terminal: the customer withdrew it;
+ *   - failed / expired may be re-opened to 'draft' only, which clears the
+ *     approval stamp (requested_at) — a re-send then needs fresh customer
+ *     approval or the policy; never failed/expired → submitted;
+ *   - 'taken_down' is terminal (a resurrected domain gets a new takedown).
+ */
 const ADMIN_ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  draft: ["requested", "submitted", "withdrawn"],
+  draft: ["submitted", "withdrawn"],
   requested: ["submitted", "withdrawn", "draft"],
-  submitted: ["pending_response", "taken_down", "failed", "requested"],
+  submitted: ["pending_response", "taken_down", "failed"],
   pending_response: ["taken_down", "failed", "expired"],
+  failed: ["draft"],
+  expired: ["draft"],
+  taken_down: [],
+  withdrawn: [],
 };
 
 // ─── POST /api/orgs/:orgId/takedowns ─────────────────────────
@@ -322,6 +341,10 @@ export async function handleUpdateTakedown(
       if (body.status === "withdrawn") {
         updates.push("resolved_at = datetime('now')");
         updates.push("resolution = 'withdrawn'");
+        // Withdrawal revokes the customer's approval (G21 / appsec H1): no
+        // stale stamp may survive to be honoured later.
+        updates.push("requested_at = NULL");
+        updates.push("requested_by = NULL");
       }
     }
 
@@ -541,6 +564,9 @@ interface StaffSendRow {
   org_id:       number;
   module_key:   ModuleKey;
   severity:     string | null;
+  /** takedown_requests.staff_severity_set_at (migration 0284) — or true when
+   *  the same PATCH is changing severity. */
+  severity_set_by_staff: boolean;
   target_type:  string | null;
   requested_at: string | null;
   requested_by: string | null;
@@ -588,10 +614,11 @@ async function refuseUnconsentedStaffSend(
 ): Promise<Response | null> {
   const consent = evaluateStaffSendConsent(scope, {
     status:            row.status,
-    customer_approved: await isCustomerApproved(env, row),
-    severity:          row.severity,
-    target_type:       row.target_type,
-    provider_type:     providerType,
+    customer_approved:     await isCustomerApproved(env, row),
+    severity:              row.severity,
+    severity_set_by_staff: row.severity_set_by_staff,
+    target_type:           row.target_type,
+    provider_type:         providerType,
   });
   if (consent.allowed) return null;
   await audit(env, {
@@ -602,7 +629,8 @@ async function refuseUnconsentedStaffSend(
     details: {
       path, org_id: row.org_id, module_key: row.module_key, status: row.status,
       mode: scope.mode, reason: consent.reason, policy_decision: consent.decision,
-      severity: row.severity, target_type: row.target_type, provider_type: providerType,
+      severity: row.severity, severity_set_by_staff: row.severity_set_by_staff,
+      target_type: row.target_type, provider_type: providerType,
     },
     outcome: "denied",
     request,
@@ -628,16 +656,32 @@ export async function handleAdminUpdateTakedown(
 
     const takedown = await env.DB.prepare(
       `SELECT id, status, org_id, brand_id, module_key,
-              severity, target_type, provider_name, requested_at, requested_by
+              severity, target_type, target_value, provider_name,
+              requested_at, requested_by, staff_severity_set_at
        FROM takedown_requests WHERE id = ?`
     ).bind(takedownId).first<{
       id: string; status: string;
       org_id: number | null; brand_id: string | null; module_key: string | null;
-      severity: string | null; target_type: string | null; provider_name: string | null;
+      severity: string | null; target_type: string | null; target_value: string | null;
+      provider_name: string | null;
       requested_at: string | null; requested_by: string | null;
+      staff_severity_set_at: string | null;
     }>();
 
     if (!takedown) return error("Takedown request not found", 404, origin);
+
+    // M2 — validate severity up front; a CHANGE is recorded as staff-set
+    // (staff_severity_set_at, migration 0284) so it can never by itself make
+    // a held takedown eligible for Semi-Auto filing.
+    let newSeverity: string | null = null;
+    if (body.severity !== undefined) {
+      const sev = typeof body.severity === "string" ? body.severity.toUpperCase() : "";
+      if (!(POLICY_SEVERITIES as readonly string[]).includes(sev)) {
+        return error(`Invalid severity. Must be one of: ${POLICY_SEVERITIES.join(", ")}`, 400, origin);
+      }
+      newSeverity = sev;
+    }
+    const severityChanging = newSeverity !== null && newSeverity !== (takedown.severity ?? "").toUpperCase();
 
     const updates: string[] = [];
     const values: unknown[] = [];
@@ -647,9 +691,25 @@ export async function handleAdminUpdateTakedown(
         return error(`Invalid status: ${body.status}`, 400, origin);
       }
 
+      // Default-deny: a status with no entry has no staff exits.
       const allowed = ADMIN_ALLOWED_TRANSITIONS[takedown.status];
-      if (allowed && !allowed.includes(body.status)) {
+      if (!allowed || !allowed.includes(body.status)) {
         return error(`Cannot transition from '${takedown.status}' to '${body.status}'`, 400, origin);
+      }
+
+      // requested → draft only recovers a row that carries no customer
+      // approval (e.g. parked in 'requested' by the retired ops "Mark Ready"
+      // step). Staff never undo a customer's approval; the customer can
+      // withdraw it themselves.
+      if (takedown.status === "requested" && body.status === "draft"
+          && takedown.org_id !== null && await isCustomerApproved(env, {
+            status: takedown.status, org_id: takedown.org_id,
+            requested_at: takedown.requested_at, requested_by: takedown.requested_by,
+          })) {
+        return error(
+          "The customer approved this takedown — staff can't return it to draft. Submit it, or ask the customer to withdraw it.",
+          409, origin,
+        );
       }
 
       // TK1 (Phase 1 PR-B) — legal-standing gate on the →submitted edge.
@@ -705,16 +765,20 @@ export async function handleAdminUpdateTakedown(
         const sendRow: StaffSendRow = {
           id: takedown.id, status: takedown.status, org_id: takedown.org_id,
           module_key: takedown.module_key as ModuleKey,
-          severity: takedown.severity, target_type: takedown.target_type,
+          severity: takedown.severity,
+          severity_set_by_staff: takedown.staff_severity_set_at !== null || severityChanging,
+          target_type: takedown.target_type,
           requested_at: takedown.requested_at, requested_by: takedown.requested_by,
         };
         const entitlementErr = await refuseUnentitledStaffSend(env, request, ctx, sendRow, "mark_submitted", origin);
         if (entitlementErr) return entitlementErr;
-        const providerType = takedown.provider_name
-          ? (await env.DB.prepare(
-              "SELECT provider_type FROM takedown_providers WHERE provider_name = ? LIMIT 1",
-            ).bind(takedown.provider_name).first<{ provider_type: string }>())?.provider_type ?? null
-          : null;
+        // Same provider resolution as the hand-submit (directory row by
+        // provider_name, else resolveProvider on the target) so both staff
+        // send paths judge the semi-auto provider axis identically. Unlike
+        // hand-submit, no provider is not a 422 here (nothing is dispatched):
+        // provider_type is null, which fails a provider-restricted rule closed.
+        const resolvedProvider = await resolveSubmitProvider(env, takedown.provider_name, takedown.target_value);
+        const providerType = resolvedProvider?.provider.provider_type ?? null;
         const consentErr = await refuseUnconsentedStaffSend(
           env, request, ctx, sendRow, authScope, providerType, "mark_submitted", origin,
         );
@@ -744,6 +808,16 @@ export async function handleAdminUpdateTakedown(
       if (body.status === "pending_response") {
         updates.push("response_received_at = datetime('now')");
       }
+      if (body.status === "draft") {
+        // Re-open (failed/expired → draft) or un-park (requested → draft):
+        // no approval stamp survives — a re-send needs fresh customer
+        // approval or the policy (G21 / appsec H2).
+        updates.push("requested_at = NULL");
+        if (takedown.status !== "requested") {
+          updates.push("resolved_at = NULL");
+          updates.push("resolution = NULL");
+        }
+      }
     }
 
     if (typeof body.response_notes === "string") { updates.push("response_notes = ?"); values.push(body.response_notes); }
@@ -761,11 +835,12 @@ export async function handleAdminUpdateTakedown(
       values.push(parsed.value);
     }
 
-    if (typeof body.severity === "string") {
+    if (newSeverity !== null) {
       updates.push("severity = ?");
-      values.push(body.severity);
+      values.push(newSeverity);
       updates.push("priority_score = ?");
-      values.push(computePriorityScore(body.severity));
+      values.push(computePriorityScore(newSeverity));
+      if (severityChanging) updates.push("staff_severity_set_at = datetime('now')");
     }
 
     if (updates.length === 0) return error("No valid fields to update", 400, origin);
@@ -773,10 +848,10 @@ export async function handleAdminUpdateTakedown(
     updates.push("updated_at = datetime('now')");
     values.push(takedownId);
 
-    // The →submitted flip is pinned to the status the consent gate judged:
-    // if the customer withdrew (or staff re-drafted) the row in between, the
-    // UPDATE matches nothing and we refuse instead of stamping 'submitted'.
-    const pinStatus = body.status === "submitted";
+    // Every status change is pinned to the status the gates judged: if the
+    // customer withdrew / approved (or another staff edit landed) in between,
+    // the UPDATE matches nothing and we refuse instead of overwriting it.
+    const pinStatus = typeof body.status === "string";
     if (pinStatus) values.push(takedown.status);
 
     const updateResult = await env.DB.prepare(
@@ -785,7 +860,7 @@ export async function handleAdminUpdateTakedown(
 
     if (pinStatus && updateResult.meta?.changes !== 1) {
       return error(
-        "Takedown changed while it was being marked 'submitted' — reload and try again.",
+        "Takedown changed while it was being updated — reload and try again.",
         409, origin,
       );
     }
@@ -799,6 +874,9 @@ export async function handleAdminUpdateTakedown(
       details: {
         previous_status: takedown.status,
         new_status: body.status ?? takedown.status,
+        ...(newSeverity !== null
+          ? { previous_severity: takedown.severity, new_severity: newSeverity, severity_changed: severityChanging }
+          : {}),
         ...(staffNotesChanged ? { staff_notes_changed: true } : {}),
       },
       outcome: "success",
@@ -904,6 +982,7 @@ interface SubmitTakedownRow {
   severity:               string;
   requested_at:           string | null;
   requested_by:           string | null;
+  staff_severity_set_at:  string | null;
 }
 
 // Only draft/requested takedowns can be hand-submitted. Every other state
@@ -925,6 +1004,30 @@ async function loadSubmitProviderRecord(
   ).bind(providerName).first<ProviderRecord>();
 }
 
+/**
+ * Resolve the abuse provider for a staff send — shared by the hand-submit and
+ * the ops PATCH →submitted so both judge the semi-auto provider axis on the
+ * same provider. Prefer the takedown's provider_name; fall back to
+ * resolveProvider() on the target when it's unset or not in the directory.
+ * Deliberately NOT gated on auto_submit_enabled (the automation switch staff
+ * replace).
+ */
+async function resolveSubmitProvider(
+  env: Env, providerName: string | null, targetValue: string | null,
+): Promise<{ provider: ProviderRecord; providerName: string } | null> {
+  let name = providerName;
+  let provider = name ? await loadSubmitProviderRecord(env, name) : null;
+  if (!provider && targetValue) {
+    const { resolveProvider } = await import("../lib/provider-resolver");
+    const resolved = await resolveProvider(env, targetValue);
+    if (resolved.abuse_contact) {
+      name = resolved.abuse_contact.provider_name;
+      provider = await loadSubmitProviderRecord(env, name);
+    }
+  }
+  return provider && name ? { provider, providerName: name } : null;
+}
+
 export async function handleAdminSubmitTakedown(
   request: Request, env: Env, takedownId: string, ctx: AuthContext,
 ): Promise<Response> {
@@ -937,7 +1040,7 @@ export async function handleAdminSubmitTakedown(
               target_type, target_value, target_url,
               evidence_summary, evidence_detail,
               provider_name, provider_abuse_contact, provider_method, severity,
-              requested_at, requested_by
+              requested_at, requested_by, staff_severity_set_at
        FROM takedown_requests WHERE id = ?`,
     ).bind(takedownId).first<SubmitTakedownRow>();
 
@@ -1011,7 +1114,8 @@ export async function handleAdminSubmitTakedown(
     // ── STANDING GATE 4b: entitlement to the module (M1, Phase G parity). ──
     const sendRow: StaffSendRow = {
       id: td.id, status: td.status, org_id: orgId, module_key: moduleKey,
-      severity: td.severity, target_type: td.target_type,
+      severity: td.severity, severity_set_by_staff: td.staff_severity_set_at !== null,
+      target_type: td.target_type,
       requested_at: td.requested_at, requested_by: td.requested_by,
     };
     const entitlementErr = await refuseUnentitledStaffSend(env, request, ctx, sendRow, "hand_submit", origin);
@@ -1039,22 +1143,14 @@ export async function handleAdminSubmitTakedown(
     // replaces. Prefer the takedown's resolved provider_name; fall back to
     // resolveProvider() when it's unset or not in the directory. ──
     const { dispatchSubmission } = await import("../lib/takedown-submitters");
-    let providerName = td.provider_name;
-    let provider = providerName ? await loadSubmitProviderRecord(env, providerName) : null;
-    if (!provider) {
-      const { resolveProvider } = await import("../lib/provider-resolver");
-      const resolved = await resolveProvider(env, td.target_value);
-      if (resolved.abuse_contact) {
-        providerName = resolved.abuse_contact.provider_name;
-        provider = await loadSubmitProviderRecord(env, providerName);
-      }
-    }
-    if (!provider || !providerName) {
+    const resolvedProvider = await resolveSubmitProvider(env, td.provider_name, td.target_value);
+    if (!resolvedProvider) {
       return error(
         "No abuse provider could be resolved for this takedown's target — cannot dispatch.",
         422, origin,
       );
     }
+    const { provider, providerName } = resolvedProvider;
 
     // ── CONSENT GATE 6 (G21): the customer authorized THIS takedown under
     // their automation policy — approved it, or the policy would auto-file

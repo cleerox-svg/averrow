@@ -20,6 +20,9 @@ export interface Takedown {
   severity: string;
   priority_score: number;
   requested_by: string | null;
+  /** Set only when the CUSTOMER approved the takedown in the tenant app
+   *  (status → 'requested'); cleared on withdraw / re-open (G21). */
+  requested_at?: string | null;
   source_type: string | null;
   /** The customer's own note (written only from the tenant app). Read-only
    *  on the ops surface. */
@@ -206,6 +209,12 @@ export function useUpdateTakedown() {
       return res;
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-takedowns'] });
+    },
+    // A refusal (e.g. 409 "Waiting for the customer's approval…", or a row
+    // the customer withdrew meanwhile) usually means our copy is stale —
+    // refetch so the queue shows the row's real state.
+    onError: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-takedowns'] });
     },
   });

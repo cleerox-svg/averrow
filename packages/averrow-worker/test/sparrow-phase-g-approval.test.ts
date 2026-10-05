@@ -37,6 +37,7 @@ interface Candidate {
   provider_name: string; provider_abuse_contact: string | null; provider_method: string | null;
   severity: string; status: string;
   requested_at: string | null; requested_by: string | null;
+  staff_severity_set_at: string | null;
 }
 
 class MockKV {
@@ -88,7 +89,8 @@ function makeEnv(candidates: Candidate[], mode: Mode) {
               } as unknown as T;
             }
             if (sql.includes("FROM users")) {
-              const role = USERS[binds[0] as string];
+              // isCustomerApproved binds (org_id, requested_by).
+              const role = USERS[binds[1] as string];
               return (role ? { role } : null) as T | null;
             }
             return null;
@@ -114,6 +116,7 @@ function cand(id: string, overrides: Partial<Candidate>): Candidate {
     evidence_summary: "phish", evidence_detail: null,
     provider_name: "GoDaddy", provider_abuse_contact: null, provider_method: "email",
     severity: "CRITICAL", status: "draft", requested_at: null, requested_by: null,
+    staff_severity_set_at: null,
     ...overrides,
   };
 }

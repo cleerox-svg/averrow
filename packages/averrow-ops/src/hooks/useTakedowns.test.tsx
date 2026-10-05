@@ -60,6 +60,20 @@ describe('useUpdateTakedown — refusal envelopes reject', () => {
     });
   });
 
+  it('refetches the admin takedown list after a refusal (stale row)', async () => {
+    mocks.patch.mockResolvedValue({ success: false, error: 'Takedown changed while it was being updated — reload and try again.' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useUpdateTakedown(), { wrapper });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ id: 'td1', status: 'submitted' })).rejects.toThrow();
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['admin-takedowns'] });
+  });
+
   it('resolves on success', async () => {
     mocks.patch.mockResolvedValue({ success: true });
     const { result } = renderHook(() => useUpdateTakedown(), { wrapper: createWrapper() });

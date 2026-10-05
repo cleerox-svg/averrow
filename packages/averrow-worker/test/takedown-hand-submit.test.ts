@@ -56,6 +56,7 @@ interface TakedownRow {
   provider_name: string | null; provider_abuse_contact: string | null;
   provider_method: string | null; severity: string;
   requested_at: string | null; requested_by: string | null;
+  staff_severity_set_at: string | null;
 }
 
 interface Fixture {
@@ -103,8 +104,9 @@ function makeDb(fx: Fixture) {
             return ({ n: fx.capUsed ?? 0 } as unknown) as T;
           }
           if (sql.includes("FROM users")) {
-            // requested_by provenance (G21): u-cust is a customer member.
-            return (binds[0] === "u-cust" ? { role: "client" } : null) as T | null;
+            // requested_by provenance (G21): u-cust is an active customer
+            // member of the row's org. Binds: (org_id, requested_by).
+            return (binds[1] === "u-cust" ? { role: "client" } : null) as T | null;
           }
           if (sql.includes("FROM org_brands")) {
             return (fx.ownsBrand ? ({ 1: 1 } as unknown) : null) as T | null;
@@ -181,6 +183,7 @@ function baseRow(overrides: Partial<TakedownRow> = {}): TakedownRow {
     // Customer-approved (G21): only the tenant PATCH stamps requested_at,
     // with requested_by = the approving (non-staff) member.
     requested_at: "2026-10-04T12:00:00Z", requested_by: "u-cust",
+    staff_severity_set_at: null,
     ...overrides,
   };
 }

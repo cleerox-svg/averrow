@@ -97,13 +97,21 @@ export interface TakedownCharacteristics {
    * posture regardless of the semi-auto criteria.
    */
   human_approved?: boolean;
+  /**
+   * True when Averrow staff changed this takedown's severity after it was
+   * created (takedown_requests.staff_severity_set_at, migration 0284). The
+   * severity is then treated as unknown: a staff edit alone must never make
+   * a held takedown eligible for Semi-Auto filing (appsec M2).
+   */
+  severity_set_by_staff?: boolean;
 }
 
 function matchesSemiAutoRules(
   rules: SemiAutoRules,
   c: TakedownCharacteristics,
 ): boolean {
-  const sev = (c.severity ?? "").toUpperCase();
+  // A staff-edited severity counts as unknown (see severity_set_by_staff).
+  const sev = c.severity_set_by_staff ? "" : (c.severity ?? "").toUpperCase();
   // Severity is the required axis. An unknown/empty severity never auto-submits.
   if (!rules.auto_severities.map((s) => s.toUpperCase()).includes(sev)) {
     return false;
@@ -176,6 +184,8 @@ export interface StaffSendCandidate {
   /** True only when the CUSTOMER approved this takedown (provenance-checked). */
   customer_approved: boolean;
   severity: string | null;
+  /** takedown_requests.staff_severity_set_at IS NOT NULL (migration 0284). */
+  severity_set_by_staff: boolean;
   target_type: string | null;
   /** Resolved provider's provider_type, or null when none is known. */
   provider_type: string | null;
@@ -202,10 +212,11 @@ export function evaluateStaffSendConsent(
   // Not customer-approved: the row is judged on its characteristics alone,
   // exactly as Sparrow judges a 'draft' (human_approved: false).
   const decision = evaluateTakedownPolicy(scope, {
-    severity:       c.severity,
-    target_type:    c.target_type,
-    provider_type:  c.provider_type,
-    human_approved: false,
+    severity:              c.severity,
+    severity_set_by_staff: c.severity_set_by_staff,
+    target_type:           c.target_type,
+    provider_type:         c.provider_type,
+    human_approved:        false,
   });
   if (decision === "auto") return { allowed: true, basis: "policy_auto" };
   return {
