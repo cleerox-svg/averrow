@@ -141,7 +141,7 @@ test("homepage: By the numbers renders chart, table, tiles and check cards", asy
   await expect(sec.getByText("new today")).toBeVisible();
 
   const hrefs = await sec.locator("[data-check]").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
-  expect(hrefs).toEqual(["/pricing", "/changelog", "/status", "/resources/sample-operation-report"]);
+  expect(hrefs).toEqual(["/scan", "/changelog", "/status", "/resources/sample-operation-report"]);
   await expect(sec.locator("[data-check]").nth(1)).toContainText(/\d+ public releases, latest v\d+\.\d+\.\d+/);
   await expect(sec.getByRole("link", { name: /How we count each number/ })).toHaveAttribute("href", "/resources/methodology");
 
