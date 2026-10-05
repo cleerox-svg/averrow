@@ -36,6 +36,7 @@
 | R2 | `geoip-staging`, binding `GEOIP_STAGING` | 3 | Yes: transient |
 | Workers AI | binding `AI` (prod only) | 2 | Fallback: rules-only |
 | MCP server | `averrow-mcp` (`packages/averrow-mcp/wrangler.toml`) | 3 | Yes, but deployed by hand (G13) |
+| Queues (legacy) | `architect-analysis` consumer + DLQ `architect-analysis-dlq` (`wrangler.toml` `[[queues.consumers]]`; nothing enqueues to it, but `wrangler deploy` fails if the queues are missing) | 3 | Yes: recreate empty |
 
 Domains routed to the Worker (`wrangler.toml` routes): `averrow.com`, `averrow.ca`, `trustradar.ca`, `lrxradar.com` and their `www.` hosts, as Cloudflare custom domains.
 
@@ -257,7 +258,7 @@ Applies to: `JWT_SECRET`, `AVERROW_INTERNAL_SECRET`, `RESEND_API_KEY`, `GOOGLE_C
   1. Contain: rotate the secret at the provider, then `npx wrangler secret put <NAME>` (from `packages/averrow-worker`), then redeploy if needed. Revoke the old value at the provider first when possible.
   2. `JWT_SECRET`: rotation invalidates all sessions; expect everyone to re-authenticate. For targeted revocation use `forced_logout:<user_id>` (KV) via the admin force-logout path. Note that KV revocation state is not backed up (G10).
   3. Scope the exposure from provider logs and the platform audit log; list affected customers.
-  4. If customer data or credentials were exposed, follow `docs/DEPLOYMENT.md` section on credential exposure (line 89 onward, webhook secrets) for the pattern: treat every listed credential as compromised, rotate, notify.
+  4. If customer data or credentials were exposed, follow `docs/DEPLOYMENT.md` section on credential exposure (from line 85, webhook secrets) for the pattern: treat every listed credential as compromised, rotate, notify.
   5. Assess breach-notification obligations with counsel.
 - **Steps (loss of `INTEGRATION_CONFIG_KEY`).** The key encrypts stored integration configuration (`lib/integration-secret.ts`). If it is lost **and has no escrow copy (current state: unknown, G4), the encrypted values cannot be decrypted.** Recovery: set a new key, then have each customer org re-enter its integration secrets (webhook secrets, integration credentials). Prevention is escrow per policy section 8.2. Do **not** rotate this key casually: rotating without re-encrypting existing values has the same effect as loss.
 - **Communications.** Customer notice if their data, integrations or webhook secrets were exposed or must be re-entered.
@@ -282,7 +283,7 @@ For use if the Worker or account must be rebuilt. Steps that cannot be completed
 
 1. Restore control-plane access (Cloudflare account, GitHub, registrar).
 2. Restore secrets from escrow (G4).
-3. Recreate D1 databases and R2 buckets with the names in section 1.1 and update IDs in `wrangler.toml` if they changed.
+3. Recreate D1 databases, R2 buckets and the legacy queues `architect-analysis` and `architect-analysis-dlq` (bound as a consumer in `wrangler.toml`; `wrangler deploy` fails without them) with the names in section 1.1 and update IDs in `wrangler.toml` if they changed.
 4. Restore Tier 1b data from the latest independent backup **(future, G1)**, or Time Travel if the databases survive.
 5. Apply migrations (`pnpm run db:migrate:prod`, `db:migrate:audit:prod`; `geoip`/`dnsq` equivalents) and run `pnpm run db:verify:prod`.
 6. Restore `TRADEMARK_ASSETS` **(future, G8)**.
