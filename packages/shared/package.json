@@ -20,7 +20,8 @@
     "./theme.css": "./src/theme/tokens.css",
     "./avatar": "./src/avatar/index.ts",
     "./threats-table": "./src/threats-table/index.ts",
-    "./ui": "./src/ui/index.ts"
+    "./ui": "./src/ui/index.ts",
+    "./account": "./src/account/index.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

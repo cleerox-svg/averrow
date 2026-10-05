@@ -33,6 +33,8 @@ export interface SharedAuthUser {
    */
   passkey_required?: boolean;
   avatar_url?:      string;
+  /** Account creation time (/api/auth/me returns it). Shown as "Member since". */
+  created_at?:      string | null;
   organization?:    SharedAuthUserOrganization | null;
 }
 
