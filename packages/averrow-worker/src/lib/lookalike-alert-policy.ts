@@ -252,16 +252,24 @@ export const PHANTOM_MATCH_ALERT_SEVERITY = 'low';
  *               observed registered before that date.
  *
  * A first-contact baseline ("it resolves, we cannot say since when") is
- * NOT confirmed and stays under the floor — that is the 56K-row seeder
- * backlog the floor exists for.
+ * NOT confirmed and stays under the floor — that is the seeder backlog the
+ * floor exists for.
+ *
+ * NOT ALERTED even when confirmed: a row an analyst marked `benign` or
+ * `taken_down` (same rule as the mail+web catch-up), and an NRD-dated row
+ * while DNS answers NXDOMAIN (a registrar-deleted fraudulent registration,
+ * or one not yet published) — held and retried within the 30-day window.
  *
  * ── THE BOUND ───────────────────────────────────────────────────────
  *
  *   * AT MOST ONE new-registration alert per lookalike row per
  *     registration event: `registration_alerted_at` is claimed with a
  *     guarded `WHERE ... IS NULL` UPDATE before `createAlert` runs, and
- *     is cleared only by an ANSWERED `registered 1 -> 0` lapse — so a
- *     re-registration after a lapse (typically a new registrant) is a new
+ *     is cleared only by an ANSWERED NXDOMAIN lapse (DoH Status 3 on a
+ *     registered row; NODATA is not a lapse), which also clears
+ *     `registration_evidence` — so a lapsed row can never re-read as a
+ *     pending NRD registration, and a re-registration after a lapse
+ *     (typically a new registrant, re-dated to the day we see it) is a new
  *     event, and nothing else is.
  *   * The population is real registrations of permutations of monitored
  *     brands, not the permutation table: a few per day platform-wide, not

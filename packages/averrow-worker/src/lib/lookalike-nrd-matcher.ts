@@ -5,13 +5,14 @@
  *
  * The DNS checker (`scanners/lookalike-domains.ts`) learns about a
  * registration only when it gets to the row. With a first-contact queue
- * of ~35K rows drained at 30/hour, a permutation that was registered while
+ * of ~35K rows (of ~39K lookalike rows) drained at 30/hour, a permutation that was registered while
  * it sat in that queue reads as a first-contact BASELINE ("registered, date
  * unknown") and never produces a "newly registered" signal. Live example:
  * tp-ink.com (a Tp Link typosquat) was registered 2026-10-03, was in our
  * own `nrd_domains` from 2026-10-04, and was never checked.
  *
- * `nrd_domains` (feeds/nrd_hagezi.ts, ~180K rows/day) is a list of
+ * `nrd_domains` (feeds/nrd_hagezi.ts — the WhoisDS free-tier daily
+ * sample, ~70K rows/day) is a list of
  * domains the registries report as NEWLY registered. Joining it to
  * `lookalike_domains` by domain turns "the checker will get to it in ~48
  * days" into "we know it was registered on <date>, check it now":
@@ -34,7 +35,7 @@
  *
  *   WHERE id = ? AND first_seen IS NULL
  *     AND NOT (registered = 1 AND baseline_established_at IS NOT NULL
- *              AND baseline_established_at < <registration date>)
+ *              AND baseline_established_at < <registration date> - 2 days)
  *
  *   * `first_seen IS NULL`: one registration date per row. A row the
  *     checker already saw appear keeps its observed date; a second NRD
@@ -42,14 +43,29 @@
  *   * A row we had ALREADY observed registered before the NRD date
  *     existed before it was "newly registered", so the listing says
  *     nothing new about it (typically a drop-catch the checker will see as
- *     a lapse + re-registration anyway). Skipped.
+ *     a lapse + re-registration anyway). Skipped. The comparison carries
+ *     2 days of slack: the WhoisDS list date is the day the domain was
+ *     PUBLISHED as new, which trails the real registration by up to a day
+ *     or so, and our baseline can legitimately land in between — that row
+ *     is a new registration, not a pre-existing one.
  *   * A row baselined AFTER the date (the checker reached it, saw it
  *     registered, and could not date it) IS claimed: this is exactly the
  *     row the first-contact path could not alert on.
  *
  * Hits whose registration date is older than `NRD_MATCH_MAX_AGE_DAYS` are
- * not claimed: "newly registered" a month later is not news, and the first
- * run walks the whole retained table.
+ * not claimed: "newly registered" a month later is not news. For the same
+ * reason the FIRST run (no cursor) starts at now − NRD_MATCH_MAX_AGE_DAYS
+ * of ingest time rather than at the oldest retained row: nothing older
+ * could be claimed, so reading it is pure D1 spend.
+ *
+ * ── What this matcher does NOT catch ────────────────────────────────
+ *
+ * A RE-registration of a domain that is still inside NRD retention. The
+ * nrd_domains insert is `INSERT OR IGNORE` on `domain`, so a second NRD
+ * listing of the same name (lapse + re-registration within ~90 days)
+ * writes nothing new, and this keyset never sees it. Re-registrations are
+ * caught by the DNS checker's observed path instead (an answered NXDOMAIN
+ * lapse followed by a 0 -> 1 transition), on the re-check cadence.
  *
  * ── Scan discipline ─────────────────────────────────────────────────
  *
@@ -76,20 +92,25 @@
  * W-1, falling back to the table's max key for a partial window), then one
  * join over (lo, hi]. Both bind 4-5 parameters (D1's limit is 100). The
  * nrd side costs ~2 index reads per row, plus one index probe into
- * lookalike_domains: ~3 reads per NRD row, ~540K/day at a full 180K-row
- * feed day. Bounded per run by `NRD_MATCH_MAX_WINDOWS_PER_RUN` x
- * `NRD_MATCH_WINDOW_ROWS` (50K rows, ~6.7x a full day's hourly inflow) and
- * a soft wall-clock cap, so a backlog drains over several hourly runs.
+ * lookalike_domains: ~3 reads per NRD row, ~210K/day at ~70K NRD rows a
+ * day. Bounded per run by `NRD_MATCH_MAX_WINDOWS_PER_RUN` x
+ * `NRD_MATCH_WINDOW_ROWS` (50K rows — the feed lands once a day, so one
+ * run normally absorbs a whole day's file) and a soft wall-clock cap, so a
+ * larger backlog drains over several hourly runs.
  *
  * ── Retention ───────────────────────────────────────────────────────
  *
- * lib/nrd-retention.ts deletes rows with `created_at` below the cursor's
- * `created_at` at the earliest (`LOOKALIKE_NRD_CURSOR_KEY` is read there),
- * so a row this matcher has not scanned is never purged. Every row below
- * the cursor's created_at has a smaller (created_at, rowid) key, i.e. it
- * has been scanned. If retention has already purged rows below a stale or
- * absent cursor, the next window simply starts at the oldest surviving
- * row — the matcher never assumes a purged row exists.
+ * lib/nrd-retention.ts reads `LOOKALIKE_NRD_CURSOR_KEY` and will not delete
+ * rows at or above the cursor's `created_at` — CLAMPED to no earlier than
+ * now − (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS), because
+ * rows older than that can never be claimed anyway. The clamp is what stops
+ * a stuck or disabled matcher from holding retention forever. With the
+ * current 90-day retention the clamped hold sits well inside the window and
+ * therefore never binds; it is a guard for a future shorter retention. Every
+ * row below the cursor's created_at has a smaller (created_at, rowid) key,
+ * i.e. it has been scanned. If retention has purged rows below a stale
+ * cursor, the next window simply starts at the oldest surviving row — the
+ * matcher never assumes a purged row exists.
  *
  * Runs inside the lookalike_scanner agent (hourly `22 * * * *` cron),
  * BEFORE the DNS checker, so a row claimed this tick is checked this tick.
@@ -115,6 +136,13 @@ export const NRD_MATCH_SOFT_CAP_MS = 20_000;
 
 /** A registration older than this is not claimed as "new". */
 export const NRD_MATCH_MAX_AGE_DAYS = 30;
+
+/**
+ * Slack, in days, on top of NRD_MATCH_MAX_AGE_DAYS before nrd-retention
+ * stops honouring this matcher's cursor (ingest lag between the WhoisDS
+ * list date and our created_at, plus a stalled week).
+ */
+export const NRD_RETENTION_HOLD_MARGIN_DAYS = 7;
 
 /** Claim statements per `DB.batch` call. */
 const CLAIM_BATCH = 50;
@@ -226,7 +254,7 @@ export const NRD_LOOKALIKE_CLAIM_SQL =
       AND first_seen IS NULL
       AND NOT (registered = 1
                AND baseline_established_at IS NOT NULL
-               AND baseline_established_at < ?)`;
+               AND baseline_established_at < datetime(?, '-2 days'))`;
 
 /** Mark the NRD row as having matched a monitored brand's permutation. */
 export const NRD_BRAND_MATCHED_SQL =
@@ -262,9 +290,11 @@ export async function runLookalikeNrdMatch(
   const staleBefore = sqliteUtc(start - NRD_MATCH_MAX_AGE_DAYS * 86_400_000);
 
   const cursorBefore = parseNrdCursor(await env.CACHE.get(LOOKALIKE_NRD_CURSOR_KEY));
-  // '' / 0 sorts below every real key: no cursor = start at the oldest
-  // surviving row.
-  let lo: NrdCursor = cursorBefore ?? { created_at: "", rowid: 0 };
+  // No cursor (first run, or an unreadable one) = start at the oldest row
+  // that could still be claimed: ingested within NRD_MATCH_MAX_AGE_DAYS.
+  // rowid 0 sorts below every real rowid, so the whole boundary second is
+  // included.
+  let lo: NrdCursor = cursorBefore ?? { created_at: staleBefore, rowid: 0 };
 
   const result: LookalikeNrdMatchResult = {
     nrd_rows_scanned: 0,

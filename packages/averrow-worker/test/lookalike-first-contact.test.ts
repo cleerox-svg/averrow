@@ -320,7 +320,9 @@ function makeEnv(rows: StoredRow[]): { env: Env; store: Map<string, StoredRow>; 
  * want an unanswered probe pass the flag explicitly.
  */
 function dnsAnswer(over: Record<string, unknown>) {
-  return { aAnswered: true, mxAnswered: true, webAnswered: true, ...over };
+  // An answered "not registered" is modelled as NXDOMAIN (DoH Status 3),
+  // which is what a lapse requires since TI-1.
+  return { aAnswered: true, mxAnswered: true, webAnswered: true, nxdomain: over.registered !== true, ...over };
 }
 
 beforeEach(() => {

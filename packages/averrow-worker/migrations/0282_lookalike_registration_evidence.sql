@@ -7,7 +7,7 @@
 --
 -- `lookalike_domains.first_seen` ("when the domain appeared") was stamped
 -- ONLY by the DNS checker's observed `registered 0 -> 1` transition. With a
--- ~35K-row first-contact queue drained at 30 rows/hour, a permutation that
+-- ~35K-row first-contact queue (of ~39K lookalike rows) drained at 30 rows/hour, a permutation that
 -- was registered while it sat in that queue was classified as a
 -- first-contact BASELINE on its first check (baseline_established_at set,
 -- first_seen NULL) and never produced a "newly registered" signal. Live
@@ -33,7 +33,10 @@
 --       Guarded claim for the new-registration alert. Set (WHERE ... IS
 --       NULL) BEFORE createAlert runs, so a registration event files at
 --       most one new-registration alert. Cleared only on an ANSWERED
---       registered 1 -> 0 lapse, so a later re-registration is a new event.
+--       NXDOMAIN lapse of a registered row (together with
+--       registration_evidence; first_seen is kept until the next
+--       registration re-dates it), so a later re-registration is a new
+--       event.
 --
 -- ── Indexes ─────────────────────────────────────────────────────────
 --
@@ -41,7 +44,7 @@
 --       The NRD join probes lookalike_domains by bare `domain`; the only
 --       existing domain index is the UNIQUE (brand_id, domain), whose
 --       leading column the join cannot constrain. Without this every
---       probe would be a full scan of ~56K rows. Not UNIQUE: the same
+--       probe would be a full scan of the ~39K-row table. Not UNIQUE: the same
 --       permutation can belong to several brands.
 --
 --   idx_lookalike_first_seen  (first_seen) WHERE first_seen IS NOT NULL
@@ -53,8 +56,8 @@
 --       test/lookalike-nrd-matcher.test.ts via EXPLAIN QUERY PLAN).
 --
 -- ── Cost ────────────────────────────────────────────────────────────
--- One-time build of idx_lookalike_domain over ~56K rows (one read pass,
--- ~56K index writes) and of the partial first_seen index (45 entries).
+-- One-time build of idx_lookalike_domain over ~39K rows (one read pass,
+-- ~39K index writes) and of the partial first_seen index (45 entries).
 -- Steady state: one extra index write per seeded permutation; the partial
 -- index only changes on a confirmed registration.
 --

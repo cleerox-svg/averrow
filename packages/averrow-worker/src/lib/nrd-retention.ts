@@ -20,11 +20,18 @@
 // created_at is a second hold: rows at or after it have not necessarily been
 // joined to lookalike_domains yet. Absent (the lookalike matcher has never
 // run) it holds nothing — the phantom cursor stays the hard floor, exactly as
-// before — and the lookalike matcher's first run starts at the oldest
-// surviving row, so it never assumes a purged row still exists.
+// before — and the lookalike matcher's first run starts at now − 30 days
+// of ingest, so it never assumes a purged row still exists.
+//
+// The lookalike hold is CLAMPED to no earlier than now − (30 + 7) days
+// (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS): rows older than
+// that can never be claimed, and a stuck or disabled matcher must not hold
+// retention forever. At 90-day retention the clamped hold therefore never
+// binds; it guards a future shorter retention.
 //
 // Retention rule (owner decision 2026-10-04, + the lookalike hold):
-//   cutoff = min(now − NRD_RETENTION_DAYS, matcher cursor, lookalike cursor)
+//   cutoff = min(now − NRD_RETENTION_DAYS, matcher cursor,
+//                max(lookalike cursor, now − 37 days))
 //   DELETE rows with created_at < cutoff  (strict: the row AT the cursor is
 //                                          re-scanned by the matcher's `>=`)
 // so a row the matcher has not yet scanned is NEVER deleted. No cursor (the
@@ -49,7 +56,12 @@
 
 import type { Env } from '../types';
 import { PHANTOM_MATCHER_NRD_CURSOR_KEY } from './phantom-matcher';
-import { LOOKALIKE_NRD_CURSOR_KEY, parseNrdCursor } from './lookalike-nrd-matcher';
+import {
+  LOOKALIKE_NRD_CURSOR_KEY,
+  NRD_MATCH_MAX_AGE_DAYS,
+  NRD_RETENTION_HOLD_MARGIN_DAYS,
+  parseNrdCursor,
+} from './lookalike-nrd-matcher';
 
 export const NRD_RETENTION_DAYS = 90;
 
@@ -193,8 +205,14 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
     result.skipped = 'cursor_unrecognized';
     return finish();
   }
-  if (lookalikeCursor && lookalikeCursor < cutoff) {
-    cutoff = lookalikeCursor;
+  // CLAMPED: never hold earlier than the oldest row the matcher could still
+  // claim (+ margin). A stuck or disabled matcher must not pin retention
+  // forever, and a row older than this is unclaimable whether or not the
+  // matcher ever reads it.
+  const holdFloor = toSqliteUtc(start - (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS) * 86_400_000);
+  const lookalikeHold = lookalikeCursor && lookalikeCursor < holdFloor ? holdFloor : lookalikeCursor;
+  if (lookalikeHold && lookalikeHold < cutoff) {
+    cutoff = lookalikeHold;
     result.held_by_lookalike_matcher = true;
   }
   result.cutoff = cutoff;

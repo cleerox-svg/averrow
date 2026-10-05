@@ -462,7 +462,18 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 > under the floor. Bound: at most one such alert per lookalike row per
 > registration event — `lookalike_domains.registration_alerted_at` is claimed
 > (`WHERE … IS NULL`) before `createAlert` and cleared only by an answered
-> `1 → 0` lapse. The alert goes through `createAlert` (tier gate, triage hook,
+> NXDOMAIN lapse (DoH `Status: 3` on a registered row — NODATA is not a lapse;
+> `DomainCheckResult.nxdomain`), which also clears `registration_evidence`, so
+> a lapsed row never re-reads as a pending NRD registration and the next
+> registration is re-dated (`first_seen` = the day it is observed) and alerts
+> once as a new event. Not alerted: rows with `status` `benign`/`taken_down`,
+> and an NRD-dated row while DNS answers NXDOMAIN (held, retried while the NRD
+> date is within 30 days). The NRD claim allows 2 days of slack (a baseline up
+> to 2 days before the list date still counts as new), the matcher's first run
+> starts at now − 30 days of ingest, and its retention hold is clamped to no
+> earlier than now − 37 days (so it never binds at 90-day retention). A
+> re-registration within NRD retention is caught only by the DNS path (the
+> NRD table de-duplicates on domain). The alert goes through `createAlert` (tier gate, triage hook,
 > `alert.created` webhook) and carries `details.new_registration = true`,
 > `details.registration_evidence`, `details.registered_at`. A below-floor
 > registration alert is NOT linked into `lookalike_domains.alert_id`, so the

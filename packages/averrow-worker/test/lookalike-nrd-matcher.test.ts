@@ -273,34 +273,35 @@ describe.skipIf(!hasSqlite())("NRD matcher — claims", () => {
 // ─── Retention holds at the lookalike cursor ───────────────────────
 
 describe.skipIf(!hasSqlite())("nrd-retention — the lookalike matcher's hold", () => {
-  it("never purges rows the lookalike matcher has not scanned", async () => {
+  const now = Date.UTC(2026, 9, 5, 0, 7, 0);
+  const old = (d: number) => toSqliteUtc(now - d * 86_400_000);
+
+  it("a STUCK lookalike cursor is clamped and cannot hold retention", async () => {
+    // M2: the hold is clamped to no earlier than now − (30 + 7) days, so a
+    // matcher stuck 100 days ago does not pin the table. At 90-day
+    // retention the age cutoff binds first.
     const raw = openDb();
-    const now = Date.UTC(2026, 9, 5, 0, 7, 0);
-    const old = (d: number) => toSqliteUtc(now - d * 86_400_000);
     nrd(raw, "a.com", "2026-06-01", old(120));
-    nrd(raw, "b.com", "2026-06-02", old(110));
-    nrd(raw, "c.com", "2026-06-03", old(100));
+    nrd(raw, "b.com", "2026-06-02", old(95));
+    nrd(raw, "c.com", "2026-06-03", old(10));
     const kv = fakeKv({
-      // The phantom matcher is fully caught up…
       [PHANTOM_MATCHER_NRD_CURSOR_KEY]: old(0),
-      // …but the lookalike matcher has only scanned up to b.com.
-      [LOOKALIKE_NRD_CURSOR_KEY]: JSON.stringify({ created_at: old(110), rowid: 2 }),
+      [LOOKALIKE_NRD_CURSOR_KEY]: JSON.stringify({ created_at: old(100), rowid: 1 }),
     });
-    const env = envFor(raw, kv);
 
-    const r = await purgeNrdDomains(env, { now: () => now });
+    const r = await purgeNrdDomains(envFor(raw, kv), { now: () => now });
 
-    expect(r.held_by_lookalike_matcher).toBe(true);
-    expect(r.cutoff).toBe(old(110));
+    expect(r.held_by_lookalike_matcher).toBe(false);
+    expect(r.lookalike_cursor).toBe(old(100));
+    expect(r.cutoff).toBe(old(90));
     const left = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
       .map((x) => x.domain);
-    expect(left).toEqual(["b.com", "c.com"]);
+    expect(left).toEqual(["c.com"]);
   });
 
   it("an absent lookalike cursor holds nothing (phantom cursor stays the floor)", async () => {
     const raw = openDb();
-    const now = Date.UTC(2026, 9, 5, 0, 7, 0);
-    nrd(raw, "a.com", "2026-06-01", toSqliteUtc(now - 120 * 86_400_000));
+    nrd(raw, "a.com", "2026-06-01", old(120));
     const env = envFor(raw, fakeKv({ [PHANTOM_MATCHER_NRD_CURSOR_KEY]: toSqliteUtc(now) }));
     const r = await purgeNrdDomains(env, { now: () => now });
     expect(r.held_by_lookalike_matcher).toBe(false);
@@ -310,9 +311,12 @@ describe.skipIf(!hasSqlite())("nrd-retention — the lookalike matcher's hold", 
 
 // ─── End to end: matcher -> checker -> alert ───────────────────────
 
+// An answered "not registered" defaults to NXDOMAIN; NODATA (the name
+// exists, no A/MX) is `nxdomain: false` explicitly.
 const answer = (over: Record<string, unknown> = {}) => ({
   registered: false, resolved: true, hasMx: false, hasWeb: false,
-  aAnswered: true, mxAnswered: true, webAnswered: true, ...over,
+  aAnswered: true, mxAnswered: true, webAnswered: true,
+  nxdomain: over.registered !== true, ...over,
 });
 
 describe.skipIf(!hasSqlite())("NRD-matched row through the checker", () => {
@@ -362,14 +366,14 @@ describe.skipIf(!hasSqlite())("NRD-matched row through the checker", () => {
     expect(createAlertSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("files the NRD alert even when DNS has nothing yet, and does not re-alert when DNS catches up", async () => {
+  it("files the NRD alert on NODATA (exists, no records yet), and does not re-alert when DNS catches up", async () => {
     const raw = openDb();
     nrd(raw, "tp-iink.com", daysAgoDate(1));
     const id = lookalike(raw, "tp-iink.com");
     const env = envFor(raw);
     await runLookalikeNrdMatch(env);
 
-    checkDomainSpy.mockResolvedValue(answer({ registered: false }));
+    checkDomainSpy.mockResolvedValue(answer({ registered: false, nxdomain: false }));
     await checkLookalikeBatch(env);
     expect(createAlertSpy).toHaveBeenCalledTimes(1);
     expect(get(raw, id).registered).toBe(0);
@@ -458,12 +462,203 @@ describe.skipIf(!hasSqlite())("NRD-matched row through the checker", () => {
   });
 });
 
+// ─── Review fixes: H1 / TI-1 / L1 / L3 / M1 / TI-6 ─────────────────
+
+const due = (raw: SqliteDb, id: string) =>
+  raw.prepare("UPDATE lookalike_domains SET check_due_at = datetime('now','-1 hour') WHERE id = ?").run(id);
+
+describe.skipIf(!hasSqlite())("review fixes", () => {
+  it("H1: NRD claim → alert → NXDOMAIN lapse → NXDOMAIN re-check (no alert) → re-registration (ONE alert, current date)", async () => {
+    const raw = openDb();
+    const reg = daysAgoDate(3);
+    nrd(raw, "tp-1ink.com", reg);
+    const id = lookalike(raw, "tp-1ink.com");
+    const env = envFor(raw);
+    await runLookalikeNrdMatch(env);
+
+    // 1. NRD-dated registration resolves → one alert dated from the list.
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.20" }));
+    await checkLookalikeBatch(env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({ details: { registered_at: `${reg} 00:00:00` } });
+
+    // 2. Answered NXDOMAIN on the registered row → a lapse; the event ends.
+    due(raw, id);
+    checkDomainSpy.mockResolvedValue(answer({ registered: false, nxdomain: true }));
+    const lapse = await checkLookalikeBatch(env);
+    expect(lapse.registrations_lost).toBe(1);
+    expect(get(raw, id).registration_evidence).toBeNull();
+    expect(get(raw, id).registration_alerted_at).toBeNull();
+    expect(get(raw, id).first_seen).toBe(`${reg} 00:00:00`); // kept
+
+    // 3. NXDOMAIN again: NOT NRD-pending any more → no false alert.
+    due(raw, id);
+    await checkLookalikeBatch(env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+
+    // 4. Re-registration → exactly one alert, dated NOW, not the old date.
+    due(raw, id);
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.21" }));
+    await checkLookalikeBatch(env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(2);
+    const second = createAlertSpy.mock.calls[1]![1] as { details: { registered_at: string; registration_evidence: string } };
+    expect(second.details.registration_evidence).toBe("observed");
+    expect(second.details.registered_at.slice(0, 10)).toBe(new Date().toISOString().slice(0, 10));
+    expect(get(raw, id).first_seen).not.toBe(`${reg} 00:00:00`);
+    expect(get(raw, id).registration_evidence).toBe("observed");
+
+    // 5. And the re-check of that registration files nothing more.
+    due(raw, id);
+    await checkLookalikeBatch(env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("TI-1: NODATA on a registered row is NOT a lapse (registered stays 1, claim kept)", async () => {
+    const raw = openDb();
+    const id = lookalike(raw, "nodata.com", {
+      registered: 1, baseline_established_at: hoursAgo(48), check_due_at: hoursAgo(1),
+      first_seen: hoursAgo(40), registration_evidence: "observed", registration_alerted_at: hoursAgo(40),
+    });
+    checkDomainSpy.mockResolvedValue(answer({ registered: false, nxdomain: false }));
+    const s = await checkLookalikeBatch(envFor(raw));
+    expect(s.registrations_lost).toBe(0);
+    expect(get(raw, id).registered).toBe(1);
+    expect(get(raw, id).registration_alerted_at).not.toBeNull();
+  });
+
+  it("TI-1: an NRD-dated row answering NXDOMAIN is HELD (no claim, no alert) and alerts when it resolves", async () => {
+    const raw = openDb();
+    nrd(raw, "held.com", daysAgoDate(1));
+    const id = lookalike(raw, "held.com");
+    const env = envFor(raw);
+    await runLookalikeNrdMatch(env);
+
+    checkDomainSpy.mockResolvedValue(answer({ registered: false, nxdomain: true }));
+    const s1 = await checkLookalikeBatch(env);
+    expect(s1.nrd_registrations_held).toBe(1);
+    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(get(raw, id).registration_alerted_at).toBeNull();
+    expect(get(raw, id).registration_evidence).toBe("nrd");
+
+    due(raw, id);
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.22" }));
+    await checkLookalikeBatch(env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("TI-1: an NRD hold expires with the 30-day window (no alert for a stale listing)", async () => {
+    const raw = openDb();
+    const id = lookalike(raw, "expired.com", {
+      first_seen: toSqliteUtc(Date.now() - 31 * 86_400_000), registration_evidence: "nrd",
+      check_due_at: hoursAgo(1), baseline_established_at: hoursAgo(24 * 20),
+    });
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.23" }));
+    await checkLookalikeBatch(envFor(raw));
+    // Not pending: the stale NRD date is NOT alerted as an NRD
+    // registration. The 0 -> 1 is a real observed registration, so it is
+    // re-dated NOW with 'observed' evidence and alerts once as such.
+    expect(get(raw, id).registration_evidence).toBe("observed");
+    expect(String(get(raw, id).first_seen).slice(0, 10)).toBe(new Date().toISOString().slice(0, 10));
+    const evs = createAlertSpy.mock.calls.map((c) => (c[1] as { details: { registration_evidence?: string } }).details.registration_evidence);
+    expect(evs).toEqual(["observed"]);
+  });
+
+  it("L1: when createAlert succeeded but the alert_id link throws, the claim is NOT released", async () => {
+    const raw = openDb();
+    nrd(raw, "link-fail.com", daysAgoDate(1));
+    const id = lookalike(raw, "link-fail.com");
+    const env = envFor(raw);
+    await runLookalikeNrdMatch(env);
+    // mail+web → HIGH → the alert is linked via `SET alert_id = ?`; make
+    // that UPDATE throw.
+    const db = env.DB as unknown as { prepare(sql: string): D1PreparedStatement };
+    const realPrepare = db.prepare.bind(db);
+    (env as unknown as { DB: unknown }).DB = {
+      ...env.DB,
+      prepare: (sql: string) => {
+        if (sql.includes("SET alert_id = ?")) throw new Error("injected link failure");
+        return realPrepare(sql);
+      },
+    };
+    checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.24", hasMx: true, hasWeb: true }));
+    const s = await checkLookalikeBatch(env);
+
+    expect(s.row_errors).toBe(1);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(get(raw, id).registration_alerted_at).not.toBeNull();
+
+    due(raw, id);
+    await checkLookalikeBatch(env);
+    // No duplicate new-registration alert on the retry.
+    const newRegs = createAlertSpy.mock.calls.filter(
+      (c) => (c[1] as { details: { new_registration?: boolean } }).details.new_registration === true,
+    );
+    expect(newRegs).toHaveLength(1);
+  });
+
+  it("L3: a benign / taken_down row gets no new-registration alert", async () => {
+    for (const status of ["benign", "taken_down"]) {
+      vi.clearAllMocks();
+      createAlertSpy.mockResolvedValue("alert_1");
+      const raw = openDb();
+      nrd(raw, `${status}.com`, daysAgoDate(1));
+      lookalike(raw, `${status}.com`, { status });
+      const env = envFor(raw);
+      await runLookalikeNrdMatch(env);
+      checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "203.0.113.25" }));
+      await checkLookalikeBatch(env);
+      expect(createAlertSpy, status).not.toHaveBeenCalled();
+    }
+  });
+
+  it("M1: with no cursor the first run starts at now − 30 days of ingest", async () => {
+    const raw = openDb();
+    const reg = daysAgoDate(1);
+    nrd(raw, "ancient-ingest.com", reg, hoursAgo(24 * 45)); // ingested 45 d ago
+    nrd(raw, "recent-ingest.com", reg, hoursAgo(2));
+    const a = lookalike(raw, "ancient-ingest.com");
+    const b = lookalike(raw, "recent-ingest.com");
+    const r = await runLookalikeNrdMatch(envFor(raw));
+    expect(r.hits).toBe(1);
+    expect(get(raw, a).first_seen).toBeNull();
+    expect(get(raw, b).registration_evidence).toBe("nrd");
+  });
+
+  it("TI-6: a baseline up to 2 days before the NRD list date still counts as new", async () => {
+    const raw = openDb();
+    const reg = daysAgoDate(1);
+    nrd(raw, "slack.com", reg);
+    nrd(raw, "older.com", reg);
+    const slack = lookalike(raw, "slack.com", {
+      registered: 1, baseline_established_at: toSqliteUtc(Date.parse(`${reg}T00:00:00Z`) - 36 * 3_600_000),
+    });
+    const older = lookalike(raw, "older.com", {
+      registered: 1, baseline_established_at: toSqliteUtc(Date.parse(`${reg}T00:00:00Z`) - 72 * 3_600_000),
+    });
+    await runLookalikeNrdMatch(envFor(raw));
+    expect(get(raw, slack).registration_evidence).toBe("nrd");
+    expect(get(raw, older).registration_evidence).toBeNull();
+  });
+});
+
 // ─── Cadence + policy (pure) ───────────────────────────────────────
 
-describe("re-check cadence by registration state", () => {
-  it("unregistered rows come back in 24 h, registered rows in 7 days", () => {
-    expect(checkCadenceFor(false)).toBe("+24 hours");
-    expect(checkCadenceFor(true)).toBe("+7 days");
+describe("re-check cadence by state (TI-2)", () => {
+  const base = { domain: "tp-ink.com", registered: true, hasMx: false, hasWeb: false, recentRegistration: false, highAlerted: false };
+  it("follows the approved table", () => {
+    expect(checkCadenceFor({ ...base, registered: false })).toBe("+24 hours");
+    expect(checkCadenceFor({ ...base, recentRegistration: true })).toBe("+24 hours");
+    expect(checkCadenceFor({ ...base, recentRegistration: true, hasWeb: true })).toBe("+24 hours");
+    expect(checkCadenceFor({ ...base, hasWeb: true })).toBe("+72 hours");
+    expect(checkCadenceFor({ ...base, hasMx: true, hasWeb: true })).toBe("+7 days");
+    expect(checkCadenceFor({ ...base, recentRegistration: true, hasMx: true, hasWeb: true })).toBe("+7 days");
+    expect(checkCadenceFor({ ...base, highAlerted: true, recentRegistration: true })).toBe("+7 days");
+  });
+  it("puts unregistrable suffixes on 30 days, whatever their state", () => {
+    for (const d of ["tp-link.gov", "tplink.edu", "tp-link.mil", "tp-link.int", "tplink.google", "tp-link.gov.uk"]) {
+      expect(checkCadenceFor({ ...base, domain: d, registered: false }), d).toBe("+30 days");
+    }
+    expect(checkCadenceFor({ ...base, domain: "tplinkgov.com", registered: false })).toBe("+24 hours");
   });
 });
 
@@ -478,12 +673,13 @@ describe.skipIf(!hasSqlite())("cadence is what the success path writes", () => {
       d === "r.com" ? answer({ registered: true, ip: "203.0.113.13" }) : answer());
     await checkLookalikeBatch(envFor(raw));
 
-    const due = (id: string) => Date.parse(String(get(raw, id).check_due_at).replace(" ", "T") + "Z");
+    const dueAt = (id: string) => Date.parse(String(get(raw, id).check_due_at).replace(" ", "T") + "Z");
     const h = (ms: number) => (ms - Date.now()) / 3_600_000;
-    expect(h(due(unreg))).toBeGreaterThan(23);
-    expect(h(due(unreg))).toBeLessThan(25);
-    expect(h(due(reg))).toBeGreaterThan(24 * 7 - 1);
-    expect(h(due(reg))).toBeLessThan(24 * 7 + 1);
+    // unregistered → 24 h; registered, old, neither mail nor web → 72 h.
+    expect(h(dueAt(unreg))).toBeGreaterThan(23);
+    expect(h(dueAt(unreg))).toBeLessThan(25);
+    expect(h(dueAt(reg))).toBeGreaterThan(71);
+    expect(h(dueAt(reg))).toBeLessThan(73);
   });
 });
 

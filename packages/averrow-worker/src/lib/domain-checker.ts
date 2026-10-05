@@ -69,6 +69,18 @@ export interface DomainCheckResult {
    * `hasWeb` is meaningful only when this is true.
    */
   webAnswered: boolean;
+  /**
+   * The A query was ANSWERED with DoH `Status: 3` (NXDOMAIN): the name
+   * does not exist in DNS at all. Read from the A query's existing
+   * response — no extra lookup.
+   *
+   * Distinct from `registered: false` with `resolved: true`, which also
+   * covers NODATA (`Status: 0`, the name exists but has no A/MX record —
+   * a registered domain with no records published). Only NXDOMAIN says
+   * the registration is GONE, so a caller deciding "this lapsed" or "this
+   * registration was deleted" must read this, not `registered`.
+   */
+  nxdomain: boolean;
   ip?: string;
   hasMx: boolean;
   hasWeb: boolean;
@@ -95,6 +107,7 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
   // true, registered = false) while a 3s timeout is not.
   let aAnswered = false;
   let mxAnswered = false;
+  let nxdomain = false;
 
   // A record check via Cloudflare DoH
   try {
@@ -106,8 +119,11 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
       },
     );
     if (aRes.ok) {
-      const data = (await aRes.json()) as { Answer?: Array<{ data: string }> };
+      const data = (await aRes.json()) as { Status?: number; Answer?: Array<{ data: string }> };
       aAnswered = true;
+      // RFC 8427 / DoH JSON: Status is the DNS RCODE. 3 = NXDOMAIN,
+      // 0 = NOERROR (the name exists, possibly with no A record = NODATA).
+      nxdomain = data.Status === 3;
       if (data.Answer && data.Answer.length > 0) {
         registered = true;
         ip = data.Answer[0]?.data;
@@ -189,5 +205,9 @@ export async function checkDomain(domain: string): Promise<DomainCheckResult> {
   // BEC-precursor shape the lookalike scanner cares most about.
   const resolved = registered || (aAnswered && mxAnswered);
 
-  return { registered, resolved, aAnswered, mxAnswered, webAnswered, ip, hasMx, hasWeb };
+  // An MX answer outranks a stale NXDOMAIN on the A query (the two
+  // queries are separate round trips): a name with a record exists.
+  if (registered) nxdomain = false;
+
+  return { registered, resolved, aAnswered, mxAnswered, webAnswered, nxdomain, ip, hasMx, hasWeb };
 }

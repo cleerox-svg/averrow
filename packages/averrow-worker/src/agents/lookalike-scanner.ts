@@ -142,7 +142,8 @@ export const lookalikeScannerAgent: AgentModule = {
           type: "diagnostic",
           summary: `Checked ${check.checked} lookalike domain(s): ` +
             `${check.new_registrations} observed registration(s), ` +
-            `${check.nrd_registrations} NRD-confirmed registration(s), ` +
+            `${check.nrd_registrations} NRD-confirmed registration(s) ` +
+            `(${check.nrd_registrations_held} held on NXDOMAIN), ` +
             `${check.registration_alerts} new-registration alert(s), ` +
             `${check.registrations_lost} lapse(s), ` +
             `${check.mx_gained} MX / ${check.web_gained} web appearance(s), ` +
