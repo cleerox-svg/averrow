@@ -30,10 +30,16 @@ import { logger } from "../lib/logger";
  *      (storeNrdReference), brand-matched, and the matches inserted via
  *      bulkInsertThreats in the same flush — so memory stays bounded even
  *      if a generic brand keyword matches a large share of the day.
- *   4. Every today-line is gzip-streamed into the NEW snapshot as it is
- *      read. The snapshot is PUT to R2 only after every D1 write succeeded,
- *      so a failed run leaves the old snapshot and the retry re-diffs
- *      (INSERT OR IGNORE + deterministic threatId make that idempotent).
+ *   4. Every today-line that is old (in the snapshot) or was actually
+ *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
+ *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
+ *      the snapshot, so the next run sees it as new again: the cap DEFERS,
+ *      never drops, and successive runs converge. A run that deferred
+ *      anything stores no etag/version on the snapshot, so the next 2-hourly
+ *      run re-diffs instead of short-circuiting on an unchanged list.
+ *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
+ *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
+ *      IGNORE + deterministic threatId make that idempotent).
  *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
@@ -54,7 +60,8 @@ export const NRD_HAGEZI_URL = "https://raw.githubusercontent.com/hagezi/nrd/main
 /** R2 key (GEOIP_STAGING bucket) of the previous run's gzip'd domain list. */
 export const NRD_SNAPSHOT_KEY = "nrd/hagezi-nrd7.txt.gz";
 
-/** Max new domains inserted + matched per run (~2.3 days of list growth). */
+/** Max new domains inserted + matched per run (~2.3 days of list growth).
+ *  The rest are deferred to the next run (kept out of the snapshot). */
 export const NRD_MAX_NEW_PER_RUN = 1_000_000;
 
 /** Timeout for the response HEADERS. The body has its own idle timeout,
@@ -170,9 +177,9 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
         lines++;
         await snapshot.add(d);
       }
-      assertListShape(lines, header);
+      assertListShape(lines, today.contentLines, header);
       await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
-        customMetadata: snapshotMetadata(etag, header),
+        customMetadata: snapshotMetadata(etag, header, 0),
       });
       logger.info("nrd_hagezi_bootstrap", { lines, version: header.version, snapshotKey: NRD_SNAPSHOT_KEY });
       return { itemsFetched: lines, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
@@ -184,7 +191,16 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     }
     prev = new SortedDomainReader(
       lineReader(prevObj.body.pipeThrough(new DecompressionStream("gzip")).pipeThrough(new TextDecoderStream()), 0),
-      `snapshot ${NRD_SNAPSHOT_KEY} (delete it to re-bootstrap)`,
+      `snapshot ${NRD_SNAPSHOT_KEY} (delete that R2 object to re-bootstrap)`,
+      (err) => {
+        logger.error("nrd_hagezi_snapshot_unreadable", {
+          key: NRD_SNAPSHOT_KEY,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return new Error(
+          `NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} could not be decompressed/read (corrupt or not gzip) — delete that object from the GEOIP_STAGING R2 bucket to re-bootstrap`,
+        );
+      },
     );
 
     const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB));
@@ -218,21 +234,27 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let p = await prev.next();
     for (let d = await today.next(); d !== null; d = await today.next()) {
       lines++;
-      await snapshot.add(d);
       while (p !== null && p < d) p = await prev.next();
-      if (p === d) continue;
+      if (p === d) {
+        await snapshot.add(d);
+        continue;
+      }
       newTotal++;
+      // Over the cap: leave it OUT of the new snapshot so the next run sees
+      // it as new again (deferred, not dropped).
       if (newInserted >= maxNew) continue;
       newInserted++;
+      await snapshot.add(d);
       pending.push(d);
       if (pending.length >= flushEvery) await flush();
     }
     await flush();
-    assertListShape(lines, header);
+    assertListShape(lines, today.contentLines, header);
     const { itemsNew, itemsDuplicate, itemsError } = totals;
+    const deferred = newTotal - newInserted;
 
-    if (newTotal > newInserted) {
-      logger.warn("nrd_hagezi_truncated", { newTotal, inserted: newInserted, skipped: newTotal - newInserted, cap: maxNew });
+    if (deferred > 0) {
+      logger.warn("nrd_hagezi_deferred", { newTotal, inserted: newInserted, deferred, cap: maxNew });
     }
 
     // Snapshot advances only when every D1 write landed. A failed threat
@@ -242,7 +264,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       logger.warn("nrd_hagezi_snapshot_held", { reason: "threat_insert_errors", itemsError, version: header.version });
     } else {
       await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
-        customMetadata: snapshotMetadata(etag, header),
+        customMetadata: snapshotMetadata(etag, header, deferred),
       });
     }
 
@@ -252,6 +274,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       lines,
       newTotal,
       newInserted,
+      deferred,
       matches: totals.matches,
       itemsNew,
       itemsDuplicate,
@@ -352,10 +375,21 @@ export function registeredDateFromHeader(lastModified: string | null, now: Date 
   return base.toISOString().slice(0, 10);
 }
 
-function snapshotMetadata(etag: string | null, header: NrdListHeader): Record<string, string> {
+/**
+ * Snapshot customMetadata. When the run deferred domains (per-run cap), the
+ * etag/version are deliberately omitted: the snapshot is then NOT a complete
+ * image of that list version, so the next run must neither send
+ * If-None-Match nor take the same-version shortcut — it re-diffs and picks
+ * up the deferred domains.
+ */
+function snapshotMetadata(etag: string | null, header: NrdListHeader, deferred: number): Record<string, string> {
   const meta: Record<string, string> = {};
-  if (etag) meta.etag = etag;
-  if (header.version) meta.version = header.version;
+  if (deferred === 0) {
+    if (etag) meta.etag = etag;
+    if (header.version) meta.version = header.version;
+  } else {
+    meta.deferred = String(deferred);
+  }
   if (header.lastModified) meta.list_modified = header.lastModified;
   return meta;
 }
@@ -365,21 +399,23 @@ function snapshotMetadata(etag: string | null, header: NrdListHeader): Record<st
  * succeeds silently, and a body shorter than its own `Number of entries`
  * header (a truncated download) fails before the snapshot is replaced.
  *
- * Wording is deliberate: none of these match autoPauseFeed's permanent-error
+ * Wording is deliberate (and never includes upstream text): none of these match autoPauseFeed's permanent-error
  * taxonomy (lib/feedRunner.ts — 404/410, "upstream archived", "no longer
  * publishes", "Gone", "served no data on N consecutive days"). An empty or
  * short list from a daily-regenerated GitHub file is a bad build, not a dead
  * source, so it stays `auto:consecutive_failures` and the 4h sweep revives it.
  */
-function assertListShape(lines: number, header: NrdListHeader): void {
+function assertListShape(lines: number, contentLines: number, header: NrdListHeader): void {
   if (lines === 0) {
     throw new Error(
       `NRD Hagezi: list contained zero domains (version ${header.version ?? "unknown"}) — refusing to treat an empty list as success`,
     );
   }
-  if (header.entries !== null && header.entries !== lines) {
+  // Compared against RAW non-comment, non-blank lines (not the post-filter
+  // domain count), so an entry the domain filter skips can't trip it.
+  if (header.entries !== null && header.entries !== contentLines) {
     throw new Error(
-      `NRD Hagezi: list body has ${lines} domains but its header declares ${header.entries} — truncated or malformed download`,
+      `NRD Hagezi: list body has ${contentLines} entries but its header declares ${header.entries} — truncated or malformed download`,
     );
   }
 }
@@ -450,13 +486,33 @@ class SortedDomainReader {
   private last: string | null = null;
   private pendingFirst: string | null = null;
   private seenContent = false;
+  /** Raw non-comment, non-blank lines seen (before the '.' filter). */
+  contentLines = 0;
 
-  constructor(private readonly lines: LineReader, private readonly label: string) {}
+  /**
+   * `label` must be FIXED text — it goes into thrown messages, which
+   * autoPauseFeed pattern-matches; upstream content is only ever logged.
+   * `onReadError` maps a stream read failure to a precise error.
+   */
+  constructor(
+    private readonly lines: LineReader,
+    private readonly label: string,
+    private readonly onReadError?: (err: unknown) => Error,
+  ) {}
+
+  private async readLine(): Promise<string | null> {
+    if (!this.onReadError) return this.lines.next();
+    try {
+      return await this.lines.next();
+    } catch (err) {
+      throw this.onReadError(err);
+    }
+  }
 
   /** Consume leading `#` lines; stops at (and buffers) the first other line. */
   async readHeader(): Promise<NrdListHeader> {
     const h: NrdListHeader = { version: null, lastModified: null, entries: null };
-    for (let raw = await this.lines.next(); raw !== null; raw = await this.lines.next()) {
+    for (let raw = await this.readLine(); raw !== null; raw = await this.readLine()) {
       const line = raw.trim();
       if (line === "") continue;
       if (line.startsWith("#")) { parseHeaderLine(line, h); continue; }
@@ -470,22 +526,28 @@ class SortedDomainReader {
     for (;;) {
       let raw: string | null;
       if (this.pendingFirst !== null) { raw = this.pendingFirst; this.pendingFirst = null; }
-      else raw = await this.lines.next();
+      else raw = await this.readLine();
       if (raw === null) return null;
       const line = raw.trim().toLowerCase();
       if (line === "" || line.startsWith("#")) continue;
+      this.contentLines++;
       if (!this.seenContent) {
         this.seenContent = true;
         if (line.startsWith("<")) {
-          throw new Error(
-            `NRD Hagezi: ${this.label} is HTML/markup, not a domain list — "${raw.trim().slice(0, 120)}"`,
-          );
+          logger.error("nrd_hagezi_html_body", { source: this.label, snippet: raw.trim().slice(0, 200) });
+          throw new Error(`NRD Hagezi: ${this.label} is HTML/markup, not a domain list`);
         }
       }
       if (!line.includes(".")) continue;
       if (this.last !== null && line < this.last) {
+        logger.error("nrd_hagezi_out_of_order", {
+          source: this.label,
+          line: line.slice(0, 200),
+          previous: this.last.slice(0, 200),
+          lineIndex: this.contentLines,
+        });
         throw new Error(
-          `NRD Hagezi: ${this.label} is not sorted ("${line.slice(0, 80)}" after "${this.last.slice(0, 80)}") — source format changed; the merge-diff requires byte-sorted input`,
+          `NRD Hagezi: ${this.label} is not sorted — source format changed; the merge-diff requires byte-sorted input`,
         );
       }
       this.last = line;
@@ -501,13 +563,14 @@ class SortedDomainReader {
 /**
  * Streams lines into a gzip CompressionStream, draining its readable
  * concurrently (awaiting write() without a reader deadlocks on backpressure)
- * into in-memory chunks; `finish()` returns the compressed bytes.
+ * into in-memory chunks; `finish()` returns them as a Blob (no JS-side
+ * concatenation copy of the ~17 MB snapshot).
  */
 class SnapshotWriter {
   private readonly cs = new CompressionStream("gzip");
   private readonly writer = this.cs.writable.getWriter();
   private readonly encoder = new TextEncoder();
-  private readonly chunks: Uint8Array[] = [];
+  private readonly chunks: Array<Uint8Array<ArrayBuffer>> = [];
   private readonly drained: Promise<void>;
   private buf = "";
   private finished = false;
@@ -518,7 +581,9 @@ class SnapshotWriter {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) return;
-        if (value) this.chunks.push(value);
+        // Always a plain ArrayBuffer in practice; the guard satisfies the
+        // BlobPart type without copying (SharedArrayBuffer → copy).
+        if (value) this.chunks.push(isArrayBufferBacked(value) ? value : new Uint8Array(value));
       }
     })();
     // Abort path rejects `drained`; observe it so it is never unhandled.
@@ -534,7 +599,7 @@ class SnapshotWriter {
     }
   }
 
-  async finish(): Promise<Uint8Array> {
+  async finish(): Promise<Blob> {
     if (this.buf.length > 0) {
       await this.writer.write(this.encoder.encode(this.buf));
       this.buf = "";
@@ -542,11 +607,7 @@ class SnapshotWriter {
     await this.writer.close();
     await this.drained;
     this.finished = true;
-    let total = 0;
-    for (const c of this.chunks) total += c.length;
-    const out = new Uint8Array(total);
-    let off = 0;
-    for (const c of this.chunks) { out.set(c, off); off += c.length; }
+    const out = new Blob(this.chunks);
     this.chunks.length = 0;
     return out;
   }
@@ -556,6 +617,10 @@ class SnapshotWriter {
     this.finished = true;
     this.writer.abort().catch(() => undefined);
   }
+}
+
+function isArrayBufferBacked(u: Uint8Array): u is Uint8Array<ArrayBuffer> {
+  return u.buffer instanceof ArrayBuffer;
 }
 
 // ─── Brand matching ─────────────────────────────────────────────────

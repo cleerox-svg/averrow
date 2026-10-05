@@ -229,19 +229,102 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
     expect(r2.ops.put).toBe(1);
   });
 
-  it("caps new domains per run but still counts them and still advances the snapshot", async () => {
+  it("the per-run cap DEFERS: capped domains stay out of the snapshot and land on the next run", async () => {
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
-    const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf([], { version: "v0" }) });
-    const today = ["acmebank-1.example", "acmebank-2.example", "acmebank-3.example", "acmebank-4.example"];
-    stubFetch(() => listResponse(today));
+    const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf(["acmebank-0.example"], { version: "v0" }) });
+    const today = [
+      "acmebank-0.example", // old
+      "acmebank-1.example",
+      "acmebank-2.example",
+      "acmebank-3.example",
+      "acmebank-4.example",
+    ];
+    const calls = stubFetch(() => listResponse(today));
 
-    const r = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
+    const first = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
 
-    expect(r).toEqual({ itemsFetched: 4, itemsNew: 2, itemsDuplicate: 0, itemsError: 0 });
+    expect(first).toEqual({ itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0 });
     expect(nrdRows().map((x) => x.domain)).toEqual(["acmebank-1.example", "acmebank-2.example"]);
-    expect(count("SELECT COUNT(*) AS n FROM threats")).toBe(2);
-    expect(await gunzipText(r2.store.get(NRD_SNAPSHOT_KEY)!.bytes)).toBe(`${today.join("\n")}\n`);
+    // Old + flushed only — the capped tail is NOT recorded as seen.
+    let snap = r2.store.get(NRD_SNAPSHOT_KEY)!;
+    expect(await gunzipText(snap.bytes)).toBe("acmebank-0.example\nacmebank-1.example\nacmebank-2.example\n");
+    // Incomplete image of this version → no etag/version, so the next run
+    // neither 304s nor takes the same-version shortcut.
+    expect(snap.customMetadata).toEqual({ deferred: "2", list_modified: MODIFIED });
+
+    // Next run, SAME list: re-diffs and picks up the deferred tail.
+    const second = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
+
+    expect(calls[1]!.ifNoneMatch).toBeNull();
+    expect(second).toEqual({ itemsFetched: 5, itemsNew: 2, itemsDuplicate: 0, itemsError: 0 });
+    expect(nrdRows().map((x) => x.domain)).toEqual(today.slice(1));
+    expect(count("SELECT COUNT(*) AS n FROM threats")).toBe(4);
+    snap = r2.store.get(NRD_SNAPSHOT_KEY)!;
+    expect(await gunzipText(snap.bytes)).toBe(`${today.join("\n")}\n`);
+    expect(snap.customMetadata).toEqual({ etag: '"etag-today"', version: VERSION, list_modified: MODIFIED });
+
+    // Converged: a third run is a same-version no-op.
+    const third = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
+    expect(third).toEqual({ itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 });
   });
+
+  it("duplicate lines in the snapshot don't make a domain look new", async () => {
+    const r2 = fakeR2Bucket({
+      [NRD_SNAPSHOT_KEY]: { bytes: await gzipText("a.com\na.com\nb.com\nb.com\n"), customMetadata: { version: "v0" } },
+    });
+    stubFetch(() => listResponse(["a.com", "b.com", "c.com"]));
+
+    const r = await nrd_hagezi.ingest(ctxOf(envOf(db, r2)));
+
+    expect(r.itemsFetched).toBe(3);
+    expect(nrdRows().map((x) => x.domain)).toEqual(["c.com"]);
+  });
+
+  it("streams ~200K CRLF lines split mid-line at odd byte boundaries against a large snapshot", async () => {
+    const N = 200_000;
+    const dom = (i: number) => `d${String(i).padStart(7, "0")}-${((i * 2654435761) >>> 0).toString(36)}.example.com`;
+    const today: string[] = [];
+    for (let i = 0; i < N; i++) today.push(dom(i));
+    // Prior: every 5th of today's domains missing, plus domains that have
+    // since aged out of the window (in the snapshot only), interleaved.
+    const prior: string[] = [];
+    for (let i = 0; i < N; i++) {
+      if (i % 5 !== 0) prior.push(dom(i));
+      if (i % 9 === 0) prior.push(`${dom(i)}-aged.net`);
+    }
+    prior.sort();
+    const expectedNew = today.filter((_, i) => i % 5 === 0);
+
+    const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(`${prior.join("\n")}\n`), customMetadata: { version: "v0" } } });
+
+    // CRLF, no trailing newline, chunked at odd sizes so lines (and CR|LF
+    // pairs) split across chunks.
+    const text = [`# Version: ${VERSION}`, `# Last modified: ${MODIFIED}`, `# Number of entries: ${N}`, ...today].join("\r\n");
+    const bytes = new TextEncoder().encode(text);
+    const sizes = [1, 3, 4097, 2, 65_537, 7, 12_289];
+    let off = 0;
+    let k = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        if (off >= bytes.length) { c.close(); return; }
+        const n = sizes[k++ % sizes.length]!;
+        c.enqueue(bytes.slice(off, off + n));
+        off += n;
+      },
+    });
+    stubFetch(() => new Response(body, { headers: { etag: '"big"', "content-type": "text/plain" } }));
+
+    const r = await nrd_hagezi.ingest(ctxOf(envOf(db, r2)));
+
+    expect(r).toEqual({ itemsFetched: N, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 });
+    const inserted = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
+      .map((x) => x.domain);
+    expect(inserted).toEqual(expectedNew);
+    // Snapshot round-trips: decompressed == today's list (LF-normalised).
+    const snap = r2.store.get(NRD_SNAPSHOT_KEY)!;
+    expect(await gunzipText(snap.bytes)).toBe(`${today.join("\n")}\n`);
+    expect(snap.customMetadata).toEqual({ etag: '"big"', version: VERSION, list_modified: MODIFIED });
+  }, 60_000);
 
   it("in-list repeats are in-payload duplicates even across flush chunks", async () => {
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
@@ -266,6 +349,55 @@ describe("nrd_hagezi — format guards", () => {
 
     await expect(nrd_hagezi.ingest(ctxOf(envOf(okDb, r2)))).rejects.toThrow(/list is not sorted/);
     expect(r2.store.get(NRD_SNAPSHOT_KEY)).toBe(prior);
+  });
+
+  it("thrown errors carry no upstream text (a domain like my-404.net must not trip the upstream-dead regex)", async () => {
+    stubFetch(() => listResponse(["zz-410.net", "my-404.net"], { unsorted: true }));
+    const okDb = {
+      prepare: () => ({ all: async () => ({ results: [] }), run: async () => ({ meta: {} }), bind() { return this; } }),
+      batch: async (s: unknown[]) => s.map(() => ({ meta: { changes: 0 } })),
+    } as unknown as D1Database;
+    const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf([], { version: "v0" }) });
+
+    const err = await nrd_hagezi.ingest(ctxOf(envOf(okDb, r2))).then(() => null, (e: Error) => e);
+    expect(err?.message).toMatch(/list is not sorted/);
+    expect(err?.message).not.toMatch(/\b(404|410)\b/);
+    expect(err?.message).not.toContain("my-404");
+
+    stubFetch(() => new Response("<html>Gone 404</html>\n", { status: 200, headers: { "content-type": "text/plain" } }));
+    const err2 = await nrd_hagezi.ingest(ctxOf(envOf(noD1, fakeR2Bucket()))).then(() => null, (e: Error) => e);
+    expect(err2?.message).toMatch(/HTML\/markup, not a domain list/);
+    expect(err2?.message).not.toMatch(/\b(404|410)\b|\bGone\b/i);
+  });
+
+  it("a corrupt (non-gzip) snapshot fails with a precise, recoverable error", async () => {
+    const r2 = fakeR2Bucket({
+      [NRD_SNAPSHOT_KEY]: { bytes: new TextEncoder().encode("this is not gzip at all\n"), customMetadata: { version: "v0" } },
+    });
+    stubFetch(() => listResponse(["a.com"]));
+    const okDb = {
+      prepare: () => ({ all: async () => ({ results: [] }), run: async () => ({ meta: {} }), bind() { return this; } }),
+      batch: async (s: unknown[]) => s.map(() => ({ meta: { changes: 0 } })),
+    } as unknown as D1Database;
+
+    await expect(nrd_hagezi.ingest(ctxOf(envOf(okDb, r2)))).rejects.toThrow(
+      /snapshot nrd\/hagezi-nrd7\.txt\.gz could not be decompressed\/read .* delete that object .* to re-bootstrap/,
+    );
+    expect(r2.ops.put).toBe(0);
+  });
+
+  it("the entry-count check counts RAW content lines, not just the ones that pass the domain filter", async () => {
+    // "localhost" has no '.', so it's skipped as a domain — but the header
+    // counts it, and so must the check.
+    const r2 = fakeR2Bucket();
+    stubFetch(() => new Response(
+      `# Version: ${VERSION}\n# Number of entries: 3\na.com\nb.com\nlocalhost\n`,
+      { status: 200, headers: { "content-type": "text/plain" } },
+    ));
+
+    const r = await nrd_hagezi.ingest(ctxOf(envOf(noD1, r2)));
+    expect(r.itemsFetched).toBe(2);
+    expect(r2.ops.put).toBe(1);
   });
 
   it("an out-of-order snapshot throws naming the key to delete", async () => {
@@ -315,7 +447,7 @@ describe("nrd_hagezi — format guards", () => {
   it("a body shorter than its `Number of entries` header (truncated download) throws before the snapshot is written", async () => {
     const r2 = fakeR2Bucket();
     stubFetch(() => listResponse(["a.com", "b.com"], { entries: 3_100_865 }));
-    await expect(nrd_hagezi.ingest(ctxOf(envOf(noD1, r2)))).rejects.toThrow(/header declares 3100865/);
+    await expect(nrd_hagezi.ingest(ctxOf(envOf(noD1, r2)))).rejects.toThrow(/2 entries but its header declares 3100865/);
     expect(r2.ops.put).toBe(0);
   });
 
