@@ -1,5 +1,7 @@
 # Disaster Recovery Architecture
 
+> **Status: aspirational, NOT implemented** (verified 2026-10-05: no backup bucket binding, no `0 4 * * *` cron, no DR panel). For the current policy, plan and gap register see `docs/security/BCDR_POLICY.md`, `docs/security/BCDR_PLAN.md` and `docs/security/BCDR_GAPS.md`.
+
 ## Current Risk Assessment
 | Component | Status | Risk |
 |-----------|--------|------|
