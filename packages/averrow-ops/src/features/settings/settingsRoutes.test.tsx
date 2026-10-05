@@ -107,7 +107,7 @@ describe('settings routes', () => {
     expect(screen.getByRole('link', { name: /Profile/ })).toHaveAttribute('href', '/settings/profile');
     expect(screen.getByRole('link', { name: /Devices & App/ })).toHaveAttribute('href', '/settings/devices');
     expect(screen.getByText('ada@averrow.com')).toBeInTheDocument();
-    expect(screen.getByText('2 passkeys · Active sessions')).toBeInTheDocument();
+    expect((await screen.findAllByText(/^Passkey on/)).length).toBeGreaterThan(0);
   });
 
   it('mobile: Sign out on the home list signs out', async () => {

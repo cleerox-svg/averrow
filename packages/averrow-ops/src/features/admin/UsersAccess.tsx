@@ -23,7 +23,7 @@ import { useSearchParams } from 'react-router-dom';
 import { roleLabel } from '@averrow/shared';
 import {
   Badge, Button, Card, ConfirmDialog, DataTable, Field, InlineBanner, Input, PageHeader,
-  PageState, Select, SettingsGroup, SettingsRow, Tabs, ToastProvider, useMediaQuery, useToast,
+  PageState, Select, roleBadgeProps, SettingsGroup, SettingsRow, Tabs, ToastProvider, useMediaQuery, useToast,
   type Column, type Tab,
 } from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
@@ -401,7 +401,10 @@ interface ControlProps {
 function RoleControl({ user: u, touchable, grantable, busy, onRole }: ControlProps) {
   const name = u.name ?? u.email;
   const editable = touchable && grantable.length > 1 && grantable.includes(u.role as StaffRoleValue);
-  if (!editable) return <Badge status="draft" font="sans" size="md">{roleLabel(u.role)}</Badge>;
+  if (!editable) {
+    const rb = roleBadgeProps(u.role);
+    return <Badge {...rb.tone} font="sans" size="md">{rb.label}</Badge>;
+  }
   return (
     <Select aria-label={`Role for ${name}`} value={u.role} disabled={busy} onChange={(e) => onRole(e.target.value as PlatformUserRole)}>
       {grantable.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}

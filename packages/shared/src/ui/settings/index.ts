@@ -9,6 +9,7 @@ export { DangerZone, type DangerZoneProps, type DangerZoneAction } from './Dange
 export { InlineBanner, type InlineBannerProps, type InlineBannerTone } from './InlineBanner';
 export { CopyField, copyText, type CopyFieldProps } from './CopyField';
 export { AccountHero, describeAccountScope, type AccountHeroProps } from './AccountHero';
+export { roleBadgeProps, type RoleBadgeProps } from './roleBadge';
 export { SettingsShell, type SettingsShellProps, type SettingsSection } from './SettingsShell';
 export { type SettingsLinkRenderProps, type SettingsRenderLink, defaultRenderLink } from './types';
 export { useMediaQuery } from './useMediaQuery';

@@ -8,6 +8,7 @@ export {
   getAccountSections, accountSectionIdFromPath,
   type AccountSectionId, type AccountSectionsOptions,
 } from './sections';
+export { securitySummary, notificationsSummary, devicesSummary } from './summaries';
 export { SignOutRow, type SignOutRowProps } from './SignOutRow';
 export {
   ProfileSettings, type ProfileSettingsProps, type ProfileSettingsUser,

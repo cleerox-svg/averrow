@@ -126,6 +126,6 @@ describe('FilterBar search keys and size', () => {
     expect(onSubmit).toHaveBeenCalledWith('abc');
     await user.keyboard('{Escape}');
     expect(onChange).toHaveBeenCalledWith('');
-    expect(screen.getByRole('button', { name: 'All' }).className).toContain('text-[11px]');
+    expect(screen.getByRole('button', { name: 'All' }).className).toContain('text-[13px]');
   });
 });

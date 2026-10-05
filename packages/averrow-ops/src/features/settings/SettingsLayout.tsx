@@ -26,6 +26,7 @@ import {
   type SettingsRenderLink,
 } from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
+import { useAccountSummaries } from './useAccountSummaries';
 import { BUILD_SHA, VERSION_LABEL } from '@/lib/version';
 
 // ── dirty-form guard ────────────────────────────────────────
@@ -107,14 +108,8 @@ export function SettingsLayout() {
     </Link>
   ), [navigate]);
 
-  const passkeys = user?.passkey_count;
-  const sections = useMemo(() => getAccountSections({
-    descriptions: {
-      security: typeof passkeys === 'number'
-        ? (passkeys > 0 ? `${passkeys} ${passkeys === 1 ? 'passkey' : 'passkeys'} · Active sessions` : 'No passkey yet · Add one')
-        : undefined,
-    },
-  }), [passkeys]);
+  // Live one-liners on the home list; generic text until each one loads.
+  const sections = getAccountSections({ descriptions: useAccountSummaries() });
 
   const signOut = () => { void logout(); };
 

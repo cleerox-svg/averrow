@@ -19,7 +19,7 @@ import { SNOOZE_OPTIONS } from '@/lib/snooze';
 
 export function typeLabel(type: string): string {
   const def = NOTIFICATION_EVENTS.find((e) => e.key === type);
-  return def?.label ?? type.replace(/_/g, ' ');
+  return def?.label ?? type.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const SEVERITY_TEXT: Record<string, string> = {
@@ -202,7 +202,7 @@ export function DayHeading({ label, id }: { label: string; id: string }) {
   return (
     <h3
       id={id}
-      className="sticky top-0 z-[1] m-0 border-b border-[var(--border-base)] bg-[var(--bg-sticky-deep)] px-4 py-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--text-tertiary)] backdrop-blur-sm"
+      className="sticky top-0 z-[1] m-0 border-b border-[var(--border-base)] bg-[var(--bg-elevated-solid)] px-4 py-1.5 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--text-tertiary)]"
     >
       {label}
     </h3>

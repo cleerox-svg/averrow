@@ -16,7 +16,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEven
 import { roleLabel } from '../roles';
 import type { Theme } from '../theme';
 import type { ProfileApiClient } from '../profile/types';
-import { Badge, type BadgeProps } from '../ui/Badge';
+import { Badge } from '../ui/Badge';
+import { roleBadgeProps } from '../ui/settings/roleBadge';
 import { Button } from '../ui/Button';
 import { Field, Input, SegmentedControl, type SegmentedOption } from '../ui/forms';
 import { PageState } from '../ui/PageState';
@@ -75,12 +76,6 @@ const THEME_OPTIONS: SegmentedOption[] = [
 
 function isTheme(v: string): v is Theme {
   return v === 'auto' || v === 'dark' || v === 'light';
-}
-
-function roleTone(role: string): Pick<BadgeProps, 'severity' | 'status'> {
-  if (role === 'super_admin' || role === 'admin') return { severity: 'medium' };
-  if (role === 'analyst') return { severity: 'low' };
-  return { status: 'draft' };
 }
 
 function ButtonSpinner() {
@@ -228,7 +223,6 @@ export function ProfileSettings({
             name={user.display_name ?? user.name}
             email={user.email}
             role={user.role}
-            roleLabel={roleLabel(user.role)}
             passkey={typeof user.passkey_count === 'number' ? user.passkey_count > 0 : null}
             scope={scope}
             actions={(
@@ -319,7 +313,7 @@ export function ProfileSettings({
           // Desktop already shows the role badge in the hero: plain text here, one badge per page.
           trailing={isDesktop
             ? <span className="text-[14px] text-[var(--text-secondary)]">{roleLabel(user.role)}</span>
-            : <Badge {...roleTone(user.role)} label={roleLabel(user.role)} size="md" font="sans" />}
+            : <Badge {...roleBadgeProps(user.role).tone} label={roleLabel(user.role)} size="md" font="sans" />}
         />
         {scope && (
           <SettingsRow icon={<ShieldCheckIcon />} title="Access" description={scope} />

@@ -25,6 +25,7 @@ vi.mock('@/design-system/hooks/useTheme', () => ({
 vi.mock('@/hooks/useNotifications', () => ({
   OPS_AUDIENCE_FILTER: ['super_admin', 'team', 'all'],
   useUnreadCount: () => ({ data: unread }),
+  useNotifications: () => ({ data: { notifications: [] }, refetch: () => Promise.resolve() }),
 }));
 
 import { UserAvatar } from './UserAvatar';
@@ -63,7 +64,7 @@ describe('role labels', () => {
   it('covers all 8 roles', () => {
     expect(USER_ROLES).toHaveLength(8);
     expect(USER_ROLES.map(r => ROLE_LABELS[r])).toEqual([
-      'Super Admin', 'Admin', 'Analyst', 'Sales', 'Support', 'Billing', 'Auditor', 'Client',
+      'Super admin', 'Admin', 'Analyst', 'Sales', 'Support', 'Billing', 'Auditor', 'Client',
     ]);
   });
   it('falls back to the raw key for unknown roles', () => {
@@ -87,13 +88,13 @@ describe('UserAvatar account menu (desktop)', () => {
 
   it('shows passkey status', async () => {
     await open();
-    expect(screen.getByText('Passkey on')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Passkey on' })).toBeTruthy();
   });
 
   it('shows "No passkey" when none registered', async () => {
     passkeys = 0;
     await open();
-    expect(screen.getByText('No passkey')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'No passkey' })).toBeTruthy();
   });
 
   it('lists the four account pages, no Organization / API Keys', async () => {

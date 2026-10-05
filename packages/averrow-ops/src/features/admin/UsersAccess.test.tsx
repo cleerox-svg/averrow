@@ -169,7 +169,7 @@ describe('UsersAccess: permission gating', () => {
   it('invite roles: super_admin may grant all three, admin only analyst', async () => {
     renderPage('/admin/users?tab=invites');
     const sel = await screen.findByLabelText('Role');
-    expect(within(sel).getAllByRole('option').map((o) => o.textContent)).toEqual(['Analyst', 'Admin', 'Super Admin']);
+    expect(within(sel).getAllByRole('option').map((o) => o.textContent)).toEqual(['Analyst', 'Admin', 'Super admin']);
   });
 
   it('invite roles for admin are limited to Analyst', async () => {
