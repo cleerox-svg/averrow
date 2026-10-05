@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { DevicesSettings, type DevicesPushAdapter } from '@averrow/shared/account';
 import { IOS_INSTALL_STEPS } from '@/components/InstallSteps';
 import { useInstallPrompt } from '@/hooks/useInstallPrompt';
@@ -11,6 +12,7 @@ import {
   getPushStatus, isPushSupported, listPushDevices, removePushDevice, sendTestPush, type PushStatus,
 } from '@/lib/push';
 import { APP_VERSION, BUILD_SHA } from '@/lib/version';
+import { ACCOUNT_SUMMARY_KEYS } from './useAccountSummaries';
 
 /** Delete this app's Cache Storage entries (shell + runtime caches), then reload. Sign-in lives in the cookie/memory, so the session survives. */
 export async function clearLocalCache(): Promise<void> {
@@ -23,6 +25,7 @@ export async function clearLocalCache(): Promise<void> {
 
 export function DevicesSettingsPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const install = useInstallPrompt();
   const [status, setStatus] = useState<PushStatus | null>(null);
 
@@ -36,10 +39,13 @@ export function DevicesSettingsPage() {
     supported: isPushSupported(),
     needsInstall: status?.needsInstall ?? false,
     list: listPushDevices,
-    remove: removePushDevice,
+    remove: async (id: string) => {
+      await removePushDevice(id);
+      void queryClient.invalidateQueries({ queryKey: ACCOUNT_SUMMARY_KEYS.pushDevices });
+    },
     sendTest: sendTestPush,
     thisDeviceUserAgent: status?.subscribed && typeof navigator !== 'undefined' ? navigator.userAgent : null,
-  }), [status]);
+  }), [status, queryClient]);
 
   return (
     <DevicesSettings

@@ -18,7 +18,9 @@ export function useUnreadSummary(): UnreadSummary {
   const unread = count ?? 0;
   const { data: feed, refetch } = useNotifications(unread > 0, OPS_AUDIENCE_FILTER);
   useEffect(() => {
-    if (unread > 0) void refetch();
+    // Bell and avatar menu both mount this hook: join an in-flight request
+    // rather than cancelling and re-sending it.
+    if (unread > 0) void refetch({ cancelRefetch: false });
   }, [unread, refetch]);
   const hasCritical = (feed?.notifications ?? []).some((n) => n.state === 'unread' && n.severity === 'critical');
   return { count, hasCritical };

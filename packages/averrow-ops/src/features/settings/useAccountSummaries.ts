@@ -1,6 +1,6 @@
 // Live one-line summaries for the /settings home list (spec §5.0). Reuses the
-// queries the section pages already run (same keys, so the pages open warm) —
-// no new endpoints. Anything still loading is left undefined and the shell
+// existing endpoints (no new ones). The Security and Devices pages invalidate
+// ACCOUNT_SUMMARY_KEYS after changes so the home list stays current. Anything still loading is left undefined and the shell
 // falls back to the generic description.
 
 import { useQuery } from '@tanstack/react-query';
@@ -14,12 +14,18 @@ import { useInstallPrompt } from '@/hooks/useInstallPrompt';
 import { useNotificationPreferencesV2 } from '@/hooks/useNotifications';
 import { getPushStatus, listPushDevices } from '@/lib/push';
 
+/** Query keys the settings home reads; pages that change these invalidate them. */
+export const ACCOUNT_SUMMARY_KEYS = {
+  sessions: ['account-summary', 'sessions'],
+  pushDevices: ['push-devices'],
+} as const;
+
 export function useAccountSummaries(): Partial<Record<AccountSectionId, string>> {
   const { user } = useAuth();
   const install = useInstallPrompt();
 
   const sessionsQ = useQuery({
-    queryKey: ['account-summary', 'sessions'],
+    queryKey: ACCOUNT_SUMMARY_KEYS.sessions,
     queryFn: async () => {
       const res = await api.get<unknown>('/api/auth/sessions');
       return normalizeSessions(res.data).sessions.length;
@@ -28,7 +34,7 @@ export function useAccountSummaries(): Partial<Record<AccountSectionId, string>>
   const prefsQ = useNotificationPreferencesV2();
   const pushQ = useQuery({ queryKey: ['push-status'], queryFn: getPushStatus });
   const devicesQ = useQuery({
-    queryKey: ['push-devices'],
+    queryKey: ACCOUNT_SUMMARY_KEYS.pushDevices,
     queryFn: async () => (await listPushDevices()).length,
   });
 

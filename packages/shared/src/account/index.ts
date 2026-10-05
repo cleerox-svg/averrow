@@ -23,3 +23,4 @@ export {
 export * from './security';
 export * from './notifications';
 export type { AccountApiClient, AccountApiResponse } from './api-types';
+export { createFieldVersions, type FieldVersions } from './field-versions';
