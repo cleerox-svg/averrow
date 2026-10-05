@@ -920,7 +920,9 @@ export interface NrdRetentionDiag {
   phantom_hold_clamped: boolean | null;
   /** created_at of the NRD <-> lookalike matcher's cursor (lib/lookalike-nrd-matcher.ts). */
   lookalike_cursor: string | null;
-  /** True when that cursor, not the age window or the phantom cursor, set the cutoff. */
+  /** True when that cursor, not the age window or the phantom cursor, set the
+   *  cutoff — only when an unscanned row exists above it (a caught-up cursor
+   *  parked on an old row of the now-sparse table does not count). */
   held_by_lookalike_matcher: boolean | null;
   more_remaining: boolean | null;
   skipped: string | null;
@@ -936,7 +938,8 @@ export interface NrdRetentionDiag {
  *  incrementally within 30 days (or ever) and the purged rows were never
  *  scanned by it. `held_by_matcher` is therefore always false on new
  *  stamps (kept for shape); `held_by_lookalike_matcher: true` = a stuck
- *  lookalike matcher extended retention (to ≤ 37 days). A legacy
+ *  lookalike matcher (unscanned rows above its cursor) extended retention
+ *  (to ≤ 37 days) — a caught-up cursor on the sparse table never sets it. A legacy
  *  `skipped: 'no_cursor'` can only come from a pre-tiering stamp. */
 export async function buildNrdRetentionDiag(env: Env): Promise<NrdRetentionDiag> {
   let raw: string | null = null;

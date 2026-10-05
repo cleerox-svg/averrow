@@ -4,7 +4,9 @@
  * free tier turned out to be a random 70K sample per day).
  *
  * Pins: conditional-GET / same-version no-ops, bootstrap (snapshot only, no
- * D1), diff inserts + brand-matches ONLY new domains, the snapshot advances
+ * D1), diff brand-matches ONLY new domains and stores in nrd_domains only the
+ * new ones equal to a lookalike_domains / phantom_domains domain (the
+ * matchable filter — test/nrd-hagezi-matchable.test.ts covers it in depth), the snapshot advances
  * only after every D1 write succeeded, format guards (sort order, empty, HTML,
  * truncated), the per-run cap, registered_date derivation, and that the
  * needle-indexed brand matcher equals the naive scan.
@@ -24,6 +26,7 @@ import {
 } from "../src/feeds/nrd_hagezi";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, gunzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -160,6 +163,18 @@ function seedBrand(id: string, name: string, canonical: string): void {
   ).run(id);
 }
 
+let seedSeq = 0;
+/** Make `domains` matchable: lookalike_domains rows, as the matchable filter
+ *  only stores new NRDs equal to one. */
+function seedLookalikes(domains: string[]): void {
+  const st = raw.prepare(
+    "INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type) VALUES (?, 'b_seed', ?, 'typosquat')",
+  );
+  raw.exec("BEGIN");
+  for (const d of domains) st.run(`la-${++seedSeq}`, d);
+  raw.exec("COMMIT");
+}
+
 const nrdRows = (): Array<{ domain: string; registered_date: string }> =>
   raw.prepare("SELECT domain, registered_date FROM nrd_domains ORDER BY domain").all() as Array<{
     domain: string;
@@ -168,7 +183,11 @@ const nrdRows = (): Array<{ domain: string; registered_date: string }> =>
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => {
   beforeEach(() => {
-    raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
+    raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     db = d1FromSqlite(raw);
   });
 
@@ -177,6 +196,10 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
     const prior = ["acmebank-old.example", "keep.com", "gone-from-window.com"];
     const today = ["acmebank-old.example", "keep.com", "acmebank-new.example", "fresh.org"];
     const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf(prior, { etag: '"e0"', version: "v0" }) });
+    // fresh.org (new) and keep.com (old) are lookalike domains; only the NEW
+    // one is stored. acmebank-new.example is not matchable: brand-matched
+    // into threats, never stored.
+    seedLookalikes(["fresh.org", "keep.com"]);
     stubFetch(() => listResponse(today));
 
     const r = await nrd_hagezi.ingest(ctxOf(envOf(db, r2)));
@@ -184,7 +207,6 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
     expect(r).toEqual({ itemsFetched: 4, itemsNew: 1, itemsDuplicate: 0, itemsError: 0 });
     // registered_date = Last modified (05 Oct) − 1 day.
     expect(nrdRows()).toEqual([
-      { domain: "acmebank-new.example", registered_date: "2026-10-04" },
       { domain: "fresh.org", registered_date: "2026-10-04" },
     ]);
     expect(
@@ -199,6 +221,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
 
   it("falls back to UTC yesterday for registered_date without a Last modified header", async () => {
     const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf([], { version: "v0" }) });
+    seedLookalikes(["new.com"]);
     stubFetch(() => listResponse(["new.com"], { modified: null }));
 
     await nrd_hagezi.ingest(ctxOf(envOf(db, r2)));
@@ -209,6 +232,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
   it("a failing nrd_domains batch fails the pull and leaves the snapshot untouched (retry re-diffs)", async () => {
     const prior = await snapshotOf(["a.com"], { etag: '"e0"', version: "v0" });
     const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: prior });
+    seedLookalikes(["b.com", "c.com"]); // matchable → an nrd_domains batch runs
     stubFetch(() => listResponse(["a.com", "b.com", "c.com"]));
     const failing = {
       ...db,
@@ -239,6 +263,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
       "acmebank-3.example",
       "acmebank-4.example",
     ];
+    seedLookalikes(today);
     const calls = stubFetch(() => listResponse(today));
 
     const first = await ingestNrdHagezi(ctxOf(envOf(db, r2)), { maxNewPerRun: 2, flushEvery: 1 });
@@ -272,6 +297,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
     const r2 = fakeR2Bucket({
       [NRD_SNAPSHOT_KEY]: { bytes: await gzipText("a.com\na.com\nb.com\nb.com\n"), customMetadata: { version: "v0" } },
     });
+    seedLookalikes(["a.com", "b.com", "c.com"]);
     stubFetch(() => listResponse(["a.com", "b.com", "c.com"]));
 
     const r = await nrd_hagezi.ingest(ctxOf(envOf(db, r2)));
@@ -293,7 +319,11 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — diff against the snapshot", () => 
       if (i % 9 === 0) prior.push(`${dom(i)}-aged.net`);
     }
     prior.sort();
-    const expectedNew = today.filter((_, i) => i % 5 === 0);
+    const allNew = today.filter((_, i) => i % 5 === 0);
+    // Half of the new domains are matchable, plus some OLD (snapshot)
+    // domains that must not be stored again: only new ∩ matchable lands.
+    const expectedNew = allNew.filter((_, j) => j % 2 === 0);
+    seedLookalikes([...expectedNew, ...today.filter((_, i) => i % 5 === 1 && i % 3 === 0)]);
 
     const r2 = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(`${prior.join("\n")}\n`), customMetadata: { version: "v0" } } });
 

@@ -2,16 +2,17 @@
  * nrd_hagezi daily archive (tiered nrd_domains retention, 2026-10-05).
  *
  * D1 keeps ~30 days of nrd_domains (lib/nrd-retention.ts); the cold tier is
- * the NRD_ARCHIVE R2 bucket, where the feed writes every domain it FLUSHED
- * (inserted) per run, gzip'd, at
+ * the NRD_ARCHIVE R2 bucket, where the feed writes every NEW domain it
+ * FLUSHED per run — stored in nrd_domains or not (only lookalike/phantom-
+ * equal domains are stored) — gzip'd, at
  * `daily/<registered_date>/<version|unversioned>-<first domain>.txt.gz`.
  *
- * Pins: the archive holds exactly the inserted domains (never deferred /
- * capped ones, never old ones), its key + customMetadata, no object on
- * bootstrap or zero-new runs, a failed archive put throws BEFORE the diff
- * snapshot advances, threat-insert errors still archive (the rows are in D1)
- * while holding the snapshot, and an unbound NRD_ARCHIVE throws before any
- * fetch or D1 write.
+ * Pins: the archive holds exactly the new processed domains (never deferred
+ * / capped ones, never old ones) — a superset of what nrd_domains stored —
+ * its key + customMetadata (incl. stored_in_d1), no object on bootstrap or
+ * zero-new runs, a failed archive put throws BEFORE the diff snapshot
+ * advances, threat-insert errors still archive while holding the snapshot,
+ * and an unbound NRD_ARCHIVE throws before any fetch or D1 write.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -23,6 +24,7 @@ import {
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, gunzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -64,6 +66,16 @@ const ctxOf = (env: Env) => ({ env, feedName: "nrd_hagezi", feedUrl: "" });
 
 const archiveKeys = (a: FakeR2Bucket) => [...a.store.keys()].sort();
 
+let seedSeq = 0;
+/** Make `domains` matchable (only those land in nrd_domains). */
+function seedLookalikes(domains: string[]): void {
+  for (const d of domains) {
+    raw.prepare(
+      "INSERT INTO lookalike_domains (id, brand_id, domain, permutation_type) VALUES (?, 'b_seed', ?, 'typosquat')",
+    ).run(`la-${++seedSeq}`, d);
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -88,15 +100,20 @@ let db: D1Database;
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — daily R2 archive", () => {
   beforeEach(() => {
-    raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
+    raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     db = d1FromSqlite(raw);
   });
 
-  it("archives exactly the inserted (new) domains with key + metadata, before the snapshot advances", async () => {
+  it("archives ALL new domains (stored in D1 or not) with key + metadata, before the snapshot advances", async () => {
     const prior = ["keep.com", "old.net"];
     const today = ["keep.com", "old.net", "new-b.org", "new-a.com", "new-c.io"];
     const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf(prior) });
     const archive = fakeR2Bucket();
+    seedLookalikes(["new-a.com", "new-c.io", "keep.com"]); // new-b.org is not matchable
     stubList(today);
 
     // flushEvery: 2 → the archive spans several flushes.
@@ -109,14 +126,16 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — daily R2 archive", () => {
     expect(await gunzipText(obj.bytes)).toBe("new-a.com\nnew-b.org\nnew-c.io\n");
     expect(obj.customMetadata).toEqual({
       count: "3",
+      stored_in_d1: "2",
       version: VERSION,
       list_modified: MODIFIED,
       registered_date: REG_DATE,
     });
-    // Archive == what landed in nrd_domains.
+    // nrd_domains holds only the new ∩ matchable subset; the archive is the
+    // only copy of new-b.org.
     const rows = (raw.prepare("SELECT domain FROM nrd_domains ORDER BY domain").all() as Array<{ domain: string }>)
       .map((x) => x.domain);
-    expect(rows).toEqual(["new-a.com", "new-b.org", "new-c.io"]);
+    expect(rows).toEqual(["new-a.com", "new-c.io"]);
     // Snapshot advanced as before.
     expect(staging.store.get(NRD_SNAPSHOT_KEY)!.customMetadata.version).toBe(VERSION);
   });
@@ -190,8 +209,9 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — daily R2 archive", () => {
     expect(staging.ops.put).toBe(1);
   });
 
-  it("threat-insert errors still ARCHIVE (rows are in D1) but hold the snapshot; the retry rewrites the same key", async () => {
+  it("threat-insert errors still ARCHIVE (nrd_domains rows landed) but hold the snapshot; the retry rewrites the same key", async () => {
     raw.prepare("INSERT INTO brands (id, name, canonical_domain) VALUES ('b1', 'Acme Bank', 'acmebank.com')").run();
+    seedLookalikes(["acmebank-x.example"]);
     raw.prepare(
       "INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b1', '__internal__', 'u1', 'active')",
     ).run();

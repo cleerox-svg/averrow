@@ -558,8 +558,10 @@ navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV c
                               (UTC hour 0, hour-only gate: dns-queue reaper + nrd_domains tiered
                                retention — lib/nrd-retention.ts: 30 days hot (phantom cursor
                                clamped at 30d; only a stuck lookalike matcher holds to ≤37d),
-                               brand_matched rows kept; every NRD inserted since 2026-10-05 also
-                               archived to R2 NRD_ARCHIVE by feeds/nrd_hagezi.ts (binding required);
+                               brand_matched rows kept; nrd_domains stores only NRDs equal to a
+                               lookalike/phantom domain (a handful/day); every new NRD since
+                               2026-10-05 archived to R2 NRD_ARCHIVE by feeds/nrd_hagezi.ts
+                               (binding required);
                                once/day, continued on later hour-0 ticks if capped)
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
 enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't share CPU

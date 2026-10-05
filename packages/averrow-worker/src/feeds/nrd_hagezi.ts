@@ -2,6 +2,21 @@ import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
 import { threatId } from "./types";
 import { bulkInsertThreats } from "../lib/feedRunner";
 import { logger } from "../lib/logger";
+import {
+  NRD_ARCHIVE_PREFIX,
+  NRD_DOMAINS_PER_STATEMENT,
+  NRD_STATEMENTS_PER_BATCH,
+  storeNrdReference,
+} from "../lib/nrd-store";
+
+// Re-exported: tests and docs refer to these through the feed module.
+export {
+  NRD_ARCHIVE_PREFIX,
+  NRD_DOMAINS_PER_STATEMENT,
+  NRD_INSERT_SQL,
+  NRD_STATEMENTS_PER_BATCH,
+  storeNrdReference,
+} from "../lib/nrd-store";
 
 /**
  * NRD Feed — Newly Registered Domains via Hagezi's NRD 7-day list.
@@ -26,38 +41,82 @@ import { logger } from "../lib/logger";
  *      merge-diffed; a domain present today but not in the snapshot is new.
  *      Both lists are in byte (LC_ALL=C) order, which matches JS `<` on
  *      ASCII; an out-of-order line is a format change and throws.
- *   3. New domains are flushed every NRD_FLUSH_EVERY into nrd_domains
- *      (storeNrdReference), brand-matched, and the matches inserted via
- *      bulkInsertThreats in the same flush — so memory stays bounded even
- *      if a generic brand keyword matches a large share of the day.
+ *   3. New domains are buffered and flushed every NRD_FLUSH_EVERY. Each
+ *      flush (a) stores in nrd_domains ONLY the "matchable" ones — see
+ *      "What lands in nrd_domains" below, (b) streams ALL of them into the
+ *      R2 archive, and (c) brand-matches ALL of them, inserting the matches
+ *      via bulkInsertThreats in the same flush — so memory stays bounded
+ *      even if a generic brand keyword matches a large share of the day.
  *   4. Every today-line that is old (in the snapshot) or was actually
  *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
  *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
  *      the snapshot, so the next run sees it as new again: the cap DEFERS,
  *      never drops, and successive runs converge. A run that deferred
  *      anything stores no etag/version on the snapshot, so the next 2-hourly
- *      run re-diffs instead of short-circuiting on an unchanged list.
+ *      run re-diffs instead of short-circuiting on an unchanged list. The
+ *      cap bounds brand-matching CPU, filter probes and archive memory per
+ *      run.
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
  *
+ * What lands in nrd_domains (D1 write cut, owner decision 2026-10-05): only
+ * new domains EQUAL to a `lookalike_domains.domain` or a
+ * `phantom_domains.domain`. Those are the only rows either nrd_domains
+ * reader can ever return: lib/lookalike-nrd-matcher.ts joins
+ * `lookalike_domains l ON l.domain = n.domain` and lib/phantom-matcher.ts
+ * joins `nrd_domains t ON t.domain = p.domain`. The filter is IN the insert
+ * (NRD_INSERT_SQL): `… SELECT j.value, ? FROM json_each(?) j WHERE EXISTS
+ * (… l.domain = j.value) OR EXISTS (… p.domain = j.value)` — the same `=` on
+ * the same BINARY-collated TEXT columns as the matchers' joins, evaluated by
+ * SQLite, so it is identical to them by construction (no JS-side
+ * normalisation to drift). The stored value is the reader-normalised domain
+ * (trimmed + lowercased, exactly as before); both lookalike/phantom writers
+ * store lowercase ASCII, IDNs as `xn--` punycode, as the Hagezi list does.
+ * Storing every NRD (~443K/day) cost ~1.3M row-writes/day plus as many again
+ * for the 30-day purge; the filtered set is a handful of rows a day. The
+ * full day is in the R2 archive, and brand keyword matches go to `threats`
+ * regardless.
+ *
+ *   * Cost: still 2 binds and ≤1000 domains per statement, 20 statements per
+ *     db.batch(). Each new domain costs ~2 index probes (lookalike, then
+ *     phantom when the first misses) on idx_lookalike_domain (0282) /
+ *     idx_phantom_domain (0258) — both covering index SEARCHes, pinned by
+ *     EXPLAIN QUERY PLAN in test/nrd-hagezi-matchable.test.ts — ≈0.9M
+ *     row-reads/day at ~443K new domains/day, and row-writes only for the
+ *     matches. No in-memory set, no extra load query.
+ *   * Writes go through env.DB (the primary), so the EXISTS sees every
+ *     lookalike/phantom row committed before the flush.
+ *   * Matchability is decided at ingest, so a lookalike permutation or
+ *     phantom created AFTER its domain's NRD listing was diffed would miss
+ *     its NRD. lib/nrd-archive-backcheck.ts closes that: the seeders hand it
+ *     the domains they just inserted, it scans the last NRD_BACKCHECK_DAYS
+ *     (8) of archive objects and stores any hit (with the archive's date)
+ *     so the matchers pick it up. Older than 8 days → not recovered.
+ *
  * Daily archive (tiered retention, owner decision 2026-10-05): nrd_domains
- * keeps only ~30 days hot in D1 (lib/nrd-retention.ts), so every domain this
- * run FLUSHED (inserted — never a deferred/capped one) is also gzip-streamed
- * into an archive object in the NRD_ARCHIVE R2 bucket, at
+ * keeps only ~30 days hot in D1 (lib/nrd-retention.ts), and the archive is
+ * now the ONLY copy of an unmatchable NRD: every NEW domain this run
+ * processed (flushed — never a deferred/capped one), stored in D1 or not, is
+ * gzip-streamed into an archive object in the NRD_ARCHIVE R2 bucket, at
  * `daily/<registered_date>/<version|unversioned>-<first domain>.txt.gz`
- * (nrdArchiveKey). It is PUT once every nrd_domains write (storeNrdReference)
- * succeeded — regardless of threat-insert errors, because those rows are
- * already in D1 and will be purged — and BEFORE the snapshot put. A failed
+ * (nrdArchiveKey; customMetadata count / stored_in_d1 / version /
+ * list_modified / registered_date). It is PUT once every nrd_domains write
+ * (storeNrdReference) succeeded — regardless of threat-insert errors — and
+ * BEFORE the snapshot put. A failed
  * archive put throws, the snapshot does not advance, and the next run
  * re-diffs, re-inserts (INSERT OR IGNORE) and rewrites the same key; the
  * same happens after a threat-insert error holds the snapshot. The first
  * domain in the key keeps a deferral catch-up run on the same list version
  * from overwriting the previous run's object, while a retry of the same set
- * overwrites itself idempotently. Zero inserted → no object. Bootstrap
+ * overwrites itself idempotently. Zero new → no object. Bootstrap
  * archives nothing. NRD_ARCHIVE is REQUIRED: unbound → the run throws
- * before fetching, because retention purges D1 on the assumption that every
- * row it deletes is archived.
+ * before fetching, because the archive is the system of record for NRDs.
+ *
+ * FeedResult: itemsFetched = list domains read (as before); itemsNew /
+ * itemsDuplicate / itemsError = brand-match THREAT rows inserted / already
+ * present (or repeated in the list) / failed — not NRD counts. NRD counts
+ * (new, stored_in_d1, archived, deferred) are in the `nrd_hagezi_diffed` log.
  *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
@@ -80,8 +139,6 @@ export const NRD_HAGEZI_URL = "https://raw.githubusercontent.com/hagezi/nrd/main
 /** R2 key (GEOIP_STAGING bucket) of the previous run's gzip'd domain list. */
 export const NRD_SNAPSHOT_KEY = "nrd/hagezi-nrd7.txt.gz";
 
-/** Key prefix of the daily archive objects in the NRD_ARCHIVE R2 bucket. */
-export const NRD_ARCHIVE_PREFIX = "daily/";
 
 /** Replace anything outside [A-Za-z0-9._-] so a key part never adds a
  *  path segment or an awkward character to the R2 key. */
@@ -98,8 +155,10 @@ export function nrdArchiveKey(registeredDate: string, version: string | null, fi
   return `${NRD_ARCHIVE_PREFIX}${archiveKeyPart(registeredDate)}/${v}-${archiveKeyPart(firstDomain)}.txt.gz`;
 }
 
-/** Max new domains inserted + matched per run (~2.3 days of list growth).
- *  The rest are deferred to the next run (kept out of the snapshot). */
+/** Max new domains processed (filtered into nrd_domains, archived and
+ *  brand-matched) per run (~2.3 days of list growth). Bounds matching CPU
+ *  and archive memory. The rest are deferred to the next run (kept out of
+ *  the snapshot). */
 export const NRD_MAX_NEW_PER_RUN = 1_000_000;
 
 /** Timeout for the response HEADERS. The body has its own idle timeout,
@@ -123,26 +182,8 @@ const HOMOGLYPHS: Record<string, string[]> = {
   s: ["5", "$"],
 };
 
-/**
- * Domains per INSERT statement in storeNrdReference. The rows travel as ONE
- * JSON-array bind expanded server-side by `json_each(?)`, so each statement
- * binds exactly 2 parameters regardless of row count — D1 caps a statement
- * at 100 bound parameters (the old `VALUES (?, ?)×500` form bound 1000 and
- * every pull died with "too many SQL variables at offset 418"). 1000 NRDs
- * ≈ 25–30 KB of JSON: far under D1's 2 MB value cap and its 100 KB SQL-text
- * cap (the JSON is a bound value, not SQL text).
- */
-export const NRD_DOMAINS_PER_STATEMENT = 1000;
-
-/**
- * Statements per `db.batch()` call. One batch = one D1 round-trip (one
- * subrequest) and one implicit transaction: 20 × 1000 = 20K rows/call, so a
- * ~443K-domain day is ~23 calls.
- */
-export const NRD_STATEMENTS_PER_BATCH = 20;
-
-/** New domains buffered before a storeNrdReference + brand-match flush:
- *  exactly one db.batch() call per flush. */
+/** New domains buffered before a flush (filtered storeNrdReference +
+ *  archive + brand match): exactly one db.batch() call per flush. */
 export const NRD_FLUSH_EVERY = NRD_DOMAINS_PER_STATEMENT * NRD_STATEMENTS_PER_BATCH;
 
 export interface NrdIngestOptions {
@@ -174,7 +215,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
   const archiveBucket = ctx.env.NRD_ARCHIVE;
   if (!archiveBucket) {
     throw new Error(
-      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every inserted domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive) before nrd_domains retention may purge it`,
+      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every new domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive); it is the only copy of the NRDs nrd_domains does not store`,
     );
   }
 
@@ -266,12 +307,15 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let pending: string[] = [];
     let lines = 0;
     let newTotal = 0;
-    let newInserted = 0;
+    let newProcessed = 0;
+    let storedInD1 = 0;
 
     const flush = async (): Promise<void> => {
       if (pending.length === 0) return;
-      await storeNrdReference(ctx.env.DB, pending, registeredDate);
-      // Archive exactly what was flushed (never a deferred domain).
+      // Only domains a matcher join can return land in D1 — the filter is
+      // in the INSERT itself (NRD_INSERT_SQL, module header).
+      storedInD1 += await storeNrdReference(ctx.env.DB, pending, registeredDate);
+      // Archive EVERY flushed domain (never a deferred one), stored or not.
       for (const d of pending) await archiveWriter.add(d);
       archiveFirst ??= pending[0]!;
       archived += pending.length;
@@ -301,8 +345,8 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       newTotal++;
       // Over the cap: leave it OUT of the new snapshot so the next run sees
       // it as new again (deferred, not dropped).
-      if (newInserted >= maxNew) continue;
-      newInserted++;
+      if (newProcessed >= maxNew) continue;
+      newProcessed++;
       await snapshot.add(d);
       pending.push(d);
       if (pending.length >= flushEvery) await flush();
@@ -310,29 +354,31 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     await flush();
     assertListShape(lines, today.contentLines, header);
     const { itemsNew, itemsDuplicate, itemsError } = totals;
-    const deferred = newTotal - newInserted;
+    const deferred = newTotal - newProcessed;
 
     if (deferred > 0) {
-      logger.warn("nrd_hagezi_deferred", { newTotal, inserted: newInserted, deferred, cap: maxNew });
+      logger.warn("nrd_hagezi_deferred", { newTotal, processed: newProcessed, deferred, cap: maxNew });
     }
 
     // Archive whenever every nrd_domains write landed (we got here, so
     // storeNrdReference never threw) — independent of threat-insert errors:
-    // those rows are in D1 now and retention will purge them. BEFORE the
-    // snapshot: if this put throws, the snapshot stays and the next run
-    // re-diffs + rewrites the same archive key.
+    // the archive is the only copy of the unstored domains, and a retry
+    // rewrites the same key anyway. BEFORE the snapshot: if this put throws,
+    // the snapshot stays and the next run re-diffs + rewrites the same
+    // archive key.
     if (archived > 0 && archiveFirst !== null) {
       const archiveKey = nrdArchiveKey(registeredDate, header.version, archiveFirst);
       await archiveBucket.put(archiveKey, await archiveWriter.finish(), {
         httpMetadata: { contentType: "application/gzip" },
         customMetadata: {
           count: String(archived),
+          stored_in_d1: String(storedInD1),
           version: header.version ?? "unversioned",
           list_modified: header.lastModified ?? "",
           registered_date: registeredDate,
         },
       });
-      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived });
+      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived, storedInD1 });
     }
 
     // Snapshot advances only when every D1 write landed. A failed threat
@@ -351,7 +397,8 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       registeredDate,
       lines,
       newTotal,
-      newInserted,
+      archived,
+      storedInD1,
       deferred,
       matches: totals.matches,
       itemsNew,
@@ -804,43 +851,6 @@ export function collectBrandMatchRows(
   matched: Set<string> = new Set<string>(),
 ): { rows: ThreatRow[]; inPayloadDuplicates: number } {
   return new BrandMatcher(brandKeywords).collect(domains, matched);
-}
-
-/**
- * Store NRDs in the reference table for later analysis (phantom matcher,
- * infrastructure correlation). INSERT OR IGNORE keeps re-runs (and in-list
- * duplicates) idempotent: the first registered_date written for a domain
- * wins.
- *
- * Exported for the D1 bind-limit regression test.
- */
-export async function storeNrdReference(db: D1Database, domains: string[], date: string): Promise<void> {
-  // Ensure reference table exists
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS nrd_domains (
-      domain TEXT PRIMARY KEY,
-      registered_date TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      brand_matched INTEGER DEFAULT 0
-    )
-  `).run();
-
-  // json_each yields rows in array order, so in-statement duplicates resolve
-  // first-wins under OR IGNORE — identical to the old multi-row VALUES list.
-  const insertSql =
-    `INSERT OR IGNORE INTO nrd_domains (domain, registered_date)
-     SELECT value, ? FROM json_each(?)`;
-
-  const stmts: D1PreparedStatement[] = [];
-  for (let i = 0; i < domains.length; i += NRD_DOMAINS_PER_STATEMENT) {
-    const chunk = domains.slice(i, i + NRD_DOMAINS_PER_STATEMENT);
-    stmts.push(db.prepare(insertSql).bind(date, JSON.stringify(chunk)));
-  }
-  for (let i = 0; i < stmts.length; i += NRD_STATEMENTS_PER_BATCH) {
-    await db.batch(stmts.slice(i, i + NRD_STATEMENTS_PER_BATCH));
-  }
-
-  logger.info("nrd_reference_stored", { domains: domains.length, date, statements: stmts.length });
 }
 
 /**

@@ -14,6 +14,7 @@ import { nrd_hagezi, collectBrandMatchRows, NRD_SNAPSHOT_KEY } from "../src/feed
 import { THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
@@ -120,7 +121,11 @@ function seedBrand(id: string, name: string, canonical: string): void {
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
   beforeEach(async () => {
-    raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
+    raw = openDerivedDb(["brands", "monitored_brands", "threats", "lookalike_domains", "phantom_domains"]);
+    // The filtered nrd_domains insert probes these by domain (prod indexes).
+    for (const t of ["lookalike_domains", "phantom_domains"]) {
+      for (const ddl of liveIndexDdl(t).values()) raw.exec(ddl);
+    }
     stats = { maxBinds: 0, roundTrips: 0, batchCalls: 0 };
     db = instrumented(d1FromSqlite(raw), stats);
     r2 = await emptyPriorSnapshot();
@@ -142,7 +147,8 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(result).toEqual({ itemsFetched: 2000, itemsNew: 1500, itemsDuplicate: 0, itemsError: 0 });
     expect(stats.maxBinds).toBeLessThanOrEqual(D1_MAX_BINDS);
     // Threat inserts: ceil(1500/50) = 30 batches + 1 brand-counter flush.
-    // Plus the fixed overhead: nrd_domains CREATE + its batch, brands SELECT.
+    // Plus the fixed overhead: brands SELECT + the two matchable-set loads
+    // (none of these domains is a lookalike/phantom, so no nrd_domains write).
     const threatBatches = Math.ceil(1500 / THREAT_INSERT_CHUNK);
     expect(stats.roundTrips).toBeLessThanOrEqual(threatBatches + 1 + 5);
     // The per-row path was ≥3 round trips per match (4 counting the bump).

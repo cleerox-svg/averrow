@@ -11,9 +11,23 @@
  * tp-ink.com (a Tp Link typosquat) was registered 2026-10-03, was in our
  * own `nrd_domains` from 2026-10-04, and was never checked.
  *
- * `nrd_domains` (feeds/nrd_hagezi.ts — the Hagezi/Stamus NRD list,
- * diffed daily, ~443K rows/day) is a list of
- * domains the registries report as NEWLY registered. Joining it to
+ * `nrd_domains` (feeds/nrd_hagezi.ts — the Hagezi/Stamus NRD list, diffed
+ * daily) holds domains the registries report as NEWLY registered — since
+ * 2026-10-05 ONLY the new ones byte-equal to a `lookalike_domains.domain` or
+ * `phantom_domains.domain` at ingest (a handful a day; the full ~443K/day is
+ * in the NRD_ARCHIVE R2 bucket). The feed's filter is IN its insert
+ * (NRD_INSERT_SQL: `WHERE EXISTS (… l.domain = j.value) OR EXISTS (…)`),
+ * i.e. this join's own `l.domain = n.domain`, so every NRD that is a
+ * lookalike at ingest is stored. A permutation seeded AFTER its domain's
+ * NRD listing was ingested would have no row; lib/nrd-archive-backcheck.ts
+ * closes that: agents/lookalike-scanner.ts back-checks the domains its
+ * seeder just inserted against the last 8 days of the R2 archive BEFORE
+ * calling this matcher, and stores any hit with the archive's date (and
+ * created_at = now, above this cursor) — or re-surfaces an existing row a
+ * brand sharing the permutation already had claimed — so this run claims it
+ * (or the next, when the replica read lags). The
+ * manual generate endpoint does the same inline. A listing older than 8
+ * days is not recovered. Joining it to
  * `lookalike_domains` by domain turns "the checker will get to it in ~48
  * days" into "we know it was registered on <date>, check it now":
  *
@@ -83,8 +97,9 @@
  *     IGNORE time) and is monotonic with ingestion, never backdated —
  *     same reasoning as lib/phantom-matcher.ts, which explains why the
  *     intrinsic `registered_date` cannot be a cursor.
- *   * One `storeNrdReference` batch writes ~20K rows inside a second or
- *     two, so thousands of rows share a `created_at`. `rowid` breaks the
+ *   * One `storeNrdReference` batch can write up to ~20K rows inside a
+ *     second or two (only in the feed's store-everything fallback; normally
+ *     a few rows), so many rows may share a `created_at`. `rowid` breaks the
  *     tie, which is what lets a bounded window stop in the MIDDLE of a
  *     tie group and resume exactly after it.
  *
@@ -97,10 +112,13 @@
  * W-1, falling back to the table's max key for a partial window), then one
  * join over (lo, hi]. Both bind 4-5 parameters (D1's limit is 100). The
  * nrd side costs ~2 index reads per row, plus one index probe into
- * lookalike_domains: ~3 reads per NRD row, ~1.3M/day at ~443K NRD rows a
- * day. Bounded per run by `NRD_MATCH_MAX_WINDOWS_PER_RUN` x
- * `NRD_MATCH_WINDOW_ROWS` (50K rows) and a soft wall-clock cap, so a day's
- * file (~443K rows, landing once a day) drains over ~9 hourly runs.
+ * lookalike_domains: ~3 reads per NRD row. With only matchable NRDs stored
+ * (a handful a day) a run is normally ONE partial window — the max-key probe
+ * plus a join over the few new rows, a few dozen reads (it was ~1.3M/day
+ * when every ~443K-row day was stored). Still bounded per run by
+ * `NRD_MATCH_MAX_WINDOWS_PER_RUN` x `NRD_MATCH_WINDOW_ROWS` (50K rows) and a
+ * soft wall-clock cap, which now only matter after a backlog (e.g. the
+ * feed's over-cap store-everything fallback, feeds/nrd_hagezi.ts).
  *
  * ── Retention ───────────────────────────────────────────────────────
  *
