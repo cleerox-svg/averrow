@@ -31,6 +31,8 @@
 export const MULTI_LABEL_SUFFIXES: ReadonlySet<string> = new Set([
   // UK
   "co.uk", "org.uk", "me.uk", "ltd.uk", "plc.uk", "ac.uk", "gov.uk", "net.uk", "sch.uk", "nhs.uk", "police.uk", "mod.uk",
+  // Austria / France / Belgium / Switzerland (generic second levels under direct-sale ccTLDs)
+  "ac.at", "gv.at", "co.at", "or.at", "gouv.fr", "asso.fr", "nom.fr", "tm.fr", "presse.fr", "ac.be",
   // Australia / NZ
   "com.au", "net.au", "org.au", "edu.au", "gov.au", "asn.au", "id.au",
   "co.nz", "net.nz", "org.nz", "ac.nz", "govt.nz", "school.nz", "geek.nz", "gen.nz", "kiwi.nz", "maori.nz", "iwi.nz",

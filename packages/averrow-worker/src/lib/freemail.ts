@@ -29,7 +29,7 @@ export const FREEMAIL_DOMAINS: ReadonlySet<string> = new Set([
   "duck.com", "skiff.com", "startmail.com", "ctemplar.com", "guerrillamail.com", "mailinator.com",
   "yopmail.com", "10minutemail.com", "temp-mail.org",
   // Russia / CIS
-  "mail.ru", "ya.ru",
+  "mail.ru", "ya.ru", "ukr.net", "i.ua", "meta.ua",
   // Germany / Austria / Switzerland
   "web.de", "t-online.de", "freenet.de", "arcor.de", "gmx.net", "bluewin.ch", "aon.at",
   // France / Belgium

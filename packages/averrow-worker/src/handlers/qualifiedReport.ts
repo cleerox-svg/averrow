@@ -617,7 +617,7 @@ export async function handleRenewQualifiedReport(
     const existing = await env.DB.prepare(`
       SELECT id, share_token, generated_by, json_extract(payload_json, '$.content') AS content
       FROM qualified_reports
-      WHERE lead_id = ? ORDER BY created_at DESC LIMIT 1
+      WHERE lead_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1
     `).bind(leadId).first<{ id: string; share_token: string; generated_by: string | null; content: string | null }>();
 
     if (!existing) {

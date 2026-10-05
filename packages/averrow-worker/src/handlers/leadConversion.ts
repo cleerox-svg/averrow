@@ -14,6 +14,7 @@ import { json } from "../lib/cors";
 import { emailMatchesScannedDomain } from "../lib/free-scan-view";
 import { sendLeadOutreachEmail } from "../lib/lead-outreach-email";
 import { createQualifiedReport } from "./qualifiedReport";
+import { normalizeLeadEmail } from "./brandScan";
 import type { Env } from "../types";
 
 interface QualifiedReportPayload {
@@ -82,7 +83,13 @@ export async function handleSendLeadOutreach(
     if (!lead) return json({ success: false, error: "Lead not found" }, 404, origin);
 
     const url = new URL(request.url);
-    const domainVerified = lead.domain != null && emailMatchesScannedDomain(lead.email, lead.domain);
+    // Rows captured before strict host validation may hold a malformed
+    // address (e.g. `x@acme.com/foo`); never send to one.
+    const recipient = normalizeLeadEmail(lead.email);
+    if (!recipient) {
+      return json({ success: false, error: "Lead email address is not valid" }, 409, origin);
+    }
+    const domainVerified = lead.domain != null && emailMatchesScannedDomain(recipient, lead.domain);
 
     // Verified address: the most recent active report, any content (share
     // URL must be one we previously generated — if none, the admin
@@ -94,7 +101,7 @@ export async function handleSendLeadOutreach(
         FROM qualified_reports
         WHERE lead_id = ? AND expires_at > datetime('now')
           AND (? = 1 OR json_extract(payload_json, '$.content') = 'scan_only')
-        ORDER BY created_at DESC LIMIT 1
+        ORDER BY created_at DESC, rowid DESC LIMIT 1
       `).bind(leadId, domainVerified ? 1 : 0).first<{ share_token: string; payload_json: string }>();
     }
 
@@ -145,7 +152,7 @@ export async function handleSendLeadOutreach(
     }
 
     const result = await sendLeadOutreachEmail(env.RESEND_API_KEY, {
-      recipientEmail: lead.email,
+      recipientEmail: recipient,
       recipientName: lead.name,
       brandName: payload.brand.name ?? payload.brand.domain,
       brandDomain: payload.brand.domain,
