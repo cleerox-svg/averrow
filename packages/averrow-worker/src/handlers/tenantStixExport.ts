@@ -22,8 +22,10 @@
  *   - `confidence_score` (internal scoring) is NOT passed to the builder;
  *     STIX `confidence` is derived from the severity band only.
  *
- * Bounds: `limit` defaults to 1000, max 5000 indicators per call; the
- * response sets `X-Averrow-Truncated: true` when the cap was hit. Rate
+ * Bounds: `limit` defaults to 1000, max 5000 indicators per call. The
+ * handler reads limit+1 rows, so `X-Averrow-Truncated: true` means more
+ * rows exist, and `X-Averrow-Next-Before` carries the keyset cursor
+ * (`<created_at>|<id>`) to pass back as `?before=` for the next page. Rate
  * limit: 20 exports per hour per (org, user) — `rateLimitCustom`.
  * Plan entitlement: none — no export/API module exists in the entitlement
  * matrix (lib/entitlements.ts) and the same threat rows are already
@@ -92,6 +94,24 @@ export function toTenantStixThreat(row: ThreatRow): ThreatInput {
   };
 }
 
+/** Content-Disposition filename: only [A-Za-z0-9_-] survive (header-safe). */
+export function safeFilename(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "averrow-stix";
+}
+
+const CURSOR_TS_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?$/;
+
+/** `before` cursor = `<created_at>|<id>` exactly as returned in
+ *  X-Averrow-Next-Before. Null when malformed. */
+export function parseBeforeCursor(raw: string): { createdAt: string; id: string } | null {
+  const sep = raw.lastIndexOf("|");
+  if (sep <= 0) return null;
+  const createdAt = raw.slice(0, sep);
+  const id = raw.slice(sep + 1);
+  if (!CURSOR_TS_RE.test(createdAt) || id.length === 0 || id.length > 200) return null;
+  return { createdAt, id };
+}
+
 function badRequest(error: string, origin: string | null): Response {
   return json({ success: false, error }, 400, origin);
 }
@@ -122,6 +142,9 @@ export async function handleTenantStixExport(
   if (since !== null && !SINCE_RE.test(since)) return badRequest("since must be an ISO-8601 date", origin);
   if (severity !== null && !SEVERITIES.has(severity)) return badRequest("Invalid severity", origin);
   if (status !== null && status !== "all" && !STATUSES.has(status)) return badRequest("Invalid status", origin);
+  const beforeRaw = url.searchParams.get("before");
+  const before = beforeRaw === null ? null : parseBeforeCursor(beforeRaw);
+  if (beforeRaw !== null && before === null) return badRequest("Invalid before cursor", origin);
 
   try {
     // 1. The org's brands (optionally one of them). Same org_brands join the
@@ -144,9 +167,15 @@ export async function handleTenantStixExport(
     if (since) { conditions.push("t.created_at >= ?"); binds.push(since.replace("T", " ").replace(/Z$/, "")); }
     if (severity) { conditions.push("t.severity = ?"); binds.push(severity); }
     if (status && status !== "all") { conditions.push("t.status = ?"); binds.push(status); }
-    binds.push(limit);
+    if (before) {
+      conditions.push("(t.created_at < ? OR (t.created_at = ? AND t.id < ?))");
+      binds.push(before.createdAt, before.createdAt, before.id);
+    }
+    // limit + 1: the extra row only proves there is more (accurate
+    // truncation flag + next cursor); it is never exported.
+    binds.push(limit + 1);
 
-    const threatRows = brands.length === 0
+    const fetched: ThreatRow[] = brands.length === 0
       ? []
       : (await env.DB.prepare(
           `SELECT t.id, t.target_brand_id, t.threat_type, t.severity, t.status,
@@ -154,9 +183,13 @@ export async function handleTenantStixExport(
              FROM threats t
              JOIN org_brands ob ON ob.brand_id = t.target_brand_id AND ob.org_id = ?
             ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
-            ORDER BY t.created_at DESC
+            ORDER BY t.created_at DESC, t.id DESC
             LIMIT ?`,
         ).bind(...binds).all<ThreatRow>()).results ?? [];
+    const truncated = fetched.length > limit;
+    const threatRows = truncated ? fetched.slice(0, limit) : fetched;
+    const lastRow = threatRows[threatRows.length - 1];
+    const nextBefore = truncated && lastRow ? `${lastRow.created_at}|${lastRow.id}` : null;
 
     // 3. One identity + its indicators/relationships per brand, merged into
     //    a single bundle via the shared serializer.
@@ -177,7 +210,7 @@ export async function handleTenantStixExport(
         first_seen: brand.first_seen ?? undefined,
         sector: brand.sector,
       };
-      objects.push(...buildSTIXBundle(threats, brandInput).objects);
+      objects.push(...(await buildSTIXBundle(threats, brandInput)).objects);
     }
     const bundle: STIXBundle = { type: "bundle", id: `bundle--${crypto.randomUUID()}`, objects };
 
@@ -193,15 +226,18 @@ export async function handleTenantStixExport(
       });
     } catch { /* audit is best-effort */ }
 
-    const filename = `averrow-stix-org-${orgId}-${Date.now()}.json`;
+    const filename = safeFilename(`averrow-stix-org-${orgId}-${Date.now()}`) + ".json";
     return new Response(JSON.stringify(bundle, null, 2), {
       status: 200,
       headers: {
         "Content-Type": "application/stix+json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
-        "X-Averrow-Truncated": threatRows.length >= limit ? "true" : "false",
+        "X-Averrow-Truncated": truncated ? "true" : "false",
+        ...(nextBefore ? { "X-Averrow-Next-Before": nextBefore } : {}),
         ...corsHeaders(origin, env),
+        // Let the tenant SPA (cross-origin in dev) read the pagination headers.
+        "Access-Control-Expose-Headers": "X-Averrow-Truncated, X-Averrow-Next-Before, Content-Disposition",
       },
     });
   } catch {

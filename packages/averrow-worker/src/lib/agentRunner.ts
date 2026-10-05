@@ -6,6 +6,7 @@
  * flight_control and architect are protected from auto-trip.
  */
 
+import { drainAlertEvents } from "./alert-events";
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry } from "./d1-retry";
@@ -444,6 +445,9 @@ export async function executeAgent(
 
   try {
     const result = await agentModule.execute(ctx);
+    // Finish this run's alert.created deliveries inside the run, before
+    // agent_runs is finalized (lib/alert-events.ts). Never throws.
+    await drainAlertEvents();
     const durationMs = Date.now() - start;
 
     // Persist agent outputs if any

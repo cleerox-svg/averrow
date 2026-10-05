@@ -21,6 +21,7 @@ vi.mock("../src/lib/org-events", () => ({
 }));
 
 const { createAlert } = await import("../src/lib/alerts");
+const { drainAlertEvents, pendingAlertEventCount } = await import("../src/lib/alert-events");
 
 const src = (rel: string) =>
   readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -151,5 +152,56 @@ describe.skipIf(!hasSqlite())("createAlert → alert.created (real SQLite)", () 
     await expect(flush()).resolves.toBeUndefined();
     expect(id).toBeTruthy();
     emitOrgEvent.mockImplementation(async () => {});
+  });
+
+  it("without waitUntil, delivery is tracked and drained before the invocation ends", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    emitOrgEvent.mockImplementation(async () => { await gate; });
+
+    await createAlert(env.DB, {
+      brandId: "b1", userId: "system", alertType: "lookalike_domain_active",
+      severity: "high", title: "t", summary: "s",
+    }, { env });
+    // Allow the org lookup to run and the deliveries to start.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pendingAlertEventCount()).toBe(1);
+
+    let drained = false;
+    const d = drainAlertEvents().then(() => { drained = true; });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(drained).toBe(false); // still waiting on the delivery
+    release();
+    await d;
+    expect(drained).toBe(true);
+    expect(pendingAlertEventCount()).toBe(0);
+    expect(emitOrgEvent).toHaveBeenCalledTimes(2);
+    emitOrgEvent.mockImplementation(async () => {});
+  });
+
+  it("an org-private alert is not delivered to an org that does not hold the brand", async () => {
+    await createAlert(env.DB, {
+      brandId: "b1", userId: "system", alertType: "executive_impersonation",
+      severity: "high", title: "Exec", summary: "s", orgId: 3,
+      details: { platform: "linkedin", handle: "x", score: 0.95 },
+    }, emitCtx());
+    await flush();
+    expect(emitOrgEvent).not.toHaveBeenCalled();
+  });
+
+  it("caps brand-wide fan-out at 50 orgs, lowest org ids first", async () => {
+    for (let org = 10; org < 70; org++) {
+      raw.prepare("INSERT INTO org_brands (org_id, brand_id) VALUES (?, 'b1')").run(org);
+    }
+    await createAlert(env.DB, {
+      brandId: "b1", userId: "system", alertType: "lookalike_domain_active",
+      severity: "high", title: "t", summary: "s",
+    }, emitCtx());
+    await flush();
+    const orgs = emitOrgEvent.mock.calls.map((c) => c[1] as number);
+    expect(orgs).toHaveLength(50);
+    expect(Math.min(...orgs)).toBe(1);
+    expect(orgs).toContain(2);
+    expect(orgs).not.toContain(69);
   });
 });

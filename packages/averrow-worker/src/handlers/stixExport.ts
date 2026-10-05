@@ -79,7 +79,7 @@ export async function handleSTIXExport(
       sector: brand.sector,
     };
 
-    const bundle = buildSTIXBundle(threats.results, brandInput);
+    const bundle = await buildSTIXBundle(threats.results, brandInput);
 
     // 5. Return as application/stix+json with download header
     const filename = `averrow-stix-${brand.canonical_domain}-${Date.now()}.json`;
@@ -147,7 +147,7 @@ export async function handleSTIXIndicators(
     ).bind(...params).all<ThreatInput>();
 
     // Return bare indicator array (no bundle wrapper)
-    const indicators = threats.results.map(threatToSTIXIndicator);
+    const indicators = await Promise.all(threats.results.map(threatToSTIXIndicator));
 
     return new Response(JSON.stringify(indicators, null, 2), {
       status: 200,

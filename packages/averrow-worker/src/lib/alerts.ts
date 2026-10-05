@@ -10,6 +10,8 @@
 import type { AlertTypeKey, AlertSeverity } from '@averrow/shared';
 import type { Env } from '../types';
 import { emitOrgEvent } from './org-events';
+import { trackAlertEvent } from './alert-events';
+import { logger } from './logger';
 
 /** @deprecated Use AlertTypeKey from @averrow/shared. */
 export type AlertType = AlertTypeKey;
@@ -75,8 +77,9 @@ export interface CreateAlertParams {
  */
 export interface AlertEmitContext {
   env: Env;
-  /** `ctx.waitUntil` when the caller has one, so delivery outlives the
-   *  invocation. Without it the delivery is fire-and-forget. */
+  /** `ctx.waitUntil` when the caller has one. Without it the delivery is
+   *  tracked in lib/alert-events.ts and drained by executeAgent / the
+   *  Worker entrypoints before the invocation ends. */
   waitUntil?: (promise: Promise<unknown>) => void;
 }
 
@@ -104,18 +107,34 @@ export interface AlertCreatedEventInput {
  */
 export async function emitAlertCreatedEvent(env: Env, input: AlertCreatedEventInput): Promise<void> {
   try {
-    const [orgRows, brand] = await Promise.all([
-      input.orgId != null
-        ? Promise.resolve([{ org_id: input.orgId }])
-        : env.DB.prepare(
-            'SELECT DISTINCT org_id FROM org_brands WHERE brand_id = ? LIMIT ?',
-          ).bind(input.brandId, ALERT_EVENT_MAX_ORGS).all<{ org_id: number }>().then((r) => r.results ?? []),
-      env.DB.prepare(
-        'SELECT name, canonical_domain FROM brands WHERE id = ?',
-      ).bind(input.brandId).first<{ name: string | null; canonical_domain: string | null }>(),
-    ]);
-    if (orgRows.length === 0) return;
+    // One read: owning org(s) + brand label. Org-private alerts bind the
+    // single owning org; brand-wide alerts take every org_brands row
+    // (ORDER BY org_id so the cap below is deterministic). A brand no org
+    // owns returns zero rows — no separate brands read.
+    const orgFilter = input.orgId != null ? ' AND ob.org_id = ?' : '';
+    const binds: unknown[] = input.orgId != null
+      ? [input.brandId, input.orgId, ALERT_EVENT_MAX_ORGS + 1]
+      : [input.brandId, ALERT_EVENT_MAX_ORGS + 1];
+    const res = await env.DB.prepare(
+      `SELECT DISTINCT ob.org_id AS org_id, b.name AS brand_name, b.canonical_domain AS brand_domain
+         FROM org_brands ob
+         LEFT JOIN brands b ON b.id = ob.brand_id
+        WHERE ob.brand_id = ?${orgFilter}
+        ORDER BY ob.org_id
+        LIMIT ?`,
+    ).bind(...binds).all<{ org_id: number; brand_name: string | null; brand_domain: string | null }>();
+    let rows = res.results ?? [];
+    if (rows.length === 0) return;
+    if (rows.length > ALERT_EVENT_MAX_ORGS) {
+      rows = rows.slice(0, ALERT_EVENT_MAX_ORGS);
+      logger.warn('alert_created_event_org_cap', {
+        alert_id: input.alertId,
+        brand_id: input.brandId,
+        cap: ALERT_EVENT_MAX_ORGS,
+      });
+    }
 
+    const first = rows[0]!;
     const data: Record<string, unknown> = {
       ...(input.eventData ?? {}),
       alert_id: input.alertId,
@@ -124,12 +143,12 @@ export async function emitAlertCreatedEvent(env: Env, input: AlertCreatedEventIn
       title: input.title,
       summary: input.summary,
       brand_id: input.brandId,
-      brand_name: brand?.name ?? null,
-      brand_domain: brand?.canonical_domain ?? null,
+      brand_name: first.brand_name ?? null,
+      brand_domain: first.brand_domain ?? null,
     };
 
     await Promise.allSettled(
-      orgRows.map((r) => emitOrgEvent(env, Number(r.org_id), 'alert.created', data)),
+      rows.map((r) => emitOrgEvent(env, Number(r.org_id), 'alert.created', data)),
     );
   } catch {
     // Best-effort: webhook/integration delivery never fails alert creation.
@@ -263,8 +282,12 @@ export async function createAlert(
         orgId: params.orgId,
         eventData: params.eventData,
       });
+      // Never awaited here (a slow customer endpoint must not stall the
+      // producer). With a ctx, hand it to waitUntil; otherwise register it
+      // so executeAgent / the Worker entrypoints drain it before the
+      // invocation ends (lib/alert-events.ts).
       if (emit.waitUntil) emit.waitUntil(pending);
-      else void pending;
+      else trackAlertEvent(pending);
     } catch {
       // Scheduling failure is non-fatal for alert creation.
     }

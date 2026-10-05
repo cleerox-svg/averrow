@@ -13,13 +13,14 @@
  *     equals it (frozen public/app.js still reads the alias);
  *   - `proof` shape + each definition (30-day lookalike registrations,
  *     component-collapsed live operations, tier-scoped monitored brands,
- *     catalog size, velocity share with the n >= 30 floor).
+ *     catalog size); velocity is NOT published (no prod index, G16);
+ *   - a failing proof compute answers all-null and is negative-cached;
+ *   - D1 outage → last-known-good totals, else null (never invented).
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, sqliteTimestampHoursAgo, type SqliteDb } from "./sqlite-d1-harness";
 import { handlePublicStats } from "../src/handlers/public";
 import { formatBigNumber } from "../src/lib/public-stats";
-import { velocityPct, VELOCITY_MIN_SAMPLE } from "../src/lib/public-proof";
 import type { Env } from "../src/types";
 
 const TABLES = [
@@ -40,25 +41,16 @@ async function getStats(env: Env): Promise<Record<string, unknown>> {
   return body.data;
 }
 
-describe("velocityPct", () => {
-  it("returns null below the sample floor and a 1-decimal percent at/above it", () => {
-    expect(velocityPct(10, VELOCITY_MIN_SAMPLE - 1)).toBeNull();
-    expect(velocityPct(0, 0)).toBeNull();
-    expect(velocityPct(10, 30)).toBe(33.3);
-    expect(velocityPct(30, 30)).toBe(100);
-  });
-});
-
 describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-derived schema)", () => {
   let raw: SqliteDb;
   let n = 0;
 
-  const threat = (opts: { firstSeenHoursAgo?: number; flag?: string | null } = {}) => {
+  const threat = () => {
     n++;
     raw.prepare(
-      `INSERT INTO threats (id, source_feed, threat_type, malicious_domain, first_seen, weaponization_flag)
-       VALUES (?, 'feed_x', 'phishing', ?, ?, ?)`,
-    ).run(`t${n}`, `bad${n}.example`, sqliteTimestampHoursAgo(opts.firstSeenHoursAgo ?? 1), opts.flag ?? null);
+      `INSERT INTO threats (id, source_feed, threat_type, malicious_domain, first_seen)
+       VALUES (?, 'feed_x', 'phishing', ?, ?)`,
+    ).run(`t${n}`, `bad${n}.example`, sqliteTimestampHoursAgo(1));
   };
   const brand = (id: string, tier: string) =>
     raw.prepare("INSERT INTO brands (id, name, canonical_domain, tier) VALUES (?, ?, ?, ?)")
@@ -118,37 +110,44 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     cluster("c4", "dormant", null);               // not live
     cluster("c5", "active", null, 24 * 40);       // stale
 
-    // 40 computable velocity rows in window: 10 very_fast, 10 fast, 20 normal.
-    for (let i = 0; i < 10; i++) threat({ flag: "very_fast" });
-    for (let i = 0; i < 10; i++) threat({ flag: "fast" });
-    for (let i = 0; i < 20; i++) threat({ flag: "normal" });
-    threat({ flag: null });                                  // not computable
-    threat({ flag: "very_fast", firstSeenHoursAgo: 24 * 40 }); // outside window
-
     const d = await getStats(envFor(raw));
     const proof = d.proof as Record<string, unknown>;
 
     expect(Object.keys(proof).sort()).toEqual([
       "brands_in_catalog", "generated_at", "lookalikes_found_30d", "monitored_brands",
-      "operations_tracked", "pct_live_within_24h", "pct_live_within_72h", "velocity_sample_30d",
+      "operations_tracked",
     ]);
     expect(proof.lookalikes_found_30d).toBe(2);
     expect(proof.operations_tracked).toBe(2);
     expect(proof.monitored_brands).toBe(2);
     expect(proof.brands_in_catalog).toBe(4);
-    expect(proof.velocity_sample_30d).toBe(40);
-    expect(proof.pct_live_within_24h).toBe(25);
-    expect(proof.pct_live_within_72h).toBe(50);
     expect(typeof proof.generated_at).toBe("string");
     expect(Number.isNaN(Date.parse(proof.generated_at as string))).toBe(false);
   });
 
-  it("publishes null velocity percentages below the n >= 30 floor", async () => {
-    for (let i = 0; i < 5; i++) threat({ flag: "very_fast" });
-    const proof = (await getStats(envFor(raw))).proof as Record<string, unknown>;
-    expect(proof.velocity_sample_30d).toBe(5);
-    expect(proof.pct_live_within_24h).toBeNull();
-    expect(proof.pct_live_within_72h).toBeNull();
+  it("never reads threats for proof (no full scan in prod)", async () => {
+    const log: Array<{ sql: string }> = [];
+    const env = { DB: d1FromSqlite(raw, { log }), CACHE: fakeKv() } as unknown as Env;
+    await getStats(env);
+    const proofSql = log.map((l) => l.sql).filter((q) => /weaponization|FROM threats\s+WHERE first_seen/i.test(q));
+    expect(proofSql).toEqual([]);
+  });
+
+  it("a failing proof compute answers all-null and is negative-cached (no per-request retry)", async () => {
+    raw.exec("DROP TABLE lookalike_domains");
+    const log: Array<{ sql: string; error?: string }> = [];
+    const env = { DB: d1FromSqlite(raw, { log }), CACHE: fakeKv() } as unknown as Env;
+
+    const p1 = (await getStats(env)).proof as Record<string, unknown>;
+    expect(p1.lookalikes_found_30d).toBeNull();
+    expect(p1.operations_tracked).toBeNull();
+    expect(p1.monitored_brands).toBeNull();
+    expect(p1.brands_in_catalog).toBeNull();
+    const attempts = () => log.filter((l) => l.sql.includes("FROM lookalike_domains")).length;
+    expect(attempts()).toBe(1);
+
+    await getStats(env);
+    expect(attempts()).toBe(1); // second request served by the negative cache
   });
 
   it("serves proof from KV on the second call (no re-query)", async () => {
@@ -158,5 +157,32 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     brand("b2", "monitored"); // would change the count if re-queried
     const proof = (await getStats(env)).proof as Record<string, unknown>;
     expect(proof.monitored_brands).toBe(1);
+  });
+
+  it("D1 outage: totals come from the last-known-good copy, else null — never an invented number", async () => {
+    for (let i = 0; i < 1500; i++) threat();
+    raw.prepare("INSERT INTO feed_configs (feed_name, display_name, schedule_cron, enabled) VALUES ('f', 'F', '0 * * * *', 1)").run();
+    brand("b1", "monitored");
+    const kv = fakeKv();
+    const good = { DB: d1FromSqlite(raw), CACHE: kv } as unknown as Env;
+    const first = await getStats(good);
+    expect(first.total_threats).toBe(1500);
+
+    // Fresh compute (expire the 10-min stats key + count caches), D1 down.
+    for (const k of Array.from(kv.store.keys())) {
+      if (!k.startsWith("public_stats:lkg")) kv.store.delete(k);
+    }
+    const broken = { DB: { prepare: () => { throw new Error("D1 down"); } }, CACHE: kv } as unknown as Env;
+    const { getPublicStats } = await import("../src/lib/public-stats");
+    const lkg = await getPublicStats(broken);
+    expect(lkg.threats_total).toBe(1500);
+    expect(lkg.threats_detected).toBe(formatBigNumber(1500));
+
+    const empty = { DB: broken.DB, CACHE: fakeKv() } as unknown as Env;
+    const unknown = await getPublicStats(empty);
+    expect(unknown.threats_total).toBeNull();
+    expect(unknown.threats_detected).toBeNull();
+    expect(unknown.feeds_protecting).toBeNull();
+    expect(unknown.brands_monitored).toBeNull();
   });
 });

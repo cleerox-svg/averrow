@@ -15,18 +15,18 @@ import { agentModules } from "../agents";
 
 export interface PublicStats {
   agents_deployed: string;     // e.g. "42"
-  feeds_protecting: string;    // e.g. "45+"
-  threats_detected: string;    // e.g. "1.3M+" — formatted from threats_total
+  feeds_protecting: string | null;    // e.g. "45+"; null when unknown
+  threats_detected: string | null;    // e.g. "1.3M+" — formatted from threats_total
   /** The ONE published threat total: all-time `COUNT(*) FROM threats`
    *  (cachedCount `count.threats.total`). `threats_detected` is this number
    *  formatted, and /api/v1/public/stats `total_threats` is this number raw,
    *  so the two can never disagree (disclosure register L20). */
-  threats_total: number;
+  threats_total: number | null;
   /** Size of the brand CATALOG (`COUNT(*) FROM brands`, incl. the passive
    *  tier='tracked' rows), formatted. The key name is legacy (the /legacy
    *  homepage template + `brands_monitored_label` read it); it is NOT the
    *  monitored-brand count — see proof.monitored_brands (register L12). */
-  brands_monitored: string;    // e.g. "124K+"
+  brands_monitored: string | null;    // e.g. "124K+"
   // Static marketing claim kept here so the template doesn't hardcode it.
   uptime_label: string;        // "24/7"
   // detection_time_label ("<5min") was REMOVED (register L4/G1): it was a
@@ -34,9 +34,10 @@ export interface PublicStats {
   // detection-time claim without an instrumented source.
 }
 
-// v2: shape changed (threats_total added, detection_time_label removed) —
+// v3: shape changed (threats_total added, detection_time_label removed,
+// D1-derived fields nullable) —
 // a v1 payload must not be served into the new shape.
-const CACHE_KEY = "public_stats:v2";
+const CACHE_KEY = "public_stats:v3";
 const CACHE_TTL_S = 600; // 10 min
 
 // agents_deployed is the SIZE OF THE AGENT REGISTRY (the number of entries
@@ -47,16 +48,33 @@ const CACHE_TTL_S = 600; // 10 min
 // it stays correct as agents are added or retired.
 const REGISTERED_AGENT_COUNT = Object.keys(agentModules).length;
 
-const FALLBACK: PublicStats = {
+// Last-known-good copy of the computed stats, written on every successful
+// compute and read only when D1 fails. 30-day expiry so a long outage
+// eventually publishes "unknown" (null) rather than an ever-staler number.
+// There is deliberately NO invented fallback number: when neither D1 nor
+// the LKG copy is available, the D1-derived fields are null and consumers
+// (averrow-marketing's fetch-stats.mjs keeps its own last build's values on
+// a non-string) decide what to render.
+const LKG_KEY = "public_stats:lkg:v1";
+const LKG_TTL_S = 30 * 86400;
+
+const UNKNOWN: PublicStats = {
   agents_deployed: String(REGISTERED_AGENT_COUNT),
-  feeds_protecting: "45+",
-  threats_detected: "210K+",
-  // Lower-bound floor that formats to exactly FALLBACK.threats_detected, so
-  // even the D1-down path publishes one consistent total.
-  threats_total: 210_000,
-  brands_monitored: "9.6K+",
+  feeds_protecting: null,
+  threats_detected: null,
+  threats_total: null,
+  brands_monitored: null,
   uptime_label: "24/7",
 };
+
+async function readLastKnownGood(env: Env): Promise<PublicStats | null> {
+  try {
+    const raw = await env.CACHE.get(LKG_KEY);
+    return raw ? (JSON.parse(raw) as PublicStats) : null;
+  } catch {
+    return null;
+  }
+}
 
 export function formatBigNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M+`;
@@ -98,25 +116,32 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
       }).then((n) => ({ n })),
     ]);
 
+    // A zero count is treated as "unknown" (a real platform never has 0
+    // threats/brands/feeds) and filled from the last-known-good copy.
+    const lkg = feeds.n && threats.n && brands.n ? null : await readLastKnownGood(env);
     const stats: PublicStats = {
       // Stable registry size — see REGISTERED_AGENT_COUNT above.
       agents_deployed: String(REGISTERED_AGENT_COUNT),
-      feeds_protecting: feeds?.n ? `${feeds.n}+` : FALLBACK.feeds_protecting,
-      threats_detected: threats?.n ? formatBigNumber(threats.n) : FALLBACK.threats_detected,
-      threats_total: threats?.n ? threats.n : FALLBACK.threats_total,
-      brands_monitored: brands?.n ? formatBigNumber(brands.n) : FALLBACK.brands_monitored,
-      uptime_label: FALLBACK.uptime_label,
+      feeds_protecting: feeds.n ? `${feeds.n}+` : lkg?.feeds_protecting ?? null,
+      // threats_detected and threats_total always come from the same
+      // source (fresh count, or the same LKG copy) so they cannot disagree.
+      threats_detected: threats.n ? formatBigNumber(threats.n) : lkg?.threats_detected ?? null,
+      threats_total: threats.n ? threats.n : lkg?.threats_total ?? null,
+      brands_monitored: brands.n ? formatBigNumber(brands.n) : lkg?.brands_monitored ?? null,
+      uptime_label: UNKNOWN.uptime_label,
     };
 
     try {
       await env.CACHE.put(CACHE_KEY, JSON.stringify(stats), { expirationTtl: CACHE_TTL_S });
+      if (feeds.n && threats.n && brands.n) {
+        await env.CACHE.put(LKG_KEY, JSON.stringify(stats), { expirationTtl: LKG_TTL_S });
+      }
     } catch { /* ignore */ }
 
     return stats;
   } catch {
-    // D1 down or schema missing — keep the homepage rendering. Fallback
-    // values match the platform's current rough state so the page never
-    // shows zeros.
-    return FALLBACK;
+    // D1 down or schema missing: serve the last-known-good copy, else
+    // unknowns. Never an invented number.
+    return (await readLastKnownGood(env)) ?? UNKNOWN;
   }
 }

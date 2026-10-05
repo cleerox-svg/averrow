@@ -300,10 +300,10 @@ export function registerBrandRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleSocialAlerts(request, env, ctx.userId);
   });
-  router.post("/api/social/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+  router.post("/api/social/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleTriggerSocialScan(request, env, request.params["brandId"] ?? "", ctx.userId);
+    return handleTriggerSocialScan(request, env, request.params["brandId"] ?? "", ctx.userId, execCtx);
   });
 
   // ─── Lookalike Domain Monitoring ─────────────────────────────────

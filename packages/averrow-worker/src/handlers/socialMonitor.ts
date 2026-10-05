@@ -238,7 +238,13 @@ export async function handleSocialAlerts(request: Request, env: Env, userId: str
 
 // ─── POST /api/social/scan/:brandId — Trigger immediate scan for a brand ───
 
-export async function handleTriggerSocialScan(request: Request, env: Env, brandId: string, userId: string): Promise<Response> {
+export async function handleTriggerSocialScan(
+  request: Request,
+  env: Env,
+  brandId: string,
+  userId: string,
+  execCtx?: ExecutionContext,
+): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
     // Verify via brands + monitored_brands
@@ -342,7 +348,12 @@ export async function handleTriggerSocialScan(request: Request, env: Env, brandI
           },
           sourceType: "social_monitor",
           sourceId: profileId,
-        }, { env });
+          eventData: {
+            platform: result.platform,
+            handle: result.handleChecked,
+            impersonation_score: result.impersonationScore,
+          },
+        }, execCtx ? { env, waitUntil: (p) => execCtx.waitUntil(p) } : { env });
         alertsCreated++;
       }
     }
