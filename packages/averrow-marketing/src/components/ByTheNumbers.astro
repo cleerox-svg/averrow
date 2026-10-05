@@ -15,6 +15,7 @@ import TrustSignals from "./TrustSignals.astro";
 import {
   buildBars,
   exact,
+  lookalikes30dLabel,
   parseThreatTypes,
   renderBars,
   renderTableRows,
@@ -37,7 +38,7 @@ const val = {
   total: live.total_threats != null ? exact(live.total_threats) : dash,
   today: live.threats_today != null ? exact(live.threats_today) : dash,
   ops: live.operations_tracked != null ? exact(live.operations_tracked) : dash,
-  lookalikes: live.lookalikes_found_30d ? roundLabel(live.lookalikes_found_30d) : fb.lookalikes_found_30d,
+  lookalikes: lookalikes30dLabel(live.lookalikes_found_30d, fb.lookalikes_found_30d) ?? dash,
   brands: live.monitored_brands != null ? exact(live.monitored_brands) : dash,
   providers: live.providers_mapped != null ? roundLabel(live.providers_mapped) : dash,
   countries: live.countries != null ? String(live.countries) : dash,
@@ -313,7 +314,7 @@ const checks = [
 
   function setText(sel: string, text: string | null) {
     if (text === null) return;
-    root?.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+    document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
       el.textContent = text;
     });
   }

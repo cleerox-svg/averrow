@@ -3,7 +3,7 @@
  * Homepage. Section 1 redesign (see docs/DISCLOSURE_REGISTER.md rows
  * L4/L10/L12/L13/L17/L21/L22): hero with scan form + an illustrative
  * operation card, a "from the platform" band of real build-time numbers,
- * coverage chips, then how it works / capabilities / console preview /
+ * coverage chips, then how it works / coverage / console preview /
  * trust / CTA.
  *
  * Every number in the band comes from src/data/stats.json, which
@@ -15,6 +15,8 @@
 import Layout from "../layouts/Layout.astro";
 import ByTheNumbers from "../components/ByTheNumbers.astro";
 import OperationStory from "../components/OperationStory.astro";
+import Coverage from "../components/Coverage.astro";
+import { COVERAGE } from "../lib/coverage";
 import liveStats from "../data/stats.json";
 
 const stats = liveStats;
@@ -41,16 +43,8 @@ const bandTiles = [
   ...(sources ? [{ value: sources, label: "intelligence sources" }] : []),
 ];
 
-const coverage = [
-  "Lookalike domains",
-  "TLS certificates",
-  "Social profiles",
-  "App stores",
-  "Executive impersonation",
-  "Dark web",
-  "Email authentication",
-  "Abuse mailbox",
-];
+// Names come from the shared source so the chips and the Coverage section match.
+const coverage = COVERAGE.map((c) => c.name);
 
 // Illustrative operation graph. Coordinates are in the SVG's 400x190 space.
 // tone -> colour token: crit = critical severity, high = high severity,
@@ -227,107 +221,8 @@ const toneVar: Record<Tone, string> = {
 
   <hr class="tr-divider-animated" />
 
-  <section class="capabilities">
-    <div class="section-label">Capabilities</div>
-    <h2 class="capabilities-title">Full-spectrum brand protection</h2>
-    <p class="capabilities-note">Sample output below is illustrative.</p>
-    <div class="capabilities-grid">
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="16" cy="16" r="2" fill="currentColor"/>
-          <circle cx="16" cy="16" r="6" stroke="currentColor" stroke-width="1.5" opacity="0.7"/>
-          <circle cx="16" cy="16" r="11" stroke="currentColor" stroke-width="1.5" opacity="0.35"/>
-          <line x1="16" y1="16" x2="16" y2="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <div class="cap-title">Threat Feed Intelligence</div>
-        <div class="cap-desc">Continuous scanning across phishing databases, malware feeds, and newly registered domains.</div>
-        <div class="cap-mock" aria-label="Sample threat feed output">
-          <div class="cap-mock-row"><span class="cap-mock-target">login-yourbrand-mfa.com</span><span class="cap-mock-badge crit">CRIT</span></div>
-          <div class="cap-mock-row"><span class="cap-mock-target">yourbrand-support.help</span><span class="cap-mock-badge high">HIGH</span></div>
-          <div class="cap-mock-row"><span class="cap-mock-target">yourbrand-billing.app</span><span class="cap-mock-badge high">HIGH</span></div>
-        </div>
-      </div>
-
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="3" y="7" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.5"/>
-          <polyline points="3,7 13,16 23,7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
-        </svg>
-        <div class="cap-title">Email Security Posture</div>
-        <div class="cap-desc">SPF, DKIM, and DMARC analysis with grading so spoofing is caught at the gate.</div>
-        <div class="cap-mock" aria-label="Sample email auth grade">
-          <div class="cap-mock-grade">
-            <div class="cap-mock-grade-cell"><div class="gl-label">SPF</div><div class="gl-value pass">A</div></div>
-            <div class="cap-mock-grade-cell"><div class="gl-label">DKIM</div><div class="gl-value pass">A</div></div>
-            <div class="cap-mock-grade-cell"><div class="gl-label">DMARC</div><div class="gl-value fail">F</div></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <ellipse cx="16" cy="16" rx="13" ry="7" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="16" cy="16" r="4" stroke="currentColor" stroke-width="1.5"/>
-          <circle cx="16" cy="16" r="1.5" fill="currentColor"/>
-        </svg>
-        <div class="cap-title">Social Media Monitoring</div>
-        <div class="cap-desc">Fake accounts, handle squatting, and unauthorized brand usage on X, LinkedIn, Instagram, TikTok, GitHub, and YouTube.</div>
-        <div class="cap-mock" aria-label="Sample social impersonation match">
-          <div class="cap-mock-social">
-            <div class="cap-mock-social-avatar">Y</div>
-            <div class="cap-mock-social-info">
-              <div class="cap-mock-social-handle">@yourbrand_support</div>
-              <div class="cap-mock-social-meta">Instagram &middot; 11 days old &middot; no link in bio</div>
-            </div>
-            <div class="cap-mock-score">94</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="13" cy="13" r="8" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="19" y1="19" x2="27" y2="27" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <div class="cap-title">Lookalike Domain Detection</div>
-        <div class="cap-desc">Fuzzy matching, homoglyph analysis, and newly registered domain monitoring.</div>
-        <div class="cap-mock" aria-label="Sample lookalike comparison">
-          <div class="cap-mock-diff">
-            <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Real</div><div class="cap-mock-diff-value">yourbrand.com</div></div>
-            <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Match</div><div class="cap-mock-diff-value">y<span class="hi">0</span>urbr<span class="hi">a</span>nd.<span class="hi">co</span></div></div>
-            <div class="cap-mock-diff-line"><div class="cap-mock-diff-label">Reg.</div><div class="cap-mock-diff-value">2 days ago &middot; Namecheap</div></div>
-          </div>
-        </div>
-      </div>
-
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="7" y="4" width="18" height="24" rx="2" stroke="currentColor" stroke-width="1.5"/>
-          <line x1="11" y1="10" x2="21" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="11" y1="14" x2="21" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <div class="cap-title">Certificate Transparency</div>
-        <div class="cap-desc">Hourly certificate-transparency checks for certificates issued to brand-adjacent domains.</div>
-        <div class="cap-mock" aria-label="Sample CT log entry">
-          <div class="cap-mock-row"><span class="cap-mock-target">acct.yourbrand.com.io</span><span class="cap-mock-badge high">NEW</span></div>
-          <div class="cap-mock-row"><span class="cap-mock-target">Let&rsquo;s Encrypt &middot; 14:07:30Z</span><span class="cap-mock-badge med">ANOM</span></div>
-        </div>
-      </div>
-
-      <div class="cap-card">
-        <svg class="cap-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <rect x="4" y="6" width="24" height="20" rx="2" stroke="currentColor" stroke-width="1.5"/>
-          <polyline points="4,18 8,18 10,12 13,22 16,14 19,20 21,16 24,16 28,16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <div class="cap-title">Plain-language summaries</div>
-        <div class="cap-desc">Readable threat timelines and remediation steps so your team can act fast.</div>
-        <div class="cap-mock cap-mock-narrative" aria-label="Sample threat summary">
-          &ldquo;Three lookalike domains were registered within 72 hours and share one hosting network and one TLS certificate. They are grouped as a single operation.&rdquo;
-          <div class="nm-meta">Illustrative example &middot; automated summary</div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <!-- ── COVERAGE — the eight surfaces, with plan tags (Section 4) ── -->
+  <Coverage />
 
   <hr class="tr-divider-animated" />
 
@@ -646,133 +541,6 @@ const toneVar: Record<Tone, string> = {
     font-size: 24px;
   }
 
-  /* ── CAPABILITIES ── */
-  .capabilities { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; }
-  .capabilities-title {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 8px;
-  }
-  .capabilities-note { font-size: 13px; color: var(--text-tertiary); margin-bottom: 4px; }
-  .capabilities-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-top: 20px;
-  }
-  @media (max-width: 960px) and (min-width: 721px) { .capabilities-grid { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 720px) { .capabilities-grid { grid-template-columns: 1fr; } }
-  .cap-card {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 24px;
-    transition: transform 0.2s, box-shadow 0.2s;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-  }
-  .cap-card:hover { transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,0.08); }
-  .cap-icon { width: 32px; height: 32px; margin-bottom: 14px; color: var(--accent); display: block; }
-  .cap-title { font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; }
-  .cap-desc { font-size: 15px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
-  .cap-mock {
-    margin-top: 14px;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-tertiary);
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: var(--text-secondary);
-  }
-  .cap-mock-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 8px;
-    padding: 4px 0;
-    align-items: center;
-  }
-  .cap-mock-row + .cap-mock-row { border-top: 1px solid var(--border); }
-  .cap-mock-target { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cap-mock-badge {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 2px 6px;
-    border-radius: 3px;
-  }
-  .cap-mock-badge.crit { color: var(--sev-critical-text); background: rgba(248,113,113,0.10); }
-  .cap-mock-badge.high { color: var(--sev-high-text); background: rgba(251,146,60,0.10); }
-  .cap-mock-badge.med  { color: var(--sev-medium-text); background: rgba(251,191,36,0.10); }
-  .cap-mock-grade {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    text-align: center;
-  }
-  .cap-mock-grade-cell {
-    padding: 8px 4px;
-    border-radius: 6px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-  }
-  .gl-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); }
-  .gl-value { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1; }
-  .gl-value.pass { color: var(--green-text); }
-  .gl-value.fail { color: var(--sev-critical-text); }
-  .cap-mock-diff { display: flex; flex-direction: column; gap: 6px; }
-  .cap-mock-diff-line { display: flex; gap: 8px; align-items: center; }
-  .cap-mock-diff-label {
-    width: 56px;
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-  }
-  .cap-mock-diff-value { color: var(--text-primary); }
-  .cap-mock-diff-value .hi {
-    color: var(--sev-high-text);
-    background: rgba(251,146,60,0.16);
-    padding: 1px 2px;
-    border-radius: 2px;
-  }
-  .cap-mock-narrative {
-    font-family: var(--font-body);
-    font-size: 12.5px;
-    color: var(--text-primary);
-    border-left: 2px solid var(--amber);
-    padding-left: 10px;
-    line-height: 1.55;
-  }
-  .nm-meta { color: var(--text-tertiary); font-size: 11px; margin-top: 6px; }
-  .cap-mock-social { display: flex; gap: 10px; align-items: center; }
-  .cap-mock-social-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, var(--red), var(--amber));
-    flex-shrink: 0;
-    font-family: var(--font-display);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    font-weight: 700;
-    font-size: 13px;
-  }
-  .cap-mock-social-info { flex: 1; min-width: 0; }
-  .cap-mock-social-handle { color: var(--text-primary); font-size: 12px; }
-  .cap-mock-social-meta { color: var(--text-tertiary); font-size: 10.5px; }
-  .cap-mock-score {
-    font-family: var(--font-display);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--sev-critical-text);
-    line-height: 1;
-  }
-
   /* ── CTA SECTION ── */
   .cta-section { padding: 3rem 24px; max-width: 1280px; margin: 0 auto; text-align: center; }
   .cta-inner {
@@ -815,7 +583,6 @@ const toneVar: Record<Tone, string> = {
     z-index: 1;
   }
 
-  :global([data-theme="light"]) .cap-card,
   :global([data-theme="light"]) .cta-inner {
     background: rgba(255,255,255,0.6);
     backdrop-filter: blur(16px);

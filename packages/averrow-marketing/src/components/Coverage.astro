@@ -1,0 +1,259 @@
+---
+/*
+ * "Coverage" — homepage Section 4. Replaces the old six-card capabilities
+ * grid so the section matches the hero's eight coverage chips one-to-one.
+ *
+ * Source of truth: src/lib/coverage.ts (names, plan tags, blurbs, links), which
+ * also builds the hero chips. Plan tags mirror src/pages/pricing.astro.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md): outcomes only ("High", "Likely
+ * fake", "Copycat"), no internal scores, permutation types, thresholds or feed
+ * names; "hourly certificate checks" is already public; no AI claims. Samples
+ * use the fictional brand Acme and .example domains. The one real number is the
+ * Lookalike tile's 30-day count, derived exactly as in ByTheNumbers (build
+ * snapshot, same helper); if neither a live nor fallback value exists the
+ * proof line is omitted, never shown as 0. The proof number carries
+ * data-stat="lookalikes", so the ByTheNumbers refresh script (one fetch,
+ * document-wide) keeps it in step with the live value. Scope statements are explicit
+ * (Apple App Store only, six named networks, paste and leak sites).
+ *
+ * Desktop: bento grid. <=640px: a list of <details> so each example expands
+ * without JS. Both are rendered, one hidden by CSS (display:none also removes
+ * it from the accessibility tree).
+ */
+import liveStats from "../data/stats.json";
+import CoverageSample from "./CoverageSample.astro";
+import { COVERAGE, PLAN_LABEL, SOCIAL_NETWORKS } from "../lib/coverage";
+import { lookalikes30dLabel } from "../lib/proof";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const lookalikes = lookalikes30dLabel(liveStats.live.lookalikes_found_30d, liveStats.fallbacks.lookalikes_found_30d);
+
+const surfaces = COVERAGE.map((s) => ({
+  ...s,
+  href: s.link ? `${base}${s.link}` : null,
+  label: PLAN_LABEL[s.plan],
+  size: s.key === "lookalike" ? "big" : s.key === "social" ? "wide" : "",
+}));
+---
+
+<section class="cv" id="coverage" aria-labelledby="cv-title">
+  <div class="cv-head">
+    <div>
+      <div class="cv-eyebrow">Coverage</div>
+      <h2 class="cv-h" id="cv-title">Everywhere attackers pretend to be you.</h2>
+      <p class="cv-lede">Eight places impersonation happens, watched continuously. Every finding lands in one queue.</p>
+    </div>
+    <a class="cv-cmp" href={`${base}/pricing#compare`}>Compare plans &rarr;</a>
+  </div>
+
+  <ul class="cv-grid" role="list">
+    {surfaces.map((s) => (
+      <li class:list={["cv-t", s.size]}>
+        <div class="cv-th">
+          <h3 class="cv-tn">{s.href ? <a href={s.href}>{s.name}</a> : s.name}</h3>
+          <span class={`cv-pl ${s.plan}`}>
+            {s.size ? s.label.full : (<><span aria-hidden="true">{s.label.short}</span><span class="cv-sr">{s.label.full}</span></>)}
+          </span>
+        </div>
+        <p>{s.blurb}</p>
+        {s.key === "social" && (
+          <ul class="cv-nets" role="list" aria-label="Networks covered">
+            {SOCIAL_NETWORKS.map((n) => <li>{n}</li>)}
+          </ul>
+        )}
+        <CoverageSample surface={s.key} />
+        {s.key === "lookalike" && lookalikes && (
+          <p class="cv-proof"><b data-stat="lookalikes">{lookalikes}</b> registered lookalikes found in the last 30 days</p>
+        )}
+      </li>
+    ))}
+  </ul>
+
+  <ul class="cv-list" role="list">
+    {surfaces.map((s) => (
+      <li>
+        <details class="cv-d">
+          <summary>
+            <h3 class="cv-tn">{s.name}</h3>
+            <span class={`cv-pl ${s.plan}`}>
+              <span aria-hidden="true">{s.label.short}</span><span class="cv-sr">{s.label.full}</span>
+            </span>
+          </summary>
+          <div class="cv-db">
+            <p>{s.blurb}</p>
+            {s.key === "social" && (
+              <ul class="cv-nets" role="list" aria-label="Networks covered">
+                {SOCIAL_NETWORKS.map((n) => <li>{n}</li>)}
+              </ul>
+            )}
+            <CoverageSample surface={s.key} />
+            {s.key === "lookalike" && lookalikes && (
+              <p class="cv-proof"><b data-stat="lookalikes">{lookalikes}</b> registered lookalikes found in the last 30 days</p>
+            )}
+            {s.href && <a class="cv-more" href={s.href}>Learn more about {s.name.toLowerCase()} &rarr;</a>}
+          </div>
+        </details>
+      </li>
+    ))}
+  </ul>
+
+  <div class="cv-foot">
+    <span>Also on Business: trademark monitoring across domains, social and apps in one view.</span>
+    <span>Examples use a fictional brand.</span>
+  </div>
+</section>
+
+<style is:global>
+  .cv { max-width: 1280px; margin: 0 auto; padding: 56px 24px 40px; display: grid; gap: 24px; }
+  .cv-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; flex-wrap: wrap; }
+  .cv-eyebrow {
+    font: 600 12px var(--font-mono);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-section, var(--accent));
+    margin-bottom: 10px;
+  }
+  .cv-h {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(24px, 3vw, 30px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    margin: 0;
+    text-wrap: balance;
+    color: var(--text-primary);
+  }
+  .cv-lede { margin: 10px 0 0; max-width: 62ch; font-size: 15px; line-height: 1.55; color: var(--text-secondary); }
+  .cv-cmp {
+    font: 700 13.5px var(--font-display);
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-strong);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .cv-cmp:hover { border-bottom-color: var(--accent); }
+
+  .cv ul { list-style: none; margin: 0; padding: 0; }
+  .cv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .cv-t {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .cv-t.big { grid-column: span 2; grid-row: span 2; }
+  .cv-t.wide { grid-column: span 2; }
+  .cv-th { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .cv-tn { margin: 0; font: 700 15px var(--font-display); color: var(--text-primary); }
+  .cv-tn a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+  .cv-tn a:hover { border-bottom-color: var(--accent); }
+  .cv-t p, .cv-db p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+  .cv-t.big .cv-tn { font-size: 17px; }
+
+  /* Plan tag: text always present; hue only reinforces. */
+  .cv-pl {
+    font: 600 10px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: var(--text-secondary);
+  }
+  .cv-pl.business { color: var(--sev-low-text); border-color: var(--sev-low-text); }
+  [data-theme="light"] .cv-pl.business { color: var(--blue-text); border-color: var(--blue-text); }
+  .cv-pl.enterprise { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+  [data-theme="light"] .cv-pl.enterprise { color: #fff; }
+  .cv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+  .cv-ui {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-primary);
+    padding: 9px 11px;
+    display: grid;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 0;
+  }
+  .cv-r { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-width: 0; }
+  .cv-mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+  .cv-r > span:first-child { color: var(--text-primary); min-width: 0; }
+  .cv-st { color: var(--text-secondary); font-size: 11px; margin-left: auto; text-align: right; }
+  .cv-note { font: 500 10.5px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .cv-pill {
+    font: 600 10.5px var(--font-mono);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+  }
+  .cv-pill.high { color: var(--sev-high-text); background: rgba(251, 146, 60, 0.10); }
+  .cv-pill.med { color: var(--sev-medium-text); background: rgba(251, 191, 36, 0.10); }
+  .cv-pill.low { color: var(--sev-low-text); background: rgba(96, 165, 250, 0.10); }
+  .cv-pill.new { color: var(--amber-text); background: var(--accent-bg); }
+  .cv-grade { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 14px; }
+  .cv-g { display: grid; gap: 2px; text-align: center; }
+  .cv-g i, .cv-checks i { font: 600 9.5px var(--font-mono); font-style: normal; color: var(--text-secondary); text-transform: uppercase; }
+  .cv-g b { font: 800 26px var(--font-display); color: var(--text-primary); }
+  .cv-checks { display: grid; gap: 3px; }
+  .cv-checks li { display: flex; justify-content: space-between; gap: 8px; font: 500 11px var(--font-mono); }
+  .cv-checks .good { color: var(--green-text); }
+  .cv-checks .bad { color: var(--red-text); }
+
+  .cv-nets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cv-nets li { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
+  .cv .cv-t p.cv-proof, .cv .cv-db p.cv-proof { margin-top: auto; font-size: 12.5px; }
+  .cv-proof b { color: var(--text-primary); font: 800 18px var(--font-display); margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .cv-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+
+  .cv-list { display: none; }
+  .cv-d { border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+  .cv-list li:last-child .cv-d { border-bottom: 0; }
+  .cv-d summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px;
+    min-height: 44px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .cv-d summary::-webkit-details-marker { display: none; }
+  .cv-d summary::after { content: "+"; font: 600 16px var(--font-mono); color: var(--text-secondary); margin-left: 4px; }
+  .cv-d[open] summary::after { content: "\2212"; }
+  .cv-d summary .cv-tn { flex: 1; min-width: 0; font-size: 14px; }
+  .cv-d summary:focus-visible, .cv-cmp:focus-visible, .cv-more:focus-visible, .cv-tn a:focus-visible {
+    outline: 2px solid var(--amber-text);
+    outline-offset: 2px;
+  }
+  .cv-db { padding: 0 12px 14px; display: grid; gap: 10px; }
+  .cv-more { font: 700 12.5px var(--font-display); color: var(--amber-text); text-decoration: none; }
+  .cv-more:hover { text-decoration: underline; }
+
+  @media (max-width: 1199px) {
+    .cv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 640px) {
+    .cv { padding: 40px 16px 28px; gap: 16px; }
+    .cv-grid { display: none; }
+    .cv-list { display: grid; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  }
+</style>
