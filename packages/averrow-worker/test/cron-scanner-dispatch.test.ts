@@ -41,7 +41,7 @@
  * can't slip through silently again.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Env } from "../src/types";
@@ -154,6 +154,14 @@ function scheduledEvent(cron: string): ScheduledEvent {
 }
 
 describe("S0.1 dedicated-cron scanner dispatch", () => {
+  // Warm the cron mesh once: each test lazily `import("../src/cron/orchestrator")`,
+  // which pulls the agent registry + feed modules. Cold, that can outrun the 5s
+  // per-test timeout on a loaded machine. Own generous budget -> cache hits.
+  beforeAll(async () => {
+    const mod = await import("../src/cron/orchestrator");
+    expect(typeof mod.handleScheduled).toBe("function");
+  }, 120_000);
+
   beforeEach(() => vi.clearAllMocks());
 
   it("'18 * * * *' dispatches ct_monitor with a full agent_runs lifecycle", async () => {

@@ -19,7 +19,7 @@
  * site fails the moment the two drift apart.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { classifyThreat, callHaikuRaw, isDeliberateAiSkip, type HaikuFailureKind } from "../src/lib/haiku";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 
@@ -55,6 +55,17 @@ const ENTRY_POINTS: Array<[string, Entry["call"]]> = [
 ];
 
 describe.skipIf(!hasSqlite())("failure_kind derivation (real anthropic wrapper, stubbed fetch)", () => {
+  // The per-agent budget gate (lib/per-agent-budget.ts getDeclaredCap) lazily
+  // `import("../agents")`es the whole agent registry (~45 modules; circular, so
+  // it cannot be static). Cold, that exceeds the 5s per-test timeout on a
+  // loaded machine: the first budget_cap test times out mid-import and later
+  // ones observe a half-evaluated module (failure_kind 'api_error' instead of
+  // 'budget_cap'). Warm it once with its own budget so per-test is a cache hit.
+  beforeAll(async () => {
+    const mod = await import("../src/agents/index");
+    expect(Object.keys(mod.agentModules).length).toBeGreaterThan(0);
+  }, 120_000);
+
   let raw: SqliteDb;
   let fetchSpy: ReturnType<typeof vi.fn>;
 

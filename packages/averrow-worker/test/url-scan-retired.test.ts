@@ -20,7 +20,7 @@
 // Drives the REAL routers in index.ts order (scan → dashboard → export →
 // public, whose `router.all("*")` is the catch-all).
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Router } from "itty-router";
@@ -210,6 +210,15 @@ describe("kept routes still respond", () => {
 });
 
 describe("url_scan agent removed", () => {
+  // Warm the agent registry once. lib/per-agent-budget.ts and this file lazily
+  // `import("../src/agents")` (~45 modules, circular so never static). Cold,
+  // that can outrun the 5s per-test timeout on a loaded machine and leave the
+  // module half-evaluated for later tests. Own generous budget -> cache hits.
+  beforeAll(async () => {
+    const mod = await import("../src/agents/index");
+    expect(Object.keys(mod.agentModules).length).toBeGreaterThan(0);
+  }, 120_000);
+
   it("agentModules has no url_scan entry and the module file is gone", async () => {
     const { agentModules } = await import("../src/agents");
     expect(Object.keys(agentModules)).not.toContain("url_scan");

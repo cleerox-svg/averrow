@@ -15,7 +15,7 @@
  *      run write lives inside generation, which the dedup guard skips.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
 import type { Env } from "../src/types";
 
 // Keep the briefing email out of the test — it's I/O and already
@@ -104,6 +104,14 @@ function makeEnv(opts: MakeEnvOpts = {}): { env: Env; rec: Recorder } {
 const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
 
 describe("daily briefing agent-run contract", () => {
+  // Warm the cron mesh once: each test lazily `import("../src/cron/orchestrator")`,
+  // which pulls the agent registry + feed modules. Cold, that can outrun the 5s
+  // per-test timeout on a loaded machine. Own generous budget -> cache hits.
+  beforeAll(async () => {
+    const mod = await import("../src/cron/orchestrator");
+    expect(typeof mod.handleScheduled).toBe("function");
+  }, 120_000);
+
   beforeEach(() => vi.clearAllMocks());
 
   it("writes one agent_runs row and emits a briefing_generated event on generation", async () => {

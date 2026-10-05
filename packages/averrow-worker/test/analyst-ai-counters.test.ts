@@ -28,7 +28,7 @@
  *      attempted > 0 && succeeded === 0.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { executeAgent } from "../src/lib/agentRunner";
@@ -69,6 +69,16 @@ interface Run {
 }
 
 describe.skipIf(!hasSqlite())("analyst — strictly-API counters and run status (real SQLite, routed fetch stub)", () => {
+  // The per-agent budget gate (lib/per-agent-budget.ts getDeclaredCap) lazily
+  // `import("../agents")`es the full registry (~45 modules; circular, so it
+  // cannot be static). Cold, the first test's import can outrun the 5s
+  // per-test timeout on a loaded machine and later tests see a half-evaluated
+  // module. Warm it once with its own budget so per-test is a cache hit.
+  beforeAll(async () => {
+    const mod = await import("../src/agents/index");
+    expect(Object.keys(mod.agentModules).length).toBeGreaterThan(0);
+  }, 120_000);
+
   let raw: SqliteDb;
   let net: RoutedFetch;
 
