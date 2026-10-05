@@ -87,13 +87,16 @@ const DDL = `
     id TEXT PRIMARY KEY,
     name TEXT,
     canonical_domain TEXT,
-    tier TEXT
+    tier TEXT,
+    source TEXT,
+    tranco_rank INTEGER
   );
-  -- The seeder's official-domain filter reads this (lib/safeDomains.ts).
+  -- The seeder's official-domain lookup reads this (lib/safeDomains.ts).
   CREATE TABLE brand_safe_domains (
     id TEXT PRIMARY KEY,
     brand_id TEXT NOT NULL,
-    domain TEXT NOT NULL
+    domain TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual'
   );
   CREATE TABLE takedown_requests (
     id TEXT PRIMARY KEY,

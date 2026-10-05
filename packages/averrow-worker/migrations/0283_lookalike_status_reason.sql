@@ -1,0 +1,11 @@
+-- Why a lookalike_domains row has its `status` (additive, nullable).
+--
+-- Written today only by the official-domain rule (lib/safeDomains.ts,
+-- lib/alert-triage.ts `decideLookalikeRegistrationTriage`, and the seeder
+-- in scanners/lookalike-domains.ts): a permutation that is ANOTHER brand's
+-- trusted official domain (zoom.com for zoom.us) is set status='benign'
+-- with e.g. "auto: zoom.com is the official domain of Zoom", so Sparrow
+-- never drafts a takedown against it (agents/sparrow.ts skips benign) and
+-- the checker stops spending budget on it (check_due_at NULL = parked).
+-- `ai_assessment` was not reused: it is a read-only historical Haiku note.
+ALTER TABLE lookalike_domains ADD COLUMN status_reason TEXT;

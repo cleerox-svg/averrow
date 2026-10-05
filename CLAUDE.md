@@ -1136,22 +1136,41 @@ the new alert's source/type:
    same platform-aware rule B via `normalizeHandleForPlatform`.
 
 5. **Lookalike domain** (`alert_type='lookalike_domain_active'` from
-   every producer, including the confirmed-new-registration alert,
-   plus `typosquat_bimi`) — `decideLookalikeRegistrationTriage`
-   dismisses when the alerted domain (`details.lookalike_domain`, or
-   `details.domain` for the phantom-matcher/BIMI shape; lowercased, no
-   trailing dot, `www.` ignored) IS any brand's `brand_safe_domains`
-   entry or `brands.canonical_domain` (e.g. zoom.com flagged as a
-   lookalike of zoom.us), or a subdomain of one (incl. `*.x`
-   wildcard entries), because only that domain's registrant can create
-   names under it. The subdomain branch is skipped under
-   shared-hosting domains (`SHARED_HOSTING_DOMAINS`, e.g. github.io).
-   The matcher and the one indexed lookup
-   (`loadOfficialDomainMatches`, ≤99 binds/statement) live in
-   `lib/safeDomains.ts` and are shared with the seeder:
-   `generateAndStoreLookalikes` drops such permutations before insert
-   (fail-open on lookup error). Reason: `auto: <domain> is the
-   official domain of <brand>`.
+   every producer, plus `typosquat_bimi`) —
+   `decideLookalikeRegistrationTriage` dismisses ONLY when the alerted
+   domain (`details.lookalike_domain`, or `details.domain` for the
+   phantom-matcher/BIMI shape; lowercased, no trailing dot, `www.`
+   ignored) is in the **trusted** official-domain set — a heuristic,
+   defined once as SQL in `lib/safeDomains.ts`:
+   `brand_safe_domains.source IN ('manual','csv_upload')` (staff-entered;
+   the ~10K `auto_detected` rows are canonical-domain copies with no trust
+   of their own), or the `canonical_domain` of a brand whose `source` is
+   NOT `ai_attributed`/`public_assess`/`self_service` AND
+   (`tier='customer'` OR `source IN ('manual','curated')` OR
+   `tranco_rank <= 20000`). Those three sources are never trusted:
+   analyst brands' canonical_domain IS the phishing domain, and the
+   unauthenticated public monitor/assess endpoints accept any domain; the
+   rank cut excludes Tranco catalog typosquats (cloudfare.com, goole.com).
+   A subdomain (or `*.x` wildcard) match counts only for a trusted key that
+   is not, and does not sit under, a shared-hosting domain
+   (`SHARED_HOSTING_DOMAINS`). **Never dismissed**: `details.new_registration`,
+   a lookalike row with `registration_evidence`, or a known age ≤
+   `NRD_MAX_AGE_DAYS` — an established brand's domain can't be newly
+   registered. An untrusted match keeps the alert and writes
+   `possible official domain of X (domain) — unverified` to
+   `alerts.staff_notes` (only if empty). On dismissal the brand's
+   `lookalike_domains` row goes `status='benign'` + `status_reason`
+   (migration 0283) and is parked (`check_due_at`/`last_check_failed_at`
+   NULL), only if it was `monitoring` — Sparrow skips benign, so no
+   takedown is drafted. The seeder (`generateAndStoreLookalikes`) stores
+   trusted-match permutations the same way (benign, parked) instead of
+   dropping them; untrusted matches seed normally; fail-open on lookup
+   error. Lookup: one indexed statement per alert
+   (`loadOfficialDomainMatches`, ≤99 binds/statement), plus one
+   `registration_evidence` read only when it would dismiss. A staff
+   `PATCH /api/lookalikes/:id` status change clears `status_reason`, and
+   reverting an auto-benign row to `monitoring` un-parks it. Reason:
+   `auto: <domain> is the official domain of <brand>`.
 
 The `0.5` threshold is the platform default — tunable per call via
 the `impersonationThreshold` parameter on `runAlertTriageBackfill`.

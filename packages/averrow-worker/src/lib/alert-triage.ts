@@ -30,9 +30,11 @@
 //
 //   5. LOOKALIKE DOMAIN (alert_type='lookalike_domain_active' — every
 //      producer, including the confirmed-new-registration alert — and
-//      'typosquat_bimi'): the alerted domain is ANY brand's official
-//      domain (brand_safe_domains or brands.canonical_domain), or a
-//      subdomain of one. See `decideLookalikeRegistrationTriage`.
+//      'typosquat_bimi'): the alerted domain is in the TRUSTED
+//      official-domain set (lib/safeDomains.ts), or a non-shared-hosting
+//      subdomain of a trusted key, and was not newly registered. An
+//      untrusted match is kept with an "unverified" staff note. See
+//      `decideLookalikeRegistrationTriage`.
 //
 // Every decision stamps a stable, machine-readable `reason` into
 // `alerts.resolution_notes` so the dismissal trail is auditable.
@@ -45,14 +47,17 @@ import { isNewlyRegistered, NRD_MAX_AGE_DAYS } from './domain-age';
 import { normalizeHandleForPlatform } from './handle-normalize';
 import {
   loadOfficialDomainMatches,
-  matchOfficialDomain,
   normalizeHost,
+  officialDomainNote,
+  resolveOfficialDomain,
   type OfficialDomainRow,
 } from './safeDomains';
 
 export type AutoTriageDecision =
   | { action: 'dismiss'; reason: string }
-  | { action: 'keep'; reason: string };
+  /** `note`: optional internal annotation for the caller to record on a
+   *  kept alert (lookalike rule: possible-owner, unverified). */
+  | { action: 'keep'; reason: string; note?: string };
 
 // ─── Threat-sourced alerts (Tier 1) ──────────────────────────────
 
@@ -460,18 +465,25 @@ export function decideExecutiveImpersonationTriage(
 
 /** Alert types the official-domain rule applies to. The new-registration
  *  alert (PR #1793) is `lookalike_domain_active` with `details.
- *  new_registration = true`, so it is covered by the first entry. */
+ *  new_registration = true`, so it is covered by the first entry — and
+ *  refused by the rule's new-registration guard. */
 export const LOOKALIKE_TRIAGE_ALERT_TYPES: ReadonlySet<string> = new Set([
   'lookalike_domain_active',
   'typosquat_bimi',
 ]);
 
-/** The domain-bearing keys lookalike producers write into `details`. The
- *  checker / page pass / claim backfill use `lookalike_domain`; the
- *  phantom matcher and the BIMI alert use `domain`. */
+/** The fields lookalike producers write into `details` that this rule
+ *  reads. The checker / page pass / claim backfill use `lookalike_domain`;
+ *  the phantom matcher and the BIMI alert use `domain`. */
 export interface LookalikeAlertDetails {
   lookalike_domain?: string;
   domain?: string;
+  /** Set by the checker on a confirmed new registration (PR #1793). */
+  new_registration?: boolean;
+  /** ISO date of the confirmed registration, when known. */
+  registered_at?: string;
+  /** Domain age in whole days, when a producer knows it. */
+  domain_age_days?: number;
 }
 
 /** The alerted host from a lookalike alert's details, or null. */
@@ -484,57 +496,180 @@ export function lookalikeAlertDomain(details: LookalikeAlertDetails | null): str
   return host || null;
 }
 
+export interface LookalikeTriageContext {
+  /** Rows `loadOfficialDomainMatches` returned (may cover a whole batch). */
+  officialRows: readonly OfficialDomainRow[];
+  /** `lookalike_domains.registration_evidence` for the alerted row
+   *  ('nrd' | 'observed' = a confirmed recent registration). */
+  registrationEvidence?: string | null;
+  /** Clock for the `registered_at` age check. Defaults to Date.now(). */
+  nowMs?: number;
+}
+
+/** Days since `details.registered_at`, or `details.domain_age_days`. */
+function lookalikeDomainAgeDays(details: LookalikeAlertDetails, nowMs: number): number | null {
+  if (typeof details.domain_age_days === 'number' && Number.isFinite(details.domain_age_days)) {
+    return details.domain_age_days;
+  }
+  if (typeof details.registered_at === 'string' && details.registered_at) {
+    const t = Date.parse(details.registered_at.replace(' ', 'T'));
+    if (Number.isFinite(t)) return Math.floor((nowMs - t) / 86_400_000);
+  }
+  return null;
+}
+
 /**
  * Decide auto-triage for a lookalike-domain alert. PURE — the caller
- * passes the rows `loadOfficialDomainMatches` returned for the alerted
- * domain.
+ * passes the lookup results.
  *
- *   Dismiss when the alerted domain (normalised: lowercase, no trailing
- *   dot, www. ignored) IS any brand's `brand_safe_domains` entry or
- *   `brands.canonical_domain` — zoom.com is not a squat of zoom.us, it is
- *   Zoom's own domain.
+ * DISMISS only when the alerted domain (lowercase, no trailing dot, www.
+ * ignored) is in the TRUSTED official-domain set (lib/safeDomains.ts —
+ * a heuristic: staff-entered safe domains, or the canonical domain of a
+ * customer / manual / curated / Tranco top-20,000 brand, never of an
+ * ai_attributed / public_assess / self_service brand), either exactly or
+ * as a subdomain of a trusted key that is not shared hosting. Example:
+ * zoom.com flagged as a lookalike of zoom.us.
  *
- *   Dismiss when it is a SUBDOMAIN of one (or matches a `*.x` wildcard
- *   entry): only the registrant of x can create names under x, so a
- *   subdomain of another brand's official domain is that brand's
- *   infrastructure, not a lookalike registration. Not applied when x is a
- *   shared-hosting domain (github.io, blogspot.com, …), whose subdomains
- *   belong to third parties — see `SHARED_HOSTING_DOMAINS`.
+ * NEVER dismiss a newly registered domain — an established brand's
+ * official domain cannot have been registered in the last
+ * NRD_MAX_AGE_DAYS: `details.new_registration`, a non-null row
+ * `registration_evidence`, or a known age <= NRD_MAX_AGE_DAYS all keep.
  *
- * Any brand, including the alerted brand itself (its own safe domain is
- * not a lookalike either). Otherwise keep.
+ * An UNTRUSTED exact match keeps the alert and returns a `note` naming
+ * the possible owner as unverified, for the caller to record.
  *
- * The reason keeps the `auto:` prefix every rule here uses:
- * lib/notification-cleanup.ts clears notifications for alerts whose
- * resolution_notes match `auto:%`.
+ * Dismiss reasons start with `auto:` like every rule here
+ * (lib/notification-cleanup.ts matches `auto:%`).
  */
 export function decideLookalikeRegistrationTriage(
   details: LookalikeAlertDetails | null,
-  officialRows: readonly OfficialDomainRow[],
+  ctx: LookalikeTriageContext,
 ): AutoTriageDecision {
   if (!details) return { action: 'keep', reason: 'lookalike_details_missing' };
   const host = lookalikeAlertDomain(details);
   if (!host) return { action: 'keep', reason: 'lookalike_domain_missing' };
 
-  const match = matchOfficialDomain(host, officialRows);
+  const { trusted, possible } = resolveOfficialDomain(host, ctx.officialRows);
+  const match = trusted ?? possible;
   if (!match) return { action: 'keep', reason: 'not_an_official_domain' };
-
   const brand = match.brand_name ?? match.brand_id;
-  return match.exact
-    ? { action: 'dismiss', reason: `auto: ${host} is the official domain of ${brand}` }
-    : {
-        action: 'dismiss',
-        reason: `auto: ${host} is a subdomain of ${match.official_domain}, the official domain of ${brand}`,
-      };
+
+  const age = lookalikeDomainAgeDays(details, ctx.nowMs ?? Date.now());
+  const newlyRegistered =
+    details.new_registration === true ||
+    (ctx.registrationEvidence != null && ctx.registrationEvidence !== '') ||
+    isNewlyRegistered(age);
+  if (newlyRegistered) {
+    return {
+      action: 'keep',
+      reason: 'newly_registered_domain',
+      note: `${host} matches the official domain of ${brand} (${match.official_domain}) but was newly registered — not dismissed; verify ownership`,
+    };
+  }
+
+  if (!trusted) {
+    return {
+      action: 'keep',
+      reason: 'unverified_official_domain_match',
+      note: `possible official domain of ${brand} (${match.official_domain}) — unverified`,
+    };
+  }
+  return { action: 'dismiss', reason: officialDomainNote(host, trusted) };
 }
 
-/** Real-time convenience: one indexed statement for the alert's domain. */
-export async function loadOfficialDomainRowsForAlert(
+/**
+ * Registration evidence for (brand_id, domain) pairs, from
+ * `lookalike_domains` (indexed on domain, migration 0282). Chunked at 99
+ * binds. Keyed `${brand_id}|${domain}`.
+ */
+export async function loadLookalikeRegistrationEvidence(
   db: D1Database,
+  pairs: ReadonlyArray<{ brandId: string; domain: string }>,
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const domains = Array.from(new Set(pairs.map((p) => p.domain)));
+  for (let i = 0; i < domains.length; i += 99) {
+    const chunk = domains.slice(i, i + 99);
+    const res = await db.prepare(
+      `SELECT brand_id, domain, registration_evidence
+         FROM lookalike_domains
+        WHERE domain IN (${chunk.map(() => '?').join(',')})`,
+    ).bind(...chunk).all<{ brand_id: string; domain: string; registration_evidence: string | null }>();
+    for (const r of res.results ?? []) out.set(`${r.brand_id}|${r.domain}`, r.registration_evidence);
+  }
+  return out;
+}
+
+/**
+ * Full lookalike decision for one alert, with the lookups. The official
+ * lookup is one indexed statement; the registration-evidence read only
+ * happens when the first pass would dismiss.
+ */
+export async function decideLookalikeAlert(
+  db: D1Database,
+  brandId: string,
   details: LookalikeAlertDetails | null,
-): Promise<OfficialDomainRow[]> {
+): Promise<AutoTriageDecision> {
   const host = lookalikeAlertDomain(details);
-  return host ? loadOfficialDomainMatches(db, [host]) : [];
+  const officialRows = host ? await loadOfficialDomainMatches(db, [host]) : [];
+  const first = decideLookalikeRegistrationTriage(details, { officialRows });
+  if (first.action !== 'dismiss' || !host) return first;
+  const ev = await loadLookalikeRegistrationEvidence(db, [{ brandId, domain: host }]);
+  return decideLookalikeRegistrationTriage(details, {
+    officialRows,
+    registrationEvidence: ev.get(`${brandId}|${host}`) ?? null,
+  });
+}
+
+/**
+ * Side effects of a lookalike decision, after the alert row is written.
+ *
+ *   dismiss  -> the alert brand's `lookalike_domains` row for the domain
+ *               goes `status='benign'` with `status_reason`, and is
+ *               PARKED (check_due_at NULL, last_check_failed_at NULL — the
+ *               un-park sweep only re-admits rows with a failure stamp).
+ *               Sparrow skips benign rows, so no takedown is drafted.
+ *               Only a `monitoring` row is changed: an analyst's
+ *               confirmed_threat / taken_down / benign is never overwritten.
+ *   keep + note -> written to `alerts.staff_notes` (internal, stripped
+ *               from tenant reads) only when it is empty, so a human
+ *               note is never overwritten.
+ *
+ * Idempotent: both writes are guarded.
+ */
+export async function applyLookalikeTriageEffects(
+  db: D1Database,
+  input: { alertId: string; brandId: string; details: LookalikeAlertDetails | null; decision: AutoTriageDecision },
+): Promise<void> {
+  const host = lookalikeAlertDomain(input.details);
+  if (!host) return;
+  if (input.decision.action === 'dismiss') {
+    await markLookalikeRowBenign(db, input.brandId, host, input.decision.reason);
+  } else if (input.decision.note) {
+    await db.prepare(
+      `UPDATE alerts SET staff_notes = ?, updated_at = datetime('now')
+        WHERE id = ? AND (staff_notes IS NULL OR staff_notes = '')`,
+    ).bind(input.decision.note, input.alertId).run();
+  }
+}
+
+/** Set one lookalike row benign + parked (see applyLookalikeTriageEffects). */
+export async function markLookalikeRowBenign(
+  db: D1Database,
+  brandId: string,
+  domain: string,
+  reason: string,
+): Promise<number> {
+  const res = await db.prepare(
+    `UPDATE lookalike_domains
+        SET status = 'benign',
+            status_reason = ?,
+            check_due_at = NULL,
+            last_check_failed_at = NULL,
+            updated_at = datetime('now')
+      WHERE brand_id = ? AND domain = ? AND status = 'monitoring'`,
+  ).bind(reason, brandId, domain).run();
+  return res.meta?.changes ?? 0;
 }
 
 // ─── Brand allowlist loading ─────────────────────────────────────
@@ -685,7 +820,9 @@ interface AlertRow {
  *   - 'app_store_impersonation' → official-app + score-threshold
  *   - 'executive_impersonation' → exec official-handle + score-threshold
  *   - 'lookalike_domain_active' / 'typosquat_bimi'
- *                              → alerted domain is any brand's official domain
+ *                              → alerted domain is in the TRUSTED official-domain
+ *                                set and not newly registered (dismiss also sets
+ *                                the lookalike row benign + parked)
  *   - any other type         → skipped (counted as `kept` so
  *                              operators see the queue isn't being
  *                              ignored silently)
@@ -734,12 +871,22 @@ export async function runAlertTriageBackfill(
   const executiveAllowlists = await loadExecutiveAllowlists(db, executiveIdsForAllowlist);
 
   // Pre-load official-domain rows for the lookalike alerts in the batch
-  // (one indexed statement per 33 distinct lookup keys).
-  const lookalikeHosts = rows.results
+  // (one indexed statement per 33 distinct lookup keys), then the
+  // registration evidence of just the ones that would dismiss.
+  const lookalikeAlerts = rows.results
     .filter((r) => LOOKALIKE_TRIAGE_ALERT_TYPES.has(r.alert_type) && r.source_type !== 'threat')
-    .map((r) => lookalikeAlertDomain(parseDetails<LookalikeAlertDetails>(r.details)))
-    .filter((h): h is string => typeof h === 'string');
-  const officialRows = await loadOfficialDomainMatches(db, lookalikeHosts);
+    .map((r) => {
+      const details = parseDetails<LookalikeAlertDetails>(r.details);
+      return { alert: r, details, host: lookalikeAlertDomain(details) };
+    });
+  const officialRows = await loadOfficialDomainMatches(
+    db,
+    lookalikeAlerts.map((a) => a.host).filter((h): h is string => typeof h === 'string'),
+  );
+  const evidencePairs = lookalikeAlerts
+    .filter((a) => a.host && decideLookalikeRegistrationTriage(a.details, { officialRows }).action === 'dismiss')
+    .map((a) => ({ brandId: a.alert.brand_id, domain: a.host as string }));
+  const registrationEvidence = await loadLookalikeRegistrationEvidence(db, evidencePairs);
 
   let dismissed = 0;
   let kept = 0;
@@ -756,6 +903,7 @@ export async function runAlertTriageBackfill(
     trackType(typeKey, 'scanned');
 
     let decision: AutoTriageDecision = { action: 'keep', reason: 'unhandled_alert_type' };
+    let lookalikeEffects: { details: LookalikeAlertDetails | null } | null = null;
 
     if (alert.source_type === 'threat' && alert.source_id) {
       const snapshot = await loadThreatSnapshotForAlert(db, alert.source_id);
@@ -781,10 +929,13 @@ export async function runAlertTriageBackfill(
         { full_name: null, official_handles: null };
       decision = decideExecutiveImpersonationTriage(details, allow, threshold);
     } else if (LOOKALIKE_TRIAGE_ALERT_TYPES.has(alert.alert_type)) {
-      decision = decideLookalikeRegistrationTriage(
-        parseDetails<LookalikeAlertDetails>(alert.details),
+      const details = parseDetails<LookalikeAlertDetails>(alert.details);
+      const host = lookalikeAlertDomain(details);
+      decision = decideLookalikeRegistrationTriage(details, {
         officialRows,
-      );
+        registrationEvidence: host ? registrationEvidence.get(`${alert.brand_id}|${host}`) ?? null : null,
+      });
+      lookalikeEffects = { details };
     }
 
     if (decision.action === 'dismiss') {
@@ -802,6 +953,15 @@ export async function runAlertTriageBackfill(
     } else {
       kept += 1;
       trackType(typeKey, 'kept');
+    }
+
+    // Lookalike side effects AFTER the alert write, same order as
+    // createAlert (lib/alerts.ts). Both writes are guarded, so a re-run
+    // is a no-op.
+    if (lookalikeEffects) {
+      await applyLookalikeTriageEffects(db, {
+        alertId: alert.id, brandId: alert.brand_id, details: lookalikeEffects.details, decision,
+      });
     }
   }
 

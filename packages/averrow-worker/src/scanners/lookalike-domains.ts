@@ -12,7 +12,7 @@ import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
 import { logger } from '../lib/logger';
-import { loadOfficialDomainMatches, matchOfficialDomain } from '../lib/safeDomains';
+import { loadOfficialDomainMatches, officialDomainNote, resolveOfficialDomain } from '../lib/safeDomains';
 import { DEFAULT_DEADLINE_MS } from '../lib/page-fetch';
 import { escalateThreatLevelForPage } from '../lib/page-phishing-scorer';
 import type { PagePhishingResult, PageThreatLevel } from '../lib/page-phishing-scorer';
@@ -1088,25 +1088,29 @@ export async function generateAndStoreLookalikes(
   brandId: string,
   domain: string,
 ): Promise<number> {
-  const generated = generatePermutations(domain);
-  if (generated.length === 0) return 0;
+  const permutations = generatePermutations(domain);
+  if (permutations.length === 0) return 0;
 
-  // A permutation that is ANY brand's official domain (brand_safe_domains
-  // or brands.canonical_domain) is not a squat — zoom.com is a TLD swap of
-  // zoom.us, cloud.com an omission of icloud.com — and must never become a
-  // lookalike row (it would alert HIGH on the other brand's own mail+web).
-  // Same matcher as the alert-time triage rule (lib/alert-triage.ts
-  // `decideLookalikeRegistrationTriage`), so the two cannot drift. Batched
-  // at <=99 binds per statement. FAIL-OPEN: a lookup error seeds every
-  // permutation, as before this filter; the triage rule still dismisses
-  // any alert one of them raises.
-  let permutations = generated;
-  let officialFiltered = 0;
+  // A permutation that is another brand's TRUSTED official domain
+  // (lib/safeDomains.ts — staff safe domains, or the canonical domain of a
+  // customer / manual / curated / Tranco top-20,000 brand) is not a squat:
+  // zoom.com is a TLD swap of zoom.us. It is still STORED — as
+  // status='benign' with a `status_reason`, parked (check_due_at NULL, so
+  // the checker never spends budget on it and the un-park sweep never
+  // re-admits it, having no failure stamp) — so the decision is auditable
+  // and reversible, and Sparrow (which skips benign) never drafts a
+  // takedown against it. Untrusted matches (ai_attributed / public /
+  // self-service brands, long-tail Tranco typosquats) seed normally.
+  // Same resolver as the alert-time rule (lib/alert-triage.ts
+  // `decideLookalikeRegistrationTriage`), so the two cannot drift.
+  // Batched at <=99 binds. FAIL-OPEN: a lookup error seeds everything
+  // normally, as before; the triage rule still handles any alert.
+  const benignReason = new Map<string, string>();
   try {
-    const official = await loadOfficialDomainMatches(env.DB, generated.map((p) => p.domain));
-    if (official.length > 0) {
-      permutations = generated.filter((p) => matchOfficialDomain(p.domain, official) === null);
-      officialFiltered = generated.length - permutations.length;
+    const official = await loadOfficialDomainMatches(env.DB, permutations.map((p) => p.domain));
+    for (const p of permutations) {
+      const { trusted } = resolveOfficialDomain(p.domain, official);
+      if (trusted) benignReason.set(p.domain, officialDomainNote(p.domain, trusted));
     }
   } catch (err) {
     logger.warn('lookalike_official_domain_filter_failed', {
@@ -1114,8 +1118,6 @@ export async function generateAndStoreLookalikes(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  if (permutations.length === 0) return 0;
-
   let inserted = 0;
 
   // Batch insert in groups of 10 to stay within D1 limits
@@ -1124,6 +1126,14 @@ export async function generateAndStoreLookalikes(
     const batch = permutations.slice(i, i + BATCH);
     const stmts = batch.map((perm) => {
       const id = crypto.randomUUID();
+      const reason = benignReason.get(perm.domain);
+      if (reason) {
+        return env.DB.prepare(
+          `INSERT OR IGNORE INTO lookalike_domains
+             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at)
+           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL)`,
+        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason);
+      }
       return env.DB.prepare(
         `INSERT OR IGNORE INTO lookalike_domains
            (id, brand_id, domain, permutation_type, unicode_domain, check_due_at)
@@ -1140,8 +1150,8 @@ export async function generateAndStoreLookalikes(
   logger.info('lookalike_generate', {
     brand_id: brandId,
     domain,
-    total_permutations: generated.length,
-    official_domains_filtered: officialFiltered,
+    total_permutations: permutations.length,
+    official_domains_benign: benignReason.size,
     new_stored: inserted,
   });
 
