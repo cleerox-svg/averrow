@@ -16,6 +16,7 @@ import { Bell, ChevronDown, ChevronRight, Settings, SlidersHorizontal } from 'lu
 import { NOTIFICATION_EVENTS, type NotificationEventKey, type NotificationSeverity } from '@averrow/shared';
 import {
   Button, Card, FilterBar, Input, PageHeader, PageState, Select, Sheet, SheetClose, SheetContent, Tabs,
+  ToastProvider, useToast,
   type Tab,
 } from '@averrow/shared/ui';
 import {
@@ -58,7 +59,17 @@ const EMPTY_COPY: Record<NotificationStateFilter, { title: string; description: 
   all: { title: 'No notifications yet', description: 'New notifications will show up here.' },
 };
 
+/** Mounts the kit ToastProvider for the inbox (ops' own Toast context is a different system). */
 export function Notifications() {
+  return (
+    <ToastProvider>
+      <NotificationsInbox />
+    </ToastProvider>
+  );
+}
+
+function NotificationsInbox() {
+  const toast = useToast();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [stateFilter, setStateFilter] = useState<NotificationStateFilter>('inbox');
@@ -92,15 +103,21 @@ export function Notifications() {
   const snooze = useSnoozeNotification();
   const markDone = useMarkDone();
 
-  // Debounced search: applying on every keystroke would fire a request per key.
+  const applySearch = (value: string) => {
+    const next = value.trim();
+    if (next === appliedSearch) return;
+    setAppliedSearch(next);
+    setCursorStack([null]);
+  };
+
+  // Typing stays instant-ish: debounced so a request isn't fired per key.
+  // Enter (FilterBar onSubmit) and Esc-to-clear apply immediately.
   useEffect(() => {
     const next = searchInput.trim();
     if (next === appliedSearch) return;
-    const t = window.setTimeout(() => {
-      setAppliedSearch(next);
-      setCursorStack([null]);
-    }, SEARCH_DEBOUNCE_MS);
+    const t = window.setTimeout(() => applySearch(next), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchInput, appliedSearch]);
 
   const resetCursor = () => setCursorStack([null]);
@@ -135,9 +152,18 @@ export function Notifications() {
     if (n.state === 'unread') markRead.mutate(n.id, actionOpts);
     if (n.link) navigate(n.link);
   };
+  // Success toasts only: failures stay as the persistent inline error below.
+  // No Undo on snooze/done: the API has no un-snooze / un-done endpoint.
   const handleSnooze = (id: string, hours: number) =>
-    snooze.mutate({ id, until: snoozeUntilIso(hours) }, actionOpts);
-  const handleDone = (id: string) => markDone.mutate(id, actionOpts);
+    snooze.mutate({ id, until: snoozeUntilIso(hours) }, {
+      ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('Snoozed'); },
+    });
+  const handleDone = (id: string) =>
+    markDone.mutate(id, { ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('Marked done'); } });
+  const handleMarkAllRead = () =>
+    markAllRead.mutate(undefined, {
+      ...actionOpts, onSuccess: () => { setActionFailed(false); toast.success('All notifications marked read'); },
+    });
 
   const tabs: Tab[] = STATE_ORDER.map((id) => ({
     id,
@@ -177,7 +203,7 @@ export function Notifications() {
               size="md"
               className="[@media(pointer:coarse)]:min-h-[44px]"
               disabled={unreadCount === 0 || markAllRead.isPending}
-              onClick={() => markAllRead.mutate(undefined, actionOpts)}
+              onClick={handleMarkAllRead}
             >
               Mark all read
             </Button>
@@ -231,9 +257,11 @@ export function Notifications() {
           active={severityFilter}
           onChange={onChangeSeverity}
           filterLabel="Severity"
+          size="md"
           search={{
             value: searchInput,
-            onChange: setSearchInput,
+            onChange: (v) => { setSearchInput(v); if (v === '') applySearch(''); },
+            onSubmit: applySearch,
             placeholder: 'Search notifications',
             label: 'Search notifications',
           }}
@@ -346,10 +374,7 @@ export function Notifications() {
           />
         )
       ) : (
-        <div
-          className="overflow-clip rounded-[var(--card-radius)] border border-[var(--border-base)] bg-[var(--bg-card)]"
-          aria-busy={isFetching && isPlaceholderData}
-        >
+        <Card padding="none" overflow="clip" aria-busy={isFetching && isPlaceholderData}>
           {groupByDay(notifications).map((day) => (
             <section key={day.key} aria-labelledby={`notif-day-${day.key}`}>
               <DayHeading id={`notif-day-${day.key}`} label={day.label} />
@@ -385,7 +410,7 @@ export function Notifications() {
               Older →
             </Button>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   );

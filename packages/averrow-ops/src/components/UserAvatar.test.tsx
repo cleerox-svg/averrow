@@ -134,12 +134,31 @@ describe('UserAvatar account menu (desktop)', () => {
     expect(within(screen.getByRole('menuitem', { name: /Notifications/ })).getByText('99+')).toBeTruthy();
   });
 
-  it('appearance control reflects and sets the theme via the theme hook', async () => {
+  it('appearance choice reflects and sets the theme via the theme hook', async () => {
     theme = 'dark';
     const user = await open();
-    const group = screen.getByRole('radiogroup', { name: 'Appearance' });
-    expect(within(group).getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
-    await user.click(within(group).getByRole('radio', { name: 'Light' }));
+    const group = screen.getByRole('group', { name: 'Appearance' });
+    expect(within(group).getByRole('menuitemradio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(group).getByRole('menuitemradio', { name: 'Light' }));
+    expect(setTheme).toHaveBeenCalledWith('light');
+    // keepOpen: choosing a theme leaves the menu open.
+    expect(screen.getByRole('menu')).toBeTruthy();
+  });
+
+  it('theme choice is reachable with arrow keys from the first item', async () => {
+    const user = await open();
+    const items = screen.getAllByRole('menuitem');
+    await user.keyboard('{ArrowDown}'); // focus first item (Profile)
+    expect(document.activeElement).toBe(items[0]);
+    let guard = 0;
+    while (document.activeElement?.getAttribute('role') !== 'menuitemradio' && guard++ < 12) {
+      await user.keyboard('{ArrowDown}');
+    }
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitemradio');
+    expect(document.activeElement?.textContent).toBe('Auto');
+    await user.keyboard('{ArrowDown}{ArrowDown}'); // Dark, Light
+    expect(document.activeElement?.textContent).toBe('Light');
+    await user.keyboard('{Enter}');
     expect(setTheme).toHaveBeenCalledWith('light');
   });
 
@@ -189,6 +208,16 @@ describe('UserAvatar account menu (mobile)', () => {
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Security/ }));
     expect(screen.getByTestId('where').textContent).toBe('/settings/security');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('sheet appearance choice is a radiogroup that sets the theme and stays open', async () => {
+    theme = 'dark';
+    const user = await open();
+    const group = within(screen.getByRole('dialog')).getByRole('radiogroup', { name: 'Appearance' });
+    expect(within(group).getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');
+    await user.click(within(group).getByRole('radio', { name: 'Light' }));
+    expect(setTheme).toHaveBeenCalledWith('light');
+    expect(screen.getByRole('dialog')).toBeTruthy();
   });
 
   it('sheet Sign out calls logout', async () => {

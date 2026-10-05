@@ -195,6 +195,17 @@ describe('Notifications filters', () => {
     expect(lastFilters()).toMatchObject({ type: 'brand_threat' });
   });
 
+  it('Enter applies the search immediately; Esc clears it immediately', async () => {
+    withRows([note({ id: 'a' })]);
+    renderPage();
+    const box = screen.getByRole('searchbox', { name: 'Search notifications' });
+    await userEvent.type(box, 'acme{Enter}');
+    expect(lastFilters()).toMatchObject({ q: 'acme' });
+    await userEvent.keyboard('{Escape}');
+    expect(box).toHaveValue('');
+    expect(lastFilters()).not.toHaveProperty('q');
+  });
+
   it('mobile hides filters behind a Filters button that opens a Sheet', async () => {
     mocks.isMobile = true;
     withRows([note({ id: 'a' })]);

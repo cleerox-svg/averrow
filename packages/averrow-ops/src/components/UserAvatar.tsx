@@ -2,14 +2,14 @@
 // kit: Radix popover on desktop, the same items in a bottom Sheet on compact
 // screens. Initials only — never the Google profile picture.
 
-import { forwardRef, type ButtonHTMLAttributes, type KeyboardEvent } from 'react';
+import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Bell, ShieldCheck, Smartphone, User, UserPlus, LogOut,
+  Bell, ShieldCheck, Smartphone, User, UserPlus, LogOut, Monitor, Moon, Sun,
 } from 'lucide-react';
 import { roleLabel } from '@averrow/shared';
 import {
-  Avatar, Badge, MenuItem, MenuSeparator, ResponsiveMenu, SegmentedControl,
+  Avatar, Badge, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator, ResponsiveMenu,
 } from '@averrow/shared/ui';
 import { useAuth } from '@/lib/auth';
 import { parseInitials } from '@/lib/avatar';
@@ -18,18 +18,15 @@ import { useTheme } from '@/design-system/hooks/useTheme';
 import type { Theme } from '@/design-system/hooks/useTheme';
 import { useUnreadCount, OPS_AUDIENCE_FILTER } from '@/hooks/useNotifications';
 
-const THEME_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
+const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof Monitor }> = [
+  { value: 'auto', label: 'Auto', Icon: Monitor },
+  { value: 'dark', label: 'Dark', Icon: Moon },
+  { value: 'light', label: 'Light', Icon: Sun },
 ];
 
 function isTheme(v: string): v is Theme {
   return v === 'auto' || v === 'dark' || v === 'light';
 }
-
-// Sentence-case sans badge text (the kit Badge defaults to mono uppercase).
-const BADGE_SANS = '!font-sans !normal-case !tracking-normal !font-semibold';
 
 const ACCOUNT_LINKS = [
   { label: 'Profile', path: '/settings/profile', Icon: User, tone: 'amber' },
@@ -37,22 +34,6 @@ const ACCOUNT_LINKS = [
   { label: 'Notifications', path: '/settings/notifications', Icon: Bell, tone: 'blue' },
   { label: 'Devices & App', path: '/settings/devices', Icon: Smartphone, tone: 'violet' },
 ] as const;
-
-type TileTone = (typeof ACCOUNT_LINKS)[number]['tone'];
-
-/** Section-tinted 28px icon tile (MenuItem's own tile is neutral/red only). */
-function Tinted({ tone, children }: { tone: TileTone; children: React.ReactNode }) {
-  return (
-    <span className="ds-tile" data-tone={tone} aria-hidden="true"
-      style={{
-        '--ds-tile-size': '28px', '--ds-tile-radius': '8px',
-        '--ds-tile-tint': `var(--${tone})`,
-        '--ds-tile-glyph': tone === 'amber' ? 'var(--amber-text)' : tone === 'green' ? 'var(--sev-info-text)' : tone === 'blue' ? 'var(--sev-low-text)' : 'var(--violet-text)',
-      } as React.CSSProperties}>
-      {children}
-    </span>
-  );
-}
 
 const AvatarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { initials: string; name: string }>(
   function AvatarTrigger({ initials, name, ...rest }, ref) {
@@ -81,12 +62,6 @@ export function UserAvatar() {
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
   const hasPasskey = (user?.passkey_count ?? 0) > 0;
 
-  // Keep arrow keys inside the segmented control (Radix menu would otherwise
-  // treat them as item navigation / typeahead).
-  const stopMenuKeys = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Escape') e.stopPropagation();
-  };
-
   return (
     <ResponsiveMenu
       title="Account menu"
@@ -100,10 +75,10 @@ export function UserAvatar() {
             <p className="truncate text-[13px] text-[var(--text-secondary)]" title={user.email}>{user.email}</p>
           ) : null}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            <Badge status="draft" size="md" className={BADGE_SANS}>{roleLabel(user?.role)}</Badge>
+            <Badge status="draft" size="md" font="sans">{roleLabel(user?.role)}</Badge>
             {hasPasskey
-              ? <Badge status="active" size="md" className={BADGE_SANS}>Passkey on</Badge>
-              : <Badge status="warning" size="md" className={BADGE_SANS}>No passkey</Badge>}
+              ? <Badge status="active" size="md" font="sans">Passkey on</Badge>
+              : <Badge status="warning" size="md" font="sans">No passkey</Badge>}
           </div>
         </div>
       </div>
@@ -113,9 +88,10 @@ export function UserAvatar() {
       {ACCOUNT_LINKS.map(({ label, path, Icon, tone }) => (
         <MenuItem
           key={path}
-          icon={<Tinted tone={tone}><Icon /></Tinted>}
+          icon={<Icon />}
+          tone={tone}
           trailing={label === 'Notifications' && unread > 0
-            ? <Badge severity="medium" size="md" className={BADGE_SANS} label={unread > 99 ? '99+' : String(unread)} />
+            ? <Badge severity="medium" size="md" label={unread > 99 ? '99+' : String(unread)} />
             : undefined}
           onSelect={() => navigate(path)}
         >
@@ -125,19 +101,20 @@ export function UserAvatar() {
 
       <MenuSeparator />
 
-      <div
-        className="flex items-center justify-between gap-3 px-3 py-1.5"
-        onKeyDown={stopMenuKeys}
+      {/* Choice rows, not a SegmentedControl: they are real menu items, so arrow
+          keys reach them in the popover and the sheet. keepOpen: a theme change
+          is visible instantly behind the menu and people compare Dark/Light, so
+          closing after each pick would force a reopen; Esc / outside tap closes. */}
+      <MenuLabel>Appearance</MenuLabel>
+      <MenuRadioGroup
+        aria-label="Appearance"
+        value={theme}
+        onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}
       >
-        <span className="text-[14px] font-medium text-[var(--text-primary)]" id="account-menu-appearance">Appearance</span>
-        <SegmentedControl
-          aria-labelledby="account-menu-appearance"
-          value={theme}
-          onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}
-          options={THEME_OPTIONS}
-          className="[&_button]:min-w-0 [&_button]:px-2.5"
-        />
-      </div>
+        {THEME_OPTIONS.map(({ value, label, Icon }) => (
+          <MenuRadioItem key={value} value={value} icon={<Icon />} keepOpen>{label}</MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
 
       <MenuSeparator />
 

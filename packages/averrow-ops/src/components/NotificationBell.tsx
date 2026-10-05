@@ -35,6 +35,8 @@ const FILTER_OPTIONS = [
 ];
 
 const ANNOUNCE_DEBOUNCE_MS = 2000;
+// The panel's visible heading names the Sheet / popover dialog (one heading).
+const PANEL_TITLE_ID = 'bell-panel-title';
 
 const ICON_LINK =
   'inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-[var(--text-secondary)] no-underline ' +
@@ -105,7 +107,7 @@ function NotificationPanel({
       >
         <div className="flex items-center gap-1 py-1 pl-4 pr-1.5">
           <div className="min-w-0 flex-1">
-            <h2 className="m-0 text-[16px] font-bold leading-tight tracking-[-0.2px] text-[var(--text-primary)]">
+            <h2 id={PANEL_TITLE_ID} className="m-0 text-[16px] font-bold leading-tight tracking-[-0.2px] text-[var(--text-primary)]">
               Notifications
             </h2>
             {unreadCount > 0 && (
@@ -370,7 +372,7 @@ export function NotificationBell() {
 
       {isMobile ? (
         <Sheet open={open} onOpenChange={(next) => { if (next) setOpen(true); else handleClose(); }}>
-          <SheetContent title="Notifications" hideTitle hideHandle fullHeight bodyClassName="p-0">
+          <SheetContent title="Notifications" labelledBy={PANEL_TITLE_ID} hideHandle fullHeight bodyClassName="p-0">
             <NotificationPanel onClose={handleClose} filter={filter} setFilter={setFilter} variant="sheet" />
           </SheetContent>
         </Sheet>
@@ -381,7 +383,7 @@ export function NotificationBell() {
             variant="elevated"
             padding="none"
             role="dialog"
-            aria-label="Notifications"
+            aria-labelledby={PANEL_TITLE_ID}
             tabIndex={-1}
             className="absolute right-0 top-full mt-2 outline-none"
             style={{ width: 'min(400px, calc(100vw - 24px))', zIndex: 'var(--z-dropdown)' as unknown as number }}

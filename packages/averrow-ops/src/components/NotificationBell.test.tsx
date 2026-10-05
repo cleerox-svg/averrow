@@ -158,8 +158,9 @@ describe('NotificationBell panel', () => {
     await openBell();
     expect(document.querySelector('.av-ov-sheet')).not.toBeNull();
     const dialog = screen.getByRole('dialog');
-    // Radix's sr-only dialog title + the visible top-bar heading.
-    expect(within(dialog).getAllByRole('heading', { name: 'Notifications' }).length).toBeGreaterThanOrEqual(1);
+    // One heading: the visible top-bar title names the dialog (labelledBy).
+    expect(within(dialog).getAllByRole('heading', { name: 'Notifications' })).toHaveLength(1);
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBe(dialog);
     expect(within(dialog).getByRole('button', { name: 'Mark all read' })).toBeInTheDocument();
     expect(within(dialog).getAllByRole('link', { name: /notification settings/i })[0]).toHaveAttribute('href', '/settings/notifications');
     expect(within(dialog).getByRole('button', { name: 'Close notifications' })).toBeInTheDocument();
