@@ -1,143 +1,160 @@
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { User, Bell, ShieldCheck, Smartphone, LogOut, UserPlus } from 'lucide-react';
-import { roleLabel } from '@averrow/shared';
-import { useAuth } from '@/lib/auth';
-import { useIsMobile } from '@/hooks/useWindowWidth';
-import { parseInitials, SELF_AVATAR_COLOR } from '@/lib/avatar';
-import { Dropdown } from './Dropdown';
-import { BottomSheet } from './BottomSheet';
+// Account / avatar menu (ACCOUNT_DESIGN_SPEC §4.12, §5.5), built on the shared
+// kit: Radix popover on desktop, the same items in a bottom Sheet on compact
+// screens. Initials only — never the Google profile picture.
 
-interface MenuItem {
-  label: string;
-  icon: typeof User;
-  path?: string;
-  onClick?: () => void;
-  danger?: boolean;
+import { forwardRef, type ButtonHTMLAttributes, type KeyboardEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Bell, ShieldCheck, Smartphone, User, UserPlus, LogOut,
+} from 'lucide-react';
+import { roleLabel } from '@averrow/shared';
+import {
+  Avatar, Badge, MenuItem, MenuSeparator, ResponsiveMenu, SegmentedControl,
+} from '@averrow/shared/ui';
+import { useAuth } from '@/lib/auth';
+import { parseInitials } from '@/lib/avatar';
+import { VERSION_LABEL, BUILD_SHA } from '@/lib/version';
+import { useTheme } from '@/design-system/hooks/useTheme';
+import type { Theme } from '@/design-system/hooks/useTheme';
+import { useUnreadCount, OPS_AUDIENCE_FILTER } from '@/hooks/useNotifications';
+
+const THEME_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+];
+
+function isTheme(v: string): v is Theme {
+  return v === 'auto' || v === 'dark' || v === 'light';
 }
 
-function ProfileMenu({ onClose }: { onClose: () => void }) {
-  const { user, logout, switchAccount } = useAuth();
-  const navigate = useNavigate();
+// Sentence-case sans badge text (the kit Badge defaults to mono uppercase).
+const BADGE_SANS = '!font-sans !normal-case !tracking-normal !font-semibold';
 
-  const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
+const ACCOUNT_LINKS = [
+  { label: 'Profile', path: '/settings/profile', Icon: User, tone: 'amber' },
+  { label: 'Security', path: '/settings/security', Icon: ShieldCheck, tone: 'green' },
+  { label: 'Notifications', path: '/settings/notifications', Icon: Bell, tone: 'blue' },
+  { label: 'Devices & App', path: '/settings/devices', Icon: Smartphone, tone: 'violet' },
+] as const;
 
-  const roleName = roleLabel(user?.role);
+type TileTone = (typeof ACCOUNT_LINKS)[number]['tone'];
 
-  // Theme toggle lives in the sidebar header (quick access) + Settings →
-  // Profile → Appearance (explicit Auto / Dark / Light picker). Organization
-  // left this menu (owner decision, ACCOUNT_DESIGN_SPEC §5.5): staff reach
-  // Users & Access from the sidebar. A full menu rebuild is Phase 4.
-  const menuItems: MenuItem[] = [
-    { label: 'Profile', icon: User, path: '/settings/profile' },
-    { label: 'Security', icon: ShieldCheck, path: '/settings/security' },
-    { label: 'Notifications', icon: Bell, path: '/settings/notifications' },
-    { label: 'Devices & App', icon: Smartphone, path: '/settings/devices' },
-  ];
-
-  const handleNav = (path: string) => {
-    navigate(path);
-    onClose();
-  };
-
+/** Section-tinted 28px icon tile (MenuItem's own tile is neutral/red only). */
+function Tinted({ tone, children }: { tone: TileTone; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="px-4 pt-4 pb-3 flex items-center gap-3 border-b border-[var(--border-base)]">
-        <div
-          className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-          style={{
-            background: SELF_AVATAR_COLOR,
-            color: 'var(--text-on-amber, #0A0F1E)',
-            border: '1px solid var(--border-strong)',
-          }}
-        >
-          {initials}
-        </div>
-        <div className="min-w-0">
-          <p className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-            {user?.display_name ?? user?.name ?? 'User'}
-          </p>
-          <p className="text-[11px] truncate" style={{ color: 'var(--text-tertiary)' }}>
-            {user?.email}
-          </p>
-          <p className="text-[10px] font-mono uppercase tracking-wider mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-            {roleName}
-          </p>
-        </div>
-      </div>
-
-      <div className="py-1">
-        {menuItems.map(item => (
-          <button
-            key={item.label}
-            onClick={() => {
-              if (item.onClick) item.onClick();
-              else if (item.path) handleNav(item.path);
-            }}
-            className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--bg-card-deep)] transition-colors touch-target border-b border-[var(--border-base)] md:border-b-0"
-          >
-            <item.icon size={15} className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
-            <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>{item.label}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="border-t border-[var(--border-base)] py-1">
-        <button
-          onClick={() => { void switchAccount(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--bg-card-deep)] transition-colors touch-target"
-          title="Sign out, then choose a different Google account"
-        >
-          <UserPlus size={15} className="flex-shrink-0" style={{ color: 'var(--text-tertiary)' }} />
-          <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--text-primary)' }}>Switch account</span>
-        </button>
-        <button
-          onClick={() => { void logout(); onClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 md:py-2.5 min-h-[52px] md:min-h-0 text-left hover:bg-[var(--sev-critical-bg)] transition-colors touch-target"
-        >
-          <LogOut size={15} className="flex-shrink-0" style={{ color: 'var(--sev-critical-text)' }} />
-          <span className="text-[14px] md:text-[12px]" style={{ color: 'var(--sev-critical-text)' }}>Logout</span>
-        </button>
-      </div>
-    </div>
+    <span className="ds-tile" data-tone={tone} aria-hidden="true"
+      style={{
+        '--ds-tile-size': '28px', '--ds-tile-radius': '8px',
+        '--ds-tile-tint': `var(--${tone})`,
+        '--ds-tile-glyph': tone === 'amber' ? 'var(--amber-text)' : tone === 'green' ? 'var(--sev-info-text)' : tone === 'blue' ? 'var(--sev-low-text)' : 'var(--violet-text)',
+      } as React.CSSProperties}>
+      {children}
+    </span>
   );
 }
 
+const AvatarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & { initials: string; name: string }>(
+  function AvatarTrigger({ initials, name, ...rest }, ref) {
+    return (
+      <button
+        ref={ref}
+        type="button"
+        aria-label={`Account menu for ${name}`}
+        aria-haspopup="menu"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] touch-target"
+        {...rest}
+      >
+        <Avatar name={name} initials={initials} tone="self" size={36} radius={18} />
+      </button>
+    );
+  },
+);
+
 export function UserAvatar() {
-  const [open, setOpen] = useState(false);
-  const { user } = useAuth();
-  const isMobile = useIsMobile();
+  const { user, logout, switchAccount } = useAuth();
+  const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
+  const { data: unread = 0 } = useUnreadCount(OPS_AUDIENCE_FILTER);
 
+  const name = user?.display_name ?? user?.name ?? user?.email ?? 'account';
   const initials = parseInitials(user?.display_name ?? user?.name ?? null, user?.email ?? null);
+  const hasPasskey = (user?.passkey_count ?? 0) > 0;
 
-  const handleClose = useCallback(() => setOpen(false), []);
+  // Keep arrow keys inside the segmented control (Radix menu would otherwise
+  // treat them as item navigation / typeahead).
+  const stopMenuKeys = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Escape') e.stopPropagation();
+  };
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-150 touch-target"
-        style={{
-          background: SELF_AVATAR_COLOR,
-          color: 'var(--text-on-amber, #0A0F1E)',
-          border: '1px solid var(--border-strong)',
-        }}
-        aria-label={`User menu, ${user?.display_name ?? user?.name ?? user?.email ?? 'account'}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        {initials}
-      </button>
+    <ResponsiveMenu
+      title="Account menu"
+      trigger={<AvatarTrigger initials={initials} name={name} />}
+    >
+      <div className="flex items-center gap-3 px-3 pb-3 pt-2.5">
+        <Avatar name={name} initials={initials} tone="self" shape="squircle" size={40} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-bold leading-tight text-[var(--text-primary)]" title={name}>{name}</p>
+          {user?.email ? (
+            <p className="truncate text-[13px] text-[var(--text-secondary)]" title={user.email}>{user.email}</p>
+          ) : null}
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <Badge status="draft" size="md" className={BADGE_SANS}>{roleLabel(user?.role)}</Badge>
+            {hasPasskey
+              ? <Badge status="active" size="md" className={BADGE_SANS}>Passkey on</Badge>
+              : <Badge status="warning" size="md" className={BADGE_SANS}>No passkey</Badge>}
+          </div>
+        </div>
+      </div>
 
-      {isMobile ? (
-        <BottomSheet open={open} onClose={handleClose}>
-          <ProfileMenu onClose={handleClose} />
-        </BottomSheet>
-      ) : (
-        <Dropdown open={open} onClose={handleClose} width={260}>
-          <ProfileMenu onClose={handleClose} />
-        </Dropdown>
-      )}
-    </div>
+      <MenuSeparator />
+
+      {ACCOUNT_LINKS.map(({ label, path, Icon, tone }) => (
+        <MenuItem
+          key={path}
+          icon={<Tinted tone={tone}><Icon /></Tinted>}
+          trailing={label === 'Notifications' && unread > 0
+            ? <Badge severity="medium" size="md" className={BADGE_SANS} label={unread > 99 ? '99+' : String(unread)} />
+            : undefined}
+          onSelect={() => navigate(path)}
+        >
+          {label}
+        </MenuItem>
+      ))}
+
+      <MenuSeparator />
+
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-1.5"
+        onKeyDown={stopMenuKeys}
+      >
+        <span className="text-[14px] font-medium text-[var(--text-primary)]" id="account-menu-appearance">Appearance</span>
+        <SegmentedControl
+          aria-labelledby="account-menu-appearance"
+          value={theme}
+          onValueChange={(v) => { if (isTheme(v)) setTheme(v); }}
+          options={THEME_OPTIONS}
+          className="[&_button]:min-w-0 [&_button]:px-2.5"
+        />
+      </div>
+
+      <MenuSeparator />
+
+      <MenuItem
+        icon={<UserPlus />}
+        description="Use a different Google account"
+        onSelect={() => { void switchAccount(); }}
+      >
+        Switch account…
+      </MenuItem>
+      <MenuItem tone="danger" icon={<LogOut />} onSelect={() => { void logout(); }}>
+        Sign out
+      </MenuItem>
+
+      <p className="px-3 pb-1.5 pt-2 text-center font-mono text-[11px] text-[var(--text-muted)]">
+        {VERSION_LABEL} · {BUILD_SHA}
+      </p>
+    </ResponsiveMenu>
   );
 }
