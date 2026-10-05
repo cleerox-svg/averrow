@@ -14,7 +14,7 @@ const PAGES: Array<{
 }> = [
   { path: "/",             title: /Averrow/,             heading: /who is attacking your brand/i },
   { path: "/platform",     title: /Platform/,            heading: /one platform/i },
-  { path: "/pricing",      title: /Pricing/,             heading: /one platform\. one price/i },
+  { path: "/pricing",      title: /^Plans — Averrow/,     heading: /plans built around\s*what you need watched/i },
   // Keep this loose: copy on About changes, the page's subject (threat actors) does not.
   { path: "/about",        title: /About/,               heading: /threat actors/i },
   { path: "/security",     title: /Security/,            heading: /security & trust/i },
@@ -163,7 +163,7 @@ test.describe("navigation (desktop bar)", () => {
     await p.goto("/");
     const nav = p.getByRole("navigation", { name: "Main" });
     const links = nav.locator("ul.nav-links > li.nav-item > a.nav-link");
-    await expect(links).toHaveText(["Platform", "Solutions", "Pricing", "Research", "Company"]);
+    await expect(links).toHaveText(["Platform", "Solutions", "Plans", "Research", "Company"]);
     await expect(nav.getByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
     await expect(nav.getByRole("link", { name: "Book a demo" })).toHaveAttribute("href", "/demo");
     await expect(nav.getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", "/scan");
@@ -191,7 +191,7 @@ test.describe("navigation (mobile menu)", () => {
     await toggle.click();
     const menu = p.locator("#mobile-menu");
     await expect(menu).toBeVisible();
-    for (const name of ["Platform", "Solutions", "Pricing", "Research", "Company", "Log in", "Book a demo", "Scan your domain"]) {
+    for (const name of ["Platform", "Solutions", "Plans", "Research", "Company", "Log in", "Book a demo", "Scan your domain"]) {
       await expect(menu.getByRole("link", { name, exact: true })).toBeVisible();
     }
   });

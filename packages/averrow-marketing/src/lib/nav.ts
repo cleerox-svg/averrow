@@ -3,7 +3,7 @@
  * and Footer.astro so the link list lives in one place.
  *
  * Five hub items. Platform, Solutions and Company carry a dropdown of
- * their child pages; Pricing and Research are plain links. To add a page,
+ * their child pages; Plans and Research are plain links. To add a page,
  * add it to the right hub's `children` and (if it lives outside the hub's
  * URL prefix) to that hub's `also` list so the hub lights up when active.
  */
@@ -47,7 +47,7 @@ export const NAV_LINKS: NavLink[] = [
       { href: "/solutions/mssp", label: "MSSPs and partners" },
     ],
   },
-  { href: "/pricing", label: "Pricing" },
+  { href: "/pricing", label: "Plans" },
   {
     href: "/resources",
     label: "Research",

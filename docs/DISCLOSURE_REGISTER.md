@@ -16,6 +16,12 @@ edits (index, Layout, platform, campaign-intelligence, pricing, why-averrow,
 sample-operation-report). §3.7 rewritten (blocklists removed, new rows), §3.6 webhooks row,
 L14 resolved, G4 shipped, backlog G21-G23 added. Approved Section 5 headline: "You set the
 rules. We do the filing."
+Updated 2026-10-05 (fourth pass): **owner decision, the marketing site no longer shows prices.**
+Pricing amounts, annual discounts, trials and contract terms are now "not shown publicly" (§3.8,
+A2, the old pricing proof point). Section 6 fact-find recorded: SLA guarantees, onboarding &
+training, dedicated support and a dedicated account manager are offered (§3.8; no published SLA
+document, G-B2). Rows 148 (customer alerts) and 151 (STIX) corrected. Free-scan row corrected.
+Backlog adds G-B1, G-A1, G-A2, G-B2, G-B5.
 
 Path roots: `W/` = `packages/averrow-worker/src/`, `T/` = `packages/averrow-tenant/src/`,
 `M/` = `packages/averrow-marketing/src/pages/`.
@@ -39,6 +45,10 @@ Path roots: `W/` = `packages/averrow-worker/src/`, `T/` = `packages/averrow-tena
 - **The biggest competitive gaps for marketing are outcome metrics, customer-facing API/export,
   SSO, Google Play, credential leaks, and self-serve integrations.** All but SSO and credential
   leaks are S/M changes because the backend mostly exists.
+- **Prices are no longer public (owner decision 2026-10-05).** The Plans page shows plan names,
+  modules per plan and the comparison only, plus the owner-confirmed SLA guarantees, onboarding &
+  training, dedicated support and dedicated account manager. No SLA document is published yet
+  (G-B2).
 
 ---
 
@@ -85,6 +95,23 @@ follows (re-verify against the merged diff):
   sample is not on LinkedIn (row 98). The TLS sample drops "free CA" (row 78). The social tile
   drops "the six networks attackers use most" (row 96).
 
+**Pricing display decision (owner, 2026-10-05).** The site no longer shows prices. Verified
+2026-10-05: no `$1,499` / `$3,999` strings remain in `packages/averrow-marketing/src`. The homepage
+proof card that used to point to pricing is now "Try it on your own domain" → free scan
+(`packages/averrow-marketing/src/components/ByTheNumbers.astro:65`, inside the "Check it yourself"
+block at `:142`). Rules from now on:
+- **Not shown publicly:** plan prices, module prices, annual discounts, trial terms, contract
+  length or minimums. This is an owner commercial decision, **not a T3 secret** (sales can quote
+  them, and the in-app billing flow shows them to signed-in customers), but they never appear on
+  the marketing site, in blog posts, press copy or comparison pages.
+- **The Plans page may show:** plan names (Free, Professional, Business, Enterprise), the modules
+  in each plan (must match the seeded matrix, `0153_pricing.sql`, see L9) and the comparison
+  table. CTAs are "Talk to us" / "Start a free scan", never a price.
+- **Also allowed on the Plans page** (owner confirmed in the Section 6 fact-find): SLA guarantees,
+  onboarding & training, dedicated support, dedicated account manager. Until an SLA document is
+  published (G-B2), say "SLA guarantees" without numbers (no uptime %, response or removal times).
+- Re-check on every marketing PR: a reintroduced price is a live-site problem (Sev M).
+
 ---
 
 ## 3. Register by surface
@@ -102,7 +129,7 @@ on the vendor's page, S = search snippet only, I = from the orchestrator's brief
 | Certificate Transparency monitoring | T1 (that we do it, **hourly cadence**: approved in L13, already public at `M/platform.astro:53`, `M/platform/threat-detection.astro:129`) / T3 (source, scoring signals) | Domain (Pro+) | "Hourly certificate-transparency checks flag new TLS certificates issued to brand look-alikes." | "Real-time", crt.sh, scoring signals such as free-CA issuance (`W/scanners/ct-monitor.ts:398-399`) | `W/scanners/ct-monitor.ts:1-9` (dedicated `18 * * * *` cron; tenant `org_brands` only) | Most peers claim real-time (I) | G13 |
 | Weaponization velocity (registration → live threat) | T1 (aggregate distribution) / T3 (bands, use in scoring) | — | "X% of brand-targeting phishing domains we saw went live within 24 hours of registration." | That it never gates triage; band cut-offs | `W/../migrations/0259_*.sql`, `threats.weaponization_flag`, diagnostics `velocity` | — | **Not published (G16).** The stamp writer runs only from `POST /api/admin/velocity/backfill`, so the 30-day sample is usually < 30, and prod has no `threats(first_seen)` index for a cheap public read. Removed from `/api/v1/public/stats` `proof` on 2026-10-05 |
 | Phishing / malware feed ingestion | T1 (count "40+ sources", total volume) / **T3 (names, vendors, per-feed volume)** | All | "We correlate 40+ phishing, malware and infrastructure intelligence sources." | Any feed or vendor name, enrichment APIs | 46 enabled (`/api/v1/public/feeds`), ~12 with 0 records today, several are context lists (Tor exits, disposable email, CVE/KEV) | — | L19. Say "40+", not "46 brand-protection feeds" |
-| Free brand scan (no signup) | T1 | Free | "Enter any domain: email-authentication grade, look-alike domains, social-handle check and an exposure score, free, no signup." | Scoring deductions (`W/handlers/brandScan.ts:224-248`), spam-trap counts method | `W/handlers/brandScan.ts`, `W/routes/scan.ts:31` | Bolster free checkers (I) | Ahead: combines email posture + impersonation |
+| Free brand scan (no signup) | T1 (corrected 2026-10-05) | Free | "Enter any domain for a free exposure check: SPF and DMARC posture, a sample of look-alike domains that resolve, and an exposure score. No signup." Homepage card "Try it on your own domain" (approved). | **DKIM** (not checked: `dkimFound: false`, "DKIM requires selector knowledge", `W/handlers/brandScan.ts:294`). **"Registered" look-alikes** (the scan only DNS-resolves up to 100 generated variants, `:161-185,286-288`; no registration data). **Social-handle check** (the scan makes none). Scoring deductions (`:224-248`), spam-trap counts method | `W/handlers/brandScan.ts`, `W/routes/scan.ts:31` | Bolster free checkers (I) | **G-A1.** The "email posture + impersonation in one view" edge (A3) is only partly true on the free scan until G-A1 ships |
 
 ### 3.2 Email
 
@@ -145,10 +172,10 @@ on the vendor's page, S = search snippet only, I = from the orchestrator's brief
 | Alert auto-triage | T2 / **T3 rules** | All | "Low-value noise is dismissed automatically, with the reason recorded, so your queue holds what needs a decision." | Any dismissal rule, threshold or enrichment condition (evasion-relevant) | `W/lib/alert-triage.ts` | — | Never publish triage rules |
 | Investigations (case management) | T1 | All tenant | "Group alerts, threats and takedowns into a case with notes and an audit trail." | — | `T/features/investigations`, `W/handlers/tenantInvestigations.ts` | — | Unmarketed |
 | Managed SOC handling ("Averrow SOC") | T1 | — | "Averrow's analysts can triage and act on alerts for you; you see every action, marked as Averrow SOC." | Staff names | CLAUDE.md §7 PR-C | Bolster/Axur managed service (I) | Unmarketed |
-| Notifications / push / email | T1 | All | "In-app, email and push alerts." | — | `W/lib/push.ts`, tenant `notifications` | — | — |
+| Customer alert delivery (corrected 2026-10-05) | T1 (console; webhook/SIEM on Business+) / **Not true** (customer email, push) | All (console); Business+ (webhook/SIEM, see next row) | "Alerts appear in your Averrow console. On Business and Enterprise they can also go to your webhook or SIEM (set up with our team)." | "Email alerts", "push notifications", "alerts on your phone" for customers. Push and per-alert email are staff-only: the PWA, service worker and push live in `averrow-ops` only (CLAUDE.md §5 scope note), and the tenant weekly digest is off (`TENANT_DIGEST_MODE="off"`, L5) | `W/lib/push.ts` (ops), tenant console alerts (`W/handlers/tenantData.ts`), `W/lib/alerts.ts:71-157` (webhook fan-out) | Peers: email + mobile alerts standard (I) | **G-A2** (customer alert email/push). G10 (weekly digest) |
 | Webhooks + SIEM/ticketing connectors | **T1** (G4 shipped 2026-10-05) | **Business+** (`M/pricing.astro:152,208`; commercial rule, not enforced in code) | "Webhooks for alert and takedown events, plus Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors, set up with our team." On an all-plan surface: "On Business and Enterprise, also sent to your webhook or SIEM when an alert is raised (set up with our team)." | "Real-time", "streamed", "self-serve", "every event" (three declared event types never fire), any of it on a Free/Pro surface without the plan qualifier | `W/lib/alerts.ts:71-157`, `W/lib/org-events.ts`, `W/lib/integration-delivery.ts`, `W/lib/webhooks.ts:16-23` | ZeroFox/RF: many connectors (I) | G5 (tenant self-serve UI). L14 resolved |
 | Customer REST API | **Not true** | Pro+ (site) | — | "API access" | L3 | Standard among peers | G2 |
-| STIX export | Not true for customers (staff-only) | — | "STIX 2.1 export on request" | "TAXII" | `W/routes/export.ts:17-26`, `W/handlers/stixExport.ts` | Standard | G3 |
+| STIX export (corrected 2026-10-05) | T1 as "on request" | — | "STIX 2.1 export on request" (keep this wording) | "TAXII", "self-serve STIX export", "one-click export", "STIX feed" | Tenant endpoint exists: `GET /api/orgs/:orgId/export/stix`, org's own brands only, any org member, rate-limited (`W/routes/tenant.ts:240-246`, `W/handlers/tenantStixExport.ts`). No tenant UI calls it (no `export/stix` reference in `packages/averrow-tenant/src`) and customer API keys don't authenticate (G2), so in practice our team delivers it. Staff export: `W/routes/export.ts:17-26` | Standard | G3 backend shipped. A tenant export button would unlock "Export your findings as STIX 2.1" |
 
 ### 3.7 Takedowns
 
@@ -169,7 +196,12 @@ on the vendor's page, S = search snippet only, I = from the orchestrator's brief
 
 | Capability | Tier | Approved phrasing | Never say | Evidence | Gap |
 |---|---|---|---|---|---|
-| Transparent pricing | T1 | "$1,499/mo Professional, $3,999/mo Business, monthly, no minimum." | Module prices beyond the page | `M/pricing.astro`, `0153_pricing.sql` | Ahead (A2) |
+| Pricing amounts, annual discounts, trials, contract terms | **Not shown publicly** (owner decision 2026-10-05; not a T3 secret) | Plans page: plan names, modules per plan, comparison table only. "Talk to us for pricing." | Any price, discount, trial length or contract term on the marketing site, blog, press or comparison copy. "Transparent/published pricing", "month-to-month, no minimum" | `M/pricing.astro` (now price-free), `0153_pricing.sql` (plan rows, admin-editable) | A2 withdrawn |
+| Plan names + modules per plan | T1 | List each plan's modules exactly as seeded | A module a plan doesn't include (L9); executive impersonation as an enforced Pro+ module (G17) | `W/../migrations/0153_pricing.sql:62-80`, `W/lib/entitlements.ts:22-30` | **G-B5:** brand and seat limits are not tied to plans, so don't publish per-plan brand/seat counts |
+| SLA guarantees | T1 (that it's offered, owner confirmed 2026-10-05) | "SLA guarantees" (Plans page) | Any uptime %, response time, removal time or credit terms until an SLA document is published | Owner fact-find (Section 6). No SLA document in the repo or on the site | **G-B2:** publish an SLA |
+| Onboarding & training | T1 (owner confirmed) | "Onboarding and training" | Hours, session counts | Owner fact-find (Section 6); commercial, not in code | — |
+| Dedicated support | T1 (owner confirmed) | "Dedicated support" | Response-time promises (needs G-B2), 24/7 | Owner fact-find (Section 6) | — |
+| Dedicated account manager | T1 (owner confirmed) | "Dedicated account manager" | Staff names | Owner fact-find (Section 6) | — |
 | Public status page with 30-day uptime | T1 | "Live public status page with 30-day history." | Feed-level internals | `/status`, `/api/v1/public/platform-status` (feeds 94.3% 30d) | Honest (shows degraded days) |
 | Passkeys / biometric sign-in | T1 | "Passkey and biometric sign-in." | — | `W/handlers/passkeys.ts` | — |
 | SSO / SAML / SCIM | **Not true** | — | — | L2 | G9 |
@@ -186,16 +218,21 @@ on the vendor's page, S = search snippet only, I = from the orchestrator's brief
 | Rank | ID | Smallest product change | Claim it unlocks | Size | Owner |
 |---|---|---|---|---|---|
 | 1 | G1 | Add cached aggregates to `GET /api/v1/public/stats` (`cachedValue`, 1h TTL): lookalikes registered (30d), operations (`infrastructure_clusters` / `component_id` count), median registration→detection hours and the ≤24h share (`threats.weaponization_hours`), monitored-brand count (`tier IN ('monitored','customer')`). Remove `detection_time_label`. Fix L20. **Shipped 2026-10-05 as `proof.*` except the velocity share (moved to G16).** | "Monitors N brands; found X new look-alike domains last month; Z active operations tracked." | S | backend |
+| 1a | G-B1 | Stripe checkout doesn't link the resulting subscription to the org. Checkout sets `metadata: { org_id, plan_id }` on the session (`W/handlers/tenantBilling.ts:196`); the fix is to make the webhook write the subscription onto that org, so plan and entitlements follow payment. **Billing change: needs owner OK before merge (§9a).** | Prerequisite for any self-serve "upgrade in the app" claim, and for G17/G-B5 to enforce anything | S | backend (billing) + appsec-reviewer |
 | 2 | G4 | Fan out `alert.created` (and `threat.detected`) from `createAlert` / `lib/alert-fanout.ts` via `emitOrgEvent` for domain, CT, threat and executive alerts. **`alert.created` shipped 2026-10-05 (`W/lib/alerts.ts:71-157`); `threat.detected`, `email_grade.changed`, `social_profile.discovered` still unemitted.** | Webhooks + Splunk/Sentinel/QRadar/Jira/ServiceNow receive alert and takedown events (L14 resolved) | S | backend |
 | 2a | G21 | Staff-submit consent gate: `handleAdminSubmitTakedown` (`W/handlers/takedowns.ts:786`) accepts only customer-approved (`requested`) rows when the org's mode is `off`, or when a Semi-Auto row was held for approval (`evaluateTakedownPolicy` returns `approval`); `auto` and in-rule Semi-Auto rows unchanged. **Consent/access boundary: owner sign-off (§9a).** | "Nothing is filed until you approve it" in Manual and for held rows; the Section 5 control story becomes literally true | S | owner → backend + appsec-reviewer |
 | 2b | G22 | Customer-created takedowns (`POST /api/orgs/:orgId/takedowns`) are unsendable by design: the insert sets no `module_key` (`W/handlers/takedowns.ts:232-246`), so automatic submit skips them (`W/agents/sparrow.ts:1112`) and staff submit returns 422. Simply setting `module_key` would let tenant free-text targets auto-send (code review finding). Fix: a review gate before they become sendable, either staff review or validation that the target has platform evidence (matches a lookalike/threat row for the org's brand) and is not an official/safe domain (`W/lib/safeDomains.ts`). **Owner decision.** | "Request a takedown for any lookalike domain or phishing URL you find, and we file it under your authorization" | M | owner → backend + appsec-reviewer |
 | 2c | G23 | Route domain/URL takedowns to the Web Risk (Safe Browsing) channel only once Google has partner-allow-listed the project and the service-account credential is set; until then nothing routes there (`W/lib/takedown-submitters/web-risk.ts:22-25`, no provider resolver sends to it) | "We also report phishing URLs for browser warnings" (generic; never name Google in marketing) | S once allow-listed (external dependency) | owner (Google application) → backend |
+| 2d | G-A1 | Free scan (homepage "Try it on your own domain"): add DKIM via a common-selector probe, check registration status (RDAP / NRD match) instead of DNS resolution only, and reuse the social-handle check for the six platforms (`W/lib/social-check.ts`), all within the scan's time budget (`W/handlers/brandScan.ts:285-295`) | "Free scan: SPF, DKIM and DMARC, registered look-alike domains and social-handle squatting, in one report" (makes A3 fully true on the free tier) | S–M | backend |
 | 3 | G18 | Executive monitor: probe LinkedIn personal profiles (`linkedin.com/in/<handle>`) instead of reusing the company-page URL from `W/lib/social-check.ts:47`. Add a platform-specific URL for executives; also confirm LinkedIn answers automated HEAD requests (it may reject them, giving `available: null`; unverified) | "Executive impersonation across all six networks, including LinkedIn" (makes L23 true again) | S | backend |
 | 4 | G17 | Limit the executive scan (`W/scanners/executive-monitor-batch.ts:255-277`) to orgs whose plan is active or trialing. Or add an `executive` module key (pricing change: owner sign-off) | Makes the "Professional+" tag enforced, not just a label. Removes unbilled monitoring for cancelled orgs | S | backend |
-| 5 | G3 | Tenant route `GET /api/orgs/:orgId/export/stix` reusing `handleSTIXExport`, scoped to org brands, plus a tenant button | "STIX 2.1 export of your findings" (no TAXII) | S | backend + frontend |
+| 4a | G-B5 | Tie brand and seat limits to plans (a per-plan limit on the plan row, enforced on brand add and member invite). **Pricing change: owner decision.** | Per-plan "N brands, M seats" in the comparison table | S | owner → backend |
+| 5 | G3 | ~~Tenant route~~ **Backend shipped:** `GET /api/orgs/:orgId/export/stix` (`W/routes/tenant.ts:240-246`). Remaining: a tenant export button | "Export your findings as STIX 2.1" (no TAXII); until then "on request" | S | frontend |
+| 5a | G-B2 | Publish an SLA document (uptime, support response, takedown follow-up commitments, credits) on the trust/legal pages. **Legal/policy content: owner sign-off.** | SLA numbers on the Plans page, instead of the bare "SLA guarantees" | S (doc) | owner + content-strategist |
 | 6 | G6 | (a) Owner sign-off on S1.5. (b) Publish takedown p50 and true-removal rate when resolved n ≥ 30. (c) Show org-scoped metrics on the tenant takedowns page. | "Median time to removal: Xh; Y% of adjudicated takedowns removed" (direct answer to Axur/Netcraft/BrandShield) | S (b) / M (c) | owner → backend/frontend |
 | 7 | G2 | API-key auth: middleware hashing `X-API-Key` against `org_api_keys` (scopes, expiry, revocation), read-only on tenant GETs, rate-limited, documented | "REST API access" (Pro) | M | backend + appsec-reviewer |
 | 8 | G10 | Turn on the tenant weekly digest (`TENANT_DIGEST_MODE`) after QA. Default `weekly_digest` on | "Weekly brand-risk briefing" (replaces the false "daily") | S (switch: owner OK) | backend/owner |
+| 8a | G-A2 | Customer alert email and push: per-alert (or batched) email to opted-in org members via the existing notification preferences, then push once the tenant app has a service worker | "Alerts in your console, by email and on your phone" | S–M | backend + frontend |
 | 9 | G19 | Show per-protocol SPF, DKIM and DMARC status (pass, weak, missing) next to the domain grade in the tenant email-security view, using the inputs `calculateEmailSecurityScore` already reads (`W/email-security.ts:208-254`) | "SPF, DKIM and DMARC each checked, with one grade for the domain" plus per-protocol visuals in samples | S/M | backend + frontend |
 | 10 | G5 | Tenant Settings → Integrations/Webhook UI on the existing routes | "Self-serve SIEM, ticketing and webhook connectors" | M | frontend |
 | 11 | G15 | Expose a cluster/operation view (read-only) in Business for the org's brands, or move `threat_actor` into Business | "Campaign intelligence" in Business becomes true (fixes L9 the other way) | M (pricing: owner) | owner + frontend |
@@ -214,6 +251,11 @@ on the vendor's page, S = search snippet only, I = from the orchestrator's brief
 ## 5. Approved proof points (T1)
 
 Publish these with an "as of" date. Never mix the two threat totals.
+
+**Pricing is not a proof point (owner decision 2026-10-05).** It is removed from this list and
+from every "Check it yourself" proof list. The homepage card that used to point to pricing is now
+"Try it on your own domain" → free scan (`packages/averrow-marketing/src/components/ByTheNumbers.astro:65`);
+its description must stay within the corrected free-scan phrasing (§3.1, G-A1).
 
 | # | Proof point | Current value | Source | Status |
 |---|---|---|---|---|
@@ -237,8 +279,8 @@ Publish these with an "as of" date. Never mix the two threat totals.
 | # | Claim | Approved phrasing | Caveat |
 |---|---|---|---|
 | A1 | Infrastructure correlation → operations, across the whole catalog | "Averrow doesn't stop at the alert. It links phishing domains, IPs and certificates that share infrastructure into operations, across more than a million threats and every brand we watch, so you see the campaign, and know when it moves." | Doppel claims a similar Threat Graph (I). Differentiate on breadth and visibility, not existence. True for Enterprise today; G15 for Business |
-| A2 | Published, monthly pricing | "Published prices. Professional $1,499/mo, Business $3,999/mo. Month-to-month, no minimum contract." | Most peers are quote-only. Re-verify per peer before naming one |
-| A3 | Email-authentication posture and impersonation in one view, free to try | "One exposure picture: your SPF/DKIM/DMARC grade alongside the look-alike domains and fake accounts using your name. Run it free on any domain, no signup." | Bolster offers free checkers (I). The bundle is the edge |
+| A2 | ~~Published, monthly pricing~~ **Withdrawn 2026-10-05** | — | Owner decision: prices are no longer shown publicly. Don't claim "transparent pricing" or "no minimum contract" |
+| A3 | Email-authentication posture and impersonation in one view, free to try | In the product: "One exposure picture: your SPF/DKIM/DMARC grade alongside the look-alike domains and fake accounts using your name." Free scan: "Try it free on your own domain: email posture, look-alike domains and an exposure score, no signup." | Bolster offers free checkers (I). The free scan doesn't check DKIM, registration or social handles (G-A1), so don't promise those on the free tier |
 | A4 | Explainable, evidence-first scoring | "Every score traces back to evidence you can see: deterministic correlation, no black box." | True *because* of `rules_only`. Revisit at AI Phase 2 |
 | A5 | Stay-down re-checks + visible SOC actions | "Removed domains are re-checked, and if one returns you're told. Every action our analysts take is visible in your console." | Not a guarantee. Don't match Axur's 15-day promise without a commercial decision |
 
