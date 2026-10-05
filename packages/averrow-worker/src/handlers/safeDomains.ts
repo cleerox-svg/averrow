@@ -2,7 +2,27 @@
 // Averrow — Brand Safe Domains (Known/Owned Domain Allowlist)
 
 import { json } from "../lib/cors";
+import { audit } from "../lib/audit";
 import type { Env } from "../types";
+
+// ── Write gate ────────────────────────────────────────────────────────
+// A `manual` / `csv_upload` row is TRUSTED platform-wide by the
+// lookalike official-domain rule (lib/safeDomains.ts): it auto-dismisses
+// any brand's lookalike alerts on that domain and parks the lookalike row
+// benign (so Sparrow drafts no takedown). Adding one is therefore a
+// takedown-suppression decision: the routes (routes/brands.ts) gate every
+// write on `requirePermission('manage_takedowns')` (super_admin, admin,
+// analyst), every add/delete is written to audit_log, and a write against
+// a nonexistent brand is a 404 rather than an orphan row.
+
+/** 404 Response when `brandId` is not a brand, else null. */
+async function brandMissing(env: Env, brandId: string, origin: string | null): Promise<Response | null> {
+  const row = await env.DB.prepare("SELECT id FROM brands WHERE id = ?").bind(brandId).first<{ id: string }>();
+  return row ? null : json({ success: false, error: "Brand not found" }, 404, origin);
+}
+
+/** Max domains listed in one bulk audit row (the count is always exact). */
+const AUDIT_DOMAIN_LIST_MAX = 200;
 
 /** Clean a domain string: strip protocol, path, www., trailing dots, lowercase, trim.
  *  Preserves wildcard prefix (*.) for wildcard entries. */
@@ -73,13 +93,27 @@ export async function handleAddSafeDomain(
       return json({ success: false, error: "Invalid domain format" }, 400, origin);
     }
 
+    const missing = await brandMissing(env, brandId, origin);
+    if (missing) return missing;
+
     const id = crypto.randomUUID();
-    await env.DB.prepare(
+    const res = await env.DB.prepare(
       `INSERT OR IGNORE INTO brand_safe_domains (id, brand_id, domain, added_by, source, notes)
        VALUES (?, ?, ?, ?, 'manual', ?)`,
     )
       .bind(id, brandId, domain, userId, body.notes ?? null)
       .run();
+
+    if ((res.meta?.changes ?? 0) > 0) {
+      await audit(env, {
+        action: "safe_domain_add",
+        userId,
+        resourceType: "brand",
+        resourceId: brandId,
+        details: { brand_id: brandId, domain, source: "manual", safe_domain_id: id },
+        request,
+      });
+    }
 
     return json({ success: true, data: { id, domain, source: "manual" } }, 201, origin);
   } catch (err) {
@@ -103,7 +137,11 @@ export async function handleBulkAddSafeDomains(
       return json({ success: false, error: "domains array required" }, 400, origin);
     }
 
+    const missing = await brandMissing(env, brandId, origin);
+    if (missing) return missing;
+
     let added = 0;
+    const addedDomains: string[] = [];
     let skippedDuplicates = 0;
     let skippedInvalid = 0;
 
@@ -123,9 +161,27 @@ export async function handleBulkAddSafeDomains(
 
       if (result.meta?.changes && result.meta.changes > 0) {
         added++;
+        if (addedDomains.length < AUDIT_DOMAIN_LIST_MAX) addedDomains.push(domain);
       } else {
         skippedDuplicates++;
       }
+    }
+
+    if (added > 0) {
+      await audit(env, {
+        action: "safe_domain_bulk_add",
+        userId,
+        resourceType: "brand",
+        resourceId: brandId,
+        details: {
+          brand_id: brandId,
+          source: "csv_upload",
+          added,
+          domains: addedDomains,
+          domains_truncated: added > addedDomains.length,
+        },
+        request,
+      });
     }
 
     return json(
@@ -144,14 +200,28 @@ export async function handleDeleteSafeDomain(
   env: Env,
   brandId: string,
   domainId: string,
+  userId: string,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    await env.DB.prepare(
-      "DELETE FROM brand_safe_domains WHERE id = ? AND brand_id = ?",
+    const missing = await brandMissing(env, brandId, origin);
+    if (missing) return missing;
+
+    const deleted = await env.DB.prepare(
+      "DELETE FROM brand_safe_domains WHERE id = ? AND brand_id = ? RETURNING domain, source",
     )
       .bind(domainId, brandId)
-      .run();
+      .first<{ domain: string; source: string }>();
+    if (deleted) {
+      await audit(env, {
+        action: "safe_domain_delete",
+        userId,
+        resourceType: "brand",
+        resourceId: brandId,
+        details: { brand_id: brandId, domain: deleted.domain, source: deleted.source, safe_domain_id: domainId },
+        request,
+      });
+    }
     return json({ success: true, data: { deleted: true } }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);

@@ -1664,8 +1664,30 @@ export function isNrdPending(
  * never given a new-registration alert — same rule as the mail+web catch-up:
  * a human decision outranks the exemption. Such a row, and a row whose
  * event already has its alert, falls back to the ordinary floored path
- * (HIGH+ only), so an operational escalation is still reported.
+ * (HIGH+ only), so an operational escalation is still reported. *
+ * EXCEPT an AUTO-benign row (`status_reason LIKE 'auto:%'` — the
+ * official-domain rule decided it is another brand's trusted official
+ * domain; no human did). A confirmed registration event contradicts that
+ * premise (an established brand's domain is not newly registered — the
+ * registry or DNS just saw it (re-)registered, e.g. after a lapse), so the
+ * row is reverted to `monitoring` (reason cleared) BEFORE the claim, the
+ * new-registration alert files, and Sparrow can act on it. The triage rule
+ * refuses to dismiss that alert (it carries new_registration). The NRD
+ * claim (lib/lookalike-nrd-matcher.ts) applies the same revert in SQL.
+ * Human-set benign (no `auto:` reason) stays benign.
  */
+async function revertAutoBenignOnRegistration(env: Env, row: LookalikeCheckRow): Promise<void> {
+  if (row.status !== 'benign') return;
+  const res = await env.DB.prepare(
+    `UPDATE lookalike_domains
+        SET status = 'monitoring',
+            status_reason = NULL,
+            updated_at = datetime('now')
+      WHERE id = ? AND status = 'benign' AND status_reason LIKE 'auto:%'`,
+  ).bind(row.id).run();
+  if ((res.meta?.changes ?? 0) > 0) row.status = 'monitoring';
+}
+
 async function fileConfirmedRegistration(
   env: Env,
   row: LookalikeCheckRow,
@@ -1679,6 +1701,9 @@ async function fileConfirmedRegistration(
     counters: LookalikeCheckSummary;
   },
 ): Promise<void> {
+  // See the block comment above: who gets the registration alert, and why
+  // an AUTO-benign row is reverted first.
+  await revertAutoBenignOnRegistration(env, row);
   const claimed = await claimRegistrationAlert(env, row.id);
   const dispositioned = row.status === 'benign' || row.status === 'taken_down';
   const alertState = { filed: false };

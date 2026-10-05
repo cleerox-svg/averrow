@@ -484,6 +484,10 @@ export interface LookalikeAlertDetails {
   registered_at?: string;
   /** Domain age in whole days, when a producer knows it. */
   domain_age_days?: number;
+  /** Phantom matcher (lib/phantom-matcher.ts): which feed observed the
+   *  predicted domain. `'nrd'` = it is in the newly-registered-domain
+   *  feed, i.e. a registration event — treated as newly registered. */
+  matched_source?: string;
 }
 
 /** The alerted host from a lookalike alert's details, or null. */
@@ -532,7 +536,8 @@ function lookalikeDomainAgeDays(details: LookalikeAlertDetails, nowMs: number): 
  *
  * NEVER dismiss a newly registered domain — an established brand's
  * official domain cannot have been registered in the last
- * NRD_MAX_AGE_DAYS: `details.new_registration`, a non-null row
+ * NRD_MAX_AGE_DAYS: `details.new_registration`, a phantom-matcher
+ * `details.matched_source === 'nrd'`, a non-null row
  * `registration_evidence`, or a known age <= NRD_MAX_AGE_DAYS all keep.
  *
  * An UNTRUSTED exact match keeps the alert and returns a `note` naming
@@ -557,6 +562,7 @@ export function decideLookalikeRegistrationTriage(
   const age = lookalikeDomainAgeDays(details, ctx.nowMs ?? Date.now());
   const newlyRegistered =
     details.new_registration === true ||
+    details.matched_source === 'nrd' ||
     (ctx.registrationEvidence != null && ctx.registrationEvidence !== '') ||
     isNewlyRegistered(age);
   if (newlyRegistered) {
@@ -578,24 +584,30 @@ export function decideLookalikeRegistrationTriage(
 }
 
 /**
- * Registration evidence for (brand_id, domain) pairs, from
- * `lookalike_domains` (indexed on domain, migration 0282). Chunked at 99
- * binds. Keyed `${brand_id}|${domain}`.
+ * Registration evidence per DOMAIN, from `lookalike_domains` (indexed on
+ * domain, migration 0282). Evidence is a property of the domain, not of
+ * the brand that generated the permutation: if ANY brand's row for the
+ * domain carries a confirmed registration ('nrd' | 'observed'), the domain
+ * was newly registered and no brand's alert on it may be dismissed.
+ * Chunked at 99 binds. Keyed by domain; the value is the first non-null
+ * evidence seen, or null when no row has any.
  */
 export async function loadLookalikeRegistrationEvidence(
   db: D1Database,
-  pairs: ReadonlyArray<{ brandId: string; domain: string }>,
+  domains: readonly string[],
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
-  const domains = Array.from(new Set(pairs.map((p) => p.domain)));
-  for (let i = 0; i < domains.length; i += 99) {
-    const chunk = domains.slice(i, i + 99);
+  const unique = Array.from(new Set(domains));
+  for (let i = 0; i < unique.length; i += 99) {
+    const chunk = unique.slice(i, i + 99);
     const res = await db.prepare(
-      `SELECT brand_id, domain, registration_evidence
+      `SELECT domain, registration_evidence
          FROM lookalike_domains
         WHERE domain IN (${chunk.map(() => '?').join(',')})`,
-    ).bind(...chunk).all<{ brand_id: string; domain: string; registration_evidence: string | null }>();
-    for (const r of res.results ?? []) out.set(`${r.brand_id}|${r.domain}`, r.registration_evidence);
+    ).bind(...chunk).all<{ domain: string; registration_evidence: string | null }>();
+    for (const r of res.results ?? []) {
+      if (out.get(r.domain) == null) out.set(r.domain, r.registration_evidence ?? null);
+    }
   }
   return out;
 }
@@ -607,17 +619,16 @@ export async function loadLookalikeRegistrationEvidence(
  */
 export async function decideLookalikeAlert(
   db: D1Database,
-  brandId: string,
   details: LookalikeAlertDetails | null,
 ): Promise<AutoTriageDecision> {
   const host = lookalikeAlertDomain(details);
   const officialRows = host ? await loadOfficialDomainMatches(db, [host]) : [];
   const first = decideLookalikeRegistrationTriage(details, { officialRows });
   if (first.action !== 'dismiss' || !host) return first;
-  const ev = await loadLookalikeRegistrationEvidence(db, [{ brandId, domain: host }]);
+  const ev = await loadLookalikeRegistrationEvidence(db, [host]);
   return decideLookalikeRegistrationTriage(details, {
     officialRows,
-    registrationEvidence: ev.get(`${brandId}|${host}`) ?? null,
+    registrationEvidence: ev.get(host) ?? null,
   });
 }
 
@@ -883,10 +894,10 @@ export async function runAlertTriageBackfill(
     db,
     lookalikeAlerts.map((a) => a.host).filter((h): h is string => typeof h === 'string'),
   );
-  const evidencePairs = lookalikeAlerts
+  const evidenceDomains = lookalikeAlerts
     .filter((a) => a.host && decideLookalikeRegistrationTriage(a.details, { officialRows }).action === 'dismiss')
-    .map((a) => ({ brandId: a.alert.brand_id, domain: a.host as string }));
-  const registrationEvidence = await loadLookalikeRegistrationEvidence(db, evidencePairs);
+    .map((a) => a.host as string);
+  const registrationEvidence = await loadLookalikeRegistrationEvidence(db, evidenceDomains);
 
   let dismissed = 0;
   let kept = 0;
@@ -933,13 +944,14 @@ export async function runAlertTriageBackfill(
       const host = lookalikeAlertDomain(details);
       decision = decideLookalikeRegistrationTriage(details, {
         officialRows,
-        registrationEvidence: host ? registrationEvidence.get(`${alert.brand_id}|${host}`) ?? null : null,
+        registrationEvidence: host ? registrationEvidence.get(host) ?? null : null,
       });
       lookalikeEffects = { details };
     }
 
+    let alertDismissed = false;
     if (decision.action === 'dismiss') {
-      await db.prepare(`
+      const upd = await db.prepare(`
         UPDATE alerts
         SET status = 'false_positive',
             resolved_at = datetime('now'),
@@ -948,6 +960,7 @@ export async function runAlertTriageBackfill(
         WHERE id = ?
           AND status = 'new'
       `).bind(decision.reason, alert.id).run();
+      alertDismissed = (upd.meta?.changes ?? 0) > 0;
       dismissed += 1;
       trackType(typeKey, 'dismissed');
     } else {
@@ -957,8 +970,11 @@ export async function runAlertTriageBackfill(
 
     // Lookalike side effects AFTER the alert write, same order as
     // createAlert (lib/alerts.ts). Both writes are guarded, so a re-run
-    // is a no-op.
-    if (lookalikeEffects) {
+    // is a no-op. A dismissal only marks the lookalike row benign when
+    // THIS call actually dismissed the alert — if a human moved it out of
+    // 'new' between the SELECT and the UPDATE, their decision stands and
+    // the row is left alone.
+    if (lookalikeEffects && (decision.action !== 'dismiss' || alertDismissed)) {
       await applyLookalikeTriageEffects(db, {
         alertId: alert.id, brandId: alert.brand_id, details: lookalikeEffects.details, decision,
       });

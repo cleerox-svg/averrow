@@ -258,7 +258,7 @@ export async function createAlert(
       // decideLookalikeRegistrationTriage. A lookup failure throws into the
       // catch below and the alert stays 'new'.
       lookalikeDetails = (params.details ?? null) as LookalikeAlertDetails | null;
-      decision = await triage.decideLookalikeAlert(db, params.brandId, lookalikeDetails);
+      decision = await triage.decideLookalikeAlert(db, lookalikeDetails);
     }
 
     if (decision && decision.action === 'dismiss') {

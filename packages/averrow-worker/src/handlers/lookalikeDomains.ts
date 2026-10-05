@@ -454,6 +454,11 @@ export async function handleScanLookalikes(
     //
     // `last_check_failed_at` is still cleared — it is a historical
     // record and an operator-triggered rescan supersedes it.
+    //
+    // `benign` rows are NOT enqueued: an analyst or the official-domain
+    // rule (migration 0283, parked on purpose) closed them, and reviving
+    // them would spend check budget on — and could re-alert — another
+    // brand's official domain. Revert the status (PATCH) to re-check one.
     const resetResult = await env.DB.prepare(
       `UPDATE lookalike_domains
        SET check_due_at = '1970-01-01 00:00:00',
@@ -464,6 +469,7 @@ export async function handleScanLookalikes(
          SELECT id FROM lookalike_domains
           WHERE brand_id = ?
             AND (check_due_at IS NULL OR check_due_at > '1970-01-01 00:00:00')
+            AND (status IS NULL OR status != 'benign')
           ORDER BY check_due_at ASC
           LIMIT ?
        )`,

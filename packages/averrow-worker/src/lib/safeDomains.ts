@@ -95,7 +95,17 @@ export const TRUSTED_TRANCO_RANK_MAX = 20000;
 const sqlList = (xs: readonly string[]) => xs.map((x) => `'${x}'`).join(",");
 
 /** SQL: 1 when the `b` (brands) row's canonical_domain is trusted. Built
- *  from the constants above only — no runtime input is interpolated. */
+ *  from the constants above only — no runtime input is interpolated.
+ *
+ *  TRUST INVARIANT for the `tier = 'customer'` clause: it is sound only
+ *  while NO runtime code path writes `tier = 'customer'` onto a brand whose
+ *  canonical_domain a tenant (or anyone unauthenticated) supplied. Today the
+ *  only writer is migration 0156 (a one-off backfill from org_brands); no
+ *  handler sets it (verified 2026-10-05: `grep "SET tier"` = 0156 only).
+ *  A future "customer adds a brand" flow that sets tier='customer' from a
+ *  submitted domain would let a tenant allowlist a typosquat platform-wide
+ *  — it must either not set this tier or this clause must change. Same for
+ *  `source IN ('manual','curated')`: written only by staff/seed paths. */
 export const TRUSTED_BRAND_CANONICAL_SQL =
   `CASE WHEN COALESCE(b.source, '') IN (${sqlList(UNTRUSTED_BRAND_SOURCES)}) THEN 0 ` +
   `WHEN b.tier = 'customer' OR b.source IN (${sqlList(TRUSTED_BRAND_SOURCES)}) ` +
@@ -124,6 +134,10 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   "onrender.com", "fly.dev", "ngrok.io", "ngrok-free.app", "duckdns.org",
   "notion.site", "carrd.co", "framer.app", "zapier.app", "wasmer.app",
   "slack.com", "zendesk.com", "atlassian.net", "my.id", "biz.id", "o-r.kr",
+  // Dynamic-DNS / free-subdomain / tunnel providers: anyone can mint a
+  // name under these in minutes.
+  "ddns.net", "hopto.org", "zapto.org", "no-ip.com", "no-ip.org", "no-ip.biz",
+  "mooo.com", "dynu.net", "freedns.afraid.org", "ngrok.app", "localtunnel.me",
 ]);
 
 /** Is `domain` a shared-hosting domain or under one? */

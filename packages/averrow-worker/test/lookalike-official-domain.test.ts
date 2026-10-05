@@ -30,10 +30,13 @@ import type { Env } from "../src/types";
 import { applyLookalikeSchema } from "./lookalike-schema";
 import { runAlertTriageBackfill } from "../src/lib/alert-triage";
 import { createAlert } from "../src/lib/alerts";
-import { loadOfficialDomainMatches } from "../src/lib/safeDomains";
+import { isUnderSharedHosting, loadOfficialDomainMatches } from "../src/lib/safeDomains";
 import { generateAndStoreLookalikes } from "../src/scanners/lookalike-domains";
 import { generatePermutations } from "../src/lib/dnstwist";
 import { handleUpdateLookalike } from "../src/handlers/lookalikeDomains";
+import { handleAddSafeDomain, handleBulkAddSafeDomains, handleDeleteSafeDomain } from "../src/handlers/safeDomains";
+import { NRD_LOOKALIKE_CLAIM_SQL } from "../src/lib/lookalike-nrd-matcher";
+import { decideLookalikeRegistrationTriage } from "../src/lib/alert-triage";
 import type { AuthContext } from "../src/middleware/auth";
 
 type Stmt = {
@@ -426,5 +429,171 @@ describe.skipIf(!hasSqlite())("PATCH /api/lookalikes/:id — reverting an auto-b
     });
     await patch(h, "l_auto2", { status: "confirmed_threat" });
     expect(h.row("brand_zoom", "zoom.com")).toMatchObject({ status: "confirmed_threat", status_reason: null, check_due_at: null });
+  });
+});
+
+const SRC = (rel: string) => readFileSync(resolve(__dirname, "..", "src", rel), "utf8");
+
+describe.skipIf(!hasSqlite())("review fixes (PR #1796)", () => {
+  it("B1: a phantom-matcher alert observed in the NRD feed is never dismissed", async () => {
+    const h = harness();
+    const rows = await loadOfficialDomainMatches(h.DB, ["zoom.com"]);
+    expect(decideLookalikeRegistrationTriage({ domain: "zoom.com", matched_source: "nrd" }, { officialRows: rows }))
+      .toMatchObject({ action: "keep", reason: "newly_registered_domain" });
+    // A CT-observed phantom is not a registration event — still dismissed.
+    expect(decideLookalikeRegistrationTriage({ domain: "zoom.com", matched_source: "ct" }, { officialRows: rows }).action)
+      .toBe("dismiss");
+  });
+
+  it("B2: Flight Control's parked gauge counts ladder parks only, not auto-benign parks", () => {
+    const fc = SRC("agents/flightControl.ts");
+    const m = fc.match(/'backlog\.lookalike_parked'[^`]*`([^`]*)`/);
+    expect(m, "gauge SQL found").not.toBeNull();
+    const h = harness();
+    seedLookalikeRow(h, "brand_zoom", "zoom.com", { status: "benign", status_reason: "auto: x", check_due_at: null, last_check_failed_at: null });
+    seedLookalikeRow(h, "brand_zoom", "zoom.co", { check_due_at: null, last_check_failed_at: "2026-09-01 00:00:00" });
+    const n = (h.db.prepare(m![1]).get() as { count: number }).count;
+    expect(n).toBe(1);
+    const plan = (h.db.prepare(`EXPLAIN QUERY PLAN ${m![1]}`).all() as Array<{ detail: string }>).map((r) => r.detail).join("\n");
+    expect(plan).toContain("idx_lookalike_parked");
+  });
+
+  it("L1: an NRD claim reverts an AUTO-benign row to monitoring; human benign stays benign", () => {
+    const h = harness();
+    seedLookalikeRow(h, "brand_zoom", "zoom.com", {
+      id: "auto", status: "benign", status_reason: "auto: zoom.com is the official domain of Zoom",
+      check_due_at: null, last_check_failed_at: null, registered: 0,
+    });
+    seedLookalikeRow(h, "brand_icloud", "cloud.com", { id: "human", status: "benign", check_due_at: null, registered: 0 });
+    for (const id of ["auto", "human"]) {
+      h.db.prepare(NRD_LOOKALIKE_CLAIM_SQL).run("2026-10-04 00:00:00", "1970-01-01 00:00:00", id, "2026-10-04 00:00:00");
+    }
+    expect(h.row("brand_zoom", "zoom.com")).toMatchObject({ status: "monitoring", status_reason: null, registration_evidence: "nrd" });
+    expect(h.row("brand_icloud", "cloud.com")).toMatchObject({ status: "benign", registration_evidence: "nrd" });
+  });
+
+  it("L1: the observed-registration path reverts an AUTO-benign row before filing", () => {
+    const src = SRC("scanners/lookalike-domains.ts");
+    const body = src.slice(src.indexOf("async function fileConfirmedRegistration("));
+    expect(body.indexOf("revertAutoBenignOnRegistration(env, row)")).toBeGreaterThan(0);
+    expect(body.indexOf("revertAutoBenignOnRegistration(env, row)")).toBeLessThan(body.indexOf("claimRegistrationAlert(env, row.id)"));
+    expect(src).toMatch(/WHERE id = \? AND status = 'benign' AND status_reason LIKE 'auto:%'/);
+  });
+
+  it("appsec L2: dynamic-DNS / tunnel suffixes are shared hosting", () => {
+    for (const d of ["x.ddns.net", "x.hopto.org", "x.zapto.org", "x.no-ip.com", "x.no-ip.org", "x.no-ip.biz",
+      "x.mooo.com", "x.duckdns.org", "x.dynu.net", "x.freedns.afraid.org", "x.ngrok.app", "x.ngrok-free.app",
+      "x.ngrok.io", "x.localtunnel.me", "x.trycloudflare.com"]) {
+      expect(isUnderSharedHosting(d), d).toBe(true);
+    }
+    expect(isUnderSharedHosting("afraid.org")).toBe(false);
+  });
+
+  it("L3: 'Scan now' never enqueues benign rows", () => {
+    const src = SRC("handlers/lookalikeDomains.ts");
+    const start = src.indexOf("SET check_due_at = '1970-01-01 00:00:00'");
+    const sql = "UPDATE lookalike_domains\n       " + src.slice(start, src.indexOf("`", start));
+    const h = harness();
+    seedLookalikeRow(h, "brand_zoom", "zoom.com", { status: "benign", status_reason: "auto: x", check_due_at: null, last_check_failed_at: null });
+    seedLookalikeRow(h, "brand_zoom", "zoom.co", { check_due_at: null });
+    h.db.prepare(sql).run("brand_zoom", 100);
+    expect(h.row("brand_zoom", "zoom.com")!.check_due_at).toBeNull();
+    expect(h.row("brand_zoom", "zoom.co")!.check_due_at).toBe("1970-01-01 00:00:00");
+  });
+
+  it("L4: backfill leaves the lookalike row alone when a human moved the alert first", async () => {
+    const h = harness();
+    seedLookalikeRow(h, "brand_zoom", "zoom.com");
+    insertAlert(h, "a1", "brand_zoom", "lookalike_domain_active", { lookalike_domain: "zoom.com" }, "2026-10-01 00:00:01");
+    // Race: the alert is acknowledged between the backfill's SELECT and its UPDATE.
+    const DB = {
+      prepare(sql: string) {
+        const st = h.DB.prepare(sql);
+        if (!/UPDATE alerts[\s\S]*false_positive/.test(sql)) return st;
+        return { ...st, bind: (...p: unknown[]) => {
+          h.db.prepare(`UPDATE alerts SET status = 'acknowledged' WHERE id = 'a1'`).run();
+          return st.bind(...p);
+        } };
+      },
+    } as unknown as D1Database;
+    await runAlertTriageBackfill(DB, { limit: 500 });
+    expect(h.alert("a1").status).toBe("acknowledged");
+    expect(h.row("brand_zoom", "zoom.com")).toMatchObject({ status: "monitoring", status_reason: null });
+  });
+
+  it("L6: registration evidence on ANY brand's row for the domain blocks dismissal", async () => {
+    const h = harness();
+    seedLookalikeRow(h, "brand_zoom", "zoom.com");
+    seedLookalikeRow(h, "brand_icloud", "zoom.com", { registration_evidence: "observed" });
+    insertAlert(h, "a1", "brand_zoom", "lookalike_domain_active", { lookalike_domain: "zoom.com" }, "2026-10-01 00:00:01");
+    await runAlertTriageBackfill(h.DB, { limit: 500 });
+    expect(h.alert("a1").status).toBe("new");
+    const id = await createAlert(h.DB, {
+      brandId: "brand_zoom", userId: "system", alertType: "lookalike_domain_active", severity: "high",
+      title: "t", summary: "s", sourceType: "lookalike_scanner", sourceId: "l9", details: { lookalike_domain: "zoom.com" },
+    });
+    expect(h.alert(id).status).toBe("new");
+    expect(h.row("brand_zoom", "zoom.com")!.status).toBe("monitoring");
+  });
+});
+
+describe.skipIf(!hasSqlite())("A1: safe-domain writes — gate, audit, 404", () => {
+  function auditHarness() {
+    const h = harness();
+    h.db.exec(`INSERT INTO users (id) VALUES ('u1')`);
+    const audits: Array<{ action: string; user_id: string; resource_id: string; details: Record<string, unknown> }> = [];
+    const AUDIT_DB = {
+      prepare: () => ({
+        bind: (...p: unknown[]) => ({
+          run: async () => {
+            audits.push({ user_id: p[1] as string, action: p[2] as string, resource_id: p[4] as string, details: JSON.parse(p[5] as string) });
+            return { meta: {} };
+          },
+        }),
+      }),
+    };
+    const env = { DB: h.DB, AUDIT_DB } as unknown as Env;
+    const req = (body?: object) => new Request("https://x/", { method: "POST", body: body ? JSON.stringify(body) : undefined });
+    return { h, env, audits, req };
+  }
+
+  it("routes gate every write on manage_takedowns (reads stay requireStaff)", () => {
+    const src = SRC("routes/brands.ts");
+    for (const route of [
+      'router.post("/api/brands/:id/safe-domains",',
+      'router.post("/api/brands/:id/safe-domains/bulk",',
+      'router.delete("/api/brands/:id/safe-domains/:domainId",',
+    ]) {
+      const at = src.indexOf(route);
+      expect(at, route).toBeGreaterThan(0);
+      expect(src.slice(at, at + 300), route).toContain('requirePermission("manage_takedowns")');
+    }
+    const get = src.indexOf('router.get("/api/brands/:id/safe-domains",');
+    expect(src.slice(get, get + 300)).toContain("requireStaff(request, env)");
+  });
+
+  it("404s a nonexistent brand on add, bulk add and delete — no row written", async () => {
+    const { h, env, audits, req } = auditHarness();
+    expect((await handleAddSafeDomain(req({ domain: "x.example" }), env, "nope", "u1")).status).toBe(404);
+    expect((await handleBulkAddSafeDomains(req({ domains: ["x.example"] }), env, "nope", "u1")).status).toBe(404);
+    expect((await handleDeleteSafeDomain(req(), env, "nope", "s1", "u1")).status).toBe(404);
+    expect(h.db.prepare(`SELECT COUNT(*) AS n FROM brand_safe_domains WHERE brand_id = 'nope'`).get()).toMatchObject({ n: 0 });
+    expect(audits).toEqual([]);
+  });
+
+  it("audits add, bulk add and delete with actor, brand, domain and source", async () => {
+    const { h, env, audits, req } = auditHarness();
+    expect((await handleAddSafeDomain(req({ domain: "Zoom-Corp.example" }), env, "brand_zoom", "u1")).status).toBe(201);
+    expect((await handleBulkAddSafeDomains(req({ domains: ["a.example", "b.example", "bad"] }), env, "brand_zoom", "u1")).status).toBe(201);
+    const row = h.db.prepare(`SELECT id FROM brand_safe_domains WHERE domain = 'a.example'`).get() as { id: string };
+    expect((await handleDeleteSafeDomain(req(), env, "brand_zoom", row.id, "u1")).status).toBe(200);
+    expect(audits).toEqual([
+      expect.objectContaining({ action: "safe_domain_add", user_id: "u1", resource_id: "brand_zoom",
+        details: expect.objectContaining({ brand_id: "brand_zoom", domain: "zoom-corp.example", source: "manual" }) }),
+      expect.objectContaining({ action: "safe_domain_bulk_add", user_id: "u1",
+        details: expect.objectContaining({ brand_id: "brand_zoom", source: "csv_upload", added: 2, domains: ["a.example", "b.example"] }) }),
+      expect.objectContaining({ action: "safe_domain_delete", user_id: "u1",
+        details: expect.objectContaining({ brand_id: "brand_zoom", domain: "a.example", source: "csv_upload" }) }),
+    ]);
   });
 });

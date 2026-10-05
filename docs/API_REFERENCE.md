@@ -159,9 +159,9 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | GET | `/api/brands/:id/report` | Staff | Generate brand report |
 | POST | `/api/brands/:id/clean-false-positives` | Staff | Clean false positives |
 | GET | `/api/brands/:id/safe-domains` | Staff | List safe/owned domains |
-| POST | `/api/brands/:id/safe-domains` | Staff | Add safe domain |
-| POST | `/api/brands/:id/safe-domains/bulk` | Staff | Bulk add safe domains |
-| DELETE | `/api/brands/:id/safe-domains/:domainId` | Staff | Remove safe domain |
+| POST | `/api/brands/:id/safe-domains` | `manage_takedowns` (super_admin, admin, analyst) | Add safe domain (`source='manual'`). A `manual`/`csv_upload` row is TRUSTED platform-wide by the lookalike official-domain rule (auto-dismisses lookalike alerts, parks the row benign, no takedown), so writes are a takedown-suppression decision. 404 for a nonexistent brand. Writes `audit_log` `safe_domain_add` (actor, brand_id, domain, source). sales/support/billing/auditor/client → 403. |
+| POST | `/api/brands/:id/safe-domains/bulk` | `manage_takedowns` (super_admin, admin, analyst) | Bulk add safe domains (`source='csv_upload'`). A `manual`/`csv_upload` row is TRUSTED platform-wide by the lookalike official-domain rule (auto-dismisses lookalike alerts, parks the row benign, no takedown), so writes are a takedown-suppression decision. 404 for a nonexistent brand. Writes `audit_log` `safe_domain_bulk_add` (actor, brand_id, source, added count, up to 200 domains). sales/support/billing/auditor/client → 403. |
+| DELETE | `/api/brands/:id/safe-domains/:domainId` | `manage_takedowns` (super_admin, admin, analyst) | Remove safe domain. 404 for a nonexistent brand. Writes `audit_log` `safe_domain_delete` (actor, brand_id, domain, source) when a row was removed. sales/support/billing/auditor/client → 403. |
 | GET | `/api/brands/:id/social-config` | Staff | Get brand social-monitoring config |
 | PATCH | `/api/brands/:id/social-config` | Staff | Update brand social-monitoring config |
 | GET | `/api/brands/:id/social-profiles` | Staff | List discovered social profiles for the brand |

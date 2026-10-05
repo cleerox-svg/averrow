@@ -1169,7 +1169,22 @@ the new alert's source/type:
    (`loadOfficialDomainMatches`, ≤99 binds/statement), plus one
    `registration_evidence` read only when it would dismiss. A staff
    `PATCH /api/lookalikes/:id` status change clears `status_reason`, and
-   reverting an auto-benign row to `monitoring` un-parks it. Reason:
+   reverting an auto-benign row to `monitoring` un-parks it. "Newly
+   registered" also covers a phantom-matcher alert with
+   `details.matched_source='nrd'`, and `registration_evidence` on ANY
+   brand's row for the domain (it is a property of the domain). A confirmed
+   registration event (NRD claim or DNS-observed) on an AUTO-benign row
+   (`status_reason LIKE 'auto:%'`) reverts it to `monitoring` so the
+   new-registration alert files; human-set benign stays. "Scan now" skips
+   benign rows, and Flight Control's `backlog.lookalike_parked` counts only
+   ladder parks (`last_check_failed_at IS NOT NULL`). Because a
+   `manual`/`csv_upload` safe domain is trusted platform-wide, the
+   safe-domain write routes gate on `requirePermission('manage_takedowns')`
+   and write `audit_log` (`safe_domain_add`/`_bulk_add`/`_delete`). The
+   trust of `tier='customer'` assumes no runtime writer sets that tier from
+   a tenant-supplied domain (only migration 0156 does). Tranco import
+   treats 20,000 as a rank-bucket boundary so crossing the trust cutoff
+   rewrites the stored rank. Reason:
    `auto: <domain> is the official domain of <brand>`.
 
 The `0.5` threshold is the platform default — tunable per call via

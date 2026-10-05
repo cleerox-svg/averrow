@@ -2,6 +2,7 @@
 // Split from handlers/admin.ts (S3.4a). Behavior-preserving move.
 
 import { z } from "zod";
+import { TRUSTED_TRANCO_RANK_MAX } from "../../lib/safeDomains";
 import { json, corsHeaders } from "../../lib/cors";
 import { audit } from "../../lib/audit";
 import type { Env, UserRole, UserStatus } from "../../types";
@@ -48,19 +49,28 @@ const TRANCO_CSV_URL = "https://tranco-list.eu/top-1m.csv.zip";
  * Buckets:
  *   1   — top-1K       (high-trust, household names)
  *   2   — top-10K      (mainstream)
- *   3   — top-100K     (midmarket)
- *   4   — top-1M       (long-tail)
- *   5   — unranked     (null / beyond 1M)
+ *   3   — top-20K      (10,001–TRUSTED_TRANCO_RANK_MAX)
+ *   4   — top-100K     (midmarket)
+ *   5   — top-1M       (long-tail)
+ *   6   — unranked     (null / beyond 1M)
+ *
+ * The 20K boundary is the lookalike official-domain TRUST cutoff
+ * (`TRUSTED_TRANCO_RANK_MAX`, lib/safeDomains.ts): a brand's
+ * canonical_domain is trusted to auto-dismiss lookalike alerts only at
+ * rank <= 20,000, so a domain that crosses it in either direction MUST get
+ * its stored rank updated — otherwise a domain that fell out of the top
+ * 20K would stay trusted on a stale rank.
  *
  * The numeric bucket id is internal; comparing values is sufficient.
  */
 export function trancoRankBucket(rank: number | null | undefined): number {
-  if (rank == null || rank <= 0) return 5;
+  if (rank == null || rank <= 0) return 6;
   if (rank <= 1_000) return 1;
   if (rank <= 10_000) return 2;
-  if (rank <= 100_000) return 3;
-  if (rank <= 1_000_000) return 4;
-  return 5;
+  if (rank <= TRUSTED_TRANCO_RANK_MAX) return 3;
+  if (rank <= 100_000) return 4;
+  if (rank <= 1_000_000) return 5;
+  return 6;
 }
 
 export async function handleImportTranco(request: Request, env: Env): Promise<Response> {
@@ -124,7 +134,8 @@ export async function handleImportTranco(request: Request, env: Env): Promise<Re
     // churn (~76K rank-jitter updates/day in production), but the
     // PLATFORM only consumes rank as a coarse reputation bucket
     // (top-1K = high-trust, top-10K = mainstream, top-100K = midmarket,
-    // top-1M = long-tail). Intra-bucket drift is noise. Updating only
+    // top-1M = long-tail), plus the 20K lookalike official-domain trust
+    // cutoff (see trancoRankBucket). Intra-bucket drift is noise. Updating only
     // when the bucket boundary is crossed cuts the write count without
     // changing any downstream consumer behavior — every caller that
     // reads tranco_rank uses it for relative ordering or for the same
