@@ -175,7 +175,7 @@ export async function handleScanBrandEmailSecurity(
     ).run();
 
     // Generate BIMI-related alerts
-    await emitBIMIAlerts(env.DB, String(brand.id), domain, result.bimi, previousBimiRecord, previousGrade, result.dmarc.policy);
+    await emitBIMIAlerts(env, String(brand.id), domain, result.bimi, previousBimiRecord, previousGrade, result.dmarc.policy);
 
     return json({ success: true, data: result }, 200, origin);
   } catch (err) {
@@ -245,7 +245,7 @@ export async function handleScanAllEmailSecurity(
           brand.id,
         ).run();
 
-        await emitBIMIAlerts(env.DB, String(brand.id), brand.domain, result.bimi, prev?.bimi_record ?? null, prev?.email_security_grade ?? null, result.dmarc.policy);
+        await emitBIMIAlerts(env, String(brand.id), brand.domain, result.bimi, prev?.bimi_record ?? null, prev?.email_security_grade ?? null, result.dmarc.policy);
         scanned++;
       } catch (e) {
         console.error(`[email-security] scan failed for ${brand.domain}:`, e);
@@ -337,7 +337,7 @@ export async function handlePublicEmailSecurity(
         brand.id,
       ).run();
 
-      await emitBIMIAlerts(env.DB, String(brand.id), domain, result.bimi, prev?.bimi_record ?? null, prev?.email_security_grade ?? null, result.dmarc.policy);
+      await emitBIMIAlerts(env, String(brand.id), domain, result.bimi, prev?.bimi_record ?? null, prev?.email_security_grade ?? null, result.dmarc.policy);
     }
 
     return json({ success: true, data: result }, 200, origin);
@@ -460,7 +460,7 @@ export async function handleEmailSecurityStats(
  * Uses a system userId since these are automated alerts.
  */
 async function emitBIMIAlerts(
-  db: D1Database,
+  env: Env,
   brandId: string,
   domain: string,
   bimi: BIMIResult,
@@ -472,7 +472,7 @@ async function emitBIMIAlerts(
 
   // 1. BIMI record removed
   if (previousBimiRecord && !bimi.record) {
-    await createAlert(db, {
+    await createAlert(env.DB, {
       brandId,
       userId: systemUserId,
       alertType: 'bimi_removed',
@@ -482,7 +482,7 @@ async function emitBIMIAlerts(
         `Email logo display in Gmail and Apple Mail will stop.`,
       details: { domain, previous_record: previousBimiRecord },
       sourceType: 'email_security_scan',
-    });
+    }, { env });
   }
 
   // 2. DMARC policy downgraded (was reject, now something weaker)
@@ -490,7 +490,7 @@ async function emitBIMIAlerts(
     // A+ / A / B grades all imply DMARC reject was in place
     const previousWasReject = ['A+', 'A', 'B'].includes(previousGrade);
     if (previousWasReject && currentDmarcPolicy !== 'reject') {
-      await createAlert(db, {
+      await createAlert(env.DB, {
         brandId,
         userId: systemUserId,
         alertType: 'dmarc_downgraded',
@@ -500,7 +500,7 @@ async function emitBIMIAlerts(
           `Email spoofing protection is now reduced.`,
         details: { domain, new_policy: currentDmarcPolicy, previous_grade: previousGrade },
         sourceType: 'email_security_scan',
-      });
+      }, { env });
     }
   }
 
@@ -512,7 +512,7 @@ async function emitBIMIAlerts(
         (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
       );
       if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
-        await createAlert(db, {
+        await createAlert(env.DB, {
           brandId,
           userId: systemUserId,
           alertType: 'vmc_expiring',
@@ -522,7 +522,7 @@ async function emitBIMIAlerts(
             `${expiryDate.toDateString()}. Renew to maintain Gmail BIMI display.`,
           details: { domain, expiry_date: bimi.vmc_expiry, days_remaining: daysUntilExpiry },
           sourceType: 'email_security_scan',
-        });
+        }, { env });
       }
     }
   }

@@ -8,6 +8,8 @@
  */
 
 import type { AlertTypeKey, AlertSeverity } from '@averrow/shared';
+import type { Env } from '../types';
+import { emitOrgEvent } from './org-events';
 
 /** @deprecated Use AlertTypeKey from @averrow/shared. */
 export type AlertType = AlertTypeKey;
@@ -54,6 +56,84 @@ export interface CreateAlertParams {
    * Never set this true outside backfill paths.
    */
   bypassTierGate?: boolean;
+  /**
+   * Family-specific, customer-safe fields merged into the `alert.created`
+   * org-event payload (e.g. social `platform`/`handle`). Core keys
+   * (alert_id, alert_type, severity, title, summary, brand_*) always win.
+   * Never put internal triage/scoring rules or feed names here.
+   */
+  eventData?: Record<string, unknown>;
+}
+
+/**
+ * Org-event fan-out context for `createAlert` (disclosure register G4).
+ * When passed, every alert that is actually inserted AND not auto-dismissed
+ * emits exactly one `alert.created` per owning org through `emitOrgEvent`
+ * (org webhook + connected SIEM/ticketing integrations). Omit it to create
+ * the row silently — `lib/alert-backfill.ts` does, so claiming a brand
+ * never floods a customer's webhook with historical alerts.
+ */
+export interface AlertEmitContext {
+  env: Env;
+  /** `ctx.waitUntil` when the caller has one, so delivery outlives the
+   *  invocation. Without it the delivery is fire-and-forget. */
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
+/** Upper bound on orgs notified for one brand-wide alert. */
+const ALERT_EVENT_MAX_ORGS = 50;
+
+export interface AlertCreatedEventInput {
+  alertId: string;
+  brandId: string;
+  alertType: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  summary: string;
+  orgId?: number;
+  eventData?: Record<string, unknown>;
+}
+
+/**
+ * Resolve the orgs an alert belongs to and emit `alert.created` to each.
+ * Scoping mirrors the tenant alert read path: an org-private alert
+ * (`orgId` set — executive impersonation) goes ONLY to that org; a
+ * brand-wide alert (org_id NULL) goes to every org that has the brand in
+ * `org_brands` (each of them already sees it in their alert list).
+ * Never throws — a delivery or lookup failure must not reach the producer.
+ */
+export async function emitAlertCreatedEvent(env: Env, input: AlertCreatedEventInput): Promise<void> {
+  try {
+    const [orgRows, brand] = await Promise.all([
+      input.orgId != null
+        ? Promise.resolve([{ org_id: input.orgId }])
+        : env.DB.prepare(
+            'SELECT DISTINCT org_id FROM org_brands WHERE brand_id = ? LIMIT ?',
+          ).bind(input.brandId, ALERT_EVENT_MAX_ORGS).all<{ org_id: number }>().then((r) => r.results ?? []),
+      env.DB.prepare(
+        'SELECT name, canonical_domain FROM brands WHERE id = ?',
+      ).bind(input.brandId).first<{ name: string | null; canonical_domain: string | null }>(),
+    ]);
+    if (orgRows.length === 0) return;
+
+    const data: Record<string, unknown> = {
+      ...(input.eventData ?? {}),
+      alert_id: input.alertId,
+      alert_type: input.alertType,
+      severity: input.severity,
+      title: input.title,
+      summary: input.summary,
+      brand_id: input.brandId,
+      brand_name: brand?.name ?? null,
+      brand_domain: brand?.canonical_domain ?? null,
+    };
+
+    await Promise.allSettled(
+      orgRows.map((r) => emitOrgEvent(env, Number(r.org_id), 'alert.created', data)),
+    );
+  } catch {
+    // Best-effort: webhook/integration delivery never fails alert creation.
+  }
 }
 
 /**
@@ -70,7 +150,11 @@ export interface CreateAlertParams {
  * once we've verified zero callers send uppercase (probably PR 3
  * follow-up).
  */
-export async function createAlert(db: D1Database, params: CreateAlertParams): Promise<string | null> {
+export async function createAlert(
+  db: D1Database,
+  params: CreateAlertParams,
+  emit?: AlertEmitContext,
+): Promise<string | null> {
   // NX2 tier gate. brands.tier values: 'tracked' (passive — no alerts),
   // 'monitored' (active, alerts fire), 'customer' (claimed, alerts fire).
   // Backfill explicitly bypasses via params.bypassTierGate when an org
@@ -116,6 +200,7 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
   // its family's auto-dismiss criteria. Best-effort — any failure
   // here leaves the alert in 'new' status (the conservative
   // outcome). See lib/alert-triage.ts for the rule definitions.
+  let dismissed = false;
   try {
     const triage = await import('./alert-triage');
 
@@ -156,10 +241,33 @@ export async function createAlert(db: D1Database, params: CreateAlertParams): Pr
             updated_at = datetime('now')
         WHERE id = ?
       `).bind(decision.reason, id).run();
+      dismissed = true;
     }
   } catch {
     // Auto-triage is non-fatal. Worst case the alert stays 'new'
     // for the operator to handle manually.
+  }
+
+  // G4: one `alert.created` per owning org, for every alert family, from
+  // this single place. Skipped for auto-dismissed alerts (born
+  // false_positive — noise the customer's queue never shows as new).
+  if (emit && !dismissed) {
+    try {
+      const pending = emitAlertCreatedEvent(emit.env, {
+        alertId: id,
+        brandId: params.brandId,
+        alertType: params.alertType,
+        severity: lowerSeverity,
+        title: params.title,
+        summary: params.summary,
+        orgId: params.orgId,
+        eventData: params.eventData,
+      });
+      if (emit.waitUntil) emit.waitUntil(pending);
+      else void pending;
+    } catch {
+      // Scheduling failure is non-fatal for alert creation.
+    }
   }
 
   return id;

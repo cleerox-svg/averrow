@@ -352,7 +352,7 @@ export async function runDarkWebRansomwareIngest(env: Env): Promise<RansomwareIn
                 },
                 sourceType: 'dark_web_monitor',
                 sourceId: mentionId,
-              });
+              }, { env });
               alertsCreated++;
             } catch (alertErr) {
               errors.push(

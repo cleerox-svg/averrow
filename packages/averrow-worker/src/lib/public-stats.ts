@@ -16,15 +16,27 @@ import { agentModules } from "../agents";
 export interface PublicStats {
   agents_deployed: string;     // e.g. "42"
   feeds_protecting: string;    // e.g. "45+"
-  threats_detected: string;    // e.g. "210K+"
-  brands_monitored: string;    // e.g. "9.6K+"
-  // Static marketing claims kept here so the template doesn't hardcode them
-  // — change once, picked up everywhere.
+  threats_detected: string;    // e.g. "1.3M+" — formatted from threats_total
+  /** The ONE published threat total: all-time `COUNT(*) FROM threats`
+   *  (cachedCount `count.threats.total`). `threats_detected` is this number
+   *  formatted, and /api/v1/public/stats `total_threats` is this number raw,
+   *  so the two can never disagree (disclosure register L20). */
+  threats_total: number;
+  /** Size of the brand CATALOG (`COUNT(*) FROM brands`, incl. the passive
+   *  tier='tracked' rows), formatted. The key name is legacy (the /legacy
+   *  homepage template + `brands_monitored_label` read it); it is NOT the
+   *  monitored-brand count — see proof.monitored_brands (register L12). */
+  brands_monitored: string;    // e.g. "124K+"
+  // Static marketing claim kept here so the template doesn't hardcode it.
   uptime_label: string;        // "24/7"
-  detection_time_label: string; // "<5min"
+  // detection_time_label ("<5min") was REMOVED (register L4/G1): it was a
+  // hard-coded constant that no metric measured. Do not reintroduce a
+  // detection-time claim without an instrumented source.
 }
 
-const CACHE_KEY = "public_stats:v1";
+// v2: shape changed (threats_total added, detection_time_label removed) —
+// a v1 payload must not be served into the new shape.
+const CACHE_KEY = "public_stats:v2";
 const CACHE_TTL_S = 600; // 10 min
 
 // agents_deployed is the SIZE OF THE AGENT REGISTRY (the number of entries
@@ -39,12 +51,14 @@ const FALLBACK: PublicStats = {
   agents_deployed: String(REGISTERED_AGENT_COUNT),
   feeds_protecting: "45+",
   threats_detected: "210K+",
+  // Lower-bound floor that formats to exactly FALLBACK.threats_detected, so
+  // even the D1-down path publishes one consistent total.
+  threats_total: 210_000,
   brands_monitored: "9.6K+",
   uptime_label: "24/7",
-  detection_time_label: "<5min",
 };
 
-function formatBigNumber(n: number): string {
+export function formatBigNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M+`;
   if (n >= 10_000) return `${Math.round(n / 1000)}K+`;
   if (n >= 1_000) return `${(n / 1000).toFixed(1)}K+`;
@@ -89,9 +103,9 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
       agents_deployed: String(REGISTERED_AGENT_COUNT),
       feeds_protecting: feeds?.n ? `${feeds.n}+` : FALLBACK.feeds_protecting,
       threats_detected: threats?.n ? formatBigNumber(threats.n) : FALLBACK.threats_detected,
+      threats_total: threats?.n ? threats.n : FALLBACK.threats_total,
       brands_monitored: brands?.n ? formatBigNumber(brands.n) : FALLBACK.brands_monitored,
       uptime_label: FALLBACK.uptime_label,
-      detection_time_label: FALLBACK.detection_time_label,
     };
 
     try {

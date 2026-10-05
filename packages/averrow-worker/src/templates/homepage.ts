@@ -9,9 +9,9 @@ const STATIC_STATS: PublicStats = {
   agents_deployed: "18",
   feeds_protecting: "33+",
   threats_detected: "210K+",
+  threats_total: 210_000,
   brands_monitored: "9.6K+",
   uptime_label: "24/7",
-  detection_time_label: "<5min",
 };
 
 export function renderHomepage(stats: PublicStats = STATIC_STATS): string {
@@ -1172,10 +1172,6 @@ ${pageStyles}
     <div class="stat-label">AI agents deployed</div>
   </div>
   <div class="stat-item">
-    <div class="stat-value">${stats.detection_time_label.replace("<", "&lt;")}</div>
-    <div class="stat-label">Threat detection time</div>
-  </div>
-  <div class="stat-item">
     <div class="stat-value">${stats.feeds_protecting}</div>
     <div class="stat-label">Brand protection feeds</div>
   </div>
@@ -1189,7 +1185,7 @@ ${pageStyles}
   </div>
   <div class="stat-item">
     <div class="stat-value">${stats.brands_monitored}</div>
-    <div class="stat-label">Brands in coverage</div>
+    <div class="stat-label">Brands in threat catalog</div>
   </div>
 </div>
 

@@ -1143,7 +1143,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
           current_grade: change.current_grade,
         },
         sourceType: 'email_security_scan',
-      });
+      }, { env, waitUntil: (p) => ctx.waitUntil(p) });
 
       logger.info('email_grade_change_alert', {
         brand_id: change.brand_id,

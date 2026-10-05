@@ -131,7 +131,7 @@ export async function createBrandAlertsForCampaign(
           threat_count: input.threat_count,
           significance_reasons: input.reasons,
         },
-      });
+      }, { env });
       if (id === null) summary.tier_gated++;
       else summary.created++;
     } catch (err) {
@@ -204,7 +204,7 @@ export async function createBrandAlertsForThreatActor(
           threat_actor_name: input.threat_actor_name,
           context: input.context ?? null,
         },
-      });
+      }, { env });
       if (id === null) summary.tier_gated++;
       else summary.created++;
     } catch (err) {

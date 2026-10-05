@@ -342,7 +342,7 @@ export async function handleTriggerSocialScan(request: Request, env: Env, brandI
           },
           sourceType: "social_monitor",
           sourceId: profileId,
-        });
+        }, { env });
         alertsCreated++;
       }
     }

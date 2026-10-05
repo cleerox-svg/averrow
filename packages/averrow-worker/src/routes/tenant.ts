@@ -66,6 +66,7 @@ import {
   handleUpdateInvestigation, handleAddInvestigationItem, handleRemoveInvestigationItem,
   handleAddInvestigationNote,
 } from "../handlers/tenantInvestigations";
+import { handleTenantStixExport } from "../handlers/tenantStixExport";
 import {
   handleListExecutives, handleCreateExecutive, handleGetExecutive,
   handleUpdateExecutive, handleDeleteExecutive,
@@ -235,6 +236,13 @@ export function registerTenantRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireOrgMember(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTenantThreatDetail(request, env, request.params["orgId"] ?? "", request.params["threatId"] ?? "", ctx);
+  });
+  // Customer STIX 2.1 export (G3) — org's own brands only, read-only,
+  // any org member; rate-limited + capped in the handler.
+  router.get("/api/orgs/:orgId/export/stix", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireOrgMember(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleTenantStixExport(request, env, request.params["orgId"] ?? "", ctx);
   });
   router.post("/api/orgs/:orgId/alerts/bulk", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireOrgMember(request, env);

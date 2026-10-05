@@ -14,7 +14,6 @@ import { normalizeHandleForPlatform } from '../lib/handle-normalize';
 import { generateHandlePermutations } from '../lib/handle-permutations';
 import { scoreImpersonation, nameSimilarity, type ImpersonationSignals } from './impersonation-scorer';
 import { createAlert } from '../lib/alerts';
-import { emitOrgEvent } from '../lib/org-events';
 import { logger } from '../lib/logger';
 import { discoverSocialProfiles } from '../lib/social-discovery';
 import { runSyncAgent } from '../lib/agentRunner';
@@ -476,7 +475,7 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
             ).bind(brand.id).first<{ added_by: string }>();
 
             if (monitoredBy) {
-              const alertId = await createAlert(env.DB, {
+              await createAlert(env.DB, {
                 brandId: brand.id,
                 userId: monitoredBy.added_by,
                 alertType: 'social_impersonation',
@@ -493,26 +492,15 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
                 },
                 sourceType: 'social_monitor',
                 sourceId: profileId,
-              });
-              totalAlerts++;
-
-              // Fire webhook: alert.created for org that owns this brand
-              const orgBrand = await env.DB.prepare(
-                "SELECT ob.org_id, b.name AS brand_name, b.canonical_domain FROM org_brands ob JOIN brands b ON b.id = ob.brand_id WHERE ob.brand_id = ? LIMIT 1",
-              ).bind(brand.id).first<{ org_id: number; brand_name: string; canonical_domain: string }>();
-              if (orgBrand) {
-                emitOrgEvent(env, orgBrand.org_id, 'alert.created', {
-                  alert_id: alertId,
-                  brand_name: orgBrand.brand_name,
-                  brand_domain: orgBrand.canonical_domain,
-                  severity: result.severity,
-                  title: `${result.severity === 'CRITICAL' ? 'Likely' : 'Possible'} impersonation on ${result.platform}: @${result.handleChecked}`,
-                  alert_type: 'social_impersonation',
+                eventData: {
                   platform: result.platform,
                   handle: result.handleChecked,
                   impersonation_score: result.impersonationScore,
-                }).catch(() => {});
-              }
+                },
+              }, { env });
+              totalAlerts++;
+              // alert.created now fans out from createAlert itself (one event
+              // per owning org, G4) — no per-family emit here.
             }
           } catch (alertErr) {
             logger.error('social_monitor_alert_error', {

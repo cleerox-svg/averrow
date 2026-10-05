@@ -352,7 +352,7 @@ export const sparrowAgent: AgentModule = {
                 },
                 sourceType: 'takedown',
                 sourceId: td.id,
-              });
+              }, { env });
             }
           } catch (err) {
             console.error(`[Sparrow] Phase F verify failed for ${td.target_value}: ${err}`);

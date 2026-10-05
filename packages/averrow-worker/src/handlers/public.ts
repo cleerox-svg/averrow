@@ -9,85 +9,126 @@ import { runSyncAgent } from "../lib/agentRunner";
 import { publicTrustCheckAgent } from "../agents/public-trust-check";
 import type { PublicTrustCheckOutput } from "../agents/public-trust-check";
 import { getPublicStats } from "../lib/public-stats";
+import { getPublicProof } from "../lib/public-proof";
+import { cachedValue } from "../lib/cached-value";
 import type { Env } from "../types";
 
 // ─── GET /api/v1/public/stats ────────────────────────────────────
+//
+// Disclosure-register fixes (docs/DISCLOSURE_REGISTER.md L4/L12/L20, G1):
+//   - ONE threat total. `total_threats` (number) and `threats_detected`
+//     (formatted string) both come from the same all-time
+//     `COUNT(*) FROM threats` (cachedCount `count.threats.total`, carried
+//     on the PublicStats object), so they always agree. The old cube SUM
+//     (threat_cube_status) under-counted: it only covers rebuilt buckets.
+//   - `detection_time_label` ("<5min") removed — it was a hard-coded,
+//     unmeasured constant.
+//   - `threats_today` is the correctly named "threats first bucketed today"
+//     count. `certificates_today` is kept ONLY as a deprecated alias because
+//     the frozen legacy SPA (public/app.js) reads it; it is not a
+//     certificate count.
+//   - `latest_insight_summary` removed: it published 80 chars of internal
+//     agent output that can name brands (customer-data risk). public/app.js
+//     reads it defensively (falsy → generic tile).
+//   - `proof` added — measured, cached aggregates (lib/public-proof.ts).
+
+/** Base aggregates, one cachedValue so anonymous traffic (the legacy SPA
+ *  re-polls every 60s) reaches D1 at most once per TTL. */
+interface PublicStatsBase {
+  active_threats: number;
+  brands_monitored: number;
+  active_feeds: number;
+  threat_campaigns: number;
+  countries: number;
+  threats_today: number;
+  providers_mapped: number;
+  threat_types: Array<{ threat_type: string; count: number }>;
+}
+
+const PUBLIC_STATS_BASE_TTL_S = 300;
+
+async function computePublicStatsBase(env: Env): Promise<PublicStatsBase> {
+  const todayBucket = new Date();
+  todayBucket.setUTCHours(0, 0, 0, 0);
+  const todayBucketStr = `${todayBucket.toISOString().slice(0, 10)} 00:00:00`;
+
+  const [
+    activeThreats, brandsMonitored, activeFeeds,
+    campaigns, countries, threatsToday, providers, typeCounts,
+  ] = await Promise.all([
+    env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE status IN ('active', 'unknown')").first<{ n: number }>(),
+    env.DB.prepare("SELECT COUNT(*) as n FROM monitored_brands WHERE status = 'active'").first<{ n: number }>(),
+    env.DB.prepare(
+      `SELECT COUNT(*) as n FROM feed_status
+       WHERE health_status IN ('healthy', 'degraded')
+       AND feed_name NOT IN (SELECT feed_name FROM feed_configs WHERE enabled = 0)`
+    ).first<{ n: number }>(),
+    env.DB.prepare("SELECT COUNT(*) as n FROM campaigns").first<{ n: number }>(),
+    env.DB.prepare("SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE country_code != 'XX'").first<{ n: number }>(),
+    env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ?").bind(todayBucketStr).first<{ n: number }>(),
+    env.DB.prepare("SELECT COUNT(DISTINCT hosting_provider_id) AS n FROM threat_cube_provider").first<{ n: number }>(),
+    env.DB.prepare(
+      `SELECT threat_type, SUM(threat_count) AS count FROM threat_cube_status
+       WHERE threat_type != 'unknown'
+       GROUP BY threat_type ORDER BY count DESC`
+    ).all<{ threat_type: string; count: number }>(),
+  ]);
+
+  return {
+    active_threats: activeThreats?.n ?? 0,
+    brands_monitored: brandsMonitored?.n ?? 0,
+    active_feeds: activeFeeds?.n ?? 0,
+    threat_campaigns: campaigns?.n ?? 0,
+    countries: countries?.n ?? 0,
+    threats_today: threatsToday?.n ?? 0,
+    providers_mapped: providers?.n ?? 0,
+    threat_types: typeCounts?.results ?? [],
+  };
+}
 
 export async function handlePublicStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    // ─── Cube-routed reads (Group 3 D1 read-budget remediation) ────
-    // Threats aggregates here used to scan the threats table on every
-    // anon homepage hit (~tens of thousands of rows × thousands of hits
-    // per day). All "all-threats" counts now read the 30-day status
-    // cube, country count reads the geo cube, provider count reads the
-    // provider cube. Semantics shift from all-time to 30-day rolling —
-    // intentional: stale-signal threats (>30 days old) aren't useful in
-    // a freshness-sensitive headline. confidence_score breakdown is
-    // dropped (no cube dimension) and replaced with classifiedToday=0.
-    const todayBucket = new Date();
-    todayBucket.setUTCHours(0, 0, 0, 0);
-    const todayBucketStr = `${todayBucket.toISOString().slice(0, 10)} 00:00:00`;
-
-    const [
-      totalThreats, activeThreats, brandsMonitored, activeFeeds,
-      campaigns, countries, threatsToday,
-      latestInsight, providers, typeCounts,
-      marketing,
-    ] = await Promise.all([
-      env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status").first<{ n: number }>(),
-      env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE status IN ('active', 'unknown')").first<{ n: number }>(),
-      env.DB.prepare("SELECT COUNT(*) as n FROM monitored_brands WHERE status = 'active'").first<{ n: number }>(),
-      env.DB.prepare(
-        `SELECT COUNT(*) as n FROM feed_status
-         WHERE health_status IN ('healthy', 'degraded')
-         AND feed_name NOT IN (SELECT feed_name FROM feed_configs WHERE enabled = 0)`
-      ).first<{ n: number }>(),
-      env.DB.prepare("SELECT COUNT(*) as n FROM campaigns").first<{ n: number }>(),
-      env.DB.prepare("SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE country_code != 'XX'").first<{ n: number }>(),
-      env.DB.prepare("SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ?").bind(todayBucketStr).first<{ n: number }>(),
-      env.DB.prepare("SELECT summary FROM agent_outputs WHERE agent_id = 'observer' ORDER BY created_at DESC LIMIT 1").first<{ summary: string }>(),
-      env.DB.prepare("SELECT COUNT(DISTINCT hosting_provider_id) AS n FROM threat_cube_provider").first<{ n: number }>(),
-      env.DB.prepare(
-        `SELECT threat_type, SUM(threat_count) AS count FROM threat_cube_status
-         WHERE threat_type != 'unknown'
-         GROUP BY threat_type ORDER BY count DESC`
-      ).all<{ threat_type: string; count: number }>(),
+    const [base, marketing, proof] = await Promise.all([
+      cachedValue<PublicStatsBase>(env, "public.v1_stats.base.v1", PUBLIC_STATS_BASE_TTL_S, () => computePublicStatsBase(env)),
       // Marketing homepage shape (formatted strings, KV-cached). Powers
       // averrow-marketing's build-time fetch (scripts/fetch-stats.mjs).
       getPublicStats(env),
+      getPublicProof(env),
     ]);
 
     return json({
       success: true,
       data: {
-        total_threats: totalThreats?.n ?? 0,
-        active_threats: activeThreats?.n ?? 0,
-        brands_monitored: brandsMonitored?.n ?? 0,
-        active_feeds: activeFeeds?.n ?? 0,
-        threat_campaigns: campaigns?.n ?? 0,
-        countries: countries?.n ?? 0,
-        certificates_today: threatsToday?.n ?? 0,
-        threats_classified_today: threatsToday?.n ?? 0,
-        providers_mapped: providers?.n ?? 0,
-        latest_insight_summary: latestInsight?.summary?.slice(0, 80) ?? "",
-        threat_types: typeCounts?.results ?? [],
-        // Legacy aliases
-        brands_tracked: brandsMonitored?.n ?? 0,
+        // The ONE threat total (all-time threats table count) — see header.
+        total_threats: marketing.threats_total,
+        active_threats: base.active_threats,
+        brands_monitored: base.brands_monitored,
+        active_feeds: base.active_feeds,
+        threat_campaigns: base.threat_campaigns,
+        countries: base.countries,
+        threats_today: base.threats_today,
+        threats_classified_today: base.threats_today,
+        providers_mapped: base.providers_mapped,
+        threat_types: base.threat_types,
+        // Legacy aliases — read by the frozen legacy SPA (public/app.js).
+        brands_tracked: base.brands_monitored,
+        /** @deprecated Mislabelled: this is threats today, not
+         *  certificates. Kept only because public/app.js reads it. */
+        certificates_today: base.threats_today,
         // ── Marketing homepage shape (formatted strings) ──
-        // Added ADDITIVELY for averrow-marketing/scripts/fetch-stats.mjs.
-        // agents_deployed is the registered-agent-registry count (stable 42),
-        // NOT the 7d-active count, so the homepage matches the "42 in the
-        // mesh" claim on /platform + /why-averrow. brands_monitored is a
-        // NUMBER above (the legacy SPA public/app.js count-up animation does
-        // arithmetic on it), so the marketing string form is exposed under
-        // the distinct key brands_monitored_label — do not merge the two.
+        // brands_monitored is a NUMBER above (the legacy SPA count-up
+        // animation does arithmetic on it), so the marketing string form
+        // is exposed under brands_monitored_label. NOTE: that label is the
+        // brand CATALOG size (incl. passive tier='tracked'), not monitored
+        // coverage — use proof.monitored_brands / proof.brands_in_catalog.
         agents_deployed: marketing.agents_deployed,
         feeds_protecting: marketing.feeds_protecting,
         threats_detected: marketing.threats_detected,
         brands_monitored_label: marketing.brands_monitored,
         uptime_label: marketing.uptime_label,
-        detection_time_label: marketing.detection_time_label,
+        // Measured proof points (G1) — see lib/public-proof.ts.
+        proof,
       },
     }, 200, origin);
   } catch (err) {
@@ -118,23 +159,56 @@ export async function handlePublicGeo(request: Request, env: Env): Promise<Respo
 }
 
 // ─── GET /api/v1/public/feeds ────────────────────────────────────
+//
+// Disclosure register L19: this endpoint used to publish every enabled
+// feed's name, vendor, description (method), health and per-feed daily
+// volume — the source list for competitors and a coverage/blind-spot map
+// for attackers (T3). It now returns aggregate counts only.
+//
+// Shape stays tolerable for the frozen legacy SPA (public/app.js
+// loadFeeds): `data` is an EMPTY ARRAY, which the SPA treats as "nothing to
+// render" (`if (!grid || !feeds.length) return`). The counts ride beside it.
+// `by_category` groups on feed_configs.feed_type (generic: e.g. ingest /
+// enrichment) — never on feed names.
+
+export interface PublicFeedsSummary {
+  total_sources: number;
+  by_category: Record<string, number>;
+}
+
+export const PUBLIC_FEEDS_TTL_S = 3600;
+
+/** Generic category allowlist. feed_type is free text on an admin-editable
+ *  table, so anything outside the known generic values collapses to
+ *  `other` rather than risk echoing a feed-specific label. */
+const PUBLIC_FEED_CATEGORIES = new Set(["ingest", "enrichment", "social"]);
+
+export function publicFeedCategory(feedType: string | null | undefined): string {
+  const t = (feedType ?? "ingest").toLowerCase();
+  return PUBLIC_FEED_CATEGORIES.has(t) ? t : "other";
+}
 
 export async function handlePublicFeeds(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const rows = await env.DB.prepare(
-      `SELECT fc.feed_name, fc.display_name, fc.description, fs.health_status,
-              fs.records_ingested_today
-       FROM feed_configs fc
-       JOIN feed_status fs ON fc.feed_name = fs.feed_name
-       WHERE fc.enabled = 1
-       ORDER BY fs.records_ingested_today DESC`
-    ).all<{
-      feed_name: string; display_name: string; description: string;
-      health_status: string; records_ingested_today: number;
-    }>();
+    const summary = await cachedValue<PublicFeedsSummary>(env, "public.feeds.summary.v1", PUBLIC_FEEDS_TTL_S, async () => {
+      const rows = await env.DB.prepare(
+        `SELECT feed_type AS category, COUNT(*) AS n
+           FROM feed_configs
+          WHERE enabled = 1
+          GROUP BY feed_type`
+      ).all<{ category: string | null; n: number }>();
+      const by_category: Record<string, number> = {};
+      let total = 0;
+      for (const r of rows.results ?? []) {
+        const cat = publicFeedCategory(r.category);
+        by_category[cat] = (by_category[cat] ?? 0) + r.n;
+        total += r.n;
+      }
+      return { total_sources: total, by_category };
+    });
 
-    return json({ success: true, data: rows.results }, 200, origin);
+    return json({ success: true, data: [], ...summary }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
