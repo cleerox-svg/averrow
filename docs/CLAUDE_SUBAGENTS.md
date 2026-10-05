@@ -262,6 +262,28 @@ fan-out, since page-writing is the slow, parallelizable part:
 - `test-engineer` edits only test files; `qa-verifier` edits nothing (runs +
   reports). A failing test/verification is handed back to the owning engineer —
   neither agent changes product source to make a check pass.
+- **Merging is the orchestrator's alone (CLAUDE.md §9a).** No subagent merges,
+  marks a PR ready, tags, or pushes to `master` — even one that holds GitHub
+  tools. Subagents leave changes uncommitted unless told otherwise; the
+  orchestrator commits, opens the PR, verifies the §9a criteria (green CI on
+  the head SHA, clean mergeability, gate + required review lanes passed, no
+  unresolved High/Medium findings) and merges.
+
+## Merge hand-off (how subagents feed §9a)
+Each lane's report is an input to the orchestrator's merge decision, so make
+the verdict explicit:
+- **Engineers** (`backend-engineer`, `frontend-engineer`): finish with the gate
+  results for every touched package, and list anything left undone.
+- **`test-engineer` / `qa-verifier`**: PASS or FAIL with evidence; say what
+  could not be exercised.
+- **Reviewers** (`code-reviewer`, `appsec-reviewer`, `design-reviewer`): rank
+  findings by severity and label each **blocking** (High/Medium correctness or
+  security, must fix before merge) or **follow-up** (Low/polish). "Clean" is a
+  valid verdict.
+- **`delivery-lead`**: flag any task that falls under §9a's owner-sign-off list
+  (destructive data changes, `wrangler.toml` bindings/secrets/crons/switches,
+  access widening, pricing/billing/legal, MAJOR bumps) so the orchestrator asks
+  before merging instead of after.
 
 ## Extending the roster
 Add a new `.claude/agents/<name>.md` with `name`, `description`, `tools` (omit to
