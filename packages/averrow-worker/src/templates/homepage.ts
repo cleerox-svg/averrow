@@ -1490,10 +1490,13 @@ function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function
 
 function summaryFor(s, d) {
   d = esc(d);
-  if (s >= 80) return d + ' has strong security posture. Email authentication is well-configured and we found minimal threat activity targeting this domain.';
-  if (s >= 60) return d + ' has moderate security. Some areas need attention — particularly email authentication and active monitoring for impersonation threats.';
-  if (s >= 40) return d + ' has concerning security gaps. We detected active threats and missing security configurations that leave the brand exposed.';
-  return d + ' has critical security vulnerabilities. Multiple active threats detected, missing essential email authentication, and significant impersonation risk.';
+  // Posture-only copy: the public score is SPF/DMARC/MX, never threat
+  // data, so the text must not claim anything about detected threats.
+  // Keep in sync with publicPostureSummary (handlers/brandScan.ts).
+  if (s >= 80) return d + ' has a strong email-security posture. SPF and DMARC are well configured; continuous monitoring for impersonation is still recommended.';
+  if (s >= 60) return d + ' has moderate email security. Some areas need attention, particularly email authentication and monitoring for impersonation.';
+  if (s >= 40) return d + ' has concerning email-security gaps. Missing or weak email authentication leaves the brand open to spoofing.';
+  return d + ' has critical email-security gaps. Essential email authentication is missing, leaving significant spoofing and impersonation risk.';
 }
 
 var FREEMAIL_DOMAINS = ['gmail.com','yahoo.com','hotmail.com','outlook.com','aol.com','icloud.com','mail.com','protonmail.com','proton.me','yandex.com','zoho.com','gmx.com','fastmail.com','tutanota.com','hey.com','live.com','msn.com','me.com','qq.com','163.com'];
@@ -1748,10 +1751,11 @@ function gradeFor(s){return s>=90?'A':s>=80?'B':s>=60?'C':s>=40?'D':'F'}
 function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function summaryFor(s,d){
   d=esc(d);
-  if(s>=80)return d+' has strong security posture. Email authentication is well-configured and we found minimal threat activity.';
-  if(s>=60)return d+' has moderate security. Some areas need attention — particularly email authentication and active monitoring for impersonation threats.';
-  if(s>=40)return d+' has concerning security gaps. We detected active threats and missing security configurations that leave the brand exposed.';
-  return d+' has critical security vulnerabilities. Multiple active threats detected, missing essential email authentication, and significant impersonation risk.';
+  // Posture-only copy (see publicPostureSummary in handlers/brandScan.ts).
+  if(s>=80)return d+' has a strong email-security posture. SPF and DMARC are well configured; continuous monitoring for impersonation is still recommended.';
+  if(s>=60)return d+' has moderate email security. Some areas need attention, particularly email authentication and monitoring for impersonation.';
+  if(s>=40)return d+' has concerning email-security gaps. Missing or weak email authentication leaves the brand open to spoofing.';
+  return d+' has critical email-security gaps. Essential email authentication is missing, leaving significant spoofing and impersonation risk.';
 }
 
 var scanId=${safeJsonForScript(scanId)};

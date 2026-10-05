@@ -110,14 +110,13 @@ describe("POST /api/brand-scan/public (handlePublicBrandScan)", () => {
 });
 
 describe("GET /api/brand-scan/public/:id (handlePublicBrandScanResult)", () => {
-  it("does not select or return feed_mentions", async () => {
+  it("does not return feed_mentions (read server-side only to strip it from the score)", async () => {
     const s = makeEnv([], {
       id: "s1", domain: "acme.example", trust_score: 70, spf_policy: null, dmarc_policy: null,
-      lookalikes_found: 0, status: "completed", created_at: "2026-10-05",
+      feed_mentions: 3, lookalikes_found: 0, status: "completed", created_at: "2026-10-05",
     });
     const res = await handlePublicBrandScanResult(new Request("https://averrow.com/api/brand-scan/public/s1"), s.env, "s1");
     expect(res.status).toBe(200);
-    expect(s.sqls[0]).not.toContain("feed_mentions");
     const body = await res.json() as { data: Record<string, unknown> };
     expect(body.data).not.toHaveProperty("feed_mentions");
   });

@@ -829,7 +829,7 @@ function renderReport(data, brandName) {
     ? 'Moderate exposure detected. Review below.'
     : score >= 40
     ? 'Significant exposure. Brand impersonation likely possible.'
-    : 'Critical exposure. Active brand abuse risk.';
+    : 'Critical exposure. Email spoofing risk is high.';
 
   const risks = [];
   if (data.riskLevel === 'critical' || data.riskLevel === 'high') {

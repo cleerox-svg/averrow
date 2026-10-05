@@ -249,12 +249,66 @@ function calculateBrandTrustScore(params: {
   else if (params.lookalikeCount > 0) score -= 5;
 
   // Feed mentions (0-20 points)
-  if (params.feedMentions > 10) score -= 20;
-  else if (params.feedMentions > 5) score -= 15;
-  else if (params.feedMentions > 2) score -= 10;
-  else if (params.feedMentions > 0) score -= 5;
+  score -= feedMentionPenalty(params.feedMentions);
 
   return Math.max(0, Math.min(100, score));
+}
+
+/** Feed-mention component of the brand trust score (0-20 points). */
+export function feedMentionPenalty(feedMentions: number): number {
+  if (feedMentions > 10) return 20;
+  if (feedMentions > 5) return 15;
+  if (feedMentions > 2) return 10;
+  if (feedMentions > 0) return 5;
+  return 0;
+}
+
+/**
+ * Public-facing score for a stored brand_scans row: the stored (staff)
+ * score with the feed-mention deduction added back, so an anonymous caller
+ * can't infer threat-data hits from the number. Exact, never clamped: the
+ * other components deduct at most 80 (SPF 25 + DMARC 25 + MX 10 +
+ * lookalikes 20), so the stored score never bottoms out at 0 before the
+ * feed component is applied.
+ */
+export function publicScoreFromStored(storedScore: number, feedMentions: number | null): number {
+  return Math.min(100, storedScore + feedMentionPenalty(feedMentions ?? 0));
+}
+
+function riskLevelFor(score: number): "low" | "medium" | "high" | "critical" {
+  return score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
+}
+
+/**
+ * Anonymous email-posture check shared by the public scan surfaces
+ * (/api/brand-scan/public, /assess, /api/v1/public/assess). Public DNS
+ * only — SPF, DMARC, MX — and never Averrow threat data, so the score is
+ * not a detection oracle.
+ */
+export async function computePublicPosture(domain: string): Promise<{
+  trustScore: number;
+  spfPolicy: string | null;
+  dmarcPolicy: string | null;
+  mxCount: number;
+}> {
+  const dns = await checkDNS(domain);
+  const trustScore = calculateBrandTrustScore({
+    spfPolicy: dns.spf.policy,
+    dmarcPolicy: dns.dmarc.policy,
+    dkimFound: false,
+    lookalikeCount: 0,
+    feedMentions: 0,
+    mxCount: dns.mx.length,
+  });
+  return { trustScore, spfPolicy: dns.spf.policy, dmarcPolicy: dns.dmarc.policy, mxCount: dns.mx.length };
+}
+
+/** Posture-only summary sentence for public surfaces — no threat claims. */
+export function publicPostureSummary(name: string, score: number): string {
+  if (score >= 80) return `${name} has a strong email-security posture. SPF and DMARC are well configured; continuous monitoring for impersonation is still recommended.`;
+  if (score >= 60) return `${name} has moderate email security. Some areas need attention, particularly email authentication and monitoring for impersonation.`;
+  if (score >= 40) return `${name} has concerning email-security gaps. Missing or weak email authentication leaves the brand open to spoofing.`;
+  return `${name} has critical email-security gaps. Essential email authentication is missing, leaving significant spoofing and impersonation risk.`;
 }
 
 // ─── Brand Scan Handler (Authenticated) ─────────────────────────
@@ -435,22 +489,25 @@ export async function handlePublicBrandScan(request: Request, env: Env): Promise
 
     const lookalikeDomains = generateLookalikes(domain);
 
-    const trustScore = calculateBrandTrustScore({
+    // Staff score (stored) includes the feed-mention component; the public
+    // score is the same formula without it, so the number returned to an
+    // anonymous caller says nothing about Averrow's threat data.
+    const scoreInputs = {
       spfPolicy: dnsResult.spf.policy,
       dmarcPolicy: dnsResult.dmarc.policy,
       dkimFound: false,
       lookalikeCount: 0, // Don't check registration for public scan
-      feedMentions: feedResult.mentions,
       mxCount: dnsResult.mx.length,
-    });
-
-    const riskLevel = trustScore >= 80 ? "low" : trustScore >= 60 ? "medium" : trustScore >= 40 ? "high" : "critical";
+    };
+    const staffScore = calculateBrandTrustScore({ ...scoreInputs, feedMentions: feedResult.mentions });
+    const trustScore = calculateBrandTrustScore({ ...scoreInputs, feedMentions: 0 });
+    const riskLevel = riskLevelFor(trustScore);
 
     // Record in brand_scans
     await env.DB.prepare(
       `INSERT INTO brand_scans (id, domain, status, trust_score, spf_policy, dmarc_policy, feed_mentions, scanned_by, created_at, updated_at)
        VALUES (?, ?, 'completed', ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
-    ).bind(crypto.randomUUID(), domain, trustScore, dnsResult.spf.policy, dnsResult.dmarc.policy, feedResult.mentions).run();
+    ).bind(crypto.randomUUID(), domain, staffScore, dnsResult.spf.policy, dnsResult.dmarc.policy, feedResult.mentions).run();
 
     // Return ONLY the score (not details) for the public endpoint.
     // No feed-mention flag: an anonymous caller must not be able to ask
@@ -475,25 +532,38 @@ export async function handlePublicBrandScan(request: Request, env: Env): Promise
 export async function handlePublicBrandScanResult(request: Request, env: Env, scanId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
+    // This lookup is public (no auth). feed_mentions is read only to strip
+    // its deduction back out of the stored staff score; it is never
+    // returned, and the response is an explicit allowlist.
     const row = await env.DB.prepare(
-      // feed_mentions deliberately NOT selected — this lookup is public
-      // (no auth) and must not reveal threat-data hits for a domain.
-      `SELECT id, domain, trust_score, spf_policy, dmarc_policy,
+      `SELECT id, domain, trust_score, spf_policy, dmarc_policy, feed_mentions,
               lookalikes_found, status, created_at
        FROM brand_scans WHERE id = ? AND status = 'completed'`
-    ).bind(scanId).first();
+    ).bind(scanId).first<{
+      id: string; domain: string; trust_score: number | null; spf_policy: string | null;
+      dmarc_policy: string | null; feed_mentions: number | null; lookalikes_found: number | null;
+      status: string; created_at: string;
+    }>();
 
     if (!row) {
       return json({ success: false, error: "Assessment not found" }, 404, origin);
     }
 
-    const typedRow = row as { trust_score: number };
-    const score = typedRow.trust_score;
-    const riskLevel = score >= 80 ? "low" : score >= 60 ? "medium" : score >= 40 ? "high" : "critical";
+    const score = publicScoreFromStored(row.trust_score ?? 0, row.feed_mentions);
 
     return json({
       success: true,
-      data: { ...row, risk_level: riskLevel },
+      data: {
+        id: row.id,
+        domain: row.domain,
+        trust_score: score,
+        spf_policy: row.spf_policy,
+        dmarc_policy: row.dmarc_policy,
+        lookalikes_found: row.lookalikes_found,
+        status: row.status,
+        created_at: row.created_at,
+        risk_level: riskLevelFor(score),
+      },
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
