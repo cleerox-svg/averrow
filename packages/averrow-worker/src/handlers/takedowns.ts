@@ -362,11 +362,18 @@ export async function handleUpdateTakedown(
     if (updates.length === 0) return error("No valid fields to update", 400, origin);
 
     updates.push("updated_at = datetime('now')");
-    values.push(takedownId);
+    values.push(takedownId, takedown.status);
 
-    await env.DB.prepare(
-      `UPDATE takedown_requests SET ${updates.join(", ")} WHERE id = ?`
+    // Pinned to the status this handler read: a concurrent change (e.g.
+    // staff claiming it to 'submitted') between the SELECT and here would
+    // otherwise be overwritten by a transition validated against stale
+    // state — a withdraw could clobber a live submission.
+    const result = await env.DB.prepare(
+      `UPDATE takedown_requests SET ${updates.join(", ")} WHERE id = ? AND status = ?`
     ).bind(...values).run();
+    if ((result.meta?.changes ?? 0) === 0) {
+      return error("Takedown request changed concurrently — reload and retry", 409, origin);
+    }
 
     await audit(env, {
       action: "takedown_update",

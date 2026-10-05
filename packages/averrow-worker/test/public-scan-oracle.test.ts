@@ -36,7 +36,7 @@ vi.mock("../src/lib/agentRunner", async (orig) => {
 const {
   handlePublicBrandScan, handlePublicBrandScanResult, publicScoreFromStored, feedMentionPenalty,
 } = await import("../src/handlers/brandScan");
-const { handlePublicAssess, handlePublicLeadCapture } = await import("../src/handlers/public");
+const { handlePublicAssess, handlePublicLeadCapture, handlePublicMonitor } = await import("../src/handlers/public");
 const { registerScanRoutes } = await import("../src/routes/scan");
 const { registerPublicRoutes } = await import("../src/routes/public");
 const { renderAssessResults, renderHomepage } = await import("../src/templates/homepage");
@@ -231,7 +231,10 @@ describe("POST /api/v1/public/assess", () => {
     });
     const r2 = await handlePublicAssess(jsonReq("/api/v1/public/assess", { domain: "acme.example" }), fresh.env);
     const d2 = (await r2.json() as { data: Record<string, unknown> }).data;
-    expect(d2).toMatchObject({ assessment_id: "new1", trust_score: 65, cached: true });
+    expect(d2).toMatchObject({ assessment_id: "new1", trust_score: 65 });
+    // No `cached` flag — "someone assessed this domain in the last 24h"
+    // is itself a signal.
+    expect(d2).not.toHaveProperty("cached");
     for (const k of FORBIDDEN) expect(d2).not.toHaveProperty(k);
     expect(fresh.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
   });
@@ -302,5 +305,48 @@ describe("POST /api/v1/public/leads", () => {
     const res = await handlePublicLeadCapture(jsonReq("/api/v1/public/leads", { ...lead, email: ["pat@acme.example"] }), s.env);
     expect(res.status).toBe(400);
     expect(s.calls.filter((c) => /INSERT/.test(c.sql))).toEqual([]);
+  });
+});
+
+// ─── 5. POST /api/v1/public/monitor ───────────────────────────────────
+
+describe("POST /api/v1/public/monitor", () => {
+  async function monitor(brandExists: boolean, threats: number, body: Record<string, unknown> = {}) {
+    const s = makeEnv((sql) => {
+      if (/SELECT id FROM brands WHERE canonical_domain/.test(sql)) return brandExists ? { id: "brand_catalog_123" } : null;
+      if (/FROM threats/.test(sql)) return { n: threats };
+      return null;
+    });
+    const res = await handlePublicMonitor(jsonReq("/api/v1/public/monitor", { domain: "acme.example", ...body }), s.env);
+    expect(res.status).toBe(201);
+    const json = await res.json() as { data: Record<string, unknown> };
+    return { data: json.data, calls: s.calls };
+  }
+
+  it("returns an identical response whether the brand was already in the catalog or not", async () => {
+    const existing = await monitor(true, 500);
+    const created = await monitor(false, 0);
+    expect(existing.data).toEqual(created.data);
+    expect(existing.data).toEqual({
+      domain: "acme.example",
+      brand_name: "Acme",
+      monitoring: true,
+      message: expect.any(String),
+    });
+    expect(existing.data).not.toHaveProperty("brand_id");
+    expect(existing.data).not.toHaveProperty("existing_threats");
+  });
+
+  it("never queries the threats table", async () => {
+    const { calls } = await monitor(false, 500);
+    expect(calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+  });
+
+  it("lead placeholder assessment carries no score/grade", async () => {
+    const { calls } = await monitor(false, 0, { email: "pat@acme.example", company: "Acme" });
+    const placeholder = calls.find((c) => /INSERT INTO assessments/.test(c.sql))!;
+    expect(placeholder.sql).toMatch(/VALUES \(\?, \?, NULL, NULL\)/);
+    const lead = calls.find((c) => /INSERT INTO leads/.test(c.sql))!;
+    expect(lead.binds[1]).toBe(placeholder.binds[0]);
   });
 });

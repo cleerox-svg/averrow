@@ -269,8 +269,10 @@ function postureGrade(score: number): PublicAssessmentView["grade"] {
   return "F";
 }
 
+// No `cached` flag: whether a domain was assessed in the last 24h is
+// itself a signal about other visitors' interest.
 function publicAssessResponse(
-  assessmentId: string, domain: string, view: PublicAssessmentView, assessedAt: string, cached: boolean,
+  assessmentId: string, domain: string, view: PublicAssessmentView, assessedAt: string,
 ): Record<string, unknown> {
   return {
     assessment_id: assessmentId,
@@ -282,7 +284,6 @@ function publicAssessResponse(
     spf_policy: view.spf_policy,
     dmarc_policy: view.dmarc_policy,
     assessed_at: assessedAt,
-    ...(cached ? { cached: true } : {}),
   };
 }
 
@@ -322,7 +323,7 @@ async function getRecentAssessment(
   } catch { /* malformed JSON — treat as not replayable */ }
   if (!isPublicAssessmentView(view)) return null;
 
-  return publicAssessResponse(row.id, row.domain, view, row.completed_at, true);
+  return publicAssessResponse(row.id, row.domain, view, row.completed_at);
 }
 
 export async function handlePublicAssess(request: Request, env: Env): Promise<Response> {
@@ -528,7 +529,7 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
 
     return json({
       success: true,
-      data: publicAssessResponse(assessmentId, domain, publicView, new Date().toISOString(), false),
+      data: publicAssessResponse(assessmentId, domain, publicView, new Date().toISOString()),
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -643,9 +644,9 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
     await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
 
     const body = await request.json().catch(() => null) as {
-      domain?: string;
-      email?: string;
-      company?: string;
+      domain?: unknown;
+      email?: unknown;
+      company?: unknown;
     } | null;
 
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
@@ -677,20 +678,18 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
     await env.DB.prepare(
       `INSERT OR IGNORE INTO monitored_brands (brand_id, tenant_id, added_by, notes, status)
        VALUES (?, '__internal__', 'self_service', ?, 'active')`
-    ).bind(brand.id, body.email ? `Self-service by ${body.email}` : "Self-service submission").run();
-
-    // Count existing threats
-    const threatCount = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM threats
-       WHERE malicious_url LIKE ? OR malicious_domain LIKE ?`
-    ).bind(`%${keyword}%`, `%${keyword}%`).first<{ n: number }>();
+    ).bind(brand.id, typeof body.email === "string" && body.email ? `Self-service by ${body.email}` : "Self-service submission").run();
 
     // Store lead if email provided
-    if (body.email && body.company) {
+    if (typeof body.email === "string" && body.email && typeof body.company === "string" && body.company) {
       const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const assessmentId = `assess_monitor_${Date.now()}`;
+      // Placeholder assessment with no score/grade. (The old grade '?'
+      // violated the assessments.grade CHECK, so INSERT OR IGNORE dropped
+      // the row and the lead referenced a missing assessment.)
+      const assessmentId = `assess_monitor_${crypto.randomUUID()}`;
       await env.DB.prepare(
-        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, 0, '?')`
+        `INSERT INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, NULL, NULL)
+         ON CONFLICT(id) DO NOTHING`
       ).bind(assessmentId, domain).run();
       await env.DB.prepare(
         `INSERT INTO leads (id, assessment_id, name, email, company, notes)
@@ -698,13 +697,15 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
       ).bind(leadId, assessmentId, body.company, body.email, body.company).run();
     }
 
+    // Uniform response (detection-oracle fix 2026-10-05): no threat count,
+    // no brand_id (its shape revealed whether the brand was already in the
+    // catalog), and the name is always derived from the submitted domain —
+    // identical whether the brand existed or was just created.
     return json({
       success: true,
       data: {
-        brand_id: brand.id,
         domain,
         brand_name: brandName,
-        existing_threats: threatCount?.n ?? 0,
         monitoring: true,
         message: `${brandName} is now being monitored. We'll detect threats targeting this domain.`,
       },
