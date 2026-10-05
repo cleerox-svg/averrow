@@ -11,6 +11,7 @@
  */
 
 import { json } from '../lib/cors';
+import { normalizePublicHostname } from '../lib/public-hostname';
 import { runEmailSecurityScan, saveEmailSecurityScan } from '../email-security';
 import type { BIMIResult } from '../email-security';
 import { createAlert } from '../lib/alerts';
@@ -274,14 +275,11 @@ export async function handlePublicEmailSecurity(
   const origin = request.headers.get('Origin');
   const startTime = Date.now();
 
-  // Normalize domain
-  const domain = rawDomain
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/\/.*$/, '')
-    .replace(/^www\./, '');
+  // Normalize domain — strict hostname (anonymous input, echoed back and
+  // used as a KV cache key).
+  const domain = normalizePublicHostname(rawDomain, { stripWww: true });
 
-  if (!domain || !domain.includes('.')) {
+  if (!domain) {
     return json({ success: false, error: 'Invalid domain' }, 400, origin);
   }
 

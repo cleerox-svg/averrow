@@ -97,13 +97,21 @@ export interface TakedownCharacteristics {
    * posture regardless of the semi-auto criteria.
    */
   human_approved?: boolean;
+  /**
+   * True when Averrow staff changed this takedown's severity after it was
+   * created (takedown_requests.staff_severity_set_at, migration 0284). The
+   * severity is then treated as unknown: a staff edit alone must never make
+   * a held takedown eligible for Semi-Auto filing (appsec M2).
+   */
+  severity_set_by_staff?: boolean;
 }
 
 function matchesSemiAutoRules(
   rules: SemiAutoRules,
   c: TakedownCharacteristics,
 ): boolean {
-  const sev = (c.severity ?? "").toUpperCase();
+  // A staff-edited severity counts as unknown (see severity_set_by_staff).
+  const sev = c.severity_set_by_staff ? "" : (c.severity ?? "").toUpperCase();
   // Severity is the required axis. An unknown/empty severity never auto-submits.
   if (!rules.auto_severities.map((s) => s.toUpperCase()).includes(sev)) {
     return false;
@@ -144,4 +152,76 @@ export function evaluateTakedownPolicy(
 
   // semi_auto — characteristics decide.
   return matchesSemiAutoRules(scope.semi_auto_rules, c) ? "auto" : "approval";
+}
+
+// ─── Staff-send consent gate (register gap G21, owner decision 2026-10-05) ──
+//
+// Averrow staff must not send a takedown the customer hasn't authorized.
+// Both staff send paths — the ops hand-submit (POST
+// /api/admin/takedowns/:id/submit) and the ops "mark submitted" PATCH —
+// call this AFTER the standing gates (org, brand, signed authorization
+// covering the module, entitlement). It answers ONLY "has the customer
+// authorized THIS takedown under their policy?":
+//
+//   customer approved (see below)    → allowed in every mode, incl. 'off'
+//   mode 'off'  (Manual)             → nothing else is allowed
+//   mode 'semi_auto' / 'auto'        → allowed iff evaluateTakedownPolicy —
+//                                      the SAME decision Sparrow Phase G
+//                                      uses — returns 'auto'
+//   status 'withdrawn'               → never (the customer withdrew it)
+//
+// `customer_approved` is NOT "status === 'requested'": the ops PATCH lets
+// staff move draft → requested (the ops queue's own "pending" step), so the
+// status alone can be staff-set. The caller derives it from provenance —
+// status 'requested' AND requested_at set (only the tenant PATCH stamps it,
+// and that route refuses staff) AND requested_by is not a staff account.
+// The one definition is isCustomerApproved (lib/takedown-customer-approval.ts),
+// shared with Sparrow Phase G.
+
+export interface StaffSendCandidate {
+  /** takedown_requests.status at the time of the check. */
+  status: string;
+  /** True only when the CUSTOMER approved this takedown (provenance-checked). */
+  customer_approved: boolean;
+  severity: string | null;
+  /** takedown_requests.staff_severity_set_at IS NOT NULL (migration 0284). */
+  severity_set_by_staff: boolean;
+  target_type: string | null;
+  /** Resolved provider's provider_type, or null when none is known. */
+  provider_type: string | null;
+}
+
+export type StaffSendRefusal =
+  | "withdrawn_by_customer"
+  | "manual_mode_requires_approval"
+  | "awaiting_customer_approval";
+
+export type StaffSendConsent =
+  | { allowed: true; basis: "customer_approved" | "policy_auto" }
+  | { allowed: false; reason: StaffSendRefusal; decision: PolicyDecision | null };
+
+export function evaluateStaffSendConsent(
+  scope: AuthorizationScope,
+  c: StaffSendCandidate,
+): StaffSendConsent {
+  if (c.status === "withdrawn") {
+    return { allowed: false, reason: "withdrawn_by_customer", decision: null };
+  }
+  if (c.customer_approved) return { allowed: true, basis: "customer_approved" };
+
+  // Not customer-approved: the row is judged on its characteristics alone,
+  // exactly as Sparrow judges a 'draft' (human_approved: false).
+  const decision = evaluateTakedownPolicy(scope, {
+    severity:              c.severity,
+    severity_set_by_staff: c.severity_set_by_staff,
+    target_type:           c.target_type,
+    provider_type:         c.provider_type,
+    human_approved:        false,
+  });
+  if (decision === "auto") return { allowed: true, basis: "policy_auto" };
+  return {
+    allowed: false,
+    reason: decision === "off" ? "manual_mode_requires_approval" : "awaiting_customer_approval",
+    decision,
+  };
 }

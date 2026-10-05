@@ -649,7 +649,8 @@ describe.skipIf(!hasSqlite())("tenant routes — staff refusal and masking", () 
     it("ops takedown PATCH emits a customer webhook without the staff id", async () => {
       const ctx = { userId: "u_staff", email: "sam@averrow.local", role: "super_admin", orgId: null, orgRole: null } as AuthContext;
       const req = new Request("https://averrow.com/api/admin/takedowns/td7", {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "requested" }),
+        // draft → withdrawn: staff can no longer move a row INTO 'requested' (G21).
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "withdrawn" }),
       });
       const res = await handleAdminUpdateTakedown(req, env, "td7", ctx);
       expect(res.status).toBe(200);

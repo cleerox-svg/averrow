@@ -55,6 +55,8 @@ interface TakedownRow {
   evidence_summary: string; evidence_detail: string | null;
   provider_name: string | null; provider_abuse_contact: string | null;
   provider_method: string | null; severity: string;
+  requested_at: string | null; requested_by: string | null;
+  staff_severity_set_at: string | null;
 }
 
 interface Fixture {
@@ -66,6 +68,7 @@ interface Fixture {
   providerAutoSubmit?: number;           // takedown_providers.auto_submit_enabled (0/1)
   hasProvider?: boolean;                 // takedown_providers row exists for provider_name
   priorSubmission?: boolean;             // an existing submitted/queued submission row
+  enabledModules?: string[];             // org_modules entitlements (default: domain + social)
 }
 
 interface CapturedRun { sql: string; binds: unknown[] }
@@ -100,6 +103,11 @@ function makeDb(fx: Fixture) {
           if (sql.includes("SELECT COUNT(*)") && sql.includes("FROM takedown_submissions")) {
             return ({ n: fx.capUsed ?? 0 } as unknown) as T;
           }
+          if (sql.includes("FROM users")) {
+            // requested_by provenance (G21): u-cust is an active customer
+            // member of the row's org. Binds: (org_id, requested_by).
+            return (binds[1] === "u-cust" ? { role: "client" } : null) as T | null;
+          }
           if (sql.includes("FROM org_brands")) {
             return (fx.ownsBrand ? ({ 1: 1 } as unknown) : null) as T | null;
           }
@@ -127,7 +135,18 @@ function makeDb(fx: Fixture) {
           }
           return null;
         },
-        all: async <T>() => ({ results: [] as T[] }),
+        all: async <T>() => {
+          if (sql.includes("FROM org_modules")) {
+            const mods = fx.enabledModules ?? ["domain", "social"];
+            return {
+              results: mods.map((m) => ({
+                module_key: m, status: "active", activated_at: "2026-01-01T00:00:00Z",
+                suspended_at: null, trial_ends_at: null, config_json: null,
+              })) as unknown as T[],
+            };
+          }
+          return { results: [] as T[] };
+        },
       }),
     };
   }
@@ -160,7 +179,12 @@ function baseRow(overrides: Partial<TakedownRow> = {}): TakedownRow {
     module_key: "domain", target_type: "domain", target_value: "evil.example",
     target_url: null, evidence_summary: "phish", evidence_detail: null,
     provider_name: "GoDaddy", provider_abuse_contact: null, provider_method: "email",
-    severity: "HIGH", ...overrides,
+    severity: "HIGH",
+    // Customer-approved (G21): only the tenant PATCH stamps requested_at,
+    // with requested_by = the approving (non-staff) member.
+    requested_at: "2026-10-04T12:00:00Z", requested_by: "u-cust",
+    staff_severity_set_at: null,
+    ...overrides,
   };
 }
 
@@ -267,6 +291,17 @@ describe("TK2 — handleAdminSubmitTakedown", () => {
 
     expect(res.status).toBe(403);
     expect(dispatchSubmission).not.toHaveBeenCalled();
+  });
+
+  it("(g2) M1 — org not entitled to the module → 403, NO dispatch, NO flip", async () => {
+    const { env, runs } = makeEnv({
+      takedownRow: baseRow(), ownsBrand: true, authModules: ["domain"], enabledModules: ["social"],
+    });
+    const res = await handleAdminSubmitTakedown(submitReq(), env, "td1", ANALYST);
+
+    expect(res.status).toBe(403);
+    expect(dispatchSubmission).not.toHaveBeenCalled();
+    expect(flipRuns(runs).length).toBe(0);
   });
 
   it("(h) missing takedown → 404", async () => {

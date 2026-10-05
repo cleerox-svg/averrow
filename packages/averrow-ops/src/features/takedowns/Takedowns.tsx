@@ -141,7 +141,10 @@ const PLATFORM_CONFIG: Record<string, PlatConf> = {
 // Workflow config keyed on the DB status values.
 // Draft → Pending → Submitted → Resolved
 const STATUS_CONFIG: Record<string, StatusConf> = {
-  draft:            { color: 'var(--amber)',      label: 'Draft',     cta: 'Submit →',         next: 'requested'  },
+  // No draft → requested CTA: 'requested' is the CUSTOMER-approval state and
+  // only the tenant app moves a row into it (G21). Staff send a draft from
+  // the detail panel ("Mark Submitted"), subject to the customer's policy.
+  draft:            { color: 'var(--amber)',      label: 'Draft',     cta: '',                 next: ''           },
   requested:        { color: 'var(--sev-high)',   label: 'Pending',   cta: 'Mark Sent →',      next: 'submitted'  },
   submitted:        { color: 'var(--blue)',       label: 'Submitted', cta: 'Mark Resolved →',  next: 'taken_down' },
   pending_response: { color: 'var(--blue)',       label: 'Awaiting',  cta: 'Mark Resolved →',  next: 'taken_down' },
@@ -660,9 +663,14 @@ function TakedownActions({ takedown, onUpdate, isUpdating }: {
       <Button variant="primary" size="sm" disabled={isUpdating} onClick={() => onUpdate(takedown.id, { status: 'submitted' })}>
         Mark Submitted
       </Button>
-      <Button variant="ghost" size="sm" disabled={isUpdating} onClick={() => onUpdate(takedown.id, { status: 'draft' })}>
-        Back to Draft
-      </Button>
+      {/* Only a row WITHOUT a customer approval stamp can go back to draft
+          (e.g. parked here by the retired "Mark Ready" step); the server
+          refuses it (409) for a customer-approved row. */}
+      {!takedown.requested_at && (
+        <Button variant="ghost" size="sm" disabled={isUpdating} onClick={() => onUpdate(takedown.id, { status: 'draft' })}>
+          Return to draft
+        </Button>
+      )}
     </>
   );
   if (s === 'submitted' || s === 'pending_response') return (
@@ -865,8 +873,10 @@ export function Takedowns() {
           setSelectedTakedown((prev) => (prev && prev.id === id ? { ...prev, staff_notes: saved } : prev));
         }
       },
-      onError: () => {
-        showToast('Update failed', 'error');
+      // The server's refusal reason (e.g. "Waiting for the customer's approval
+      // under their automation policy …") — never a success toast on a 4xx.
+      onError: (err: Error) => {
+        showToast(err.message || 'Update failed', 'error');
         setUpdatingId(null);
       },
     });

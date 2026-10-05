@@ -8,7 +8,15 @@
 // control: this change ships straight to prod, so the gate is verified
 // here rather than in staging.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// The →submitted gate resolves the provider like the hand-submit; never hit
+// DNS/network from a unit test.
+vi.mock("../src/lib/provider-resolver", () => ({
+  resolveProvider: vi.fn(async () => ({
+    hosting_provider: null, hosting_ip: null, hosting_country: null, registrar: null, abuse_contact: null,
+  })),
+}));
 import { handleAdminUpdateTakedown } from "../src/handlers/takedowns";
 import { roleHasPermission } from "../src/lib/role-permissions";
 import type { UserRole } from "../src/types";
@@ -36,9 +44,14 @@ class MockKV {
 interface TakedownRow {
   id: string; status: string;
   org_id: number | null; brand_id: string | null; module_key: string | null;
+  // G21 consent inputs (optional — absent = draft-like, not customer-approved).
+  severity?: string | null; requested_at?: string | null; requested_by?: string | null;
+  staff_severity_set_at?: string | null;
 }
 
-interface AuthRowScope { modules: string[] }
+// mode 'auto' by default so these TK1 tests isolate the STANDING gate; the
+// customer-consent (G21) matrix lives in takedown-staff-consent.test.ts.
+interface AuthRowScope { modules: string[]; mode: string }
 
 interface Fixture {
   takedownRow: TakedownRow | null;
@@ -54,11 +67,11 @@ function makeDb(fx: Fixture) {
   function prepare(sql: string) {
     return {
       bind: (...binds: unknown[]) => ({
-        run: async () => { runs.push({ sql, binds }); return { success: true }; },
+        run: async () => { runs.push({ sql, binds }); return { success: true, meta: { changes: 1 } }; },
         first: async <T>() => {
           // Primary load in the handler.
           if (sql.includes("FROM takedown_requests") && sql.includes("module_key") && sql.includes("WHERE id = ?")) {
-            return fx.takedownRow as T | null;
+            return (fx.takedownRow ? { staff_severity_set_at: null, ...fx.takedownRow } : null) as T | null;
           }
           // Post-update org lookup for emitOrgEvent.
           if (sql.includes("SELECT org_id FROM takedown_requests")) {
@@ -71,7 +84,7 @@ function makeDb(fx: Fixture) {
           // Active authorization lookup (inside getActiveAuthorization).
           if (sql.includes("FROM takedown_authorizations")) {
             if (fx.authModules == null) return null;
-            const scope: AuthRowScope = { modules: fx.authModules };
+            const scope: AuthRowScope = { modules: fx.authModules, mode: "auto" };
             return {
               id: "auth-1", org_id: fx.takedownRow?.org_id ?? 0,
               agreement_version: "msa-2026-05", status: "active",
@@ -84,7 +97,19 @@ function makeDb(fx: Fixture) {
           }
           return null;
         },
-        all: async <T>() => ({ results: [] as T[] }),
+        // org_modules: the org is entitled to every module (M1 is covered in
+        // takedown-staff-consent.test.ts).
+        all: async <T>() => {
+          if (sql.includes("FROM org_modules")) {
+            return {
+              results: ["domain", "social", "app_store"].map((m) => ({
+                module_key: m, status: "active", activated_at: "2026-01-01T00:00:00Z",
+                suspended_at: null, trial_ends_at: null, config_json: null,
+              })) as unknown as T[],
+            };
+          }
+          return { results: [] as T[] };
+        },
       }),
     };
   }
@@ -271,15 +296,14 @@ describe("handleAdminUpdateTakedown — non-submitted paths unaffected (TK1)", (
     expect(anyUpdate(runs)).toHaveLength(0);
   });
 
-  it("7b. terminal-state edge taken_down→submitted (unrestricted by table) now hits the standing gate → 422 when orgless", async () => {
-    // Terminal states have no ADMIN_ALLOWED_TRANSITIONS entry, so the table
-    // does not block transitions out of them. The new standing gate is the
-    // net that now catches a spurious re-flip to 'submitted'.
+  it("7b. terminal-state edge taken_down→submitted is refused by the table (default-deny, G21) → 400", async () => {
+    // Every status now has an ADMIN_ALLOWED_TRANSITIONS entry and a missing
+    // one is denied; taken_down is terminal for staff.
     const { env, runs } = makeEnv({
       takedownRow: { id: "td1", status: "taken_down", org_id: null, brand_id: "b1", module_key: "domain" },
     });
     const res = await handleAdminUpdateTakedown(patch("submitted"), env, "td1", ANALYST);
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(400);
     expect(anyUpdate(runs)).toHaveLength(0);
   });
 });

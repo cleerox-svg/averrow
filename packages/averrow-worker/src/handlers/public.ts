@@ -11,6 +11,8 @@ import type { PublicTrustCheckOutput } from "../agents/public-trust-check";
 import { getPublicStats } from "../lib/public-stats";
 import { getPublicProof } from "../lib/public-proof";
 import { cachedValue } from "../lib/cached-value";
+import { normalizePublicHostname } from "../lib/public-hostname";
+import { computePublicPosture, publicPostureSummary } from "./brandScan";
 import type { Env } from "../types";
 
 // ─── GET /api/v1/public/stats ────────────────────────────────────
@@ -239,16 +241,55 @@ export async function publicAssessIpLimit(request: Request, env: Env): Promise<R
   return null;
 }
 
-interface StoredAssessmentIntel {
-  threat_count?: number;
-  provider_count?: number;
-  campaign_count?: number;
-  threat_types?: { threat_type: string; count: number }[];
-  is_monitored?: boolean;
-  brand_name?: string;
+/** Public-safe view of an assessment, stored as `assessments.score_breakdown`
+ *  JSON under `public`. Email posture only (SPF / DMARC / MX) — no Averrow
+ *  threat data, so replaying it can't act as a detection oracle. */
+interface PublicAssessmentView {
+  version: 1;
+  brand_name: string;
+  trust_score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  assessment_text: string;
+  spf_policy: string | null;
+  dmarc_policy: string | null;
 }
 
-/** H4(a): fetch the most recent completed assessment for a domain.
+function isPublicAssessmentView(v: unknown): v is PublicAssessmentView {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return o.version === 1 && typeof o.trust_score === "number" && typeof o.grade === "string"
+    && typeof o.assessment_text === "string" && typeof o.brand_name === "string";
+}
+
+function postureGrade(score: number): PublicAssessmentView["grade"] {
+  if (score >= 90) return "A";
+  if (score >= 80) return "B";
+  if (score >= 70) return "C";
+  if (score >= 60) return "D";
+  return "F";
+}
+
+// No `cached` flag: whether a domain was assessed in the last 24h is
+// itself a signal about other visitors' interest.
+function publicAssessResponse(
+  assessmentId: string, domain: string, view: PublicAssessmentView, assessedAt: string,
+): Record<string, unknown> {
+  return {
+    assessment_id: assessmentId,
+    domain,
+    brand_name: view.brand_name,
+    trust_score: view.trust_score,
+    grade: view.grade,
+    assessment_text: view.assessment_text,
+    spf_policy: view.spf_policy,
+    dmarc_policy: view.dmarc_policy,
+    assessed_at: assessedAt,
+  };
+}
+
+/** H4(a): fetch the most recent completed assessment for a domain that
+ *  carries a public-safe view (rows written before the 2026-10-05
+ *  detection-oracle fix don't, and are never replayed publicly).
  *  `maxAgeModifier` is a SQLite datetime modifier (e.g. '-24 hours');
  *  pass null for "most recent, any age" (global-cap fallback). */
 async function getRecentAssessment(
@@ -258,49 +299,31 @@ async function getRecentAssessment(
 ): Promise<Record<string, unknown> | null> {
   const stmt = maxAgeModifier
     ? env.DB.prepare(
-        `SELECT id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at
+        `SELECT id, domain, score_breakdown, completed_at
          FROM assessments
          WHERE domain = ? AND completed_at IS NOT NULL AND completed_at >= datetime('now', ?)
+           AND score_breakdown IS NOT NULL
          ORDER BY completed_at DESC LIMIT 1`,
       ).bind(domain, maxAgeModifier)
     : env.DB.prepare(
-        `SELECT id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at
+        `SELECT id, domain, score_breakdown, completed_at
          FROM assessments
-         WHERE domain = ? AND completed_at IS NOT NULL
+         WHERE domain = ? AND completed_at IS NOT NULL AND score_breakdown IS NOT NULL
          ORDER BY completed_at DESC LIMIT 1`,
       ).bind(domain);
 
   const row = await stmt.first<{
-    id: string; domain: string; trust_score: number; grade: string;
-    summary_text: string | null; threat_intel_results: string | null;
-    completed_at: string;
+    id: string; domain: string; score_breakdown: string | null; completed_at: string;
   }>();
   if (!row) return null;
 
-  let intel: StoredAssessmentIntel = {};
+  let view: unknown = null;
   try {
-    intel = JSON.parse(row.threat_intel_results ?? "{}") as StoredAssessmentIntel;
-  } catch { /* legacy rows may hold malformed JSON — fall back to defaults */ }
+    view = (JSON.parse(row.score_breakdown ?? "{}") as { public?: unknown }).public;
+  } catch { /* malformed JSON — treat as not replayable */ }
+  if (!isPublicAssessmentView(view)) return null;
 
-  const keyword = row.domain.split(".")[0] ?? row.domain;
-  const fallbackBrand = keyword.charAt(0).toUpperCase() + keyword.slice(1);
-
-  return {
-    assessment_id: row.id,
-    domain: row.domain,
-    brand_name: intel.brand_name ?? fallbackBrand,
-    trust_score: row.trust_score,
-    grade: row.grade,
-    threat_count: intel.threat_count ?? 0,
-    provider_count: intel.provider_count ?? 0,
-    campaign_count: intel.campaign_count ?? 0,
-    threat_types: intel.threat_types ?? [],
-    is_monitored: intel.is_monitored ?? false,
-    assessment_text: row.summary_text ?? "",
-    spam_trap: null,
-    assessed_at: row.completed_at,
-    cached: true,
-  };
+  return publicAssessResponse(row.id, row.domain, view, row.completed_at);
 }
 
 export async function handlePublicAssess(request: Request, env: Env): Promise<Response> {
@@ -315,9 +338,9 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     const body = await request.json().catch(() => null) as { domain?: string } | null;
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
 
-    // Validate domain format
-    const domain = body.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
-    if (!domain || !domain.includes(".") || domain.includes("@")) {
+    // Validate domain format — strict hostname (stored + rendered back).
+    const domain = normalizePublicHostname(body.domain, { stripWww: true });
+    if (!domain) {
       return json({ success: false, error: "Please enter a valid domain (e.g. yourbrand.com)" }, 400, origin);
     }
 
@@ -460,17 +483,34 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     const assessmentText = agentRun.data?.assessmentText
       ?? `${brandName} threat landscape — ${threatCount} known threats across ${providerCount} hosting provider(s) and ${campaignCount} campaign(s). Continuous monitoring is recommended.`;
 
+    // Public view (detection-oracle fix 2026-10-05): the anonymous caller
+    // gets an email-posture score from public DNS only. The threat-derived
+    // score/grade/text above stay on the row for staff (lead intel reads
+    // trust_score/grade); none of it — nor threat/provider/campaign counts,
+    // threat types, monitored status, the monitored brand's name or
+    // spam-trap hits — is returned here.
+    const posture = await computePublicPosture(domain);
+    const publicView: PublicAssessmentView = {
+      version: 1,
+      brand_name: brandName,
+      trust_score: posture.trustScore,
+      grade: postureGrade(posture.trustScore),
+      assessment_text: publicPostureSummary(brandName, posture.trustScore),
+      spf_policy: posture.spfPolicy,
+      dmarc_policy: posture.dmarcPolicy,
+    };
+
     // Store assessment. The requester IP is used only for the KV rate-limit
     // key above and is never persisted (PR-E: no visitor IP in D1).
     const assessmentId = `assess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     await env.DB.prepare(
-      `INSERT INTO assessments (id, domain, trust_score, grade, summary_text, threat_intel_results, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+      `INSERT INTO assessments (id, domain, trust_score, grade, summary_text, threat_intel_results, score_breakdown, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`
     ).bind(
       assessmentId, domain, trustScore, grade, assessmentText,
-      // is_monitored + brand_name ride along so the H4 cached-replay
-      // path can reconstruct the full response shape from this row.
-      JSON.stringify({ threat_count: threatCount, provider_count: providerCount, campaign_count: campaignCount, threat_types: threatTypes, is_monitored: isMonitored, brand_name: monitoredBrand?.name ?? brandName }),
+      JSON.stringify({ threat_count: threatCount, provider_count: providerCount, campaign_count: campaignCount, threat_types: threatTypes, is_monitored: isMonitored, brand_name: monitoredBrand?.name ?? brandName, spam_trap_count: spamTrapCount, spam_trap_ips: spamTrapIps }),
+      // The H4 cached-replay path rebuilds the public response from this.
+      JSON.stringify({ public: publicView }),
     ).run();
 
     // ─── Auto-add brand if it doesn't exist (from public assessment) ───
@@ -489,21 +529,7 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
 
     return json({
       success: true,
-      data: {
-        assessment_id: assessmentId,
-        domain,
-        brand_name: monitoredBrand?.name ?? brandName,
-        trust_score: trustScore,
-        grade,
-        threat_count: threatCount,
-        provider_count: providerCount,
-        campaign_count: campaignCount,
-        threat_types: threatTypes,
-        is_monitored: isMonitored,
-        assessment_text: assessmentText,
-        spam_trap: spamTrapCount > 0 ? { emails_caught: spamTrapCount, unique_ips: spamTrapIps } : null,
-        assessed_at: new Date().toISOString(),
-      },
+      data: publicAssessResponse(assessmentId, domain, publicView, new Date().toISOString()),
     }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
@@ -531,10 +557,16 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
 
     const body = await request.json().catch(() => null) as {
       email?: string; name?: string; company?: string; role?: string;
-      domain?: string; trust_score?: number; grade?: string; assessment_id?: string;
+      domain?: string; assessment_id?: unknown;
+      // trust_score / grade may still arrive from the legacy SPA; they are
+      // ignored — a lead never carries a caller-supplied score.
     } | null;
 
-    if (!body?.email || !body?.name || !body?.company) {
+    if (
+      typeof body?.email !== "string" || typeof body.name !== "string" || typeof body.company !== "string"
+      || !body.email || !body.name || !body.company
+      || (body.role !== undefined && body.role !== null && typeof body.role !== "string")
+    ) {
       return json({ success: false, error: "Email, name, and company are required" }, 400, origin);
     }
 
@@ -544,14 +576,45 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
       return json({ success: false, error: "Please use your business email address" }, 400, origin);
     }
 
-    const assessmentId = body.assessment_id || `assess_placeholder_${Date.now()}`;
+    // Optional domain; when present it must be a real hostname (it is
+    // stored on the placeholder assessments row).
+    let leadDomain = "";
+    if (body.domain !== undefined && body.domain !== null && body.domain !== "") {
+      const normalized = normalizePublicHostname(body.domain, { stripWww: true });
+      if (!normalized) {
+        return json({ success: false, error: "Please enter a valid domain (e.g. yourbrand.com)" }, 400, origin);
+      }
+      leadDomain = normalized;
+    }
+
     const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-    // If no real assessment, create a placeholder
-    if (!body.assessment_id) {
+    // Link the lead to a REAL assessment row, resolved server-side:
+    //   1. the caller's assessment_id, only if that row exists;
+    //   2. else the latest completed assessment for the caller's domain;
+    //   3. else a placeholder row with NO score/grade (never the caller's).
+    // Caller-supplied trust_score / grade are never stored.
+    let assessmentId: string | null = null;
+    if (typeof body.assessment_id === "string" && body.assessment_id.length > 0 && body.assessment_id.length <= 128) {
+      const existing = await env.DB.prepare(
+        "SELECT id FROM assessments WHERE id = ?",
+      ).bind(body.assessment_id).first<{ id: string }>();
+      assessmentId = existing?.id ?? null;
+    }
+    if (!assessmentId && leadDomain) {
+      const latest = await env.DB.prepare(
+        `SELECT id FROM assessments
+         WHERE domain = ? AND completed_at IS NOT NULL
+         ORDER BY completed_at DESC LIMIT 1`,
+      ).bind(leadDomain).first<{ id: string }>();
+      assessmentId = latest?.id ?? null;
+    }
+    if (!assessmentId) {
+      assessmentId = `assess_placeholder_${crypto.randomUUID()}`;
       await env.DB.prepare(
-        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, ?, ?)`
-      ).bind(assessmentId, body.domain || "", body.trust_score ?? 0, body.grade || "?").run();
+        `INSERT INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, NULL, NULL)
+         ON CONFLICT(id) DO NOTHING`,
+      ).bind(assessmentId, leadDomain).run();
     }
 
     await env.DB.prepare(
@@ -581,15 +644,16 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
     await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
 
     const body = await request.json().catch(() => null) as {
-      domain?: string;
-      email?: string;
-      company?: string;
+      domain?: unknown;
+      email?: unknown;
+      company?: unknown;
     } | null;
 
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
 
-    const domain = body.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
-    if (!domain || !domain.includes(".") || domain.includes("@")) {
+    // Strict hostname — this creates a brands row from anonymous input.
+    const domain = normalizePublicHostname(body.domain, { stripWww: true });
+    if (!domain) {
       return json({ success: false, error: "Please enter a valid domain" }, 400, origin);
     }
 
@@ -614,20 +678,18 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
     await env.DB.prepare(
       `INSERT OR IGNORE INTO monitored_brands (brand_id, tenant_id, added_by, notes, status)
        VALUES (?, '__internal__', 'self_service', ?, 'active')`
-    ).bind(brand.id, body.email ? `Self-service by ${body.email}` : "Self-service submission").run();
-
-    // Count existing threats
-    const threatCount = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM threats
-       WHERE malicious_url LIKE ? OR malicious_domain LIKE ?`
-    ).bind(`%${keyword}%`, `%${keyword}%`).first<{ n: number }>();
+    ).bind(brand.id, typeof body.email === "string" && body.email ? `Self-service by ${body.email}` : "Self-service submission").run();
 
     // Store lead if email provided
-    if (body.email && body.company) {
+    if (typeof body.email === "string" && body.email && typeof body.company === "string" && body.company) {
       const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const assessmentId = `assess_monitor_${Date.now()}`;
+      // Placeholder assessment with no score/grade. (The old grade '?'
+      // violated the assessments.grade CHECK, so INSERT OR IGNORE dropped
+      // the row and the lead referenced a missing assessment.)
+      const assessmentId = `assess_monitor_${crypto.randomUUID()}`;
       await env.DB.prepare(
-        `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, 0, '?')`
+        `INSERT INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, NULL, NULL)
+         ON CONFLICT(id) DO NOTHING`
       ).bind(assessmentId, domain).run();
       await env.DB.prepare(
         `INSERT INTO leads (id, assessment_id, name, email, company, notes)
@@ -635,13 +697,15 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
       ).bind(leadId, assessmentId, body.company, body.email, body.company).run();
     }
 
+    // Uniform response (detection-oracle fix 2026-10-05): no threat count,
+    // no brand_id (its shape revealed whether the brand was already in the
+    // catalog), and the name is always derived from the submitted domain —
+    // identical whether the brand existed or was just created.
     return json({
       success: true,
       data: {
-        brand_id: brand.id,
         domain,
         brand_name: brandName,
-        existing_threats: threatCount?.n ?? 0,
         monitoring: true,
         message: `${brandName} is now being monitored. We'll detect threats targeting this domain.`,
       },

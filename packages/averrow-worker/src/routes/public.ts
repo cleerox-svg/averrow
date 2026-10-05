@@ -24,6 +24,7 @@ import { handleContactSubmission } from "../handlers/contact";
 import { handleTrackEvent } from "../handlers/track";
 import { logMarketingEdgeView } from "../lib/marketing-event-logger";
 import { handlePublicBrandScan } from "../handlers/brandScan";
+import { normalizePublicHostname } from "../lib/public-hostname";
 import {
   handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
   handlePublicMonitor, handlePublicFeeds, publicAssessIpLimit,
@@ -130,16 +131,18 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     if (limited) return limited;
     try {
       const ct = request.headers.get("Content-Type") ?? "";
-      let domain: string | undefined;
+      let rawDomain: unknown;
       if (ct.includes("application/x-www-form-urlencoded")) {
         const form = await request.formData();
-        domain = (form.get("domain") as string)?.toLowerCase().trim();
+        rawDomain = form.get("domain");
       } else {
-        const body = await request.json() as { domain?: string };
-        domain = body.domain?.toLowerCase().trim();
+        const body = await request.json() as { domain?: unknown };
+        rawDomain = body.domain;
       }
-      domain = domain?.replace(/^https?:\/\//, "").split("/")[0];
-      if (!domain || !domain.includes(".")) {
+      // Strict hostname check (stored-XSS fix): anything that isn't a plain
+      // DNS hostname goes back to the homepage with no scan and no row.
+      const domain = normalizePublicHostname(rawDomain);
+      if (!domain) {
         return Response.redirect(new URL("/", request.url).toString(), 302);
       }
       const scanRequest = new Request(request.url, {
