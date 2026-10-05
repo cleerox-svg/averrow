@@ -192,6 +192,8 @@ export default function App() {
           <Route path="security" element={lazyRoute(<SecurityPage />)} />
           <Route path="notifications" element={<Navigate to="/settings/notifications/channels" replace />} />
           <Route path="notifications/:tab" element={lazyRoute(<NotificationSettingsPage />)} />
+          {/* Unknown settings paths land on the default section. */}
+          <Route path="*" element={<Navigate to="/settings/profile" replace />} />
         </Route>
         {/* Legacy account paths */}
         <Route path="profile" element={<Navigate to="/settings/profile" replace />} />

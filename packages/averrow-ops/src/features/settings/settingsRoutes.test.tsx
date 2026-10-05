@@ -191,4 +191,9 @@ describe('settings routes', () => {
     await waitFor(() =>
       expect(screen.getByTestId('where')).toHaveTextContent('/settings/notifications/events'));
   });
+
+  it('unknown /settings/* paths redirect to Profile', async () => {
+    renderAt('/settings/bogus');
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/settings/profile'));
+  });
 });
