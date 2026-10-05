@@ -9,6 +9,7 @@ import {
   handlePublicBrandScanResult, handleLeadCapture,
 } from "../handlers/brandScan";
 import { handleHealthCheck } from "../handlers/health";
+import { turnstileGuardJson } from "../lib/turnstile";
 
 export function registerScanRoutes(router: RouterType<IRequest>): void {
   // ─── Health ─────────────────────────────────────────────────────
@@ -51,6 +52,11 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
   router.post("/api/brand-scan/public", async (request: Request, env: Env) => {
     const limited = await rateLimit(request, env, "scan");
     if (limited) return limited;
+    // Turnstile (TURNSTILE_MODE): JSON `turnstileToken` or CF-Turnstile-Response header.
+    const blocked = await turnstileGuardJson(request, env, {
+      route: "POST /api/brand-scan/public", expectedAction: "scan",
+    });
+    if (blocked) return blocked;
     return handlePublicBrandScan(request, env);
   });
 
@@ -63,6 +69,10 @@ export function registerScanRoutes(router: RouterType<IRequest>): void {
   router.post("/api/leads", async (request: Request, env: Env) => {
     const limited = await rateLimit(request, env, "auth");
     if (limited) return limited;
+    const blocked = await turnstileGuardJson(request, env, {
+      route: "POST /api/leads", expectedAction: "lead",
+    });
+    if (blocked) return blocked;
     return handleLeadCapture(request, env);
   });
 }

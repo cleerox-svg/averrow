@@ -26,6 +26,9 @@ import { logMarketingEdgeView } from "../lib/marketing-event-logger";
 import { handlePublicBrandScan } from "../handlers/brandScan";
 import { normalizePublicHostname } from "../lib/public-hostname";
 import {
+  evaluateTurnstile, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
+} from "../lib/turnstile";
+import {
   handlePublicStats, handlePublicGeo, handlePublicAssess, handlePublicLeadCapture,
   handlePublicMonitor, handlePublicFeeds, publicAssessIpLimit,
 } from "../handlers/public";
@@ -132,12 +135,26 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
     try {
       const ct = request.headers.get("Content-Type") ?? "";
       let rawDomain: unknown;
+      let rawToken: unknown = request.headers.get(TURNSTILE_HEADER);
       if (ct.includes("application/x-www-form-urlencoded")) {
         const form = await request.formData();
         rawDomain = form.get("domain");
+        rawToken = rawToken || form.get(TURNSTILE_FORM_FIELD);
       } else {
-        const body = await request.json() as { domain?: unknown };
+        const body = await request.json() as Record<string, unknown>;
         rawDomain = body.domain;
+        rawToken = rawToken || body[TURNSTILE_JSON_FIELD] || body[TURNSTILE_FORM_FIELD];
+      }
+      // Turnstile (TURNSTILE_MODE). Enforce-mode failure goes back to the
+      // homepage with an error param instead of a JSON 403 — this is a
+      // browser form post.
+      const turnstile = await evaluateTurnstile(
+        request, env,
+        () => (typeof rawToken === "string" && rawToken.trim() ? rawToken.trim() : null),
+        { route: "POST /assess", expectedAction: "scan" },
+      );
+      if (turnstile.blocked) {
+        return Response.redirect(new URL("/?error=verification_failed", request.url).toString(), 302);
       }
       // Strict hostname check (stored-XSS fix): anything that isn't a plain
       // DNS hostname goes back to the homepage with no scan and no row.
