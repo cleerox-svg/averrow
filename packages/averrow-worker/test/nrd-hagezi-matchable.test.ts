@@ -36,6 +36,7 @@ import {
 } from "../src/feeds/nrd_hagezi";
 import { threatId } from "../src/feeds/types";
 import { generatePermutations } from "../src/lib/dnstwist";
+import { NRD_BACKCHECK_UPSERT_SQL } from "../src/lib/nrd-store";
 import { runLookalikeNrdMatch } from "../src/lib/lookalike-nrd-matcher";
 import { runPhantomMatch } from "../src/lib/phantom-matcher";
 import { generateAndStoreLookalikes } from "../src/scanners/lookalike-domains";
@@ -117,6 +118,15 @@ describe.skipIf(!hasSqlite())("NRD_INSERT_SQL — the filtered insert", () => {
     expect(joined).not.toMatch(/SCAN (l|p|lookalike_domains|phantom_domains)\b/);
     // Exactly two bind parameters regardless of row count.
     expect((NRD_INSERT_SQL.match(/\?/g) ?? []).length).toBe(2);
+  });
+
+  it("the back-check upsert uses the same covering-index probes and 2 binds", () => {
+    const joined = (raw.prepare(`EXPLAIN QUERY PLAN ${NRD_BACKCHECK_UPSERT_SQL}`).all("2026-10-04", "[]") as Array<{ detail: string }>)
+      .map((r) => r.detail).join(" | ");
+    expect(joined).toMatch(/SEARCH l USING COVERING INDEX idx_lookalike_domain \(domain=\?\)/);
+    expect(joined).toMatch(/SEARCH p USING COVERING INDEX idx_phantom_domain \(domain=\?\)/);
+    expect(joined).not.toMatch(/SCAN (l|p|lookalike_domains|phantom_domains)\b/);
+    expect((NRD_BACKCHECK_UPSERT_SQL.match(/\?/g) ?? []).length).toBe(2);
   });
 
   it("stores only lookalike/phantom-equal domains and returns the rows actually inserted", async () => {

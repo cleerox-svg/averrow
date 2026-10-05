@@ -289,7 +289,14 @@ export async function handleGenerateLookalikes(
         domain: brand.canonical_domain,
         new_permutations: newCount,
         nrd_backcheck: backcheck
-          ? { hits: backcheck.hits, stored: backcheck.stored, timed_out: backcheck.timed_out, skipped: backcheck.skipped }
+          ? {
+            hits: backcheck.hits,
+            stored: backcheck.stored,
+            refreshed: backcheck.refreshed,
+            store_errors: backcheck.store_errors,
+            timed_out: backcheck.timed_out,
+            skipped: backcheck.skipped,
+          }
           : null,
       },
     }, 200, origin);

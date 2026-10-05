@@ -150,6 +150,38 @@ describe.skipIf(!hasSqlite())("NRD archive back-check — end to end", () => {
     ).toEqual({ ev: "nrd", first_seen: `${REG_DATE} 00:00:00` });
   });
 
+  it("a permutation SHARED with an already-claimed brand: the back-check re-surfaces the row and the later brand is claimed too", async () => {
+    // Brand A owns the permutation at ingest → stored + claimed, cursor moves
+    // past it. Brand B (same permutation; lookalike_domains is unique on
+    // (brand_id, domain)) is seeded later.
+    const shared = "paypa1-shared.com";
+    seedLookalike(shared, "b_a");
+    const archive = fakeR2Bucket();
+    const staging = fakeR2Bucket({
+      [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(""), customMetadata: { version: "v0" } },
+    });
+    const env = envOf(archive, staging);
+    vi.stubGlobal("fetch", vi.fn(async () => listResponse([shared, "noise.org"])));
+    await ingestNrdHagezi({ env, feedName: "nrd_hagezi", feedUrl: "" });
+    // Day D: the ingest (and A's claim) happened earlier than the back-check.
+    raw.prepare("UPDATE nrd_domains SET created_at = datetime('now', '-1 day')").run();
+    expect((await runLookalikeNrdMatch(env)).claimed).toBe(1);
+    const claimA = raw.prepare("SELECT first_seen FROM lookalike_domains WHERE brand_id = 'b_a'").get();
+    // A second run with nothing new claims nothing (the cursor is past the row).
+    expect((await runLookalikeNrdMatch(env)).claimed).toBe(0);
+
+    seedLookalike(shared, "b_b");
+    const bc = await runNrdArchiveBackcheck(env, [shared], "lookalike");
+    expect(bc).toMatchObject({ hits: 1, stored: 0, refreshed: 1 });
+
+    const m = await runLookalikeNrdMatch(env);
+    expect(m.claimed).toBe(1); // B only — A's claim needs first_seen IS NULL
+    expect(
+      raw.prepare("SELECT registration_evidence AS ev, first_seen FROM lookalike_domains WHERE brand_id = 'b_b'").get(),
+    ).toEqual({ ev: "nrd", first_seen: `${REG_DATE} 00:00:00` });
+    expect(raw.prepare("SELECT first_seen FROM lookalike_domains WHERE brand_id = 'b_a'").get()).toEqual(claimA);
+  });
+
   it("phantom source: a back-checked phantom NRD is found by the phantom matcher's incremental nrd run", async () => {
     raw.prepare(
       "INSERT INTO phantom_domains (id, brand_id, domain, source_model) VALUES ('ph1', 'b1', 'brand-ai-help.com', 'm')",
@@ -204,13 +236,47 @@ describe.skipIf(!hasSqlite())("NRD archive back-check — scan order and bounds"
     expect(archive.ops.list).toBe(NRD_BACKCHECK_DAYS);
   });
 
-  it("a domain already in nrd_domains is a hit with stored = 0 (INSERT OR IGNORE)", async () => {
-    raw.prepare("INSERT INTO nrd_domains (domain, registered_date) VALUES ('x.com', '2026-01-01')").run();
+  it("a domain already in nrd_domains is RE-SURFACED (created_at → now), keeping the EARLIER registered_date", async () => {
+    raw.prepare(
+      "INSERT INTO nrd_domains (domain, registered_date, created_at, brand_matched) VALUES ('x.com', '2026-01-01', '2026-01-02 00:00:00', 1)",
+    ).run();
+    raw.prepare(
+      `INSERT INTO nrd_domains (domain, registered_date, created_at) VALUES ('y.com', '${daysAgo(1)}', '2026-01-02 00:00:00')`,
+    ).run();
     const archive = fakeR2Bucket();
-    await putArchive(archive, daysAgo(1), "a.com", ["x.com"]);
-    const r = await runNrdArchiveBackcheck(envOf(archive), ["x.com"], "lookalike");
-    expect(r).toMatchObject({ hits: 1, stored: 0 });
-    expect(nrdRow("x.com")?.registered_date).toBe("2026-01-01");
+    await putArchive(archive, daysAgo(3), "a.com", ["x.com", "y.com"]);
+
+    const r = await runNrdArchiveBackcheck(envOf(archive), ["x.com", "y.com"], "lookalike");
+
+    expect(r).toMatchObject({ hits: 2, stored: 0, refreshed: 2, store_errors: 0 });
+    const rows = raw.prepare(
+      "SELECT domain, registered_date, created_at > '2026-01-02 00:00:00' AS moved, brand_matched FROM nrd_domains ORDER BY domain",
+    ).all();
+    expect(rows).toEqual([
+      { domain: "x.com", registered_date: "2026-01-01", moved: 1, brand_matched: 1 }, // stored date was earlier
+      { domain: "y.com", registered_date: daysAgo(3), moved: 1, brand_matched: 0 }, // archive date was earlier
+    ]);
+  });
+
+  it("a FAILED nrd_domains write is recorded (store_errors, unstored, error) — never silent, never thrown", async () => {
+    const archive = fakeR2Bucket();
+    await putArchive(archive, daysAgo(2), "a.com", ["x.com", "y.com"]);
+    const inner = db;
+    const failing = {
+      ...inner,
+      prepare: (sql: string) => {
+        if (sql.includes("INSERT INTO nrd_domains")) throw new Error("D1_ERROR: simulated write failure");
+        return inner.prepare(sql);
+      },
+    } as unknown as D1Database;
+    const env = { ...envOf(archive), DB: failing } as unknown as Env;
+
+    const r = await runNrdArchiveBackcheck(env, ["x.com", "y.com"], "lookalike");
+
+    expect(r).toMatchObject({ hits: 2, stored: 0, refreshed: 0, store_errors: 2 });
+    expect([...r.unstored].sort()).toEqual(["x.com", "y.com"]);
+    expect(r.error).toMatch(/nrd_domains write failed: .*simulated write failure/);
+    expect(nrdRow("x.com")).toBeUndefined();
   });
 
   it("no domains → skipped with zero R2 traffic", async () => {

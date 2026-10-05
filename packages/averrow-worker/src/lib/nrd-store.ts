@@ -85,3 +85,63 @@ export async function storeNrdReference(db: D1Database, domains: string[], date:
   return stored;
 }
 
+
+/**
+ * The BACK-CHECK variant of NRD_INSERT_SQL (lib/nrd-archive-backcheck.ts
+ * only — never the feed). Same matchable filter, but a domain ALREADY in
+ * nrd_domains is RE-SURFACED: `created_at` moves to now so the row sits
+ * above both matchers' cursors again, and `registered_date` keeps the
+ * earlier of the stored and archive dates. Why: lookalike_domains is unique
+ * on (brand_id, domain), so a permutation shared by brands A and B has ONE
+ * nrd_domains row; if A's claim already moved the matcher's cursor past it,
+ * B (seeded later) would never be claimed. Re-claiming A is a no-op (the
+ * claim requires first_seen IS NULL); restarting the row's 30-day
+ * retention clock is accepted. The rowid is unchanged, so the row clears the
+ * lookalike matcher's (created_at, rowid) keyset only because created_at
+ * moves to a LATER second than the cursor's — true whenever the cursor was
+ * set by an earlier matcher run (the scanner back-checks BEFORE matching;
+ * its previous run is an hour old). The WHERE clause also disambiguates SQLite's
+ * INSERT … SELECT … ON CONFLICT parse. 2 binds, like NRD_INSERT_SQL.
+ */
+export const NRD_BACKCHECK_UPSERT_SQL =
+  `INSERT INTO nrd_domains (domain, registered_date)
+   SELECT j.value, ? FROM json_each(?) AS j
+    WHERE EXISTS (SELECT 1 FROM lookalike_domains l WHERE l.domain = j.value)
+       OR EXISTS (SELECT 1 FROM phantom_domains p WHERE p.domain = j.value)
+   ON CONFLICT(domain) DO UPDATE SET
+     created_at = datetime('now'),
+     registered_date = MIN(nrd_domains.registered_date, excluded.registered_date)`;
+
+/** Which of a JSON array of domains already have an nrd_domains row (PK probes). */
+const NRD_EXISTING_SQL =
+  `SELECT j.value AS domain FROM json_each(?) AS j
+    WHERE EXISTS (SELECT 1 FROM nrd_domains n WHERE n.domain = j.value)`;
+
+/**
+ * Store (new) or re-surface (existing) archive back-check hits for one
+ * archive date. `stored` = rows inserted, `refreshed` = existing rows whose
+ * created_at was moved to now. Hits are a handful, so one statement each
+ * (≤ NRD_DOMAINS_PER_STATEMENT per chunk). Throws on a D1 failure — the
+ * back-check records it.
+ */
+export async function upsertNrdBackcheckHits(
+  db: D1Database,
+  domains: string[],
+  date: string,
+): Promise<{ stored: number; refreshed: number }> {
+  let stored = 0;
+  let refreshed = 0;
+  for (let i = 0; i < domains.length; i += NRD_DOMAINS_PER_STATEMENT) {
+    const json = JSON.stringify(domains.slice(i, i + NRD_DOMAINS_PER_STATEMENT));
+    const existing = await db.prepare(NRD_EXISTING_SQL).bind(json).all<{ domain: string }>();
+    const r = await db.prepare(NRD_BACKCHECK_UPSERT_SQL).bind(date, json).run();
+    const changes = Number(r.meta?.changes ?? 0);
+    // An existing row always takes the DO UPDATE branch (changes 1); a new
+    // matchable domain inserts. In-chunk duplicates are deduped by the caller.
+    const ex = Math.min(existing.results.length, changes);
+    refreshed += ex;
+    stored += changes - ex;
+  }
+  logger.info("nrd_backcheck_upserted", { domains: domains.length, stored, refreshed, date });
+  return { stored, refreshed };
+}

@@ -363,7 +363,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/api/lookalikes/:brandId` | Staff | List lookalike domains |
-| POST | `/api/lookalikes/:brandId/generate` | Staff | Generate domain permutations. Then back-checks the newly inserted permutations against the last 8 days of the `NRD_ARCHIVE` R2 archive (`lib/nrd-archive-backcheck.ts`, inline, 10s soft cap, never fails the request) and stores any hit in `nrd_domains` with its archive date, so the hourly NRD matcher claims it. Response `data` adds `nrd_backcheck: {hits, stored, timed_out, skipped} \| null` (null when nothing new was inserted). |
+| POST | `/api/lookalikes/:brandId/generate` | Staff | Generate domain permutations. Then back-checks the newly inserted permutations against the last 8 days of the `NRD_ARCHIVE` R2 archive (`lib/nrd-archive-backcheck.ts`, inline, 10s soft cap, never fails the request) and stores any hit in `nrd_domains` with its archive date, so the hourly NRD matcher claims it. A hit already in `nrd_domains` (permutation shared with another brand) is re-surfaced (`created_at` → now) so this brand's row is claimed too. Response `data` adds `nrd_backcheck: {hits, stored, refreshed, store_errors, timed_out, skipped} \| null` (null when nothing new was inserted). |
 | POST | `/api/lookalikes/:brandId/scan` | Staff | Scan lookalike domains |
 | PATCH | `/api/lookalikes/:id` | Staff | Update lookalike status / threat_level. A `status` change clears `status_reason`; setting `monitoring` on a row the official-domain rule parked as benign (non-null `status_reason`, `check_due_at` NULL) also un-parks it. |
 

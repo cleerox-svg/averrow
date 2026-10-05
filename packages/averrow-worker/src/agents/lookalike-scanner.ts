@@ -90,20 +90,23 @@ export const lookalikeScannerAgent: AgentModule = {
     // stores only NRDs that were ALREADY lookalike/phantom domains at
     // ingest, so a permutation seeded above whose NRD listing came in
     // earlier has no nrd_domains row. Scan the last 8 days of the R2 archive
-    // for the just-seeded domains and store any hit (created_at = now), so
-    // the matcher below claims it on THIS run. Skipped when nothing was
+    // for the just-seeded domains and store (or re-surface) any hit with
+    // created_at = now, so the matcher below claims it — on this run, or the
+    // next if its replica read lags. Skipped when nothing was
     // seeded; never throws (archive trouble must not fail the scanner).
     if (seededDomains.length > 0) {
       const bc = await runNrdArchiveBackcheck(ctx.env, seededDomains, "lookalike");
-      if (bc.hits > 0 || bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped === "archive_unbound") {
+      if (bc.hits > 0 || bc.store_errors > 0 || bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped === "archive_unbound") {
         agentOutputs.push({
           type: "diagnostic",
           summary: `NRD archive back-check: ${bc.domains} seeded domain(s), ${bc.hits} found in the last 8 days ` +
-            `(${bc.stored} stored)` +
+            `(${bc.stored} stored, ${bc.refreshed} re-surfaced)` +
+            `${bc.store_errors > 0 ? `, ${bc.store_errors} NOT stored` : ""}` +
             `${bc.timed_out ? ", timed out" : ""}` +
             `${bc.skipped ? `, skipped (${bc.skipped})` : ""}` +
             `${bc.error || bc.object_errors > 0 ? `, ${bc.object_errors} object error(s)${bc.error ? `: ${bc.error}` : ""}` : ""}`,
-          severity: bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped ? "low" : "info",
+          severity: bc.store_errors > 0 ? "medium"
+            : bc.error || bc.object_errors > 0 || bc.timed_out || bc.skipped ? "low" : "info",
           details: { ...bc } as Record<string, unknown>,
         });
       }

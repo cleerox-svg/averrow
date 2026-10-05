@@ -20,11 +20,21 @@
  * is never today), OLDEST FIRST, stream-gunzips each object and tests every
  * line against that Set. Archive lines are the feed's stored form (trimmed +
  * lowercased), and the seeded domains are the raw stored strings, so the
- * test is the matchers' own `=`. A hit is stored with storeNrdReference
- * (INSERT OR IGNORE, same EXISTS filter) under the object's date prefix as
- * `registered_date`; `created_at` defaults to now, so it sits above the
- * lookalike matcher's keyset cursor and the phantom matcher's incremental
- * cursor and is picked up on their next run — for the scanner, the SAME run.
+ * test is the matchers' own `=`. A hit is written with
+ * upsertNrdBackcheckHits (lib/nrd-store.ts — same EXISTS filter) under the
+ * object's date prefix as `registered_date`:
+ *   * a NEW row gets `created_at` = now;
+ *   * an EXISTING row (the permutation is shared with another brand whose
+ *     claim already moved the matcher's cursor past it — lookalike_domains
+ *     is unique on (brand_id, domain), nrd_domains on domain) is
+ *     RE-SURFACED: `created_at` = now, `registered_date` = the earlier of
+ *     the stored and archive dates. Re-claiming the first brand is a no-op
+ *     (the claim needs first_seen IS NULL); the row's 30-day retention clock
+ *     restarts.
+ * Either way the row sits above the lookalike matcher's keyset cursor and
+ * the phantom matcher's incremental cursor. The scanner calls its matcher
+ * right after, but the matcher READS through a replica session, so the
+ * claim lands on this run or — if the replica lags — the next one.
  * Oldest first + a found domain leaves the Set, so the earliest listing
  * wins and the scan stops once every domain is found.
  *
@@ -47,7 +57,7 @@
  */
 
 import type { Env } from "../types";
-import { NRD_ARCHIVE_PREFIX, storeNrdReference } from "./nrd-store";
+import { NRD_ARCHIVE_PREFIX, upsertNrdBackcheckHits } from "./nrd-store";
 import { logger } from "./logger";
 
 /** UTC dates (yesterday back) whose archive objects are scanned. */
@@ -58,6 +68,9 @@ export const NRD_BACKCHECK_SOFT_CAP_MS = 20_000;
 
 /** Distinct domains checked per call (a seeder tick is ~hundreds). */
 export const NRD_BACKCHECK_MAX_DOMAINS = 10_000;
+
+/** Max unstored domains listed in the result (the count is exact). */
+const UNSTORED_SAMPLE = 50;
 
 export type NrdBackcheckSource = "lookalike" | "phantom";
 
@@ -71,8 +84,14 @@ export interface NrdBackcheckResult {
   lines_scanned: number;
   /** Domains found in the archive. */
   hits: number;
-  /** nrd_domains rows inserted (0 for a hit already present). */
+  /** nrd_domains rows inserted. */
   stored: number;
+  /** Existing nrd_domains rows re-surfaced (created_at → now). */
+  refreshed: number;
+  /** Hits whose write FAILED (D1 error) — found in the archive, not stored. */
+  store_errors: number;
+  /** Up to UNSTORED_SAMPLE of those domains, for the operator. */
+  unstored: string[];
   /** The soft cap stopped the scan before every object was read. */
   timed_out: boolean;
   object_errors: number;
@@ -178,6 +197,9 @@ export async function runNrdArchiveBackcheck(
     lines_scanned: 0,
     hits: 0,
     stored: 0,
+    refreshed: 0,
+    store_errors: 0,
+    unstored: [],
     timed_out: false,
     object_errors: 0,
     skipped: null,
@@ -233,7 +255,22 @@ export async function runNrdArchiveBackcheck(
         }
         if (found.length > 0) {
           result.hits += found.length;
-          result.stored += await storeNrdReference(env.DB, found, date);
+          try {
+            const w = await upsertNrdBackcheckHits(env.DB, found, date);
+            result.stored += w.stored;
+            result.refreshed += w.refreshed;
+          } catch (err) {
+            // Never silent: the domains were FOUND but not written. They are
+            // not re-queued (a later object would give them a newer date);
+            // the caller's diagnostic surfaces store_errors + unstored.
+            const msg = err instanceof Error ? err.message : String(err);
+            result.store_errors += found.length;
+            for (const d of found) {
+              if (result.unstored.length < UNSTORED_SAMPLE) result.unstored.push(d);
+            }
+            result.error ??= `nrd_domains write failed: ${msg}`;
+            logger.error("nrd_archive_backcheck_store_failed", { source, date, domains: found, error: msg });
+          }
         }
         if (!completed) { result.timed_out = true; break dates; }
         if (wanted.size === 0) break dates;

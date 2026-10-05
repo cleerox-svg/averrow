@@ -23,7 +23,9 @@
  * closes that: agents/lookalike-scanner.ts back-checks the domains its
  * seeder just inserted against the last 8 days of the R2 archive BEFORE
  * calling this matcher, and stores any hit with the archive's date (and
- * created_at = now, above this cursor), so the same run claims it. The
+ * created_at = now, above this cursor) — or re-surfaces an existing row a
+ * brand sharing the permutation already had claimed — so this run claims it
+ * (or the next, when the replica read lags). The
  * manual generate endpoint does the same inline. A listing older than 8
  * days is not recovered. Joining it to
  * `lookalike_domains` by domain turns "the checker will get to it in ~48
