@@ -13,8 +13,10 @@
  * Disclosure (docs/DISCLOSURE_REGISTER.md): no speed, success-rate, volume,
  * cadence or batch-size claims; no provider or vendor names; no AI wording;
  * "Evidence" lists outcomes only, never signals, thresholds or weights.
- * Scope is stated plainly: Averrow submits for lookalike domains and phishing
- * URLs under the customer's signed authorization at the level they choose;
+ * Scope is stated plainly: Averrow files for lookalike domains and phishing
+ * URLs under the customer's signed authorization at the level they choose
+ * (automatic sending covers registrar reports; hosting-provider reports are
+ * filed by our team);
  * social profiles, apps and paste sites are drafted with evidence, ready to
  * file with the platform. "Revoke any time" is true of the authorization.
  * Fragments are labelled illustrative and carry no figures.
@@ -38,10 +40,10 @@ const modes = [
 ];
 
 const timeline = [
-  { title: "Found", text: "Linked to the operation behind it.", hl: false },
+  { title: "Found", text: "Lands in your queue with its severity.", hl: false },
   { title: "Evidence", text: "Assembled automatically.", hl: false },
   { title: "Your rules", text: "Manual, approve first or automatic.", hl: true },
-  { title: "Filed", text: "Every submission and reply in one history.", hl: false },
+  { title: "Filed", text: "Every submission, with the provider's response and ticket number where there is one.", hl: false },
   { title: "Watched", text: "Alerted if a removed domain returns.", hl: false },
 ];
 ---
@@ -50,11 +52,12 @@ const timeline = [
   <div class="tf-head">
     <div>
       <div class="tf-eyebrow">From finding to takedown</div>
-      <h2 class="tf-h" id="tf-title">You decide what gets filed. We do the filing.</h2>
+      <h2 class="tf-h" id="tf-title">You set the rules. We do the filing.</h2>
       <p class="tf-lede">
-        Every finding arrives with its evidence. Set your rules once, and Averrow submits abuse
-        reports for lookalike domains and phishing URLs to registrars and hosting providers on your
-        behalf. Revoke the authorization any time.
+        Every finding arrives with its evidence. Sign an authorization, set your rules, and Averrow
+        files abuse reports for lookalike domains and phishing URLs with registrars and hosting
+        providers on your behalf. Registrar reports can go out automatically. Revoke the
+        authorization any time.
       </p>
     </div>
     <div class="tf-mode" role="radiogroup" aria-label="Automation level" data-tf-mode hidden>
@@ -70,37 +73,37 @@ const timeline = [
       <div class="tf-sn"><span aria-hidden="true">1</span>Found</div>
       <div class="tf-card">
         <div class="tf-r"><span class="tf-mono">acme-payroll-login.example</span><span class="tf-pill high">High</span></div>
-        <div class="tf-cap">live login page · part of OP-2291</div>
+        <div class="tf-cap">live login page</div>
       </div>
-      <p>Lands in your queue, already linked to the operation behind it.</p>
+      <p>Lands in your queue with its severity and what it's serving.</p>
     </li>
     <li class="tf-st">
       <div class="tf-sn"><span aria-hidden="true">2</span>Evidence</div>
       <div class="tf-card tf-ev">
-        <div><i aria-hidden="true"></i>Registered 2 days ago</div>
-        <div><i aria-hidden="true"></i>Login form imitating Acme</div>
-        <div><i aria-hidden="true"></i>Hosted on AS64500</div>
-        <div><i aria-hidden="true"></i>Shares a certificate with other domains in OP-2291</div>
+        <div><i aria-hidden="true"></i>Character-swap lookalike of acme.example</div>
+        <div><i aria-hidden="true"></i>Live web server</div>
+        <div><i aria-hidden="true"></i>Mail (MX) records set up</div>
+        <div><i aria-hidden="true"></i>Resolves to 203.0.113.24</div>
       </div>
       <p>An evidence summary is assembled automatically for every draft.</p>
     </li>
     <li class="tf-st hl">
       <div class="tf-sn"><span aria-hidden="true">3</span>Your rules</div>
       <div class="tf-card" data-m="manual" hidden>
-        <div class="tf-r"><b>Draft ready</b><span class="tf-pill med">Yours to send</span></div>
-        <div class="tf-cap">nothing is filed until you choose to</div>
+        <div class="tf-r"><b>Draft ready</b><span class="tf-pill amber">Waits for you</span></div>
+        <div class="tf-cap">nothing goes out automatically</div>
       </div>
       <div class="tf-card" data-m="approve">
         <div class="tf-r"><b>Waiting for your approval</b></div>
-        <div class="tf-btns"><span class="tf-b pri">Approve</span><span class="tf-b">Withdraw</span></div>
+        <div class="tf-btns" aria-hidden="true"><span class="tf-b pri">Approve</span><span class="tf-b">Withdraw</span></div>
       </div>
       <div class="tf-card" data-m="auto" hidden>
         <div class="tf-r"><b>Within your monthly limit</b><span class="tf-cap">limit set by you</span></div>
         <div class="tf-bar" aria-hidden="true"><i></i></div>
       </div>
-      <p data-m="manual" hidden>You review and send each one yourself.</p>
-      <p data-m="approve">We hold every takedown until someone on your team approves it.</p>
-      <p data-m="auto" hidden>Filed automatically, up to the monthly limit you set.</p>
+      <p data-m="manual" hidden>You approve each one, and our team files it.</p>
+      <p data-m="approve">Takedowns outside your rules wait until someone on your team approves them. You can make that all of them.</p>
+      <p data-m="auto" hidden>Filed automatically within your rules and any monthly limit you set.</p>
     </li>
     <li class="tf-st">
       <div class="tf-sn"><span aria-hidden="true">4</span>Filed</div>
@@ -108,7 +111,7 @@ const timeline = [
         <div class="tf-r"><b>Report sent to the registrar</b></div>
         <div class="tf-cap">ticket 48213 · awaiting response</div>
       </div>
-      <p>Every submission and every provider reply, in one history.</p>
+      <p>Every submission, with the provider's response and ticket number where there is one.</p>
     </li>
     <li class="tf-st">
       <div class="tf-sn"><span aria-hidden="true">5</span>Watched</div>
@@ -132,15 +135,15 @@ const timeline = [
   <ul class="tf-who" role="list" aria-label="Who files what">
     <li>
       <b>Domains and phishing URLs</b>
-      <span>Submitted by Averrow under your authorization, at the level you choose.</span>
+      <span>Submitted under your authorization, at the level you choose. Our analysts can also file on your behalf.</span>
     </li>
     <li>
       <b>Social profiles, apps and paste sites</b>
-      <span>Drafted with evidence, ready to file with the platform.</span>
+      <span>Drafted with evidence, ready to file with the platform. Paste sites on Business and up.</span>
     </li>
     <li>
       <b>How you hear</b>
-      <span>In your console, and streamed to your webhook or SIEM as findings are created.</span>
+      <span>In your console. On Business and Enterprise, also sent to your webhook or SIEM when an alert is raised, set up with our team.</span>
     </li>
   </ul>
 
@@ -253,6 +256,7 @@ const timeline = [
     padding: 12px;
   }
   .tf-st.hl { border-color: color-mix(in srgb, var(--amber) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 9%, transparent); }
+  [data-theme="light"] .tf-st.hl { border-color: color-mix(in srgb, var(--amber) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 14%, transparent); }
   .tf-sn { display: flex; align-items: center; gap: 8px; font: 700 14px var(--font-display); color: var(--text-primary); }
   .tf-sn span {
     display: grid;
@@ -281,19 +285,19 @@ const timeline = [
   .tf-card b { color: var(--text-primary); font-size: 12.5px; }
   .tf-r { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-width: 0; }
   .tf-mono { font-family: var(--font-mono); color: var(--text-primary); font-size: 11px; overflow-wrap: anywhere; min-width: 0; }
-  .tf-cap { font: 500 10.5px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .tf-cap { font: 500 11.5px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
   .tf-ev { gap: 4px; }
   .tf-ev div { display: flex; gap: 6px; align-items: baseline; font-size: 11.5px; }
   .tf-ev i { width: 6px; height: 6px; border-radius: 2px; background: var(--amber); flex: none; transform: translateY(-1px); }
   .tf-btns { display: flex; gap: 6px; }
-  .tf-b { font: 700 11.5px var(--font-display); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); color: var(--text-primary); }
+  .tf-b { cursor: default; pointer-events: none; font: 700 11.5px var(--font-display); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-strong); color: var(--text-primary); }
   .tf-b.pri { background: var(--btn-primary-bg); color: var(--btn-primary-ink); border-color: transparent; }
   .tf-bar { height: 6px; border-radius: 999px; background: var(--border-strong); overflow: hidden; }
   .tf-bar i { display: block; height: 100%; width: 48%; background: var(--amber); }
   .tf-st p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
 
   .tf-pill {
-    font: 700 10px var(--font-mono);
+    font: 700 10.5px var(--font-mono);
     letter-spacing: 0.08em;
     text-transform: uppercase;
     border: 1px solid transparent;
@@ -302,15 +306,15 @@ const timeline = [
     white-space: nowrap;
   }
   .tf-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 14%, transparent); border-color: color-mix(in srgb, var(--sev-high) 38%, transparent); }
-  .tf-pill.med  { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 14%, transparent); border-color: color-mix(in srgb, var(--sev-medium) 38%, transparent); }
+  .tf-pill.amber { color: var(--amber-text); background: var(--accent-bg); border-color: color-mix(in srgb, var(--amber) 38%, transparent); }
   .tf-pill.ok   { color: var(--green-text); background: color-mix(in srgb, var(--green) 14%, transparent); border-color: color-mix(in srgb, var(--green) 38%, transparent); }
 
   .tf-who {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 1px;
-    background: var(--border);
-    border: 1px solid var(--border);
+    background: var(--border-strong);
+    border: 1px solid var(--border-strong);
     border-radius: 12px;
     overflow: hidden;
   }
@@ -339,6 +343,7 @@ const timeline = [
 
   @media (max-width: 1100px) {
     .tf-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tf-st:last-child { grid-column: 1 / -1; }
     .tf-who { grid-template-columns: 1fr; }
   }
   @media (max-width: 640px) {

@@ -106,12 +106,12 @@ test.describe("Takedown flow (desktop)", () => {
     await page.getByRole("radio", { name: "Manual" }).click();
     await expectMode(page, "manual", "Manual");
     await expect(stage3(page)).toContainText("Draft ready");
-    await expect(stage3(page)).toContainText("You review and send each one yourself.");
+    await expect(stage3(page)).toContainText("You approve each one, and our team files it.");
 
     await page.getByRole("radio", { name: "Automatic" }).click();
     await expectMode(page, "auto", "Automatic");
     await expect(stage3(page)).toContainText("Within your monthly limit");
-    await expect(stage3(page)).toContainText("Filed automatically, up to the monthly limit you set.");
+    await expect(stage3(page)).toContainText("Filed automatically within your rules and any monthly limit you set.");
 
     await page.getByRole("radio", { name: "Approve first" }).click();
     await expectMode(page, "approve", "Approve first");
@@ -198,7 +198,7 @@ test.describe("Takedown flow (JS disabled)", () => {
       expect(v.card).toEqual(["approve"]);
       expect(v.caption).toEqual(["approve"]);
       await expect(stage3(page)).toContainText("Waiting for your approval");
-      await expect(stage3(page)).toContainText("We hold every takedown until someone on your team approves it.");
+      await expect(stage3(page)).toContainText("Takedowns outside your rules wait until someone on your team approves them.");
       for (const m of ["manual", "auto"]) {
         await expect(stage3(page).locator(`.tf-card[data-m="${m}"]`)).toBeHidden();
         await expect(stage3(page).locator(`p[data-m="${m}"]`)).toBeHidden();
