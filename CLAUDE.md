@@ -564,7 +564,9 @@ navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV c
                                (binding required);
                                once/day, continued on later hour-0 ticks if capped)
                               (UTC hour 0 also: free-scan retention — lib/brand-scan-retention.ts deletes
-                               brand_scans rows older than 90 days in batches; scan_leads untouched)
+                               brand_scans rows and auto-delivered qualified_reports
+                               (generated_by='auto:lead_capture') older than 90 days in batches;
+                               scan_leads untouched)
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
 enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't share CPU
                              with the orchestrator's analyst inline-await. Decoupled

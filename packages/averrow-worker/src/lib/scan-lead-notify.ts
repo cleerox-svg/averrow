@@ -5,7 +5,10 @@
 //                                   matches the scanned domain and the
 //                                   report was generated automatically.
 //   sendScanFollowUpConfirmation  → the prospect, otherwise: a short note
-//                                   that the team will follow up.
+//                                   that the team will follow up (no
+//                                   scanned domain in it).
+//
+// Daily caps on all three live in handlers/brandScan.ts (handleLeadCapture).
 //
 // Prospect emails never include a caller-supplied name or company, and
 // only say a report is attached/linked when it actually is. Plain Averrow
@@ -169,7 +172,7 @@ export async function sendScanReportLink(env: Env, p: ScanReportLinkParams): Pro
   const expiry = formatExpiry(p.expiresAt);
   const html = prospectShell(
     `Your scan report for ${escapeHtml(p.domain)}`,
-    `<p style="margin:0 0 14px;">Here is the report for <strong style="font-family:monospace;">${escapeHtml(p.domain)}</strong> from the free scan you ran on averrow.com. It covers your email authentication, the lookalike domains we found registered, and what Averrow would watch for you.</p>
+    `<p style="margin:0 0 14px;">Here is the report for <strong style="font-family:monospace;">${escapeHtml(p.domain)}</strong> from the free scan you ran on averrow.com. It covers your email authentication, the lookalike domains the scan found registered, and what Averrow would watch for you.</p>
     <div style="text-align:center;margin:24px 0;">
       <a href="${escapeHtml(p.shareUrl)}" style="display:inline-block;background:#C83C3C;color:#fff;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:4px;">View your report</a>
     </div>
@@ -179,7 +182,7 @@ export async function sendScanReportLink(env: Env, p: ScanReportLinkParams): Pro
   const text = [
     `Your scan report for ${p.domain}`,
     "",
-    `Here is the report for ${p.domain} from the free scan you ran on averrow.com. It covers your email authentication, the lookalike domains we found registered, and what Averrow would watch for you.`,
+    `Here is the report for ${p.domain} from the free scan you ran on averrow.com. It covers your email authentication, the lookalike domains the scan found registered, and what Averrow would watch for you.`,
     "",
     `View your report: ${p.shareUrl}`,
     "",
@@ -201,21 +204,25 @@ export async function sendScanReportLink(env: Env, p: ScanReportLinkParams): Pro
 
 export interface ScanFollowUpParams {
   email: string;
-  domain: string;
 }
 
-/** Confirmation that the team will follow up. Claims nothing else. */
+/**
+ * Confirmation that the team will follow up. Claims nothing else, and
+ * does not repeat the scanned domain (appsec L4): this address did not
+ * prove any connection to it, so the email must not carry attacker-chosen
+ * text into a third party's inbox.
+ */
 export async function sendScanFollowUpConfirmation(env: Env, p: ScanFollowUpParams): Promise<SendResult> {
   const html = prospectShell(
     "We received your request",
-    `<p style="margin:0 0 14px;">Thanks for scanning <strong style="font-family:monospace;">${escapeHtml(p.domain)}</strong> on averrow.com. We have your request for the full report.</p>
+    `<p style="margin:0 0 14px;">Thanks for running the free scan on averrow.com. We have your request for the full report.</p>
     <p style="margin:0 0 14px;">Someone from our team will follow up with you directly about the report.</p>
     <p style="margin:0 0 14px;">If you have questions in the meantime, reply to this email.</p>`,
   );
   const text = [
     "We received your request",
     "",
-    `Thanks for scanning ${p.domain} on averrow.com. We have your request for the full report.`,
+    "Thanks for running the free scan on averrow.com. We have your request for the full report.",
     "",
     "Someone from our team will follow up with you directly about the report.",
     "",
@@ -223,11 +230,11 @@ export async function sendScanFollowUpConfirmation(env: Env, p: ScanFollowUpPara
     "",
     FOOTER_TEXT,
   ].join("\n");
-  return sendEmail(env, "scan-follow-up", { domain: p.domain }, {
+  return sendEmail(env, "scan-follow-up", {}, {
     from: PROSPECT_FROM_ADDRESS,
     to: [p.email],
     reply_to: NOTIFY_TO,
-    subject: `We received your Averrow scan request for ${p.domain}`,
+    subject: "We received your Averrow scan request",
     html,
     text,
   });

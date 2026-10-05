@@ -390,7 +390,7 @@ async function runNavigatorImpl(
       }
     }
 
-    // ── 2e. brand_scans retention (free-scan results, 90 days) ──
+    // ── 2e. brand_scans + auto-report retention (free-scan results, 90 days) ──
     // Hour-only gate (CLAUDE.md §6 cron-audit rule). Runs on every hour-0
     // tick: when nothing is due it is one indexed read, and a backlog over
     // one run's batch cap drains on the next tick. Never throws.
@@ -956,11 +956,11 @@ export const navigatorAgent: AgentModule = {
 
     // brand_scans retention diagnostic — only when it did something or
     // failed, so the 12 empty hour-0 runs a day don't add noise.
-    if (result.brandScanPurgeResult && (result.brandScanPurgeResult.deleted > 0 || result.brandScanPurgeResult.error)) {
+    if (result.brandScanPurgeResult && (result.brandScanPurgeResult.deleted > 0 || result.brandScanPurgeResult.reports_deleted > 0 || result.brandScanPurgeResult.error)) {
       const bp = result.brandScanPurgeResult;
       agentOutputs.push({
         type: 'diagnostic',
-        summary: `brand-scan-retention: deleted=${bp.deleted} batches=${bp.batches} more=${bp.more_remaining ? 'yes' : 'no'}${bp.error ? ` err="${bp.error.slice(0, 120)}"` : ''}`,
+        summary: `brand-scan-retention: deleted=${bp.deleted} reports=${bp.reports_deleted} batches=${bp.batches} more=${bp.more_remaining ? 'yes' : 'no'}${bp.error ? ` err="${bp.error.slice(0, 120)}"` : ''}`,
         severity: bp.error ? 'medium' : 'info',
         details: { ...bp },
       });

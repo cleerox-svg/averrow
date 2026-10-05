@@ -13,18 +13,27 @@ vi.mock("../src/lib/agentRunner", async (orig) => {
   return { ...actual, runSyncAgent: vi.fn(async () => ({ runId: "r", status: "success", data: null })) };
 });
 
-const { handlePublicBrandScan, handlePublicBrandScanResult, handleLeadCapture } = await import("../src/handlers/brandScan");
-const { buildReportPayload } = await import("../src/handlers/qualifiedReport");
+const {
+  handlePublicBrandScan, handlePublicBrandScanResult, handleLeadCapture,
+  normalizeEmailForCap, leadMailAddressKey, leadMailDomainKey, salesNotifyKey,
+  LEAD_MAIL_DOMAIN_DAILY_CAP, LEAD_SALES_NOTIFY_DAILY_CAP,
+} = await import("../src/handlers/brandScan");
+const { buildReportPayload, handleRenewQualifiedReport, AUTO_REPORT_GENERATED_BY } = await import("../src/handlers/qualifiedReport");
+const { runSyncAgent } = await import("../src/lib/agentRunner");
 const { renderQualifiedReportHTML } = await import("../src/templates/qualifiedReport");
 const { deterministicNarrative, deterministicPlan } = await import("../src/agents/qualified-report");
 const {
   toPublicEmailView, spfStatusFrom, dmarcPolicyFrom, emailMatchesScannedDomain, parseStoredPublicView,
+  toScanDomain, runEmailSecurityScanWithin, EmailScanTimeoutError,
 } = await import("../src/lib/free-scan-view");
+const { registrableDomain } = await import("../src/lib/registrable-domain");
+const { isFreemailEmail, isMailOrSaasProviderDomain } = await import("../src/lib/freemail");
 const {
   selectLikelyLookalikes, getScanLookalikes, checkRegistrations, lookalikeCacheKey, LOOKALIKE_CACHE_TTL_SECONDS,
+  LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS,
 } = await import("../src/lib/scan-lookalikes");
 const { calculateEmailSecurityScore } = await import("../src/email-security");
-const { purgeExpiredBrandScans, BRAND_SCAN_PURGE_SQL } = await import("../src/lib/brand-scan-retention");
+const { purgeExpiredBrandScans, BRAND_SCAN_PURGE_SQL, AUTO_REPORT_PURGE_SQL } = await import("../src/lib/brand-scan-retention");
 const { registerScanRoutes } = await import("../src/routes/scan");
 const { registerPublicRoutes } = await import("../src/routes/public");
 
@@ -33,7 +42,7 @@ const { registerPublicRoutes } = await import("../src/routes/public");
 type Responder = (sql: string, binds: unknown[]) => unknown;
 interface Call { sql: string; binds: unknown[] }
 
-function makeEnv(respond: Responder = () => null, kvInit: Record<string, string> = {}) {
+function makeEnv(respond: Responder = () => null, kvInit: Record<string, string> = {}, opts: { kvDown?: boolean } = {}) {
   const calls: Call[] = [];
   const db = {
     prepare(sql: string) {
@@ -58,8 +67,11 @@ function makeEnv(respond: Responder = () => null, kvInit: Record<string, string>
   const kv = new Map<string, string>(Object.entries(kvInit));
   const puts: Array<{ key: string; value: string; ttl?: number }> = [];
   const cache = {
-    async get(k: string) { return kv.get(k) ?? null; },
-    async put(k: string, v: string, o?: { expirationTtl?: number }) { kv.set(k, v); puts.push({ key: k, value: v, ttl: o?.expirationTtl }); },
+    async get(k: string) { if (opts.kvDown) throw new Error("kv down"); return kv.get(k) ?? null; },
+    async put(k: string, v: string, o?: { expirationTtl?: number }) {
+      if (opts.kvDown) throw new Error("kv down");
+      kv.set(k, v); puts.push({ key: k, value: v, ttl: o?.expirationTtl });
+    },
   };
   const assets = { fetch: vi.fn(async () => new Response("static scan page", { status: 200, headers: { "content-type": "text/html" } })) };
   const env = { DB: db, CACHE: cache, ASSETS: assets, AI_MODE: "rules_only", RESEND_API_KEY: "re_test" } as unknown as Env;
@@ -123,6 +135,8 @@ describe("POST /api/brand-scan/public contract", () => {
     stubNetwork({ registered: ["acme.net", "acme.org"] });
     const s = makeEnv((sql) => (/FROM threats/.test(sql) ? [THREAT_ROW] : null));
     const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "www.Acme.Example" }), s.env);
+    // The public scan never touches threat data (appsec M2 / code M3).
+    expect(s.calls.some((c) => /FROM threats|malicious_domain LIKE/.test(c.sql))).toBe(false);
     expect(res.status).toBe(200);
     const body = await res.json() as { success: boolean; data: Record<string, unknown> };
     expect(body.success).toBe(true);
@@ -144,12 +158,12 @@ describe("POST /api/brand-scan/public contract", () => {
     const text = JSON.stringify(body);
     expect(text).not.toMatch(/feed|threat|trust|score|phishtank|google|acme\.net|selector/i);
 
-    // Staff fields + names stored on the row.
+    // Names stored on the row; trust_score/feed_mentions are NULL on public rows.
     const insert = s.calls.find((c) => /INSERT INTO brand_scans/.test(c.sql))!;
-    expect(insert.sql).toMatch(/feed_mentions/);
-    expect(insert.binds[5]).toBe(1); // feed_mentions
-    expect(JSON.parse(insert.binds[7] as string)).toEqual(["acme.net", "acme.org"]);
-    expect(parseStoredPublicView(insert.binds[8] as string)?.email.grade).toBe("A+");
+    expect(insert.sql).toMatch(/'completed', NULL, \?, \?, NULL,/);
+    expect(insert.binds[1]).toBe("acme.example");
+    expect(JSON.parse(insert.binds[5] as string)).toEqual(["acme.net", "acme.org"]);
+    expect(parseStoredPublicView(insert.binds[6] as string)?.email.grade).toBe("A+");
   });
 
   it("GET /:id returns the same data shape; unknown → 404", async () => {
@@ -158,7 +172,7 @@ describe("POST /api/brand-scan/public contract", () => {
     const post = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "acme.example" }), s.env);
     const posted = (await post.json() as { data: { id: string } }).data;
     const insert = s.calls.find((c) => /INSERT INTO brand_scans/.test(c.sql))!;
-    const row = { id: posted.id, domain: "acme.example", public_view: insert.binds[8] };
+    const row = { id: posted.id, domain: "acme.example", public_view: insert.binds[6] };
 
     const g = makeEnv((sql) => (/FROM brand_scans WHERE id = \?/.test(sql) ? row : null));
     const res = await handlePublicBrandScanResult(new Request("https://averrow.com/x"), g.env, posted.id);
@@ -450,9 +464,21 @@ describe("POST /api/leads auto-delivery", () => {
     expect(lead.binds).toContain(SCAN_ID);
   });
 
-  it("subdomain of the scanned domain also matches", async () => {
-    const { body } = await capture("pat@mail.acme.example");
-    expect(body.data.delivery).toBe("emailed");
+  it("subdomain email does NOT match the scanned domain (H1: exact host only)", async () => {
+    const { body, s } = await capture("pat@mail.acme.example");
+    expect(body.data.delivery).toBe("team_follow_up");
+    expect(s.calls.some((c) => /INSERT INTO qualified_reports/.test(c.sql))).toBe(false);
+  });
+
+  it("mail-provider and SaaS-tenant scanned domains never auto-send", async () => {
+    for (const domain of ["zendesk.com", "atlassian.net", "myshopify.com", "salesforce.com"]) {
+      const net = stubNetwork();
+      const s = leadEnv();
+      const res = await handleLeadCapture(jsonReq("/api/leads", { email: `pat@${domain}`, domain, consent: true }), s.env);
+      expect((await res.json() as { data: { delivery: string } }).data.delivery).toBe("team_follow_up");
+      expect(s.calls.some((c) => /INSERT INTO qualified_reports/.test(c.sql))).toBe(false);
+      expect(net.sent.some((m) => /qualified-report/.test(m.html))).toBe(false);
+    }
   });
 
   it("non-matching domain → team_follow_up, no report, short confirmation without any caller name", async () => {
@@ -473,19 +499,107 @@ describe("POST /api/leads auto-delivery", () => {
   });
 
   it("per-address daily cap: no prospect email, team_follow_up", async () => {
-    const { body, s, net } = await capture("pat@acme.example", {}, { kv: { "lead:mail:pat@acme.example": "3" } });
+    const { body, s, net } = await capture("pat@acme.example", {}, { kv: { [leadMailAddressKey("pat@acme.example")]: "3" } });
     expect(body.data.delivery).toBe("team_follow_up");
     expect(prospectMail(net.sent, "pat@acme.example")).toEqual([]);
     expect(s.calls.some((c) => /INSERT INTO qualified_reports/.test(c.sql))).toBe(false);
   });
 
+  it("the cap is on the normalised address: +tag variants share it", async () => {
+    const { body, net } = await capture("Pat+spam1@acme.example", {}, { kv: { [leadMailAddressKey("pat@acme.example")]: "3" } });
+    expect(body.data.delivery).toBe("team_follow_up");
+    expect(net.sent.filter((m) => !m.to.includes("sales@averrow.com"))).toEqual([]);
+    expect(normalizeEmailForCap("Pat+spam1@Acme.Example")).toBe("pat@acme.example");
+    expect(normalizeEmailForCap("j.o.e+x@googlemail.com")).toBe("joe@gmail.com");
+    expect(normalizeEmailForCap("j.o.e@gmail.com")).toBe("joe@gmail.com");
+    expect(normalizeEmailForCap("j.o.e@acme.example")).toBe("j.o.e@acme.example");
+  });
+
+  it("per-recipient-domain daily cap blocks every address at that domain", async () => {
+    const { body, net, s } = await capture("someone.new@acme.example", {}, {
+      kv: { [leadMailDomainKey("acme.example")]: String(LEAD_MAIL_DOMAIN_DAILY_CAP) },
+    });
+    expect(body.data.delivery).toBe("team_follow_up");
+    expect(prospectMail(net.sent, "someone.new@acme.example")).toEqual([]);
+    // The lead itself is still recorded.
+    expect(s.calls.some((c) => /INSERT INTO scan_leads/.test(c.sql))).toBe(true);
+  });
+
+  it("sales alert email is capped globally per day and dropped silently", async () => {
+    const { body, net } = await capture("pat@agency.example", {}, { kv: { [salesNotifyKey()]: String(LEAD_SALES_NOTIFY_DAILY_CAP) } });
+    expect(body.success).toBe(true);
+    expect(net.sent.some((m) => m.to.includes("sales@averrow.com"))).toBe(false);
+    expect(prospectMail(net.sent, "pat@agency.example")).toHaveLength(1);
+  });
+
+  it("KV failure: fails closed for every email but still records the lead", async () => {
+    const net = stubNetwork();
+    const s = makeEnv((sql) => (/SELECT id FROM brand_scans WHERE id = \? AND domain = \?/.test(sql) ? { id: SCAN_ID } : null), {}, { kvDown: true });
+    const res = await handleLeadCapture(jsonReq("/api/leads", { email: "pat@acme.example", domain: "acme.example", scan_id: SCAN_ID, consent: true }), s.env);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { data: { delivery: string } }).data.delivery).toBe("team_follow_up");
+    expect(net.sent).toEqual([]);
+    expect(s.calls.some((c) => /INSERT INTO scan_leads/.test(c.sql))).toBe(true);
+  });
+
+  it("the follow-up confirmation does not repeat the scanned domain (L4)", async () => {
+    const { net } = await capture("pat@agency.example");
+    const mine = prospectMail(net.sent, "pat@agency.example")[0]!;
+    expect(`${mine.subject}\n${mine.html}\n${mine.text}`).not.toContain("acme.example");
+  });
+
+  it("auto-delivered report is scan-only: no threats/IPs/providers/campaigns, no AI call", async () => {
+    vi.mocked(runSyncAgent).mockClear();
+    const net = stubNetwork();
+    // Threat data exists for the brand — none of it may reach the prospect.
+    const s = makeEnv((sql) => {
+      if (/SELECT id FROM brand_scans WHERE id = \? AND domain = \?/.test(sql)) return { id: SCAN_ID };
+      if (/SELECT id FROM brands WHERE canonical_domain/.test(sql)) return { id: "b1" };
+      return reportResponder({ brand: true, threats: 30 })(sql, []);
+    });
+    const res = await handleLeadCapture(jsonReq("/api/leads", { email: "pat@acme.example", domain: "acme.example", scan_id: SCAN_ID, consent: true }), s.env);
+    expect((await res.json() as { data: { delivery: string } }).data.delivery).toBe("emailed");
+    const insert = s.calls.find((c) => /INSERT INTO qualified_reports/.test(c.sql))!;
+    const payload = JSON.parse(insert.binds[4] as string) as Record<string, unknown>;
+    expect(payload.content).toBe("scan_only");
+    expect(payload).not.toHaveProperty("active_threats");
+    expect(payload).not.toHaveProperty("infrastructure");
+    expect((payload.lookalikes as { names: string[] }).names).toEqual(["acme-login.example", "acme.net"]);
+    // (The generic watch list mentions phishing sites; no threat RECORD may appear.)
+    expect(JSON.stringify(payload)).not.toMatch(/Example Hosting|acme-secure\.example|campaign|active threat|ip_address|samples|"US"/i);
+    expect(s.calls.some((c) => /FROM threats|hosting_providers|campaigns|lookalike_domains|email_security_scans/.test(c.sql))).toBe(false);
+    expect(runSyncAgent).not.toHaveBeenCalled();
+    expect(net.sent.length).toBeGreaterThan(0);
+  });
+
   it("emailMatchesScannedDomain edge cases", () => {
     expect(emailMatchesScannedDomain("a@acme.example", "www.acme.example")).toBe(true);
+    expect(emailMatchesScannedDomain("a@acme.co.uk", "acme.co.uk")).toBe(true);
     expect(emailMatchesScannedDomain("a@notacme.example", "acme.example")).toBe(false);
     expect(emailMatchesScannedDomain("a@acme.example.evil.test", "acme.example")).toBe(false);
+    // No subdomains, either way round.
+    expect(emailMatchesScannedDomain("a@shop.acme.co.uk", "acme.co.uk")).toBe(false);
+    expect(emailMatchesScannedDomain("x@evil.zendesk.com", "zendesk.com")).toBe(false);
+    expect(emailMatchesScannedDomain("a@shop.acme.example", "shop.acme.example")).toBe(false);
+    // Public suffixes are never a match.
     expect(emailMatchesScannedDomain("a@foo.co.uk", "co.uk")).toBe(false);
-    expect(emailMatchesScannedDomain("a@co.uk", "co.uk")).toBe(true);
-    expect(emailMatchesScannedDomain("a@shop.acme.co.uk", "acme.co.uk")).toBe(true);
+    expect(emailMatchesScannedDomain("a@co.uk", "co.uk")).toBe(false);
+    expect(emailMatchesScannedDomain("a@uk.com", "uk.com")).toBe(false);
+    // Mail providers and SaaS tenants.
+    for (const d of ["yandex.ru", "mail.ru", "gmx.de", "web.de", "orange.fr", "yahoo.co.uk", "outlook.com.br", "hotmail.fr",
+      "naver.com", "qq.com", "comcast.net", "zendesk.com", "onmicrosoft.com", "github.io", "herokuapp.com", "force.com"]) {
+      expect(emailMatchesScannedDomain(`a@${d}`, d)).toBe(false);
+      expect(isMailOrSaasProviderDomain(d)).toBe(true);
+    }
+  });
+
+  it("free-mail gate covers ccTLD variants of the big providers; SaaS hosts are not blocked as lead emails", () => {
+    for (const e of ["a@yandex.ru", "a@yahoo.co.uk", "a@yahoo.fr", "a@hotmail.co.uk", "a@outlook.de", "a@live.ca",
+      "a@gmx.de", "a@googlemail.com", "a@t-online.de", "a@laposte.net", "a@seznam.cz", "a@wp.pl", "a@163.com", "a@tutanota.de"]) {
+      expect(isFreemailEmail(e)).toBe(true);
+    }
+    expect(isFreemailEmail("pat@acme.example")).toBe(false);
+    expect(isFreemailEmail("pat@salesforce.com")).toBe(false);
   });
 });
 
@@ -494,14 +608,23 @@ describe("POST /api/leads auto-delivery", () => {
 describe("brand_scans retention", () => {
   it("deletes in batches by created_at older than 90 days until a short batch", async () => {
     const changes = [500, 500, 37];
-    const s = makeEnv((sql) => (/DELETE FROM brand_scans/.test(sql) ? { changes: changes.shift() ?? 0 } : null));
+    const reportChanges = [4];
+    const s = makeEnv((sql) => {
+      if (/DELETE FROM brand_scans/.test(sql)) return { changes: changes.shift() ?? 0 };
+      if (/DELETE FROM qualified_reports/.test(sql)) return { changes: reportChanges.shift() ?? 0 };
+      return null;
+    });
     const r = await purgeExpiredBrandScans(s.env);
-    expect(r).toEqual({ deleted: 1037, batches: 3, more_remaining: false, error: null });
-    expect(s.calls).toHaveLength(3);
-    for (const c of s.calls) {
+    expect(r).toEqual({ deleted: 1037, reports_deleted: 4, batches: 4, more_remaining: false, error: null });
+    expect(s.calls).toHaveLength(4);
+    for (const c of s.calls.slice(0, 3)) {
       expect(c.sql).toBe(BRAND_SCAN_PURGE_SQL);
       expect(c.binds).toEqual(["-90 days", 500]);
     }
+    // Auto-delivered reports only (staff-generated reports are kept).
+    expect(s.calls[3]!.sql).toBe(AUTO_REPORT_PURGE_SQL);
+    expect(s.calls[3]!.binds).toEqual([AUTO_REPORT_GENERATED_BY, "-90 days", 500]);
+    expect(AUTO_REPORT_PURGE_SQL).toMatch(/generated_by = \?/);
     expect(BRAND_SCAN_PURGE_SQL).toMatch(/created_at < datetime\('now', \?\)/);
     expect(BRAND_SCAN_PURGE_SQL).not.toMatch(/scan_leads/);
   });
@@ -562,5 +685,160 @@ describe("route changes", () => {
     const res = (await router().fetch(new Request("https://averrow.com/scan"), s.env, ctx)) as Response;
     expect(s.assets.fetch).toHaveBeenCalled();
     expect(await res.text()).toBe("static scan page");
+  });
+});
+
+// ─── 8. Review fixes (PR #1805): domain reduction, report modes, caps ──
+
+describe("registrable domain + scan input reduction (code M1)", () => {
+  it("reduces hostnames with the built-in suffix table", () => {
+    expect(registrableDomain("shop.acme.com")).toBe("acme.com");
+    expect(registrableDomain("a.b.acme.co.uk")).toBe("acme.co.uk");
+    expect(registrableDomain("acme.com.au")).toBe("acme.com.au");
+    expect(registrableDomain("x.acme.uk.com")).toBe("acme.uk.com");
+    expect(registrableDomain("tenant.zendesk.com")).toBe("zendesk.com");
+    expect(registrableDomain("shop.acme.com.tr")).toBe("acme.com.tr"); // generic second level heuristic
+    expect(registrableDomain("co.uk")).toBeNull();
+    expect(registrableDomain("com")).toBeNull();
+    expect(toScanDomain("https://www.Shop.Acme.co.uk/login")).toBe("acme.co.uk");
+    expect(toScanDomain("co.uk")).toBeNull();
+  });
+
+  it("POST /api/brand-scan/public scans, stores, caches and returns the registrable domain", async () => {
+    const net = stubNetwork();
+    const s = makeEnv();
+    const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "shop.acme.example" }), s.env);
+    expect(res.status).toBe(200);
+    expect((await res.json() as { data: { domain: string } }).data.domain).toBe("acme.example");
+    const insert = s.calls.find((c) => /INSERT INTO brand_scans/.test(c.sql))!;
+    expect(insert.binds[1]).toBe("acme.example");
+    expect(s.puts.map((p) => p.key)).toContain("scan:lookalikes:acme.example");
+    // Lookalikes are of "acme", never of "shop".
+    expect(net.nsQueries.some((n) => n.startsWith("shop"))).toBe(false);
+    expect(net.nsQueries).toContain("acme.net");
+  });
+
+  it("a bare public suffix is rejected", async () => {
+    stubNetwork();
+    const s = makeEnv();
+    const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "co.uk" }), s.env);
+    expect(res.status).toBe(400);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("the lead's domain is reduced the same way", async () => {
+    stubNetwork();
+    const s = makeEnv();
+    await handleLeadCapture(jsonReq("/api/leads", { email: "pat@agency.example", domain: "www.shop.acme.example", consent: true }), s.env);
+    const lead = s.calls.find((c) => /INSERT INTO scan_leads/.test(c.sql))!;
+    expect(lead.binds).toContain("acme.example");
+    expect(lead.binds).not.toContain("shop.acme.example");
+  });
+});
+
+describe("report content modes", () => {
+  it("scan_only renders no threat or infrastructure section; full still does", async () => {
+    stubNetwork();
+    const scanOnly = await buildReportPayload(makeEnv(reportResponder({ brand: true, threats: 3 })).env,
+      { domain: "acme.example", company: null, scanId: SCAN_ID }, { content: "scan_only" });
+    const html = renderQualifiedReportHTML(scanOnly);
+    expect(html).not.toMatch(/Active Threats|Hosting Infrastructure|threats targeting this domain|Example Hosting/);
+    expect(html).toContain("acme-login.example");
+    expect(scanOnly.narrative).not.toMatch(/active threats/i);
+
+    const full = await buildReportPayload(makeEnv(reportResponder({ brand: true, threats: 3 })).env,
+      { domain: "acme.example", company: null, scanId: SCAN_ID });
+    expect(full.content).toBe("full");
+    const fullHtml = renderQualifiedReportHTML(full);
+    expect(fullHtml).toContain("Active Threats");
+    expect(fullHtml).toContain("Example Hosting");
+  });
+
+  it("the email-security scan is time-boxed (L6); a scan-only report without posture fails → team follow-up", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    await expect(runEmailSecurityScanWithin("acme.example", 30)).rejects.toBeInstanceOf(EmailScanTimeoutError);
+  });
+
+  it("staff lookalike count uses the same benign filter as the names query (L2)", async () => {
+    stubNetwork();
+    const s = makeEnv(reportResponder({ brand: true }));
+    await buildReportPayload(s.env, { domain: "acme.example", company: null, scanId: SCAN_ID });
+    const count = s.calls.find((c) => /SUM\(CASE WHEN registered = 1/.test(c.sql))!;
+    expect(count.sql).toMatch(/COALESCE\(status, 'monitoring'\) != 'benign'/);
+  });
+
+  it("renewing an auto-delivered report keeps it scan-only", async () => {
+    stubNetwork();
+    const s = makeEnv((sql) => {
+      if (/FROM scan_leads WHERE id = \?/.test(sql)) return { id: "l1", company: null, domain: "acme.example", scan_id: SCAN_ID };
+      if (/FROM qualified_reports/.test(sql)) return { id: "r1", share_token: "tok", generated_by: AUTO_REPORT_GENERATED_BY };
+      return reportResponder({ brand: true, threats: 5 })(sql, []);
+    });
+    const res = await handleRenewQualifiedReport(new Request("https://averrow.com/x", { method: "POST" }), s.env, "l1");
+    expect(res.status).toBe(200);
+    const update = s.calls.find((c) => /UPDATE qualified_reports/.test(c.sql))!;
+    const payload = JSON.parse(update.binds[0] as string) as Record<string, unknown>;
+    expect(payload.content).toBe("scan_only");
+    expect(payload).not.toHaveProperty("active_threats");
+    expect(s.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+  });
+});
+
+describe("lookalike partial results (L1)", () => {
+  it("SERVFAIL is unknown (not registered, not checked) and a partial result is cached for 1h", async () => {
+    const picks = selectLikelyLookalikes("acme.example");
+    const servfail = new Set(picks.slice(0, 5));
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const name = new URL(String(input)).searchParams.get("name") ?? "";
+      if (servfail.has(name)) return new Response(JSON.stringify({ Status: 2 }));
+      if (name === "acme.org") return new Response(JSON.stringify({ Status: 0, Answer: [{ type: 2, data: "ns1.x." }] }));
+      return new Response(JSON.stringify({ Status: 3 }));
+    }));
+    const s = makeEnv();
+    const r = await getScanLookalikes(s.env, "acme.example");
+    expect(r.checked).toBe(picks.length - 5);
+    for (const d of servfail) expect(r.registered).not.toContain(d);
+    expect(s.puts).toHaveLength(1);
+    expect(s.puts[0]!.ttl).toBe(LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS);
+    expect(LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS).toBe(3_600);
+  });
+});
+
+describe("retention batch cap", () => {
+  it("reports more_remaining when the cap stops it before the report pass drained", async () => {
+    const s = makeEnv((sql) => (/DELETE FROM brand_scans/.test(sql) ? { changes: 0 } : { changes: 10 }));
+    const r = await purgeExpiredBrandScans(s.env, { batchSize: 10, maxBatches: 2 });
+    expect(r).toMatchObject({ deleted: 0, reports_deleted: 10, batches: 2, more_remaining: true });
+  });
+});
+
+describe("route rate-limit buckets", () => {
+  function router(): RouterType<IRequest> {
+    const r = Router();
+    registerScanRoutes(r);
+    registerPublicRoutes(r);
+    return r;
+  }
+  const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+
+  it("POST /api/brand-scan/public shares the /assess per-IP 10/hour bucket (M2)", async () => {
+    stubNetwork();
+    const s = makeEnv(() => null, { "pub_assess_203.0.113.7": "10" });
+    const res = (await router().fetch(jsonReq("/api/brand-scan/public", { domain: "acme.example" }), s.env, ctx)) as Response;
+    expect(res.status).toBe(429);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("POST /api/leads has its own bucket, not the login 'auth' bucket (M3)", async () => {
+    stubNetwork();
+    const win = Math.floor(Date.now() / 60_000);
+    // Auth bucket exhausted → leads still accepted.
+    const s = makeEnv(() => null, { [`rl:auth:203.0.113.7:${win}`]: "10" });
+    const ok = (await router().fetch(jsonReq("/api/leads", { email: "pat@agency.example", domain: "acme.example", consent: true }), s.env, ctx)) as Response;
+    expect(ok.status).toBe(200);
+    // Leads bucket exhausted → 429.
+    const s2 = makeEnv(() => null, { [`rl:leads:203.0.113.7:${win}`]: "10" });
+    const limited = (await router().fetch(jsonReq("/api/leads", { email: "pat@agency.example", domain: "acme.example", consent: true }), s2.env, ctx)) as Response;
+    expect(limited.status).toBe(429);
   });
 });

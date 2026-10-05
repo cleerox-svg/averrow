@@ -86,7 +86,7 @@ describe("POST /api/brand-scan/public (handlePublicBrandScan)", () => {
     expect(s.sqls).toEqual([]);
   });
 
-  it("stores the normalised hostname and returns no feed-mention flag even when the domain is in threat data", async () => {
+  it("stores the normalised hostname, never reads threat data and returns no feed-mention flag", async () => {
     const feedRows = [{ id: "t1", threat_type: "phishing", severity: "high", source_feed: "x", created_at: "2026-10-01" }];
     const s = makeEnv(feedRows);
     const res = await handlePublicBrandScan(
@@ -99,12 +99,13 @@ describe("POST /api/brand-scan/public (handlePublicBrandScan)", () => {
     expect(Object.keys(body.data).sort()).toEqual(["checked_at", "domain", "email", "id", "lookalikes"]);
     expect(JSON.stringify(body)).not.toMatch(/feed/i);
 
-    // The staff-side count is still stored on the row.
+    // Public scans no longer cross-reference threats (appsec M2 / code M3):
+    // feed_mentions is written as NULL and no threats query runs.
     const insertIdx = s.sqls.findIndex((q) => /INSERT INTO brand_scans/.test(q));
     expect(insertIdx).toBeGreaterThanOrEqual(0);
-    expect(s.sqls[insertIdx]).toContain("feed_mentions");
-    const insertBinds = s.binds.find((b) => b.includes("acme.example") && b.includes(1));
-    expect(insertBinds).toBeDefined();
+    expect(s.sqls[insertIdx]).toMatch(/feed_mentions[\s\S]*NULL/);
+    expect(s.binds.some((b) => b[1] === "acme.example")).toBe(true);
+    expect(s.sqls.some((q) => /FROM threats/.test(q))).toBe(false);
   });
 });
 

@@ -24,7 +24,7 @@ import { handleContactSubmission } from "../handlers/contact";
 import { handleTrackEvent } from "../handlers/track";
 import { logMarketingEdgeView } from "../lib/marketing-event-logger";
 import { runPublicScan } from "../handlers/brandScan";
-import { normalizePublicHostname } from "../lib/public-hostname";
+import { toScanDomain } from "../lib/free-scan-view";
 import {
   evaluateTurnstile, turnstileBlockedRedirectPath, TURNSTILE_FORM_FIELD, TURNSTILE_HEADER, TURNSTILE_JSON_FIELD,
 } from "../lib/turnstile";
@@ -158,7 +158,8 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
       }
       // Strict hostname check (stored-XSS fix): anything that isn't a plain
       // DNS hostname goes back to the homepage with no scan and no row.
-      const domain = normalizePublicHostname(rawDomain, { stripWww: true });
+      // Reduced to the registrable domain (shop.acme.com → acme.com).
+      const domain = toScanDomain(rawDomain);
       if (!domain) {
         return Response.redirect(new URL("/", request.url).toString(), 302);
       }

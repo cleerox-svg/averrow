@@ -26,6 +26,7 @@ export interface RateLimitConfig {
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
   auth:        { key: "auth",        maxRequests: 10,  windowSeconds: 60 },     // 10 auth attempts per minute
   scan:        { key: "scan",        maxRequests: 30,  windowSeconds: 60 },     // 30 scans per minute
+  leads:       { key: "leads",       maxRequests: 10,  windowSeconds: 60 },     // 10 lead submissions per minute (POST /api/leads)
   scan_report: { key: "scan_report", maxRequests: 5,   windowSeconds: 3600 },   // 5 public scan reports per hour
   api:         { key: "api",         maxRequests: 100,  windowSeconds: 60 },    // 100 API calls per minute (auth'd)
   brands:      { key: "brands",      maxRequests: 10,  windowSeconds: 3600 },   // 10 brand creates per hour (auth'd)

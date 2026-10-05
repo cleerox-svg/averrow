@@ -9,8 +9,10 @@
 // brand_scans.public_view, so the results link renders the same answer
 // for as long as the row exists (90-day retention).
 
-import type { EmailSecurityResult } from "../email-security";
+import { runEmailSecurityScan, type EmailSecurityResult } from "../email-security";
 import { normalizePublicHostname } from "./public-hostname";
+import { registrableDomain } from "./registrable-domain";
+import { isMailOrSaasProviderDomain } from "./freemail";
 
 export type EmailGrade = "A+" | "A" | "B" | "C" | "D" | "F";
 export type SpfStatus = "pass" | "soft" | "neutral" | "missing";
@@ -120,30 +122,65 @@ export function toPublicScanData(id: string, domain: string, view: StoredPublicV
   return { id, domain, checked_at: view.checked_at, email: view.email, lookalikes: view.lookalikes };
 }
 
+/** qualified_reports.generated_by for reports auto-delivered from the lead form. */
+export const AUTO_REPORT_GENERATED_BY = "auto:lead_capture";
+
+/** Wall-clock cap on the email-security scan (public scan + report path). */
+export const EMAIL_SCAN_BUDGET_MS = 8_000;
+
+export class EmailScanTimeoutError extends Error {
+  constructor() { super("email scan timed out"); this.name = "EmailScanTimeoutError"; }
+}
+
+/**
+ * runEmailSecurityScan bounded by a wall-clock timeout (L6). The DNS
+ * lookups keep running in the background but the caller is released.
+ */
+export async function runEmailSecurityScanWithin(
+  domain: string,
+  budgetMs: number = EMAIL_SCAN_BUDGET_MS,
+): Promise<EmailSecurityResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new EmailScanTimeoutError()), budgetMs);
+  });
+  try {
+    return await Promise.race([runEmailSecurityScan(domain), timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function isScanId(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v);
 }
 
-// Two-label names whose first label is a common registry second level
-// (co.uk, com.au, org.nz …). Scanning one of these must not make every
-// address under it a "match" for report auto-delivery.
-const REGISTRY_SECOND_LEVELS = new Set(["co", "com", "net", "org", "gov", "edu", "ac", "or", "ne", "go", "gob", "nic", "mil"]);
+/**
+ * The domain a free scan runs on: the strict public hostname (leading
+ * www. dropped) reduced to its registrable domain, so `shop.acme.com`
+ * scans — and generates lookalikes of — `acme.com`, not "shop". Null for
+ * invalid input and for bare public suffixes (`co.uk`).
+ */
+export function toScanDomain(input: unknown): string | null {
+  const host = normalizePublicHostname(input, { stripWww: true });
+  return host ? registrableDomain(host) : null;
+}
 
 /**
- * Auto-delivery rule: the lead's email domain equals the scanned domain
- * or is a subdomain of it (pat@mail.acme.com for acme.com). Both sides
- * are normalised (lowercase, punycode, leading www. dropped). A scanned
- * registry suffix such as co.uk only matches itself.
+ * Auto-delivery rule (H1): the lead's email host is EXACTLY the scanned
+ * domain, the scanned domain is a registrable domain (not a suffix, not a
+ * subdomain), and it is not a mailbox provider or multi-tenant SaaS host.
+ * No subdomain matching: pat@mail.acme.com does not match acme.com, and
+ * x@evil.zendesk.com can never match zendesk.com. Anything else falls
+ * back to a team follow-up.
  */
 export function emailMatchesScannedDomain(email: string, scannedDomain: string): boolean {
   const at = email.lastIndexOf("@");
   if (at <= 0) return false;
-  const host = normalizePublicHostname(email.slice(at + 1), { stripWww: true });
+  const host = normalizePublicHostname(email.slice(at + 1));
   const domain = normalizePublicHostname(scannedDomain, { stripWww: true });
-  if (!host || !domain) return false;
-  if (host === domain) return true;
-  const labels = domain.split(".");
-  if (labels.length === 2 && REGISTRY_SECOND_LEVELS.has(labels[0]!)) return false;
-  return host.endsWith(`.${domain}`);
+  if (!host || !domain || host !== domain) return false;
+  if (registrableDomain(domain) !== domain) return false;
+  return !isMailOrSaasProviderDomain(domain);
 }

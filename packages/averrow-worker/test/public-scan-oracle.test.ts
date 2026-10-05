@@ -106,7 +106,7 @@ describe("free scan response carries no threat-data signal", () => {
     const res = await handlePublicBrandScan(jsonReq("/api/brand-scan/public", { domain: "acme.example" }), s.env);
     const body = await res.json() as { data: Record<string, unknown> };
     const insert = s.calls.find((c) => /INSERT INTO brand_scans/.test(c.sql))!;
-    return { data: body.data, storedScore: insert.binds[2], storedFeed: insert.binds[5] };
+    return { data: body.data, insert, calls: s.calls };
   }
   const strip = ({ id: _id, checked_at: _at, ...rest }: Record<string, unknown>) => rest;
 
@@ -117,11 +117,10 @@ describe("free scan response carries no threat-data signal", () => {
     expect(JSON.stringify(hit.data)).not.toMatch(/feed|threat|score/i);
   });
 
-  it("still stores the staff score (with the feed deduction) and the feed count", async () => {
+  it("never reads threat data; trust_score and feed_mentions are NULL on public rows (appsec M2)", async () => {
     const hit = await scan(12);
-    // softfail SPF (-10) + no DMARC (-25) − feed (12 → -20) → 45.
-    expect(hit.storedScore).toBe(45);
-    expect(hit.storedFeed).toBe(12);
+    expect(hit.calls.some((c) => /FROM threats/.test(c.sql))).toBe(false);
+    expect(hit.insert.sql).toMatch(/'completed', NULL, \?, \?, NULL,/);
   });
 });
 

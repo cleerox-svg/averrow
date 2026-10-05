@@ -16,12 +16,13 @@
 import { json } from "../lib/cors";
 import { isFreemailEmail } from "../lib/freemail";
 import { normalizePublicHostname } from "../lib/public-hostname";
+import { registrableDomain } from "../lib/registrable-domain";
 import { generateLookalikes, getScanLookalikes } from "../lib/scan-lookalikes";
 import {
-  emailMatchesScannedDomain, isScanId, parseStoredPublicView, toPublicEmailView, toPublicScanData,
+  emailMatchesScannedDomain, isScanId, parseStoredPublicView, toPublicEmailView, toPublicScanData, toScanDomain,
+  runEmailSecurityScanWithin, EmailScanTimeoutError, EMAIL_SCAN_BUDGET_MS,
   type PublicScanData, type StoredPublicView,
 } from "../lib/free-scan-view";
-import { runEmailSecurityScan } from "../email-security";
 import type { Env } from "../types";
 
 // Lookalike permutation generation lives in lib/scan-lookalikes.ts
@@ -393,10 +394,12 @@ export async function handleBrandScanHistory(request: Request, env: Env): Promis
 //
 // Anonymous. Returns ONLY public-DNS facts (lib/free-scan-view.ts): the
 // email-security grade + SPF/DKIM/DMARC/MX/BIMI flags, and how many of a
-// sample of lookalike domains are registered. The staff fields are still
-// written to the row exactly as before — feed_mentions and the
-// threat-informed trust_score (same formula, lookalikes not scored) —
-// and are never returned.
+// sample of lookalike domains are registered. It never reads Averrow
+// threat data: no threats query (the old crossReferenceFeedData was an
+// unindexable leading-wildcard LIKE over threats on every anonymous scan),
+// so brand_scans.feed_mentions and trust_score stay NULL on public rows.
+// The input is reduced to its registrable domain before anything else
+// (toScanDomain): shop.acme.com scans acme.com.
 
 /** checkDNS's SPF vocabulary, kept for the stored staff columns. */
 function legacySpfPolicy(exists: boolean, policy: string | null): string | null {
@@ -407,24 +410,22 @@ function legacySpfPolicy(exists: boolean, policy: string | null): string | null 
   return "none";
 }
 
+/**
+ * Run and store a public scan. `domain` should already be a registrable
+ * domain (toScanDomain); a subdomain passed here is reduced defensively.
+ * Throws EmailScanTimeoutError when the email-security scan exceeds its
+ * wall-clock budget (nothing is stored then).
+ */
 export async function runPublicScan(env: Env, domain: string): Promise<PublicScanData> {
+  const scanDomain = toScanDomain(domain) ?? domain;
   const startTime = Date.now();
-  const [email, lookalikes, feed] = await Promise.all([
-    runEmailSecurityScan(domain),
-    getScanLookalikes(env, domain),
-    crossReferenceFeedData(domain, env.DB),
+  const [email, lookalikes] = await Promise.all([
+    runEmailSecurityScanWithin(scanDomain, EMAIL_SCAN_BUDGET_MS),
+    getScanLookalikes(env, scanDomain),
   ]);
 
   const spfPolicy = legacySpfPolicy(email.spf.exists, email.spf.policy);
   const dmarcPolicy = email.dmarc.exists ? (email.dmarc.policy ?? "none") : null;
-  const staffScore = calculateBrandTrustScore({
-    spfPolicy,
-    dmarcPolicy,
-    dkimFound: false,
-    lookalikeCount: 0,
-    feedMentions: feed.mentions,
-    mxCount: email.mx.exists ? 1 : 0,
-  });
 
   const id = crypto.randomUUID();
   const view: StoredPublicView = {
@@ -438,14 +439,14 @@ export async function runPublicScan(env: Env, domain: string): Promise<PublicSca
     `INSERT INTO brand_scans (id, domain, status, trust_score, spf_policy, dmarc_policy, feed_mentions,
                               lookalikes_found, registered_lookalikes, public_view, scan_duration_ms,
                               scanned_by, created_at, updated_at)
-     VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
+     VALUES (?, ?, 'completed', NULL, ?, ?, NULL, ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
   ).bind(
-    id, domain, staffScore, spfPolicy, dmarcPolicy, feed.mentions,
+    id, scanDomain, spfPolicy, dmarcPolicy,
     lookalikes.registered.length, JSON.stringify(lookalikes.registered), JSON.stringify(view),
     Date.now() - startTime,
   ).run();
 
-  return toPublicScanData(id, domain, view);
+  return toPublicScanData(id, scanDomain, view);
 }
 
 export async function handlePublicBrandScan(request: Request, env: Env): Promise<Response> {
@@ -453,14 +454,19 @@ export async function handlePublicBrandScan(request: Request, env: Env): Promise
   try {
     const body = await request.json().catch(() => null) as { domain?: unknown } | null;
     // Strict hostname check — the domain is stored in brand_scans and
-    // rendered back on the public results page (stored-XSS fix).
-    const domain = normalizePublicHostname(body?.domain, { stripWww: true });
+    // rendered back on the public results page (stored-XSS fix) — then
+    // reduced to the registrable domain. The response's `domain` is the
+    // reduced one.
+    const domain = toScanDomain(body?.domain);
     if (!domain) {
       return json({ success: false, error: "Valid domain required" }, 400, origin);
     }
     const data = await runPublicScan(env, domain);
     return json({ success: true, data }, 200, origin);
-  } catch {
+  } catch (err) {
+    if (err instanceof EmailScanTimeoutError) {
+      return json({ success: false, error: "The scan took too long. Please try again." }, 504, origin);
+    }
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
 }
@@ -491,30 +497,93 @@ export async function handlePublicBrandScanResult(request: Request, env: Env, sc
 // ─── Lead Capture ──────────────────────────────────────────────
 //
 // POST /api/leads {email, domain, scan_id, consent:true}. Delivery:
-//   - email domain == scanned domain (or a subdomain of it): the
-//     prospect report is generated now and its link emailed to that
-//     address → delivery "emailed". Receiving it proves the mailbox.
+//   - email host is EXACTLY the scanned registrable domain, and that
+//     domain is not a mailbox provider or SaaS tenant host
+//     (emailMatchesScannedDomain): a SCAN-ONLY report is generated now
+//     (email posture + the scan's own registered lookalike names — no
+//     Averrow threat data, see buildReportPayload) and its link emailed
+//     to that address → delivery "emailed". Receiving it proves the mailbox.
 //   - otherwise (or if generating/sending fails): sales is notified and
-//     the prospect gets a short "the team will follow up" confirmation →
-//     delivery "team_follow_up". The response never claims an email was
-//     sent unless it was.
-// Sales is notified in both cases. Prospect emails are capped per
-// address per day so the form can't be used to mail-bomb an inbox.
+//     the prospect gets a short "the team will follow up" confirmation
+//     that does not repeat the scanned domain → delivery "team_follow_up".
+//     The response never claims an email was sent unless it was.
+// Mail-bombing caps (KV, best effort, fail CLOSED for the email — the
+// lead row is always recorded):
+//   - one prospect email per lead, ≤ LEAD_MAIL_DAILY_CAP per normalised
+//     address and ≤ LEAD_MAIL_DOMAIN_DAILY_CAP per recipient domain per
+//     UTC day;
+//   - the internal sales alert email ≤ LEAD_SALES_NOTIFY_DAILY_CAP per
+//     UTC day platform-wide, dropped silently beyond that (the in-app
+//     notification is still created).
 
 const EMAIL_RE = /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/;
 export const LEAD_MAIL_DAILY_CAP = 3;
-const leadMailKey = (email: string) => `lead:mail:${email}`;
+export const LEAD_MAIL_DOMAIN_DAILY_CAP = 10;
+export const LEAD_SALES_NOTIFY_DAILY_CAP = 50;
+const DAILY_COUNTER_TTL_SECONDS = 2 * 24 * 60 * 60;
 
-/** Reserve one prospect email for this address today. Fails open on KV error. */
+/**
+ * The mailbox an address delivers to, for rate caps: lowercase, `+tag`
+ * dropped from the local part, and for gmail/googlemail the dots dropped
+ * and the domain folded to gmail.com (they are the same inbox).
+ */
+export function normalizeEmailForCap(email: string): string {
+  const lower = email.trim().toLowerCase();
+  const at = lower.lastIndexOf("@");
+  if (at <= 0) return lower;
+  let local = lower.slice(0, at);
+  let domain = lower.slice(at + 1).replace(/\.$/, "");
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    local = local.replace(/\./g, "");
+    domain = "gmail.com";
+  }
+  return `${local}@${domain}`;
+}
+
+const utcDay = () => new Date().toISOString().slice(0, 10);
+export const leadMailAddressKey = (normalisedEmail: string, day = utcDay()) => `lead:mail:addr:${day}:${normalisedEmail}`;
+export const leadMailDomainKey = (domain: string, day = utcDay()) => `lead:mail:domain:${day}:${domain}`;
+export const salesNotifyKey = (day = utcDay()) => `lead:notify:sales:${day}`;
+
+const readCounter = async (env: Env, key: string) => parseInt((await env.CACHE.get(key)) ?? "0", 10) || 0;
+
+/**
+ * Reserve one prospect email for this recipient today, against both the
+ * per-address and the per-recipient-domain cap. Not atomic (KV), so a
+ * burst can overshoot by a few — the per-IP route limit bounds that.
+ * Fails CLOSED: any KV error means no email.
+ */
 async function reserveLeadMail(env: Env, email: string): Promise<boolean> {
   try {
-    const key = leadMailKey(email);
-    const sent = parseInt((await env.CACHE.get(key)) ?? "0", 10) || 0;
-    if (sent >= LEAD_MAIL_DAILY_CAP) return false;
-    await env.CACHE.put(key, String(sent + 1), { expirationTtl: 24 * 60 * 60 });
+    const normalised = normalizeEmailForCap(email);
+    const host = normalised.slice(normalised.lastIndexOf("@") + 1);
+    const recipientDomain = registrableDomain(host) ?? host;
+    const addrKey = leadMailAddressKey(normalised);
+    const domainKey = leadMailDomainKey(recipientDomain);
+    const [addrSent, domainSent] = await Promise.all([readCounter(env, addrKey), readCounter(env, domainKey)]);
+    if (addrSent >= LEAD_MAIL_DAILY_CAP || domainSent >= LEAD_MAIL_DOMAIN_DAILY_CAP) return false;
+    await Promise.all([
+      env.CACHE.put(addrKey, String(addrSent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS }),
+      env.CACHE.put(domainKey, String(domainSent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS }),
+    ]);
     return true;
   } catch {
+    return false;
+  }
+}
+
+/** Reserve one internal sales alert email today. Fails CLOSED on KV error. */
+async function reserveSalesNotify(env: Env): Promise<boolean> {
+  try {
+    const key = salesNotifyKey();
+    const sent = await readCounter(env, key);
+    if (sent >= LEAD_SALES_NOTIFY_DAILY_CAP) return false;
+    await env.CACHE.put(key, String(sent + 1), { expirationTtl: DAILY_COUNTER_TTL_SECONDS });
     return true;
+  } catch {
+    return false;
   }
 }
 
@@ -523,17 +592,20 @@ async function autoDeliverReport(
   p: { leadId: string; email: string; domain: string; scanId: string | null; appOrigin: string },
 ): Promise<boolean> {
   try {
-    const [{ createQualifiedReport }, { sendScanReportLink }] = await Promise.all([
+    const [{ createQualifiedReport, AUTO_REPORT_GENERATED_BY }, { sendScanReportLink }] = await Promise.all([
       import("./qualifiedReport"),
       import("../lib/scan-lead-notify"),
     ]);
+    // Scan-only content: what the public scan shows plus the scan's own
+    // registered lookalike names. Never threats/IPs/providers/campaigns.
     const report = await createQualifiedReport(env, {
       leadId: p.leadId,
       domain: p.domain,
       company: null,
       scanId: p.scanId,
-      generatedBy: "auto:lead_capture",
+      generatedBy: AUTO_REPORT_GENERATED_BY,
       appOrigin: p.appOrigin,
+      content: "scan_only",
     });
     const sent = await sendScanReportLink(env, {
       email: p.email, domain: p.domain, shareUrl: report.shareUrl, expiresAt: report.expiresAt,
@@ -566,8 +638,9 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
       return json({ success: false, error: "Please use a business email address (no free email providers)" }, 400, origin);
     }
     // Stored on scan_leads, correlated against brands and echoed into the
-    // sales + prospect emails, so it must be a real hostname.
-    const domain = normalizePublicHostname(body.domain, { stripWww: true });
+    // sales email, so it must be a real hostname. Reduced to the
+    // registrable domain, the same way the scan itself is.
+    const domain = toScanDomain(body.domain);
     if (!domain) {
       return json({ success: false, error: "Please enter a valid domain (e.g. example.com)" }, 400, origin);
     }
@@ -608,8 +681,8 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
 
     // Side effects are best-effort: the lead row is committed, and the
     // visitor must not see an error because a downstream send failed.
-    //   1. Prospect confirmation (team_follow_up only, within the cap).
-    //   2. Internal alert email to sales@averrow.com.
+    //   1. Prospect confirmation (team_follow_up only, within the caps).
+    //   2. Internal alert email to sales@averrow.com (global daily cap).
     //   3. In-app notification (audience 'team'); group_key per lead.
     try {
       const [{ notifySalesOfNewLead, sendScanFollowUpConfirmation }, { createNotification }] =
@@ -617,33 +690,36 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
           import("../lib/scan-lead-notify"),
           import("../lib/notifications"),
         ]);
+      const salesAllowed = await reserveSalesNotify(env);
       await Promise.allSettled([
         delivery === "team_follow_up" && mailAllowed
-          ? sendScanFollowUpConfirmation(env, { email, domain })
+          ? sendScanFollowUpConfirmation(env, { email })
           : Promise.resolve(null),
-        notifySalesOfNewLead(env, {
-          leadId: id,
-          email,
-          company,
-          domain,
-          correlatedBrandId,
-          delivery,
-          adminUrlBase: appOrigin,
-        }),
+        salesAllowed
+          ? notifySalesOfNewLead(env, {
+              leadId: id,
+              email,
+              company,
+              domain,
+              correlatedBrandId,
+              delivery,
+              adminUrlBase: appOrigin,
+            })
+          : Promise.resolve(null),
         createNotification(env, {
           type: "new_lead",
           audience: "team",
           severity: "low",
           title: `New lead — ${email}`,
           message: delivery === "emailed"
-            ? `${email} scanned ${domain}; the report was emailed to them automatically.`
+            ? `${email} scanned ${domain}; the scan-only report was emailed to them automatically.`
             : `${email} scanned ${domain} and asked for the report. Follow up needed.`,
           // Basename-relative (SPA mounts at /v2), deep-links to the lead.
           link: `/leads?view=scan&lead=${id}`,
           groupKey: `new_lead:${id}`,
           reasonText: "A visitor submitted the free-scan report form.",
           recommendedAction: delivery === "emailed"
-            ? "Review the lead; the prospect already has their report."
+            ? "Review the lead; the prospect already has their scan-only report."
             : "Review the lead and generate a report or reach out.",
           metadata: {
             lead_id: id,

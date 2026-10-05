@@ -7,6 +7,11 @@
 //
 // Prospect-facing: no feed/source names, no ASNs, no vendor names, no
 // social-media section, no unsourced statistics.
+//
+// A "scan_only" payload (auto-delivered from the lead form) has no
+// active_threats / infrastructure blocks; those sections are not rendered
+// at all — not even as "none on record", which would itself be a claim
+// about Averrow's threat data.
 
 import type { ReportPayload as ReportPayloadCurrent } from "../handlers/qualifiedReport";
 
@@ -69,7 +74,10 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
 
   const findings = p.executive_summary.key_findings.map((f) => `<li>${escapeHtml(f)}</li>`).join("");
 
-  const threatRows = p.active_threats.samples.slice(0, 25).map((t) => `
+  const scanOnly = p.content === "scan_only";
+  const threats = scanOnly ? undefined : p.active_threats;
+  const infra = scanOnly ? undefined : p.infrastructure;
+  const threatRows = (threats?.samples ?? []).slice(0, 25).map((t) => `
     <tr>
       <td>${severityChip(t.severity)}</td>
       <td>${escapeHtml(t.threat_type)}</td>
@@ -79,9 +87,9 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
     </tr>
   `).join("");
 
-  const providers = p.infrastructure.top_hosting_providers;
-  const countries = p.infrastructure.top_countries;
-  const campaigns = p.infrastructure.campaigns_caught_in;
+  const providers = infra?.top_hosting_providers ?? [];
+  const countries = infra?.top_countries ?? [];
+  const campaigns = infra?.campaigns_caught_in ?? [];
   const hasInfra = providers.length > 0 || countries.length > 0 || campaigns.length > 0;
   const providerRows = providers.map((hp) => `
     <tr><td>${escapeHtml(hp.name)}</td><td style="text-align:right;">${hp.threat_count}</td></tr>
@@ -236,23 +244,24 @@ export function renderQualifiedReportHTML(p: ReportPayload): string {
         : `<div class="panel" style="color:var(--text-secondary);">No registered lookalike domains were found.</div>`}
     </section>
 
+    ${threats ? `
     <section>
       ${h(`Active Threats Targeting ${escapeHtml(p.brand.domain)}`)}
-      ${p.active_threats.total > 0 ? `
+      ${threats.total > 0 ? `
       <div class="stat-grid">
-        <div class="stat"><div class="label">Total Active</div><div class="value red">${p.active_threats.total}</div></div>
-        <div class="stat"><div class="label">Critical / High</div><div class="value red">${(p.active_threats.by_severity.critical ?? 0) + (p.active_threats.by_severity.high ?? 0)}</div></div>
+        <div class="stat"><div class="label">Total Active</div><div class="value red">${threats.total}</div></div>
+        <div class="stat"><div class="label">Critical / High</div><div class="value red">${(threats.by_severity.critical ?? 0) + (threats.by_severity.high ?? 0)}</div></div>
       </div>
-      ${p.active_threats.samples.length > 0 ? `
+      ${threats.samples.length > 0 ? `
       <div class="panel">
         <table>
           <thead><tr><th>Severity</th><th>Type</th><th>Indicator</th><th>Country</th><th>First Seen</th></tr></thead>
           <tbody>${threatRows}</tbody>
         </table>
-        ${p.active_threats.total > 25 ? `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Showing the 25 most recent of ${p.active_threats.total} active threats.</div>` : ""}
+        ${threats.total > 25 ? `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;">Showing the 25 most recent of ${threats.total} active threats.</div>` : ""}
       </div>` : ""}
       ` : `<div class="panel" style="color:var(--text-secondary);">No active threats targeting this domain are on record.</div>`}
-    </section>
+    </section>` : ""}
 
     ${hasInfra ? `
     <section>

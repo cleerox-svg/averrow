@@ -150,8 +150,9 @@ type Verdict = "registered" | "unregistered" | "unknown";
 /**
  * NS lookup over DNS-over-HTTPS. NOERROR with an answer = the name is
  * delegated (registered); NXDOMAIN = not registered. Anything else
- * (SERVFAIL, timeout, HTTP error) is "unknown" and is not counted as
- * checked, so the public `checked` number only covers definite answers.
+ * (SERVFAIL — rcode 2 — REFUSED, timeout, HTTP error) is "unknown": never
+ * counted as registered and not counted as checked, so the public
+ * `checked` number only covers definite answers.
  */
 async function lookupRegistration(domain: string, timeoutMs: number): Promise<Verdict> {
   const controller = new AbortController();
@@ -224,6 +225,8 @@ export async function checkRegistrations(
 // ─── Cached per-domain result ───────────────────────────────────
 
 export const LOOKALIKE_CACHE_TTL_SECONDS = 24 * 60 * 60;
+/** TTL for a partial result (some lookups SERVFAIL / timed out / budget-cut). */
+export const LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS = 60 * 60;
 export const lookalikeCacheKey = (domain: string) => `scan:lookalikes:${domain}`;
 
 interface CachedLookalikes { v: 1; checked: number; registered: string[] }
@@ -243,10 +246,13 @@ function parseCached(raw: string | null): CachedLookalikes | null {
 export interface ScanLookalikes { checked: number; registered: string[]; cached: boolean }
 
 /**
- * Registered lookalikes for `domain`: KV hit (24h) or a live check of the
- * ranked sample. Only a complete check is cached — a budget-cut partial
- * result is returned but re-checked next time. KV failures fall through
- * to the live check.
+ * Registered lookalikes for `domain`: KV hit or a live check of the
+ * ranked sample. A complete check is cached for 24h. A partial one (some
+ * names SERVFAIL, timed out or were cut by the budget — all "unknown",
+ * never counted as registered) is cached for 1h, so a domain whose
+ * resolvers misbehave doesn't re-run ~40 lookups on every anonymous scan.
+ * A check with no definite answer at all (resolver outage) is not cached.
+ * KV failures fall through to the live check.
  */
 export async function getScanLookalikes(
   env: Pick<Env, "CACHE">,
@@ -260,10 +266,12 @@ export async function getScanLookalikes(
   } catch { /* KV transient — check live */ }
 
   const result = await checkRegistrations(selectLikelyLookalikes(domain), opts);
-  if (result.complete) {
+  if (result.checked > 0) {
     try {
       const entry: CachedLookalikes = { v: 1, checked: result.checked, registered: result.registered };
-      await env.CACHE.put(key, JSON.stringify(entry), { expirationTtl: LOOKALIKE_CACHE_TTL_SECONDS });
+      await env.CACHE.put(key, JSON.stringify(entry), {
+        expirationTtl: result.complete ? LOOKALIKE_CACHE_TTL_SECONDS : LOOKALIKE_PARTIAL_CACHE_TTL_SECONDS,
+      });
     } catch { /* non-fatal */ }
   }
   return { checked: result.checked, registered: result.registered, cached: false };
