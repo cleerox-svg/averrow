@@ -16,6 +16,10 @@
  *   countries          "215"
  *   active_feeds       46            (number — the page says "40+ sources")
  *   proof?             { lookalikes_found_30d, operations_tracked, monitored_brands }
+ *   live               raw numbers (total_threats, threats_today, threat_types[],
+ *                      operations_tracked, lookalikes_found_30d, ...) for the
+ *                      "By the numbers" section; null per field when missing
+ *   fallbacks          static labels for fields the backend may not measure yet
  *   generated_at       ISO timestamp of THIS fetch
  *   source             the URL, or "snapshot-YYYY-MM-DD" when the committed
  *                      snapshot is being reused
@@ -63,6 +67,9 @@ function parseLabel(label) {
   return base * mult;
 }
 
+/** Static labels used when the live value is missing or not yet measured. */
+export const DEFAULT_FALLBACKS = { lookalikes_found_30d: "2,300+" };
+
 const isCount = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
 
 async function fetchWithTimeout(url, ms) {
@@ -85,6 +92,8 @@ async function fetchWithTimeout(url, ms) {
  * @property {string} generated_at
  * @property {string} source
  * @property {{ lookalikes_found_30d?: string | null, operations_tracked?: string | null, monitored_brands?: string | null }} [proof]
+ * @property {Record<string, any>} [live] raw numbers for the By-the-numbers section
+ * @property {{ lookalikes_found_30d: string }} [fallbacks]
  */
 
 /**
@@ -134,11 +143,37 @@ export function buildStats(live, generatedAt, source) {
   if (p && typeof p === "object") {
     /** @type {NonNullable<SiteStats['proof']>} */
     const proof = {};
-    if (isCount(p.lookalikes_found_30d)) proof.lookalikes_found_30d = roundLabel(p.lookalikes_found_30d);
+    // 0 = "not measured under the current definition" (the backend narrowed it);
+    // never publish it as a real zero. The static fallback below covers the gap.
+    if (isCount(p.lookalikes_found_30d) && p.lookalikes_found_30d > 0) proof.lookalikes_found_30d = roundLabel(p.lookalikes_found_30d);
     if (isCount(p.operations_tracked)) proof.operations_tracked = roundLabel(p.operations_tracked);
     if (isCount(p.monitored_brands)) proof.monitored_brands = roundLabel(p.monitored_brands);
     if (Object.keys(proof).length > 0) stats.proof = proof;
   }
+
+  // Raw numbers for the "By the numbers" section (rendered at build, then
+  // refreshed in the browser from the same endpoint). Any field may be null:
+  // the page keeps its fallback for that field.
+  const num = (v) => (isCount(v) ? v : null);
+  const pr = p && typeof p === "object" ? p : {};
+  const types = Array.isArray(live.threat_types)
+    ? live.threat_types
+        .filter((r) => r && typeof r.threat_type === "string" && isCount(r.count))
+        .map((r) => ({ threat_type: r.threat_type, count: r.count }))
+    : [];
+  stats.live = {
+    total_threats: num(live.total_threats),
+    threats_today: num(live.threats_today),
+    threat_types: types,
+    operations_tracked: num(pr.operations_tracked),
+    lookalikes_found_30d: isCount(pr.lookalikes_found_30d) && pr.lookalikes_found_30d > 0 ? pr.lookalikes_found_30d : null,
+    monitored_brands: num(pr.monitored_brands),
+    providers_mapped: num(live.providers_mapped),
+    countries: num(live.countries),
+    active_feeds: num(live.active_feeds),
+    proof_generated_at: typeof pr.generated_at === "string" ? pr.generated_at : null,
+  };
+  stats.fallbacks = { ...DEFAULT_FALLBACKS };
   return stats;
 }
 

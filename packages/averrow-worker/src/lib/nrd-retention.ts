@@ -4,7 +4,7 @@
 // in (feeds/nrd_hagezi.ts storeNrdReference). A full feed day is ~180K rows
 // and nothing ever deleted them, so the table grew without bound.
 //
-// Its only reader is the phantom matcher (lib/phantom-matcher.ts, nrd
+// Its readers are the phantom matcher (lib/phantom-matcher.ts, nrd
 // source), which is manual/API-triggered and scans incrementally from a KV
 // cursor (PHANTOM_MATCHER_NRD_CURSOR_KEY) with `WHERE created_at >= cursor`.
 // The cursor is a "scanned up to" watermark: every row with created_at below
@@ -14,8 +14,24 @@
 // purge is gated on the matcher having RUN since the rows arrived; if the
 // matcher never runs, nothing is ever purged.
 //
-// Retention rule (owner decision 2026-10-04):
-//   cutoff = min(now − NRD_RETENTION_DAYS, matcher cursor)
+// Second reader (2026-10-05): the NRD <-> lookalike matcher
+// (lib/lookalike-nrd-matcher.ts, every lookalike_scanner run) keeps its own
+// keyset cursor at LOOKALIKE_NRD_CURSOR_KEY. When that cursor exists, its
+// created_at is a second hold: rows at or after it have not necessarily been
+// joined to lookalike_domains yet. Absent (the lookalike matcher has never
+// run) it holds nothing — the phantom cursor stays the hard floor, exactly as
+// before — and the lookalike matcher's first run starts at now − 30 days
+// of ingest, so it never assumes a purged row still exists.
+//
+// The lookalike hold is CLAMPED to no earlier than now − (30 + 7) days
+// (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS): rows older than
+// that can never be claimed, and a stuck or disabled matcher must not hold
+// retention forever. At 90-day retention the clamped hold therefore never
+// binds; it guards a future shorter retention.
+//
+// Retention rule (owner decision 2026-10-04, + the lookalike hold):
+//   cutoff = min(now − NRD_RETENTION_DAYS, matcher cursor,
+//                max(lookalike cursor, now − 37 days))
 //   DELETE rows with created_at < cutoff  (strict: the row AT the cursor is
 //                                          re-scanned by the matcher's `>=`)
 // so a row the matcher has not yet scanned is NEVER deleted. No cursor (the
@@ -40,6 +56,12 @@
 
 import type { Env } from '../types';
 import { PHANTOM_MATCHER_NRD_CURSOR_KEY } from './phantom-matcher';
+import {
+  LOOKALIKE_NRD_CURSOR_KEY,
+  NRD_MATCH_MAX_AGE_DAYS,
+  NRD_RETENTION_HOLD_MARGIN_DAYS,
+  parseNrdCursor,
+} from './lookalike-nrd-matcher';
 
 export const NRD_RETENTION_DAYS = 90;
 
@@ -78,6 +100,13 @@ export interface NrdRetentionResult {
   cursor: string | null;
   /** True when the matcher cursor is earlier than the age cutoff. */
   held_by_matcher: boolean;
+  /**
+   * created_at of the NRD <-> lookalike matcher's keyset cursor (null when
+   * that matcher has never run, or its cursor is unreadable — no hold).
+   */
+  lookalike_cursor?: string | null;
+  /** True when the lookalike matcher's cursor set the effective cutoff. */
+  held_by_lookalike_matcher?: boolean;
   /** True when the soft cap stopped the loop before a short chunk. */
   more_remaining: boolean;
   statements: number;
@@ -156,7 +185,36 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
 
   // ── 2. Effective cutoff = the earlier of age cutoff and cursor. ──
   result.held_by_matcher = cursor < ageCutoff;
-  const cutoff = result.held_by_matcher ? cursor : ageCutoff;
+  let cutoff = result.held_by_matcher ? cursor : ageCutoff;
+
+  // ── 2b. The lookalike matcher's hold (only when it has a cursor). ──
+  // A failed read here is NOT a skip: it would only make the purge less
+  // conservative by its own hold, so treat it as "hold at the current
+  // cutoff" — i.e. purge nothing this run, same any-doubt rule as step 1.
+  let lookalikeCursor: string | null = null;
+  try {
+    lookalikeCursor = parseNrdCursor(await env.CACHE.get(LOOKALIKE_NRD_CURSOR_KEY))?.created_at ?? null;
+  } catch (err) {
+    result.skipped = 'cursor_read_failed';
+    result.error = err instanceof Error ? err.message : String(err);
+    return finish();
+  }
+  result.lookalike_cursor = lookalikeCursor;
+  result.held_by_lookalike_matcher = false;
+  if (lookalikeCursor && !SQLITE_TS_RE.test(lookalikeCursor)) {
+    result.skipped = 'cursor_unrecognized';
+    return finish();
+  }
+  // CLAMPED: never hold earlier than the oldest row the matcher could still
+  // claim (+ margin). A stuck or disabled matcher must not pin retention
+  // forever, and a row older than this is unclaimable whether or not the
+  // matcher ever reads it.
+  const holdFloor = toSqliteUtc(start - (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS) * 86_400_000);
+  const lookalikeHold = lookalikeCursor && lookalikeCursor < holdFloor ? holdFloor : lookalikeCursor;
+  if (lookalikeHold && lookalikeHold < cutoff) {
+    cutoff = lookalikeHold;
+    result.held_by_lookalike_matcher = true;
+  }
   result.cutoff = cutoff;
 
   // ── 3. Chunked delete through idx_nrd_domains_created. ──

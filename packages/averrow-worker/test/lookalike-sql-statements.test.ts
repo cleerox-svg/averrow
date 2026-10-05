@@ -259,6 +259,7 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       ai_claimed_at: string | null;
       threat_level: string | null;
       ai_assessment: string | null;
+      registration_evidence: string | null;
     };
   }
 
@@ -282,10 +283,15 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     // "proved" it was hand-typing a `bimiSql` that existed nowhere in
     // `src/`, in the one file whose whole contract is that extracting
     // beats retyping.
+    //
+    // Plus 0282's TWO: `idx_lookalike_domain` (the NRD join's probe) and
+    // the partial `idx_lookalike_first_seen` (the public-proof
+    // new-registrations count). Both are plan-pinned in
+    // test/lookalike-nrd-matcher.test.ts.
     expect(
       lookalikeSchema().indexes.length,
       "expected index DDL to be extracted from the migrations",
-    ).toBe(9);
+    ).toBe(11);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 
@@ -494,16 +500,32 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       expect(fetch(id).first_seen).not.toBeNull();
     });
 
-    it("does NOT overwrite an existing first_seen, and reports zero changes", () => {
-      // The appearance date of a squat is a fact recorded once. A later
-      // lapse-and-re-registration is a NEW appearance, but the platform
-      // deliberately keeps the FIRST one — and the 0-row result is what
-      // a caller would need to detect a re-registration if that ever
-      // changes.
+    it("does NOT overwrite a first_seen that dates the CURRENT event, and reports zero changes", () => {
+      // Since migration 0282 the guard is "no ALERTED current event": a
+      // row whose current registration is already dated (by the NRD list,
+      // or an earlier observed pass of this same event) AND alerted keeps
+      // that date and evidence. Mutation-checked: dropping the guard fails.
+      for (const evidence of ["nrd", "observed"]) {
+        const id = insert({
+          first_seen: "2026-03-04 05:06:07", last_checked: "2026-09-01 00:00:00",
+          registration_evidence: evidence, registration_alerted_at: "2026-03-04 06:00:00",
+        });
+        const res = db.prepare(SQL.firstSeenStamp()).run(id);
+        expect(res.changes).toBe(0);
+        expect(fetch(id).first_seen).toBe("2026-03-04 05:06:07");
+        expect(fetch(id).registration_evidence).toBe(evidence);
+      }
+    });
+
+    it("RE-stamps a first_seen whose event has ended (evidence cleared by a lapse)", () => {
+      // The lapse branch clears `registration_evidence` but keeps the old
+      // `first_seen`; the next observed registration is a NEW event and
+      // must carry today's date, not the previous event's.
       const id = insert({ first_seen: "2026-03-04 05:06:07", last_checked: "2026-09-01 00:00:00" });
       const res = db.prepare(SQL.firstSeenStamp()).run(id);
-      expect(res.changes).toBe(0);
-      expect(fetch(id).first_seen).toBe("2026-03-04 05:06:07");
+      expect(res.changes).toBe(1);
+      expect(fetch(id).first_seen).not.toBe("2026-03-04 05:06:07");
+      expect(fetch(id).registration_evidence).toBe("observed");
     });
   });
 

@@ -21,6 +21,13 @@
  * fourth is a DOCUMENTED EXEMPTION with a stated bound — see
  * `PHANTOM_MATCH_ALERT_SEVERITY`.
  *
+ * Producer 1 has a SECOND documented exemption (owner decision
+ * 2026-10-05): a CONFIRMED NEW REGISTRATION files at MEDIUM even below the
+ * HIGH floor — see `NEW_REGISTRATION_ALERT_SEVERITY` and
+ * `newRegistrationAlertSeverity`. Every other producer-1 path (first-contact
+ * baseline, mx/web gains, the mail+web catch-up) still goes through
+ * `clearsLookalikeAlertFloor`.
+ *
  * Producer 3 was the previous correction: this docstring said "ONE
  * definition, imported by BOTH producers" and the floor's own text said
  * "on either producer path", and both were false — `alert-backfill.ts`
@@ -108,7 +115,8 @@ export function normalizeThreatLevel(raw: string | null): PageThreatLevel {
  *
  * Below this level NO alert row is created — on producers 1-3 of the
  * four listed in this module's docstring. Producer 4 is exempt; see
- * `PHANTOM_MATCH_ALERT_SEVERITY`.
+ * `PHANTOM_MATCH_ALERT_SEVERITY`. So is producer 1's confirmed-new-
+ * registration path; see `NEW_REGISTRATION_ALERT_SEVERITY`.
  * Everything else is still persisted: `threat_level`, `ai_assessment`,
  * and the whole page-analysis column family. THE DATA IS THE
  * DELIVERABLE; THE ALERT IS THE NOTIFICATION, and the two had been
@@ -211,6 +219,82 @@ export function clearsLookalikeAlertFloor(level: PageThreatLevel): boolean {
  * unnoticed while the docstring claimed it could not exist.
  */
 export const PHANTOM_MATCH_ALERT_SEVERITY = 'low';
+
+/**
+ * THE SECOND DOCUMENTED EXEMPTION from `LOOKALIKE_ALERT_SEVERITY_FLOOR`
+ * (owner decision 2026-10-05): the minimum severity of a CONFIRMED NEW
+ * REGISTRATION alert, filed by the registration checker
+ * (`scanners/lookalike-domains.ts`, producer 1) with the title "New
+ * lookalike domain registered: <domain>".
+ *
+ * ── Why the floor was wrong for this one finding ────────────────────
+ *
+ * The floor withholds everything below HIGH, and a freshly registered
+ * squat is almost never HIGH on the day it appears: it is parked, with no
+ * mail and no web content yet, so the compositor puts it at LOW/MEDIUM.
+ * Under the floor alone the platform therefore had NO "newly registered
+ * lookalike" alert at all — the registration was recorded
+ * (`first_seen`, `alerts_withheld_below_floor`) and nobody was told. A
+ * registration is the earliest point at which a takedown or a block is
+ * cheap, which is the whole reason to watch permutations.
+ *
+ * ── What counts as CONFIRMED ────────────────────────────────────────
+ *
+ * Exactly two pieces of evidence (`lookalike_domains.registration_
+ * evidence`, migration 0282):
+ *
+ *   'observed'  the DNS checker saw `registered 0 -> 1` on a row it had
+ *               ALREADY baselined as unregistered — a transition, not a
+ *               first contact.
+ *   'nrd'       the domain appeared in the registries' newly-registered
+ *               list (`nrd_domains`, lib/lookalike-nrd-matcher.ts) no
+ *               earlier than 30 days ago, on a row we had not already
+ *               observed registered before that date.
+ *
+ * A first-contact baseline ("it resolves, we cannot say since when") is
+ * NOT confirmed and stays under the floor — that is the seeder backlog the
+ * floor exists for.
+ *
+ * NOT ALERTED even when confirmed: a row an analyst marked `benign` or
+ * `taken_down` (same rule as the mail+web catch-up), and an NRD-dated row
+ * while DNS answers NXDOMAIN (a registrar-deleted fraudulent registration,
+ * or one not yet published) — held and retried within the 30-day window.
+ *
+ * ── THE BOUND ───────────────────────────────────────────────────────
+ *
+ *   * AT MOST ONE new-registration alert per lookalike row per
+ *     registration event: `registration_alerted_at` is claimed with a
+ *     guarded `WHERE ... IS NULL` UPDATE before `createAlert` runs, and
+ *     is cleared only by an ANSWERED NXDOMAIN lapse (DoH Status 3 on a
+ *     registered row; NODATA is not a lapse), which also clears
+ *     `registration_evidence` — so a lapsed row can never re-read as a
+ *     pending NRD registration, and a re-registration after a lapse
+ *     (typically a new registrant, re-dated to the day we see it) is a new
+ *     event, and nothing else is.
+ *   * The population is real registrations of permutations of monitored
+ *     brands, not the permutation table: a few per day platform-wide, not
+ *     a re-check of 56K rows. And `createAlert`'s tier gate still applies
+ *     (no alert for `tracked` brands).
+ *
+ * When the composed level already clears the floor (mail+web, BIMI, a
+ * phishing page) the alert carries THAT level; MEDIUM is a floor for this
+ * finding, never a cap.
+ */
+export const NEW_REGISTRATION_ALERT_SEVERITY: PageThreatLevel = 'MEDIUM';
+
+/** Where a confirmed registration came from (migration 0282). */
+export type RegistrationEvidence = 'nrd' | 'observed';
+
+/**
+ * The severity a confirmed-new-registration alert files at: the composed
+ * level when it clears the HIGH floor, else `NEW_REGISTRATION_ALERT_SEVERITY`.
+ * Never withholds — that is the exemption.
+ */
+export function newRegistrationAlertSeverity(effective: PageThreatLevel): PageThreatLevel {
+  return THREAT_LEVEL_RANK[effective] >= THREAT_LEVEL_RANK[NEW_REGISTRATION_ALERT_SEVERITY]
+    ? effective
+    : NEW_REGISTRATION_ALERT_SEVERITY;
+}
 
 /**
  * Does a page verdict clear the bar `escalateThreatLevelForPage` already

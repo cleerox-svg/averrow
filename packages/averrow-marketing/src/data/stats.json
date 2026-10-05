@@ -1,9 +1,61 @@
 {
-  "threats_detected": "1.1M+",
+  "threats_detected": "1.2M+",
   "campaigns": "6,000+",
   "providers_mapped": "12,000+",
   "countries": "215",
   "active_feeds": 46,
-  "generated_at": "2026-10-05T03:43:14.959Z",
-  "source": "snapshot-2026-10-05"
+  "generated_at": "2026-10-05T12:12:10.093Z",
+  "source": "https://averrow.com/api/v1/public/stats",
+  "proof": {
+    "operations_tracked": "2,900+",
+    "monitored_brands": "1,800+"
+  },
+  "live": {
+    "total_threats": 1274830,
+    "threats_today": 10768,
+    "threat_types": [
+      {
+        "threat_type": "malware_distribution",
+        "count": 388367
+      },
+      {
+        "threat_type": "scanning",
+        "count": 342172
+      },
+      {
+        "threat_type": "phishing",
+        "count": 235237
+      },
+      {
+        "threat_type": "typosquatting",
+        "count": 88329
+      },
+      {
+        "threat_type": "malicious_ip",
+        "count": 64459
+      },
+      {
+        "threat_type": "c2",
+        "count": 53580
+      },
+      {
+        "threat_type": "credential_harvesting",
+        "count": 4552
+      },
+      {
+        "threat_type": "malicious_ssl",
+        "count": 13
+      }
+    ],
+    "operations_tracked": 2964,
+    "lookalikes_found_30d": null,
+    "monitored_brands": 1867,
+    "providers_mapped": 12154,
+    "countries": 215,
+    "active_feeds": 46,
+    "proof_generated_at": "2026-10-05T11:38:41.888Z"
+  },
+  "fallbacks": {
+    "lookalikes_found_30d": "2,300+"
+  }
 }

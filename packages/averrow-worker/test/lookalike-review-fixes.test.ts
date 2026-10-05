@@ -235,19 +235,24 @@ function answer(
   over: Partial<{
     registered: boolean; ip: string; hasMx: boolean; hasWeb: boolean;
     aAnswered: boolean; mxAnswered: boolean; webAnswered: boolean;
+    nxdomain: boolean;
   }> = {},
 ) {
-  return {
+  const merged = {
     registered: false, resolved: true, hasMx: false, hasWeb: false,
     aAnswered: true, mxAnswered: true, webAnswered: true,
     ...over,
   };
+  // An answered "not registered" is modelled as NXDOMAIN (DoH Status 3),
+  // which is what a lapse requires since TI-1; a test that wants NODATA
+  // passes `nxdomain: false` explicitly.
+  return { nxdomain: !merged.registered, ...merged };
 }
 
 /** A FAILED check — a timeout or non-ok DoH response. Not an observation. */
 const NO_ANSWER = {
   registered: false, resolved: false, hasMx: false, hasWeb: false,
-  aAnswered: false, mxAnswered: false, webAnswered: false,
+  aAnswered: false, mxAnswered: false, webAnswered: false, nxdomain: false,
 };
 
 const STALE = "2026-09-01 00:00:00";
@@ -480,21 +485,34 @@ describe.skipIf(!hasSqlite())("handleScanLookalikes — the rescan path", () => 
     expect(h.row(never).baseline_established_at).toBeNull();
   });
 
-  it("a BARE registration keeps the stored level and files no alert", async () => {
+  it("a BARE registration keeps the stored level and files ONE MEDIUM new-registration alert, never twice", async () => {
     // Neither mail nor web: no rule fires, so the level is the stored
-    // one and stays below the floor. What covers this case is the
-    // deterministic page pass, which sees any row with a web server one
-    // pass later and can raise the alert itself.
+    // one and stays below the HIGH floor. A CONFIRMED registration is
+    // the floor's second documented exemption (owner decision
+    // 2026-10-05): it files "New lookalike domain registered" at MEDIUM.
     const h = harness();
     const id = h.seed({ ...BASELINED, registered: 0 });
     checkDomainSpy.mockResolvedValue(answer({ registered: true, ip: "5.6.7.8" }));
 
     await checkLookalikeBatch(h.env);
 
-    expect(createAlertSpy).not.toHaveBeenCalled();
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
+    expect(createAlertSpy.mock.calls[0]![1]).toMatchObject({
+      severity: "MEDIUM",
+      title: "New lookalike domain registered: " + String(h.row(id).domain),
+    });
     expect(h.row(id).threat_level).toBe("LOW");
-    // The transition itself is still RECORDED.
+    // The transition itself is still RECORDED, with its evidence.
     expect(h.row(id).first_seen).not.toBeNull();
+    expect(h.row(id).registration_evidence).toBe("observed");
+    expect(h.row(id).registration_alerted_at).not.toBeNull();
+
+    // The re-check of the SAME registration (still registered, nothing
+    // changed) files nothing more: `none` transition, and the claim is
+    // held. Real SQLite, so this is the guarded UPDATE itself.
+    await makeDue(h, id);
+    await checkLookalikeBatch(h.env);
+    expect(createAlertSpy).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a never-checked row at first contact", async () => {
@@ -1926,9 +1944,13 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — lapse then re-registratio
     expect(h.row(id).alert_id).toBe("alert_third");
   });
 
-  it("does NOT re-stamp first_seen on the second appearance", async () => {
-    // The guard that IS lifetime-scoped: `WHERE id = ? AND first_seen IS
-    // NULL`. The alert repeats; the recorded appearance date does not.
+  it("RE-stamps first_seen on the second appearance (it dates the CURRENT event)", async () => {
+    // Changed 2026-10-05 (review H1 / TI note): `first_seen` is the date of
+    // the current registration event, and the new-registration alert
+    // carries it. Keeping the first appearance's date made the second
+    // cycle's alert report a months-old registration date. The answered
+    // NXDOMAIN lapse ends the event (clears `registration_evidence`), and
+    // the next observed 0 -> 1 re-stamps.
     const h = harness();
     const id = h.seed({
       ...BASELINED, registered: 1, has_mx: 1, has_web: 1,
@@ -1943,6 +1965,8 @@ describe.skipIf(!hasSqlite())("checkLookalikeBatch — lapse then re-registratio
     );
     await checkLookalikeBatch(h.env);
 
-    expect(h.row(id).first_seen).toBe("2026-03-04 05:06:07");
+    expect(h.row(id).first_seen).not.toBe("2026-03-04 05:06:07");
+    expect(String(h.row(id).first_seen) > "2026-03-04 05:06:07").toBe(true);
+    expect(h.row(id).registration_evidence).toBe("observed");
   });
 });
