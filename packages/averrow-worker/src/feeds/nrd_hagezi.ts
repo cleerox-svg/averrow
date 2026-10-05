@@ -197,8 +197,12 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
           key: NRD_SNAPSHOT_KEY,
           error: err instanceof Error ? err.message : String(err),
         });
+        // Keep the runtime cause (never upstream text) so a transient R2 read
+        // drop isn't mistaken for corruption — deleting a good snapshot loses
+        // every domain first listed since it was written.
+        const cause = err instanceof Error ? err.message : String(err);
         return new Error(
-          `NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} could not be decompressed/read (corrupt or not gzip) — delete that object from the GEOIP_STAGING R2 bucket to re-bootstrap`,
+          `NRD Hagezi: snapshot ${NRD_SNAPSHOT_KEY} could not be decompressed/read (${cause.slice(0, 120)}) — usually transient, the next run retries; only if this repeats across runs (corrupt or not gzip), delete that object from the GEOIP_STAGING R2 bucket to re-bootstrap`,
         );
       },
     );
@@ -563,8 +567,8 @@ class SortedDomainReader {
 /**
  * Streams lines into a gzip CompressionStream, draining its readable
  * concurrently (awaiting write() without a reader deadlocks on backpressure)
- * into in-memory chunks; `finish()` returns them as a Blob (no JS-side
- * concatenation copy of the ~17 MB snapshot).
+ * into in-memory chunks; `finish()` returns them as a Blob for the R2 put.
+ * Peak is still ~2× the ~17 MB gzip (the Blob copies its parts).
  */
 class SnapshotWriter {
   private readonly cs = new CompressionStream("gzip");
