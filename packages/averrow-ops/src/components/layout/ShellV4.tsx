@@ -43,8 +43,8 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
   // PLATFORM — consolidated rows (admin-console redesign). The four flat
   // ops pages (Agents / Feeds / Takedown Integrations / Attribution
   // Backlog) live inside the Operations workspace; the compliance trio
-  // (Audit / Pricing / Platform Notifications) inside Governance. Team and
-  // Customers keep their own rows because each already has its own
+  // (Audit / Pricing / Platform Notifications) inside Governance. Users &
+  // Access and Customers keep their own rows because each already has its own
   // internal tab bar (nesting them would create tab-inside-tab). Metrics
   // was removed as a standalone nav row (Tier 3): /admin/metrics merged
   // into /admin as tabs, so a separate "Metrics" entry pointed at the same
@@ -62,7 +62,11 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
     ...(isSuperAdmin || opts.role === 'admin' || roleHasPermission(opts.role, 'view_audit') || roleHasPermission(opts.role, 'view_billing')
       ? [{ label: 'Governance', to: '/admin/governance', icon: ClipboardList } as NavItem]
       : []),
-    { label: 'Team',        to: '/admin/users?tab=members', icon: Users },
+    // Staff accounts + invites: admins (requireAdmin) and manage_invites
+    // holders (sales). Everyone else would only see a locked state.
+    ...(isSuperAdmin || opts.role === 'admin' || roleHasPermission(opts.role, 'manage_invites')
+      ? [{ label: 'Users & Access', to: '/admin/users?tab=staff', icon: Users } as NavItem]
+      : []),
     ...(isSuperAdmin
       ? [{ label: 'Customers', to: '/admin/customers', icon: Building2 } as NavItem]
       : []),
