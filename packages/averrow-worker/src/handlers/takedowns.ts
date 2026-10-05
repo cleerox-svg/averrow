@@ -13,6 +13,7 @@ import { requireAuthorizationForModule, TakedownNotAuthorizedError, isUnderMonth
 import type { Env, CreateTakedownBody, UpdateTakedownBody } from "../types";
 import type { AuthContext } from "../middleware/auth";
 import type { ModuleKey } from "../lib/entitlements";
+import { moduleKeyForTargetType } from "../lib/takedown-module-key";
 import type { ProviderRecord } from "../lib/takedown-submitters";
 import { refuseStaffTenantWrite } from "../lib/tenant-staff-guard";
 import { AVERROW_SOC_LABEL } from "./tenantData";
@@ -234,8 +235,8 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
       id, org_id, brand_id, target_type, target_value, target_platform, target_url,
       source_type, source_id, evidence_summary, evidence_detail, evidence_urls,
       provider_name, provider_abuse_contact, provider_method,
-      status, severity, priority_score, notes, requested_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)
+      status, severity, priority_score, notes, requested_by, module_key
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
   `).bind(
     id, orgId, brandId, targetType, targetValue, targetPlatform,
     body.target_url || null,
@@ -243,6 +244,8 @@ export const handleCreateTakedown = orgHandler(async (request, env, orgId, ctx) 
     evidenceSummary, evidenceDetail, body.evidence_urls || null,
     providerName, providerAbuseContact, providerMethod,
     severity, priorityScore, createNotes, ctx.userId,
+    // Every send path refuses a NULL module_key (authorization scope check).
+    moduleKeyForTargetType(targetType),
   ).run();
 
   await audit(env, {
