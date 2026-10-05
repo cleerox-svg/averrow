@@ -12,14 +12,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="About — Averrow"
-  description="LRX Enterprises Inc. — Making brand protection accessible. AI-native, edge-first, radically accessible."
+  description="LRX Enterprises Inc. — Making brand protection accessible. Outside-in threat intelligence with published pricing."
 >
   <section class="about-hero">
-    <div class="about-hero-wing" aria-hidden="true">
-      <svg viewBox="0 0 600 360" xmlns="http://www.w3.org/2000/svg">
-        <path d="M300 16 L568 336 L300 296 L32 336 Z" fill="currentColor" />
-      </svg>
-    </div>
     <div class="container">
       <div class="section-label" style="text-align:center;">About</div>
       <h1>Built to get ahead of<br />threat actors.</h1>
@@ -31,19 +26,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <div class="about-heritage">
-    <div class="about-heritage-card">
-      <svg viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M60 6 L114 74 L60 60 L6 74 Z" fill="currentColor" />
-        <path d="M44 64 L76 64 L72 56 L48 56 Z" fill="var(--bg-secondary)" />
-      </svg>
-      <div class="about-heritage-text">
+  <div class="about-why">
+    <div class="about-why-card">
+      <div class="about-why-text">
         <span class="ah-eyebrow">Why Averrow exists</span>
         Enterprise-grade threat intelligence has always been priced for
         enterprises. Averrow gives every company the same outside-in view
         attackers have &mdash; across impersonation, phishing, domain abuse,
-        and social &mdash; powered by AI agents and delivered on edge
-        infrastructure. <strong>Detect, classify, and shut down threats
+        and social &mdash; with automated analysis and published pricing.
+        <strong>Detect, classify, and shut down threats
         before they reach your customers.</strong>
       </div>
     </div>
@@ -54,18 +45,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2>Our Story</h2>
       <div class="our-story-container">
         <p>
-          Enterprise brand protection platforms cost $20,000 to $150,000+
-          per year and require dedicated security analysts to operate.
-          Meanwhile, companies of every size &mdash; the ones actually
+          Enterprise brand protection platforms are typically quote-only,
+          priced for large enterprises, and require dedicated security
+          analysts to operate. Meanwhile, companies of every size &mdash; the ones actually
           being targeted by phishing campaigns and brand impersonation
           &mdash; have no affordable option.
         </p>
         <p>
           Averrow exists to close that gap. Founded by LRX Enterprises
-          Inc., built AI-native from day one, and deployed on edge
-          infrastructure that makes enterprise-grade protection cost
-          50&ndash;66% less than traditional platforms. Every company
-          should be able to see
+          Inc., with prices published on the site and month-to-month
+          plans. Every company should be able to see
           their brand the way attackers do &mdash; and stop threats before
           they reach their customers.
         </p>
@@ -85,26 +74,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <p>
           See your brand the way attackers do. Averrow works instantly
           with zero setup &mdash; it scans the open internet and reports
-          what it finds. Optionally connect your security platforms for
-          deeper signal.
+          what it finds.
         </p>
       </div>
       <div class="principle-card">
         <div class="principle-num">02</div>
-        <h3>AI-Native</h3>
+        <h3>Evidence-First</h3>
         <p>
-          Intelligence, not alert dumps. AI agents that reason, correlate,
-          and narrate. Built with the most advanced AI available, from the
-          ground up &mdash; not bolted on as an afterthought.
+          Intelligence, not alert dumps. Rule-based correlation links
+          signals together, and plain-language summaries explain them.
+          Every score traces back to evidence you can see.
         </p>
       </div>
       <div class="principle-card">
         <div class="principle-num">03</div>
         <h3>Radically Accessible</h3>
         <p>
-          Enterprise intelligence without enterprise pricing. Edge-native
-          architecture lets us deliver it for 50&ndash;66% less than
-          traditional security platforms.
+          Enterprise intelligence without enterprise pricing. Published
+          monthly prices, no minimum contract, and a free domain scan
+          that needs no signup.
         </p>
       </div>
     </div>
@@ -116,24 +104,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
     <div class="facts-grid">
       <div class="fact-card"><div class="fact-value">LRX Enterprises Inc.</div><div class="fact-label">Parent company</div></div>
-      <div class="fact-card"><div class="fact-value">AI-Native</div><div class="fact-label">Powered by advanced AI agents</div></div>
-      <div class="fact-card"><div class="fact-value">Edge-First</div><div class="fact-label">Zero cold starts, globally distributed</div></div>
-      <div class="fact-card"><div class="fact-value">45+</div><div class="fact-label">Threat &amp; intelligence feeds</div></div>
-      <div class="fact-card"><div class="fact-value">50&ndash;66%</div><div class="fact-label">Less than incumbent platforms</div></div>
-      <div class="fact-card"><div class="fact-value">Q3 2026</div><div class="fact-label">SOC 2 Type I audit target</div></div>
+      <div class="fact-card"><div class="fact-value">Evidence-First</div><div class="fact-label">Rule-based correlation you can trace</div></div>
+      <div class="fact-card"><div class="fact-value">Global</div><div class="fact-label">Threat coverage worldwide</div></div>
+      <div class="fact-card"><div class="fact-value">40+</div><div class="fact-label">Threat &amp; intelligence sources</div></div>
+      <div class="fact-card"><div class="fact-value">Published</div><div class="fact-label">Monthly pricing, no minimum</div></div>
+      <div class="fact-card"><div class="fact-value">SOC 2 Type I</div><div class="fact-label">In preparation</div></div>
     </div>
   </section>
 
   <section class="about-section" style="text-align:center;">
     <div class="container">
-      <h2 style="font-family:var(--font-display);font-size:clamp(24px,3vw,36px);font-weight:700;margin-bottom:0.5rem;">Technology</h2>
-      <p style="color:var(--text-secondary);margin-bottom:1rem;">Every choice optimized for performance, reliability, and cost.</p>
+      <h2 style="font-family:var(--font-display);font-size:clamp(24px,3vw,36px);font-weight:700;margin-bottom:0.5rem;">How we work</h2>
+      <p style="color:var(--text-secondary);margin-bottom:1rem;">Reliability, transparency, and privacy first.</p>
     </div>
     <div class="tech-grid">
-      <div class="tech-item"><div class="tech-name">Edge Compute Workers</div><div class="tech-desc">Edge-native compute with zero cold starts. Globally distributed, no traditional servers to compromise.</div></div>
-      <div class="tech-item"><div class="tech-name">D1 Database</div><div class="tech-desc">SQLite-based, encrypted at rest, automatic backups. Low-cost, high-reliability relational storage.</div></div>
-      <div class="tech-item"><div class="tech-name">Advanced AI Agents</div><div class="tech-desc">Multi-signal threat reasoning and natural language narrative generation. Configurable via API key.</div></div>
-      <div class="tech-item"><div class="tech-name">KV + R2</div><div class="tech-desc">Distributed caching and object storage. TTL-based expiry, encrypted, globally replicated.</div></div>
+      <div class="tech-item"><div class="tech-name">Continuous monitoring</div><div class="tech-desc">Brands we monitor get continuous lookalike-domain, social, and threat coverage.</div></div>
+      <div class="tech-item"><div class="tech-name">Rule-based correlation</div><div class="tech-desc">Deterministic matching across 40+ sources, so every score traces back to evidence.</div></div>
+      <div class="tech-item"><div class="tech-name">Plain-language summaries</div><div class="tech-desc">Findings are explained in plain language your team can act on.</div></div>
+      <div class="tech-item"><div class="tech-name">Security and privacy</div><div class="tech-desc">Encrypted at rest and in transit, minimal data collected. See <a href={`${base}/security`}>Security &amp; Trust</a>.</div></div>
     </div>
   </section>
 
@@ -143,7 +131,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>Explore the platform or run a free brand exposure scan.</p>
       <div class="cta-actions">
         <a href={`${base}/platform`} class="btn btn-primary">Explore Platform</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>
@@ -176,37 +164,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .about-hero :global(.section-label) { position: relative; z-index: 2; }
 
-  .about-hero-wing {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    z-index: 1;
-    opacity: 0.06;
-  }
-  :global([data-theme="light"]) .about-hero-wing { opacity: 0.05; }
-  .about-hero-wing svg { width: min(680px, 90vw); height: auto; }
-
-  .about-heritage {
+  .about-why {
     max-width: 980px;
     margin: 0 auto;
     padding: 1.75rem 2rem 0;
   }
-  .about-heritage-card {
-    display: grid;
-    grid-template-columns: 132px 1fr;
-    gap: 1.5rem;
-    align-items: center;
+  .about-why-card {
     padding: 1.5rem 1.75rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-left: 3px solid var(--amber);
     border-radius: var(--radius-md);
   }
-  .about-heritage-card svg { width: 100%; height: auto; color: var(--amber); }
-  .about-heritage-text {
+  .about-why-text {
     font-family: var(--font-body);
     color: var(--text-secondary);
     font-size: 14.5px;
@@ -221,10 +191,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     display: block;
     margin-bottom: 4px;
   }
-  .about-heritage-text strong { color: var(--text-primary); }
+  .about-why-text strong { color: var(--text-primary); }
   @media (max-width: 640px) {
-    .about-heritage-card { grid-template-columns: 1fr; text-align: center; }
-    .about-heritage-card svg { width: 96px; margin: 0 auto; }
+    .about-why-card { text-align: center; }
   }
 
   .about-section { padding: 3rem 0; }

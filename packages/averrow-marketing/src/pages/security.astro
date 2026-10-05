@@ -13,15 +13,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Security & Trust — Averrow"
-  description="Open by design. The architecture, the controls in place today, and the certifications we're building toward — with dates."
+  description="The controls in place today, what data we collect and what we don't, and where we are on certification."
 >
   <section class="sec-hero">
     <div class="sec-body">
       <h1>Security &amp; Trust</h1>
       <p>
-        Open by design. Below is the architecture, the controls in place
-        today, and the certifications we&rsquo;re building toward &mdash;
-        with dates.
+        Below are the controls in place today, what data we collect and
+        what we don&rsquo;t, and where we are on certification.
       </p>
     </div>
   </section>
@@ -101,7 +100,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </div>
         <div class="sec-trust-tile-text">
           <div class="sec-trust-tile-title">Minimal data collected</div>
-          <div class="sec-trust-tile-sub">Public signals only; country-level location at most</div>
+          <div class="sec-trust-tile-sub">Public signals, plus what you choose to report</div>
         </div>
       </a>
     </div>
@@ -161,7 +160,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <p>Encrypted, distributed, automatic TTL-based expiry.</p>
         </div>
       </div>
-      <div class="sec-infra-note">No customer data leaves our processing network.</div>
+      <div class="sec-infra-note">Customer data is processed only by Averrow and the sub-processors listed on our <a href={`${base}/legal/dpa`}>Data Processing Agreement</a> page.</div>
     </div>
 
     <div class="sec-section" id="compliance">
@@ -169,8 +168,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2 class="sec-section-title">Standards we operate to today</h2>
       <p class="sec-section-intro">
         Three frameworks shape our day-to-day controls right now. SOC 2
-        audits are scheduled and we&rsquo;ll publish the report when we
-        have it &mdash; we don&rsquo;t want to overstate where we are.
+        is in preparation &mdash; we don&rsquo;t want to overstate where
+        we are.
       </p>
 
       <div class="sec-timeline">
@@ -190,14 +189,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="sec-timeline-desc">Accessibility target across public-facing pages and the authenticated dashboard. Audit findings get tracked the same way as security findings.</div>
         </div>
         <div class="sec-timeline-item">
-          <div class="sec-timeline-date">Q3 2026</div>
-          <div class="sec-timeline-title">SOC 2 Type I <span class="sec-status-pill scheduled">Scheduled</span></div>
-          <div class="sec-timeline-desc">Initial third-party assessment of security controls design and implementation. Engagement letter in place.</div>
-        </div>
-        <div class="sec-timeline-item">
-          <div class="sec-timeline-date">Q1 2027</div>
-          <div class="sec-timeline-title">SOC 2 Type II <span class="sec-status-pill scheduled">Scheduled</span></div>
-          <div class="sec-timeline-desc">Full certification demonstrating operational effectiveness across the audit window. Report available under NDA on completion.</div>
+          <div class="sec-timeline-date">In preparation</div>
+          <div class="sec-timeline-title">SOC 2 Type I <span class="sec-status-pill scheduled">In preparation</span></div>
+          <div class="sec-timeline-desc">SOC 2 Type I: in preparation. <a href={`${base}/contact`}>Ask us for our current security documentation.</a></div>
         </div>
       </div>
     </div>
@@ -237,16 +231,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <li>Email security records (public DNS)</li>
             <li>Social platform public profiles</li>
             <li>Threat feed matches</li>
+            <li>Account information for your users (name, email address, sign-in method)</li>
+            <li>For the Abuse Mailbox: the reporter&rsquo;s email address, the original sender, the subject, and a short excerpt of each reported message</li>
             <li>At most, the approximate country of public scan requests (no IP, city, or coordinates stored)</li>
           </ul>
         </div>
         <div class="sec-data-block sec-no-collect" style="margin-top:2rem;">
           <h4><span style="color:var(--green);">&#9679;</span> What we DON&apos;T collect</h4>
           <ul>
-            <li>Email content</li>
-            <li>Credentials</li>
+            <li>Mailbox access: we never connect to your mail systems, only to messages that are forwarded to us</li>
+            <li>Passwords (sign-in uses Google, magic links or passkeys)</li>
             <li>Internal network data</li>
-            <li>Customer PII beyond account info</li>
           </ul>
         </div>
         <div class="sec-data-block sec-retention" style="margin-top:2rem;">

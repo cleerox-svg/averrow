@@ -3,7 +3,7 @@
  * Campaign Intelligence deep dive — child of /platform.
  *
  * Distinct from the four base capabilities (Threat Detection, Email
- * Security, Social Monitoring, Agent Mesh): campaign intelligence is a
+ * Security, Social Monitoring, Automated Analysis): campaign intelligence is a
  * higher-tier capability built on top of them — it correlates threats
  * that share infrastructure into a single campaign, tracks that
  * infrastructure as it moves, and (where warranted) associates it with
@@ -20,25 +20,22 @@ import Layout from "../../layouts/Layout.astro";
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const signals = [
-  { color: "#C83C3C", title: "Shared TLS certificate", desc: "Same certificate authority signature or issuance pattern reused across lookalikes." },
-  { color: "#E5A832", title: "Shared IP address", desc: "Two threats sitting on the identical host." },
-  { color: "#DCAA32", title: "Shared /24 subnet", desc: "Infrastructure clustered in the same narrow IP range." },
-  { color: "#0A8AB5", title: "Shared network (ASN)", desc: "The same autonomous system behind seemingly unrelated attacks." },
-  { color: "#3CB878", title: "Shared registrar", desc: "The same registrar account or pattern, durable even as domains rotate." },
-  { color: "#8A8F9C", title: "Shared app-store developer identity", desc: "The same developer account behind apps impersonating multiple brands." },
+  { color: "#C83C3C", title: "Shared certificates", desc: "Certificates reused across lookalike domains." },
+  { color: "#E5A832", title: "Shared hosting", desc: "Seemingly unrelated threats sitting on the same hosting or network infrastructure." },
+  { color: "#0A8AB5", title: "Shared registration details", desc: "Registration patterns that stay durable even as domains rotate." },
 ];
 
 const siblingLinks = [
-  { href: "/platform/threat-detection", title: "Threat Detection", desc: "How the detection engine and the feed network find phishing, lookalikes, and malicious infrastructure." },
+  { href: "/platform/threat-detection", title: "Threat Detection", desc: "How the detection engine finds phishing, lookalikes, and malicious infrastructure." },
   { href: "/platform/email-security", title: "Email Security Posture", desc: "SPF, DKIM, DMARC, and MX graded A+ through F." },
-  { href: "/platform/social-monitoring", title: "Social Monitoring", desc: "Impersonation and handle-squatting detection across six platforms." },
-  { href: "/platform/ai-agents", title: "The Agent Mesh", desc: "The reasoning layer that fuses signals into one exposure score." },
+  { href: "/platform/social-monitoring", title: "Social Monitoring", desc: "Impersonation and handle-squatting detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube." },
+  { href: "/platform/ai-agents", title: "Automated Analysis", desc: "How signals are correlated and fused into one exposure score." },
 ];
 ---
 
 <Layout
   title="Campaign Intelligence — Averrow"
-  description="How Averrow's Digital Risk Protection (DRPS) platform links threats sharing infrastructure into one campaign, with confidence-scored actor attribution."
+  description="How Averrow's Digital Risk Protection platform links phishing domains, IPs, and certificates that share infrastructure into operations, so you see the campaign behind each alert."
 >
   <section class="ci-hero">
     <div class="container">
@@ -46,12 +43,11 @@ const siblingLinks = [
       <div class="ci-eyebrow">Campaign Intelligence</div>
       <h1>See the operation,<br /><span class="ci-accent">not just the symptom.</span></h1>
       <p>
-        Attackers rarely build one-off infrastructure. The same TLS
-        certificate, IP address, subnet, network, or registrar shows up
-        behind a dozen lookalike domains &mdash; or the same developer
-        identity behind app-store impersonations of multiple brands.
-        Averrow connects the threats that share infrastructure into a
-        single campaign, and tracks that infrastructure as it moves.
+        Attackers rarely build one-off infrastructure. The same
+        certificate, hosting, or registration pattern shows up behind a
+        dozen lookalike domains. Averrow links phishing domains, IPs, and
+        certificates that share infrastructure into operations, and
+        notices when an operation moves.
         Your team stops triaging isolated alerts and starts seeing the
         operation behind them.
       </p>
@@ -66,8 +62,8 @@ const siblingLinks = [
       <p class="ci-section-p">
         A phishing kit gets torn down. The domain expires. A new lookalike
         goes live a week later &mdash; but it&rsquo;s sitting behind the
-        same certificate authority signature, the same hosting network,
-        the same registrar account. Attackers reuse infrastructure
+        same certificates, the same hosting network, the same
+        registration pattern. Attackers reuse infrastructure
         because standing it up from scratch is slow and expensive. That
         reuse is the signal.
       </p>
@@ -94,7 +90,7 @@ const siblingLinks = [
         <div class="ci-pipeline-card">
           <div class="ci-pipeline-num">01</div>
           <h3>Every new threat is fingerprinted.</h3>
-          <p>Its infrastructure &mdash; certificate, IP, subnet, ASN, registrar, developer identity &mdash; is captured alongside it.</p>
+          <p>Its infrastructure &mdash; certificates, IPs, hosting, and registration details &mdash; is captured alongside it.</p>
         </div>
         <div class="ci-pipeline-card">
           <div class="ci-pipeline-num">02</div>
@@ -103,8 +99,8 @@ const siblingLinks = [
         </div>
         <div class="ci-pipeline-card">
           <div class="ci-pipeline-num">03</div>
-          <h3>Attribution carries a confidence level, never a certainty claim.</h3>
-          <p>Where enough overlap exists, a campaign is <em>associated</em> with a known actor profile at a stated confidence &mdash; never asserted. Averrow shows you what the infrastructure supports, not a name pulled out of the air.</p>
+          <h3>Actor links come from public reporting, not guesswork.</h3>
+          <p>Where public reporting names the actor behind infrastructure we&rsquo;ve clustered, we link it. Averrow shows you what the evidence supports, not a name pulled out of the air.</p>
         </div>
       </div>
     </div>
@@ -143,23 +139,6 @@ const siblingLinks = [
     </div>
   </section>
 
-  <!-- ── WATCH IT MOVE ── -->
-  <section class="ci-section ci-section-alt" id="watch-it-move">
-    <div class="container">
-      <div class="section-label">Watch It Move</div>
-      <h2>Infrastructure clustering, visualized</h2>
-      <p class="ci-section-p">
-        Campaign intelligence is easier to understand in motion than in a
-        spec sheet. Inside the platform, the Observatory renders global
-        threat infrastructure as a live map &mdash; where attacks
-        originate, and the corridors connecting infrastructure to the
-        brands it targets. It&rsquo;s the same clustering logic behind
-        the Threat Actor view, rendered as a map instead of a table.
-      </p>
-      <a href={`${base}/demo`} class="btn btn-primary">See It In A Live Demo</a>
-    </div>
-  </section>
-
   <!-- ── TAKEDOWNS (execution, under authorization) ── -->
   <section class="ci-section" id="takedowns">
     <div class="container">
@@ -184,7 +163,7 @@ const siblingLinks = [
   <section class="ci-section ci-section-alt" id="explore-more">
     <div class="container">
       <div class="section-label" style="text-align:center;">Explore The Platform</div>
-      <h2 class="ci-explore-h2">Campaign intelligence builds on the rest of the mesh</h2>
+      <h2 class="ci-explore-h2">Campaign intelligence builds on the rest of the platform</h2>
       <div class="ci-explore-grid">
         {siblingLinks.map((s) => (
           <a class="ci-explore-card" href={`${base}${s.href}`}>
@@ -200,10 +179,10 @@ const siblingLinks = [
   <section class="ci-cta">
     <div class="container">
       <h2>Stop reading a list of alerts.<br />Start seeing the operation.</h2>
-      <p>Campaign Intelligence is part of the Business and Enterprise plans. See it running against your own brand in a live demo.</p>
+      <p>Campaign Intelligence is part of the Enterprise plan. See it running against your own brand in a live demo.</p>
       <div class="ci-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>

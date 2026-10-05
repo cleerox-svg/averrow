@@ -3,8 +3,8 @@
  * Documentation hub. Landing page for /docs — routes to the real
  * product surfaces (getting-started walkthrough, the platform deep
  * dives, integrations, account & billing). Deliberately NOT an API
- * reference: no endpoints/payloads are documented here (see the
- * "Request API Access" callout below) — see docs/archive P3 brief,
+ * reference: there is no customer API, so none is documented or
+ * claimed (docs/DISCLOSURE_REGISTER.md L3) — see docs/archive P3 brief,
  * "docs honesty rule."
  */
 import Layout from "../../layouts/Layout.astro";
@@ -23,14 +23,14 @@ const topics = [
     href: "/platform/ai-agents",
     icon: "activity",
     title: "Brand Exposure Score",
-    desc: "The composite score the agent mesh fuses from threats, email posture, social, and domain signal.",
+    desc: "The composite score fused from threats, email posture, social, and domain signal.",
     tag: "Concept",
   },
   {
     href: "/platform/threat-detection",
     icon: "shield",
     title: "Threat Detection",
-    desc: "Phishing databases, malware feeds, CT logs, and DNS intelligence &mdash; deduped and AI-assessed.",
+    desc: "Phishing databases, malware feeds, CT logs, and DNS intelligence &mdash; deduped and scored automatically.",
     tag: "Platform",
   },
   {
@@ -44,28 +44,28 @@ const topics = [
     href: "/platform/social-monitoring",
     icon: "users",
     title: "Social Monitoring",
-    desc: "Impersonation and handle-squatting detection across six platforms, with AI confidence scoring.",
+    desc: "Impersonation and handle-squatting detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube, with confidence scoring.",
     tag: "Platform",
   },
   {
     href: "/platform/ai-agents",
     icon: "cpu",
-    title: "AI Agents",
-    desc: "Inside the 42-agent mesh &mdash; threat detection, scoring & triage, strategic intel, DNS resolution, geo & provider mapping, and timeline & narrative.",
+    title: "Automated Analysis",
+    desc: "How detection, scoring & triage, infrastructure correlation, DNS resolution, geo & provider mapping, and plain-language summaries fit together.",
     tag: "Platform",
   },
   {
     href: "/partners",
     icon: "link",
     title: "Integrations",
-    desc: "STIX/TAXII, REST API, webhooks, and email are live today. Slack, Splunk, QRadar, and Sentinel are on the roadmap.",
+    desc: "Webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors &mdash; set up with our team. STIX 2.1 export on request. Slack is on the roadmap.",
     tag: "Integrations",
   },
   {
     href: "/pricing",
     icon: "card",
     title: "Account & Billing",
-    desc: "Plans, upgrades, and what's included at each tier &mdash; Free Scan through Enterprise.",
+    desc: "Plans, upgrades, and what's included at each tier &mdash; Professional through Enterprise, plus the free domain scan.",
     tag: "Account",
   },
 ];
@@ -84,7 +84,7 @@ const icons: Record<string, string> = {
 
 <Layout
   title="Documentation — Averrow"
-  description="Digital Risk Protection (DRPS) platform docs: getting started, the Brand Exposure Score, threat detection, email security, social monitoring, and integrations."
+  description="Digital Risk Protection platform docs: getting started, the Brand Exposure Score, threat detection, email security, social monitoring, and integrations."
 >
   <section class="docs-hub-hero">
     <div class="container">
@@ -107,7 +107,7 @@ const icons: Record<string, string> = {
         <div class="docs-hub-start-text">
           <div class="docs-hub-start-eyebrow">New to Averrow?</div>
           <h2>Get started in five steps</h2>
-          <p>Run a free scan, add your brand, understand your Brand Exposure Score, set up alerts, and connect a live integration.</p>
+          <p>Run a free scan, add your brand, understand your Brand Exposure Score, set up alerts, and connect an integration with our team.</p>
         </div>
         <span class="docs-hub-start-cta">Start the walkthrough &rarr;</span>
       </a>
@@ -142,25 +142,24 @@ const icons: Record<string, string> = {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
       </div>
       <div class="docs-hub-api-text">
-        <h3>Need API reference detail?</h3>
+        <h3>Need integration help?</h3>
         <p>
-          This hub covers the product flow, not endpoint-level API reference.
-          If you need REST API credentials, STIX/TAXII feed access, or
-          webhook setup help, request API access and someone on the team
-          will walk you through it directly.
+          This hub covers the product flow. If you need webhook or
+          SIEM/ticketing connector setup, or a STIX 2.1 export, contact the
+          team and someone will walk you through it directly.
         </p>
       </div>
-      <a href={`${base}/contact`} class="btn btn-outline docs-hub-api-btn">Request API Access</a>
+      <a href={`${base}/contact`} class="btn btn-outline docs-hub-api-btn">Talk to the team</a>
     </div>
   </section>
 
   <section class="docs-hub-cta">
     <div class="container">
       <h2>See what Averrow finds for your brand.</h2>
-      <p>Run a free exposure scan in under five minutes, or book a demo to see the platform end to end.</p>
+      <p>Run a free exposure scan in minutes, or book a demo to see the platform end to end.</p>
       <div class="docs-hub-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>

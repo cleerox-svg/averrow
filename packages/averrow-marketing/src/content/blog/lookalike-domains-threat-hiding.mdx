@@ -45,7 +45,7 @@ Most domain monitoring services work by checking blacklists or scanning for know
 
 Proactive monitoring works differently. You generate the full set of plausible permutations for your domain, covering every technique: omission, swap, homoglyph, TLD, keyword addition, and subdomain tricks. You check which permutations are registered. For those that are, you monitor for signs of weaponization — active web content, MX records indicating email capability, freshly issued SSL certificates.
 
-That's the approach we built into Averrow. When you add a brand, the domain permutation engine generates hundreds of variants, checks their registration and DNS configuration, and feeds the results to our AI engine for risk scoring. A parked domain scores differently than one with active hosting, an MX record, and a certificate issued yesterday.
+That's the approach we built into Averrow. Every brand we monitor gets continuous lookalike-domain coverage: newly registered look-alikes, character swaps, and brand-plus-keyword domains are checked for registration and DNS configuration, and the results feed rule-based risk scoring. A parked domain scores differently than one with active hosting, an MX record, and a certificate issued yesterday.
 
 ### What You Can Do Right Now
 

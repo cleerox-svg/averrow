@@ -4,8 +4,8 @@
  *
  * We have no customers yet, so this page does NOT use testimonials,
  * logos, or case studies. Instead it argues the case on: the market
- * gap, the product's actual mechanics (SQL does correlation, AI does
- * narrative), a clearly-labeled ILLUSTRATIVE sample report, the
+ * gap, the product's actual mechanics (deterministic correlation,
+ * plain-language summaries), a clearly-labeled ILLUSTRATIVE sample report, the
  * compliance posture, and a self-serve proof point (the free scan).
  * Structure follows platform.astro's section pattern.
  */
@@ -28,7 +28,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         of dishonesty a security vendor can&rsquo;t afford. What we can show
         you is the actual gap we built this to close, exactly how detection
         works under the hood, and a free scan you can run on your own brand
-        in the next five minutes to see for yourself.
+        in minutes to see for yourself.
       </p>
     </div>
   </section>
@@ -40,10 +40,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="section-label">The Gap</div>
           <h2>Enterprise tools. Mid-market budgets. Nothing in between.</h2>
           <p>
-            Enterprise brand-protection platforms cost <strong>$20,000 to
-            $150,000+ per year</strong> &mdash; before you add the analyst
-            headcount to actually operate them. That price point works for
-            a short list of global enterprises. It doesn&rsquo;t work for
+            Enterprise brand-protection platforms are typically
+            <strong>quote-only and priced for large enterprises</strong>
+            &mdash; before you add the analyst headcount to actually
+            operate them. That model works for a short list of global
+            enterprises. It doesn&rsquo;t work for
             the much longer list of mid-market companies facing the exact
             same phishing kits, lookalike domains, and social impersonation
             &mdash; just without a seven-figure security budget to fight
@@ -57,12 +58,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </div>
         <div class="why-visual why-gap-cards">
           <div class="why-gap-card">
-            <div class="why-gap-figure why-gap-figure-red">$20K&ndash;$150K+/yr</div>
-            <div class="why-gap-label">What incumbent enterprise platforms cost</div>
+            <div class="why-gap-figure why-gap-figure-red">Quote-only</div>
+            <div class="why-gap-label">How enterprise platforms are typically sold</div>
           </div>
           <div class="why-gap-card">
-            <div class="why-gap-figure why-gap-figure-green">50&ndash;66% less</div>
-            <div class="why-gap-label">What Averrow costs instead</div>
+            <div class="why-gap-figure why-gap-figure-green">$1,499/mo</div>
+            <div class="why-gap-label">Published Professional pricing, month-to-month</div>
           </div>
         </div>
       </div>
@@ -85,15 +86,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="why-diff-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2V13M6.6 17.6L11 13.6M17.4 17.6L13 13.6"/></svg>
           </div>
-          <h3>AI-native, not AI-bolted-on</h3>
-          <p>42 specialized AI agents work as a coordinated mesh &mdash; the same mesh detailed on our <a href={`${base}/platform`}>Platform page</a> &mdash; cross-referencing email, domains, social, and threat feeds to reason about risk, not just list alerts.</p>
+          <h3>Correlation you can trace</h3>
+          <p>Rule-based correlation cross-references email, domains, social, and threat feeds &mdash; detailed on our <a href={`${base}/platform`}>Platform page</a> &mdash; so every score traces back to evidence you can see, not a black box.</p>
         </div>
         <div class="why-diff-card">
           <div class="why-diff-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a14 14 0 0 1 0 20 14 14 0 0 1 0-20z"/></svg>
           </div>
-          <h3>Edge-native economics</h3>
-          <p>Built on Cloudflare Workers, not a legacy server fleet with a license markup passed on to you. That infrastructure choice is most of the reason we can run 50&ndash;66% below incumbent pricing &mdash; not a discount, a different cost structure.</p>
+          <h3>Published pricing</h3>
+          <p>Prices are on the page, billed month-to-month with no minimum contract: Professional is $1,499/mo and Business is $3,999/mo. No sales call required to find out what it costs.</p>
         </div>
       </div>
     </div>
@@ -104,25 +105,22 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="why-row reversed">
         <div class="why-text">
           <div class="section-label">How Detection Actually Works</div>
-          <h2>No black box: SQL does correlation, AI does narrative</h2>
+          <h2>No black box: deterministic correlation, plain-language summaries</h2>
           <p>
             Every threat Averrow surfaces starts as a structured match
             across phishing databases, malware URL feeds, threat-intel
-            feeds, Certificate Transparency logs, DNS intelligence, and
-            credential-breach intel &mdash; deduplicated and run through a
-            false-positive filter and safe-domains allowlist before it ever
-            reaches a human. That part is deterministic database work: fast,
-            auditable, and repeatable. It doesn&rsquo;t need AI, and we
-            don&rsquo;t pay AI tokens to do what a query can do in
-            milliseconds.
+            feeds, Certificate Transparency logs, and DNS intelligence
+            &mdash; deduplicated and run through a false-positive filter
+            and safe-domains allowlist before it ever reaches a human. That
+            part is deterministic database work: fast, auditable, and
+            repeatable.
           </p>
           <p>
-            AI enters after the correlation, not instead of it &mdash; the
-            agent mesh takes the structured findings and writes the
-            natural-language threat report, the composite Brand Exposure
-            Score, and the daily intelligence briefing your team actually
-            reads. The detection is the query. The AI is the analyst who
-            explains what the query found.
+            Scoring and summaries come after the correlation, not instead
+            of it &mdash; the structured findings feed the composite Brand
+            Exposure Score and the plain-language threat summaries your
+            team actually reads. Every score traces back to evidence you
+            can see.
           </p>
         </div>
         <div class="why-visual why-method-flow">
@@ -130,15 +128,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <div class="why-flow-num">1</div>
             <div class="why-flow-body">
               <div class="why-flow-title">Structured detection</div>
-              <div class="why-flow-desc">Feed matching, dedup, false-positive filtering, allowlisting &mdash; SQL, not AI.</div>
+              <div class="why-flow-desc">Feed matching, dedup, false-positive filtering, allowlisting &mdash; deterministic rules.</div>
             </div>
           </div>
           <div class="why-flow-arrow" aria-hidden="true">&darr;</div>
           <div class="why-flow-step">
             <div class="why-flow-num">2</div>
             <div class="why-flow-body">
-              <div class="why-flow-title">AI assessment on detection</div>
-              <div class="why-flow-desc">Confidence scoring and triage applied to what the query already found.</div>
+              <div class="why-flow-title">Rule-based scoring and triage</div>
+              <div class="why-flow-desc">Confidence scoring and triage applied to what detection already found.</div>
             </div>
           </div>
           <div class="why-flow-arrow" aria-hidden="true">&darr;</div>
@@ -146,7 +144,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <div class="why-flow-num">3</div>
             <div class="why-flow-body">
               <div class="why-flow-title">Narrative &amp; scoring</div>
-              <div class="why-flow-desc">Brand Exposure Score, natural-language reports, daily briefings.</div>
+              <div class="why-flow-desc">Brand Exposure Score and plain-language threat summaries.</div>
             </div>
           </div>
         </div>
@@ -203,15 +201,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2>Built to be checked, not just believed</h2>
       <p class="why-trust-intro">
         We&rsquo;d rather list what&rsquo;s actually in place today &mdash;
-        and be specific about what&rsquo;s scheduled &mdash; than round up.
+        and be specific about what&rsquo;s still in preparation &mdash; than round up.
       </p>
       <div class="why-trust-grid">
         <div class="why-trust-pill why-status-live">GDPR-aligned processing &middot; In place</div>
         <div class="why-trust-pill why-status-live">PIPEDA &middot; In place</div>
         <div class="why-trust-pill why-status-live">WCAG 2.1 AA &middot; In place</div>
-        <div class="why-trust-pill why-status-live">No PII stored</div>
+        <div class="why-trust-pill why-status-live">Minimal data collected</div>
         <div class="why-trust-pill why-status-live">TLS 1.3 in transit</div>
-        <div class="why-trust-pill why-status-scheduled">SOC 2 Type I &middot; Scheduled Q3 2026</div>
+        <div class="why-trust-pill why-status-scheduled">SOC 2 Type I &middot; In preparation</div>
       </div>
       <p class="why-trust-link"><a href={`${base}/security`}>Full detail on our Security &amp; Trust page &rarr;</a></p>
     </div>
@@ -232,7 +230,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </p>
         </div>
         <div class="why-proof-cta">
-          <a href={`${base}/scan`} class="btn btn-primary">Run Your Free Scan</a>
+          <a href={`${base}/scan`} class="btn btn-primary">Scan your domain</a>
         </div>
       </div>
     </div>
@@ -241,22 +239,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="why-section" id="roi">
     <div class="container">
       <div class="section-label">The ROI Argument</div>
-      <h2>What replacing 2&ndash;3 monitoring analysts actually means</h2>
+      <h2>What automated monitoring takes off your team</h2>
       <p>
-        Averrow&rsquo;s agent mesh performs the continuous correlation and
-        triage work that would otherwise require dedicated headcount &mdash;
-        watching feeds around the clock, cross-referencing signals across
-        email, domains, and social, and submitting takedowns under an
-        authorization you control. Call it the equivalent of 2&ndash;3
-        security analysts doing that work full time. That&rsquo;s not a
-        hire you have to source, train, and retain to get the same
-        coverage &mdash; it&rsquo;s a platform you turn on.
+        Averrow&rsquo;s automated analysis performs the continuous
+        correlation and triage work that would otherwise take dedicated
+        analyst time &mdash; watching feeds around the clock,
+        cross-referencing signals across email, domains, and social, and
+        submitting takedowns under an authorization you control. Your team
+        reviews decisions instead of raw alerts.
       </p>
       <p>
         We&rsquo;re not going to cite a customer savings number we
-        don&rsquo;t have yet. This is a value argument, not a fabricated
-        statistic: the cost of the coverage versus the cost of building it
-        yourself with people.
+        don&rsquo;t have yet. This is a value argument, not a statistic:
+        the cost of the coverage versus the cost of building it yourself
+        with people.
       </p>
     </div>
   </section>

@@ -2,9 +2,9 @@
 /*
  * Getting Started walkthrough. Five real steps through the actual
  * product flow: free scan/signup -> add a brand -> understand the
- * Brand Exposure Score -> set up alerts -> connect a live integration.
- * No invented API endpoints, payloads, or keys (docs honesty rule) —
- * anything requiring endpoint-level detail routes to /contact.
+ * Brand Exposure Score -> set up alerts -> connect an integration.
+ * No customer API is documented or claimed (docs honesty rule) —
+ * integration help routes to /contact.
  */
 import Layout from "../../layouts/Layout.astro";
 
@@ -13,11 +13,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const steps = [
   {
     n: "01",
-    title: "Run a free scan or create an account",
+    title: "Run the free scan, then pick a plan",
     body:
-      "Averrow's free Brand Exposure scan needs no signup and no credit card &mdash; enter your domain and the platform checks public threat feeds, DNS, and email authentication records for exposure signals in minutes. Ready for continuous monitoring, alerts, and the full agent mesh? Create an account on the Free plan, or go straight to Professional or Business.",
+      "Averrow's free Brand Exposure scan needs no signup and no credit card &mdash; enter your domain and the platform checks email authentication, lookalike domains, and social handles, and gives you an exposure score in minutes. The scan is free, not a plan. Ready for continuous monitoring and alerts? Choose Professional or Business, or talk to us about Enterprise.",
     links: [
-      { href: "/scan", label: "Run a free scan" },
+      { href: "/scan", label: "Scan your domain" },
       { href: "/pricing", label: "Compare plans" },
     ],
   },
@@ -25,31 +25,31 @@ const steps = [
     n: "02",
     title: "Add your brand",
     body:
-      "Once you have an account, add the brand you want Averrow to watch: your primary domain, plus &mdash; optionally &mdash; the official social handles and app-store listings you already control. That context is what lets the platform tell a real impersonation attempt apart from your own verified presence, instead of flagging everything that merely resembles your brand.",
+      "Once you have an account, add the brand you want Averrow to watch: your primary domain, plus &mdash; optionally &mdash; the official social handles and Apple App Store listings you already control. That context is what lets the platform tell a real impersonation attempt apart from your own verified presence, instead of flagging everything that merely resembles your brand.",
     links: [],
   },
   {
     n: "03",
     title: "Understand your Brand Exposure Score",
     body:
-      "Every brand gets one composite Brand Exposure Score, fused by the AI agent mesh from four signal streams: active threats, email authentication posture (SPF, DKIM, DMARC, and MX graded A+ through F), social exposure across six platforms, and domain infrastructure. The score moves as any of those four inputs change &mdash; and the daily strategic intel briefing explains why it moved, not just that it did.",
+      "Every brand gets one composite Brand Exposure Score, fused from four signal streams: active threats, email authentication posture (SPF, DKIM, DMARC, and MX graded A+ through F), social exposure across six platforms, and domain infrastructure. The score moves as any of those four inputs change, and every score traces back to evidence you can see.",
     links: [{ href: "/platform/ai-agents", label: "How the score is built" }],
   },
   {
     n: "04",
     title: "Set up alerts",
     body:
-      "Decide how you want to hear about new findings. Rule-based triage runs first &mdash; matches against your own verified handles, or detections with no real risk signal, are auto-dismissed before they reach a person &mdash; so what lands in your queue is worth a look. From there, choose email digests, in-app notifications, or both.",
+      "Decide how you want to hear about new findings. Automated triage runs first &mdash; low-value noise is dismissed automatically, with the reason recorded &mdash; so what lands in your queue is worth a look. Alerts arrive in-app, by email, and by push.",
     links: [],
   },
   {
     n: "05",
-    title: "Connect a live integration",
+    title: "Connect an integration",
     body:
-      "When Averrow needs to plug into the rest of your stack, four integrations are live today: STIX/TAXII for standard threat-intel export, a REST API for programmatic access, webhooks for real-time event delivery, and email for alert digests. Slack, Splunk, IBM QRadar, and Microsoft Sentinel are on the roadmap. For API credentials or help wiring up an integration, request access directly &mdash; this walkthrough won't hand you a fabricated endpoint reference.",
+      "When Averrow needs to plug into the rest of your stack, we set it up with you: webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors. A STIX 2.1 export is available on request. Slack is on the roadmap. Contact the team to get an integration wired up.",
     links: [
-      { href: "/partners", label: "See live integrations" },
-      { href: "/contact", label: "Request API access" },
+      { href: "/partners", label: "See integrations" },
+      { href: "/contact", label: "Talk to the team" },
     ],
   },
 ];
@@ -57,7 +57,7 @@ const steps = [
 
 <Layout
   title="Getting Started — Averrow Docs"
-  description="A five-step walkthrough of the Averrow product flow: run a free scan, add your brand, understand your Brand Exposure Score, set up alerts, and connect a live integration."
+  description="A five-step walkthrough of the Averrow product flow: run a free scan, add your brand, understand your Brand Exposure Score, set up alerts, and connect an integration."
 >
   <section class="docs-gs-hero">
     <div class="container">
@@ -65,8 +65,8 @@ const steps = [
       <div class="docs-gs-eyebrow">Getting Started</div>
       <h1>From zero to your first<br /><span class="docs-gs-accent">Brand Exposure Score.</span></h1>
       <p class="docs-gs-lede">
-        Five steps, plain language, no fabricated API detail. This is the
-        real product flow &mdash; not a hypothetical one.
+        Five steps, plain language. This is the real product flow &mdash;
+        not a hypothetical one.
       </p>
     </div>
   </section>
@@ -98,12 +98,11 @@ const steps = [
       <div class="docs-gs-next-card">
         <h3>What's next</h3>
         <p>
-          Once your brand is added and alerts are configured, the agent
-          mesh runs continuously in the background &mdash; you don't have
+          Once your brand is added and alerts are configured, monitoring
+          runs continuously in the background &mdash; you don't have
           to trigger anything manually. Come back to the documentation hub
           any time for a refresher on a specific capability, or book a demo
-          to see the platform reason through a real detection with someone
-          on the team.
+          to see a real detection worked through with someone on the team.
         </p>
         <div class="docs-gs-next-links">
           <a href={`${base}/docs`} class="btn btn-outline">Back to Documentation</a>
@@ -116,10 +115,10 @@ const steps = [
   <section class="docs-gs-cta">
     <div class="container">
       <h2>See what's already targeting your brand.</h2>
-      <p>Run a free exposure scan in under five minutes &mdash; no signup, no credit card.</p>
+      <p>Run a free exposure scan in minutes &mdash; no signup, no credit card.</p>
       <div class="docs-gs-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>

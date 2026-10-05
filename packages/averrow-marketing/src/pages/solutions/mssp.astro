@@ -11,7 +11,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Solutions for MSSPs — Averrow"
-  description="Add Digital Risk Protection (DRPS) and brand threat intelligence to your managed security services. Multi-tenant, API-first, STIX/TAXII export, live today."
+  description="Add Digital Risk Protection and brand threat intelligence to your managed security services. Multi-tenant, with webhooks and SIEM and ticketing connectors set up with our team."
 >
   <section class="mssp-hero">
     <div class="container">
@@ -19,7 +19,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h1>Add brand threat intelligence<br /><span class="hero-accent">to your managed services.</span></h1>
       <p>
         Your clients ask about brand and phishing protection. Averrow gives you
-        a multi-tenant, API-first brand-intelligence layer built to plug into
+        a multi-tenant brand-intelligence layer built to plug into
         the stack you already run &mdash; not a standalone tool your clients
         have to log into separately.
       </p>
@@ -29,16 +29,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="mssp-pain-section">
     <div class="container">
       <div class="section-label" style="text-align:center;">The Problem</div>
-      <h2 class="mssp-h2" style="text-align:center;">What we hear from MSSPs and MDR providers</h2>
+      <h2 class="mssp-h2" style="text-align:center;">What MSSPs and MDR providers typically need</h2>
       <div class="mssp-pain-grid">
         <div class="mssp-pain-card">
-          <div class="mssp-pain-quote">&ldquo;Our clients ask about brand protection and we don&rsquo;t have an offering.&rdquo;</div>
+          <div class="mssp-pain-quote">A brand-protection offering to give clients who ask about it.</div>
         </div>
         <div class="mssp-pain-card">
-          <div class="mssp-pain-quote">&ldquo;We need multi-tenant architecture, not another siloed single-tenant tool.&rdquo;</div>
+          <div class="mssp-pain-quote">Multi-tenant architecture, not another siloed single-tenant tool.</div>
         </div>
         <div class="mssp-pain-card">
-          <div class="mssp-pain-quote">&ldquo;We need API access and SIEM-ready export &mdash; not a dashboard we have to screen-share.&rdquo;</div>
+          <div class="mssp-pain-quote">Events delivered into the SIEM and ticketing tools they already run, not a dashboard to screen-share.</div>
         </div>
       </div>
     </div>
@@ -58,7 +58,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <ul class="mssp-features">
           <li>Organization-level data isolation, enforced at the API layer</li>
           <li>Role-based access per organization (viewer / analyst / admin / owner)</li>
-          <li>The same 42-agent mesh runs across every client brand you onboard</li>
+          <li>The same automated analysis runs across every client brand you onboard</li>
           <li>Composite Brand Exposure Score per client, ready for your reporting</li>
         </ul>
       </div>
@@ -69,7 +69,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client C</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
           <div class="mssp-tenant-row"><span class="mssp-tenant-name">Client D</span><span class="mssp-tenant-badge isolated">Isolated</span></div>
         </div>
-        <div class="mssp-tenant-caption">One platform. One agent mesh. Every client&rsquo;s data walled off from every other.</div>
+        <div class="mssp-tenant-caption">One platform. Every client&rsquo;s data walled off from every other.</div>
       </div>
     </div>
   </section>
@@ -78,33 +78,32 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="mssp-cap-row reversed">
       <div class="mssp-cap-text">
         <div class="section-label">Integration</div>
-        <h2>API-first, so it fits inside your stack</h2>
+        <h2>Fits inside your stack</h2>
         <p>
           Your analysts shouldn&rsquo;t have to context-switch into another vendor
-          portal. Averrow ships REST API access and STIX 2.1 export so brand
-          threat intelligence lands in the same SIEM/SOAR workflow as everything
-          else you monitor.
+          portal. Averrow delivers webhooks and SIEM and ticketing connectors,
+          set up with our team, so brand threat intelligence lands in the same
+          workflow as everything else you monitor.
         </p>
         <ul class="mssp-features">
-          <li>STIX/TAXII export &mdash; live today</li>
-          <li>Full REST API access &mdash; live today</li>
-          <li>Webhooks for real-time event delivery &mdash; live today</li>
-          <li>Email digests &mdash; live today</li>
+          <li>Webhooks for alert and takedown events</li>
+          <li>Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors, set up with our team</li>
+          <li>STIX 2.1 export, available on request</li>
+          <li>Email alert delivery</li>
         </ul>
         <div class="mssp-callout">
-          Splunk, IBM QRadar, and Microsoft Sentinel connectors are on the roadmap.
-          Slack notifications are also on the roadmap.
+          Slack notifications are on the roadmap.
         </div>
       </div>
       <div class="mssp-cap-visual">
         <div class="mssp-int-grid">
-          <div class="mssp-int-item live"><span class="mssp-int-name">STIX/TAXII</span><span class="mssp-int-status live">Live</span></div>
-          <div class="mssp-int-item live"><span class="mssp-int-name">REST API</span><span class="mssp-int-status live">Live</span></div>
           <div class="mssp-int-item live"><span class="mssp-int-name">Webhooks</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">Splunk</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">Microsoft Sentinel</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">IBM QRadar</span><span class="mssp-int-status live">Live</span></div>
+          <div class="mssp-int-item live"><span class="mssp-int-name">Jira &amp; ServiceNow</span><span class="mssp-int-status live">Live</span></div>
           <div class="mssp-int-item live"><span class="mssp-int-name">Email</span><span class="mssp-int-status live">Live</span></div>
-          <div class="mssp-int-item"><span class="mssp-int-name">Splunk</span><span class="mssp-int-status">Roadmap</span></div>
-          <div class="mssp-int-item"><span class="mssp-int-name">IBM QRadar</span><span class="mssp-int-status">Roadmap</span></div>
-          <div class="mssp-int-item"><span class="mssp-int-name">Microsoft Sentinel</span><span class="mssp-int-status">Roadmap</span></div>
+          <div class="mssp-int-item"><span class="mssp-int-name">STIX 2.1 export</span><span class="mssp-int-status">On request</span></div>
           <div class="mssp-int-item"><span class="mssp-int-name">Slack</span><span class="mssp-int-status">Roadmap</span></div>
         </div>
       </div>
@@ -119,8 +118,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         Business plan covers up to 10 client brands under one account for
         $3,999/mo ($3,199/mo billed annually) &mdash; a fixed platform cost you
         allocate across engagements however your commercial model works. Need
-        more than 10 brands, SSO/SAML, or a custom feed set? Enterprise is
-        built for that.
+        more than 10 brands, the Abuse Mailbox, or threat-actor intelligence?
+        Enterprise is built for that.
       </p>
       <div class="mssp-economics-grid">
         <div class="mssp-economics-card">
@@ -128,8 +127,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="mssp-economics-amount">$3,999<span>/mo</span></div>
           <ul class="mssp-economics-list">
             <li>Up to 10 brands</li>
-            <li>Advanced API access</li>
-            <li>Webhook &amp; SIEM integration</li>
+            <li>Dark web and trademark monitoring</li>
+            <li>Webhooks &amp; SIEM / ticketing connectors</li>
             <li>Dedicated account manager</li>
           </ul>
         </div>
@@ -138,8 +137,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="mssp-economics-amount">Custom</div>
           <ul class="mssp-economics-list">
             <li>Unlimited brands</li>
-            <li>SSO / SAML / SCIM</li>
-            <li>Custom integrations &amp; threat feeds</li>
+            <li>Abuse Mailbox</li>
+            <li>Threat-actor intelligence</li>
             <li>SLA guarantees</li>
           </ul>
         </div>
@@ -164,7 +163,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="mssp-cta">
     <div class="container">
       <h2>Request MSSP partnership information</h2>
-      <p>Tell us about your client base and stack &mdash; we&rsquo;ll walk you through the API, multi-tenant model, and Business plan economics.</p>
+      <p>Tell us about your client base and stack &mdash; we&rsquo;ll walk you through the integrations, multi-tenant model, and Business plan economics.</p>
       <div class="mssp-cta-actions">
         <a href={`${base}/contact`} class="btn btn-primary">Request MSSP Partnership Info</a>
         <a href={`${base}/pricing`} class="btn btn-outline">See Business Plan</a>

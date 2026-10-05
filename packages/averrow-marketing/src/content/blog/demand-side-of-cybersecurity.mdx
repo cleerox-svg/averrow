@@ -40,21 +40,21 @@ These attacks don't appear in CVE databases. They don't get fixed by patches. An
 
 ### What we see from the demand side
 
-We've spent years thinking about this side of the problem. While Project Glasswing focuses on the supply side of cybersecurity — finding vulnerabilities before attackers can exploit them — Averrow exists to handle the demand side: catching attacks already in motion against brands and the people who trust them.
+While Project Glasswing focuses on the supply side of cybersecurity — finding vulnerabilities before attackers can exploit them — Averrow exists to handle the demand side: catching attacks already in motion against brands and the people who trust them.
 
 Our intelligence comes from several categories of sources. None of them, individually, is novel. The advantage is in the way they combine.
 
-**Public threat infrastructure.** We pull from dozens of threat feeds — newly registered domains, certificate transparency logs, malware command-and-control trackers, phishing repositories, IP reputation systems, passive DNS. Most security teams know these exist. Few correlate across them in real time at brand granularity. We do.
+**Public threat infrastructure.** We correlate 40+ phishing, malware, and infrastructure intelligence sources — newly registered domains, certificate transparency logs, phishing repositories, passive DNS. Most security teams know these exist. Few correlate across them at brand granularity.
 
-**Customer-forwarded signals.** Every brand we monitor gets an abuse mailbox — an inbox where customers and employees forward suspicious messages they receive. Most of what arrives is mundane: legitimate emails misread as phishing, expected newsletter content, internal mail forwarded out of confusion. But a meaningful fraction contains genuine attacks the rest of the internet hasn't seen yet. A targeted phishing campaign starts somewhere. Usually it starts in inboxes belonging to a specific brand's customers.
+**Reported messages.** For customers on the Enterprise plan, the Abuse Mailbox gives a brand one address where customers and employees forward suspicious messages. Each report is classified automatically, and confirmed phishing moves into the threat feed. A targeted phishing campaign starts somewhere, and usually it starts in inboxes belonging to a specific brand's customers.
 
-**Public attacker behavior.** Threat actors increasingly operate in semi-public — Telegram channels, criminal forums, leaked credential dumps, app stores. We watch these surfaces continuously. Not because what they say is hard to find, but because nobody on a brand security team has time to read all of it every day.
+**Public attacker behavior.** Paste sites and ransomware leak-site victim lists are semi-public, and we monitor them for mentions of a brand, its domains, and its executives, because nobody on a brand security team has time to read all of it every day.
 
-**Brand-specific surface scanning.** Lookalike domain permutations. Social media handle squatting. Mobile app stores. App marketplaces. The places where a brand's identity gets impersonated in ways that don't show up in any feed.
+**Brand-specific surface scanning.** Lookalike domains. Social media handle squatting on X, LinkedIn, Instagram, TikTok, GitHub, and YouTube. Look-alike apps on the Apple App Store. The places where a brand's identity gets impersonated in ways that don't show up in any feed.
 
-What turns this into intelligence isn't the data. It's the correlation. When a domain forwarded by a customer matches a hosting provider already flagged for targeting the same brand in our feeds, and the same brand has a known DKIM gap that makes spoofing easier — that's a narrative, not an alert. When three social profiles registered the same week share visual elements with each other and with a previously-taken-down impersonation account, that's a campaign, not a coincidence. The signal lives in the joins, not the columns.
+What turns this into intelligence isn't the data. It's the correlation. When a domain matches a hosting provider already flagged for targeting the same brand, and the same brand has a known DKIM gap that makes spoofing easier — that's a story, not an alert. The signal lives in the joins, not the columns.
 
-We won't go further than that on the specifics. The exact correlation logic, the classifiers, the dedup heuristics, the prioritization weights — those stay in the codebase. Anthropic's Glasswing post does the same thing when it withholds vulnerability details under coordinated disclosure embargos. There's a version of openness that's principled and a version that's reckless; the line is whether transparency makes attackers' jobs easier.
+We won't go further than that on the specifics. The exact correlation logic and the prioritization rules stay in the codebase. Anthropic's Glasswing post does the same thing when it withholds vulnerability details under coordinated disclosure embargos. There's a version of openness that's principled and a version that's reckless; the line is whether transparency makes attackers' jobs easier.
 
 ### What this means going forward
 
@@ -66,7 +66,7 @@ A few practical things follow from where the threat landscape is heading.
 
 **Detection that matches attacker speed becomes table stakes.** The same AI acceleration helping defenders find vulnerabilities is helping attackers run impersonation campaigns at scale. Manual brand protection workflows — quarterly takedown reviews, weekly domain checks, monthly social media audits — were already too slow. They'll be uncompetitive within a year.
 
-**The "so what" matters more than the alert.** When AI can generate noise as fast as it generates signal, raw alert counts mean nothing. What matters is the narrative — what happened, who's behind it, what's at risk, what to do about it. That's what we've been building toward. The Glasswing post is a useful confirmation that the rest of the industry sees it too.
+**The "so what" matters more than the alert.** When AI can generate noise as fast as it generates signal, raw alert counts mean nothing. What matters is the summary — what happened, what's at risk, what to do about it. That's what we've been building toward. The Glasswing post is a useful confirmation that the rest of the industry sees it too.
 
 ### A useful asymmetry
 

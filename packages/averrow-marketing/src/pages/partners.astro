@@ -1,6 +1,6 @@
 ---
 /*
- * Partners page. Technology Integrations grid (live + roadmap, cloned
+ * Partners page. Technology Integrations grid (available + roadmap, cloned
  * from platform.astro's int-section visual vocabulary) + MSSP
  * Partnership Program section for managed security providers.
  * Structure/tokens cloned from ../pages/platform.astro and
@@ -12,16 +12,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
 <Layout
-  title="Partners &amp; Integrations — Averrow"
-  description="Averrow's technology integrations and MSSP partnership program. STIX/TAXII, REST API, webhooks, and email are live today; SIEM connectors are on the roadmap."
+  title="Partners & Integrations — Averrow"
+  description="Averrow's technology integrations and MSSP partnership program. Webhooks for alert and takedown events, Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors set up with our team, and STIX 2.1 export on request."
 >
   <section class="pt-hero">
     <div class="container">
       <div class="section-label" style="text-align:center;">Partners</div>
       <h1>Built to plug into<br /><span class="hero-accent">the stack you already run.</span></h1>
       <p>
-        Averrow exports threat intelligence in open, standard formats and
-        partners with managed security providers who want to add brand
+        Averrow connects to the SIEM and ticketing tools you already run,
+        and partners with managed security providers who want to add brand
         protection to what they already sell &mdash; not a walled garden
         clients have to log into separately.
       </p>
@@ -35,30 +35,46 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p class="pt-int-p">Export data and receive alerts in the tools you already use.</p>
     </div>
 
-    <div class="pt-group-label">Live Today</div>
+    <div class="pt-group-label">Available Today</div>
     <div class="pt-int-grid">
-      <div class="pt-int-card">
-        <div class="pt-int-card-icon live" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </div>
-        <div class="pt-int-card-name">STIX/TAXII</div>
-        <div class="pt-int-card-desc">Standard threat intelligence export</div>
-        <span class="pt-int-card-status live">Live</span>
-      </div>
-      <div class="pt-int-card">
-        <div class="pt-int-card-icon live" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        </div>
-        <div class="pt-int-card-name">REST API</div>
-        <div class="pt-int-card-desc">Full programmatic access</div>
-        <span class="pt-int-card-status live">Live</span>
-      </div>
       <div class="pt-int-card">
         <div class="pt-int-card-icon live" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         </div>
         <div class="pt-int-card-name">Webhooks</div>
-        <div class="pt-int-card-desc">Real-time event notifications</div>
+        <div class="pt-int-card-desc">Alert and takedown events, set up with our team</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        </div>
+        <div class="pt-int-card-name">Splunk</div>
+        <div class="pt-int-card-desc">SIEM connector, set up with our team</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg>
+        </div>
+        <div class="pt-int-card-name">Microsoft Sentinel</div>
+        <div class="pt-int-card-desc">Cloud SIEM connector, set up with our team</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+        </div>
+        <div class="pt-int-card-name">IBM QRadar</div>
+        <div class="pt-int-card-desc">Security analytics connector, set up with our team</div>
+        <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon live" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/></svg>
+        </div>
+        <div class="pt-int-card-name">Jira &amp; ServiceNow</div>
+        <div class="pt-int-card-desc">Ticketing connectors, set up with our team</div>
         <span class="pt-int-card-status live">Live</span>
       </div>
       <div class="pt-int-card">
@@ -66,8 +82,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         </div>
         <div class="pt-int-card-name">Email</div>
-        <div class="pt-int-card-desc">Alert delivery and digests</div>
+        <div class="pt-int-card-desc">Alert delivery</div>
         <span class="pt-int-card-status live">Live</span>
+      </div>
+      <div class="pt-int-card">
+        <div class="pt-int-card-icon planned" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="pt-int-card-name">STIX 2.1 export</div>
+        <div class="pt-int-card-desc">Standard threat intelligence format, delivered by our team</div>
+        <span class="pt-int-card-status planned">On request</span>
       </div>
     </div>
 
@@ -81,30 +105,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="pt-int-card-desc">Team alert channels</div>
         <span class="pt-int-card-status planned">Roadmap</span>
       </div>
-      <div class="pt-int-card">
-        <div class="pt-int-card-icon planned" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-        </div>
-        <div class="pt-int-card-name">Splunk</div>
-        <div class="pt-int-card-desc">SIEM data integration</div>
-        <span class="pt-int-card-status planned">Roadmap</span>
-      </div>
-      <div class="pt-int-card">
-        <div class="pt-int-card-icon planned" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
-        </div>
-        <div class="pt-int-card-name">IBM QRadar</div>
-        <div class="pt-int-card-desc">Security analytics feed</div>
-        <span class="pt-int-card-status planned">Roadmap</span>
-      </div>
-      <div class="pt-int-card">
-        <div class="pt-int-card-icon planned" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg>
-        </div>
-        <div class="pt-int-card-name">Microsoft Sentinel</div>
-        <div class="pt-int-card-desc">Cloud SIEM integration</div>
-        <span class="pt-int-card-status planned">Roadmap</span>
-      </div>
     </div>
   </section>
 
@@ -114,7 +114,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2 class="pt-h2" style="text-align:center;">Add brand intelligence to your managed services</h2>
       <p class="pt-mssp-intro">
         Built for managed security service providers and MDR teams who want a
-        multi-tenant, API-first brand-intelligence layer they can fold into an
+        multi-tenant brand-intelligence layer they can fold into an
         existing client program &mdash; not a separate portal every client has
         to be onboarded to.
       </p>
@@ -131,15 +131,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div class="pt-mssp-card-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           </div>
-          <div class="pt-mssp-card-name">API-first</div>
-          <div class="pt-mssp-card-desc">Full REST API access so brand threat intelligence lands in the same workflow as everything else you monitor.</div>
+          <div class="pt-mssp-card-name">Fits your workflow</div>
+          <div class="pt-mssp-card-desc">Webhooks for alert and takedown events, plus SIEM and ticketing connectors set up with our team, so brand threat intelligence lands in the same workflow as everything else you monitor.</div>
         </div>
         <div class="pt-mssp-card">
           <div class="pt-mssp-card-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
-          <div class="pt-mssp-card-name">STIX/TAXII export</div>
-          <div class="pt-mssp-card-desc">Standard threat-intel export &mdash; live today &mdash; so findings feed straight into your SIEM/SOAR pipeline.</div>
+          <div class="pt-mssp-card-name">STIX 2.1 export</div>
+          <div class="pt-mssp-card-desc">Standard threat-intel export, available on request and delivered by our team.</div>
         </div>
         <div class="pt-mssp-card">
           <div class="pt-mssp-card-icon" aria-hidden="true">
@@ -172,7 +172,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="pt-cta">
     <div class="container">
       <h2>Let&rsquo;s talk partnership.</h2>
-      <p>Tell us about your stack and client base &mdash; we&rsquo;ll walk you through the API, integrations, and Business plan economics.</p>
+      <p>Tell us about your stack and client base &mdash; we&rsquo;ll walk you through the integrations and Business plan economics.</p>
       <div class="pt-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Request partnership info</a>
         <a href={`${base}/pricing`} class="btn btn-outline">See pricing</a>
