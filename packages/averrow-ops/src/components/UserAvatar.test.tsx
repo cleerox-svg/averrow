@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ROLE_LABELS, USER_ROLES, roleLabel } from '@averrow/shared';
 
 const logout = vi.fn(() => Promise.resolve());
@@ -58,5 +58,38 @@ describe('UserAvatar profile menu', () => {
     fireEvent.click(screen.getByText('Logout'));
     expect(logout).toHaveBeenCalledTimes(1);
     expect(switchAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('UserAvatar menu — account links', () => {
+  function Where() {
+    return <div data-testid="where">{useLocation().pathname}</div>;
+  }
+  function openWithLocation() {
+    render(<MemoryRouter initialEntries={['/']}><Where /><UserAvatar /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: /user menu/i }));
+  }
+
+  it('offers the four settings pages, no Organization / API Keys, no profile picture', () => {
+    role = 'admin';
+    openWithLocation();
+    for (const label of ['Profile', 'Security', 'Notifications', 'Devices & App']) {
+      expect(screen.getByRole('button', { name: label })).toBeTruthy();
+    }
+    expect(screen.queryByText('Organization')).toBeNull();
+    expect(screen.queryByText('API Keys')).toBeNull();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it.each([
+    ['Profile', '/settings/profile'],
+    ['Security', '/settings/security'],
+    ['Notifications', '/settings/notifications'],
+    ['Devices & App', '/settings/devices'],
+  ])('%s navigates to %s', (label, path) => {
+    role = 'admin';
+    openWithLocation();
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(screen.getByTestId('where').textContent).toBe(path);
   });
 });

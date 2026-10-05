@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Bell, Building2, Key, LogOut, UserPlus } from 'lucide-react';
+import { User, Bell, ShieldCheck, Smartphone, LogOut, UserPlus } from 'lucide-react';
 import { roleLabel } from '@averrow/shared';
 import { useAuth } from '@/lib/auth';
 import { useIsMobile } from '@/hooks/useWindowWidth';
@@ -24,15 +24,15 @@ function ProfileMenu({ onClose }: { onClose: () => void }) {
 
   const roleName = roleLabel(user?.role);
 
-  // Theme toggle lives in the sidebar header now (canonical
-  // quick-access surface) + Profile → Preferences (canonical
-  // explicit picker with Auto / Dark / Light). Removed from this
-  // dropdown to keep one toggle per product, no duplication.
+  // Theme toggle lives in the sidebar header (quick access) + Settings →
+  // Profile → Appearance (explicit Auto / Dark / Light picker). Organization
+  // left this menu (owner decision, ACCOUNT_DESIGN_SPEC §5.5): staff reach
+  // Users & Access from the sidebar. A full menu rebuild is Phase 4.
   const menuItems: MenuItem[] = [
-    { label: 'Profile & Settings', icon: User, path: '/profile' },
-    { label: 'Notification Preferences', icon: Bell, path: '/notifications/preferences' },
-    { label: 'Organization', icon: Building2, path: '/admin/users' },
-    { label: 'API Keys', icon: Key, path: '/admin/users?tab=api-keys' },
+    { label: 'Profile', icon: User, path: '/settings/profile' },
+    { label: 'Security', icon: ShieldCheck, path: '/settings/security' },
+    { label: 'Notifications', icon: Bell, path: '/settings/notifications' },
+    { label: 'Devices & App', icon: Smartphone, path: '/settings/devices' },
   ];
 
   const handleNav = (path: string) => {

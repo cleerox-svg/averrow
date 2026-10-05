@@ -1,5 +1,11 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { USER_TOGGLEABLE_EVENTS } from '@averrow/shared';
+// Types live in the shared kit (the settings sections are mounted from there).
+import type {
+  NotificationPrefsV2, SeverityFloor, SeverityFloorWithOff, DigestMode,
+  DigestSeverityFloor, GroupCadence, SubscriptionLevel, UpdatePrefsOptions,
+} from '@averrow/shared/account';
 import type { NotificationEventKey, NotificationSeverity } from '@averrow/shared';
 
 export type NotificationState = 'unread' | 'read' | 'snoozed' | 'done';
@@ -162,32 +168,36 @@ export function useMarkDone() {
 
 // ─── N5: preferences_v2 ───────────────────────────────────────────────
 
-export type SeverityFloor = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type SeverityFloorWithOff = SeverityFloor | 'off';
-export type DigestMode = 'realtime' | 'hourly' | 'daily' | 'weekly' | 'off';
-export type DigestSeverityFloor = 'high' | 'medium' | 'low' | 'info';
-// NX5: per-group cadence (intel + platform). Distinct from digest_mode
-// which gates tenant-targeted brand events.
-export type GroupCadence = 'realtime' | 'daily_digest' | 'weekly_digest';
+// Re-exported so existing imports from this hook keep working.
+export type {
+  SeverityFloor, SeverityFloorWithOff, DigestMode, DigestSeverityFloor, GroupCadence, SubscriptionLevel,
+};
+export type NotificationPreferencesV2 = NotificationPrefsV2;
 
-export interface NotificationPreferencesV2 {
-  inapp_severity_floor: SeverityFloor;
-  push_severity_floor: SeverityFloorWithOff;
-  email_severity_floor: SeverityFloorWithOff;
-  digest_mode: DigestMode;
-  digest_severity_floor: DigestSeverityFloor;
-  quiet_hours_start: string | null;
-  quiet_hours_end: string | null;
-  quiet_hours_timezone: string;
-  critical_bypasses_quiet: number;
-  show_tenant_notifications: number;
-  cadence_intel: GroupCadence;
-  cadence_platform: GroupCadence;
+// Mutations resolve with a `{ success: false, error }` envelope on 4xx/5xx
+// (only GETs reject — see lib/api.ts), so a write that "succeeded" at the
+// network level can still have failed. Throw so react-query's error path (and
+// the optimistic rollback below) actually runs.
+function assertWritten(res: { success?: boolean; error?: string } | undefined): void {
+  if (res && res.success === false) {
+    throw new Error(res.error || "Couldn't save. Check your connection and try again.");
+  }
 }
+
+/** Restore only the keys a failed write touched, so a concurrent edit to another field survives. */
+function rollbackKeys<T extends object>(current: T | undefined, previous: T | undefined, keys: string[]): T | undefined {
+  if (!current || !previous) return previous ?? current;
+  const next = { ...current } as Record<string, unknown>;
+  const prev = previous as Record<string, unknown>;
+  for (const k of keys) next[k] = prev[k];
+  return next as T;
+}
+
+const PREFS_V2_KEY = ['notification-preferences-v2'] as const;
 
 export function useNotificationPreferencesV2() {
   return useQuery({
-    queryKey: ['notification-preferences-v2'],
+    queryKey: PREFS_V2_KEY,
     queryFn: async (): Promise<NotificationPreferencesV2 | null> => {
       const res = await api.get<NotificationPreferencesV2>('/api/notifications/preferences/v2');
       return res.data ?? null;
@@ -195,14 +205,93 @@ export function useNotificationPreferencesV2() {
   });
 }
 
+export interface UpdatePrefsV2Variables {
+  patch: Partial<NotificationPreferencesV2>;
+  /** Default true: flip the cached value immediately and roll back on failure. */
+  options?: UpdatePrefsOptions;
+}
+
+/**
+ * v2 preference write (floors, summary, cadence, quiet hours, critical
+ * breakthrough). Optimistic with rollback; `options.optimistic: false` is for
+ * explicit-save forms, which keep the user's edits on screen if the save fails.
+ */
 export function useUpdateNotificationPreferencesV2() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (patch: Partial<NotificationPreferencesV2>) => {
-      await api.put('/api/notifications/preferences/v2', patch);
+    mutationFn: async ({ patch }: UpdatePrefsV2Variables) => {
+      assertWritten(await api.put('/api/notifications/preferences/v2', patch));
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notification-preferences-v2'] });
+    onMutate: async ({ patch, options }) => {
+      if (options?.optimistic === false) return { previous: undefined };
+      await queryClient.cancelQueries({ queryKey: PREFS_V2_KEY });
+      const previous = queryClient.getQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY) ?? undefined;
+      if (previous) queryClient.setQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY, { ...previous, ...patch });
+      return { previous };
+    },
+    onError: (_err, { patch }, ctx) => {
+      if (!ctx?.previous) return;
+      queryClient.setQueryData<NotificationPreferencesV2 | null>(PREFS_V2_KEY, (cur) =>
+        rollbackKeys(cur ?? undefined, ctx.previous, Object.keys(patch)) ?? null);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: PREFS_V2_KEY });
+    },
+  });
+}
+
+// ─── Per-event toggles (v1 endpoint — no v2 columns exist for these) ───
+//
+// GET/PATCH /api/notifications/preferences also carries the old quiet-hours
+// columns. The settings UI never reads or writes them (quiet hours live on v2);
+// the PATCH below is built only from USER_TOGGLEABLE_EVENTS keys.
+
+const EVENT_KEYS: readonly string[] = USER_TOGGLEABLE_EVENTS.map((e) => e.key);
+const EVENT_PREFS_KEY = ['notification-preferences'] as const;
+
+export type EventPreferences = Record<string, boolean>;
+
+export function useNotificationEventPreferences() {
+  return useQuery({
+    queryKey: EVENT_PREFS_KEY,
+    queryFn: async (): Promise<EventPreferences> => {
+      const res = await api.get<Record<string, unknown>>('/api/notifications/preferences');
+      const out: EventPreferences = {};
+      for (const key of EVENT_KEYS) {
+        const v = res.data?.[key];
+        if (v !== undefined && v !== null) out[key] = Boolean(v);
+      }
+      return out;
+    },
+  });
+}
+
+export function useUpdateNotificationEventPreferences() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (patch: EventPreferences) => {
+      const body: EventPreferences = {};
+      for (const key of EVENT_KEYS) if (key in patch) body[key] = patch[key] as boolean;
+      assertWritten(await api.patch('/api/notifications/preferences', body));
+    },
+    onMutate: async (patch) => {
+      await queryClient.cancelQueries({ queryKey: EVENT_PREFS_KEY });
+      const previous = queryClient.getQueryData<EventPreferences>(EVENT_PREFS_KEY);
+      queryClient.setQueryData<EventPreferences>(EVENT_PREFS_KEY, { ...(previous ?? {}), ...patch });
+      return { previous };
+    },
+    onError: (_err, patch, ctx) => {
+      queryClient.setQueryData<EventPreferences>(EVENT_PREFS_KEY, (cur) => {
+        const next = { ...(cur ?? {}) };
+        for (const key of Object.keys(patch)) {
+          if (ctx?.previous && key in ctx.previous) next[key] = ctx.previous[key] as boolean;
+          else delete next[key];
+        }
+        return next;
+      });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: EVENT_PREFS_KEY });
     },
   });
 }
@@ -292,8 +381,6 @@ export function useDeleteNotificationMute() {
 
 // ─── N5: subscriptions ────────────────────────────────────────────────
 
-export type SubscriptionLevel = 'watching' | 'default' | 'ignored';
-
 export interface Subscription {
   brand_id: string;
   brand_name: string | null;
@@ -302,9 +389,11 @@ export interface Subscription {
   updated_at: string;
 }
 
+const SUBSCRIPTIONS_KEY = ['notification-subscriptions'] as const;
+
 export function useNotificationSubscriptions() {
   return useQuery({
-    queryKey: ['notification-subscriptions'],
+    queryKey: SUBSCRIPTIONS_KEY,
     queryFn: async (): Promise<Subscription[]> => {
       const res = await api.get<Subscription[]>('/api/notifications/subscriptions');
       return res.data ?? [];
@@ -320,13 +409,26 @@ export function useUpdateSubscription() {
       level: SubscriptionLevel;
       snoozedUntil?: string | null;
     }) => {
-      await api.put(`/api/notifications/subscriptions/${brandId}`, {
+      assertWritten(await api.put(`/api/notifications/subscriptions/${brandId}`, {
         level,
         ...(snoozedUntil !== undefined ? { snoozed_until: snoozedUntil } : {}),
-      });
+      }));
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notification-subscriptions'] });
+    onMutate: async ({ brandId, level }) => {
+      await queryClient.cancelQueries({ queryKey: SUBSCRIPTIONS_KEY });
+      const previous = queryClient.getQueryData<Subscription[]>(SUBSCRIPTIONS_KEY);
+      queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
+        (cur ?? []).map((s) => (s.brand_id === brandId ? { ...s, level } : s)));
+      return { previous };
+    },
+    onError: (_err, { brandId }, ctx) => {
+      const before = ctx?.previous?.find((s) => s.brand_id === brandId);
+      if (!before) return;
+      queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
+        (cur ?? []).map((s) => (s.brand_id === brandId ? { ...s, level: before.level } : s)));
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
     },
   });
 }
@@ -335,10 +437,20 @@ export function useDeleteSubscription() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (brandId: string) => {
-      await api.delete(`/api/notifications/subscriptions/${brandId}`);
+      assertWritten(await api.delete(`/api/notifications/subscriptions/${brandId}`));
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notification-subscriptions'] });
+    onMutate: async (brandId) => {
+      await queryClient.cancelQueries({ queryKey: SUBSCRIPTIONS_KEY });
+      const previous = queryClient.getQueryData<Subscription[]>(SUBSCRIPTIONS_KEY);
+      queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, (cur) =>
+        (cur ?? []).filter((s) => s.brand_id !== brandId));
+      return { previous };
+    },
+    onError: (_err, _brandId, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData<Subscription[]>(SUBSCRIPTIONS_KEY, ctx.previous);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
     },
   });
 }

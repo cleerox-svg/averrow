@@ -163,7 +163,7 @@ function buildPaletteCommands(
     { label: 'Trademarks',    to: tabUrl('trademarks'),    group: 'INTELLIGENCE', icon: Scale, keywords: 'typosquat lookalike' },
     { label: 'Trends',        to: tabUrl('trends'),        group: 'INTELLIGENCE', icon: TrendingUp, keywords: 'intelligence analytics' },
     // Account / personal
-    { label: 'Profile',       to: '/profile',       group: 'ACCOUNT', icon: UserCog, keywords: 'account sign out settings' },
+    { label: 'Profile',       to: '/settings/profile',       group: 'ACCOUNT', icon: UserCog, keywords: 'account sign out settings' },
     { label: 'Notifications', to: '/notifications', group: 'ACCOUNT', icon: Bell, keywords: 'inbox' },
   ];
 
@@ -184,10 +184,11 @@ const FULL_BLEED_ROUTES: ReadonlySet<string> = new Set([
   '/coverage',
   '/admin/operations',
   '/admin/governance',
-  // Shared ProfilePage already centers itself in a 720px column with 24px
-  // gutters (and must stay structurally identical to FarmTrack's).
-  '/profile',
 ]);
+
+/** The Settings area (/settings/*) brings its own gutters: SettingsLayout pads
+ *  the desktop rail + pane, and the mobile list/detail screens are edge-to-edge. */
+const BLEED_ROUTE_PREFIXES: readonly string[] = ['/settings'];
 
 /** Observatory fills the outlet (no gutter, no scroll) and sizes via flex. */
 const FILL_ROUTE_PREFIX = '/observatory';
@@ -197,7 +198,8 @@ export type OutletLayout = 'padded' | 'bleed' | 'fill';
 export function outletLayoutFor(pathname: string): OutletLayout {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (path === FILL_ROUTE_PREFIX || path.startsWith(FILL_ROUTE_PREFIX + '/')) return 'fill';
-  return FULL_BLEED_ROUTES.has(path) ? 'bleed' : 'padded';
+  if (FULL_BLEED_ROUTES.has(path)) return 'bleed';
+  return BLEED_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '/')) ? 'bleed' : 'padded';
 }
 
 export function ShellV4() {

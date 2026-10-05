@@ -426,7 +426,7 @@ function NotificationList({
                 <CheckCheck size={12} /> Mark all read
               </button>
               <button
-                onClick={() => { setMenuOpen(false); navigate('/notifications/preferences'); onClose(); }}
+                onClick={() => { setMenuOpen(false); navigate('/settings/notifications'); onClose(); }}
                 className="w-full flex items-center gap-2 px-3 py-2 text-[12px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] text-left"
                 style={{ color: 'var(--text-primary)' }}
               >

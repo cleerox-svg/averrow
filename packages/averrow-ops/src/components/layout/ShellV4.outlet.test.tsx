@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 describe('outletLayoutFor', () => {
-  it.each(['/', '/console', '/explore', '/coverage', '/admin/operations', '/admin/governance', '/console/', '/profile'])(
+  it.each(['/', '/console', '/explore', '/coverage', '/admin/operations', '/admin/governance', '/console/', '/settings', '/settings/profile', '/settings/devices/'])(
     '%s is full-bleed', (p) => expect(outletLayoutFor(p)).toBe('bleed'),
   );
   it.each(['/observatory', '/observatory/'])('%s fills the outlet', (p) => expect(outletLayoutFor(p)).toBe('fill'));
