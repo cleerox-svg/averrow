@@ -54,7 +54,10 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      use: { ...devices["iPhone 13"] },
+      // Pixel 5 (Chromium) rather than iPhone 13 (WebKit): the pre-installed
+      // browser forced via launchOptions above is Chromium, and WebKit cannot
+      // launch with it. Same phone-sized viewport + touch emulation.
+      use: { ...devices["Pixel 5"] },
     },
   ],
   // When PLAYWRIGHT_BASE_URL isn't set, boot the Astro preview

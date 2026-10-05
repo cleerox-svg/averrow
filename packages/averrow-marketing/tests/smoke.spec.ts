@@ -154,7 +154,11 @@ test.describe("homepage hero", () => {
   });
 });
 
-test.describe("navigation", () => {
+test.describe("navigation (desktop bar)", () => {
+  test.beforeEach(({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 0) < 900, "desktop nav collapses into the hamburger below 900px");
+  });
+
   test("has exactly 5 top-level links and the three actions", async ({ page: p }) => {
     await p.goto("/");
     const nav = p.getByRole("navigation", { name: "Main" });
@@ -172,5 +176,23 @@ test.describe("navigation", () => {
     await p.locator("a.nav-link", { hasText: "Platform" }).focus();
     await expect(menu).toBeVisible();
     await expect(menu.getByRole("link", { name: /Email security/ })).toBeVisible();
+  });
+});
+
+test.describe("navigation (mobile menu)", () => {
+  test.beforeEach(({ page }) => {
+    test.skip((page.viewportSize()?.width ?? 0) >= 900, "mobile menu is only used below 900px");
+  });
+
+  test("hamburger menu has the 5 hubs and the actions", async ({ page: p }) => {
+    await p.goto("/");
+    const toggle = p.getByRole("button", { name: "Toggle menu" });
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    const menu = p.locator("#mobile-menu");
+    await expect(menu).toBeVisible();
+    for (const name of ["Platform", "Solutions", "Pricing", "Research", "Company", "Log in", "Book a demo", "Scan your domain"]) {
+      await expect(menu.getByRole("link", { name, exact: true })).toBeVisible();
+    }
   });
 });
