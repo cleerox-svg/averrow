@@ -73,11 +73,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
     <div class="pricing-grid">
       <div class="price-card free-scan">
-        <div class="price-not-a-plan">Free Scan &middot; Not a plan</div>
         <div class="price-tier">Free Scan</div>
-        <div class="price-desc">Brand Exposure Report</div>
-        <div class="price-amount">Free</div>
-        <div class="price-billing">One-time, no signup</div>
+        <div class="price-desc">Brand Exposure Report &middot; free, no signup</div>
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Exposure score</li>
@@ -86,7 +83,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Full report on request</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-free">Scan your domain</a>
+          <a href={`${base}/scan`} class="btn btn-outline" data-cta="pricing-free">Scan your domain</a>
         </div>
       </div>
 
@@ -105,7 +102,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>Email security posture monitoring</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/demo`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-professional">Book a demo</a>
+          <a href={`${base}/demo`} class="btn btn-primary" data-cta="pricing-professional">Book a demo</a>
         </div>
       </div>
 
@@ -122,7 +119,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>STIX 2.1 export, available on request</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/demo`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-business">Book a demo</a>
+          <a href={`${base}/demo`} class="btn btn-outline" data-cta="pricing-business">Book a demo</a>
         </div>
       </div>
 
@@ -132,14 +129,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Business</li>
-          <li><a href={`${base}/abuse-mailbox`} style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Abuse Mailbox</a> &mdash; branded report inbox with automatic classification</li>
+          <li><a href={`${base}/abuse-mailbox`} style="color:inherit;text-decoration:underline;text-underline-offset:2px;white-space:nowrap;">Abuse Mailbox</a> &mdash; branded report inbox with automatic classification</li>
           <li>Threat-actor intelligence: infrastructure correlation into operations and campaigns</li>
           <li>SLA guarantees</li>
           <li>Dedicated support</li>
           <li>Onboarding &amp; training</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Talk to sales</a>
+          <a href={`${base}/contact`} class="btn btn-outline" data-cta="pricing-enterprise">Talk to sales</a>
         </div>
       </div>
     </div>
@@ -150,32 +147,34 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="section-label" style="text-align:center;">Compare Plans</div>
       <h2 class="compare-heading">Everything you need, at every stage</h2>
     </div>
+    <p class="compare-swipe-hint" aria-hidden="true">Swipe to compare &rarr;</p>
     <div class="compare-table-wrap">
       <table class="compare-table">
+        <caption class="sr-only">Plan comparison: which capabilities each plan includes</caption>
         <thead>
           <tr>
-            <th></th>
-            <th>Free Scan</th>
-            <th class="highlight">Professional</th>
-            <th>Business</th>
-            <th>Enterprise</th>
+            <th scope="col"><span class="sr-only">Capability</span></th>
+            <th scope="col">Free Scan</th>
+            <th scope="col" class="highlight">Professional</th>
+            <th scope="col">Business</th>
+            <th scope="col">Enterprise</th>
           </tr>
         </thead>
         <tbody>
-          <tr><td>Monitoring</td><td>One-time</td><td>Continuous 24/7</td><td>Continuous 24/7</td><td>Continuous 24/7</td></tr>
-          <tr><td>Email Security Posture</td><td>Grade only</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td></tr>
-          <tr><td>Domain Monitoring (lookalikes, certificate transparency)</td><td>Possible-lookalike count</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Social Media Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Executive Impersonation</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Apple App Store Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Dark Web Monitoring (paste sites, ransomware leak sites)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Trademark Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Webhooks &amp; SIEM / ticketing connectors (set up with our team)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>STIX 2.1 Export</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td>On request</td><td>On request</td></tr>
-          <tr><td>Dedicated Account Manager</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Abuse Mailbox</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Threat-Actor Intelligence (operations &amp; campaigns)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>SLA Guarantees</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td role="rowheader">Monitoring</td><td>One-time</td><td>Continuous 24/7</td><td>Continuous 24/7</td><td>Continuous 24/7</td></tr>
+          <tr><td role="rowheader">Email Security Posture</td><td>SPF/DMARC check</td><td class="ct-yes"><span aria-hidden="true">&#10003;</span> Full monitoring</td><td class="ct-yes"><span aria-hidden="true">&#10003;</span> Full monitoring</td><td class="ct-yes"><span aria-hidden="true">&#10003;</span> Full monitoring</td></tr>
+          <tr><td role="rowheader">Domain Monitoring (lookalikes, certificate transparency)</td><td>Possible-lookalike count</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Social Media Monitoring</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Executive Impersonation</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Apple App Store Monitoring</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Dark Web Monitoring (paste sites, ransomware leak sites)</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Trademark Monitoring</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Webhooks &amp; SIEM / ticketing connectors (set up with our team)</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">STIX 2.1 Export</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td>On request</td><td>On request</td></tr>
+          <tr><td role="rowheader">Dedicated Account Manager</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Abuse Mailbox</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">Threat-Actor Intelligence (operations &amp; campaigns)</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
+          <tr><td role="rowheader">SLA Guarantees</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-no" role="cell" aria-label="Not included">&#10007;</td><td class="ct-yes" role="cell" aria-label="Included">&#10003;</td></tr>
         </tbody>
       </table>
     </div>
@@ -191,24 +190,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
     <div class="faq-list">
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>How does the free scan work? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Enter any domain for an exposure score and email-authentication check in under a minute, no signup. Ask for the full report for lookalike and social findings.</div>
+        <button class="faq-q" data-faq-toggle id="faq-q-1" aria-expanded="false" aria-controls="faq-a-1">How does the free scan work? <span class="faq-arrow" aria-hidden="true">&#9660;</span></button>
+        <div class="faq-a" id="faq-a-1" role="region" aria-labelledby="faq-q-1">Enter any domain for an exposure score and email-authentication check in under a minute, no signup. Ask for the full report for lookalike and social findings.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>What&rsquo;s included in continuous monitoring? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Professional and above monitor continuously across the modules in your plan, Alerts land in your Averrow console; Business and Enterprise can also send them to a webhook or SIEM, set up with our team.</div>
+        <button class="faq-q" data-faq-toggle id="faq-q-2" aria-expanded="false" aria-controls="faq-a-2">What&rsquo;s included in continuous monitoring? <span class="faq-arrow" aria-hidden="true">&#9660;</span></button>
+        <div class="faq-a" id="faq-a-2" role="region" aria-labelledby="faq-q-2">Professional and above monitor continuously across the modules in your plan. Alerts land in your Averrow console; Business and Enterprise can also send them to a webhook or SIEM, set up with our team.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>How is Averrow priced? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">By the coverage you need. Book a demo and we&rsquo;ll scope it with you.</div>
+        <button class="faq-q" data-faq-toggle id="faq-q-3" aria-expanded="false" aria-controls="faq-a-3">How is Averrow priced? <span class="faq-arrow" aria-hidden="true">&#9660;</span></button>
+        <div class="faq-a" id="faq-a-3" role="region" aria-labelledby="faq-q-3">By the coverage you need. Book a demo and we&rsquo;ll scope it with you.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>Can I change plans later? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Yes &mdash; talk to us and we&rsquo;ll change your coverage.</div>
+        <button class="faq-q" data-faq-toggle id="faq-q-4" aria-expanded="false" aria-controls="faq-a-4">Can I change plans later? <span class="faq-arrow" aria-hidden="true">&#9660;</span></button>
+        <div class="faq-a" id="faq-a-4" role="region" aria-labelledby="faq-q-4">Yes &mdash; talk to us and we&rsquo;ll change your coverage.</div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" data-faq-toggle>How do I get started? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Run the free domain scan on your own domain &mdash; no signup. When you want continuous monitoring, book a demo and our team will set you up.</div>
+        <button class="faq-q" data-faq-toggle id="faq-q-5" aria-expanded="false" aria-controls="faq-a-5">How do I get started? <span class="faq-arrow" aria-hidden="true">&#9660;</span></button>
+        <div class="faq-a" id="faq-a-5" role="region" aria-labelledby="faq-q-5">Run the free domain scan on your own domain &mdash; no signup. When you want continuous monitoring, book a demo and our team will set you up.</div>
       </div>
     </div>
   </section>
@@ -298,9 +297,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .price-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
   .price-card.popular {
-    border: 2px solid var(--accent);
-    border-radius: 12px;
-    box-shadow: var(--shadow-glow);
+    border-color: var(--accent);
+    border-radius: var(--radius-lg);
+    box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-glow);
   }
   .price-card.popular::before {
     content: "";
@@ -334,7 +333,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     top: -10px;
     left: 16px;
     font-family: var(--font-mono);
-    font-size: 0.62rem;
+    font-size: 0.7rem;
     font-weight: 700;
     letter-spacing: 0.12em;
     background: var(--bg-primary);
@@ -342,15 +341,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--amber-text);
     border-radius: 6px;
     border: 1px solid var(--border);
-  }
-  .price-not-a-plan {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    margin-bottom: 0.4rem;
   }
 
   .popular-badge {
@@ -361,7 +351,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     background: var(--btn-primary-bg);
     color: var(--btn-primary-ink);
     font-family: var(--font-mono);
-    font-size: 0.68rem;
+    font-size: 0.7rem;
     font-weight: 600;
     padding: 0.25rem 0.75rem;
     border-radius: 100px;
@@ -374,15 +364,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 0.25rem;
   }
   .price-desc { font-size: 15px; color: var(--text-tertiary); margin-bottom: 1.25rem; }
-  .price-amount {
-    font-family: var(--font-display);
-    font-size: 48px;
-    font-weight: 800;
-    margin-bottom: 0.25rem;
-  }
-  .price-amount span { font-size: 1rem; font-weight: 400; color: var(--text-tertiary); }
-  .price-billing { font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 1.5rem; }
-  .price-billing strong { color: var(--green-text); }
   .price-divider { height: 1px; background: var(--border); margin-bottom: 1.5rem; }
   .price-features {
     list-style: none;
@@ -407,6 +388,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     flex-shrink: 0;
   }
   .price-cta { margin-top: auto; }
+  .price-cta .btn { width: 100%; justify-content: center; }
 
   .compare-section { padding: 3rem 0; background: var(--bg-tertiary); }
   .compare-heading {
@@ -419,6 +401,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin: 2rem auto 0;
     padding: 0 2rem;
     overflow-x: auto;
+    position: relative;
   }
   .compare-table {
     width: 100%;
@@ -448,9 +431,23 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-secondary);
   }
   .compare-table tr:last-child td { border-bottom: none; }
-  .compare-table td:first-child { font-weight: 600; color: var(--text-primary); }
-  .ct-no { color: var(--red-text); }
-  .ct-yes { color: var(--green-text); }
+  .compare-table td.ct-yes { color: var(--green-text); }
+  .compare-table td.ct-no { color: var(--red-text); }
+  .compare-table tbody td:first-child {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    padding: 0.85rem 1rem;
+  }
+  .compare-swipe-hint { display: none; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
 
   .faq-section { padding: 3rem 0; }
   .faq-heading {
@@ -476,6 +473,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-primary);
   }
   .faq-q:hover { color: var(--accent); }
+  .faq-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .faq-arrow {
     font-size: 0.85rem;
     color: var(--text-tertiary);
@@ -508,11 +506,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   :global([data-theme="light"]) .price-card,
   :global([data-theme="light"]) .value-prop-item {
-    background: rgba(255,255,255,0.6);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-color: rgba(226,221,213,0.5);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
+    background: var(--bg-secondary);
+    border-color: var(--border);
+    box-shadow: var(--shadow-md);
   }
 
   @media (max-width: 1024px) {
@@ -522,12 +518,26 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   @media (max-width: 768px) {
     .pricing-grid { grid-template-columns: 1fr; max-width: 420px; }
     .value-prop-grid { grid-template-columns: 1fr; }
+    .compare-swipe-hint {
+      display: block; text-align: right; padding: 0 1rem; margin: 1rem 0 0;
+      font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-tertiary);
+    }
+    .compare-table-wrap { padding: 0 1rem; }
+    .compare-table th:first-child,
+    .compare-table tbody td:first-child {
+      position: sticky; left: 0; z-index: 1; min-width: 140px;
+      background: var(--bg-secondary);
+    }
+    .compare-table thead th:first-child { background: var(--bg-tertiary); }
   }
 </style>
 
 <script>
   // FAQ toggle.
   document.querySelectorAll<HTMLButtonElement>("[data-faq-toggle]").forEach(btn => {
-    btn.addEventListener("click", () => btn.parentElement?.classList.toggle("open"));
+    btn.addEventListener("click", () => {
+      const open = btn.parentElement?.classList.toggle("open") ?? false;
+      btn.setAttribute("aria-expanded", String(open));
+    });
   });
 </script>
