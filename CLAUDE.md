@@ -1415,19 +1415,25 @@ don't ask "should I merge?" for a PR that meets the criteria below.
 
 **Who may merge**
 - Only the **orchestrator** (the main session driving the work), and only
-  PRs it opened or that the owner asked it to drive. Never someone else's PR.
+  PRs from the branch this session was assigned (every Claude session pushes
+  as the same GitHub user, so the branch, not the author, says whose PR it
+  is) or that the owner asked it to drive. Never another session's or a
+  person's PR.
 - **Subagents never merge**, never mark a PR ready for review, never tag
   and never push to `master`. They build, test, review and report; the
   orchestrator integrates, commits, and decides.
 
 **Merge when ALL of these hold on the current head SHA**
 1. Every CI check run is `completed` + `success`. No check still running,
-   no red, no skipped-to-pass. Never merge red; never skip, disable or
+   no red, no skipped-to-pass. (A check that its own trigger rules skip,
+   e.g. a path-filtered job that didn't apply, is fine.) Never merge red; never skip, disable or
    quarantine a test to get green (§1A: failures go back to the owner of
    the code).
 2. `mergeable_state` is `clean`: no conflicts. Resolve conflicts by merging
    `master` into the branch, then re-run the gate.
-3. The §1A pipeline ran for the change:
+3. The §1A pipeline ran for the change, or the change was legitimately
+   skippable under §1A (trivial edit, pure docs/changelog; the local gate
+   still has to pass for any touched code):
    - the local gate passed (typecheck + `check:resource-drift` + tests for
      every touched package; `qa-verifier` for non-trivial changes);
    - the required review lanes ran: `code-reviewer` for any non-trivial
@@ -1440,6 +1446,9 @@ don't ask "should I merge?" for a PR that meets the criteria below.
 5. The PR description matches what is actually in the diff.
 
 **How to merge**
+- If branch protection reports `mergeable_state: blocked` because it wants a
+  human approval, don't try to approve or bypass it: say once that the PR is
+  green, reviewed and waiting only on that approval.
 - Take the PR out of draft, then merge with `merge_method: "merge"`
   (merge commits are this repo's convention) and `expectedHeadSha` set to
   the SHA you verified, so a late push can't slip in unverified.
@@ -1467,6 +1476,10 @@ don't ask "should I merge?" for a PR that meets the criteria below.
 - changes pricing, billing/Stripe behaviour, or legal/policy content
   (privacy, terms, DPA);
 - bumps the MAJOR version;
+- changes CI or deploy workflows (`.github/workflows/**`) or the rules that
+  govern merging and agents (this §9a, §1A, `docs/CLAUDE_SUBAGENTS.md`,
+  `.claude/agents/**`), so a session can never widen its own authority or
+  drop a required check and merge that itself;
 - is something the owner said to hold.
 For these, get the PR green and fully reviewed, then ask once, with
 the exact risk stated.

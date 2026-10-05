@@ -23,10 +23,14 @@ concurrency:
 jobs:
   tag:
     name: Tag platform version
+    # Release tags only ever point at master. A manual run started from
+    # another branch is refused rather than tagging an unmerged commit.
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: master
           fetch-depth: 0
 
       - name: Create tag if missing
@@ -42,9 +46,18 @@ jobs:
             echo "$tag already exists at $(git rev-list -n1 "$tag"); nothing to do."
             exit 0
           fi
-          # The first-parent commit on master that last changed the version
-          # file: the merge commit for a merged PR.
-          target=$(git log --first-parent -1 --format=%H -- platform-version.json)
+          # The oldest first-parent commit on master that carries this version
+          # (the merge commit that introduced it for a merged PR), walking back
+          # only through commits that touched the version file.
+          target=""
+          for c in $(git log --first-parent --format=%H -- platform-version.json); do
+            v=$(git show "$c:platform-version.json" | jq -r '.version')
+            if [ "$v" = "$version" ]; then target="$c"; else break; fi
+          done
+          if [ -z "$target" ]; then
+            echo "::error::no commit on master carries version $version"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" "$target" -m "$tag"
