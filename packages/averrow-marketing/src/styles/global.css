@@ -262,9 +262,12 @@ img, video, svg { max-width: 100%; height: auto; }
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
-  transition: opacity 0.12s, transform 0.12s, visibility 0.12s;
+  /* opacity/transform only: visibility must flip instantly so a fast Tab
+     into the menu never lands on a still-hidden (unfocusable) link. */
+  transition: opacity 0.12s, transform 0.12s;
 }
 /* Hover bridge so the menu doesn't close crossing the 6px gap. */
+.nav-item-closed > .nav-menu { opacity: 0 !important; visibility: hidden !important; }
 .nav-menu::before { content: ""; position: absolute; left: 0; right: 0; top: -8px; height: 8px; }
 .nav-item:hover > .nav-menu,
 .nav-item:focus-within > .nav-menu {
@@ -462,7 +465,7 @@ img, video, svg { max-width: 100%; height: auto; }
   font-size: 0.92rem;
   transition: color 0.2s;
 }
-.footer-col a:hover { color: var(--amber); text-decoration: none; }
+.footer-col a:hover { color: var(--amber-text); text-decoration: none; }
 .footer-bottom {
   padding-top: 1.75rem;
   border-top: 1px solid var(--border);

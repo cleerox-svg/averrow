@@ -173,7 +173,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <li>14-day trial</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
+          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
         </div>
       </div>
     </div>
@@ -375,13 +375,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     transition: all 0.2s;
   }
   .pricing-toggle-btn.active {
-    background: var(--accent);
+    background: var(--btn-primary-bg);
     color: var(--btn-primary-ink);
     border-color: var(--accent);
   }
   .pricing-save-badge {
-    background: var(--green);
-    color: white;
+    background: rgba(60, 184, 120, 0.14);
+    color: var(--green-text);
     font-size: 10px;
     padding: 2px 8px;
     border-radius: 10px;
@@ -397,11 +397,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-tertiary);
     margin-bottom: 1.75rem;
   }
-  .pricing-grid-hint-arrow { color: var(--amber); margin: 0 6px; }
+  .pricing-grid-hint-arrow { color: var(--amber-text); margin: 0 6px; }
 
   .price-card.free-scan {
     background: transparent;
-    border: 1.5px dashed var(--border);
+    border: 1.5px dashed var(--border-strong);
     position: relative;
   }
   .price-card.free-scan::before {
@@ -415,7 +415,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     letter-spacing: 0.12em;
     background: var(--bg-primary);
     padding: 2px 8px;
-    color: var(--amber);
+    color: var(--amber-text);
     border-radius: 6px;
     border: 1px solid var(--border);
   }
@@ -434,7 +434,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     top: -12px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--accent);
+    background: var(--btn-primary-bg);
     color: var(--btn-primary-ink);
     font-family: var(--font-mono);
     font-size: 0.68rem;

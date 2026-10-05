@@ -124,6 +124,18 @@ const withBase = (href: string) => `${base}${href}`;
       });
     }
 
+    // Escape closes an open dropdown (blur moves focus out of it).
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active.closest(".nav-menu, .nav-item")) {
+        active.blur();
+        (document.querySelectorAll<HTMLElement>(".nav-item")).forEach((i) => i.classList.add("nav-item-closed"));
+        setTimeout(() => document.querySelectorAll(".nav-item-closed").forEach((i) => i.classList.remove("nav-item-closed")), 400);
+      }
+      if (menu && menu.classList.contains("open")) button?.click();
+    });
+
     const nav = document.querySelector(".nav");
     if (nav) {
       const onScroll = () => {

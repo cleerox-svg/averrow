@@ -104,7 +104,7 @@ const toneVar: Record<Tone, string> = {
           spellcheck="false"
           required
         />
-        <button class="scan-btn" type="submit" data-cta="hero-scan">Scan free &rarr;</button>
+        <button class="scan-btn" type="submit" data-cta="hero-scan">Scan your domain <span aria-hidden="true">&rarr;</span></button>
       </form>
       <p class="scan-meta">
         <span>30-second scan &middot; no sign-up</span>
@@ -540,7 +540,7 @@ const toneVar: Record<Tone, string> = {
   .sp-map-foot { display: flex; gap: 18px; margin-top: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary); }
   .sp-map-foot b { color: var(--text-primary); }
   .sp-gauge { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-  .sp-gauge-num { font-family: var(--font-display); font-weight: 800; font-size: 38px; fill: var(--amber); }
+  .sp-gauge-num { font-family: var(--font-display); font-weight: 800; font-size: 38px; fill: var(--amber-text); }
   .sp-gauge-grade { font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; fill: var(--text-tertiary); }
   .sp-gauge-meta { font-size: 12px; color: var(--text-secondary); margin-top: 8px; max-width: 200px; }
   .sp-ticker { display: flex; align-items: center; gap: 12px; margin-top: 16px; background: var(--bg-code); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; overflow: hidden; }
@@ -651,6 +651,10 @@ const toneVar: Record<Tone, string> = {
   }
   .scan-input::placeholder { color: var(--text-tertiary); }
   .scan-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     white-space: nowrap;
     font-family: var(--font-body);
     font-size: 14px;

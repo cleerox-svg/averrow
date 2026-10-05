@@ -72,7 +72,7 @@
   --sev-high-text:     var(--sev-high);
   --sev-medium-text:   var(--sev-medium);
   --sev-low-text:      var(--sev-low);
-  --red-text:          var(--red);
+  --red-text:          var(--sev-critical);
   --green-text:        var(--green);
   --amber-text:        var(--amber);
   --blue-text:         var(--blue);
@@ -141,7 +141,7 @@
   --bg-elevated:   #1A2E48;
   --text-primary:  rgba(255,255,255,0.92);
   --text-secondary:rgba(255,255,255,0.60);
-  --text-tertiary: rgba(255,255,255,0.40);
+  --text-tertiary: rgba(255,255,255,0.56); /* 6.4:1 on #060A14 (was .40 = 3.8:1) */
   --text-inverse:  #1A1F2E;
   --border:        rgba(120, 160, 200, 0.08);
   --border-strong: rgba(120, 160, 200, 0.15);

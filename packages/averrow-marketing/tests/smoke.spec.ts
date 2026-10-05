@@ -130,7 +130,7 @@ test.describe("homepage hero", () => {
     await expect(form).toHaveAttribute("action", /\/assess$/);
     await expect(form).toHaveAttribute("method", /post/i);
     await expect(form.locator('input[name="domain"]')).toBeVisible();
-    await expect(form.getByRole("button", { name: /scan free/i })).toBeVisible();
+    await expect(form.getByRole("button", { name: /scan your domain/i })).toBeVisible();
   });
 
   test("no fake live feed, no retired claims", async ({ page: p }) => {
