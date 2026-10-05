@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.3.0",
+    publishedAt: "2026-10-05",
+    kind: "Feature",
+    title: "A redesigned account experience",
+    description:
+      "One Settings area for Profile, Security, Notifications, and Devices & App, with a side rail on desktop and a simple list on phones. A new avatar menu adds a built-in theme switch and Switch account. The notification bell and inbox are rebuilt, with day grouping, filters, and actions that are always visible on phones. Security now lets you see each signed-in session, sign out a single device, sign out other devices, or sign out everywhere, and sign-outs take effect immediately. Notification settings are organized into Channels, Events, Summary, and Quiet hours, and changes save instantly and undo themselves if saving fails. Fixed quiet hours using the wrong time zone, quiet hours not always turning off, and one notification toggle sometimes resetting others. Critical alerts still break through quiet hours. Also fixed notification preferences failing to load. Customers now get the same account area, with larger touch targets, more readable text, and keyboard-friendly menus in both light and dark themes.",
+  },
+  {
     version: "v4.2.2",
     publishedAt: "2026-07-22",
     kind: "Fix",
