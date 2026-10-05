@@ -73,12 +73,12 @@ export type PhantomMatchSource = "nrd" | "ct" | "lookalike";
  * incrementally (`full=1` never reads or advances it); it is never set if
  * the matcher has never run.
  *
- * Exported so `lib/nrd-retention.ts` can hold its purge on it: rows at or
- * after this value are not deleted — but the hold is CLAMPED to no earlier
- * than now − 37 days (30-day retention + 7-day margin), and a missing cursor
- * holds at that floor. So if this manual matcher is not run incrementally
- * for over a month, unscanned rows ARE purged from D1; every one is still in
- * the NRD_ARCHIVE R2 bucket (feeds/nrd_hagezi.ts daily archive).
+ * Read by `lib/nrd-retention.ts`, but its hold is CLAMPED at the 30-day age
+ * cutoff, so it never extends retention: rows older than 30 days are purged
+ * whether or not this manual matcher has scanned them (reported as
+ * `phantom_hold_clamped`). Rows ingested since 2026-10-05 remain in the
+ * NRD_ARCHIVE R2 bucket (feeds/nrd_hagezi.ts daily archive); `full=1` sweeps
+ * cover only the 30-day D1 window.
  */
 export const PHANTOM_MATCHER_NRD_CURSOR_KEY = "phantom_matcher:nrd:cursor";
 

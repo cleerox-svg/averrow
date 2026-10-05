@@ -7,11 +7,12 @@
 // lost idx_nrd_domains_created fails here instead of silently turning every
 // purge chunk into a full table scan.
 //
-// Invariants under test: a brand_matched = 1 row is NEVER deleted; a row the
-// phantom matcher hasn't scanned (created_at >= its nrd cursor) is kept
-// while the cursor is within now − 37 days — the hold is CLAMPED there, and
-// a MISSING cursor holds at that floor; an unreadable / unrecognised cursor
-// → nothing is deleted.
+// Invariants under test: a brand_matched = 1 row is NEVER deleted; unmatched
+// rows older than 30 days are deleted whatever the phantom matcher's cursor
+// says (its hold is CLAMPED at the age cutoff; a missing or stale cursor is
+// reported as phantom_hold_clamped); an unreadable / unrecognised cursor →
+// nothing is deleted. The purge seeks the partial index
+// idx_nrd_domains_unmatched_created (migration 0283).
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -31,7 +32,6 @@ import {
   parseNrdRetentionLastResult,
   toSqliteUtc,
   NRD_RETENTION_DAYS,
-  NRD_PHANTOM_HOLD_MAX_DAYS,
   NRD_RETENTION_PURGE_SQL,
   NRD_RETENTION_LAST_RESULT_KEY,
   NRD_RETENTION_HOUR_UTC,
@@ -101,20 +101,18 @@ function makeEnv(raw: SqliteDb, kvSeed: Record<string, string> = {}) {
 const clock = () => NOW;
 
 describe.skipIf(!hasSqlite())("purgeNrdDomains (nrd_domains tiered retention)", () => {
-  it("retention is 30 days; the phantom hold clamps at 30 + 7", () => {
+  it("retention is 30 days", () => {
     expect(NRD_RETENTION_DAYS).toBe(30);
-    expect(NRD_PHANTOM_HOLD_MAX_DAYS).toBe(37);
   });
 
-  it("no phantom cursor → holds at the clamp floor: rows older than 37d deleted, 30–37d kept", async () => {
+  it("no phantom cursor (the normal prod state) → plain 30-day cutoff, phantom_hold_clamped", async () => {
     const raw = openNrd();
     seed(raw, [
       { domain: "ancient.example", created_at: ts(400) },
-      { domain: "old.example", created_at: ts(38) },
-      { domain: "just-below-floor.example", created_at: ts(37, -1_000) },
-      { domain: "at-floor.example", created_at: ts(37) },
-      { domain: "held-35.example", created_at: ts(35) },
-      { domain: "held-31.example", created_at: ts(31) },
+      { domain: "old-35.example", created_at: ts(35) },
+      { domain: "just-below-cutoff.example", created_at: ts(30, -1_000) },
+      { domain: "at-cutoff.example", created_at: ts(30) },
+      { domain: "kept-29.example", created_at: ts(29) },
       { domain: "recent.example", created_at: ts(2) },
     ]);
     const { env } = makeEnv(raw);
@@ -123,34 +121,30 @@ describe.skipIf(!hasSqlite())("purgeNrdDomains (nrd_domains tiered retention)", 
     expect(r.error).toBeUndefined();
     expect(r.cursor).toBeNull();
     expect(r.phantom_hold_clamped).toBe(true);
-    expect(r.held_by_matcher).toBe(true);
-    expect(r.cutoff).toBe(ts(NRD_PHANTOM_HOLD_MAX_DAYS));
+    expect(r.held_by_matcher).toBe(false);
+    expect(r.cutoff).toBe(ts(NRD_RETENTION_DAYS));
+    expect(r.cutoff).toBe(r.age_cutoff);
     expect(r.deleted).toBe(3);
-    expect(domains(raw)).toEqual([
-      "at-floor.example",
-      "held-31.example",
-      "held-35.example",
-      "recent.example",
-    ]);
+    expect(domains(raw)).toEqual(["at-cutoff.example", "kept-29.example", "recent.example"]);
   });
 
-  it("a STALE phantom cursor (older than 37d) is clamped: unscanned rows below the floor are purged", async () => {
+  it("a STALE phantom cursor (older than 30d) holds nothing: unscanned rows past 30d are purged", async () => {
     const raw = openNrd();
     const cursor = ts(150);
     seed(raw, [
       { domain: "scanned.example", created_at: ts(200) },
       { domain: "unscanned-old.example", created_at: ts(120) },
-      { domain: "unscanned-held.example", created_at: ts(35) },
+      { domain: "unscanned-35.example", created_at: ts(35) },
       { domain: "recent.example", created_at: ts(5) },
     ]);
     const { env } = makeEnv(raw, { [PHANTOM_MATCHER_NRD_CURSOR_KEY]: cursor });
     const r = await purgeNrdDomains(env, { now: clock });
     expect(r.cursor).toBe(cursor);
     expect(r.phantom_hold_clamped).toBe(true);
-    expect(r.held_by_matcher).toBe(true);
-    expect(r.cutoff).toBe(ts(37));
-    expect(r.deleted).toBe(2);
-    expect(domains(raw)).toEqual(["recent.example", "unscanned-held.example"]);
+    expect(r.held_by_matcher).toBe(false);
+    expect(r.cutoff).toBe(ts(30));
+    expect(r.deleted).toBe(3);
+    expect(domains(raw)).toEqual(["recent.example"]);
   });
 
   it("brand_matched = 1 rows are never purged, at any age, with or without a cursor", async () => {
@@ -213,7 +207,7 @@ describe.skipIf(!hasSqlite())("purgeNrdDomains (nrd_domains tiered retention)", 
     expect(domains(raw)).toEqual(["edge-new.example", "recent.example", "today.example"]);
   });
 
-  it("cursor between 30d and 37d old → only rows older than the cursor deleted, held_by_matcher", async () => {
+  it("cursor between 30d and 37d old is clamped too (no 37-day phantom hold any more)", async () => {
     const raw = openNrd();
     const cursor = ts(34);
     seed(raw, [
@@ -223,25 +217,24 @@ describe.skipIf(!hasSqlite())("purgeNrdDomains (nrd_domains tiered retention)", 
     ]);
     const { env } = makeEnv(raw, { [PHANTOM_MATCHER_NRD_CURSOR_KEY]: cursor });
     const r = await purgeNrdDomains(env, { now: clock });
-    expect(r.held_by_matcher).toBe(true);
-    expect(r.phantom_hold_clamped).toBe(false);
+    expect(r.held_by_matcher).toBe(false);
+    expect(r.phantom_hold_clamped).toBe(true);
     expect(r.cursor).toBe(cursor);
-    expect(r.cutoff).toBe(cursor);
-    expect(r.deleted).toBe(1);
-    expect(domains(raw)).toEqual(["recent.example", "unscanned-old.example"]);
+    expect(r.cutoff).toBe(ts(30));
+    expect(r.deleted).toBe(2);
+    expect(domains(raw)).toEqual(["recent.example"]);
   });
 
-  it("a row exactly at the cursor is kept (strict <, matcher re-scans >=)", async () => {
+  it("a row exactly at the cutoff is kept (strict <)", async () => {
     const raw = openNrd();
-    const cursor = ts(33);
     seed(raw, [
-      { domain: "before.example", created_at: ts(33, -1_000) },
-      { domain: "at-cursor.example", created_at: cursor },
+      { domain: "before.example", created_at: ts(30, -1_000) },
+      { domain: "at-cutoff.example", created_at: ts(30) },
     ]);
-    const { env } = makeEnv(raw, { [PHANTOM_MATCHER_NRD_CURSOR_KEY]: cursor });
+    const { env } = makeEnv(raw, { [PHANTOM_MATCHER_NRD_CURSOR_KEY]: ts(1) });
     const r = await purgeNrdDomains(env, { now: clock });
     expect(r.deleted).toBe(1);
-    expect(domains(raw)).toEqual(["at-cursor.example"]);
+    expect(domains(raw)).toEqual(["at-cutoff.example"]);
   });
 
   it("purges more than one chunk across multiple statements", async () => {
@@ -342,35 +335,44 @@ describe.skipIf(!hasSqlite())("purgeNrdDomains (nrd_domains tiered retention)", 
   });
 });
 
-describe.skipIf(!hasSqlite())("idx_nrd_domains_created (migration 0279)", () => {
+describe.skipIf(!hasSqlite())("purge indexes (migrations 0279 + 0283)", () => {
   const plan = (raw: SqliteDb, sql: string, ...b: unknown[]): string =>
     (raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...b) as Array<{ detail: string }>)
       .map((r) => r.detail)
       .join(" | ");
 
-  it("is defined by migrations and survives replay", () => {
-    const ddl = liveIndexDdl("nrd_domains").get("idx_nrd_domains_created");
-    expect(ddl).toBeDefined();
-    expect(ddl!.replace(/\s+/g, " ")).toMatch(/ON nrd_domains\(created_at\)/);
+  it("both indexes are defined by migrations and survive replay", () => {
+    const live = liveIndexDdl("nrd_domains");
+    const full = live.get("idx_nrd_domains_created");
+    expect(full).toBeDefined();
+    expect(full!.replace(/\s+/g, " ")).toMatch(/ON nrd_domains\(created_at\)/);
+    const partial = live.get("idx_nrd_domains_unmatched_created");
+    expect(partial).toBeDefined();
+    expect(partial!.replace(/\s+/g, " ")).toMatch(/ON nrd_domains\(created_at\) WHERE brand_matched = 0/);
   });
 
-  it("the purge subquery seeks idx_nrd_domains_created (no scan, no temp sort)", () => {
+  it("the purge subquery seeks the PARTIAL idx_nrd_domains_unmatched_created (no scan, no temp sort)", () => {
     const raw = openNrd();
     seedMany(raw, 50, ts(100));
-    seed(raw, [{ domain: "matched.example", created_at: ts(100), brand_matched: 1 }]);
+    raw.exec("BEGIN");
+    const ins = raw.prepare(
+      "INSERT INTO nrd_domains (domain, registered_date, created_at, brand_matched) VALUES (?, '2026-01-01', ?, 1)",
+    );
+    for (let i = 0; i < 50; i++) ins.run(`matched-${i}.example`, ts(200));
+    raw.exec("COMMIT");
     raw.exec("ANALYZE");
-    // Pinned shape: created_at range + brand_matched residual (never purge
-    // matched rows), 2 binds.
+    // Pinned shape: created_at range + `brand_matched = 0`, textually the
+    // partial index's predicate (never purge matched rows), 2 binds.
     expect(NRD_RETENTION_PURGE_SQL).toBe(
       "DELETE FROM nrd_domains WHERE rowid IN (SELECT rowid FROM nrd_domains WHERE created_at < ? AND brand_matched = 0 ORDER BY created_at LIMIT ?)",
     );
     const sub = /\((SELECT rowid FROM nrd_domains[^)]*)\)/.exec(NRD_RETENTION_PURGE_SQL)![1]!;
     const p = plan(raw, sub, ts(30), 5000);
-    expect(p).toContain("idx_nrd_domains_created (created_at<?)");
+    expect(p).toContain("idx_nrd_domains_unmatched_created (created_at<?)");
     expect(p).not.toMatch(/TEMP B-TREE/);
     expect(p).not.toMatch(/SCAN nrd_domains(?! USING)/);
     const full = plan(raw, NRD_RETENTION_PURGE_SQL, ts(30), 5000);
-    expect(full).toContain("idx_nrd_domains_created");
+    expect(full).toContain("idx_nrd_domains_unmatched_created");
   });
 });
 
@@ -470,12 +472,13 @@ describe("buildNrdRetentionDiag (KV-only diagnostics block)", () => {
 });
 
 // ── Phantom matcher nrd cursor = "scanned up to" watermark ──────────────
-// The purge's no-unscanned-rows guarantee depends on the matcher's nrd
+// The purge's `phantom_hold_clamped` report depends on the matcher's nrd
 // cursor meaning "every row with created_at < cursor has been scanned".
 // An untruncated incremental run must therefore advance it to
 // MAX(nrd_domains.created_at) even with zero matches; a truncated run keeps
-// the matched-row rule.
-describe.skipIf(!hasSqlite())("phantom matcher nrd cursor (gates the retention purge)", () => {
+// the matched-row rule. (The cursor no longer holds the purge — it is
+// clamped at the 30-day age cutoff.)
+describe.skipIf(!hasSqlite())("phantom matcher nrd cursor (reported by the retention purge)", () => {
   function openMatcherDb(): SqliteDb {
     const raw = openDerivedDb(["nrd_domains", "phantom_domains", "brands"]);
     for (const ddl of liveIndexDdl("nrd_domains").values()) raw.exec(ddl);
@@ -548,18 +551,19 @@ describe.skipIf(!hasSqlite())("phantom matcher nrd cursor (gates the retention p
     expect(kv.store.get(PHANTOM_MATCHER_NRD_CURSOR_KEY)).toBe(ts(5));
   });
 
-  it("(c) a row inserted at the advanced cursor's created_at is re-scanned (>=) and not purged (<)", async () => {
+  it("(c) a row inserted at the advanced cursor's created_at (inside 30 days) is re-scanned (>=) and not purged", async () => {
     const raw = openMatcherDb();
-    // Both rows sit inside the 37-day clamp window, so the cursor (not the
-    // clamp floor) is the binding hold.
+    // The phantom cursor no longer moves the purge cutoff (clamped at the
+    // 30-day age cutoff); what still matters is that a late row at the
+    // cursor's second, inside the 30-day window, survives and is matched.
     seed(raw, [
-      { domain: "old.example", created_at: ts(36) },
-      { domain: "boundary.example", created_at: ts(34) },
+      { domain: "old.example", created_at: ts(40) },
+      { domain: "boundary.example", created_at: ts(5) },
     ]);
     const kv = fakeKv();
     await runNrd(raw, kv);
     const cursor = kv.store.get(PHANTOM_MATCHER_NRD_CURSOR_KEY)!;
-    expect(cursor).toBe(ts(34));
+    expect(cursor).toBe(ts(5));
 
     // Late row with the SAME created_at second, matching a predicted phantom.
     seed(raw, [{ domain: "late.example", created_at: cursor }]);
@@ -567,9 +571,9 @@ describe.skipIf(!hasSqlite())("phantom matcher nrd cursor (gates the retention p
 
     const { env } = makeEnv(raw, { [PHANTOM_MATCHER_NRD_CURSOR_KEY]: cursor });
     const purge = await purgeNrdDomains(env, { now: clock });
-    expect(purge.held_by_matcher).toBe(true);
+    expect(purge.held_by_matcher).toBe(false);
     expect(purge.phantom_hold_clamped).toBe(false);
-    expect(purge.deleted).toBe(1); // only old.example
+    expect(purge.deleted).toBe(1); // only old.example (age cutoff)
     expect(domains(raw)).toEqual(["boundary.example", "late.example"]);
 
     const r = await runNrd(raw, kv);

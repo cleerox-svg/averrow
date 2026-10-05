@@ -109,10 +109,11 @@
  * now − (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS), because
  * rows older than that can never be claimed anyway. The clamp is what stops
  * a stuck or disabled matcher from holding retention forever. With the
- * 30-day retention (tiered model, 2026-10-05) the clamp actually binds: a
- * matcher more than ~30 days behind holds the purge at now − 37 days, and
- * rows below that are purged from D1 (they remain in the NRD_ARCHIVE R2
- * bucket, and are unclaimable anyway). Every
+ * 30-day retention (tiered model, 2026-10-05) this hold binds only when
+ * this hourly matcher is more than 30 days behind (stuck): it then holds
+ * the purge at now − 37 days, and rows below that are purged from D1 (they
+ * are unclaimable anyway, and remain in the NRD_ARCHIVE R2 bucket unless
+ * ingested before 2026-10-05). Every
  * row below the cursor's created_at has a smaller (created_at, rowid) key,
  * i.e. it has been scanned. If retention has purged rows below a stale
  * cursor, the next window simply starts at the oldest surviving row — the
@@ -407,7 +408,7 @@ async function claimHits(
       await env.DB.batch(markStmts.slice(i, i + CLAIM_BATCH));
     } catch {
       // A failed mark only means retention may purge the NRD row after 30
-      // days (it stays in the NRD_ARCHIVE R2 object); the claim itself, the
+      // days (it stays in the NRD_ARCHIVE R2 archive); the claim itself, the
       // evidence that matters, already landed on lookalike_domains.
     }
   }

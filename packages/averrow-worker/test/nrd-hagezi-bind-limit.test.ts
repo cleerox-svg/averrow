@@ -59,7 +59,7 @@ async function envWithEmptyPrior(): Promise<Env> {
   const { bucket } = fakeR2Bucket({
     [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(""), customMetadata: { version: "prior" } },
   });
-  return { DB: db, CACHE: fakeKv(), GEOIP_STAGING: bucket } as unknown as Env;
+  return { DB: db, CACHE: fakeKv(), GEOIP_STAGING: bucket, NRD_ARCHIVE: fakeR2Bucket().bucket } as unknown as Env;
 }
 
 describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {

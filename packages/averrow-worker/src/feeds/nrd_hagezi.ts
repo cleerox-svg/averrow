@@ -46,14 +46,18 @@ import { logger } from "../lib/logger";
  * run FLUSHED (inserted — never a deferred/capped one) is also gzip-streamed
  * into an archive object in the NRD_ARCHIVE R2 bucket, at
  * `daily/<registered_date>/<version|unversioned>-<first domain>.txt.gz`
- * (nrdArchiveKey). It is PUT after every D1 write succeeded and BEFORE the
- * snapshot put: a failed archive put throws, the snapshot does not advance,
- * and the next run re-diffs, re-inserts (INSERT OR IGNORE) and rewrites the
- * same key. The first domain in the key keeps a deferral catch-up run on the
- * same list version from overwriting the previous run's object, while a
- * retry of the same set overwrites itself idempotently. Zero inserted → no
- * object. NRD_ARCHIVE unbound (staging/dev) → `nrd_hagezi_archive_unbound`
- * warning and the run continues. Bootstrap archives nothing.
+ * (nrdArchiveKey). It is PUT once every nrd_domains write (storeNrdReference)
+ * succeeded — regardless of threat-insert errors, because those rows are
+ * already in D1 and will be purged — and BEFORE the snapshot put. A failed
+ * archive put throws, the snapshot does not advance, and the next run
+ * re-diffs, re-inserts (INSERT OR IGNORE) and rewrites the same key; the
+ * same happens after a threat-insert error holds the snapshot. The first
+ * domain in the key keeps a deferral catch-up run on the same list version
+ * from overwriting the previous run's object, while a retry of the same set
+ * overwrites itself idempotently. Zero inserted → no object. Bootstrap
+ * archives nothing. NRD_ARCHIVE is REQUIRED: unbound → the run throws
+ * before fetching, because retention purges D1 on the assumption that every
+ * row it deletes is archived.
  *
  * First run (no snapshot): write the snapshot only and insert nothing, so
  * the 3.1M-row window isn't dumped into D1 in one pull; the next daily list
@@ -167,6 +171,13 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     );
   }
 
+  const archiveBucket = ctx.env.NRD_ARCHIVE;
+  if (!archiveBucket) {
+    throw new Error(
+      `NRD Hagezi: NRD_ARCHIVE (R2) binding not configured — every inserted domain is archived under ${NRD_ARCHIVE_PREFIX} in that bucket (averrow-nrd-archive) before nrd_domains retention may purge it`,
+    );
+  }
+
   const prevHead = await bucket.head(NRD_SNAPSHOT_KEY);
   const prevMeta = prevHead?.customMetadata ?? {};
 
@@ -242,9 +253,8 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       },
     );
 
-    const archiveBucket = ctx.env.NRD_ARCHIVE;
-    // Only buffer the archive when there is somewhere to put it.
-    archive = archiveBucket ? new SnapshotWriter() : null;
+    const archiveWriter = new SnapshotWriter();
+    archive = archiveWriter; // aborted in `finally` unless finished
     let archiveFirst: string | null = null;
     let archived = 0;
 
@@ -262,10 +272,8 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       if (pending.length === 0) return;
       await storeNrdReference(ctx.env.DB, pending, registeredDate);
       // Archive exactly what was flushed (never a deferred domain).
-      if (archive) {
-        for (const d of pending) await archive.add(d);
-        archiveFirst ??= pending[0]!;
-      }
+      for (const d of pending) await archiveWriter.add(d);
+      archiveFirst ??= pending[0]!;
       archived += pending.length;
       if (!matcher.empty) {
         const { rows, inPayloadDuplicates } = matcher.collect(pending, matched);
@@ -308,31 +316,31 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       logger.warn("nrd_hagezi_deferred", { newTotal, inserted: newInserted, deferred, cap: maxNew });
     }
 
+    // Archive whenever every nrd_domains write landed (we got here, so
+    // storeNrdReference never threw) — independent of threat-insert errors:
+    // those rows are in D1 now and retention will purge them. BEFORE the
+    // snapshot: if this put throws, the snapshot stays and the next run
+    // re-diffs + rewrites the same archive key.
+    if (archived > 0 && archiveFirst !== null) {
+      const archiveKey = nrdArchiveKey(registeredDate, header.version, archiveFirst);
+      await archiveBucket.put(archiveKey, await archiveWriter.finish(), {
+        httpMetadata: { contentType: "application/gzip" },
+        customMetadata: {
+          count: String(archived),
+          version: header.version ?? "unversioned",
+          list_modified: header.lastModified ?? "",
+          registered_date: registeredDate,
+        },
+      });
+      logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived });
+    }
+
     // Snapshot advances only when every D1 write landed. A failed threat
     // chunk (bulkInsertThreats reports it as itemsError rather than throwing)
     // must keep the old snapshot, or those matches would never be retried.
     if (itemsError > 0) {
       logger.warn("nrd_hagezi_snapshot_held", { reason: "threat_insert_errors", itemsError, version: header.version });
     } else {
-      // Archive BEFORE the snapshot: if this put throws, the snapshot stays
-      // put and the next run re-diffs + rewrites the same archive key.
-      if (archived > 0) {
-        if (archiveBucket && archive && archiveFirst !== null) {
-          const archiveKey = nrdArchiveKey(registeredDate, header.version, archiveFirst);
-          await archiveBucket.put(archiveKey, await archive.finish(), {
-            httpMetadata: { contentType: "application/gzip" },
-            customMetadata: {
-              count: String(archived),
-              version: header.version ?? "unversioned",
-              list_modified: header.lastModified ?? "",
-              registered_date: registeredDate,
-            },
-          });
-          logger.info("nrd_hagezi_archived", { key: archiveKey, count: archived });
-        } else {
-          logger.warn("nrd_hagezi_archive_unbound", { domains: archived, registeredDate, version: header.version });
-        }
-      }
       await bucket.put(NRD_SNAPSHOT_KEY, await snapshot.finish(), {
         customMetadata: snapshotMetadata(etag, header, deferred),
       });

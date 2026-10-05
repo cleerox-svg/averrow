@@ -1061,8 +1061,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/nrd_hagezi.ts",
       "source_type": "http",
       "schedule": null,
-      "loc": 862,
-      "last_modified": "2026-10-05T14:32:20.195Z"
+      "loc": 870,
+      "last_modified": "2026-10-05T14:37:32.640Z"
     },
     {
       "name": "nvd_cve",

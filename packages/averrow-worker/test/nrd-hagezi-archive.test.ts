@@ -9,7 +9,9 @@
  * Pins: the archive holds exactly the inserted domains (never deferred /
  * capped ones, never old ones), its key + customMetadata, no object on
  * bootstrap or zero-new runs, a failed archive put throws BEFORE the diff
- * snapshot advances, and an unbound NRD_ARCHIVE logs and continues.
+ * snapshot advances, threat-insert errors still archive (the rows are in D1)
+ * while holding the snapshot, and an unbound NRD_ARCHIVE throws before any
+ * fetch or D1 write.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -20,7 +22,6 @@ import {
   NRD_ARCHIVE_PREFIX,
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
-import { logger } from "../src/lib/logger";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import { fakeR2Bucket, gzipText, gunzipText, type FakeR2Bucket } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
@@ -53,7 +54,7 @@ const noD1 = {
   batch() { throw new Error("D1 must not be touched on this path"); },
 } as unknown as D1Database;
 
-function envOf(db: D1Database, staging: FakeR2Bucket, archive?: FakeR2Bucket | R2Bucket): Env {
+function envOf(db: D1Database, staging: FakeR2Bucket, archive: FakeR2Bucket | R2Bucket | null): Env {
   const env: Record<string, unknown> = { DB: db, CACHE: fakeKv(), GEOIP_STAGING: staging.bucket };
   if (archive) env.NRD_ARCHIVE = "bucket" in archive ? archive.bucket : archive;
   return env as unknown as Env;
@@ -189,7 +190,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — daily R2 archive", () => {
     expect(staging.ops.put).toBe(1);
   });
 
-  it("threat-insert errors hold the snapshot AND skip the archive (the retry archives instead)", async () => {
+  it("threat-insert errors still ARCHIVE (rows are in D1) but hold the snapshot; the retry rewrites the same key", async () => {
     raw.prepare("INSERT INTO brands (id, name, canonical_domain) VALUES ('b1', 'Acme Bank', 'acmebank.com')").run();
     raw.prepare(
       "INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b1', '__internal__', 'u1', 'active')",
@@ -203,23 +204,35 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — daily R2 archive", () => {
     const r = await ingestNrdHagezi(ctxOf(envOf(db, staging, archive)));
 
     expect(r.itemsError).toBeGreaterThan(0);
-    expect(archive.ops.put).toBe(0);
+    const key = `daily/${REG_DATE}/${VERSION}-acmebank-x.example.txt.gz`;
+    expect(archiveKeys(archive)).toEqual([key]);
+    expect(await gunzipText(archive.store.get(key)!.bytes)).toBe("acmebank-x.example\n");
+    expect((raw.prepare("SELECT domain FROM nrd_domains").all() as Array<{ domain: string }>).map((x) => x.domain))
+      .toEqual(["acmebank-x.example"]);
+    // Snapshot NOT advanced → the next run re-diffs.
+    expect(staging.ops.put).toBe(0);
+    expect(staging.store.get(NRD_SNAPSHOT_KEY)).toBe(prior);
+
+    // Retry (threats table still broken): same set → same key overwritten.
+    stubList(["a.com", "acmebank-x.example"]);
+    await ingestNrdHagezi(ctxOf(envOf(db, staging, archive)));
+    expect(archiveKeys(archive)).toEqual([key]);
+    expect(archive.ops.put).toBe(2);
     expect(staging.store.get(NRD_SNAPSHOT_KEY)).toBe(prior);
   });
 
-  it("unbound NRD_ARCHIVE (staging/dev): the run succeeds and logs nrd_hagezi_archive_unbound", async () => {
-    const warn = vi.spyOn(logger, "warn");
-    const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: await snapshotOf(["a.com"]) });
-    stubList(["a.com", "b.com"], { version: null });
+  it("unbound NRD_ARCHIVE throws a precise error before any fetch, D1 write or snapshot write", async () => {
+    const prior = await snapshotOf(["a.com"]);
+    const staging = fakeR2Bucket({ [NRD_SNAPSHOT_KEY]: prior });
+    const fetchSpy = vi.fn(async () => listResponse(["a.com", "b.com"]));
+    vi.stubGlobal("fetch", fetchSpy);
 
-    const r = await ingestNrdHagezi(ctxOf(envOf(db, staging)));
-
-    expect(r.itemsFetched).toBe(2);
-    expect(staging.ops.put).toBe(1);
-    expect(warn).toHaveBeenCalledWith(
-      "nrd_hagezi_archive_unbound",
-      expect.objectContaining({ domains: 1, registeredDate: REG_DATE }),
+    await expect(ingestNrdHagezi(ctxOf(envOf(noD1, staging, null)))).rejects.toThrow(
+      /NRD_ARCHIVE \(R2\) binding not configured/,
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(staging.ops.put).toBe(0);
+    expect(staging.store.get(NRD_SNAPSHOT_KEY)).toBe(prior);
   });
 
   it("an unversioned list archives under 'unversioned'", async () => {

@@ -1,0 +1,36 @@
+-- 0283 — nrd_domains: partial created_at index over UNMATCHED rows, for the
+-- tiered retention purge.
+--
+-- ── Why ──────────────────────────────────────────────────────────────
+-- Tiered nrd_domains retention (owner decision 2026-10-05,
+-- lib/nrd-retention.ts) never deletes a `brand_matched = 1` row (set by the
+-- NRD <-> lookalike matcher on a hit). The purge is
+--   DELETE FROM nrd_domains WHERE rowid IN (
+--     SELECT rowid FROM nrd_domains
+--      WHERE created_at < ? AND brand_matched = 0
+--      ORDER BY created_at LIMIT ?)
+-- Through the full idx_nrd_domains_created (0279) the kept matched rows pile
+-- up at the OLD end of the index, below every cutoff, and every purge chunk
+-- would step over all of them as a residual filter — a cost that grows
+-- forever with the number of matched rows. This partial index holds only the
+-- rows the purge may delete, so each chunk is a pure range seek again.
+--
+-- The index predicate is `brand_matched = 0`, written EXACTLY as in the
+-- purge subquery: SQLite only uses a partial index when the query's WHERE
+-- contains a term that matches (implies) the predicate. Pinned by
+-- test/nrd-retention.test.ts (EXPLAIN QUERY PLAN).
+--
+-- idx_nrd_domains_created stays: the NRD <-> lookalike matcher's keyset
+-- (created_at, rowid) seek and the phantom matcher's `created_at >= cursor`
+-- read cover ALL rows, matched or not.
+--
+-- ── Cost ─────────────────────────────────────────────────────────────
+-- One-time build: one pass over nrd_domains (a few million rows at most on
+-- 2026-10-05; the Hagezi feed started that day) and one index-entry write per
+-- unmatched row. Steady state: one extra index write per newly inserted NRD
+-- (~443K/day), one extra removal per purged row, and one removal when the
+-- lookalike matcher flips a row to brand_matched = 1 (rare). No column or
+-- table change.
+
+CREATE INDEX IF NOT EXISTS idx_nrd_domains_unmatched_created
+  ON nrd_domains(created_at) WHERE brand_matched = 0;

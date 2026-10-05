@@ -84,7 +84,7 @@ const noD1 = {
 } as unknown as D1Database;
 
 function envOf(db: D1Database, r2: FakeR2Bucket): Env {
-  return { DB: db, CACHE: fakeKv(), GEOIP_STAGING: r2.bucket } as unknown as Env;
+  return { DB: db, CACHE: fakeKv(), GEOIP_STAGING: r2.bucket, NRD_ARCHIVE: fakeR2Bucket().bucket } as unknown as Env;
 }
 
 const ctxOf = (env: Env) => ({ env, feedName: "nrd_hagezi", feedUrl: "" });

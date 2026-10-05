@@ -10,9 +10,12 @@
 //            on a hit) are NEVER purged, whatever their age.
 //   * COLD — every row the feed inserts is ALSO archived, per run, to the
 //            NRD_ARCHIVE R2 bucket (`daily/<registered_date>/…txt.gz`,
-//            feeds/nrd_hagezi.ts) before the feed's diff snapshot advances.
-//            So every purged row is preserved in R2: purging an unscanned
-//            row no longer loses it.
+//            feeds/nrd_hagezi.ts) before the feed's diff snapshot advances;
+//            the binding is required, so the feed fails rather than insert
+//            unarchived rows. So a purged row is preserved in R2 — EXCEPT
+//            rows ingested before the archive shipped (2026-10-05), which
+//            were never archived and are gone from the platform once
+//            purged (their brand matches are already in `threats`).
 //
 // Readers and their holds:
 //
@@ -23,12 +26,16 @@
 //    it has been covered by an incremental run. It moves ONLY when someone
 //    runs the matcher incrementally. It used to be a HARD floor (no cursor →
 //    purge nothing; a stale cursor → nothing newer ever purged), which with
-//    a rarely-run manual matcher meant D1 grew without bound. It is now a
-//    CLAMPED hold: never earlier than now − (NRD_RETENTION_DAYS +
-//    NRD_RETENTION_HOLD_MARGIN_DAYS) = 37 days, and a MISSING cursor is a
-//    hold AT that clamp floor (`phantom_hold_clamped`). Rationale: the R2
-//    archive keeps every purged row, and a stuck manual matcher must not
-//    grow D1 without bound.
+//    a rarely-run manual matcher meant D1 grew without bound. It is now
+//    CLAMPED at the age cutoff (now − NRD_RETENTION_DAYS): it may never hold
+//    a row past 30 days, so in practice it never moves the cutoff — a
+//    cursor newer than 30 days only covers rows the age cutoff keeps anyway,
+//    and a missing or older cursor holds nothing (`phantom_hold_clamped`:
+//    unscanned rows are leaving D1). Effective retention is therefore 30
+//    days in the normal prod state (the manual matcher rarely runs).
+//    Rationale: purged rows are in the R2 archive (see COLD above for the
+//    exception), and a stuck manual matcher must not grow D1 without bound.
+//    `full=1` phantom sweeps cover only the 30-day D1 window.
 //
 // 2. NRD <-> lookalike matcher (lib/lookalike-nrd-matcher.ts, every
 //    lookalike_scanner run) — keyset cursor at LOOKALIKE_NRD_CURSOR_KEY. When
@@ -36,15 +43,17 @@
 //    now − (NRD_MATCH_MAX_AGE_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS) = 37
 //    days: rows older than that can never be claimed, and a stuck or
 //    disabled matcher must not hold retention forever. With 30-day retention
-//    this clamp now actually binds whenever the matcher lags > 30 days.
+//    this hold binds only when that HOURLY matcher is more than 30 days
+//    behind (stuck), extending retention to at most 37 days.
 //    Absent (never run) → no hold; its first run starts at now − 30 days of
 //    ingest, so it never assumes a purged row still exists.
 //
 // Retention rule:
-//   floor  = now − 37 days
-//   cutoff = min(now − NRD_RETENTION_DAYS,
-//                max(phantom cursor ?? floor, floor),
-//                max(lookalike cursor, floor)   [only when it exists])
+//   age    = now − NRD_RETENTION_DAYS (30 days)
+//   floor  = now − (NRD_MATCH_MAX_AGE_DAYS + margin) (37 days)
+//   cutoff = min(age,
+//                max(phantom cursor ?? age, age),   [never below age]
+//                max(lookalike cursor, floor)       [only when it exists])
 //   DELETE rows with created_at < cutoff AND brand_matched = 0
 //     (strict <: the row AT a cursor is re-scanned by the matcher's `>=`)
 // A FAILED or unrecognised cursor READ (either cursor) → purge nothing this
@@ -58,15 +67,19 @@
 // into created_at and the matchers copy verbatim into their cursors — so
 // string order is time order.
 //
-// Deletes run in chunks through idx_nrd_domains_created (migration 0279):
+// Deletes run in chunks through the PARTIAL index
+// idx_nrd_domains_unmatched_created (migration 0283, `ON nrd_domains
+// (created_at) WHERE brand_matched = 0`):
 //   DELETE … WHERE rowid IN (SELECT rowid … WHERE created_at < ?
 //                            AND brand_matched = 0
 //                            ORDER BY created_at LIMIT ?)
-// 2 binds per statement, until a chunk deletes fewer than the chunk size or
-// the soft wall-clock cap is hit (more_remaining=true; the next hour-0
-// Navigator tick continues — see shouldRunNrdRetention). brand_matched is a
-// residual filter on the index range (matched rows are a tiny share), so
-// the seek stays on idx_nrd_domains_created.
+// The `brand_matched = 0` term must stay textually identical to the index
+// predicate or SQLite won't use the partial index. Through the full
+// idx_nrd_domains_created (0279), the kept matched rows would sit at the
+// old end of the range and every chunk would re-read all of them. 2 binds
+// per statement, until a chunk deletes fewer than the chunk size or the
+// soft wall-clock cap is hit (more_remaining=true; the next hour-0
+// Navigator tick continues — see shouldRunNrdRetention).
 //
 // Never throws. Writes a JSON last-result stamp to KV (best-effort).
 
@@ -81,9 +94,6 @@ import {
 
 export const NRD_RETENTION_DAYS = 30;
 
-/** Oldest the phantom matcher's hold may reach, in days: retention + the
- *  shared margin (37). */
-export const NRD_PHANTOM_HOLD_MAX_DAYS = NRD_RETENTION_DAYS + NRD_RETENTION_HOLD_MARGIN_DAYS;
 
 /** Rows per DELETE statement. Binds are fixed at 2, so this is bounded by
  *  per-statement work, not the 100-variable ceiling. */
@@ -124,15 +134,16 @@ export interface NrdRetentionResult {
   /** Phantom matcher nrd cursor as read from KV (null when absent / unreadable). */
   cursor: string | null;
   /**
-   * True when the phantom matcher's hold (its cursor, or the clamp floor when
-   * the cursor is missing or older) is earlier than the age cutoff.
+   * True when the phantom matcher's hold set a cutoff earlier than the age
+   * cutoff. Since the hold is clamped AT the age cutoff this is always false
+   * now; kept so diagnostics and older stamps keep their shape.
    */
   held_by_matcher: boolean;
   /**
-   * True when the phantom hold was CLAMPED to now − NRD_PHANTOM_HOLD_MAX_DAYS
-   * because the cursor is missing or older than that (the matcher has not
-   * run incrementally recently). Unscanned rows below the floor are purged
-   * from D1; they remain in the NRD_ARCHIVE R2 bucket.
+   * True when the phantom cursor is missing or older than the age cutoff
+   * (now − NRD_RETENTION_DAYS), i.e. the manual matcher has not scanned the
+   * rows being purged. Those rows leave D1 unscanned; post-2026-10-05 rows
+   * remain in the NRD_ARCHIVE R2 bucket.
    */
   phantom_hold_clamped?: boolean;
   /**
@@ -197,8 +208,9 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
     return result;
   };
 
-  // ── 1. Phantom matcher cursor — a CLAMPED hold. A failed or
-  //       unrecognised read → purge nothing (any doubt → no delete). ──
+  // ── 1. Phantom matcher cursor — a hold CLAMPED at the age cutoff. A
+  //       failed or unrecognised read → purge nothing (any doubt → no
+  //       delete). ──
   let cursor: string | null;
   try {
     cursor = await env.CACHE.get(PHANTOM_MATCHER_NRD_CURSOR_KEY);
@@ -216,14 +228,14 @@ export async function purgeNrdDomains(env: Env, opts: NrdRetentionOptions = {}):
   }
 
   // ── 2. Effective cutoff = the earlier of age cutoff and phantom hold. ──
-  // A missing cursor (never run incrementally) or one older than the floor
-  // holds AT the floor: rows below it are preserved in the R2 archive, and a
-  // stuck manual matcher must not grow D1 without bound.
-  const phantomFloor = toSqliteUtc(start - NRD_PHANTOM_HOLD_MAX_DAYS * 86_400_000);
-  result.phantom_hold_clamped = !cursor || cursor < phantomFloor;
-  const phantomHold = cursor && !result.phantom_hold_clamped ? cursor : phantomFloor;
-  result.held_by_matcher = phantomHold < ageCutoff;
-  let cutoff = result.held_by_matcher ? phantomHold : ageCutoff;
+  // The phantom hold is clamped AT the age cutoff: a missing cursor (never
+  // run incrementally) or one older than 30 days holds nothing, and a fresher
+  // one only covers rows the age cutoff keeps anyway. The manual matcher
+  // must not grow D1 without bound; purged rows are in the R2 archive.
+  result.phantom_hold_clamped = !cursor || cursor < ageCutoff;
+  const phantomHold = cursor && !result.phantom_hold_clamped ? cursor : ageCutoff;
+  result.held_by_matcher = phantomHold < ageCutoff; // always false (clamped)
+  let cutoff = ageCutoff;
 
   // ── 2b. The lookalike matcher's hold (only when it has a cursor). ──
   // A failed read here is NOT a skip: it would only make the purge less
