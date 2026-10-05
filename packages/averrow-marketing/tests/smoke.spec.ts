@@ -33,12 +33,12 @@ for (const page of PAGES) {
     });
     // "Failed to load resource" console lines carry no URL, so judge broken
     // resources by response instead: any same-origin 4xx/5xx counts, except
-    // the analytics beacon and brand/icon files (served by the Worker's static
+    // the analytics beacon, the Worker-served public API (live stats refresh; falls back to the build snapshot) and brand/icon files (served by the Worker's static
     // assets, not by the preview server). Third-party failures (fonts blocked in a
     // sandbox, cert errors) are not this site's regressions.
     p.on("response", res => {
       const url = new URL(res.url());
-      if (url.origin === new URL(p.url() === "about:blank" ? res.url() : p.url()).origin && res.status() >= 400 && !/^\/(api\/track|favicon|icon-|brand\/)/.test(url.pathname)) {
+      if (url.origin === new URL(p.url() === "about:blank" ? res.url() : p.url()).origin && res.status() >= 400 && !/^\/(api\/track|api\/v1\/public\/|favicon|icon-|brand\/)/.test(url.pathname)) {
         brokenLocal.push(`${res.status()} ${url.pathname}`);
       }
     });

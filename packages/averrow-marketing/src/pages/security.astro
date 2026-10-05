@@ -3,7 +3,7 @@
  * Security & Trust page. Ported from
  * packages/averrow-worker/src/templates/security.ts (Item 3 polish).
  * Trust-stack tile row, security practices, infrastructure list,
- * compliance timeline (PIPEDA/GDPR/WCAG/SOC2), disclosure, data
+ * privacy and compliance posture (DPA, SOC 2 status), disclosure, data
  * handling. No interactivity — pure static markup.
  */
 import Layout from "../layouts/Layout.astro";
@@ -164,29 +164,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
 
     <div class="sec-section" id="compliance">
-      <div class="sec-section-label">Compliance</div>
-      <h2 class="sec-section-title">Standards we operate to today</h2>
+      <div class="sec-section-label">Privacy &amp; compliance</div>
+      <h2 class="sec-section-title">What we can state today</h2>
       <p class="sec-section-intro">
-        Three frameworks shape our day-to-day controls right now. SOC 2
+        We list concrete facts rather than certifications. SOC 2
         is in preparation &mdash; we don&rsquo;t want to overstate where
         we are.
       </p>
 
       <div class="sec-timeline">
         <div class="sec-timeline-item sec-tl-active">
-          <div class="sec-timeline-date">Operating today</div>
-          <div class="sec-timeline-title">GDPR-aligned processing <span class="sec-status-pill in-place">In place</span></div>
-          <div class="sec-timeline-desc">Lawful-basis, data-minimization, and subject-rights handling aligned with EU General Data Protection Regulation requirements. EU sub-processor list available on request.</div>
+          <div class="sec-timeline-date">Available</div>
+          <div class="sec-timeline-title">Data Processing Agreement <span class="sec-status-pill in-place">Available</span></div>
+          <div class="sec-timeline-desc">A DPA is available on request, and our sub-processors are listed in it. <a href={`${base}/legal/dpa`}>What the DPA covers</a>.</div>
         </div>
         <div class="sec-timeline-item sec-tl-active">
           <div class="sec-timeline-date">Operating today</div>
-          <div class="sec-timeline-title">PIPEDA <span class="sec-status-pill in-place">In place</span></div>
-          <div class="sec-timeline-desc">Personal Information Protection and Electronic Documents Act &mdash; Canadian privacy law that governs how we collect, use, and disclose personal information.</div>
-        </div>
-        <div class="sec-timeline-item sec-tl-active">
-          <div class="sec-timeline-date">Operating today</div>
-          <div class="sec-timeline-title">WCAG 2.1 Level AA <span class="sec-status-pill in-place">In place</span></div>
-          <div class="sec-timeline-desc">Accessibility target across public-facing pages and the authenticated dashboard. Audit findings get tracked the same way as security findings.</div>
+          <div class="sec-timeline-title">Data minimised <span class="sec-status-pill in-place">In place</span></div>
+          <div class="sec-timeline-desc">We collect only the data the product needs. Contact us for our privacy documentation.</div>
         </div>
         <div class="sec-timeline-item">
           <div class="sec-timeline-date">In preparation</div>

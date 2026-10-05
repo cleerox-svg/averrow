@@ -1,0 +1,164 @@
+---
+/*
+ * "How we count": one short section per number published on the homepage
+ * "By the numbers" section. Tier T2 only (docs/DISCLOSURE_REGISTER.md): what
+ * each number counts, its window, how fresh it is and what it leaves out.
+ * No thresholds, feed names, scoring or detection methods.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const FRESH_LIVE = "Each page view, cached for up to 5 minutes.";
+const FRESH_HOURLY = "Each page view, cached for up to an hour.";
+const FALLBACK = "If the live figure can't be fetched, the page shows the snapshot taken when the site was last built, and says so.";
+
+const items = [
+  {
+    id: "threats-tracked",
+    title: "Threats tracked",
+    counts: "Every distinct malicious indicator we have recorded: phishing and malware domains and URLs, command-and-control and other malicious addresses, and typosquatted domains. Each indicator is counted once, however many sources report it.",
+    window: "Since launch (all time).",
+    fresh: FRESH_LIVE,
+    excludes: "Customer-reported material and anything from a customer's private data. Those are never added to the public count.",
+  },
+  {
+    id: "by-type",
+    title: "Threats by type",
+    counts: "The same indicators, split by what they are. Scanning hosts and malicious IP addresses are shown together as “Infrastructure signals” because they describe infrastructure rather than an attack on a brand. Percentages are each type's share of the classified threats shown, so they will not match the headline total exactly.",
+    window: "Since launch (all time).",
+    fresh: FRESH_LIVE,
+    excludes: "Types with fewer than 1,000 indicators are left off the chart, and unclassified indicators have no bar. The hidden-table view lists every bar's exact count.",
+  },
+  {
+    id: "new-today",
+    title: "New today",
+    counts: "Indicators added across every source since 00:00 UTC on the current day.",
+    window: "The current UTC day, so it resets at midnight UTC and is not a rolling 24 hours.",
+    fresh: FRESH_LIVE,
+    excludes: "Re-sightings of indicators we already track. Only new additions count.",
+  },
+  {
+    id: "operations",
+    title: "Active operations",
+    counts: "Groups of threats we link together because they share hosting, certificates or registration patterns. A multi-part operator counts once, however many kinds of infrastructure link its threats.",
+    window: "Operations with activity in the last 30 days.",
+    fresh: FRESH_HOURLY,
+    excludes: "Operations with no activity in the window, and single threats we have not linked to anything.",
+  },
+  {
+    id: "lookalikes",
+    title: "Lookalike domains found",
+    counts: "Registered domains that imitate a monitored brand, counted from the day we first observe them registered.",
+    window: "The last 30 days.",
+    fresh: `${FRESH_HOURLY} Shown as a rounded-down figure with a plus sign (for example “2,300+”).`,
+    excludes: "Names that are available but not registered, and domains that were already registered before we began watching them.",
+  },
+  {
+    id: "brands-monitored",
+    title: "Brands monitored",
+    counts: "Brands under continuous monitoring: lookalike, certificate and threat-feed coverage runs for each of them all the time.",
+    window: "Current count.",
+    fresh: FRESH_HOURLY,
+    excludes: "Our wider brand catalog. The catalog holds many more names than we watch actively, and we never describe catalog entries as monitored. Customer names are never listed.",
+  },
+  {
+    id: "providers",
+    title: "Hosting providers mapped",
+    counts: "Distinct hosting providers that appear in the infrastructure behind the threats we track, so you can see where attacks are hosted. Shown rounded down with a plus sign.",
+    window: "Since launch (all time).",
+    fresh: FRESH_LIVE,
+    excludes: "Providers with no observed threat activity. We don't publish provider rankings.",
+  },
+  {
+    id: "countries",
+    title: "Countries",
+    counts: "Distinct countries where the hosting for tracked threats is located.",
+    window: "Since launch (all time).",
+    fresh: FRESH_LIVE,
+    excludes: "Threats whose location we can't determine.",
+  },
+  {
+    id: "sources",
+    title: "Intelligence sources",
+    counts: "Phishing, malware and infrastructure data sources feeding the platform, shown as “40+”.",
+    window: "Current count.",
+    fresh: FRESH_LIVE,
+    excludes: "We show a floor, not an exact figure, and we don't name or rank sources.",
+  },
+];
+---
+
+<Layout
+  title="How We Count — Averrow"
+  description="What each number on the Averrow homepage counts: its time window, how often it refreshes, and what it leaves out."
+>
+  <section class="meth-hero">
+    <div class="container">
+      <div class="meth-eyebrow">Methodology</div>
+      <h1>How we count</h1>
+      <p class="meth-lede">
+        Every number in &ldquo;By the numbers&rdquo; on the <a href={`${base}/#by-the-numbers`}>homepage</a>
+        is a real aggregate from the platform. This page says what each one counts, over what window,
+        how fresh it is, and what it leaves out. Customer data is never used in these numbers.
+      </p>
+    </div>
+  </section>
+
+  <section class="meth-sec">
+    <div class="container meth-body">
+      <div class="meth-general">
+        <h2>How these numbers are produced</h2>
+        <ul>
+          <li><b>Live where possible.</b> The page fetches current figures when you open it. If that fails, it shows the figures from the last site build, labelled as a snapshot with its date.</li>
+          <li><b>Rounded down, never up.</b> Figures shown with a plus sign are floored, so we don't overstate.</li>
+          <li><b>Aggregates only.</b> Nothing here names a customer, a brand we monitor for a customer, or a data source.</li>
+        </ul>
+        <p>{FALLBACK}</p>
+      </div>
+
+      {items.map((it) => (
+        <article class="meth-item" id={it.id}>
+          <h2>{it.title}</h2>
+          <dl>
+            <div><dt>What it counts</dt><dd>{it.counts}</dd></div>
+            <div><dt>Time window</dt><dd>{it.window}</dd></div>
+            <div><dt>How often it refreshes</dt><dd>{it.fresh}</dd></div>
+            <div><dt>What it excludes</dt><dd>{it.excludes}</dd></div>
+          </dl>
+        </article>
+      ))}
+
+      <p class="meth-foot">
+        Questions about a number? <a href={`${base}/contact`}>Ask us</a>. You can also see
+        <a href={`${base}/resources/sample-operation-report`}>an illustrative operation report</a>.
+      </p>
+    </div>
+  </section>
+</Layout>
+
+<style is:global>
+  .meth-hero { padding: 4rem 0 1.5rem; background: var(--gradient-hero); }
+  .meth-eyebrow { font: 600 12px var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent-section, var(--accent)); margin-bottom: 0.75rem; }
+  .meth-hero h1 { font-family: var(--font-display); font-size: clamp(30px, 5vw, 48px); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 1rem; }
+  .meth-lede { max-width: 700px; font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin: 0; }
+  .meth-lede a, .meth-foot a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .meth-sec { padding: 1rem 0 4rem; }
+  .meth-body { max-width: 860px; display: grid; gap: 18px; }
+  .meth-general, .meth-item { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); padding: 20px 22px; }
+  .meth-general h2, .meth-item h2 { font-family: var(--font-display); font-size: 20px; font-weight: 700; margin: 0 0 12px; }
+  .meth-general ul { margin: 0 0 12px; padding-left: 1.2rem; display: grid; gap: 8px; color: var(--text-secondary); line-height: 1.6; }
+  .meth-general p { margin: 0; color: var(--text-secondary); line-height: 1.6; }
+  .meth-general b { color: var(--text-primary); }
+  .meth-item dl { margin: 0; display: grid; gap: 12px; }
+  .meth-item dl > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 14px; }
+  .meth-item dt { font: 600 11px var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary); padding-top: 3px; }
+  .meth-item dd { margin: 0; color: var(--text-secondary); line-height: 1.6; }
+  .meth-item dd, .meth-item dt { overflow-wrap: anywhere; }
+  .meth-foot { margin: 8px 0 0; color: var(--text-secondary); }
+  @media (max-width: 640px) {
+    .meth-hero { padding: 2.5rem 0 1rem; }
+    .meth-item dl > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .meth-general, .meth-item { padding: 16px; }
+  }
+</style>

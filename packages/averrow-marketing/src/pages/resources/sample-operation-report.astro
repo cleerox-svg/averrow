@@ -1,0 +1,337 @@
+---
+/*
+ * Sample operation report. A SYNTHETIC example that mirrors the homepage
+ * operation card (OP-2291). Every name, domain and address is fictional:
+ * the brand is "Acme", domains use the reserved .example TLD, ASNs are
+ * AS64500-AS64511 and addresses sit in the RFC 5737 documentation ranges.
+ * No scoring weights, cadences, feed names or internal codenames
+ * (docs/DISCLOSURE_REGISTER.md). Don't swap in real data.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+type Status = "Removed" | "Pending" | "Queued";
+
+interface Indicator {
+  domain: string;
+  day: number;
+  asn: string;
+  ip: string;
+  cert: boolean;
+  status: Status;
+}
+
+const indicators: Indicator[] = [
+  { domain: "acme-payroll-login.example", day: 0, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Removed" },
+  { domain: "acme-payrol1.example", day: 1, asn: "AS64500", ip: "192.0.2.14", cert: true, status: "Removed" },
+  { domain: "acmepayroll-portal.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Removed" },
+  { domain: "login-acme-hr.example", day: 1, asn: "AS64500", ip: "192.0.2.21", cert: true, status: "Removed" },
+  { domain: "acme-hr-support.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Removed" },
+  { domain: "my-acmepay.example", day: 1, asn: "AS64500", ip: "192.0.2.33", cert: true, status: "Removed" },
+  { domain: "acme-benefits-portal.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Removed" },
+  { domain: "acme-timesheets.example", day: 2, asn: "AS64500", ip: "192.0.2.47", cert: true, status: "Removed" },
+  { domain: "secure-acme-pay.example", day: 2, asn: "AS64500", ip: "192.0.2.52", cert: true, status: "Pending" },
+  { domain: "acme-payroll-update.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Pending" },
+  { domain: "acmepay-verify.example", day: 3, asn: "AS64501", ip: "198.51.100.8", cert: false, status: "Pending" },
+  { domain: "acme-employee-id.example", day: 4, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "Pending" },
+  { domain: "acme-payslips.example", day: 6, asn: "AS64501", ip: "198.51.100.19", cert: false, status: "Queued" },
+  { domain: "acme-direct-deposit.example", day: 8, asn: "AS64501", ip: "203.0.113.40", cert: false, status: "Queued" },
+];
+
+const counts = {
+  Removed: indicators.filter((i) => i.status === "Removed").length,
+  Pending: indicators.filter((i) => i.status === "Pending").length,
+  Queued: indicators.filter((i) => i.status === "Queued").length,
+};
+
+const stats = [
+  { v: "9 days", l: "First seen to report" },
+  { v: "3", l: "Surfaces (domains, social, app)" },
+  { v: `${indicators.length} → ${counts.Pending + counts.Queued}`, l: "Domains live" },
+  { v: "19", l: "Linked indicators" },
+];
+
+const timeline = [
+  { day: "Day 0", title: "First lookalike seen", body: "A newly registered domain imitating Acme's payroll sign-in page is flagged for brand impersonation." },
+  { day: "Day 1–2", title: "Cluster grouped", body: "Eight more lookalikes appear on the same hosting network and present the same TLS certificate. They are grouped into one operation, OP-2291, by the infrastructure they share." },
+  { day: "Day 3–4", title: "Operation widens", body: "A second hosting network comes online with three more domains. A fake HR-support social profile and a cloned “Acme Pay” app are linked to the same operation." },
+  { day: "Day 4", title: "Takedowns filed", body: "Evidence packages go to the registrars and hosting providers for the domains found so far, plus the social platform and the app store. Later domains are queued as they appear." },
+  { day: "Day 5–8", title: "First removals", body: "Eight domains are removed, starting with the original hosting network." },
+  { day: "Day 9", title: "Report generated", body: "Four domain takedowns are pending a registrar response and two are queued. The social and app cases remain open." },
+];
+
+const hosting = [
+  { asn: "AS64500", name: "Example Hosting Network A", range: "192.0.2.0/24", domains: indicators.filter((i) => i.asn === "AS64500").length, note: "Original infrastructure; most domains removed." },
+  { asn: "AS64501", name: "Example Hosting Network B", range: "198.51.100.0/24, 203.0.113.0/24", domains: indicators.filter((i) => i.asn === "AS64501").length, note: "Second wave; later registrations." },
+];
+
+const takedowns = [
+  { surface: "Lookalike domains", target: "Registrars and hosting providers", status: `${counts.Removed} removed · ${counts.Pending} pending · ${counts.Queued} queued`, tone: "mixed" },
+  { surface: "Social profile", target: "@acme_hr_support (example handle)", status: "Report filed · pending platform review", tone: "Pending" },
+  { surface: "Cloned app", target: "“Acme Pay” on a third-party app store", status: "Evidence in review · queued", tone: "Queued" },
+];
+
+const actions = [
+  { title: "Block the 14 domains and both address ranges", body: "Add the indicators below to your mail, web and DNS filters now; don't wait for the takedowns to complete." },
+  { title: "Warn payroll and HR staff", body: "The lures impersonate payroll sign-in, payslips and direct-deposit changes. A short reminder to use bookmarked links only is enough." },
+  { title: "Move Acme's DMARC policy past “none”", body: "Acme's own domain publishes DMARC at p=none, so spoofed mail from it is delivered. Step up to quarantine, then reject, once reports look clean." },
+  { title: "Report the cloned app to the store and your mobile team", body: "Tell customers and staff that the only official Acme Pay app is the one listed on your site." },
+  { title: "Keep watching for re-registration", body: "Operations like this tend to return on new names. Monitoring stays on Acme's name and the infrastructure above." },
+];
+
+const certSerial = "4F:2A:91:C7:0B:3E:D8:65 (fictional)";
+---
+
+<Layout
+  title="Sample Operation Report — Averrow"
+  description="An illustrative operation report: one phishing operation traced across 14 lookalike domains, shared hosting and certificate, a fake social profile and a cloned app, with a timeline and takedown status."
+>
+  <section class="rep-hero">
+    <div class="container">
+      <p class="rep-illustrative" role="note">
+        <strong>Illustrative example</strong> &middot; names, domains and infrastructure changed
+      </p>
+      <div class="rep-eyebrow">Sample operation report</div>
+      <h1>OP-2291: Payroll-portal phishing kit</h1>
+      <p class="rep-lede">
+        One operation, traced from a single lookalike domain to the hosting, certificate, social
+        profile and app behind it, with the takedown status for each. This is the kind of
+        report Averrow produces. Every name here is made up: the brand is a fictional &ldquo;Acme&rdquo;,
+        domains use the reserved <code>.example</code> name, and addresses come from documentation ranges.
+      </p>
+      <div class="rep-actions">
+        <button type="button" class="btn btn-outline rep-print" data-print>Print or save as PDF</button>
+        <a class="btn btn-primary" href={`${base}/scan`}>Scan your own domain</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="rep-sec">
+    <div class="container rep-body">
+      <div class="rep-stats">
+        {stats.map((s) => (
+          <div><b>{s.v}</b><span>{s.l}</span></div>
+        ))}
+      </div>
+
+      <h2>Summary</h2>
+      <p>
+        Acme, a fictional payroll customer, was targeted by a credential-phishing operation built around
+        a fake payroll sign-in. Fourteen lookalike domains were registered over eight days. They share two
+        hosting networks and, for the first nine, one TLS certificate, which is what tied them into a single
+        operation rather than fourteen separate alerts. The same operation also runs a fake HR-support social
+        profile and a cloned &ldquo;Acme Pay&rdquo; app on a third-party store.
+      </p>
+      <p>
+        At the time of this report, {counts.Removed} of {indicators.length} domains have been removed, {counts.Pending}
+        are pending a registrar response and {counts.Queued} are queued. {counts.Pending + counts.Queued} domains
+        are still live.
+      </p>
+
+      <h2>Timeline</h2>
+      <ol class="rep-timeline">
+        {timeline.map((t) => (
+          <li>
+            <span class="rep-day">{t.day}</span>
+            <div><b>{t.title}</b><p>{t.body}</p></div>
+          </li>
+        ))}
+      </ol>
+
+      <h2>Linked indicators</h2>
+      <p class="rep-note">14 lookalike domains. &ldquo;Day&rdquo; counts from first sighting. All names are fictional.</p>
+      <div class="rep-tablewrap" tabindex="0" role="region" aria-label="Linked indicators table">
+        <table class="rep-table">
+          <thead>
+            <tr><th scope="col">Domain</th><th scope="col">Seen</th><th scope="col">Network</th><th scope="col">Address</th><th scope="col">Shared cert</th><th scope="col">Takedown</th></tr>
+          </thead>
+          <tbody>
+            {indicators.map((i) => (
+              <tr>
+                <th scope="row"><code>{i.domain}</code></th>
+                <td>Day {i.day}</td>
+                <td>{i.asn}</td>
+                <td><code>{i.ip}</code></td>
+                <td>{i.cert ? "Yes" : "No"}</td>
+                <td><span class={`rep-pill rep-${i.status.toLowerCase()}`}>{i.status}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Hosting</h2>
+      <div class="rep-tablewrap" tabindex="0" role="region" aria-label="Hosting summary table">
+        <table class="rep-table">
+          <thead>
+            <tr><th scope="col">Network</th><th scope="col">Operator (fictional)</th><th scope="col">Address ranges</th><th scope="col">Domains</th><th scope="col">Note</th></tr>
+          </thead>
+          <tbody>
+            {hosting.map((h) => (
+              <tr>
+                <th scope="row">{h.asn}</th>
+                <td>{h.name}</td>
+                <td><code>{h.range}</code></td>
+                <td>{h.domains}</td>
+                <td>{h.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Shared TLS certificate</h2>
+      <p>
+        Nine domains on AS64500 present the same certificate, serial <code>{certSerial}</code>, issued by
+        &ldquo;Example Certificate Authority&rdquo;. A shared serial across unrelated-looking domains is strong
+        evidence of one operator, and it is what lets the operation be grouped before every domain is found.
+      </p>
+
+      <h2>Other surfaces</h2>
+      <div class="rep-two">
+        <div class="rep-card">
+          <b>Social profile</b>
+          <p><code>@acme_hr_support</code> (example handle). Uses Acme's name and logo, posts &ldquo;payroll update&rdquo; links to the lookalike domains, and was created in the same week as the first domains.</p>
+        </div>
+        <div class="rep-card">
+          <b>Cloned app</b>
+          <p>&ldquo;Acme Pay&rdquo; on a third-party app store. Copies the real app's name, icon and description. The publisher is unrelated to Acme, and the listing links to the operation's sign-in domains.</p>
+        </div>
+      </div>
+
+      <h2>Takedown status</h2>
+      <div class="rep-tablewrap" tabindex="0" role="region" aria-label="Takedown status table">
+        <table class="rep-table">
+          <thead>
+            <tr><th scope="col">Surface</th><th scope="col">Target</th><th scope="col">Status</th></tr>
+          </thead>
+          <tbody>
+            {takedowns.map((t) => (
+              <tr>
+                <th scope="row">{t.surface}</th>
+                <td>{t.target}</td>
+                <td>{t.tone === "mixed" ? t.status : <span class={`rep-pill rep-${t.tone.toLowerCase()}`}>{t.status}</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div class="rep-bar" role="img" aria-label={`Domain takedowns: ${counts.Removed} of ${indicators.length} removed, ${counts.Pending} pending, ${counts.Queued} queued`}>
+        <i class="rep-removed" style={`width:${(counts.Removed / indicators.length) * 100}%`}></i>
+        <i class="rep-pending" style={`width:${(counts.Pending / indicators.length) * 100}%`}></i>
+        <i class="rep-queued" style={`width:${(counts.Queued / indicators.length) * 100}%`}></i>
+      </div>
+
+      <h2>Recommended actions</h2>
+      <ol class="rep-actionlist">
+        {actions.map((a) => (
+          <li><b>{a.title}</b><p>{a.body}</p></li>
+        ))}
+      </ol>
+
+      <p class="rep-foot">
+        Illustrative example &middot; names, domains and infrastructure changed. See
+        <a href={`${base}/resources/methodology`}>how we count</a> the numbers on our homepage.
+      </p>
+    </div>
+  </section>
+
+  <section class="rep-cta">
+    <div class="container">
+      <h2>See what is aimed at your brand</h2>
+      <p>Run the free scan, or book a walk-through of a report built from your own data.</p>
+      <div class="rep-actions">
+        <a class="btn btn-primary" href={`${base}/scan`}>Scan your domain</a>
+        <a class="btn btn-outline" href={`${base}/demo`}>Book a demo</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<script>
+  document.querySelector("[data-print]")?.addEventListener("click", () => window.print());
+</script>
+
+<style is:global>
+  .rep-hero { padding: 4rem 0 2rem; background: var(--gradient-hero); }
+  .rep-hero .container { max-width: 960px; }
+  .rep-illustrative {
+    display: inline-block;
+    margin: 0 0 1.25rem;
+    padding: 6px 12px;
+    border: 1px dashed var(--accent);
+    border-radius: 999px;
+    font: 500 12px var(--font-mono);
+    color: var(--text-primary);
+    background: var(--accent-bg);
+  }
+  .rep-eyebrow { font: 600 12px var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent-section, var(--accent)); margin-bottom: 0.75rem; }
+  .rep-hero h1 { font-family: var(--font-display); font-size: clamp(28px, 4.5vw, 46px); font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 1rem; text-wrap: balance; }
+  .rep-lede { max-width: 720px; font-size: 16px; line-height: 1.65; color: var(--text-secondary); margin: 0 0 1.5rem; }
+  .rep-lede code, .rep-body code { font-family: var(--font-mono); font-size: 0.9em; overflow-wrap: anywhere; }
+  .rep-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .rep-sec { padding: 1rem 0 3rem; }
+  .rep-body { max-width: 960px; }
+  .rep-body h2 { font-family: var(--font-display); font-size: 22px; font-weight: 700; margin: 2.5rem 0 0.75rem; }
+  .rep-body p { color: var(--text-secondary); line-height: 1.7; margin: 0 0 0.9rem; }
+  .rep-note { font: 500 12px var(--font-mono); color: var(--text-secondary); }
+  .rep-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 1rem 0 0; }
+  .rep-stats div { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 3px; }
+  .rep-stats b { font: 800 24px/1.1 var(--font-display); color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .rep-stats span { font-size: 12px; color: var(--text-secondary); }
+
+  .rep-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--border); }
+  .rep-timeline li { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 14px; padding: 0 0 18px 16px; position: relative; }
+  .rep-timeline li::before { content: ""; position: absolute; left: -7px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-primary); border: 2px solid var(--amber); }
+  .rep-day { font: 600 12px var(--font-mono); color: var(--text-secondary); padding-top: 2px; }
+  .rep-timeline b { color: var(--text-primary); }
+  .rep-timeline p { margin: 2px 0 0; }
+
+  .rep-tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-secondary); }
+  .rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .rep-table th, .rep-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; color: var(--text-secondary); vertical-align: top; }
+  .rep-table thead th { font: 600 11px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .rep-table tbody th { color: var(--text-primary); font-weight: 600; }
+  .rep-table tbody tr:last-child > * { border-bottom: 0; }
+  .rep-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font: 600 11px var(--font-mono); border: 1px solid var(--border-strong); }
+  .rep-removed { background: var(--green); }
+  .rep-pending { background: var(--amber); }
+  .rep-queued { background: var(--border-strong); }
+  .rep-pill.rep-removed { background: var(--green-bg); color: var(--green-text); border-color: transparent; }
+  .rep-pill.rep-pending { background: var(--accent-bg); color: var(--amber-text); border-color: transparent; }
+  .rep-pill.rep-queued { background: transparent; color: var(--text-secondary); }
+  [data-theme="light"] .rep-pill.rep-pending { color: var(--accent-section, #8A5F0F); }
+
+  .rep-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .rep-card { border: 1px solid var(--border-strong); border-radius: 10px; padding: 16px; background: var(--bg-secondary); }
+  .rep-card b { color: var(--text-primary); }
+  .rep-card p { margin: 6px 0 0; font-size: 14px; }
+  .rep-bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--border); margin-top: 14px; }
+  .rep-bar i { display: block; height: 100%; }
+  .rep-actionlist { margin: 0; padding-left: 1.25rem; display: grid; gap: 12px; color: var(--text-secondary); }
+  .rep-actionlist b { color: var(--text-primary); }
+  .rep-actionlist p { margin: 2px 0 0; }
+  .rep-foot { margin-top: 2.5rem; font: 500 12px var(--font-mono); color: var(--text-secondary); border-top: 1px solid var(--border); padding-top: 1rem; }
+  .rep-foot a { color: var(--text-primary); }
+  .rep-cta { padding: 3rem 0 4rem; text-align: center; }
+  .rep-cta h2 { font-family: var(--font-display); font-size: clamp(24px, 3vw, 32px); font-weight: 700; margin-bottom: 0.75rem; }
+  .rep-cta p { color: var(--text-secondary); margin-bottom: 1.5rem; }
+  .rep-cta .rep-actions { justify-content: center; }
+
+  @media (max-width: 720px) {
+    .rep-hero { padding: 2.5rem 0 1.25rem; }
+    .rep-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rep-two { grid-template-columns: minmax(0, 1fr); }
+    .rep-timeline li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+    .rep-body .container, .rep-body { padding-left: 1rem; padding-right: 1rem; }
+  }
+  @media print {
+    .nav, .footer, .skip-link, .rep-actions, .rep-cta, .mobile-menu { display: none !important; }
+    body { background: #fff !important; color: #000 !important; }
+    .rep-hero { background: none; padding: 0 0 12px; }
+    .rep-table th, .rep-table td { white-space: normal; color: #000; }
+    .rep-tablewrap, .rep-card, .rep-stats div { background: #fff; }
+    .rep-timeline li, .rep-card, .rep-table tr { break-inside: avoid; }
+  }
+</style>

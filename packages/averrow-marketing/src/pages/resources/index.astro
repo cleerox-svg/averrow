@@ -50,6 +50,20 @@ const categories = [
     icon: "layers",
   },
   {
+    label: "Sample Operation Report",
+    desc: "An illustrative report: one phishing operation traced across domains, hosting, a fake profile and a cloned app.",
+    href: "/resources/sample-operation-report",
+    cta: "Open the sample report",
+    icon: "file",
+  },
+  {
+    label: "How We Count",
+    desc: "What each number on our homepage counts, its time window, how fresh it is and what it leaves out.",
+    href: "/resources/methodology",
+    cta: "Read the methodology",
+    icon: "scale",
+  },
+  {
     label: "Security & Trust",
     desc: "Data handling, compliance posture, and what protects your account.",
     href: "/security",
@@ -94,6 +108,12 @@ const categories = [
               )}
               {cat.icon === "layers" && (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              )}
+              {cat.icon === "file" && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>
+              )}
+              {cat.icon === "scale" && (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><path d="M5 7h14"/><path d="M5 7l-3 7a3.5 3.5 0 0 0 6 0z"/><path d="M19 7l-3 7a3.5 3.5 0 0 0 6 0z"/></svg>
               )}
               {cat.icon === "shield" && (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -237,6 +257,8 @@ const categories = [
   .res-card-icon svg { width: 24px; height: 24px; }
   .res-icon-radar { background: var(--green-bg); color: var(--green); }
   .res-icon-layers { background: rgba(10,138,181,0.10); color: var(--blue); }
+  .res-icon-file { background: var(--green-bg); color: var(--green); }
+  .res-icon-scale { background: rgba(10,138,181,0.10); color: var(--blue); }
   .res-icon-shield { background: rgba(229,168,50,0.10); color: var(--amber-text); }
 
   .res-card-title {
@@ -384,6 +406,8 @@ const categories = [
   :global([data-theme="light"]) .res-latest-badge { color: var(--accent-section, #8A5F0F); }
   :global([data-theme="light"]) .res-icon-radar { color: #106b32; }
   :global([data-theme="light"]) .res-icon-shield { color: var(--accent-section, #8A5F0F); }
+  :global([data-theme="light"]) .res-icon-file { color: #106b32; }
+  :global([data-theme="light"]) .res-icon-scale { color: var(--blue-dim); }
   :global([data-theme="light"]) .res-icon-layers { color: var(--blue-dim); }
 
   @media (max-width: 900px) {
