@@ -19,12 +19,13 @@ function makeEnv(
     /** Pre-seeded KV risk cache entries, keyed by indicator. */
     cached?: Record<string, string>;
   },
-): { env: Env; updates: Update[]; fetchCount: () => number; dailyCount: () => number } {
+): { env: Env; updates: Update[]; fetchCount: () => number; dailyCount: () => number; monthlyCount: () => number } {
   const updates: Update[] = [];
   const kv = new Map<string, string>();
   const dailyKey = `pulsedive_daily_${new Date().toISOString().slice(0, 10)}`;
+  const monthlyKey = `pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`;
   if (opts?.dailyCount != null) kv.set(dailyKey, String(opts.dailyCount));
-  if (opts?.monthlyCount != null) kv.set(`pulsedive_monthly_${new Date().toISOString().slice(0, 7)}`, String(opts.monthlyCount));
+  if (opts?.monthlyCount != null) kv.set(monthlyKey, String(opts.monthlyCount));
   for (const [ind, risk] of Object.entries(opts?.cached ?? {})) kv.set(`pulsedive:${ind}`, risk);
   let fetches = 0;
 
@@ -50,6 +51,15 @@ function makeEnv(
     const ind = m ? decodeURIComponent(m[1]!) : "";
     const risk = riskByIndicator[ind];
     if (risk === "HTTP429") return makeRes({ ok: false, status: 429, body: {} });
+    // Pulsedive's real "unknown indicator" answer: HTTP 404 + JSON {error}.
+    if (risk === "HTTP404_NOT_FOUND") return makeRes({ ok: false, status: 404, body: { error: "Indicator not found." } });
+    if (risk === "HTTP404_HTML") {
+      return makeRes({ ok: false, status: 404, body: "<html><body><h1>404 Not Found</h1></body></html>", contentType: "text/html" });
+    }
+    if (risk === "HTTP404_OTHER") return makeRes({ ok: false, status: 404, body: { error: "Something else broke." } });
+    if (risk === "HTTP404_KEY") return makeRes({ ok: false, status: 404, body: { error: "API key not found." } });
+    if (risk === "HTTP404_ENDPOINT") return makeRes({ ok: false, status: 404, body: { error: "Endpoint not found" } });
+    if (risk === "HTTP404_EMPTY") return makeRes({ ok: false, status: 404, body: "", contentType: "text/plain" });
     if (risk === "HTML") {
       // HTTP 200 carrying an HTML error/interstitial page.
       return makeRes({ ok: true, status: 200, body: "<!DOCTYPE html><html><body>Just a moment...</body></html>", contentType: "text/html" });
@@ -57,6 +67,7 @@ function makeEnv(
     const body =
       risk === "ERROR" ? { error: "Indicator not found." } :        // valid "no data"
       risk === "ERROR_OTHER" ? { error: "Invalid API key." } :      // hard failure
+      risk === "ERROR_KEY_NOT_FOUND" ? { error: "API key not found." } : // must NOT read as "indicator not found"
       { risk };
     return makeRes({ ok: true, status: 200, body });
   }) as unknown as typeof fetch;
@@ -88,6 +99,7 @@ function makeEnv(
     updates,
     fetchCount: () => fetches,
     dailyCount: () => parseInt(kv.get(dailyKey) ?? "0", 10),
+    monthlyCount: () => parseInt(kv.get(monthlyKey) ?? "0", 10),
   };
 }
 
@@ -220,6 +232,89 @@ describe("pulsedive enrichment", () => {
     // Only the streak's worth of quota is spent, not the whole 8-item batch.
     expect(fetchCount()).toBe(3);
     expect(dailyCount()).toBe(3);
+  });
+
+  // ── Regression: 2026-09-11+ "upstream=3 … HTTP 404 Not Found" every run ──
+  // Pulsedive answers an unknown indicator with HTTP 404 + {"error":"Indicator not found."}.
+
+  it("treats HTTP 404 + 'Indicator not found.' JSON as risk=unknown: cached, stamped checked, metered, run succeeds", async () => {
+    const threats = Array.from({ length: 3 }, (_, i) => ({ id: `t${i}`, indicator: `fresh${i}.com` }));
+    const risks = Object.fromEntries(threats.map((t) => [t.indicator, "HTTP404_NOT_FOUND"]));
+    const { env, updates, fetchCount, dailyCount, monthlyCount } = makeEnv(threats, risks);
+
+    const r = await pulsedive.ingest({ env, ...CTX }); // must NOT throw
+    expect(monthlyCount()).toBe(3); // monthly ceiling metered too, same as 200 not-found
+    expect(r).toEqual({ itemsFetched: 3, itemsNew: 0, itemsDuplicate: 3, itemsError: 0 });
+    // every threat stamped checked with risk 'unknown' (same SQL as the 200 not-found path)
+    expect(updates).toHaveLength(3);
+    for (const u of updates) {
+      expect(u.sql).toMatch(/pulsedive_checked = 1, pulsedive_risk = \?/);
+      expect(u.args[0]).toBe("unknown");
+    }
+    // quota spent once per HTTP request, exactly like the 200 not-found path
+    expect(fetchCount()).toBe(3);
+    expect(dailyCount()).toBe(3);
+    // cached "unknown" in KV → a repeat lookup makes no HTTP call
+    expect(await env.CACHE.get("pulsedive:fresh0.com")).toBe("unknown");
+    expect(await checkPulsedive("fresh0.com", env)).toBe("unknown");
+    expect(fetchCount()).toBe(3);
+  });
+
+  it("treats HTTP 404 with an HTML body as an upstream failure (uncached, unstamped)", async () => {
+    const { env, updates } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "HTTP404_HTML" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/upstream=1 .*first upstream detail: HTTP 404/);
+    expect(updates).toEqual([]);
+    expect(await env.CACHE.get("pulsedive:a.com")).toBeNull();
+  });
+
+  it("treats HTTP 404 with a different JSON {error} as an upstream failure", async () => {
+    const { env, updates } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "HTTP404_OTHER" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/upstream=1 .*first upstream detail: HTTP 404/);
+    expect(updates).toEqual([]);
+    expect(await env.CACHE.get("pulsedive:a.com")).toBeNull();
+  });
+
+  it("treats HTTP 404 + {error:'API key not found.'} as an AUTH failure, not risk=unknown", async () => {
+    const threats = [{ id: "t1", indicator: "a.com" }, { id: "t2", indicator: "b.com" }];
+    const { env, updates, fetchCount } = makeEnv(threats, { "a.com": "HTTP404_KEY", "b.com": "HTTP404_KEY" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/rotate PULSEDIVE_API_KEY \(auth=1 .*first auth detail: API key not found\./);
+    expect(fetchCount()).toBe(1); // auth aborts on first hit
+    expect(updates).toEqual([]);
+    expect(await env.CACHE.get("pulsedive:a.com")).toBeNull();
+  });
+
+  it("treats HTTP 404 + {error:'Endpoint not found'} as an upstream failure, not risk=unknown", async () => {
+    const { env, updates } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "HTTP404_ENDPOINT" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/upstream=1 .*first upstream detail: HTTP 404/);
+    expect(updates).toEqual([]);
+    expect(await env.CACHE.get("pulsedive:a.com")).toBeNull();
+  });
+
+  it("treats an empty HTTP 404 body as an upstream failure", async () => {
+    const { env, updates } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "HTTP404_EMPTY" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/upstream=1 .*first upstream detail: HTTP 404/);
+    expect(updates).toEqual([]);
+  });
+
+  it("treats HTTP 200 + {error:'API key not found.'} as AUTH (anchored not-found match on the 200 path too)", async () => {
+    const { env, updates } = makeEnv([{ id: "t1", indicator: "a.com" }], { "a.com": "ERROR_KEY_NOT_FOUND" });
+    await expect(pulsedive.ingest({ env, ...CTX })).rejects.toThrow(/auth=1/);
+    expect(updates).toEqual([]);
+    expect(await env.CACHE.get("pulsedive:a.com")).toBeNull();
+  });
+
+  it("a 404 not-found between upstream failures resets the abort streak", async () => {
+    // Without the reset, the 4th lookup would be the 3rd consecutive failure
+    // and abort the run at 4 fetches.
+    const order = ["HTML", "HTML", "HTTP404_NOT_FOUND", "HTML", "HTML", "high"];
+    const threats = order.map((_, i) => ({ id: `t${i}`, indicator: `m${i}.com` }));
+    const risks = Object.fromEntries(threats.map((t, i) => [t.indicator, order[i]!]));
+    const { env, updates, fetchCount } = makeEnv(threats, risks);
+
+    const r = await pulsedive.ingest({ env, ...CTX }); // not all failed → no throw
+    expect(fetchCount()).toBe(6);
+    expect(r).toEqual({ itemsFetched: 6, itemsNew: 1, itemsDuplicate: 1, itemsError: 4 });
+    expect(updates.map((u) => u.args[u.args.length - 1])).toEqual(["t2", "t5"]);
   });
 
   it("does not charge the daily quota for KV cache hits", async () => {

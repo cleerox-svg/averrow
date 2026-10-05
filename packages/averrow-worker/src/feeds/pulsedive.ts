@@ -13,7 +13,8 @@ import { logger } from "../lib/logger";
  *
  * Endpoint: GET https://pulsedive.com/api/info.php?indicator=<v>&key=<k>
  *   → { risk: "unknown"|"none"|"low"|"medium"|"high"|"critical"|"retired", ... }
- *   → { error: "Indicator not found." } when unknown to Pulsedive.
+ *   → HTTP 404 + { error: "Indicator not found." } when unknown to Pulsedive
+ *     (also tolerated as HTTP 200 + the same body).
  *
  * Free-tier limits (verified from the Pulsedive account page): 1 req/s,
  * 50 requests/day, 500 requests/month. The MONTHLY cap is the binding
@@ -41,10 +42,11 @@ const VALID_RISK = new Set<PulsediveRisk>(["unknown", "none", "low", "medium", "
  * "rotate the secret" from "wait out the outage".
  *
  *   auth       — key rejected / expired / over-plan (HTTP 401/403, or a
- *                key/quota `{error}` body Pulsedive returns as HTTP 200).
+ *                key/quota `{error}` body on an HTTP 200 or 404).
  *                Definitive: it will reject every remaining indicator too.
  *   ratelimit  — HTTP 429; back off, don't rotate.
- *   upstream   — other non-2xx, or an unparseable 200 body.
+ *   upstream   — other non-2xx (incl. a 404 whose body is NOT the
+ *                "Indicator not found." JSON), or an unparseable 200 body.
  *   network    — fetch threw (DNS/TLS/timeout/abort).
  */
 type LookupFailKind = "auth" | "ratelimit" | "upstream" | "network";
@@ -82,9 +84,46 @@ type LookupResult =
  */
 const TRANSIENT_FAIL_ABORT_STREAK = 3;
 
-/** True if a Pulsedive HTTP-200 `{error}` body signals a key/quota problem. */
+/** True if a Pulsedive HTTP-200/404 `{error}` body signals a key/quota problem. */
 function isAuthLikeError(msg: string): boolean {
   return /key|api|auth|unauthor|invalid|forbidden|quota|credit|limit|upgrade|plan/i.test(msg);
+}
+
+/**
+ * Pulsedive's exact "Indicator not found." — the ONLY valid "no risk data"
+ * answer. Deliberately anchored: a loose /not\s*found/ would also accept
+ * "API key not found." or "Endpoint not found", turn them into ok/unknown and
+ * permanently stamp every threat `pulsedive_checked = 1` — a silent outage.
+ */
+const INDICATOR_NOT_FOUND_RE = /^\s*indicator\s+not\s+found\.?\s*$/i;
+
+/** Collapsed, length-capped body excerpt for logs (never for thrown detail). */
+function bodySnippet(raw: string): string {
+  return raw.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+/** The string `error` field of a JSON object body, or null if absent/unparseable. */
+function parseErrorField(raw: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed !== null && typeof parsed === "object" && "error" in parsed) {
+      const e = (parsed as { error: unknown }).error;
+      return typeof e === "string" ? e : null;
+    }
+  } catch {
+    // not JSON — caller treats as a genuine upstream failure
+  }
+  return null;
+}
+
+/**
+ * Shared "unknown to Pulsedive" outcome (HTTP 200 or HTTP 404 body). An HTTP
+ * request was made, so the quota was spent → `cached: false`, which the
+ * caller meters and then stamps the threat `pulsedive_checked = 1`.
+ */
+async function cacheNotFound(cacheKey: string, env: Env): Promise<LookupResult> {
+  await env.CACHE.put(cacheKey, "unknown", { expirationTtl: 172800 });
+  return { ok: true, risk: "unknown", cached: false };
 }
 
 /**
@@ -123,7 +162,30 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
     return { ok: false, kind: "ratelimit", detail: "HTTP 429", spentQuota: true };
   }
   if (!res.ok) {
-    logger.error("pulsedive_api_error", { indicator, status: res.status });
+    // Pulsedive answers an indicator it has never seen with HTTP 404 +
+    // `{"error":"Indicator not found."}` — a valid "no risk data" answer,
+    // not an outage. Our indicators are fresh phishing domains/IPs, mostly
+    // unknown to Pulsedive, so treating every 404 as `upstream` failed every
+    // run from 2026-09-11 and auto-paused the feed. The not-found 404 takes
+    // the exact same path as the HTTP-200 not-found body (cache "unknown",
+    // stamp the threat checked, quota spent → cached:false); a key/quota
+    // {error} is `auth`, mirroring the 200 path. Any other 404 body (HTML,
+    // empty, a different {error}) stays a genuine upstream failure with the
+    // same `HTTP 404 ...` detail as before — the snippet goes to the log only.
+    let snippet: string | undefined;
+    if (res.status === 404) {
+      const raw404 = await res.text().catch(() => "");
+      const error404 = parseErrorField(raw404);
+      if (error404 !== null) {
+        if (INDICATOR_NOT_FOUND_RE.test(error404)) return cacheNotFound(cacheKey, env);
+        if (isAuthLikeError(error404)) {
+          logger.error("pulsedive_error_body", { indicator, status: 404, error: error404, classifiedAs: "auth" });
+          return { ok: false, kind: "auth", detail: error404, spentQuota: true };
+        }
+      }
+      snippet = bodySnippet(raw404);
+    }
+    logger.error("pulsedive_api_error", { indicator, status: res.status, ...(snippet !== undefined ? { snippet } : {}) });
     return {
       ok: false,
       kind: "upstream",
@@ -141,7 +203,7 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
   try {
     body = JSON.parse(raw) as { risk?: string; error?: string };
   } catch {
-    const snippet = raw.replace(/\s+/g, " ").trim().slice(0, 120);
+    const snippet = bodySnippet(raw);
     logger.error("pulsedive_unparseable_body", { indicator, contentType: res.headers.get("content-type"), snippet });
     return {
       ok: false,
@@ -158,9 +220,8 @@ async function lookupPulsedive(indicator: string, env: Env): Promise<LookupResul
     // signal instead of masquerading as a generic upstream error. Any other
     // {error} is a real, retryable upstream failure (uncached, does NOT
     // stamp the threat checked).
-    if (/not\s*found/i.test(body.error)) {
-      await env.CACHE.put(cacheKey, "unknown", { expirationTtl: 172800 });
-      return { ok: true, risk: "unknown", cached: false };
+    if (INDICATOR_NOT_FOUND_RE.test(body.error)) {
+      return cacheNotFound(cacheKey, env);
     }
     const kind: LookupFailKind = isAuthLikeError(body.error) ? "auth" : "upstream";
     logger.error("pulsedive_error_body", { indicator, error: body.error, classifiedAs: kind });
