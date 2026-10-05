@@ -54,26 +54,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>A board-ready security snapshot, in minutes</h2>
         <p>
           Run the free Brand Exposure scan on any domain &mdash; no signup, no
-          credit card. It checks email security posture, threat feeds, lookalike
+          credit card. It checks email authentication, lookalike
           domains, and social handles, and rolls it into a single exposure
           score you can put in front of your board or your first investor
           security questionnaire.
         </p>
         <ul class="su-features">
-          <li>Email security grade (A+ through F)</li>
-          <li>Threat feed check across 45+ sources</li>
+          <li>Email-authentication grade (A+ through F)</li>
           <li>Lookalike domain scan</li>
-          <li>Social handle check across six platforms</li>
-          <li>Composite Brand Exposure Score</li>
+          <li>Social handle check (X, LinkedIn, Instagram, TikTok, GitHub, YouTube)</li>
+          <li>Exposure score</li>
         </ul>
       </div>
       <div class="su-scan-visual">
         <div class="su-scan-item"><span>Domain</span><span class="su-scan-value">yourcompany.com</span></div>
         <div class="su-scan-item"><span>Email Security</span><span class="su-scan-grade">B+</span></div>
-        <div class="su-scan-item"><span>Threat Feeds</span><span class="su-scan-pass">Checked &#10003;</span></div>
         <div class="su-scan-item"><span>Lookalike Domains</span><span class="su-scan-pass">Checked &#10003;</span></div>
         <div class="su-scan-item su-scan-last"><span>Social Handles</span><span class="su-scan-pass">Checked &#10003;</span></div>
-        <div class="su-scan-cta-hint">Free &middot; No signup &middot; Under 5 minutes</div>
+        <div class="su-scan-cta-hint">Free &middot; No signup &middot; Results in minutes</div>
       </div>
     </div>
   </section>
@@ -107,10 +105,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="su-cta">
     <div class="container">
-      <h2>Run your free scan.</h2>
-      <p>See your Brand Exposure Score in under five minutes, then move to continuous monitoring on Professional when you&rsquo;re ready.</p>
+      <h2>Scan your domain, free.</h2>
+      <p>See your Brand Exposure Score in minutes, then move to continuous monitoring on Professional when you&rsquo;re ready.</p>
       <div class="su-cta-actions">
-        <a href={`${base}/`} class="btn btn-primary">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-primary">Scan your domain</a>
         <a href={`${base}/pricing`} class="btn btn-outline">See Professional Plan</a>
       </div>
     </div>
@@ -130,7 +128,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 1rem;
     line-height: 1.05;
   }
-  .hero-accent { color: var(--amber); }
+  .hero-accent { color: var(--amber-text); }
   .su-hero p {
     font-size: 18px;
     color: var(--text-secondary);
@@ -323,7 +321,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .su-quickwin-arrow {
     font-size: 1.75rem;
-    color: var(--amber);
+    color: var(--amber-text);
     text-align: center;
   }
   .su-quickwin-footnote {

@@ -1,4 +1,5 @@
 // Averrow — Cloudflare Worker entry point
+import { drainAlertEvents } from "./lib/alert-events";
 import { Router } from "itty-router";
 import { handleOptions } from "./lib/cors";
 import { applySecurityHeaders } from "./middleware/security";
@@ -102,7 +103,16 @@ registerPublicRoutes(router);
 
 // ─── Worker export ───────────────────────────────────────────────────
 export default {
-  scheduled: handleScheduled,
+  // Both entrypoints drain tracked alert.created deliveries on the way out
+  // (lib/alert-events.ts) so a scanner's webhook/integration pushes finish
+  // within the invocation that created the alert.
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    try {
+      await handleScheduled(event, env, ctx);
+    } finally {
+      ctx.waitUntil(drainAlertEvents());
+    }
+  },
 
   // Legacy queue consumer drain — kept until Cloudflare-side consumer
   // relationship is deregistered via CLI (see wrangler.toml comments).
@@ -152,6 +162,15 @@ export default {
   },
 
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    try {
+      return await handleFetch(request, env, ctx);
+    } finally {
+      ctx.waitUntil(drainAlertEvents());
+    }
+  },
+};
+
+async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
 
@@ -961,5 +980,4 @@ export default {
       } catch { /* DB write failed — don't mask the original error */ }
       return new Response('Internal Server Error', { status: 500 });
     }
-  },
-};
+}

@@ -2,7 +2,7 @@
 /*
  * Trust signals strip — target-sector icons + a factual trust-posture
  * card (compliance + security posture; no customer claims until real
- * proof exists). Used on / (R5) and /pricing (R4).
+ * proof exists). Copy governed by docs/DISCLOSURE_REGISTER.md. Used on / (R5) and /pricing (R4).
  *
  * Wrap the import site in a <section class="trust-signals">
  * — that's where the outer padding lives in global.css.
@@ -65,9 +65,9 @@ const sectors: Sector[] = [
   <div class="trust-posture-heading">Proof, not promises</div>
   <ul class="trust-posture-list">
     <li><strong>GDPR-aligned, PIPEDA &amp; WCAG 2.1 AA</strong> controls operating today</li>
-    <li><strong>SOC 2 Type I</strong> audit scheduled for Q3 2026</li>
-    <li><strong>No customer PII stored</strong> &middot; encrypted at rest &middot; TLS 1.3 everywhere</li>
-    <li><strong>42 specialized AI agents</strong> across 45+ threat &amp; intelligence feeds</li>
+    <li><strong>SOC 2 Type I:</strong> in preparation. Ask us for our current security documentation.</li>
+    <li><strong>Minimal data collected</strong> &middot; encrypted at rest &middot; TLS 1.3 in transit</li>
+    <li><strong>40+ threat &amp; intelligence sources</strong> correlated automatically</li>
   </ul>
 </div>
 
@@ -148,7 +148,7 @@ const sectors: Sector[] = [
     font-weight: 600;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--amber);
+    color: var(--amber-text);
     margin-bottom: 16px;
   }
   .trust-posture-list {

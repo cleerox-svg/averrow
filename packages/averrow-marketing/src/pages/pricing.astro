@@ -15,17 +15,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Pricing — Averrow"
-  description="One platform. One price. Complete Digital Risk Protection (DRPS) and AI-powered brand protection from $1,199/mo. Free scan available."
+  description="Published, monthly pricing. Professional $1,499/mo, Business $3,999/mo, Enterprise custom. Month-to-month, no minimum contract. Free domain scan, no signup."
 >
   <section class="pricing-hero">
     <div class="container">
       <div class="section-label" style="text-align:center;">Pricing</div>
       <h1>One platform. One price.<br />Complete coverage.</h1>
       <p>
-        Companies spend $150K+ per year across separate brand protection,
-        email security monitoring, and threat intelligence platforms
-        &mdash; plus 2-3 dedicated analysts to operate them. Averrow
-        consolidates all three into one AI-native platform.
+        Brand protection, email-security monitoring, and threat
+        intelligence are usually bought as separate tools &mdash; and
+        staffed separately. Averrow brings all three into one platform,
+        with published prices and a 14-day trial.
       </p>
     </div>
   </section>
@@ -53,14 +53,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
           </div>
           <div class="value-prop-title">Threat Intelligence Feeds</div>
-          <div class="value-prop-desc">45+ threat &amp; intelligence feeds ingested and correlated automatically.</div>
+          <div class="value-prop-desc">40+ threat &amp; intelligence sources ingested and correlated automatically.</div>
         </div>
         <div class="value-prop-item">
           <div class="value-prop-icon">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           </div>
-          <div class="value-prop-title">2-3 Security Analysts</div>
-          <div class="value-prop-desc">AI agents that reason about threats 24/7 &mdash; no headcount required.</div>
+          <div class="value-prop-title">Analyst Workload</div>
+          <div class="value-prop-desc">Automated triage and rule-based correlation, running around the clock, so your team reviews decisions instead of raw alerts.</div>
         </div>
       </div>
     </div>
@@ -88,14 +88,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-billing">One-time, no signup</div>
         <div class="price-divider"></div>
         <ul class="price-features">
-          <li>Email security grade</li>
-          <li>Threat feed check</li>
+          <li>Email-authentication grade</li>
           <li>Lookalike domain scan</li>
           <li>Social handle check</li>
           <li>Exposure score</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-free">Run Free Scan</a>
+          <a href={`${base}/scan`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-free">Scan your domain</a>
         </div>
       </div>
 
@@ -116,14 +115,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </div>
         <div class="price-divider"></div>
         <ul class="price-features">
-          <li>Everything in Free Scan, monitored continuously</li>
-          <li>1 brand &mdash; continuous 24/7 monitoring</li>
-          <li>Full AI agent mesh</li>
-          <li>Daily strategic intel briefings</li>
+          <li>Everything in the free scan, monitored continuously</li>
+          <li>Domain monitoring: lookalike domains and certificate-transparency checks</li>
+          <li>Social impersonation monitoring (X, LinkedIn, Instagram, TikTok, GitHub, YouTube)</li>
+          <li>Look-alike apps on the Apple App Store</li>
+          <li>Takedowns submitted automatically under an authorization you sign</li>
           <li>Email security posture monitoring</li>
-          <li>Social media monitoring</li>
-          <li>Threat trend analysis</li>
-          <li>API access</li>
+          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
           <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-professional">Get Started</a>
@@ -147,14 +145,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Professional</li>
-          <li>Up to 10 brands</li>
           <li>Dedicated account manager</li>
-          <li>Custom monitoring rules</li>
-          <li>Webhook &amp; SIEM integration</li>
-          <li>Priority takedown processing</li>
-          <li>Campaign intelligence</li>
-          <li><a href={`${base}/abuse-mailbox`} style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Abuse Mailbox</a> &mdash; branded report inbox with AI triage</li>
-          <li>Advanced API access</li>
+          <li>Dark web monitoring: paste-site and ransomware leak-site mentions of your brand</li>
+          <li>Trademark monitoring: misuse of your name across domains, social and apps in one view</li>
+          <li>Webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors &mdash; set up with our team</li>
+          <li>STIX 2.1 export, available on request</li>
+          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
           <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-business">Contact Sales</a>
@@ -169,16 +165,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Business</li>
-          <li>Unlimited brands</li>
-          <li>SSO / SAML / SCIM</li>
-          <li>Custom integrations</li>
+          <li><a href={`${base}/abuse-mailbox`} style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Abuse Mailbox</a> &mdash; branded report inbox with automatic classification</li>
+          <li>Threat-actor intelligence: infrastructure correlation into operations and campaigns</li>
           <li>SLA guarantees</li>
           <li>Dedicated support</li>
-          <li>Custom threat feeds</li>
           <li>Onboarding &amp; training</li>
+          <li>14-day trial</li>
         </ul>
         <div class="price-cta">
-          <a href={`${base}/contact`} class="btn btn-primary" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
+          <a href={`${base}/contact`} class="btn btn-outline" style="width:100%;justify-content:center;" data-cta="pricing-enterprise">Contact Sales</a>
         </div>
       </div>
     </div>
@@ -201,22 +196,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </tr>
         </thead>
         <tbody>
-          <tr><td>Brands</td><td>1 scan</td><td>1</td><td>Up to 10</td><td>Unlimited</td></tr>
           <tr><td>Monitoring</td><td>One-time</td><td>Continuous 24/7</td><td>Continuous 24/7</td><td>Continuous 24/7</td></tr>
-          <tr><td>AI Agent Mesh</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003; Full</td><td class="ct-yes">&#10003; Full</td><td class="ct-yes">&#10003; Full</td></tr>
-          <tr><td>Strategic Intel Briefings</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003; Daily</td><td class="ct-yes">&#10003; Daily</td><td class="ct-yes">&#10003; Daily</td></tr>
           <tr><td>Email Security Posture</td><td>Grade only</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td></tr>
+          <tr><td>Domain Monitoring (lookalikes, certificate transparency)</td><td>Lookalike scan</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>Social Media Monitoring</td><td>Handle check</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Threat Trend Analysis</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>API Access</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003; Advanced</td><td class="ct-yes">&#10003; Advanced</td></tr>
-          <tr><td>Custom Monitoring Rules</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Webhook &amp; SIEM Integration</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Apple App Store Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Dark Web Monitoring (paste sites, ransomware leak sites)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Trademark Monitoring</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Webhooks &amp; SIEM / ticketing connectors (set up with our team)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>STIX 2.1 Export</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td>On request</td><td>On request</td></tr>
           <tr><td>Dedicated Account Manager</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Campaign Intelligence</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>SSO / SAML / SCIM</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Custom Integrations</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Abuse Mailbox</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>Threat-Actor Intelligence (operations &amp; campaigns)</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
           <tr><td>SLA Guarantees</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
-          <tr><td>Custom Threat Feeds</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td></tr>
+          <tr><td>14-day trial</td><td class="ct-no">&#10007;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
         </tbody>
       </table>
     </div>
@@ -233,11 +226,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="faq-list">
       <div class="faq-item">
         <button class="faq-q" data-faq-toggle>How does the free scan work? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Enter any domain. We check email security, threat feeds, lookalike domains, and social handles in under a minute. No account, no credit card.</div>
+        <div class="faq-a">Enter any domain. We check email authentication, lookalike domains, and social handles, and give you an exposure score in minutes. No account, no credit card.</div>
       </div>
       <div class="faq-item">
         <button class="faq-q" data-faq-toggle>What&rsquo;s included in continuous monitoring? <span class="faq-arrow">&#9660;</span></button>
-        <div class="faq-a">Professional and above run 24/7 across every feed and social platform, with daily AI briefings and real-time alerts when something new lands.</div>
+        <div class="faq-a">Professional and above monitor continuously across the modules in your plan, with in-app, email and push alerts when something new lands.</div>
       </div>
       <div class="faq-item">
         <button class="faq-q" data-faq-toggle>Can I switch plans? <span class="faq-arrow">&#9660;</span></button>
@@ -255,15 +248,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <button class="faq-q" data-faq-toggle>Is there a minimum contract? <span class="faq-arrow">&#9660;</span></button>
         <div class="faq-a">No. Professional and Business are month-to-month. Enterprise is custom.</div>
       </div>
+      <div class="faq-item">
+        <button class="faq-q" data-faq-toggle>Is there a free trial? <span class="faq-arrow">&#9660;</span></button>
+        <div class="faq-a">Yes. Every plan starts with a 14-day trial. Separately, the domain scan is free with no signup &mdash; it is a free scan, not a plan.</div>
+      </div>
     </div>
   </section>
 
   <section class="cta-block">
     <div class="container">
       <h2>Ready to protect your brand?</h2>
-      <p>Start with a free scan or talk to our team about the right plan for you.</p>
+      <p>Start with the free domain scan or talk to our team about the right plan for you.</p>
       <div class="cta-actions">
-        <a href={`${base}/scan`} class="btn btn-primary" data-cta="run-scan">Start Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-primary" data-cta="run-scan">Scan your domain</a>
         <a href={`${base}/contact`} class="btn btn-outline" data-cta="contact-sales">Contact Sales</a>
       </div>
     </div>
@@ -378,13 +375,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     transition: all 0.2s;
   }
   .pricing-toggle-btn.active {
-    background: var(--accent);
-    color: white;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-ink);
     border-color: var(--accent);
   }
   .pricing-save-badge {
-    background: var(--green);
-    color: white;
+    background: rgba(60, 184, 120, 0.14);
+    color: var(--green-text);
     font-size: 10px;
     padding: 2px 8px;
     border-radius: 10px;
@@ -400,11 +397,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-tertiary);
     margin-bottom: 1.75rem;
   }
-  .pricing-grid-hint-arrow { color: var(--amber); margin: 0 6px; }
+  .pricing-grid-hint-arrow { color: var(--amber-text); margin: 0 6px; }
 
   .price-card.free-scan {
     background: transparent;
-    border: 1.5px dashed var(--border);
+    border: 1.5px dashed var(--border-strong);
     position: relative;
   }
   .price-card.free-scan::before {
@@ -418,7 +415,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     letter-spacing: 0.12em;
     background: var(--bg-primary);
     padding: 2px 8px;
-    color: var(--amber);
+    color: var(--amber-text);
     border-radius: 6px;
     border: 1px solid var(--border);
   }
@@ -437,8 +434,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     top: -12px;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--accent);
-    color: white;
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-ink);
     font-family: var(--font-mono);
     font-size: 0.68rem;
     font-weight: 600;
@@ -528,7 +525,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .compare-table tr:last-child td { border-bottom: none; }
   .compare-table td:first-child { font-weight: 600; color: var(--text-primary); }
-  .ct-no { color: var(--accent); }
+  .ct-no { color: var(--red-text); }
   .ct-yes { color: var(--green-text); }
 
   .faq-section { padding: 3rem 0; }

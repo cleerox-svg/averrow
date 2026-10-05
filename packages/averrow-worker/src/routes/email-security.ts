@@ -23,10 +23,12 @@ export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void 
     if (!isAuthContext(ctx)) return ctx;
     return handleEmailSecurityStats(request, env);
   });
-  router.get("/api/email-security/scan-all", async (request: Request, env: Env) => {
+  // execCtx (itty passes the ExecutionContext as the 3rd arg) lets the
+  // BIMI alerts' alert.created delivery run under waitUntil.
+  router.get("/api/email-security/scan-all", async (request: Request, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireAdmin(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleScanAllEmailSecurity(request, env);
+    return handleScanAllEmailSecurity(request, env, execCtx);
   });
   // Note: /history must be registered BEFORE the bare /:brandId catch-all.
   router.get("/api/email-security/:brandId/history", async (request: Request & { params: Record<string, string> }, env: Env) => {
@@ -39,10 +41,10 @@ export function registerEmailSecurityRoutes(router: RouterType<IRequest>): void 
     if (!isAuthContext(ctx)) return ctx;
     return handleGetEmailSecurity(request, env, request.params["brandId"] ?? "");
   });
-  router.post("/api/email-security/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+  router.post("/api/email-security/scan/:brandId", async (request: Request & { params: Record<string, string> }, env: Env, execCtx: ExecutionContext) => {
     const ctx = await requireStaffMutation(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleScanBrandEmailSecurity(request, env, request.params["brandId"] ?? "");
+    return handleScanBrandEmailSecurity(request, env, request.params["brandId"] ?? "", execCtx);
   });
 
   // ─── DMARC Report endpoints ───────────────────────────────────────

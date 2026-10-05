@@ -1,10 +1,14 @@
 ---
 /*
- * Platform deep-dive: The Agent Mesh.
- * Expands Capability 04 from src/pages/platform.astro into a full page —
- * philosophy, six core agent profiles, signal fusion into the Brand
- * Exposure Score, the "SQL does correlation, AI does narrative" doctrine,
- * an illustrative sample narrative, and cross-links to sibling deep dives.
+ * Platform deep-dive: Automated Analysis (URL kept as /platform/ai-agents
+ * so existing links keep working).
+ * Expands the Automated Analysis capability from src/pages/platform.astro
+ * into a full page — philosophy, six pipeline stages, signal fusion into the
+ * Brand Exposure Score, the deterministic-correlation doctrine, an
+ * illustrative sample summary, and cross-links to sibling deep dives.
+ *
+ * Copy follows docs/DISCLOSURE_REGISTER.md: no "AI", no agent counts, no
+ * internal codenames, cadences, weights or architecture.
  */
 import Layout from "../../layouts/Layout.astro";
 
@@ -15,37 +19,37 @@ const coreAgents = [
     name: "Threat Detection",
     color: "var(--red-text)",
     role: "Feed & certificate monitoring",
-    desc: "Watches the open feed network around the clock — phishing databases, malware URL lists, Certificate Transparency logs, DNS intelligence — and hands every new hit to the mesh for scoring the moment it appears.",
+    desc: "Watches phishing databases, malware URL lists, Certificate Transparency logs, and DNS intelligence, and passes every new hit on for scoring.",
   },
   {
     name: "Scoring & Triage",
     color: "var(--amber-text)",
     role: "Composite exposure scoring",
-    desc: "Takes every new detection and everything else the mesh already knows about a brand, and decides how much it actually matters — folding email posture, social findings, and infrastructure signals into a single composite score.",
+    desc: "Takes every new detection and everything else already known about a brand, and decides how much it matters, folding email posture, social findings, and infrastructure signals into a single composite score.",
   },
   {
-    name: "Strategic Intel",
+    name: "Infrastructure Correlation",
     color: "var(--blue-text)",
-    role: "Daily intelligence briefings",
-    desc: "Steps back from individual threats to look at trend lines — grade changes, new campaign patterns, exposure moving up or down over time — and writes the daily intelligence briefing your team actually reads.",
+    role: "Linking threats that share infrastructure",
+    desc: "Links phishing domains, IPs, and certificates that share infrastructure into operations, so you see the campaign behind each alert and notice when it moves.",
   },
   {
     name: "DNS Resolution",
     color: "var(--blue-text)",
     role: "Infrastructure resolution",
-    desc: "Resolves the domains and hostnames behind every threat down to live IP addresses in real time, keeping the platform's infrastructure data current as attackers rotate hosting — the foundation the geo and provider mapping layer builds on.",
+    desc: "Resolves the domains and hostnames behind threats to IP addresses, keeping infrastructure data current as attackers rotate hosting. The geo and provider mapping stage builds on it.",
   },
   {
     name: "Geo & Provider Mapping",
     color: "var(--green-text)",
     role: "Hosting & regional mapping",
-    desc: "Maps resolved infrastructure to where it's actually hosted — provider, region, network — so a pattern of attacks from the same infrastructure is visible as one picture, not a list of isolated incidents.",
+    desc: "Maps resolved infrastructure to where it's hosted (provider, region, network) so a pattern of attacks from the same infrastructure is visible as one picture, not a list of isolated incidents.",
   },
   {
-    name: "Timeline & Narrative",
+    name: "Plain-Language Summaries",
     color: "var(--slate-text)",
-    role: "Plain-language incident writeups",
-    desc: "Reconstructs how a threat unfolded — first seen, what changed, what else co-occurred — and writes it up in plain language a human can act on without reading raw log lines.",
+    role: "Readable threat summaries",
+    desc: "Summarises how a threat unfolded (first seen, what changed, what else co-occurred) in plain language a person can act on without reading raw log lines.",
   },
 ];
 
@@ -63,31 +67,31 @@ const siblingLinks = [
   {
     href: "/platform/social-monitoring",
     title: "Social Monitoring",
-    desc: "Impersonation and handle-squatting detection across six platforms, with AI confidence scoring.",
+    desc: "Impersonation and handle-squatting detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube, with confidence scoring.",
   },
   {
     href: "/platform/campaign-intelligence",
     title: "Campaign Intelligence",
-    desc: "How shared infrastructure links isolated threats into a single campaign, with confidence-scored attribution.",
+    desc: "How shared infrastructure links isolated threats into a single operation, so you see the campaign behind each alert.",
   },
 ];
 ---
 
 <Layout
-  title="The Agent Mesh — Averrow"
-  description="Inside Averrow's 42-agent AI mesh — the engine behind its Digital Risk Protection platform, running threat detection, scoring & triage, and infrastructure mapping."
+  title="Automated Analysis — Averrow"
+  description="How Averrow's automated analysis works: rule-based correlation across threat feeds, domains, email and social, scored into one exposure picture with plain-language threat summaries."
 >
   <section class="dd-ai-hero">
     <div class="container">
       <a href={`${base}/platform`} class="dd-ai-back">&larr; Platform overview</a>
-      <div class="dd-ai-eyebrow">The Agent Mesh</div>
+      <div class="dd-ai-eyebrow">Automated Analysis</div>
       <h1>Intelligence,<br /><span class="dd-ai-accent">not alerts.</span></h1>
       <p class="dd-ai-lede">
-        A list of matches is not intelligence. Averrow runs a 42-agent AI mesh
-        that reads every signal the platform collects &mdash; email posture,
-        social findings, domain infrastructure, threat feeds &mdash; and
-        reasons about what they mean together, in language a human can act
-        on the same day.
+        A list of matches is not intelligence. Averrow&rsquo;s automated
+        analysis reads every signal the platform collects &mdash; email
+        posture, social findings, domain infrastructure, threat feeds
+        &mdash; and correlates them with deterministic rules into a picture
+        a person can act on, summarised in plain language.
       </p>
 
       <div class="dd-ai-hero-visual" aria-hidden="true">
@@ -113,8 +117,8 @@ const siblingLinks = [
       </div>
 
       <div class="dd-ai-stat-strip">
-        <div class="dd-ai-stat"><span class="dd-ai-stat-num">42</span><span class="dd-ai-stat-label">AI agents in the mesh</span></div>
-        <div class="dd-ai-stat"><span class="dd-ai-stat-num">6</span><span class="dd-ai-stat-label">core agents profiled below</span></div>
+        <div class="dd-ai-stat"><span class="dd-ai-stat-num">4</span><span class="dd-ai-stat-label">signal streams fused</span></div>
+        <div class="dd-ai-stat"><span class="dd-ai-stat-num">6</span><span class="dd-ai-stat-label">analysis stages described below</span></div>
         <div class="dd-ai-stat"><span class="dd-ai-stat-num">1</span><span class="dd-ai-stat-label">composite Brand Exposure Score</span></div>
       </div>
     </div>
@@ -131,7 +135,7 @@ const siblingLinks = [
         whoever on your team has time to read the row.
       </p>
       <p class="dd-ai-body">
-        Averrow's agent mesh does the interpretation first. Every detection
+        Averrow's automated analysis does the interpretation first. Every detection
         is evaluated against everything else the platform already knows
         about that brand &mdash; its email posture, its social exposure, its
         domain history &mdash; before it ever reaches a person. What reaches
@@ -149,7 +153,7 @@ const siblingLinks = [
           </ul>
         </div>
         <div class="dd-ai-compare-col dd-ai-compare-new">
-          <div class="dd-ai-compare-head">Averrow's reasoning</div>
+          <div class="dd-ai-compare-head">Averrow's correlation (illustrative)</div>
           <p>
             Two lookalike domains registered within 48 hours of each other,
             paired with a new impersonation account and a DKIM gap that
@@ -165,12 +169,12 @@ const siblingLinks = [
   <section class="dd-ai-section dd-ai-section-alt" id="agents">
     <div class="container">
       <div class="section-label" style="text-align:center;">The Core Six</div>
-      <h2 class="dd-ai-center-h2">Six agents that reason, not just detect</h2>
+      <h2 class="dd-ai-center-h2">Six stages that correlate, not just detect</h2>
       <p class="dd-ai-center-p">
-        The 42-agent mesh includes specialized processors for individual
-        feeds, enrichment steps, and platform maintenance. These six are the
-        ones whose output you'll see directly &mdash; the reasoning layer on
-        top of everything the mesh collects.
+        Behind the scenes there are many smaller automated steps for
+        individual feeds and enrichment. These six are the stages whose
+        output you'll see directly &mdash; the analysis layer on top of
+        everything the platform collects.
       </p>
       <div class="dd-ai-agent-grid">
         {coreAgents.map((a) => (
@@ -193,16 +197,16 @@ const siblingLinks = [
           Email posture, social findings, active threats, and domain
           infrastructure are collected by different parts of the platform
           &mdash; but they describe one thing: how exposed a brand actually
-          is. The mesh fuses all four into a single composite Brand Exposure
-          Score, so priority is never decided by whichever feed happened to
-          fire most recently.
+          is. The analysis fuses all four into a single composite Brand
+          Exposure Score, so priority is never decided by whichever feed
+          happened to fire most recently.
         </p>
         <ul class="dd-ai-features">
           <li>Cross-system signal fusion across email, social, threats, and domains</li>
-          <li>Social intelligence correlated directly into risk scoring, not siloed</li>
+          <li>Social signals correlated directly into risk scoring, not siloed</li>
           <li>One composite Brand Exposure Score per brand</li>
-          <li>Natural-language threat reports generated from the same fused signal</li>
-          <li>Automated takedown-evidence generation once a threat clears triage</li>
+          <li>Plain-language threat summaries built from the same fused signal</li>
+          <li>Takedown evidence assembled automatically once a threat clears triage</li>
         </ul>
       </div>
       <div class="cap-visual">
@@ -232,38 +236,34 @@ const siblingLinks = [
   <section class="dd-ai-section dd-ai-section-alt">
     <div class="container dd-ai-narrow">
       <div class="section-label" style="text-align:center;">The Doctrine</div>
-      <h2 class="dd-ai-center-h2">SQL does correlation. AI does narrative.</h2>
+      <h2 class="dd-ai-center-h2">Deterministic correlation. Plain-language summaries.</h2>
       <p class="dd-ai-center-p">
-        Most of what looks like "AI" in brand protection is really just
-        counting and grouping &mdash; work a database engine already does in
-        milliseconds. Averrow keeps that split explicit instead of routing
-        everything through a model:
+        Most brand-protection analysis is counting and grouping, work a
+        database does quickly and repeatably. Averrow keeps that explicit
+        instead of hiding it in a black box:
       </p>
       <div class="dd-ai-doctrine-grid">
         <div class="dd-ai-doctrine-card">
-          <div class="dd-ai-doctrine-head" style="color:var(--blue-text)">Structured correlation</div>
+          <div class="dd-ai-doctrine-head" style="color:var(--blue-text)">Rule-based correlation</div>
           <p>
             Counting hits, grouping by provider or region, matching a domain
             against a feed, checking a DKIM selector &mdash; anything with a
-            deterministic, rule-based answer runs as fast structured queries
-            across the full dataset. No model call, no latency, no cost per
-            row.
+            deterministic answer runs as structured queries across the full
+            dataset. Every score traces back to evidence you can see.
           </p>
         </div>
         <div class="dd-ai-doctrine-card">
-          <div class="dd-ai-doctrine-head" style="color:var(--amber-text)">AI narrative</div>
+          <div class="dd-ai-doctrine-head" style="color:var(--amber-text)">Plain-language summaries</div>
           <p>
-            Explaining why a combination of signals matters, writing a daily
-            briefing, drafting takedown evidence in plain language &mdash;
-            work that genuinely benefits from reasoning over structured
-            correlation &mdash; is reserved for the agents built to do it.
+            Explaining why a combination of signals matters, and drafting
+            takedown evidence in plain language, is built on top of that
+            correlation, so the explanation always matches the evidence.
           </p>
         </div>
       </div>
       <p class="dd-ai-body dd-ai-doctrine-close">
-        The result: correlation that scales to the full dataset without AI
-        cost attached to every row, and narrative that's only generated when
-        there's something worth explaining.
+        The result: correlation that scales to the full dataset, and
+        summaries that stay tied to the underlying evidence.
       </p>
     </div>
   </section>
@@ -271,14 +271,14 @@ const siblingLinks = [
   <section class="dd-ai-section" id="sample">
     <div class="container dd-ai-narrow">
       <div class="section-label">Sample Output</div>
-      <h2>What a fused narrative looks like</h2>
+      <h2>What a fused summary looks like</h2>
       <p class="dd-ai-body">
         The example below is illustrative &mdash; a representative sample of
-        the kind of narrative the mesh generates once a situation has been
-        scored as worth explaining, not a live customer report.
+        the kind of summary produced once a situation has been scored as
+        worth explaining, not a live customer report.
       </p>
       <div class="narrative-block">
-        <div class="narrative-label"><span class="narrative-dot"></span> Timeline &amp; Narrative <span class="dd-ai-illustrative">Illustrative example</span></div>
+        <div class="narrative-label"><span class="narrative-dot"></span> Plain-language summary <span class="dd-ai-illustrative">Illustrative example</span></div>
         &ldquo;A phishing domain matching your brand was registered 48 hours
         ago with active MX records, combined with your current DKIM gap on
         the proofpoint selector. This creates a HIGH-severity compound risk
@@ -290,7 +290,7 @@ const siblingLinks = [
   <section class="dd-ai-section dd-ai-section-alt">
     <div class="container">
       <div class="section-label" style="text-align:center;">Explore the Platform</div>
-      <h2 class="dd-ai-center-h2">The rest of the mesh's inputs</h2>
+      <h2 class="dd-ai-center-h2">The inputs to the analysis</h2>
       <div class="dd-ai-sibling-grid">
         {siblingLinks.map((s) => (
           <a href={`${base}${s.href}`} class="dd-ai-sibling-card">
@@ -305,11 +305,11 @@ const siblingLinks = [
 
   <section class="plat-cta">
     <div class="container">
-      <h2>See what the mesh finds for your brand.</h2>
-      <p>Run a free exposure scan in under five minutes, or book a demo to see the agent mesh reason through a real detection.</p>
+      <h2>See what the analysis finds for your brand.</h2>
+      <p>Run a free exposure scan in minutes, or book a demo to see a real detection worked through end to end.</p>
       <div class="plat-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>
@@ -332,12 +332,12 @@ const siblingLinks = [
     text-decoration: none;
     margin-bottom: 1.5rem;
   }
-  .dd-ai-back:hover { color: var(--amber); }
+  .dd-ai-back:hover { color: var(--amber-text); }
   .dd-ai-eyebrow {
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
     letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 0.85rem;
@@ -349,7 +349,7 @@ const siblingLinks = [
     margin-bottom: 1.1rem;
     line-height: 1.05;
   }
-  .dd-ai-accent { color: var(--amber); }
+  .dd-ai-accent { color: var(--amber-text); }
   .dd-ai-lede {
     font-size: 18px;
     color: var(--text-secondary);
@@ -374,7 +374,7 @@ const siblingLinks = [
     font-family: var(--font-display);
     font-size: 2rem;
     font-weight: 800;
-    color: var(--amber);
+    color: var(--amber-text);
     line-height: 1;
   }
   .dd-ai-stat-label {
@@ -622,7 +622,7 @@ const siblingLinks = [
     font-family: var(--font-mono);
     font-size: 0.75rem;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
   }
 
   /* ── CTA (shared vocabulary with platform.astro) ── */

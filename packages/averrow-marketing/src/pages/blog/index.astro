@@ -18,7 +18,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
 <Layout
-  title="Blog — Averrow | AI-Powered Brand Threat Intelligence"
+  title="Blog — Averrow | Brand Threat Intelligence"
   description="Product updates, threat research, and engineering deep dives from the Averrow team."
 >
   <section class="blog-hero">
@@ -108,7 +108,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--amber);
+    color: var(--amber-text);
     border: 1px solid rgba(229,168,50,0.30);
     background: rgba(229,168,50,0.06);
     padding: 0.45rem 0.8rem;
@@ -116,7 +116,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     text-decoration: none;
     transition: background 0.2s, border-color 0.2s, color 0.2s;
   }
-  .blog-rss:hover { background: rgba(229,168,50,0.12); border-color: rgba(229,168,50,0.50); color: var(--amber); text-decoration: none; }
+  .blog-rss:hover { background: rgba(229,168,50,0.12); border-color: rgba(229,168,50,0.50); color: var(--amber-text); text-decoration: none; }
   .blog-rss svg { width: 12px; height: 12px; }
 
   .blog-filter-strip {
@@ -210,7 +210,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
-  .blog-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(200,60,60,0.20); }
+  .blog-badge-product      { background: var(--accent-bg); color: var(--accent); border: 1px solid rgba(229,168,50,0.22); }
   .blog-badge-threat-intel { background: rgba(229,168,50,0.10); color: var(--amber-text); border: 1px solid rgba(229,168,50,0.25); }
   .blog-badge-engineering  { background: var(--green-bg); color: var(--green-text); border: 1px solid rgba(60,184,120,0.25); }
   .blog-badge-company      { background: rgba(10,138,181,0.10); color: var(--blue-text); border: 1px solid rgba(10,138,181,0.25); }
@@ -253,7 +253,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-body);
     font-size: 0.88rem;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;

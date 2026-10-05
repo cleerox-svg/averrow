@@ -1,21 +1,30 @@
 #!/usr/bin/env node
 /**
- * Fetch live platform stats at build time and write them to
- * src/data/stats.json so the homepage Astro page can import
- * them as a static module.
+ * Fetch real platform stats at build time and write them to
+ * src/data/stats.json, which the homepage imports as a static module.
  *
- * Runs BEFORE astro build (prebuild hook in package.json).
+ * Runs BEFORE astro build (see the `build` script in package.json).
  *
- * Failure modes:
- *  - Network is offline (local dev, CI without internet):
- *    fall back to the existing src/data/stats.json contents.
- *    Don't fail the build — we'd rather ship slightly stale
- *    numbers than block deploys.
- *  - API returns malformed JSON: same, fall back to existing.
+ * Source: GET https://averrow.com/api/v1/public/stats, envelope
+ *   { success: true, data: { total_threats, threats_detected, providers_mapped,
+ *     threat_campaigns, countries, active_feeds, proof?: {...}, ... } }
  *
- * The static fallback values match what the inline-template
- * homepage used as its own fallback before R6, so the
- * homepage will always render with credible numbers.
+ * Output (all values are display strings, rounded DOWN so we never overstate):
+ *   threats_detected   "1.1M+"
+ *   campaigns          "6,000+"
+ *   providers_mapped   "12,000+"
+ *   countries          "215"
+ *   active_feeds       46            (number — the page says "40+ sources")
+ *   proof?             { lookalikes_found_30d, operations_tracked, monitored_brands }
+ *   generated_at       ISO timestamp of THIS fetch
+ *   source             the URL, or "snapshot-YYYY-MM-DD" when the committed
+ *                      snapshot is being reused
+ *
+ * Failure policy: a failed fetch NEVER fails the build (we'd rather ship a
+ * dated snapshot than block a deploy), but it is loud: a console error
+ * block, and under CI a GitHub `::warning::` annotation. The page shows
+ * "updated <date>" from generated_at, so a stale snapshot is visibly dated
+ * rather than passed off as fresh.
  */
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -26,85 +35,159 @@ const ROOT = resolve(here, "..");
 const STATS_PATH = resolve(ROOT, "src/data/stats.json");
 const SOURCE_URL = "https://averrow.com/api/v1/public/stats";
 
-const STATIC_FALLBACK = {
-  agents_deployed: "42",
-  feeds_protecting: "45+",
-  threats_detected: "210K+",
-  brands_monitored: "9.6K+",
-  uptime_label: "24/7",
-  detection_time_label: "<5min",
-  generated_at: new Date().toISOString(),
-  source: "static-fallback",
-};
+/** Round DOWN to 2 significant digits and add "+": 6097 -> "6,000+", 12147 -> "12,000+". Below 1,000 stays exact. */
+export function roundLabel(n) {
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n < 1000) return String(Math.floor(n));
+  const digits = Math.floor(Math.log10(n)) + 1;
+  const step = 10 ** (digits - 2);
+  const floored = Math.floor(n / step) * step;
+  return `${floored.toLocaleString("en-US")}+`;
+}
+
+/** Compact label for the big threat counter: 1,175,112 -> "1.1M+", 210,400 -> "210K+". */
+export function compactLabel(n) {
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n >= 1_000_000) return `${(Math.floor(n / 100_000) / 10).toFixed(1).replace(/\.0$/, "")}M+`;
+  if (n >= 1_000) return `${Math.floor(n / 1000)}K+`;
+  return String(Math.floor(n));
+}
+
+/** Parse "1.3M+" / "210K+" / "9,600+" back into a number (null if unparseable). */
+function parseLabel(label) {
+  const m = /^\s*([\d.,]+)\s*([KkMm])?\+?\s*$/.exec(String(label ?? ""));
+  if (!m) return null;
+  const base = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(base)) return null;
+  const mult = { k: 1e3, m: 1e6 }[(m[2] ?? "").toLowerCase()] ?? 1;
+  return base * mult;
+}
+
+const isCount = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
 
 async function fetchWithTimeout(url, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    return res;
+    return await fetch(url, { signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
 }
 
-function isPlausibleStats(obj) {
-  // The Worker's /api/v1/public/stats may wrap the payload — accept
-  // either { data: {...} } or a flat shape. We only proceed if the
-  // expected string fields are present.
-  const candidate = obj?.data ?? obj;
-  return (
-    candidate &&
-    typeof candidate === "object" &&
-    typeof candidate.agents_deployed === "string" &&
-    typeof candidate.threats_detected === "string"
-  );
+/**
+ * @typedef {object} SiteStats
+ * @property {string} threats_detected
+ * @property {string | null} campaigns
+ * @property {string | null} providers_mapped
+ * @property {string} countries
+ * @property {number | null} active_feeds
+ * @property {string} generated_at
+ * @property {string} source
+ * @property {{ lookalikes_found_30d?: string | null, operations_tracked?: string | null, monitored_brands?: string | null }} [proof]
+ */
+
+/**
+ * Build the committed-shape stats object from the live `data` payload, or throw.
+ * @param {any} live
+ * @param {string} generatedAt
+ * @param {string} source
+ * @returns {SiteStats}
+ */
+export function buildStats(live, generatedAt, source) {
+  if (!live || typeof live !== "object") throw new Error("payload has no data object");
+  if (!isCount(live.providers_mapped) || !isCount(live.threat_campaigns) || !isCount(live.countries)) {
+    throw new Error(
+      "payload is missing providers_mapped / threat_campaigns / countries (shape changed?)",
+    );
+  }
+
+  // Threat total: prefer the API's own label, but never print a figure larger
+  // than the raw total we were also given.
+  let threats = typeof live.threats_detected === "string" ? live.threats_detected : null;
+  if (isCount(live.total_threats)) {
+    const claimed = parseLabel(threats);
+    if (threats === null || claimed === null || claimed > live.total_threats) {
+      if (threats !== null) {
+        console.warn(
+          `[fetch-stats] API label threats_detected="${threats}" exceeds total_threats=${live.total_threats}; using "${compactLabel(live.total_threats)}".`,
+        );
+      }
+      threats = compactLabel(live.total_threats);
+    }
+  }
+  if (!threats) throw new Error("payload has neither threats_detected nor total_threats");
+
+  /** @type {SiteStats} */
+  const stats = {
+    threats_detected: threats,
+    campaigns: roundLabel(live.threat_campaigns),
+    providers_mapped: roundLabel(live.providers_mapped),
+    countries: String(Math.floor(live.countries)),
+    active_feeds: isCount(live.active_feeds) ? Math.floor(live.active_feeds) : null,
+    generated_at: generatedAt,
+    source,
+  };
+
+  // Optional proof block (backend adds it; tolerate absence or partial data).
+  const p = live.proof;
+  if (p && typeof p === "object") {
+    /** @type {NonNullable<SiteStats['proof']>} */
+    const proof = {};
+    if (isCount(p.lookalikes_found_30d)) proof.lookalikes_found_30d = roundLabel(p.lookalikes_found_30d);
+    if (isCount(p.operations_tracked)) proof.operations_tracked = roundLabel(p.operations_tracked);
+    if (isCount(p.monitored_brands)) proof.monitored_brands = roundLabel(p.monitored_brands);
+    if (Object.keys(proof).length > 0) stats.proof = proof;
+  }
+  return stats;
+}
+
+function loudWarning(message, existing) {
+  const lines = [
+    "",
+    "[fetch-stats] ============================================================",
+    `[fetch-stats] WARNING: live stats NOT refreshed — ${message}`,
+    `[fetch-stats] Shipping the committed snapshot instead (source=${existing?.source ?? "unknown"}, generated_at=${existing?.generated_at ?? "unknown"}).`,
+    "[fetch-stats] The homepage will show that date. Fix the endpoint or the parser.",
+    "[fetch-stats] ============================================================",
+    "",
+  ];
+  console.error(lines.join("\n"));
+  if (process.env.CI) {
+    // GitHub Actions annotation — surfaces on the run summary.
+    console.log(`::warning title=Marketing stats not refreshed::${message}. Homepage is using the committed snapshot (${existing?.source ?? "unknown"}).`);
+  }
 }
 
 async function main() {
   await mkdir(dirname(STATS_PATH), { recursive: true });
 
-  // Read existing on-disk stats so we have something to fall back to
-  // even if the very first build runs offline.
-  let existing = STATIC_FALLBACK;
+  let existing = null;
   try {
     existing = JSON.parse(await readFile(STATS_PATH, "utf8"));
   } catch {
-    // First run — file doesn't exist yet. Existing stays as fallback.
+    // First run — file doesn't exist yet.
   }
 
   try {
-    const res = await fetchWithTimeout(SOURCE_URL, 5000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetchWithTimeout(SOURCE_URL, 8000);
+    if (!res.ok) throw new Error(`HTTP ${res.status} from ${SOURCE_URL}`);
     const payload = await res.json();
-    if (!isPlausibleStats(payload)) throw new Error("malformed payload");
-    const live = payload.data ?? payload;
-    const merged = {
-      agents_deployed: live.agents_deployed,
-      feeds_protecting: live.feeds_protecting,
-      threats_detected: live.threats_detected,
-      // The endpoint exposes the marketing brands string under
-      // `brands_monitored_label` because its flat `brands_monitored`
-      // is a NUMBER consumed by the legacy SPA's count-up animation.
-      // Fall back to `brands_monitored` for backward-compat.
-      brands_monitored: live.brands_monitored_label ?? live.brands_monitored,
-      uptime_label: live.uptime_label,
-      detection_time_label: live.detection_time_label,
-      generated_at: new Date().toISOString(),
-      source: SOURCE_URL,
-    };
-    await writeFile(STATS_PATH, JSON.stringify(merged, null, 2) + "\n", "utf8");
-    console.log(`[fetch-stats] Wrote live stats from ${SOURCE_URL}`);
-  } catch (err) {
-    // Network/parse failure — keep the existing file untouched so the
-    // build still produces a deterministic homepage. Don't bubble up.
-    console.warn(
-      `[fetch-stats] Live fetch failed (${err.message ?? err}); using existing src/data/stats.json (source=${existing.source ?? "unknown"}).`,
+    if (payload?.success === false) throw new Error(`API reported failure: ${payload.error ?? "unknown"}`);
+    const stats = buildStats(payload?.data ?? payload, new Date().toISOString(), SOURCE_URL);
+    await writeFile(STATS_PATH, JSON.stringify(stats, null, 2) + "\n", "utf8");
+    console.log(
+      `[fetch-stats] Wrote live stats from ${SOURCE_URL}: threats=${stats.threats_detected} campaigns=${stats.campaigns} providers=${stats.providers_mapped} countries=${stats.countries} feeds=${stats.active_feeds}${stats.proof ? " proof=yes" : " proof=absent"}`,
     );
+  } catch (err) {
+    loudWarning(err?.message ?? String(err), existing);
   }
 }
 
-main().catch(err => {
-  // Defensive: even an unexpected throw shouldn't fail the build.
-  console.warn("[fetch-stats] Unexpected error, continuing:", err);
-});
+// Only run when executed directly, so the helpers can be imported by tests.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    // Defensive: even an unexpected throw shouldn't fail the build.
+    loudWarning(`unexpected error: ${err?.message ?? err}`, null);
+  });
+}

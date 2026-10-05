@@ -557,7 +557,7 @@ export async function generateNarrativesForBrand(env: Env, brandId: string): Pro
         // Template prose is not an AI assessment — leave the column NULL.
         aiAssessment: prose ? prose.narrative : undefined,
         aiRecommendations: prose ? prose.recommendations : undefined,
-      });
+      }, { env });
 
     } catch (err) {
       console.error(`[narrator] Failed to create alert for brand ${brandId}:`, err);

@@ -29,6 +29,8 @@ import {
   handlePublicMonitor, handlePublicFeeds, publicAssessIpLimit,
 } from "../handlers/public";
 import { handlePublicStats as handlePublicStatsV2 } from "../handlers/stats";
+import { rateLimitCustom } from "../middleware/rateLimit";
+import type { RateLimitConfig } from "../middleware/rateLimit";
 import { handlePublicEmailSecurity } from "../handlers/emailSecurity";
 
 // Public marketing HTML routes eligible for edge analytics logging.
@@ -68,6 +70,13 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   '/admin/takedowns':     '/v2/console?tab=takedowns',
   '/observatory':         '/v2',
   '/brands':              '/v2/explore?tab=brands',
+};
+
+/** 30 anonymous email-security checks per IP per hour. */
+export const PUBLIC_EMAIL_SECURITY_RATE_LIMIT: RateLimitConfig = {
+  key: "pub_email_security",
+  maxRequests: 30,
+  windowSeconds: 3600,
 };
 
 export function registerPublicRoutes(router: RouterType<IRequest>): void {
@@ -332,9 +341,14 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // Marketing analytics beacon (unauthenticated, 204 fast-path). ctx is
   // threaded as the 3rd arg by itty-router (index.ts router.fetch(request, env, ctx)).
   router.post("/api/track", (request: Request, env: Env, ctx: ExecutionContext) => handleTrackEvent(request, env, ctx));
-  router.get("/api/v1/public/email-security/:domain", async (request: Request & { params: Record<string, string> }, env: Env) =>
-    handlePublicEmailSecurity(request, env, request.params["domain"] ?? "")
-  );
+  // Anonymous live DNS scan: per-IP KV limiter (same CF-Connecting-IP
+  // keyed pattern as the other public endpoints) so it can't be used to
+  // drive unbounded outbound DNS work.
+  router.get("/api/v1/public/email-security/:domain", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const limited = await rateLimitCustom(request, env, PUBLIC_EMAIL_SECURITY_RATE_LIMIT);
+    if (limited) return limited;
+    return handlePublicEmailSecurity(request, env, request.params["domain"] ?? "");
+  });
   router.get("/api/stats/public", (request: Request, env: Env) => handlePublicStatsV2(request, env));
 
   // Public platform status — feeds the Home banner (Phase 2) and the

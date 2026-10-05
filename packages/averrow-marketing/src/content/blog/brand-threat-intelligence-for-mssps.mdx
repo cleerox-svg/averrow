@@ -24,8 +24,8 @@ Brand threat intelligence covers a category of risk that sits adjacent to, but d
 - **Lookalike and phishing domains** targeting the client's brand name, tracked from registration through weaponization.
 - **Email authentication posture** — SPF, DKIM, DMARC, and MX configuration — which determines how easily the client's own domain can be spoofed directly, independent of any lookalike infrastructure.
 - **Social media impersonation** across the platforms attackers actually use to run scams against a brand's customers and employees.
-- **Threat feed correlation** — matching the client's brand against phishing databases, malware URL feeds, certificate transparency logs, and breach intelligence.
-- **A composite exposure score and natural-language briefings**, so the output is something a client's leadership can read without needing a security background to interpret it.
+- **Threat feed correlation** — matching the client's brand against phishing databases, malware URL feeds, and certificate transparency logs.
+- **A composite exposure score and plain-language threat summaries**, so the output is something a client's leadership can read without needing a security background to interpret it.
 
 None of this replaces the network- and endpoint-centric work an MDR program already does. It extends coverage to the parts of a client's risk surface that live entirely outside their infrastructure — the parts a firewall or EDR agent was never going to see in the first place.
 
@@ -35,17 +35,17 @@ The economics of adding a new service line only work if it can be delivered acro
 
 **Multi-tenant from the ground up.** Managing brand exposure for dozens of client organizations needs to look like managing dozens of separate brand profiles inside one platform, not standing up separate instances or juggling separate logins per client.
 
-**API-first.** Brand exposure data — scores, findings, alert status — needs to be pullable programmatically so it can be folded into whatever reporting or ticketing workflow the MSSP already runs for clients, rather than requiring analysts to work inside a second dashboard all day.
+**Fits the existing workflow.** Brand exposure events — alerts and takedown status changes — need to reach whatever reporting, SIEM, or ticketing workflow the MSSP already runs for clients, rather than requiring analysts to work inside a second dashboard all day. Averrow delivers webhooks for alert and takedown events, and Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow connectors, set up with our team.
 
-**Standard intelligence export.** STIX/TAXII export means brand-derived threat intelligence — newly identified phishing domains, malicious infrastructure, impersonation indicators — can flow into the same threat intelligence platforms and SIEMs an MSSP already uses, instead of sitting in a silo that only makes sense on its own.
+**Standard intelligence export.** A STIX 2.1 export, available on request, means brand-derived threat intelligence — newly identified phishing domains, malicious infrastructure, impersonation indicators — can flow into the same threat intelligence platforms an MSSP already uses, instead of sitting in a silo that only makes sense on its own.
 
-These three — multi-tenant management, a REST API, and STIX/TAXII export — are live in Averrow today, not on a roadmap. That matters, because a brand intelligence source that can't plug into an existing SOC workflow ends up being a second screen someone has to remember to check, which is exactly the kind of tool sprawl MSSPs are trying to eliminate for their own clients.
+That matters, because a brand intelligence source that can't plug into an existing SOC workflow ends up being a second screen someone has to remember to check, which is exactly the kind of tool sprawl MSSPs are trying to eliminate for their own clients.
 
 ### The economics
 
 Brand impersonation monitoring has historically been priced and packaged for enterprises — platforms built for organizations with dedicated security budgets and named account teams, with pricing that reflects it. That pricing model doesn't translate to an MSSP's client book, where most clients are mid-market organizations that need the coverage but were never going to buy an enterprise brand protection contract on their own.
 
-An AI-native approach changes the underlying cost structure. When agents handle continuous monitoring, scoring, and narrative generation instead of a team of human analysts triaging alerts by hand, the cost of covering an additional brand doesn't scale the way headcount-based coverage does. That's what makes it feasible to offer as a line item across a client book rather than reserve it for the largest few accounts.
+Automation changes the underlying cost structure. When continuous monitoring, scoring, and plain-language summaries are handled by automated analysis instead of a team of human analysts triaging alerts by hand, the cost of covering an additional brand doesn't scale the way headcount-based coverage does. That's what makes it feasible to offer as a line item across a client book rather than reserve it for the largest few accounts.
 
 ### Where to go from here
 

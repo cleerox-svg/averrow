@@ -6,9 +6,9 @@
  * Renders the full <!doctype html>, head meta, pre-paint theme script,
  * top nav, page body, footer.
  *
- * The theme cycle island is mounted inside Nav.astro; this layout
- * just sets data-theme via the pre-paint inline script so first
- * paint matches the user's saved (or OS) preference without flash.
+ * The theme toggle island is mounted in Footer.astro; this layout just
+ * sets data-theme via the pre-paint inline script (dark unless the visitor
+ * saved "light") so first paint is correct without a flash.
  */
 import "../styles/global.css";
 import Nav from "../components/Nav.astro";
@@ -50,7 +50,7 @@ const orgJsonLd = {
   logo: new URL("/brand/averrow-512.png", siteOrigin).toString(),
   image: ogImageUrl,
   description:
-    "AI-first Digital Risk Protection (DRPS) and brand protection — detect and shut down impersonation, phishing, and brand abuse across domains, email, and social.",
+    "Digital risk protection and brand protection — find lookalike domains, fake social profiles, cloned apps and phishing kits aimed at your brand, link them to the operation behind them, and file the takedowns.",
   parentOrganization: { "@type": "Organization", name: "LRX Enterprises Inc." },
 };
 ---
@@ -97,25 +97,15 @@ const orgJsonLd = {
     />
 
     <script is:inline>
-      // Pre-paint theme load — avoids a flash. Three modes match the
-      // back-end sidebar: auto / dark / light. Auto resolves from
-      // prefers-color-scheme. data-theme always ends up either 'dark'
-      // or 'light' so CSS rules apply; the saved mode (including 'auto')
-      // is what the ThemeCycle island reads on hydration.
+      // Pre-paint theme load — avoids a flash. Dark is the default: only an
+      // explicit saved "light" switches it. prefers-color-scheme is
+      // intentionally ignored; the footer toggle is the only way to change it.
       (function () {
+        var theme = "dark";
         try {
-          const saved = localStorage.getItem("averrow-theme");
-          let resolved = "dark";
-          if (saved === "light" || saved === "dark") {
-            resolved = saved;
-          } else {
-            const prefersLight =
-              window.matchMedia &&
-              window.matchMedia("(prefers-color-scheme: light)").matches;
-            resolved = prefersLight ? "light" : "dark";
-          }
-          document.documentElement.setAttribute("data-theme", resolved);
+          if (localStorage.getItem("averrow-theme") === "light") theme = "light";
         } catch (e) {}
+        document.documentElement.setAttribute("data-theme", theme);
       })();
     </script>
   </head>

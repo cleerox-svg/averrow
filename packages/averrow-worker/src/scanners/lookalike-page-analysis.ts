@@ -494,7 +494,7 @@ export async function raiseUnalertedPhishingPageAlert(
       'Consider an expedited takedown or registrar abuse report',
       'Check whether credentials may already have been submitted',
     ],
-  });
+  }, { env });
 
   // Null = `createAlert`'s NX2 tier gate declined the insert
   // (brands.tier = 'tracked'). Nothing to link, nothing raised.

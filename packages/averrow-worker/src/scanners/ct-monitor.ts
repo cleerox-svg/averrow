@@ -338,7 +338,7 @@ async function processCertEntries(
             },
             sourceType: 'ct_certificate',
             sourceId: certId,
-          });
+          }, { env });
 
           // Update the certificate record with the alert ID
           await env.DB.prepare(

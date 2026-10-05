@@ -6,6 +6,7 @@
  * flight_control and architect are protected from auto-trip.
  */
 
+import { runInAlertScope, drainAlertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS } from "./alert-events";
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry } from "./d1-retry";
@@ -443,7 +444,12 @@ export async function executeAgent(
   const start = Date.now();
 
   try {
-    const result = await agentModule.execute(ctx);
+    // The agent runs in its own alert-delivery scope so the drain below
+    // waits only on THIS run's alert.created deliveries, and never longer
+    // than ALERT_SCOPE_DRAIN_DEADLINE_MS. Anything still pending is left to
+    // the Worker entrypoint's ctx.waitUntil drain (lib/alert-events.ts).
+    const { result, scope: alertScope } = await runInAlertScope(() => agentModule.execute(ctx));
+    await drainAlertScope(alertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS);
     const durationMs = Date.now() - start;
 
     // Persist agent outputs if any

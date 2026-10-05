@@ -194,7 +194,7 @@ export const typosquat_scanner: FeedModule = {
                 `This indicates a sophisticated phishing operation.`,
               details: { domain: variant, brand_domain: brand.canonical_domain },
               sourceType: "typosquat_scanner",
-            });
+            }, { env });
           }
 
           await markSeen(ctx.env, "domain", dedupKey);

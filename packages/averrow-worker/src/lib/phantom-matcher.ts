@@ -353,7 +353,7 @@ async function matchSource(
         },
         sourceType: "phantom",
         sourceId: row.phantom_id,
-      });
+      }, { env });
     } catch {
       // Alert creation is non-fatal: the prediction was still validated and
       // the phantom is already flipped to 'registered'. Leave alert_id NULL.

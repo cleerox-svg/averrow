@@ -1,7 +1,7 @@
 ---
 /*
  * Abuse Mailbox product page. Customer-branded report-fraud inbox with
- * AI auto-triage and automated response. Self-contained: hero, how-it-
+ * automated classification and automated response. Self-contained: hero, how-it-
  * works, #setup (forwarding guide — the tenant UI deep-links here), what
  * you get, CTA.
  *
@@ -13,18 +13,19 @@ import Layout from "../layouts/Layout.astro";
 
 <Layout
   title="Abuse Mailbox — Averrow"
-  description="Give your customers and staff one address to report suspicious email. Averrow triages every report with AI in seconds, confirms real phishing, and emails back a verdict — turning your inbox into a live threat-detection feed."
+  description="Give your customers and staff one address to report suspicious email. Every report is classified automatically, with an automated second opinion on borderline cases. Confirmed phishing moves into your threat feed."
 >
   <section class="am-hero">
     <div class="container">
       <div class="am-eyebrow">Abuse Mailbox</div>
-      <h1>One address to report fraud.<br /><span class="hero-accent">Instant AI triage.</span></h1>
+      <h1>One address to report fraud.<br /><span class="hero-accent">Automatic triage.</span></h1>
       <p>
         Give your customers and team a single inbox to forward suspicious
-        email. Every report is parsed, classified, and verified by AI in
-        seconds &mdash; real phishing is confirmed and escalated, noise is
-        filtered, and the reporter gets a clear verdict back. Your abuse
-        inbox becomes a live detection feed instead of an unread folder.
+        email. Every report is acknowledged instantly and classified
+        automatically, with an automated second opinion on borderline
+        cases. Confirmed phishing moves into your threat feed, and the
+        reporter gets a clear verdict back. Your abuse inbox becomes a
+        live detection feed instead of an unread folder.
       </p>
 
       <div class="am-flow" aria-label="How a report moves through the mailbox">
@@ -37,7 +38,7 @@ import Layout from "../layouts/Layout.astro";
         <div class="am-flow-step">
           <div class="am-flow-num">02</div>
           <div class="am-flow-name">Triaged</div>
-          <div class="am-flow-desc">AI classifies + extracts the threat</div>
+          <div class="am-flow-desc">Classified automatically, threat extracted</div>
         </div>
         <div class="am-flow-arrow" aria-hidden="true">&rarr;</div>
         <div class="am-flow-step">
@@ -55,18 +56,16 @@ import Layout from "../layouts/Layout.astro";
         <div class="section-label">How it works</div>
         <h2>From forwarded email to confirmed threat</h2>
         <p>
-          The mailbox doesn&rsquo;t just store reports &mdash; it reasons
-          about them. Each forwarded message is unpacked down to the
-          original suspicious email, then checked the way an analyst
-          would, only in seconds.
+          The mailbox doesn&rsquo;t just store reports &mdash; it checks
+          them. Each forwarded message is unpacked down to the original
+          suspicious email, then classified automatically.
         </p>
         <ul class="am-features">
           <li>Unpacks the original message from inside the forward</li>
           <li>Extracts URLs, attachments, and sender authentication (SPF / DKIM / DMARC)</li>
-          <li>AI classification: phishing, malware, spam, or benign &mdash; with a confidence score</li>
-          <li>Confirmed phishing and malware promote straight into your threat feed</li>
+          <li>Automatic classification, with an automated second opinion on borderline cases</li>
+          <li>Confirmed phishing moves into your threat feed</li>
           <li>Matches the report against the brands you already monitor</li>
-          <li>Deep analysis on high-severity reports explains the verdict in plain language</li>
         </ul>
       </div>
       <div class="am-visual">
@@ -130,7 +129,7 @@ import Layout from "../layouts/Layout.astro";
         </div>
         <div class="am-card">
           <div class="am-card-title">Noise control</div>
-          <div class="am-card-desc">Per-sender throttling and confidence scoring keep the inbox signal, not spam.</div>
+          <div class="am-card-desc">Per-sender throttling and automatic classification keep the inbox signal, not spam.</div>
         </div>
         <div class="am-card">
           <div class="am-card-title">Intel rollup</div>
@@ -152,7 +151,7 @@ import Layout from "../layouts/Layout.astro";
         <ol class="am-steps">
           <li><strong>Get your alias.</strong> We provision a dedicated report address for your brand (for example, <span class="am-mono">report@yourbrand</span>) inside your tenant.</li>
           <li><strong>Share it.</strong> Publish it where customers report fraud, and set staff to forward anything suspicious.</li>
-          <li><strong>Forward suspicious mail.</strong> Each report is acknowledged instantly; verdicts and escalations appear in your inbox &mdash; usually within minutes, determinations within a day.</li>
+          <li><strong>Forward suspicious mail.</strong> Each report is acknowledged instantly; verdicts and escalations appear in your inbox &mdash; usually within minutes.</li>
         </ol>
         <div class="am-callout">Already a customer? Your alias and forwarding instructions live in the Abuse Mailbox module inside your dashboard.</div>
       </div>
@@ -161,7 +160,7 @@ import Layout from "../layouts/Layout.astro";
         <div class="am-check"><span class="am-check-mark">&#10003;</span> Branded report alias provisioned</div>
         <div class="am-check"><span class="am-check-mark">&#10003;</span> Forwarding instructions in-app</div>
         <div class="am-check"><span class="am-check-mark">&#10003;</span> Instant auto-acknowledgement</div>
-        <div class="am-check"><span class="am-check-mark">&#10003;</span> AI triage on every report</div>
+        <div class="am-check"><span class="am-check-mark">&#10003;</span> Automatic classification of every report</div>
         <div class="am-check am-check-last"><span class="am-check-mark">&#10003;</span> Verdicts + threat promotion</div>
       </div>
     </div>
@@ -201,7 +200,7 @@ import Layout from "../layouts/Layout.astro";
     margin-bottom: 1rem;
     line-height: 1.06;
   }
-  .hero-accent { color: var(--amber); }
+  .hero-accent { color: var(--amber-text); }
   .am-hero p {
     font-size: 18px;
     color: var(--text-secondary);
@@ -213,7 +212,7 @@ import Layout from "../layouts/Layout.astro";
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
     letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 0.85rem;
@@ -245,7 +244,7 @@ import Layout from "../layouts/Layout.astro";
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 700;
-    color: var(--amber);
+    color: var(--amber-text);
     letter-spacing: 0.1em;
   }
   .am-flow-name {
@@ -372,7 +371,7 @@ import Layout from "../layouts/Layout.astro";
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--red-text);
+    color: var(--sev-critical-text);
     background: rgba(200,60,60,0.08);
     border: 1px solid rgba(200,60,60,0.25);
     border-radius: 100px;

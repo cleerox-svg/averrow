@@ -17,23 +17,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Threat Detection — Averrow"
-  description="How Averrow's Digital Risk Protection platform detects phishing, lookalike domains, and breach exposure — 45+ feeds, continuous AI scanning."
+  description="How Averrow's Digital Risk Protection platform detects phishing, lookalike domains, and paste-site and leak-site mentions of your brand — 40+ sources, continuous scanning."
 >
   <section class="dd-td-hero">
     <div class="container">
       <a class="dd-td-breadcrumb" href={`${base}/platform`}>&larr; Platform Overview</a>
       <div class="dd-td-eyebrow">Capability 01 &middot; Threat Detection</div>
-      <h1>See attacks the moment<br /><span class="dd-td-accent">they surface.</span></h1>
+      <h1>See attacks<br /><span class="dd-td-accent">as they surface.</span></h1>
       <p>
-        The threat detection engine pulls from 45+ threat and intelligence
-        feeds around the clock &mdash; phishing databases, malware URL
+        The threat detection engine correlates 40+ threat and intelligence
+        sources continuously &mdash; phishing databases, malware URL
         lists, Certificate Transparency logs, DNS intelligence, and
-        credential-breach dumps &mdash; and hands every match to an AI
-        assessment step before it ever reaches your team.
+        paste-site and ransomware leak-site mentions &mdash; and runs every
+        match through automated scoring and triage before it reaches your
+        team.
       </p>
       <div class="dd-td-stat-row" aria-label="Detection coverage summary">
         <div class="dd-td-stat">
-          <div class="dd-td-stat-num">45+</div>
+          <div class="dd-td-stat-num">40+</div>
           <div class="dd-td-stat-label">Feeds &amp; sources</div>
         </div>
         <div class="dd-td-stat">
@@ -55,8 +56,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <h2>Six feed categories. One exposure picture.</h2>
       <p class="dd-td-section-p">
         Every feed is normalized into the same threat record, so a phishing
-        hit, a newly-issued lookalike certificate, and a breached credential
-        set all show up in the same place &mdash; correlated, not scattered
+        hit, a newly-issued lookalike certificate, and a paste-site mention
+        all show up in the same place &mdash; correlated, not scattered
         across six different dashboards.
       </p>
       <div class="dd-td-monitor-grid">
@@ -98,8 +99,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="dd-td-monitor-card">
           <span class="dd-td-monitor-bar" style="background:#C83C3C"></span>
           <div class="dd-td-monitor-body">
-            <h3>Credential-breach intel</h3>
-            <p>Breached credential sets that reference your domains, so account-takeover risk shows up as a brand-exposure signal, not a surprise.</p>
+            <h3>Paste &amp; leak-site mentions</h3>
+            <p>Paste-site and ransomware leak-site mentions of your brand, domains, and executives, so an early sign of a targeted attack shows up as a brand-exposure signal, not a surprise.</p>
           </div>
         </div>
       </div>
@@ -110,7 +111,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="dd-td-section dd-td-section-alt" id="feed-coverage">
     <div class="container">
       <div class="section-label">Feed Coverage</div>
-      <h2>What each category catches, and how fast</h2>
+      <h2>What each category catches</h2>
       <p class="dd-td-scroll-hint" aria-hidden="true">Scroll to see more &rarr;</p>
       <div class="dd-td-table-wrap">
         <table class="dd-td-table">
@@ -118,21 +119,20 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <tr>
               <th>Feed category</th>
               <th>What it catches</th>
-              <th>Update cadence</th>
               <th>Coverage</th>
             </tr>
           </thead>
           <tbody>
-            <tr><td>Phishing databases</td><td>Live phishing URLs</td><td>Real-time</td><td>Global</td></tr>
-            <tr><td>Malware URL feeds</td><td>Malicious payload hosts</td><td>Hourly</td><td>Global</td></tr>
-            <tr><td>Threat-intel feeds</td><td>Cross-community indicators of compromise</td><td>Real-time</td><td>Global</td></tr>
-            <tr><td>Certificate Transparency logs</td><td>New TLS certificates on lookalike domains</td><td>Real-time</td><td>All public CAs</td></tr>
-            <tr><td>DNS intelligence</td><td>Resolution &amp; hosting changes</td><td>Real-time</td><td>Global</td></tr>
-            <tr><td>Credential-breach intel</td><td>Breached accounts referencing your brand</td><td>Daily</td><td>Global</td></tr>
+            <tr><td>Phishing databases</td><td>Live phishing URLs</td><td>Global</td></tr>
+            <tr><td>Malware URL feeds</td><td>Malicious payload hosts</td><td>Global</td></tr>
+            <tr><td>Threat-intel feeds</td><td>Cross-community indicators of compromise</td><td>Global</td></tr>
+            <tr><td>Certificate Transparency logs</td><td>New TLS certificates on lookalike domains, checked hourly</td><td>Public CAs</td></tr>
+            <tr><td>DNS intelligence</td><td>Resolution &amp; hosting changes</td><td>Global</td></tr>
+            <tr><td>Paste &amp; leak-site mentions</td><td>Paste-site and ransomware leak-site mentions of your brand</td><td>Global</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="dd-td-table-note">These six categories span 45+ individual feeds and sources, reconciled continuously by the threat detection engine.</p>
+      <p class="dd-td-table-note">These six categories span 40+ individual sources, reconciled continuously by the threat detection engine.</p>
     </div>
   </section>
 
@@ -145,12 +145,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="dd-td-pipeline-card">
           <div class="dd-td-pipeline-num">01</div>
           <h3>Continuous, not batch</h3>
-          <p>Feeds are pulled around the clock rather than on a nightly schedule. A new phishing URL, a freshly-logged lookalike certificate, or a new breach dump enters the pipeline as soon as it&rsquo;s public.</p>
+          <p>Sources are checked around the clock rather than on a nightly schedule, so a new phishing URL or a freshly-logged lookalike certificate enters the pipeline promptly.</p>
         </div>
         <div class="dd-td-pipeline-card">
           <div class="dd-td-pipeline-num">02</div>
-          <h3>Parallel by design</h3>
-          <p>All 45+ feeds are processed concurrently rather than queued one behind the next, so a volume spike on one feed doesn&rsquo;t delay detection on the rest.</p>
+          <h3>One record, many sources</h3>
+          <p>Every source is normalised into the same threat record, so findings from different feeds can be correlated instead of living in separate dashboards.</p>
         </div>
         <div class="dd-td-pipeline-card">
           <div class="dd-td-pipeline-num">03</div>
@@ -165,33 +165,24 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="dd-td-section dd-td-section-alt" id="lookalike">
     <div class="container">
       <div class="section-label">Lookalike &amp; Typosquat Detection</div>
-      <h2>How we generate what to look for</h2>
+      <h2>What we look for</h2>
       <p class="dd-td-section-p">
         Attackers rarely register your exact domain &mdash; they register
-        something close enough to fool a rushed click. We generate and
-        monitor the same permutation space they use. Examples below use a
-        placeholder brand and are illustrative only.
+        something close enough to fool a rushed click. Every brand we
+        monitor gets continuous lookalike-domain coverage: newly registered
+        look-alikes, character swaps, and brand-plus-keyword domains.
+        Examples below use a placeholder brand and are illustrative only.
       </p>
       <div class="dd-td-technique-grid">
         <div class="dd-td-technique-card">
-          <h3>Homoglyph substitution</h3>
-          <p>Visually similar characters swapped in &mdash; zero for the letter O, Cyrillic look-alikes, &ldquo;rn&rdquo; standing in for &ldquo;m.&rdquo;</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">y0urbrand.com</span></div>
-        </div>
-        <div class="dd-td-technique-card">
-          <h3>TLD swaps</h3>
-          <p>The identical brand name registered under a different or unusual top-level domain.</p>
+          <h3>Newly registered look-alikes</h3>
+          <p>Domains registered close to your brand name, caught shortly after they appear.</p>
           <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">yourbrand.support</span></div>
         </div>
         <div class="dd-td-technique-card">
-          <h3>Separator variations</h3>
-          <p>Hyphens or underscores inserted into (or removed from) a brand name that normally reads as one word.</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">your-brand.com</span></div>
-        </div>
-        <div class="dd-td-technique-card">
-          <h3>Character insertion, omission &amp; transposition</h3>
-          <p>Extra, missing, or swapped letters &mdash; close enough to survive a glance on a small screen.</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">yuorbrand.com</span></div>
+          <h3>Character swaps</h3>
+          <p>Visually similar, extra, missing, or swapped characters &mdash; close enough to survive a glance on a small screen.</p>
+          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">y0urbrand.com</span></div>
         </div>
         <div class="dd-td-technique-card">
           <h3>Prefix / suffix combinations</h3>
@@ -202,26 +193,26 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <!-- ── DETECTION → AI ASSESSMENT → ALERT ── -->
+  <!-- ── DETECTION → AUTOMATED ASSESSMENT → ALERT ── -->
   <section class="dd-td-section" id="flow">
     <div class="container">
       <div class="section-label">From Signal to Action</div>
-      <h2>Detection &rarr; AI assessment &rarr; alert</h2>
+      <h2>Detection &rarr; automated assessment &rarr; alert</h2>
       <div class="dd-td-flow-row">
         <div class="dd-td-flow-card">
           <div class="dd-td-flow-icon" style="color:#C83C3C;background:rgba(200,60,60,0.1)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           </div>
           <h3>Detection</h3>
-          <p>A feed, a CT log, or a DNS change surfaces a domain, URL, or credential set matching your brand.</p>
+          <p>A feed, a CT log, or a DNS change surfaces a domain, URL, or mention matching your brand.</p>
         </div>
         <div class="dd-td-flow-arrow" aria-hidden="true">&rarr;</div>
         <div class="dd-td-flow-card">
           <div class="dd-td-flow-icon" style="color:#E5A832;background:rgba(229,168,50,0.1)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/></svg>
           </div>
-          <h3>AI assessment</h3>
-          <p>Deduplicated, checked against your safe-domains allowlist, and evaluated for real intent &mdash; registration age, active hosting, MX records.</p>
+          <h3>Automated assessment</h3>
+          <p>Deduplicated, checked against your safe-domains allowlist, and scored on signs of real intent &mdash; registration age, active hosting, MX records.</p>
         </div>
         <div class="dd-td-flow-arrow" aria-hidden="true">&rarr;</div>
         <div class="dd-td-flow-card">
@@ -229,12 +220,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           </div>
           <h3>Alert</h3>
-          <p>Only what clears assessment reaches your team &mdash; with a natural-language brief on why it matters, not a raw feed row.</p>
+          <p>Only what clears assessment reaches your team &mdash; with a plain-language summary of why it matters, not a raw feed row.</p>
         </div>
       </div>
       <p class="dd-td-flow-note">
-        The reasoning layer behind the assessment step is covered in depth on
-        <a href={`${base}/platform/ai-agents`}>the AI Agents deep dive</a>.
+        The analysis behind the assessment step is covered in depth on
+        <a href={`${base}/platform/ai-agents`}>the Automated Analysis page</a>.
       </p>
     </div>
   </section>
@@ -254,8 +245,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <p>The same domain reported by multiple feeds collapses into a single detection record instead of duplicate alerts competing for attention.</p>
         </div>
         <div class="dd-td-fp-card">
-          <h3>AI assessment as final filter</h3>
-          <p>Before an alert is raised, the finding is evaluated for real intent &mdash; not just pattern match &mdash; so your queue stays weighted toward things worth acting on.</p>
+          <h3>Automated triage as final filter</h3>
+          <p>Before an alert is raised, the finding is scored on more than a pattern match, so low-value noise is dismissed automatically and your queue stays weighted toward things worth acting on.</p>
         </div>
       </div>
     </div>
@@ -279,7 +270,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <div><span>Pattern match</span><strong>Prefix/suffix combination</strong></div>
         </div>
         <div class="dd-td-alert-narrative">
-          <div class="dd-td-alert-narrative-label"><span class="dd-td-alert-dot"></span> AI Assessment</div>
+          <div class="dd-td-alert-narrative-label"><span class="dd-td-alert-dot"></span> Automated assessment</div>
           &ldquo;A certificate was issued 36 hours ago for a domain combining your
           brand name with &lsquo;secure&rsquo; and &lsquo;login&rsquo; &mdash; a pattern common in
           credential-phishing kits. The domain now resolves with active MX
@@ -302,11 +293,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         </a>
         <a class="dd-td-explore-card" href={`${base}/platform/social-monitoring`}>
           <h3>Social Monitoring</h3>
-          <p>Impersonation detection across six platforms.</p>
+          <p>Impersonation detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube.</p>
         </a>
         <a class="dd-td-explore-card" href={`${base}/platform/ai-agents`}>
-          <h3>AI Agents</h3>
-          <p>The reasoning layer behind every assessment.</p>
+          <h3>Automated Analysis</h3>
+          <p>The correlation and scoring behind every assessment.</p>
         </a>
         <a class="dd-td-explore-card" href={`${base}/platform/campaign-intelligence`}>
           <h3>Campaign Intelligence</h3>
@@ -324,10 +315,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="dd-td-cta">
     <div class="container">
       <h2>See what&rsquo;s already targeting your brand.</h2>
-      <p>Run a free exposure scan in under five minutes, or talk to us about full deployment.</p>
+      <p>Run a free exposure scan in minutes, or talk to us about full deployment.</p>
       <div class="dd-td-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>
@@ -350,12 +341,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 1.25rem;
     text-decoration: none;
   }
-  .dd-td-breadcrumb:hover { color: var(--amber); text-decoration: none; }
+  .dd-td-breadcrumb:hover { color: var(--amber-text); text-decoration: none; }
   .dd-td-eyebrow {
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
     letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 0.85rem;
@@ -367,7 +358,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 1rem;
     line-height: 1.08;
   }
-  .dd-td-accent { color: var(--amber); }
+  .dd-td-accent { color: var(--amber-text); }
   .dd-td-hero p {
     font-size: 18px;
     color: var(--text-secondary);
@@ -395,7 +386,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-display);
     font-size: 1.6rem;
     font-weight: 800;
-    color: var(--amber);
+    color: var(--amber-text);
     line-height: 1.1;
   }
   .dd-td-stat-label {
@@ -532,7 +523,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-mono);
     font-size: 0.75rem;
     font-weight: 700;
-    color: var(--amber);
+    color: var(--amber-text);
     letter-spacing: 0.1em;
     margin-bottom: 0.6rem;
   }
@@ -568,7 +559,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     flex-wrap: wrap;
   }
   .dd-td-example-from { color: var(--text-tertiary); }
-  .dd-td-example-arrow { color: var(--amber); }
+  .dd-td-example-arrow { color: var(--amber-text); }
   .dd-td-example-to { color: var(--red-text); font-weight: 600; }
 
   /* ── FLOW ── */
@@ -609,7 +600,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     color: var(--text-tertiary);
     margin-top: 1.5rem;
   }
-  .dd-td-flow-note a { color: var(--amber); }
+  .dd-td-flow-note a { color: var(--amber-text); }
 
   /* ── FALSE POSITIVES ── */
   .dd-td-fp-grid {
@@ -706,7 +697,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-family: var(--font-mono);
     font-size: 0.68rem;
     font-weight: 600;
-    color: var(--amber);
+    color: var(--amber-text);
     margin-bottom: 0.6rem;
     display: flex;
     align-items: center;

@@ -25,6 +25,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         behalf. This page explains what ours covers and how to get
         one &mdash; it is <strong>not</strong> the agreement itself.
       </p>
+      <p class="dpa-updated-line">Updated 5 Oct 2026</p>
     </div>
   </section>
 
@@ -72,7 +73,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           PIPEDA &mdash; a DPA formalizes that relationship. This
           typically applies to <strong>Business</strong> and
           <strong>Enterprise</strong> plan customers. Professional and
-          Free Scan users are welcome to request one too; we just
+          free-scan users are welcome to request one too; we just
           haven&rsquo;t needed to standardize it for that tier yet.
         </p>
       </div>
@@ -92,11 +93,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="dpa-summary-grid">
           <div class="dpa-summary-item">
             <h4><span class="dpa-dot" style="background:var(--accent)"></span>Sub-processors</h4>
-            <p>Cloudflare (edge compute, database, cache, and storage) and our AI model provider (inference, routed through an AI gateway). No customer data goes further than that.</p>
+            <ul class="dpa-sub-list">
+              <li><strong>Cloudflare</strong> &mdash; hosting, database, cache, storage and email routing; also runs the automated second-opinion classification used by the Abuse Mailbox.</li>
+              <li><strong>Resend</strong> &mdash; transactional email delivery (sign-in links, invitations, report acknowledgements and notifications).</li>
+              <li><strong>Stripe</strong> &mdash; payment processing and subscription billing.</li>
+              <li><strong>Google</strong> &mdash; sign-in with Google, where a user chooses it.</li>
+            </ul>
+            <p>No third-party AI model provider currently receives customer data. If that changes, this list will be updated first.</p>
           </div>
           <div class="dpa-summary-item">
-            <h4><span class="dpa-dot" style="background:var(--green)"></span>Minimal personal data</h4>
-            <p>Averrow scans public signals &mdash; domains, public DNS records, public social profiles, and threat feed matches. We don&rsquo;t collect email content, credentials, or internal network data. Public scans record at most the approximate country of the request; we don&rsquo;t store visitor IP, city, or coordinates.</p>
+            <h4><span class="dpa-dot" style="background:var(--green)"></span>Personal data we process</h4>
+            <p>Averrow scans public signals &mdash; domains, public DNS records, public social profiles, and threat feed matches. We also hold account information for your users (name, email address, sign-in method). For the Abuse Mailbox, we store the reporter&rsquo;s email address, the original sender, the subject, and a short excerpt (up to 500 characters) of each reported message. We don&rsquo;t collect credentials or internal network data. Public scans record at most the approximate country of the request; we don&rsquo;t store visitor IP, city, or coordinates.</p>
           </div>
           <div class="dpa-summary-item">
             <h4><span class="dpa-dot" style="background:var(--accent)"></span>Encrypted at rest and in transit</h4>
@@ -111,8 +118,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           <span class="dpa-pill">GDPR-aligned processing</span>
           <span class="dpa-pill">PIPEDA</span>
           <span class="dpa-pill">WCAG 2.1 AA</span>
-          <span class="dpa-pill dpa-pill-scheduled">SOC 2 Type I &mdash; Q3 2026</span>
+          <span class="dpa-pill dpa-pill-scheduled">SOC 2 Type I: in preparation</span>
         </div>
+        <p class="dpa-updated">Ask us for our current security documentation through the <a href={`${base}/contact`}>contact form</a>.</p>
       </div>
     </div>
   </section>
@@ -150,6 +158,27 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     line-height: 1.7;
   }
   .dpa-hero p strong { color: var(--text-primary); }
+  .dpa-hero p.dpa-updated-line {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-top: 1rem;
+  }
+  .dpa-sub-list {
+    list-style: none;
+    padding: 0 0 0 1.3rem;
+    margin: 0 0 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .dpa-sub-list strong { color: var(--text-primary); }
+  .dpa-content p.dpa-updated { margin-top: 1rem; font-size: 14px; }
 
   .dpa-notice { max-width: 900px; margin: 0 auto; padding: 1.75rem 2rem 0; }
   .dpa-notice-card {
@@ -163,7 +192,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     border-left: 3px solid var(--amber);
     border-radius: var(--radius-md);
   }
-  .dpa-notice-card svg { width: 26px; height: 26px; color: var(--amber); margin-top: 2px; }
+  .dpa-notice-card svg { width: 26px; height: 26px; color: var(--amber-text); margin-top: 2px; }
   .dpa-notice-text {
     font-family: var(--font-body);
     color: var(--text-secondary);
@@ -175,7 +204,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     font-size: 11px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--amber);
+    color: var(--amber-text);
     display: block;
     margin-bottom: 4px;
   }

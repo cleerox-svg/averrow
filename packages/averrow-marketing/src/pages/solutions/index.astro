@@ -11,14 +11,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 <Layout
   title="Solutions — Averrow"
-  description="Digital Risk Protection (DRPS) for how your team actually works — mid-market companies without a SOC, MSSPs adding a new offering, and startups protecting their name."
+  description="Digital Risk Protection for how your team actually works — mid-market companies without a SOC, MSSPs adding a new offering, and startups protecting their name."
 >
   <section class="sol-hero">
     <div class="container">
       <div class="section-label" style="text-align:center;">Solutions</div>
       <h1>Solutions for<br /><span class="hero-accent">every team.</span></h1>
       <p>
-        Same 42-agent mesh. Same 45+ threat &amp; intelligence feeds. Configured
+        Same automated analysis. Same 40+ threat &amp; intelligence sources. Configured
         around how your organization actually operates &mdash; not a one-size
         dashboard. Pick the path that matches your team.
       </p>
@@ -43,11 +43,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </div>
           <div class="sol-persona-eyebrow">50&ndash;500 Employees</div>
           <h2 class="sol-persona-title">Mid-Market</h2>
-          <p class="sol-persona-desc">Brand protection without a SOC &mdash; continuous monitoring that replaces the analyst team you don&rsquo;t have.</p>
+          <p class="sol-persona-desc">Brand protection without a SOC &mdash; continuous monitoring that takes the first pass off the analyst team you don&rsquo;t have.</p>
           <ul class="sol-persona-list">
-            <li>Full 42-agent mesh, zero added headcount</li>
+            <li>Automated triage, so your team reviews decisions instead of raw alerts</li>
             <li>Professional plan at $1,499/mo</li>
-            <li>Daily strategic intel briefings, not alert floods</li>
+            <li>Alerts in-app, by email and by push</li>
           </ul>
           <span class="sol-persona-link">See the Mid-Market path &rarr;</span>
         </a>
@@ -65,10 +65,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </div>
           <div class="sol-persona-eyebrow">Managed Security Providers</div>
           <h2 class="sol-persona-title">MSSP &amp; MDR</h2>
-          <p class="sol-persona-desc">Add brand threat intelligence to your services &mdash; multi-tenant, API-first, built to sit inside an existing stack.</p>
+          <p class="sol-persona-desc">Add brand threat intelligence to your services &mdash; multi-tenant, built to sit inside an existing stack.</p>
           <ul class="sol-persona-list">
             <li>Org-isolated multi-tenant architecture</li>
-            <li>STIX/TAXII + REST API &mdash; live today</li>
+            <li>Webhooks and SIEM / ticketing connectors, set up with our team</li>
             <li>Business plan covers up to 10 brands</li>
           </ul>
           <span class="sol-persona-link">See the MSSP path &rarr;</span>
@@ -101,10 +101,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="sol-cta">
     <div class="container">
       <h2>Not sure which fits? Talk to us.</h2>
-      <p>Get a walkthrough of the platform tailored to your team, or see what&rsquo;s already targeting your brand in under five minutes.</p>
+      <p>Get a walkthrough of the platform tailored to your team, or see what&rsquo;s already targeting your brand in minutes.</p>
       <div class="sol-cta-actions">
         <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/`} class="btn btn-outline">Run a Free Scan</a>
+        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
       </div>
     </div>
   </section>
@@ -123,7 +123,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     margin-bottom: 1rem;
     line-height: 1.05;
   }
-  .hero-accent { color: var(--amber); }
+  .hero-accent { color: var(--amber-text); }
   .sol-hero p {
     font-size: 18px;
     color: var(--text-secondary);

@@ -220,7 +220,10 @@ export async function runExecutiveMonitorBatch(
           },
           sourceType: 'executive_monitor',
           sourceId: exec.id,
-        });
+          // Org-private (orgId above) — createAlert emits alert.created to
+          // the owning org ONLY (G4).
+          eventData: { platform: candidate.platform, handle: candidate.handle },
+        }, { env });
         if (alertId) stats.alerts_created++;
       }
     } catch {

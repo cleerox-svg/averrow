@@ -80,7 +80,7 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     kind: "Feature",
     title: "Social Brand Monitoring",
     description:
-      "Monitor 6 social platforms for brand impersonation with AI-powered confidence scoring.",
+      "Monitor 6 social platforms (X, LinkedIn, Instagram, TikTok, GitHub and YouTube) for brand impersonation with confidence scoring.",
   },
   {
     version: "v2.3.0",
@@ -96,15 +96,15 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     kind: "Improvement",
     title: "DKIM Selector Expansion",
     description:
-      "Added 12+ enterprise email selectors across major enterprise email security providers.",
+      "Expanded DKIM selector coverage across major enterprise email security providers.",
   },
   {
     version: "v2.2.0",
     publishedAt: "2026-03-01",
     kind: "Feature",
-    title: "AI Threat Narratives",
+    title: "Threat Summaries",
     description:
-      "The scoring & triage engine now generates multi-signal threat narratives connecting email, domain, and social findings.",
+      "Scoring and triage now produces multi-signal threat summaries connecting email, domain, and social findings.",
   },
   {
     version: "v2.1.0",
@@ -112,7 +112,7 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     kind: "Feature",
     title: "Lookalike Domain Detection",
     description:
-      "Comprehensive domain permutation engine with typosquat, homoglyph, and TLD swap detection.",
+      "Continuous lookalike-domain detection for monitored brands.",
   },
   {
     version: "v2.0.1",
@@ -128,7 +128,7 @@ export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     kind: "Feature",
     title: "Platform Launch",
     description:
-      "Averrow v2 with AI-powered threat detection, email security engine, and daily briefings.",
+      "Averrow v2 with automated threat detection and an email security engine.",
   },
   {
     version: "v1.9.0",

@@ -11,7 +11,6 @@
 import { nameSimilarity } from "./impersonation-scorer";
 import { searchITunesApps, type ITunesApp } from "../feeds/itunes";
 import { createAlert } from "../lib/alerts";
-import { emitOrgEvent } from "../lib/org-events";
 import { logger } from "../lib/logger";
 import { checkCostGuard } from "../lib/haiku";
 import { callAnthropicText, AnthropicError } from "../lib/anthropic";
@@ -305,11 +304,6 @@ export async function runAppStoreMonitorForBrand(
     alertUserId = monitoredBy?.added_by ?? null;
   }
 
-  // Resolve org for webhooks.
-  const orgRow = await env.DB.prepare(
-    "SELECT org_id FROM org_brands WHERE brand_id = ? LIMIT 1",
-  ).bind(brand.id).first<{ org_id: number }>();
-
   for (const app of apps) {
     const verdict = classifyApp(ctx, app, STORE_IOS);
     if (verdict.classification === "unknown") continue;
@@ -411,22 +405,15 @@ export async function runAppStoreMonitorForBrand(
           },
           sourceType: "app_store_monitor",
           sourceId: listingId,
-        });
-
-        if (orgRow?.org_id) {
-          emitOrgEvent(env, orgRow.org_id, "alert.created", {
-            alert_id: alertId,
-            brand_name: brand.name,
-            brand_domain: brand.domain,
-            severity: verdict.severity,
-            title: `Possible impersonation app: "${app.app_name}"`,
-            alert_type: "app_store_impersonation",
+          eventData: {
             store: STORE_IOS,
             app_id: app.app_id,
             app_url: app.app_url,
             impersonation_score: verdict.impersonation_score,
-          }).catch(() => {});
-        }
+          },
+        }, { env });
+
+        // alert.created fans out from createAlert itself (G4).
       } catch (alertErr) {
         logger.error("app_store_monitor_alert_error", {
           brand_id: brand.id,

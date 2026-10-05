@@ -684,7 +684,7 @@ async function fileBimiAlert(
     },
     sourceType: 'lookalike_scanner',
     sourceId: row.id,
-  });
+  }, { env });
 }
 
 /**
@@ -1344,7 +1344,7 @@ async function compositeAndPersist(
             'Continue monitoring for content changes',
             'Check periodically for brand impersonation',
           ],
-    });
+    }, { env });
 
     // Link the alert back to the lookalike record. Guarded on a non-null
     // id: both the floor above and `createAlert`'s NX2 tier gate can

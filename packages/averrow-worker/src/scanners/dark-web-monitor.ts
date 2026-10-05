@@ -11,7 +11,6 @@
 
 import { searchPastes, fetchPasteContent, type PasteMention } from "../feeds/psbdmp";
 import { createAlert } from "../lib/alerts";
-import { emitOrgEvent } from "../lib/org-events";
 import { logger } from "../lib/logger";
 import { checkCostGuard } from "../lib/haiku";
 import { callAnthropicText, AnthropicError } from "../lib/anthropic";
@@ -377,9 +376,6 @@ export async function runDarkWebMonitorForBrand(
     ).bind(brand.id).first<{ added_by: string }>();
     alertUserId = monitoredBy?.added_by ?? null;
   }
-  const orgRow = await env.DB.prepare(
-    "SELECT org_id FROM org_brands WHERE brand_id = ? LIMIT 1",
-  ).bind(brand.id).first<{ org_id: number }>();
 
   // 3. Fetch body + classify + upsert, one paste at a time.
   for (const paste of pastes) {
@@ -479,21 +475,14 @@ export async function runDarkWebMonitorForBrand(
           },
           sourceType: "dark_web_monitor",
           sourceId: mentionId,
-        });
-
-        if (orgRow?.org_id) {
-          emitOrgEvent(env, orgRow.org_id, "alert.created", {
-            alert_id: alertId,
-            brand_name: brand.name,
-            brand_domain: brand.domain,
-            severity: verdict.severity,
-            title: `Dark-web mention: ${brand.name} on ${SOURCE_PASTEBIN}`,
-            alert_type: "dark_web_mention",
+          eventData: {
             source: SOURCE_PASTEBIN,
             source_url: paste.url,
             score: verdict.score,
-          }).catch(() => {});
-        }
+          },
+        }, { env });
+
+        // alert.created fans out from createAlert itself (G4).
       } catch (alertErr) {
         logger.error("dark_web_monitor_alert_error", {
           brand_id: brand.id,
