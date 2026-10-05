@@ -1,0 +1,94 @@
+---
+/*
+ * Illustrative sample finding for one Coverage tile. Fictional brand "Acme"
+ * and .example domains only. Outcomes ("High", "Likely fake", "Copycat"),
+ * never internal scores, permutation types or thresholds
+ * (docs/DISCLOSURE_REGISTER.md). Every status carries text, so severity is
+ * never conveyed by colour alone.
+ */
+interface Props {
+  surface: string;
+}
+const { surface } = Astro.props;
+
+type Tone = "high" | "med" | "low" | "new";
+interface Row {
+  text: string;
+  mono?: boolean;
+  status?: string;
+  pill: string;
+  tone: Tone;
+}
+interface Sample {
+  rows?: Row[];
+  note?: string;
+  grades?: Array<{ label: string; grade: string; good: boolean }>;
+  label: string;
+}
+
+const SAMPLES: Record<string, Sample> = {
+  lookalike: {
+    label: "Sample lookalike findings",
+    rows: [
+      { text: "acme-payroll-login.example", mono: true, status: "live login page", pill: "High", tone: "high" },
+      { text: "acrne.example", mono: true, status: "registered · parked", pill: "Medium", tone: "med" },
+      { text: "acme-support.example", mono: true, status: "not registered · watching", pill: "Watch", tone: "low" },
+    ],
+  },
+  tls: {
+    label: "Sample certificate finding",
+    rows: [{ text: "acme-login.example", mono: true, pill: "New cert", tone: "new" }],
+    note: "issued by a free CA · 2 SANs",
+  },
+  email: {
+    label: "Sample email authentication grades",
+    grades: [
+      { label: "SPF", grade: "A", good: true },
+      { label: "DKIM", grade: "A", good: true },
+      { label: "DMARC", grade: "F", good: false },
+    ],
+  },
+  social: {
+    label: "Sample social profile finding",
+    rows: [{ text: "@acme_hr_support", mono: true, status: "Instagram · created 11 days ago", pill: "Likely fake", tone: "high" }],
+  },
+  executive: {
+    label: "Sample executive impersonation finding",
+    rows: [{ text: "J. Rivera, CFO", pill: "Fake profile", tone: "high" }],
+    note: "LinkedIn · not the official handle",
+  },
+  apps: {
+    label: "Sample app store finding",
+    rows: [{ text: "“Acme Pay”", pill: "Copycat", tone: "high" }],
+    note: "developer is not Acme",
+  },
+  darkweb: {
+    label: "Sample dark web finding",
+    rows: [{ text: "Paste site mention", pill: "Review", tone: "med" }],
+    note: "“acme.example staff list”, 2 days ago",
+  },
+  abuse: {
+    label: "Sample abuse mailbox finding",
+    rows: [{ text: "Reported by an employee", pill: "Phishing", tone: "high" }],
+    note: "added to your threat queue",
+  },
+};
+
+const s = SAMPLES[surface];
+---
+
+{s && (
+  <div class:list={["cv-ui", s.grades && "cv-grades"]} role="group" aria-label={s.label}>
+    {s.grades?.map((g) => (
+      <span class="cv-g"><i>{g.label}</i><b class={g.good ? "good" : "bad"}>{g.grade}</b></span>
+    ))}
+    {s.rows?.map((r) => (
+      <div class="cv-r">
+        <span class:list={[r.mono && "cv-mono"]}>{r.text}</span>
+        {r.status && <span class="cv-st">{r.status}</span>}
+        <span class={`cv-pill ${r.tone}`}>{r.pill}</span>
+      </div>
+    ))}
+    {s.note && <div class="cv-note">{s.note}</div>}
+  </div>
+)}

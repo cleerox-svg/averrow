@@ -136,6 +136,16 @@ export function roundLabel(n: number): string {
   return `${(Math.floor(n / step) * step).toLocaleString("en-US")}+`;
 }
 
+/**
+ * Label for the 30-day lookalike count: the live build value rounded, else the
+ * published fallback, else null (callers omit the figure; never show 0).
+ * Shared by ByTheNumbers and Coverage so both render the same string.
+ */
+export function lookalikes30dLabel(live: number | null | undefined, fallback: string | null | undefined): string | null {
+  if (live) return roundLabel(live);
+  return fallback ? fallback : null;
+}
+
 /** "5 Oct 2026, 11:38 UTC" (deterministic, independent of the viewer's zone). */
 export function utcStamp(iso: string | number | Date): string | null {
   const d = new Date(iso);
