@@ -116,7 +116,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in the free scan, monitored continuously</li>
-          <li>1 brand &mdash; continuous monitoring</li>
           <li>Domain monitoring: lookalike domains and certificate-transparency checks</li>
           <li>Social impersonation monitoring (X, LinkedIn, Instagram, TikTok, GitHub, YouTube)</li>
           <li>Look-alike apps on the Apple App Store</li>
@@ -146,7 +145,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Professional</li>
-          <li>Up to 10 brands</li>
           <li>Dedicated account manager</li>
           <li>Dark web monitoring: paste-site and ransomware leak-site mentions of your brand</li>
           <li>Trademark monitoring: misuse of your name across domains, social and apps in one view</li>
@@ -167,7 +165,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <div class="price-divider"></div>
         <ul class="price-features">
           <li>Everything in Business</li>
-          <li>Unlimited brands</li>
           <li><a href={`${base}/abuse-mailbox`} style="color:inherit;text-decoration:underline;text-underline-offset:2px;">Abuse Mailbox</a> &mdash; branded report inbox with automatic classification</li>
           <li>Threat-actor intelligence: infrastructure correlation into operations and campaigns</li>
           <li>SLA guarantees</li>
@@ -199,7 +196,6 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
           </tr>
         </thead>
         <tbody>
-          <tr><td>Brands</td><td>1 scan</td><td>1</td><td>Up to 10</td><td>Unlimited</td></tr>
           <tr><td>Monitoring</td><td>One-time</td><td>Continuous 24/7</td><td>Continuous 24/7</td><td>Continuous 24/7</td></tr>
           <tr><td>Email Security Posture</td><td>Grade only</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td><td class="ct-yes">&#10003; Full monitoring</td></tr>
           <tr><td>Domain Monitoring (lookalikes, certificate transparency)</td><td>Lookalike scan</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td><td class="ct-yes">&#10003;</td></tr>
@@ -380,7 +376,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .pricing-toggle-btn.active {
     background: var(--accent);
-    color: white;
+    color: var(--btn-primary-ink);
     border-color: var(--accent);
   }
   .pricing-save-badge {
@@ -439,7 +435,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     left: 50%;
     transform: translateX(-50%);
     background: var(--accent);
-    color: white;
+    color: var(--btn-primary-ink);
     font-family: var(--font-mono);
     font-size: 0.68rem;
     font-weight: 600;
@@ -529,7 +525,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   }
   .compare-table tr:last-child td { border-bottom: none; }
   .compare-table td:first-child { font-weight: 600; color: var(--text-primary); }
-  .ct-no { color: var(--accent); }
+  .ct-no { color: var(--red-text); }
   .ct-yes { color: var(--green-text); }
 
   .faq-section { padding: 3rem 0; }
