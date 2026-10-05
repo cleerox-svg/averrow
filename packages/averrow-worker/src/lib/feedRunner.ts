@@ -680,8 +680,8 @@ async function autoPauseFeed(
   // notifications.
   //
   // "served no data on N consecutive days" is the same class stated by a
-  // feed that already probed more than one upstream window itself (nrd
-  // walks yesterday AND the day before). A feed that reports every window
+  // feed that already probed more than one upstream window itself (the
+  // former WhoisDS nrd source walked yesterday AND the day before). A feed that reports every window
   // as 200-but-zero-bytes is not having a bad minute — its source is gone,
   // so it gets the sticky reason rather than the 4-hourly revive loop.
   // Transient shapes stay transient: an HTTP 5xx surfaces as "HTTP 503",

@@ -1,4 +1,4 @@
-// nrd_hagezi stores the whole daily NRD list (50K–180K domains) in
+// nrd_hagezi stores every NEW domain of the daily diff (~443K/day) in
 // nrd_domains. The old insert bound 500 rows × 2 = 1000 params per statement
 // and every prod pull died with "too many SQL variables at offset 418". The
 // SQLite harness allows ~32K binds, so the D1 here is wrapped to throw like
@@ -11,8 +11,10 @@ import {
   storeNrdReference,
   NRD_DOMAINS_PER_STATEMENT,
   NRD_STATEMENTS_PER_BATCH,
+  NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
+import { fakeR2Bucket, gzipText } from "./fake-r2-bucket";
 import type { Env } from "../src/types";
 
 const D1_MAX_BINDS = 100;
@@ -52,6 +54,14 @@ let db: D1Database;
 const count = (sql: string, ...p: unknown[]): number =>
   (raw.prepare(sql).all(...p)[0] as { n: number }).n;
 
+/** Env with an EMPTY prior R2 snapshot, so the diff treats every listed domain as new. */
+async function envWithEmptyPrior(): Promise<Env> {
+  const { bucket } = fakeR2Bucket({
+    [NRD_SNAPSHOT_KEY]: { bytes: await gzipText(""), customMetadata: { version: "prior" } },
+  });
+  return { DB: db, CACHE: fakeKv(), GEOIP_STAGING: bucket } as unknown as Env;
+}
+
 describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
   beforeEach(() => {
     raw = openDerivedDb(["brands", "monitored_brands", "threats"]);
@@ -71,7 +81,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
     expect(count("SELECT COUNT(*) AS n FROM nrd_domains WHERE registered_date = '2026-10-03'")).toBe(1000);
   });
 
-  it("a 180K-domain day stays ≤100 binds and needs only a handful of batch calls", async () => {
+  it("a 180K-domain flush stays ≤100 binds and needs only a handful of batch calls", async () => {
     const n = 180_000;
     await storeNrdReference(db, domainList(n), "2026-10-03");
 
@@ -96,7 +106,7 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
     expect(count("SELECT COUNT(*) AS n FROM nrd_domains WHERE registered_date = '2026-10-03'")).toBe(500);
   });
 
-  it("full ingest: 1000-domain plain-text archive lands, brand matching still fires", async () => {
+  it("full ingest: 1000-domain list diffed against an empty snapshot lands, brand matching still fires", async () => {
     raw.exec(`
       INSERT INTO brands (id, name, canonical_domain) VALUES ('b_acme', 'Acme Bank', 'acmebank.com');
       INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b_acme', '__internal__', 'u1', 'active');
@@ -108,9 +118,10 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
       "acmeb4nk-secure.example", // homoglyph a→4 hit
       "acmebank.com", // the brand's own canonical domain — never a threat
     ];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(`# header\n${domains.join("\n")}\n`, { status: 200 })));
+    const body = `# header\n${[...domains].sort().join("\n")}\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 200 })));
 
-    const env = { DB: db, CACHE: fakeKv() } as unknown as Env;
+    const env = await envWithEmptyPrior();
     const result = await nrd_hagezi.ingest({ env, feedName: "nrd_hagezi", feedUrl: "" });
 
     expect(stats.maxBinds).toBeLessThanOrEqual(D1_MAX_BINDS);
@@ -128,9 +139,9 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — D1 100-bind limit", () => {
       INSERT INTO monitored_brands (brand_id, tenant_id, added_by, status) VALUES ('b_hp', '__internal__', 'u1', 'active');
     `);
     const domains = ["hp-support.example", "shopping.example", "hplogin.example"];
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(`${domains.join("\n")}\n`, { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`${[...domains].sort().join("\n")}\n`, { status: 200 })));
 
-    const env = { DB: db, CACHE: fakeKv() } as unknown as Env;
+    const env = await envWithEmptyPrior();
     const result = await nrd_hagezi.ingest({ env, feedName: "nrd_hagezi", feedUrl: "" });
 
     expect(result.itemsFetched).toBe(3);

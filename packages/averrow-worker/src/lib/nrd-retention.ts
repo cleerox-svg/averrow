@@ -1,8 +1,9 @@
 // NRD retention — daily purge of old `nrd_domains` rows.
 //
 // `nrd_domains` is the reference table every newly-registered domain lands
-// in (feeds/nrd_hagezi.ts storeNrdReference). A full feed day is ~180K rows
-// and nothing ever deleted them, so the table grew without bound.
+// in (feeds/nrd_hagezi.ts storeNrdReference). A feed day is ~443K rows (the
+// Hagezi 7-day NRD list, diffed daily; ~40M rows at 90 days) and nothing ever
+// deleted them, so the table grew without bound.
 //
 // Its only reader is the phantom matcher (lib/phantom-matcher.ts, nrd
 // source), which is manual/API-triggered and scans incrementally from a KV
