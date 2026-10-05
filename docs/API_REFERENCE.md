@@ -13,6 +13,10 @@ Complete reference for the Averrow API. All authenticated endpoints require a `B
 | GET | `/api/auth/callback` | — | OAuth callback handler |
 | POST | `/api/auth/refresh` | Cookie | Refresh access token |
 | POST | `/api/auth/logout` | Cookie | Logout and clear session |
+| GET | `/api/auth/sessions` | JWT | Caller's own active sessions: `{ total, current_known, sessions[{ id, ip_masked, user_agent, issued_at, last_active_at, auth_method, is_current }] }`. Current session identified via the `radar_refresh` cookie. IP is masked server-side. |
+| DELETE | `/api/auth/sessions/:id` | JWT | Revoke one of the caller's own sessions (400 for the current one, 404 if not theirs/already revoked) |
+| POST | `/api/auth/sessions/revoke-others` | JWT + cookie | Revoke every caller session except this device's (409 if the current session can't be identified) |
+| POST | `/api/auth/logout-all` | JWT | Sign out everywhere: revokes all caller sessions, stamps `forced_logout:<id>`, clears the refresh cookie |
 | GET | `/api/auth/me` | User | Get current user info |
 | POST | `/api/auth/magic-link/request` | — (rate-limited) | Request a magic sign-in link by email. Body: `{ email, return_to? }` |
 | GET | `/api/auth/magic-link/:token` | — (rate-limited) | Verify magic link from the email body; mints a session and 302s to the SPA like the OAuth callback |

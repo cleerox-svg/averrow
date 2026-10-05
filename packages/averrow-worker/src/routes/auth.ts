@@ -13,6 +13,9 @@ import {
   handlePasskeyAuthBegin, handlePasskeyAuthFinish,
   handleListPasskeys, handleDeletePasskey,
 } from "../handlers/passkeys";
+import {
+  handleListOwnSessions, handleRevokeOwnSession, handleRevokeOtherSessions, handleLogoutEverywhere,
+} from "../handlers/account-sessions";
 import { handleGetProfile, handleUpdateProfile } from "../handlers/profile";
 import { handleValidateInvite } from "../handlers/invites";
 import { handleInviteLanding } from "../handlers/invite-landing";
@@ -53,6 +56,29 @@ export function registerAuthRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireAuthAllowEnroll(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleLogout(request, env, ctx.userId);
+  });
+
+  // Self-service session management (Account → Security). Own sessions only.
+  // Registered before any `/api/auth/:x` param route; literal paths first.
+  router.get("/api/auth/sessions", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleListOwnSessions(request, env, ctx.userId);
+  });
+  router.post("/api/auth/sessions/revoke-others", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRevokeOtherSessions(request, env, ctx.userId);
+  });
+  router.delete("/api/auth/sessions/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleRevokeOwnSession(request, env, ctx.userId, request.params["id"] ?? "");
+  });
+  router.post("/api/auth/logout-all", async (request: Request, env: Env) => {
+    const ctx = await requireAuth(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleLogoutEverywhere(request, env, ctx.userId);
   });
 
   // /me must remain reachable by enrollment-scoped sessions so the SPA can

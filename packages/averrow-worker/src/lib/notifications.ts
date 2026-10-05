@@ -562,7 +562,10 @@ export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs |
       // defaults to 0, so reading v1 alone would start holding critical
       // alerts overnight for users who never touched the checkbox. The
       // flag carries no timezone, so this can't reintroduce the UTC bug.
-      // Phase 3 consolidates prefs on v2 and removes this fallback.
+      // Phase 3 (D4): the settings UI now writes quiet hours to v2 only and
+      // migration 0281 copied every complete legacy window into v2, so this
+      // legacy read stays for ONE release as a delivery fallback (old clients
+      // can still PATCH the v1 quiet fields) and is then removed.
       criticalBreakthrough: pref.v2_critical_bypasses_quiet != null
         ? pref.v2_critical_bypasses_quiet === 1
         : pref.critical_breakthrough === 1,
