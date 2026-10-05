@@ -15,6 +15,7 @@
 
 import { json } from "../lib/cors";
 import { isFreemailEmail } from "../lib/freemail";
+import { normalizePublicHostname } from "../lib/public-hostname";
 import type { Env } from "../types";
 
 // ─── Typosquat / Lookalike Domain Generation ────────────────────
@@ -261,9 +262,11 @@ function calculateBrandTrustScore(params: {
 export async function handleBrandScan(request: Request, env: Env, userId?: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as { domain?: string };
-    const domain = body.domain?.toLowerCase().trim();
-    if (!domain || !domain.includes(".")) {
+    const body = await request.json() as { domain?: unknown };
+    // Same strict check as the public scan: staff rows land in the same
+    // brand_scans table, which the public /assess results page reads by id.
+    const domain = normalizePublicHostname(body.domain);
+    if (!domain) {
       return json({ success: false, error: "Valid domain required" }, 400, origin);
     }
 
@@ -416,9 +419,11 @@ export async function handleBrandScanHistory(request: Request, env: Env): Promis
 export async function handlePublicBrandScan(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as { domain?: string };
-    const domain = body.domain?.toLowerCase().trim();
-    if (!domain || !domain.includes(".")) {
+    const body = await request.json().catch(() => null) as { domain?: unknown } | null;
+    // Strict hostname check — the domain is stored in brand_scans and
+    // rendered back on the public /assess results page (stored-XSS fix).
+    const domain = normalizePublicHostname(body?.domain);
+    if (!domain) {
       return json({ success: false, error: "Valid domain required" }, 400, origin);
     }
 
@@ -447,7 +452,10 @@ export async function handlePublicBrandScan(request: Request, env: Env): Promise
        VALUES (?, ?, 'completed', ?, ?, ?, ?, 'public', datetime('now'), datetime('now'))`
     ).bind(crypto.randomUUID(), domain, trustScore, dnsResult.spf.policy, dnsResult.dmarc.policy, feedResult.mentions).run();
 
-    // Return ONLY the score (not details) for the public endpoint
+    // Return ONLY the score (not details) for the public endpoint.
+    // No feed-mention flag: an anonymous caller must not be able to ask
+    // "is this domain in Averrow's threat data?" (detection oracle). The
+    // count stays in brand_scans.feed_mentions for staff.
     return json({
       success: true,
       data: {
@@ -455,7 +463,6 @@ export async function handlePublicBrandScan(request: Request, env: Env): Promise
         trustScore,
         riskLevel,
         lookalikesPossible: lookalikeDomains.length,
-        feedMentions: feedResult.mentions > 0, // boolean only
       },
     }, 200, origin);
   } catch (err) {
@@ -469,7 +476,9 @@ export async function handlePublicBrandScanResult(request: Request, env: Env, sc
   const origin = request.headers.get("Origin");
   try {
     const row = await env.DB.prepare(
-      `SELECT id, domain, trust_score, spf_policy, dmarc_policy, feed_mentions,
+      // feed_mentions deliberately NOT selected — this lookup is public
+      // (no auth) and must not reveal threat-data hits for a domain.
+      `SELECT id, domain, trust_score, spf_policy, dmarc_policy,
               lookalikes_found, status, created_at
        FROM brand_scans WHERE id = ? AND status = 'completed'`
     ).bind(scanId).first();
@@ -501,6 +510,19 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
       company?: string; message?: string;
     };
 
+    // Optional domain, but when present it must be a real hostname: it is
+    // stored on scan_leads, correlated against brands and echoed into the
+    // sales + prospect emails.
+    if (body.domain !== undefined && body.domain !== null && body.domain !== "") {
+      const normalized = normalizePublicHostname(body.domain);
+      if (!normalized) {
+        return json({ success: false, error: "Please enter a valid domain (e.g. example.com)" }, 400, origin);
+      }
+      body.domain = normalized;
+    } else {
+      body.domain = undefined;
+    }
+
     if (!body.email || !body.name) {
       return json({ success: false, error: "Name and email are required" }, 400, origin);
     }
@@ -523,10 +545,9 @@ export async function handleLeadCapture(request: Request, env: Env): Promise<Res
     // capture cleanly.
     let correlatedBrandId: string | null = null;
     if (body.domain) {
-      const dom = body.domain.toLowerCase().trim();
       const existing = await env.DB.prepare(
         "SELECT id FROM brands WHERE canonical_domain = ?",
-      ).bind(dom).first<{ id: string }>();
+      ).bind(body.domain).first<{ id: string }>();
       if (existing) correlatedBrandId = existing.id;
     }
 

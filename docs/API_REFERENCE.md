@@ -71,12 +71,12 @@ Registration is auth-required (passkey is added to a signed-in user). Authentica
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | POST | `/api/scan/report` | Generate brand exposure report |
-| POST | `/api/brand-scan/public` | Public brand exposure scan |
-| GET | `/api/brand-scan/public/:id` | Get public scan results |
+| POST | `/api/brand-scan/public` | Public brand exposure scan. JSON `{ domain }` — must pass the strict hostname check (`normalizePublicHostname`, `lib/public-hostname.ts`; scheme/path/port/trailing dot stripped, lowercased, `[a-z0-9-]` labels, letter or `xn--` TLD, ≤253 chars), else **400**. Response `{ domain, trustScore, riskLevel, lookalikesPossible }` — no threat-feed flag (detection-oracle fix 2026-10-05; the count stays in `brand_scans.feed_mentions` for staff). The same hostname check gates `POST /assess` (invalid → 302 home, no scan), `POST /api/scan/report`, `GET /api/v1/public/email-security/:domain`, and `POST /api/v1/public/{assess,monitor,leads}`. |
+| GET | `/api/brand-scan/public/:id` | Get public scan results (`id, domain, trust_score, spf_policy, dmarc_policy, lookalikes_found, status, created_at, risk_level`; `feed_mentions` is not returned) |
 | GET | `/api/stats/public` | Public platform statistics |
 | POST | `/api/contact` | Contact form submission (unauthenticated). JSON body `{ name, email, message` (all required)`, company?, companySize?, interest?, company_website? }`. `company_website` is a **honeypot** — real users never fill it; a non-empty value is silently accepted (200) but never persisted. Per-IP rate-limited (5/hr → 429). `companySize` persists to `contact_submissions.company_size` (migration 0262). |
 | POST | `/api/track` | Marketing analytics beacon (unauthenticated). JSON body `{ type: 'pageview'\|'click'\|'cta', page: string (starts with `/`, ≤255), ref?: string, ctaId?: string (≤64) }`. Referrer is classified server-side for AI-chat referral detection. Rate-limited per-IP (120/hr). Always responds **204** (invalid body → 400); insert runs via `ctx.waitUntil`. Raw IP is never stored (salted, truncated SHA-256 visitor hash). |
-| POST | `/api/leads` | Lead capture (rate-limited) |
+| POST | `/api/leads` | Lead capture (rate-limited). Optional `domain` must pass the strict hostname check (400 otherwise) and is stored normalised |
 | POST | `/api/abuse-mailbox/unsubscribe` | RFC 8058 one-click unsubscribe target for abuse-mailbox responder emails. Token is an HMAC of the email address — no auth, no body |
 | GET | `/api/abuse-mailbox/unsubscribe` | Manual-click fallback for the unsubscribe link (same HMAC token gate) |
 | POST | `/api/stripe/webhook` | Stripe billing lifecycle webhook. No bearer auth — the handler verifies the `Stripe-Signature` HMAC before trusting any payload |

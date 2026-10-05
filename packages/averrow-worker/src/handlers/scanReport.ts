@@ -15,6 +15,7 @@
  */
 
 import { json } from '../lib/cors';
+import { normalizePublicHostname } from '../lib/public-hostname';
 import { runEmailSecurityScan } from '../email-security';
 import type { EmailSecurityResult } from '../email-security';
 import { generatePermutations, checkLookalikeDNS } from '../lib/dnstwist';
@@ -60,15 +61,6 @@ export interface BrandExposureReport {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
-
-function normalizeDomain(input: string): string {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/^https?:\/\//, '')
-    .replace(/\/.*$/, '')
-    .replace(/^www\./, '');
-}
 
 function deriveBrandName(domain: string): string {
   const name = domain.split('.')[0] ?? domain;
@@ -181,9 +173,10 @@ export async function handleScanReport(
 
   try {
     const body = (await request.json()) as { domain?: string; brand_name?: string };
-    const domain = normalizeDomain(body.domain ?? '');
+    // Strict hostname (anonymous input; echoed back and used as a KV key).
+    const domain = normalizePublicHostname(body.domain, { stripWww: true });
 
-    if (!domain || !domain.includes('.')) {
+    if (!domain) {
       return json({ success: false, error: 'A valid domain is required (e.g., example.com)' }, 400, origin);
     }
 

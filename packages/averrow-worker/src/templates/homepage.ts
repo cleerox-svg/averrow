@@ -1485,7 +1485,11 @@ function gradeFor(s) {
   return 'F';
 }
 
+// HTML-escape anything user/API-supplied before it reaches innerHTML.
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
 function summaryFor(s, d) {
+  d = esc(d);
   if (s >= 80) return d + ' has strong security posture. Email authentication is well-configured and we found minimal threat activity targeting this domain.';
   if (s >= 60) return d + ' has moderate security. Some areas need attention — particularly email authentication and active monitoring for impersonation threats.';
   if (s >= 40) return d + ' has concerning security gaps. We detected active threats and missing security configurations that leave the brand exposed.';
@@ -1509,7 +1513,7 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
   rs.scrollIntoView({ behavior: 'smooth' });
 
   rs.querySelector('#results-content').innerHTML =
-    '<div class="scanning"><div class="scan-ring-anim"></div><div class="scan-label">Scanning ' + domain + '</div><div class="scan-detail" id="scan-step">Resolving DNS records...</div></div>';
+    '<div class="scanning"><div class="scan-ring-anim"></div><div class="scan-label">Scanning ' + esc(domain) + '</div><div class="scan-detail" id="scan-step">Resolving DNS records...</div></div>';
 
   var steps = ['Resolving DNS records...','Checking email authentication (SPF/DKIM/DMARC)...','Validating SSL/TLS certificates...','Scanning for active threats...','Checking impersonation domains...','Analyzing hosting infrastructure...','Calculating defense grade...'];
   var si = 0;
@@ -1534,12 +1538,12 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
 
     if (!data.success) {
       rs.querySelector('#results-content').innerHTML =
-        '<div class="result-card"><div class="result-domain">' + domain + '</div><p style="color:var(--accent)">Scan failed: ' + (data.error || 'Unknown error') + '</p></div>';
+        '<div class="result-card"><div class="result-domain">' + esc(domain) + '</div><p style="color:var(--accent)">Scan failed: ' + esc(data.error || 'Unknown error') + '</p></div>';
       return;
     }
 
     var d = data.data;
-    var score = d.trustScore;
+    var score = Number(d.trustScore) || 0;
     var sc = scoreColor(score);
     var grade = gradeFor(score);
 
@@ -1548,14 +1552,11 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
     else if (d.riskLevel === 'medium') risks.push({ text: 'Risk: MEDIUM', cls: 'warn' });
     else risks.push({ text: 'Risk: LOW', cls: 'ok' });
 
-    if (d.feedMentions) risks.push({ text: 'Active threats detected', cls: 'bad' });
-    else risks.push({ text: 'No active threats', cls: 'ok' });
-
     if (d.lookalikesPossible > 50) risks.push({ text: d.lookalikesPossible + ' lookalike domains possible', cls: 'warn' });
 
     rs.querySelector('#results-content').innerHTML =
       '<div class="result-card">' +
-        '<div class="result-domain">' + domain + '</div>' +
+        '<div class="result-domain">' + esc(domain) + '</div>' +
         '<div class="score-ring">' +
           '<svg viewBox="0 0 140 140">' +
             '<circle cx="70" cy="70" r="60" fill="none" stroke="var(--bg-tertiary)" stroke-width="6"/>' +
@@ -1565,7 +1566,7 @@ document.getElementById('scanForm').addEventListener('submit', function(e) {
         '</div>' +
         '<div class="score-grade" style="color:' + sc + '">Defense Grade: ' + grade + '</div>' +
         '<div class="score-summary">' + summaryFor(score, domain) + '</div>' +
-        '<div class="risk-pills">' + risks.map(function(r) { return '<span class="risk-p ' + r.cls + '">' + r.text + '</span>'; }).join('') + '</div>' +
+        '<div class="risk-pills">' + risks.map(function(r) { return '<span class="risk-p ' + r.cls + '">' + esc(r.text) + '</span>'; }).join('') + '</div>' +
         '<div class="gate-divider">' +
           '<div class="gate-title">Get the Full Intercept Report</div>' +
           '<div class="gate-sub">Detailed assessment with threat actor analysis, infrastructure mapping, and specific remediation steps.</div>' +
@@ -1662,6 +1663,20 @@ ${spiderTraps}`;
 
 // ─── Assessment Results Page (server-rendered) ──────────────────
 
+/**
+ * JSON-encode a value for embedding inside an inline <script>. Plain
+ * JSON.stringify leaves `<` intact, so a path param like
+ * `</script><script>…` would break out of the script element.
+ */
+function safeJsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 export function renderAssessResults(scanId: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1729,24 +1744,27 @@ export function renderAssessResults(scanId: string): string {
 var FREEMAIL_DOMAINS=['gmail.com','yahoo.com','hotmail.com','outlook.com','aol.com','icloud.com','mail.com','protonmail.com','proton.me','yandex.com','zoho.com','gmx.com','fastmail.com','tutanota.com','hey.com','live.com','msn.com','me.com','qq.com','163.com'];
 function scoreColor(s){return s>=80?'var(--positive)':s>=60?'var(--amber)':s>=40?'var(--threat-medium)':s>=25?'var(--threat-high)':'var(--negative)'}
 function gradeFor(s){return s>=90?'A':s>=80?'B':s>=60?'C':s>=40?'D':'F'}
+// HTML-escape anything user/API-supplied before it reaches innerHTML.
+function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function summaryFor(s,d){
+  d=esc(d);
   if(s>=80)return d+' has strong security posture. Email authentication is well-configured and we found minimal threat activity.';
   if(s>=60)return d+' has moderate security. Some areas need attention — particularly email authentication and active monitoring for impersonation threats.';
   if(s>=40)return d+' has concerning security gaps. We detected active threats and missing security configurations that leave the brand exposed.';
   return d+' has critical security vulnerabilities. Multiple active threats detected, missing essential email authentication, and significant impersonation risk.';
 }
 
-var scanId=${JSON.stringify(scanId)};
+var scanId=${safeJsonForScript(scanId)};
 fetch('/api/brand-scan/public/'+encodeURIComponent(scanId))
 .then(function(r){return r.json()})
 .then(function(data){
   document.getElementById('loading').style.display='none';
   if(!data.success){
-    document.getElementById('results').innerHTML='<div class="result-card"><p style="color:var(--negative)">'+( data.error||'Assessment not found')+'</p></div><a href="/" class="back-link">\\u2190 Scan another domain</a>';
+    document.getElementById('results').innerHTML='<div class="result-card"><p style="color:var(--negative)">'+esc(data.error||'Assessment not found')+'</p></div><a href="/" class="back-link">\\u2190 Scan another domain</a>';
     return;
   }
   var d=data.data;
-  var score=d.trust_score||d.trustScore||50;
+  var score=Number(d.trust_score||d.trustScore)||50;
   var domain=d.domain||'Unknown';
   var sc=scoreColor(score);
   var grade=gradeFor(score);
@@ -1765,16 +1783,13 @@ fetch('/api/brand-scan/public/'+encodeURIComponent(scanId))
   else if(d.dmarc_policy) risks.push({text:'DMARC: '+d.dmarc_policy,cls:'warn'});
   else risks.push({text:'DMARC: Missing',cls:'bad'});
 
-  if(d.feed_mentions>0) risks.push({text:'Active threats: '+d.feed_mentions,cls:'bad'});
-  else risks.push({text:'No active threats',cls:'ok'});
-
   document.getElementById('results').innerHTML=
     '<div class="result-card">'+
-      '<div class="result-domain">'+domain+'</div>'+
+      '<div class="result-domain">'+esc(domain)+'</div>'+
       '<div class="score-ring"><svg viewBox="0 0 160 160"><circle cx="80" cy="80" r="68" fill="none" stroke="var(--bg-elevated)" stroke-width="6"/><circle cx="80" cy="80" r="68" fill="none" stroke="'+sc+'" stroke-width="6" stroke-dasharray="427" stroke-dashoffset="'+(427*(1-score/100))+'" stroke-linecap="round" transform="rotate(-90 80 80)" style="transition:stroke-dashoffset 1.5s ease"/></svg><div class="score-val" style="color:'+sc+'">'+score+'</div></div>'+
       '<div class="score-grade" style="color:'+sc+'">Grade: '+grade+'</div>'+
       '<div class="score-summary">'+summaryFor(score,domain)+'</div>'+
-      '<div class="risk-pills">'+risks.map(function(r){return '<span class="risk-p '+r.cls+'">'+r.text+'</span>'}).join('')+'</div>'+
+      '<div class="risk-pills">'+risks.map(function(r){return '<span class="risk-p '+r.cls+'">'+esc(r.text)+'</span>'}).join('')+'</div>'+
       '<div class="gate-divider"><div class="gate-title">Get the Full Report</div><div class="gate-sub">Detailed assessment with threat actor analysis, infrastructure mapping, and remediation steps.</div>'+
         '<form class="gate-form" id="gateForm"><input class="gate-input" id="emailInput" placeholder="Business email address" type="email" required><button class="gate-btn" type="submit" id="gateBtn">Get Report</button></form>'+
         '<div class="gate-note" id="gateNote">Business email required &middot; Free &middot; No credit card</div>'+

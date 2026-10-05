@@ -11,6 +11,7 @@ import type { PublicTrustCheckOutput } from "../agents/public-trust-check";
 import { getPublicStats } from "../lib/public-stats";
 import { getPublicProof } from "../lib/public-proof";
 import { cachedValue } from "../lib/cached-value";
+import { normalizePublicHostname } from "../lib/public-hostname";
 import type { Env } from "../types";
 
 // ─── GET /api/v1/public/stats ────────────────────────────────────
@@ -315,9 +316,9 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     const body = await request.json().catch(() => null) as { domain?: string } | null;
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
 
-    // Validate domain format
-    const domain = body.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
-    if (!domain || !domain.includes(".") || domain.includes("@")) {
+    // Validate domain format — strict hostname (stored + rendered back).
+    const domain = normalizePublicHostname(body.domain, { stripWww: true });
+    if (!domain) {
       return json({ success: false, error: "Please enter a valid domain (e.g. yourbrand.com)" }, 400, origin);
     }
 
@@ -544,6 +545,17 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
       return json({ success: false, error: "Please use your business email address" }, 400, origin);
     }
 
+    // Optional domain; when present it must be a real hostname (it is
+    // stored on the placeholder assessments row).
+    let leadDomain = "";
+    if (body.domain !== undefined && body.domain !== null && body.domain !== "") {
+      const normalized = normalizePublicHostname(body.domain, { stripWww: true });
+      if (!normalized) {
+        return json({ success: false, error: "Please enter a valid domain (e.g. yourbrand.com)" }, 400, origin);
+      }
+      leadDomain = normalized;
+    }
+
     const assessmentId = body.assessment_id || `assess_placeholder_${Date.now()}`;
     const leadId = `lead_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -551,7 +563,7 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
     if (!body.assessment_id) {
       await env.DB.prepare(
         `INSERT OR IGNORE INTO assessments (id, domain, trust_score, grade) VALUES (?, ?, ?, ?)`
-      ).bind(assessmentId, body.domain || "", body.trust_score ?? 0, body.grade || "?").run();
+      ).bind(assessmentId, leadDomain, body.trust_score ?? 0, body.grade || "?").run();
     }
 
     await env.DB.prepare(
@@ -588,8 +600,9 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
 
     if (!body?.domain) return json({ success: false, error: "domain required" }, 400, origin);
 
-    const domain = body.domain.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "").trim();
-    if (!domain || !domain.includes(".") || domain.includes("@")) {
+    // Strict hostname — this creates a brands row from anonymous input.
+    const domain = normalizePublicHostname(body.domain, { stripWww: true });
+    if (!domain) {
       return json({ success: false, error: "Please enter a valid domain" }, 400, origin);
     }
 

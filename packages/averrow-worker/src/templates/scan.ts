@@ -820,7 +820,7 @@ var FREEMAIL_DOMAINS = ['gmail.com','yahoo.com','hotmail.com','outlook.com','aol
 // behind a business email submission (POSTed to /api/leads).
 function renderReport(data, brandName) {
   const el = document.getElementById('report');
-  const score = data.trustScore;
+  const score = Number(data.trustScore) || 0;
   const color = scoreColor(score);
   const grade = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : score >= 20 ? 'D' : 'F';
   const summary = score >= 80
@@ -838,11 +838,6 @@ function renderReport(data, brandName) {
     risks.push({ text: 'Risk: MEDIUM', cls: 'warn' });
   } else {
     risks.push({ text: 'Risk: LOW', cls: 'ok' });
-  }
-  if (data.feedMentions) {
-    risks.push({ text: 'Active threats detected', cls: 'bad' });
-  } else {
-    risks.push({ text: 'No active threats', cls: 'ok' });
   }
   if (data.lookalikesPossible > 50) {
     risks.push({ text: data.lookalikesPossible + ' lookalike domains possible', cls: 'warn' });
@@ -914,10 +909,10 @@ function renderReport(data, brandName) {
 
 // ── Escape HTML ──
 function esc(s) {
-  if (!s) return '';
-  const d = document.createElement('div');
-  d.appendChild(document.createTextNode(String(s)));
-  return d.innerHTML;
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
 }
 
 // ── URL param auto-scan ──
