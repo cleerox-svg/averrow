@@ -323,9 +323,8 @@ here. Spec: `docs/ACCOUNT_DESIGN_SPEC.md`; adoption guide:
 `forms/`, `overlays/`, `settings/` — see `AVERROW_UI_STANDARD.md` "Account &
 Settings"). Ops mounts them at `/settings/*`, tenant at `/tenant/account/*`;
 legacy `/profile` and `/notifications/preferences` redirect. Edit the shared
-pages, not the per-app mounts. `packages/shared/src/profile/` (old
-`ProfilePage`) is no longer used by either app and is slated for deletion
-(only a type import from `account/ProfileSettings.tsx` remains).
+pages, not the per-app mounts. The old `packages/shared/src/profile/`
+(`ProfilePage`) was deleted on 2026-10-05.
 
 ### PWA install + biometric prompt
 
@@ -334,7 +333,7 @@ Two install affordances + one biometric auto-prompt:
 | Component | Where | When |
 |---|---|---|
 | `<InstallAppBanner />` | Overview (`features/home/OverviewV4.tsx`), directly below the hero | Visible to non-installed users; dismissible per-device |
-| Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile — `components/InstallAppCard.tsx` is unmounted, pending cleanup) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
+| Install card | Settings → Devices & App (`packages/shared/src/account/DevicesSettings.tsx`, ops `/settings/devices`; no longer on Profile; the old `InstallAppCard` was deleted) | Always visible; not dismissible. Tenant has no Devices & App (no service worker) |
 | `<FirstSignInPasskeyPrompt />` | Mounted at `components/layout/ShellV4.tsx` root | Auto-fires when `passkey_count === 0` + WebAuthn supported |
 
 The banner and the passkey prompt self-gate internally. Don't add per-route logic to control them.

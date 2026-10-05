@@ -1,7 +1,6 @@
 // Adapter-style contracts for <SecuritySettings>. Structurally compatible with
-// the existing `ProfileApiClient` / `PasskeyAdapter` (profile/types.ts) so ops
-// and tenant can pass the objects they already build; declared here so the
-// account kit has no dependency on the legacy profile folder.
+// AccountApiClient (../api-types) and the passkey client, so ops and tenant can
+// pass the objects they already build.
 
 import type { PasskeyDevice } from '../../passkeys/types';
 

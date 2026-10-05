@@ -22,3 +22,4 @@ export {
 } from './time-format';
 export * from './security';
 export * from './notifications';
+export type { AccountApiClient, AccountApiResponse } from './api-types';

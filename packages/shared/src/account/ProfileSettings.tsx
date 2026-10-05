@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { roleLabel } from '../roles';
 import type { Theme } from '../theme';
-import type { ProfileApiClient } from '../profile/types';
+import type { AccountApiClient } from './api-types';
 import { Badge } from '../ui/Badge';
 import { roleBadgeProps } from '../ui/settings/roleBadge';
 import { Button } from '../ui/Button';
@@ -52,7 +52,7 @@ export interface ProfileSettingsProps {
   /** Load failure: renders an error card with retry. */
   error?: boolean;
   onRetry?: () => void;
-  apiClient: Pick<ProfileApiClient, 'patch'>;
+  apiClient: Pick<AccountApiClient, 'patch'>;
   /** Current theme preference + setter (the host's useTheme()). */
   theme: Theme;
   onThemeChange: (theme: Theme) => void;

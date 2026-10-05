@@ -238,10 +238,9 @@ packages/shared/src/account/
   index.ts                — public exports
 ```
 
-The older `packages/shared/src/profile/` (`ProfilePage`) is no longer imported by
-either app and is slated for deletion — do not build on it. (One residual
-dependency: `account/ProfileSettings.tsx` still imports the `ProfileApiClient`
-type from `profile/types.ts`; move it before deleting the folder.)
+The older `packages/shared/src/profile/` (`ProfilePage`) was deleted on
+2026-10-05; its API-client type now lives in `account/api-types.ts`
+(`AccountApiClient`).
 
 ### Where it is mounted
 
@@ -343,7 +342,7 @@ platforms are independent repos for now).
   - Android Chrome / Edge: captured `beforeinstallprompt` → native install button.
   - iOS Safari: four-step Share → Add to Home Screen instructions inline.
 
-- **Install card (Settings → Devices & App)** — the always-visible install affordance now lives in the shared `DevicesSettings` page (`packages/shared/src/account/DevicesSettings.tsx`, mounted by ops at `/settings/devices`), fed by `useInstallPrompt` and `IOS_INSTALL_STEPS` (`components/InstallSteps.tsx`). It replaced `<InstallAppCard />` on Profile (2026-10-04); `components/InstallAppCard.tsx` is no longer mounted anywhere and is pending cleanup.
+- **Install card (Settings → Devices & App)** — the always-visible install affordance now lives in the shared `DevicesSettings` page (`packages/shared/src/account/DevicesSettings.tsx`, mounted by ops at `/settings/devices`), fed by `useInstallPrompt` and `IOS_INSTALL_STEPS` (`components/InstallSteps.tsx`). It replaced `<InstallAppCard />` on Profile (2026-10-04); that component was deleted on 2026-10-05.
   - Hidden/replaced by "installed" state when `isStandalone()`.
   - **Not dismissible** — always reachable from Settings.
   - Includes a manual-steps list for desktop browsers that didn't fire `beforeinstallprompt`.
@@ -387,7 +386,7 @@ Mounted at the Shell layout root (Averrow ops: `components/layout/ShellV4.tsx`).
 | Body copy | Mentions Touch ID, Face ID, Windows Hello, fingerprint. Reassurance that biometric stays on-device. |
 | Primary button | "Set up biometric" (green gradient) |
 | Secondary button | "Maybe later" (transparent) |
-| Footer note | "You can add or remove passkeys anytime from your Profile." (current copy in `FirstSignInPasskeyPrompt.tsx`; passkeys now live under Settings → Security — copy drift flagged to the owner) |
+| Footer note | "You can add or remove passkeys anytime in Settings → Security." (`FirstSignInPasskeyPrompt.tsx`) |
 | Auto-prompt delay | 1000ms after Shell mount (so it doesn't slam in mid-paint) |
 
 ---

@@ -1,6 +1,6 @@
 // Numbered "Share → Add to Home Screen" steps shown to iOS Safari users, who
 // have no programmatic install path. Shared by InstallAppBanner (Overview)
-// and InstallAppCard (Profile). Styling lives in install-app.css (tokens only).
+// and the install card in Settings → Devices & App. Styling lives in install-app.css (tokens only).
 
 import './install-app.css';
 
