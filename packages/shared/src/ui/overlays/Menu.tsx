@@ -3,6 +3,8 @@ import * as DropdownMenuPrimitive from '@radix-ui/react-dropdown-menu';
 import { cn } from '../cn';
 import { Card } from '../Card';
 import { OverlayStyles } from './overlay-styles';
+import { FOCUS_RING_INSET } from '../forms/focus';
+import { IconTile } from '../settings/IconTile';
 import { Sheet, SheetContent, SheetTrigger, useSheetClose } from './Sheet';
 import { useIsCompact } from './useMediaQuery';
 
@@ -15,7 +17,14 @@ import { useIsCompact } from './useMediaQuery';
 type Presentation = 'popover' | 'sheet';
 const PresentationContext = React.createContext<Presentation>('popover');
 
-export const Menu = DropdownMenuPrimitive.Root;
+export function Menu(props: DropdownMenuPrimitive.DropdownMenuProps): React.ReactElement {
+  return (
+    <>
+      <OverlayStyles />
+      <DropdownMenuPrimitive.Root {...props} />
+    </>
+  );
+}
 export const MenuTrigger = DropdownMenuPrimitive.Trigger;
 export const MenuGroup = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   function MenuGroup(props, ref) {
@@ -59,10 +68,9 @@ export const MenuContent = React.forwardRef<HTMLDivElement, MenuContentProps>(fu
             maxHeight: 'var(--radix-dropdown-menu-content-available-height, 80dvh)',
             overflowY: 'auto',
             borderRadius: 16,
-            zIndex: 'var(--z-dropdown, 100)' as unknown as number,
+            zIndex: 'var(--z-popover, 450)' as unknown as number,
           }}
         >
-          <OverlayStyles />
           {children}
         </Card>
       </DropdownMenuPrimitive.Content>
@@ -74,7 +82,7 @@ const ITEM_CLASS =
   'relative flex min-h-[44px] w-full cursor-pointer select-none items-center gap-3 rounded-[10px] px-3 text-left text-[14px] font-medium leading-[1.3] outline-none ' +
   'text-[var(--text-primary)] transition-colors duration-[var(--dur-fast,120ms)] motion-reduce:transition-none ' +
   'data-[highlighted]:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] ' +
-  'focus-visible:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring,var(--amber))] ' +
+  'focus-visible:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] ' + FOCUS_RING_INSET + ' ' +
   'data-[disabled]:pointer-events-none data-[disabled]:opacity-50 disabled:pointer-events-none disabled:opacity-50';
 
 const DANGER_CLASS = 'text-[var(--sev-critical-text)]';
@@ -99,21 +107,12 @@ function ItemContent({ icon, description, trailing, tone, children }: Pick<MenuI
   return (
     <>
       {icon ? (
-        <span
-          aria-hidden
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] [&>svg]:h-[18px] [&>svg]:w-[18px]"
-          style={{
-            color: danger ? 'var(--sev-critical-text)' : 'var(--text-secondary)',
-            background: `color-mix(in srgb, ${danger ? 'var(--red)' : 'var(--text-secondary)'} var(--tile-tint-pct, 16%), transparent)`,
-          }}
-        >
-          {icon}
-        </span>
+        <IconTile size={28} tone={danger ? 'red' : 'neutral'} className="[&>svg]:!h-[18px] [&>svg]:!w-[18px]">{icon}</IconTile>
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate">{children}</span>
         {description ? (
-          <span className="block truncate text-[13px] font-normal text-[var(--text-tertiary)]">{description}</span>
+          <span className="block truncate text-[13px] font-normal text-[var(--text-help)]">{description}</span>
         ) : null}
       </span>
       {trailing ? <span className="ml-auto inline-flex shrink-0 items-center">{trailing}</span> : null}

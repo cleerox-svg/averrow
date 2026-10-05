@@ -100,9 +100,9 @@ describe('TimezoneSelect', () => {
     const { user, onChange } = setup();
     await user.click(screen.getByRole('button', { name: 'Time zone' }));
     await screen.findByRole('combobox', { name: 'Search time zones' });
-    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
-    // rows: [Detected Paris, New York, Toronto, ...]; two downs lands on index 2.
-    expect(onChange).toHaveBeenCalledWith('America/Toronto');
+    // The highlight starts on the selected row (Toronto); one down moves to the next row.
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(onChange).toHaveBeenCalledWith('Asia/Kolkata');
   });
 
   it('opens as a bottom sheet on compact screens', async () => {
@@ -110,5 +110,52 @@ describe('TimezoneSelect', () => {
     const { user } = setup();
     await user.click(screen.getByRole('button', { name: 'Time zone' }));
     expect((await screen.findByRole('dialog')).className).toContain('av-ov-sheet');
+  });
+});
+
+describe('TimezoneSelect legacy ids (review fix)', () => {
+  const run = (over: Partial<React.ComponentProps<typeof TimezoneSelect>> = {}) => {
+    const onChange = vi.fn();
+    render(<TimezoneSelect value="Asia/Calcutta" onChange={onChange} zones={['UTC', 'Asia/Calcutta', 'Asia/Kolkata', 'Europe/Kiev', 'Asia/Saigon']} detectedZone={null} now={JAN} aria-label="Time zone" {...over} />);
+    return { onChange, user: userEvent.setup() };
+  };
+
+  it('labels legacy ids with the modern city name', () => {
+    expect(formatTimeZoneLabel('Asia/Calcutta', JAN)).toBe('Kolkata (UTC+5:30)');
+    expect(formatTimeZoneLabel('Europe/Kiev', JAN)).toBe('Kyiv (UTC+2)');
+    expect(formatTimeZoneLabel('Asia/Saigon', JAN)).toBe('Ho Chi Minh (UTC+7)');
+  });
+
+  it('collapses Calcutta/Kolkata into one selected row', async () => {
+    const { user } = run();
+    await user.click(screen.getByRole('button', { name: 'Time zone' }));
+    const kolkata = (await screen.findAllByRole('option')).filter((o) => /Kolkata/.test(o.textContent ?? ''));
+    expect(kolkata).toHaveLength(1);
+    expect(kolkata[0]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('search matches the legacy name', async () => {
+    const { user } = run({ value: 'UTC' });
+    await user.click(screen.getByRole('button', { name: 'Time zone' }));
+    await user.type(await screen.findByRole('combobox', { name: 'Search time zones' }), 'calcutta');
+    const options = screen.getAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent('Kolkata');
+  });
+
+  it('marks the detected row selected when detected is a legacy alias of the value', async () => {
+    const { user } = run({ value: 'Asia/Kolkata', detectedZone: 'Asia/Calcutta' });
+    await user.click(screen.getByRole('button', { name: 'Time zone' }));
+    const detected = await screen.findByRole('option', { name: /Detected/ });
+    expect(detected).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('opens with the selected row highlighted and exposes aria-autocomplete', async () => {
+    const { user, onChange } = run({ value: 'Europe/Kiev' });
+    await user.click(screen.getByRole('button', { name: 'Time zone' }));
+    const input = await screen.findByRole('combobox', { name: 'Search time zones' });
+    expect(input).toHaveAttribute('aria-autocomplete', 'list');
+    await user.keyboard('{Enter}');
+    expect(onChange).toHaveBeenCalledWith('Europe/Kyiv');
   });
 });

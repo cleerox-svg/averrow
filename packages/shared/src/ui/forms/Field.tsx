@@ -22,7 +22,7 @@ export type HelpTextProps = React.HTMLAttributes<HTMLParagraphElement>;
 
 /** 13px tertiary help line. */
 export const HelpText = React.forwardRef<HTMLParagraphElement, HelpTextProps>(({ className, ...props }, ref) => (
-  <p ref={ref} className={cn('m-0 text-[13px] leading-[1.45] text-[var(--text-tertiary)]', className)} {...props} />
+  <p ref={ref} className={cn('m-0 text-[13px] leading-[1.45] text-[var(--text-help)]', className)} {...props} />
 ));
 HelpText.displayName = 'HelpText';
 
@@ -72,12 +72,13 @@ export interface FieldProps extends Omit<React.HTMLAttributes<HTMLDivElement>, '
 export const Field = React.forwardRef<HTMLDivElement, FieldProps>(
   ({ label, help, error, id, className, children, ...props }, ref) => {
     const generated = React.useId();
-    const controlId = id ?? `field-${generated}`;
+    const [registeredId, setControlId] = React.useState<string | undefined>(undefined);
+    const controlId = registeredId ?? id ?? `field-${generated}`;
     const helpId = help ? `${controlId}-help` : undefined;
     const errorId = error ? `${controlId}-error` : undefined;
     const describedBy = [errorId, helpId].filter(Boolean).join(' ') || undefined;
     const ctx = React.useMemo(
-      () => ({ id: controlId, describedBy, invalid: Boolean(error) }),
+      () => ({ id: controlId, describedBy, invalid: Boolean(error), setControlId }),
       [controlId, describedBy, error],
     );
     return (

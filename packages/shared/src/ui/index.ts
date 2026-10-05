@@ -31,7 +31,7 @@ export {
   type PageStateAction, type PageStateActionSpec,
 } from './PageState';
 export { Sparkline, type SparklineProps } from './Sparkline';
-export { Avatar, type AvatarProps, type AvatarSeverity, type AvatarTone } from './Avatar';
+export { Avatar, type AvatarProps, type AvatarSeverity, type AvatarTone, type AvatarShape } from './Avatar';
 export {
   Table, Th, Td, DataTable,
   type TableProps, type Column, type DataTableProps, type SortState, type SortDir,
@@ -47,6 +47,7 @@ export {
 // Account-experience kit (docs/ACCOUNT_DESIGN_SPEC.md): form controls,
 // overlays (sheet, dialog, menu, toast, time zone picker) and settings
 // layout (shell, groups, rows, hero).
+export { Spinner } from './Spinner';
 export * from './forms';
 export * from './overlays';
 export * from './settings';

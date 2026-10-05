@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { cn } from '../cn';
 import { Dialog } from './Dialog';
+import { PageState } from '../PageState';
+import { controlBase } from '../forms/Input';
+import { useFieldContext, useFieldControlId, joinIds } from '../forms/field-context';
 import { useIsCompact } from './useMediaQuery';
 
 // Searchable IANA time zone picker (ACCOUNT_DESIGN_SPEC §4.8). Native <select>
@@ -22,6 +25,57 @@ const FALLBACK_ZONES = [
   'Europe/Moscow', 'Europe/Paris', 'Europe/Rome', 'Europe/Stockholm', 'Europe/Zurich',
   'Pacific/Auckland', 'Pacific/Fiji', 'Pacific/Honolulu',
 ];
+
+/**
+ * Legacy IANA ids V8/ICU still reports -> the modern name. Used to label,
+ * search and de-duplicate (a runtime listing both Asia/Calcutta and
+ * Asia/Kolkata shows one row).
+ */
+const ZONE_ALIASES: Record<string, string> = {
+  'Asia/Calcutta': 'Asia/Kolkata',
+  'Asia/Saigon': 'Asia/Ho_Chi_Minh',
+  'Asia/Rangoon': 'Asia/Yangon',
+  'Asia/Katmandu': 'Asia/Kathmandu',
+  'Asia/Dacca': 'Asia/Dhaka',
+  'Asia/Thimbu': 'Asia/Thimphu',
+  'Asia/Ujung_Pandang': 'Asia/Makassar',
+  'Asia/Macao': 'Asia/Macau',
+  'Asia/Ulan_Bator': 'Asia/Ulaanbaatar',
+  'Asia/Istanbul': 'Europe/Istanbul',
+  'Asia/Tel_Aviv': 'Asia/Jerusalem',
+  'Asia/Kashgar': 'Asia/Urumqi',
+  'Europe/Kiev': 'Europe/Kyiv',
+  'Europe/Belfast': 'Europe/London',
+  'America/Godthab': 'America/Nuuk',
+  'America/Buenos_Aires': 'America/Argentina/Buenos_Aires',
+  'America/Cordoba': 'America/Argentina/Cordoba',
+  'America/Catamarca': 'America/Argentina/Catamarca',
+  'America/Jujuy': 'America/Argentina/Jujuy',
+  'America/Mendoza': 'America/Argentina/Mendoza',
+  'America/Indianapolis': 'America/Indiana/Indianapolis',
+  'America/Louisville': 'America/Kentucky/Louisville',
+  'America/Coral_Harbour': 'America/Atikokan',
+  'America/Shiprock': 'America/Denver',
+  'America/Virgin': 'America/St_Thomas',
+  'Atlantic/Faeroe': 'Atlantic/Faroe',
+  'Africa/Asmera': 'Africa/Asmara',
+  'Pacific/Truk': 'Pacific/Chuuk',
+  'Pacific/Ponape': 'Pacific/Pohnpei',
+  'Pacific/Samoa': 'Pacific/Pago_Pago',
+  'Antarctica/South_Pole': 'Antarctica/McMurdo',
+  'Etc/UTC': 'UTC',
+  'Etc/GMT': 'UTC',
+};
+
+const ALIASES_BY_CANONICAL: Record<string, string[]> = {};
+for (const [legacy, modern] of Object.entries(ZONE_ALIASES)) {
+  (ALIASES_BY_CANONICAL[modern] ??= []).push(legacy);
+}
+
+/** Modern IANA id for a possibly-legacy one (identity when there is no alias). */
+export function canonicalTimeZone(tz: string): string {
+  return ZONE_ALIASES[tz] ?? tz;
+}
 
 /** All IANA zones the runtime knows, plus UTC. Static fallback when `Intl.supportedValuesOf` is missing. */
 export function listTimeZones(): string[] {
@@ -70,7 +124,7 @@ function formatOffset(minutes: number): string {
 }
 
 function cityOf(tz: string): string {
-  const last = tz.split('/').pop() ?? tz;
+  const last = canonicalTimeZone(tz).split('/').pop() ?? tz;
   return last.replace(/_/g, ' ');
 }
 
@@ -101,7 +155,8 @@ interface ZoneRow {
 
 function matches(row: ZoneRow, q: string): boolean {
   if (!q) return true;
-  const hay = `${row.label} ${row.tz.replace(/_/g, ' ')} ${row.region}`.toLowerCase();
+  const aliases = (ALIASES_BY_CANONICAL[row.tz] ?? []).join(' ');
+  const hay = `${row.label} ${row.tz.replace(/_/g, ' ')} ${aliases.replace(/_/g, ' ')} ${row.region}`.toLowerCase();
   return q.split(/\s+/).every((tok) => hay.includes(tok));
 }
 
@@ -126,6 +181,8 @@ export interface TimezoneSelectProps {
 export function TimezoneSelect({
   value, onChange, id, disabled, className, title = 'Time zone', detectedZone, zones, now, ...rest
 }: TimezoneSelectProps): React.ReactElement {
+  const field = useFieldContext();
+  const controlId = useFieldControlId(id);
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [active, setActive] = React.useState(0);
@@ -135,15 +192,16 @@ export function TimezoneSelect({
   const detected = detectedZone === undefined ? detectTimeZone() : detectedZone;
 
   const rows = React.useMemo<ZoneRow[]>(() => {
-    const ids = new Set(zones ?? listTimeZones());
-    if (value) ids.add(value);
+    const ids = new Set((zones ?? listTimeZones()).map(canonicalTimeZone));
+    if (value) ids.add(canonicalTimeZone(value));
     return [...ids].map((tz) => ({ tz, label: formatTimeZoneLabel(tz, date), region: regionOf(tz) }));
   }, [zones, value, date]);
 
   const q = query.trim().toLowerCase();
   const detectedRow = React.useMemo<ZoneRow | null>(() => {
     if (!detected) return null;
-    const row = { tz: detected, label: formatTimeZoneLabel(detected, date), region: regionOf(detected) };
+    const tz = canonicalTimeZone(detected);
+    const row = { tz, label: formatTimeZoneLabel(tz, date), region: regionOf(tz) };
     return matches(row, q) ? row : null;
   }, [detected, date, q]);
 
@@ -167,7 +225,16 @@ export function TimezoneSelect({
     [detectedRow, groups],
   );
 
-  React.useEffect(() => { setActive(0); }, [q]);
+  const selectedTz = value ? canonicalTimeZone(value) : null;
+
+  // Highlight the selected row when the picker opens; the first match while searching.
+  const flatRef = React.useRef(flat);
+  flatRef.current = flat;
+  React.useEffect(() => {
+    if (!open) return;
+    const idx = q || !selectedTz ? -1 : flatRef.current.findIndex((r) => r.tz === selectedTz);
+    setActive(idx >= 0 ? idx : 0);
+  }, [open, q, selectedTz]);
 
   const optionId = (tz: string) => `${listId}-${tz.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
   const activeRow = flat[Math.min(active, flat.length - 1)];
@@ -201,7 +268,7 @@ export function TimezoneSelect({
   };
 
   const renderOption = (row: ZoneRow, opts: { detected?: boolean }) => {
-    const selected = row.tz === value;
+    const selected = row.tz === selectedTz;
     const isActive = activeRow?.tz === row.tz; // the pinned row and its list twin never coexist
     return (
       <div
@@ -237,17 +304,17 @@ export function TimezoneSelect({
     <>
       <button
         type="button"
-        id={id}
+        id={controlId}
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={rest['aria-label']}
+        aria-invalid={field?.invalid || undefined}
+        aria-describedby={joinIds(field?.describedBy)}
         onClick={() => setOpen(true)}
         className={cn(
-          'inline-flex h-11 w-full items-center justify-between gap-2 rounded-[10px] border border-[var(--border-base)] bg-[var(--bg-input,var(--bg-card-deep))] px-3.5 text-left text-[16px] text-[var(--text-primary)] md:text-[15px]',
-          'outline-none transition-colors duration-[var(--dur-fast,120ms)] hover:border-[var(--border-strong)] motion-reduce:transition-none',
-          'focus-visible:border-[var(--amber)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring,var(--amber))]',
-          'disabled:pointer-events-none disabled:opacity-50',
+          controlBase,
+          'inline-flex items-center justify-between gap-2 text-left cursor-pointer hover:border-[var(--border-strong)] focus-visible:border-[var(--focus-ring,var(--amber))]',
           className,
         )}
       >
@@ -268,6 +335,7 @@ export function TimezoneSelect({
           type="text"
           role="combobox"
           aria-expanded="true"
+          aria-autocomplete="list"
           aria-controls={listId}
           aria-activedescendant={activeRow ? optionId(activeRow.tz) : undefined}
           aria-label="Search time zones"
@@ -296,9 +364,7 @@ export function TimezoneSelect({
             </div>
           ))}
           {flat.length === 0 ? (
-            <div role="status" className="px-3 py-8 text-center text-[14px] text-[var(--text-secondary)]">
-              {`No time zone matches '${query.trim()}'`}
-            </div>
+            <PageState kind="empty" compact layout="inline" icon={null} title={`No time zone matches '${query.trim()}'`} description="Try a city or region name." />
           ) : null}
         </div>
       </Dialog>

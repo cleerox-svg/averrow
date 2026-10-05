@@ -44,6 +44,7 @@ export function Sheet({ open, defaultOpen = false, onOpenChange, children }: She
   return (
     <SheetContext.Provider value={ctx}>
       <DialogPrimitive.Root open={isOpen} onOpenChange={set}>
+        <OverlayStyles />
         {children}
       </DialogPrimitive.Root>
     </SheetContext.Provider>
@@ -88,12 +89,16 @@ export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
     [ref],
   );
 
-  const applyOffset = (dy: number, animate: boolean) => {
+  // Drag moves the sheet with the individual `translate` property (driven by
+  // --sheet-drag-y in overlay-styles). It composes with the keyframe
+  // `transform`, so the enter/exit animations never restart and a dismissal
+  // leaves from the drop point. data-drag-active only switches the spring-back
+  // transition off while the finger is down.
+  const applyOffset = (dy: number, active: boolean) => {
     const el = localRef.current;
     if (!el) return;
-    el.dataset.dragging = dy > 0 || !animate ? 'true' : 'false';
-    el.style.transition = animate ? 'transform var(--dur-fast, 120ms) var(--ease-out, ease-out)' : 'none';
-    el.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
+    el.dataset.dragActive = active ? 'true' : 'false';
+    el.style.setProperty('--sheet-drag-y', `${dy}px`);
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -104,26 +109,30 @@ export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
     d.dy = Math.max(0, e.clientY - d.startY); // never drag upward past rest
-    applyOffset(d.dy, false);
+    applyOffset(d.dy, true);
   };
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
     drag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
+    const el = localRef.current;
     if (d.dy >= DRAG_DISMISS_PX) {
-      applyOffset(0, false);
+      // Keep the offset: the exit animation starts from the drop point.
+      if (el) el.dataset.dragActive = 'false';
       close?.();
+      // A refused close (controlled `open` stays true) must not leave the sheet stranded.
+      requestAnimationFrame(() => {
+        if (localRef.current && localRef.current.dataset.state === 'open') applyOffset(0, false);
+      });
     } else {
-      applyOffset(0, true); // spring back
+      applyOffset(0, false); // spring back via the translate transition
     }
   };
 
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className="av-ov-scrim">
-        <OverlayStyles />
-      </DialogPrimitive.Overlay>
+      <DialogPrimitive.Overlay className="av-ov-scrim" />
       <DialogPrimitive.Content
         asChild
         aria-modal="true"
@@ -151,7 +160,7 @@ export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
             display: 'flex',
             flexDirection: 'column',
             paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-            willChange: 'transform',
+            willChange: 'transform, translate',
           }}
         >
           {hideHandle ? null : (

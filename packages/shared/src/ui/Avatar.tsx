@@ -72,7 +72,7 @@ const mix = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%
 export function Avatar({
   name,
   faviconUrl,
-  color = 'var(--red)',
+  color: colorProp,
   dimColor,
   tone = 'brand',
   shape = 'default',
@@ -88,13 +88,16 @@ export function Avatar({
 }: AvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const self = tone === 'self';
+  // Self avatars default to the static amber (SELF_AVATAR_COLOR); entities to red.
+  const color = colorProp ?? (self ? 'var(--amber)' : 'var(--red)');
   // Self avatars are initials-only by contract: never render an image.
   const showFavicon = !self && !!faviconUrl && failedUrl !== faviconUrl;
   const neutral = tone === 'neutral';
   const glow = glowProp ?? self;
 
   const r = radius ?? (shape === 'squircle' ? Math.round(size * 0.3) : neutral ? Math.round(size * 0.26) : 12);
-  const text = (initials ?? '').trim();
+  const rawText = (initials ?? '').trim();
+  const text = self ? [...rawText].slice(0, 2).join('') : rawText;
   const initialCount = [...text].length;
   const fs = fontSize ?? Math.round(size * (neutral ? 0.37 : self && initialCount > 1 ? 0.36 : 0.375));
   const dot = severity ? SEV_DOT[String(severity).toLowerCase()] : undefined;

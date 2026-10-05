@@ -36,8 +36,8 @@ const VARIANT_STYLES: Record<CardVariant, { bg: string; border: string; rim: str
   elevated: {
     bg: 'linear-gradient(160deg, var(--bg-elevated) 0%, var(--bg-card-deep) 100%)',
     border: 'var(--border-strong)',
-    rim: 'rgba(255, 255, 255, 0.18)',
-    shadow: '0 12px 48px rgba(0, 0, 0, 0.75)',
+    rim: 'var(--card-rim-elevated)',
+    shadow: 'var(--card-shadow-elevated)',
   },
   active: {
     bg: 'linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%)',

@@ -18,7 +18,6 @@ export const OVERLAY_CSS = `
 @keyframes av-ov-menu-in{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
 @keyframes av-ov-menu-out{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.96)}}
 @keyframes av-ov-toast-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-@keyframes av-ov-spin{to{transform:rotate(360deg)}}
 
 .av-ov-scrim{position:fixed;inset:0;z-index:var(--z-modal,400);background:var(--scrim,rgba(4,7,14,.62));-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
 .av-ov-scrim[data-state=open]{animation:av-ov-fade-in var(--dur-base,180ms) var(--ease-out,ease-out)}
@@ -28,12 +27,12 @@ export const OVERLAY_CSS = `
 .av-ov-dialog[data-state=closed]{animation:av-ov-pop-out var(--dur-fast,120ms) var(--ease-out,ease-out) forwards}
 .av-ov-sheet[data-state=open]{animation:av-ov-sheet-in var(--dur-slow,300ms) var(--ease-emphasized,ease-out)}
 .av-ov-sheet[data-state=closed]{animation:av-ov-sheet-out 210ms var(--ease-out,ease-out) forwards}
-.av-ov-sheet[data-dragging=true]{animation:none}
+.av-ov-sheet{translate:0 var(--sheet-drag-y,0px);transition:translate var(--dur-base,180ms) var(--ease-out,ease-out)}
+.av-ov-sheet[data-drag-active=true]{transition:none}
 .av-ov-menu{transform-origin:var(--radix-dropdown-menu-content-transform-origin,top right)}
 .av-ov-menu[data-state=open]{animation:av-ov-menu-in 140ms var(--ease-emphasized,ease-out)}
 .av-ov-menu[data-state=closed]{animation:av-ov-menu-out 100ms var(--ease-out,ease-out) forwards}
 .av-ov-toast{animation:av-ov-toast-in var(--dur-base,180ms) var(--ease-emphasized,ease-out)}
-.av-ov-spinner{animation:av-ov-spin .8s linear infinite}
 
 .av-ov-footer{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .av-ov-footer[data-presentation=sheet]{flex-direction:column-reverse;flex-wrap:nowrap;align-items:stretch}
@@ -46,11 +45,36 @@ export const OVERLAY_CSS = `
   .av-ov-dialog[data-state=open],.av-ov-sheet[data-state=open],.av-ov-menu[data-state=open],.av-ov-toast{animation:av-ov-fade-in 100ms linear !important}
   .av-ov-dialog[data-state=closed],.av-ov-sheet[data-state=closed],.av-ov-menu[data-state=closed]{animation:av-ov-fade-out 100ms linear forwards !important}
   .av-ov-scrim[data-state]{animation-duration:100ms !important}
-  .av-ov-spinner{animation-duration:1.6s}
 }
 `;
 
-/** Emits the overlay CSS. Cheap + idempotent: duplicates are identical rules. */
-export function OverlayStyles(): React.ReactElement {
-  return <style data-averrow-overlay-styles="">{OVERLAY_CSS}</style>;
+let styleRefs = 0;
+let styleEl: HTMLStyleElement | null = null;
+
+/**
+ * Injects the overlay CSS into <head> once (ref-counted). Mount it in each
+ * overlay ROOT (Sheet, Dialog, Menu, ToastProvider) - never inside Radix
+ * Content/Overlay, which unmount before the exit animation finishes and would
+ * take the keyframes with them. Renders nothing.
+ */
+export function OverlayStyles(): null {
+  React.useInsertionEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    styleRefs += 1;
+    if (!styleEl || !styleEl.isConnected) {
+      styleEl = document.createElement('style');
+      styleEl.setAttribute('data-averrow-overlay-styles', '');
+      styleEl.textContent = OVERLAY_CSS;
+      document.head.appendChild(styleEl);
+    }
+    return () => {
+      styleRefs -= 1;
+      if (styleRefs <= 0) {
+        styleEl?.remove();
+        styleEl = null;
+        styleRefs = 0;
+      }
+    };
+  }, []);
+  return null;
 }

@@ -46,9 +46,13 @@ describe('ConfirmDialog', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Sign out everywhere' }));
     const confirm = screen.getByRole('button', { name: 'Sign out everywhere' });
-    expect(confirm).toBeDisabled();
+    // aria-disabled (not disabled) so keyboard focus is never dropped mid-request.
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
     expect(confirm).toHaveAttribute('aria-busy', 'true');
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(confirm).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveAttribute('aria-disabled', 'true');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onOpenChange).not.toHaveBeenCalled();
     // Esc must not dismiss mid-request.
     await user.keyboard('{Escape}');
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -105,5 +109,14 @@ describe('ConfirmDialog', () => {
   it('presents as a centered dialog on desktop', () => {
     render(<ConfirmDialog {...base} onOpenChange={() => {}} onConfirm={() => {}} />);
     expect(screen.getByRole('dialog').className).toContain('av-ov-dialog');
+  });
+});
+
+describe('ConfirmDialog a11y (S8)', () => {
+  it('announces description AND consequence as the dialog description', () => {
+    render(<ConfirmDialog {...base} onOpenChange={() => {}} onConfirm={() => {}} />);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAccessibleDescription(expect.stringContaining("You'll stay signed in here."));
+    expect(dialog).toHaveAccessibleDescription(expect.stringContaining(String(base.description)));
   });
 });

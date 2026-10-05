@@ -1,5 +1,4 @@
-// @averrow/shared overlay primitives (Phase 2 PR P2-2). Not yet re-exported from
-// ui/index.ts; import from this folder until the kit barrel picks them up.
+// @averrow/shared overlay primitives. Re-exported from ui/index.ts.
 export { Sheet, SheetTrigger, SheetClose, SheetContent, useSheetClose, type SheetProps, type SheetContentProps } from './Sheet';
 export { Dialog, ConfirmDialog, type DialogProps, type ConfirmDialogProps, type OverlayPresentation } from './Dialog';
 export {
@@ -11,8 +10,8 @@ export {
   type ToastType, type ToastAction, type ToastOptions, type ToastContextValue,
 } from './Toast';
 export {
-  TimezoneSelect, formatTimeZoneLabel, listTimeZones, detectTimeZone, type TimezoneSelectProps,
+  TimezoneSelect, formatTimeZoneLabel, canonicalTimeZone, listTimeZones, detectTimeZone, type TimezoneSelectProps,
 } from './TimezoneSelect';
-// useMediaQuery and the tile/spinner parts stay internal: the public
-// useMediaQuery and IconTile come from ../settings (one name, one export).
+// The public useMediaQuery (settings barrel) and IconTile come from ../settings;
+// the spinner lives in ../Spinner. Only the compact-viewport helpers are here.
 export { useIsCompact, COMPACT_QUERY } from './useMediaQuery';

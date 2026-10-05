@@ -123,3 +123,16 @@ describe('shared Avatar squircle / self', () => {
     expect((brand.container.firstChild as HTMLElement).style.boxShadow).not.toMatch(/0 0 32px/);
   });
 });
+
+describe('shared Avatar tone=self (review fix)', () => {
+  it('defaults to the amber self colour when no colour is passed', () => {
+    const { container } = render(<Avatar tone="self" name="Claude Leroux" initials="CL" />);
+    expect((container.firstChild as HTMLElement).style.background).toContain('var(--amber)');
+  });
+
+  it('caps self initials at 2 characters', () => {
+    render(<Avatar tone="self" name="x" initials="ABC" />);
+    expect(screen.getByText('AB')).toBeInTheDocument();
+    expect(screen.queryByText('ABC')).toBeNull();
+  });
+});

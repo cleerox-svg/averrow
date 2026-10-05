@@ -57,7 +57,7 @@ describe('ToastProvider', () => {
   it('pauses on hover and resumes with the remaining time on leave', () => {
     setup();
     act(() => { api.success('Hold me'); });
-    const el = screen.getByRole('status');
+    const el = screen.getByText('Hold me').closest('[class*="av-ov-toast"]') as HTMLElement;
     act(() => { vi.advanceTimersByTime(2000); });
     fireEvent.mouseEnter(el);
     act(() => { vi.advanceTimersByTime(20000); });
@@ -96,5 +96,66 @@ describe('ToastProvider', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(() => render(<Grab />)).toThrow(/ToastProvider/);
     err.mockRestore();
+  });
+});
+
+describe('ToastProvider (review fixes)', () => {
+  it('keeps always-mounted live regions so inserted toasts are announced', () => {
+    setup();
+    const polite = document.querySelector('.av-toast-viewport [aria-live="polite"]');
+    const assertive = document.querySelector('.av-toast-viewport [aria-live="assertive"]');
+    expect(polite).not.toBeNull();
+    expect(assertive).not.toBeNull();
+    act(() => { api.success('Hi'); });
+    expect(document.querySelector('.av-toast-viewport [aria-live="polite"]')).toBe(polite);
+    expect(polite).toHaveTextContent('Hi');
+    act(() => { api.error('Bad'); });
+    act(() => { vi.advanceTimersByTime(3500); });
+    expect(assertive).toHaveTextContent('Bad');
+  });
+
+  it('sticky toasts (duration 0 / Infinity) get a 44px Dismiss button that unblocks the queue', () => {
+    setup();
+    act(() => { api.toast({ message: 'Stuck', duration: 0 }); api.info('Next'); });
+    act(() => { vi.advanceTimersByTime(60000); });
+    expect(screen.getByText('Stuck')).toBeInTheDocument();
+    const btn = screen.getByRole('button', { name: 'Dismiss' });
+    expect(btn.className).toContain('h-[44px]');
+    fireEvent.click(btn);
+    expect(screen.queryByText('Stuck')).toBeNull();
+    expect(screen.getByText('Next')).toBeInTheDocument();
+    act(() => { api.toast({ message: 'Inf', duration: Infinity }); });
+    act(() => { vi.advanceTimersByTime(3500); });
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('Escape dismisses the focused toast', () => {
+    setup();
+    act(() => { api.toast({ message: 'Esc me', action: { label: 'Undo', onAction: () => {} } }); });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Undo' }), { key: 'Escape' });
+    expect(screen.queryByText('Esc me')).toBeNull();
+  });
+
+  it('a pause that lands at expiry does not turn the toast sticky', () => {
+    setup();
+    act(() => { api.success('Edge'); });
+    const el = screen.getByText('Edge').closest('[class*="av-ov-toast"]') as HTMLElement;
+    act(() => { vi.advanceTimersByTime(3499); });
+    fireEvent.mouseEnter(el);
+    fireEvent.mouseLeave(el);
+    act(() => { vi.advanceTimersByTime(10); });
+    expect(screen.queryByText('Edge')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+
+  it('hover and focus pause independently (leaving hover while focused stays paused)', () => {
+    setup();
+    act(() => { api.toast({ message: 'Both', action: { label: 'Undo', onAction: () => {} } }); });
+    const el = screen.getByText('Both').closest('[class*="av-ov-toast"]') as HTMLElement;
+    fireEvent.mouseEnter(el);
+    fireEvent.focus(screen.getByRole('button', { name: 'Undo' }));
+    fireEvent.mouseLeave(el);
+    act(() => { vi.advanceTimersByTime(30000); });
+    expect(screen.getByText('Both')).toBeInTheDocument();
   });
 });

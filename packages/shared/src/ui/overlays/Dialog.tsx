@@ -4,7 +4,10 @@ import { cn } from '../cn';
 import { Card } from '../Card';
 import { Button } from '../Button';
 import { OverlayStyles } from './overlay-styles';
-import { AlertGlyph, IconTile, InfoGlyph, OverlayHeader, Spinner, type OverlayHeaderProps } from './parts';
+import { OverlayHeader, type OverlayHeaderProps } from './parts';
+import { IconTile } from '../settings/IconTile';
+import { WarnIcon, InfoIcon } from '../settings/icons';
+import { Spinner } from '../Spinner';
 import { Sheet, SheetContent } from './Sheet';
 import { useIsCompact } from './useMediaQuery';
 
@@ -57,10 +60,9 @@ export function Dialog({
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <OverlayStyles />
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="av-ov-scrim">
-          <OverlayStyles />
-        </DialogPrimitive.Overlay>
+        <DialogPrimitive.Overlay className="av-ov-scrim" />
         <DialogPrimitive.Content
           asChild
           aria-modal="true"
@@ -146,6 +148,7 @@ export function ConfirmDialog({
   };
 
   const handleConfirm = async () => {
+    if (pending) return;
     setPending(true);
     setError(null);
     try {
@@ -160,27 +163,43 @@ export function ConfirmDialog({
     }
   };
 
-  const defaultIcon = tone === 'danger' ? <AlertGlyph /> : <InfoGlyph />;
+  const defaultIcon = tone === 'danger' ? <WarnIcon /> : <InfoIcon />;
 
   return (
     <Dialog
       open={open}
       onOpenChange={handleOpenChange}
       title={title}
-      description={description}
-      icon={<IconTile tone={tone === 'danger' ? 'danger' : 'primary'}>{icon ?? defaultIcon}</IconTile>}
+      description={
+        description || consequence ? (
+          <>
+            {description ? <span className="block">{description}</span> : null}
+            {consequence ? <span className={description ? 'mt-2 block' : 'block'}>{consequence}</span> : null}
+          </>
+        ) : undefined
+      }
+      icon={<IconTile size={40} tone={tone === 'danger' ? 'red' : 'amber'}>{icon ?? defaultIcon}</IconTile>}
       presentation={presentation}
       // Destructive: land on Cancel so Enter can never confirm by accident.
       onOpenAutoFocus={tone === 'danger' ? (e) => { e.preventDefault(); cancelRef.current?.focus(); } : undefined}
       footer={
         <>
-          <Button ref={cancelRef} type="button" variant="secondary" disabled={pending} onClick={() => handleOpenChange(false)}>
+          {/* aria-disabled (not disabled) while pending so keyboard focus is never dropped. */}
+          <Button
+            ref={cancelRef}
+            type="button"
+            variant="secondary"
+            aria-disabled={pending || undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            onClick={() => handleOpenChange(false)}
+          >
             {cancelLabel}
           </Button>
           <Button
             type="button"
             variant={tone === 'danger' ? 'danger' : 'primary'}
-            disabled={pending}
+            aria-disabled={pending || undefined}
+            className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
             aria-busy={pending || undefined}
             onClick={() => { void handleConfirm(); }}
           >
@@ -190,9 +209,6 @@ export function ConfirmDialog({
         </>
       }
     >
-      {consequence ? (
-        <p className="m-0 text-[14px] leading-[1.5] text-[var(--text-secondary)]">{consequence}</p>
-      ) : null}
       {error ? (
         <p role="alert" className="m-0 mt-3 flex items-start gap-2 text-[13px] leading-[1.45] text-[var(--sev-critical-text)]">
           <svg aria-hidden width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-[3px] shrink-0">

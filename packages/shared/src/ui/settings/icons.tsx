@@ -19,12 +19,3 @@ export const WarnIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 3.5
 export const AlertIcon = (p: IconProps) => <svg {...base} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 7.5v5M12 16h.01" /></svg>;
 export const ShieldIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z" /></svg>;
 export const XIcon = (p: IconProps) => <svg {...base} {...p}><path d="m6 6 12 12M18 6 6 18" /></svg>;
-
-export function Spinner({ size = 16 }: { size?: number }) {
-  return (
-    <svg {...base} width={size} height={size} className="animate-spin" data-testid="ds-spinner">
-      <circle cx="12" cy="12" r="9" opacity={0.25} />
-      <path d="M21 12a9 9 0 0 0-9-9" />
-    </svg>
-  );
-}

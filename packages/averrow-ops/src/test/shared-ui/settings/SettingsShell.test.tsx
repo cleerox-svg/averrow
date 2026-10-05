@@ -110,7 +110,8 @@ describe('SettingsShell — mobile list to detail', () => {
   });
 
   it('runs a View Transition when supported (forward on open, back on return)', async () => {
-    const start = vi.fn(() => ({ finished: Promise.resolve() }));
+    // Like the browser: the callback is actually invoked (after the click), and its promise gates `finished`.
+    const start = vi.fn((cb: () => Promise<void> | void) => ({ finished: Promise.resolve().then(() => cb()) }));
     (document as unknown as { startViewTransition: typeof start }).startViewTransition = start;
     const onNavigate = vi.fn();
     const { rerender } = render(<SettingsShell sections={SECTIONS} activeId={null} basePath="/settings" onNavigate={onNavigate} />);
@@ -124,5 +125,71 @@ describe('SettingsShell — mobile list to detail', () => {
   it('without the View Transition API the screen gets the CSS fallback animation class', () => {
     const { container } = render(<SettingsShell sections={SECTIONS} activeId="profile" basePath="/settings" />);
     expect(container.querySelector('.ds-sshell-screen--fallback')).not.toBeNull();
+  });
+});
+
+describe('SettingsShell view transition + focus (review fixes)', () => {
+  beforeEach(() => stubViewport(false));
+  afterEach(() => { delete (document as unknown as { startViewTransition?: unknown }).startViewTransition; });
+
+  /** Mock that captures the callback; `run()` plays the browser taking the snapshot, then calling it. */
+  const installVT = (log: string[]) => {
+    const cbs: Array<() => Promise<void> | void> = [];
+    (document as unknown as { startViewTransition: unknown }).startViewTransition = vi.fn((cb: () => Promise<void> | void) => {
+      log.push('vt-start');
+      cbs.push(cb);
+      return { finished: Promise.resolve() };
+    });
+    return { run: async () => { log.push('snapshot'); await cbs.shift()?.(); } };
+  };
+
+  it('navigates INSIDE the transition callback, after the old snapshot', async () => {
+    const log: string[] = [];
+    const vt = installVT(log);
+    const onNavigate = vi.fn(() => { log.push('navigate'); });
+    render(<SettingsShell sections={SECTIONS} activeId={null} basePath="/settings" onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('link', { name: /Security/ }));
+    expect(onNavigate).not.toHaveBeenCalled(); // not navigated synchronously with the click
+    expect(log).toEqual(['vt-start']);
+    void vt.run();
+    expect(log).toEqual(['vt-start', 'snapshot', 'navigate']);
+    expect(onNavigate).toHaveBeenCalledWith('/settings/security');
+  });
+
+  it('with renderLink + onNavigate the click is intercepted (router Link skips its own navigation)', async () => {
+    const vt = installVT([]);
+    const onNavigate = vi.fn();
+    const linkClick = vi.fn((e: { defaultPrevented: boolean }) => e.defaultPrevented);
+    const renderLink = (p: Parameters<NonNullable<React.ComponentProps<typeof SettingsShell>['renderLink']>>[0]) => (
+      <a href={p.href} className={p.className} onClick={(e) => { p.onClick?.(e); linkClick(e); e.preventDefault(); }}>{p.children}</a>
+    );
+    render(<SettingsShell sections={SECTIONS} activeId={null} basePath="/settings" renderLink={renderLink} onNavigate={onNavigate} />);
+    await userEvent.click(screen.getByRole('link', { name: /Devices/ }));
+    expect(linkClick).toHaveReturnedWith(true);
+    void vt.run();
+    expect(onNavigate).toHaveBeenCalledWith('/settings/devices');
+  });
+
+  it('renderLink without onNavigate skips the transition and uses the CSS fallback animation', async () => {
+    const log: string[] = [];
+    installVT(log);
+    const { container } = render(
+      <SettingsShell sections={SECTIONS} activeId="profile" basePath="/settings"
+        renderLink={(p) => <a href={p.href} className={p.className} onClick={(e) => { p.onClick?.(e); e.preventDefault(); }}>{p.children}</a>} />,
+    );
+    expect(container.querySelector('.ds-sshell-screen--fallback')).not.toBeNull();
+    await userEvent.click(screen.getByRole('link', { name: /Settings/ }));
+    expect(log).toEqual([]);
+  });
+
+  it('moves focus to the new screen title on route change, not on first mount', () => {
+    const { rerender } = render(<SettingsShell sections={SECTIONS} activeId={null} basePath="/settings" />);
+    const home = screen.getByRole('heading', { level: 1, name: 'Settings' });
+    expect(home).not.toHaveFocus();
+    expect(home).toHaveAttribute('tabindex', '-1');
+    rerender(<SettingsShell sections={SECTIONS} activeId="security" basePath="/settings" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Security' })).toHaveFocus();
+    rerender(<SettingsShell sections={SECTIONS} activeId={null} basePath="/settings" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toHaveFocus();
   });
 });

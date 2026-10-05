@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { cn } from '../cn';
 import { controlBase } from './Input';
-import { useFieldContext, joinIds } from './field-context';
+import { useFieldContext, useFieldControlId, joinIds } from './field-context';
 
 export interface TimeInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   invalid?: boolean;
@@ -11,13 +11,14 @@ export interface TimeInputProps extends Omit<React.InputHTMLAttributes<HTMLInput
 export const TimeInput = React.forwardRef<HTMLInputElement, TimeInputProps>(
   ({ className, id, invalid, step = 900, ...props }, ref) => {
     const field = useFieldContext();
+    const controlId = useFieldControlId(id);
     const isInvalid = invalid ?? field?.invalid ?? false;
     return (
       <input
         {...props}
         ref={ref}
         type="time"
-        id={id ?? field?.id}
+        id={controlId}
         step={step}
         aria-invalid={isInvalid || undefined}
         aria-describedby={joinIds(props['aria-describedby'], field?.describedBy)}

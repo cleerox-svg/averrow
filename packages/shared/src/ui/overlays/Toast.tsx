@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { cn } from '../cn';
 import { Card } from '../Card';
 import { OverlayStyles } from './overlay-styles';
+import { FOCUS_RING } from '../forms/focus';
 
 // Shared toast (ACCOUNT_DESIGN_SPEC §4.11). Ported from the ops Toast:
 //   - `useToast().showToast(message, type?)` still works (same signature).
@@ -88,15 +89,22 @@ export function ToastProvider({ children }: { children?: React.ReactNode }): Rea
   );
 
   const current = queue[0];
+  const item = current ? <ToastItem key={current.id} entry={current} onDismiss={() => dismiss(current.id)} /> : null;
 
   return (
     <ToastContext.Provider value={value}>
       {children}
       {typeof document !== 'undefined'
         ? createPortal(
+            // The live regions are always mounted so an inserted toast is announced.
             <div className="av-toast-viewport">
               <OverlayStyles />
-              {current ? <ToastItem key={current.id} entry={current} onDismiss={() => dismiss(current.id)} /> : null}
+              <div role="status" aria-live="polite" aria-atomic="true">
+                {current && current.type !== 'error' ? item : null}
+              </div>
+              <div role="alert" aria-live="assertive" aria-atomic="true">
+                {current && current.type === 'error' ? item : null}
+              </div>
             </div>,
             document.body,
           )
@@ -106,9 +114,9 @@ export function ToastProvider({ children }: { children?: React.ReactNode }): Rea
 }
 
 const ICON_COLOR: Record<ToastType, string> = {
-  success: 'var(--green)',
+  success: 'var(--sev-info-text)',
   error: 'var(--sev-critical-text)',
-  info: 'var(--blue)',
+  info: 'var(--sev-low-text)',
 };
 
 function ToastGlyph({ type }: { type: ToastType }) {
@@ -118,35 +126,41 @@ function ToastGlyph({ type }: { type: ToastType }) {
   return <svg {...common}><circle cx="12" cy="12" r="9.5" /><path d="M12 11v5M12 8h.01" /></svg>;
 }
 
+/** Sticky = decided from the TOTAL duration (never from time remaining). */
+function isSticky(total: number): boolean {
+  return !Number.isFinite(total) || total <= 0;
+}
+
 function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: () => void }): React.ReactElement {
-  const [paused, setPaused] = React.useState(false);
+  const [hovered, setHovered] = React.useState(false);
+  const [focused, setFocused] = React.useState(false);
+  const paused = hovered || focused;
   const total = toastDuration(entry);
-  const remaining = React.useRef(total);
+  const sticky = isSticky(total);
+  const remaining = React.useRef(sticky ? 0 : total);
   const onDismissRef = React.useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
   React.useEffect(() => {
-    if (paused || !Number.isFinite(remaining.current) || remaining.current <= 0) return;
+    if (sticky || paused) return undefined;
     const startedAt = Date.now();
-    const timer = setTimeout(() => onDismissRef.current(), remaining.current);
+    const timer = setTimeout(() => onDismissRef.current(), Math.max(0, remaining.current));
     return () => {
       clearTimeout(timer);
       remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt));
     };
-  }, [paused]);
+  }, [paused, sticky]);
 
   return (
     <Card
       variant="elevated"
       padding="12px 14px"
       className={cn('av-ov-toast')}
-      role={entry.type === 'error' ? 'alert' : 'status'}
-      aria-live={entry.type === 'error' ? 'assertive' : 'polite'}
-      aria-atomic="true"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onDismiss(); } }}
     >
       <div className="flex items-center gap-3">
         <span className="inline-flex shrink-0" style={{ color: ICON_COLOR[entry.type] }}>
@@ -160,9 +174,28 @@ function ToastItem({ entry, onDismiss }: { entry: ToastEntry; onDismiss: () => v
               entry.action?.onAction();
               onDismiss();
             }}
-            className="-my-2 -mr-2 inline-flex min-h-[44px] shrink-0 items-center rounded-[10px] px-3 text-[14px] font-bold text-[var(--amber-text)] outline-none hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] focus-visible:ring-2 focus-visible:ring-[var(--focus-ring,var(--amber))]"
+            className={cn(
+              '-my-2 inline-flex min-h-[44px] shrink-0 items-center rounded-[10px] px-3 text-[14px] font-bold text-[var(--amber-text)] outline-none hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)]',
+              FOCUS_RING,
+              sticky ? '' : '-mr-2',
+            )}
           >
             {entry.action.label}
+          </button>
+        ) : null}
+        {sticky ? (
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={onDismiss}
+            className={cn(
+              '-my-2 -mr-2 inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-[10px] text-[var(--text-secondary)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] hover:text-[var(--text-primary)]',
+              FOCUS_RING,
+            )}
+          >
+            <svg aria-hidden width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="m6 6 12 12M18 6 6 18" />
+            </svg>
           </button>
         ) : null}
       </div>

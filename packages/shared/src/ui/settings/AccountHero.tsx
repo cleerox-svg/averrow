@@ -68,13 +68,18 @@ export function AccountHero({
   const padding = wide && !compact ? 'lg' : 20;
 
   if (loading) {
+    const bone = (w: number | string, h: number, r = 6, strong = false) => (
+      <div className="motion-safe:animate-pulse" style={{ width: w, height: h, borderRadius: r, background: strong ? 'var(--border-strong)' : 'var(--border-base)' }} />
+    );
     return (
-      <Card variant="active" accent="var(--amber)" padding={padding} className={className} aria-busy="true" aria-label="Loading your profile">
-        <div className="ds-hero">
-          <div className="animate-pulse rounded-full" style={{ width: avatarSize, height: avatarSize, background: 'var(--border-strong)' }} />
+      <Card variant="active" accent="var(--amber)" padding={padding} className={className} role="status" aria-busy="true" aria-label="Loading your profile">
+        <div className={cn('ds-hero', compact && 'ds-hero--compact')}>
+          {bone(avatarSize, avatarSize, Math.round(avatarSize * 0.3), true)}
           <div className="ds-hero-body">
-            <div className="animate-pulse rounded" style={{ height: 22, width: '55%', background: 'var(--border-strong)' }} />
-            <div className="mt-2 animate-pulse rounded" style={{ height: 14, width: '40%', background: 'var(--border-base)' }} />
+            {bone('55%', 22, 6, true)}
+            <div className="mt-2">{bone('40%', 14)}</div>
+            <div className="ds-hero-chips">{bone(88, 22, 999)}{bone(96, 22, 999)}</div>
+            <div className="mt-2">{bone('50%', 14)}</div>
           </div>
         </div>
       </Card>

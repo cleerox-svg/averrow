@@ -16,7 +16,8 @@
 import { useId, type MouseEvent, type ReactNode } from 'react';
 import { cn } from '../cn';
 import { IconTile, type IconTileTone } from './IconTile';
-import { ChevronRightIcon, Spinner } from './icons';
+import { ChevronRightIcon } from './icons';
+import { Spinner } from '../Spinner';
 import { defaultRenderLink, type SettingsRenderLink } from './types';
 
 export interface SettingsRowControlContext {
@@ -143,14 +144,14 @@ export function SettingsRow({
 
   if (variant === 'toggle') {
     return (
-      <label id={id} className={cls} aria-disabled={disabled || undefined}>
+      <label id={id} className={cls} data-disabled={disabled || undefined}>
         {body}
       </label>
     );
   }
 
   return (
-    <div id={id} className={cls} aria-disabled={disabled || undefined} aria-busy={loading || undefined}>
+    <div id={id} className={cls} data-disabled={disabled || undefined} aria-busy={loading || undefined}>
       {body}
     </div>
   );

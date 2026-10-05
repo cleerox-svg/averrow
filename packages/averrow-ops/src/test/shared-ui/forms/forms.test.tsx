@@ -182,3 +182,53 @@ describe('describeQuietWindow', () => {
     expect(describeQuietWindow('25:00', '07:00')).toBeNull();
   });
 });
+
+import { TimezoneSelect } from '../../../../../shared/src/ui/overlays';
+
+describe('Field wiring with a control-owned id (review fix)', () => {
+  it('Input with its own id: label and help follow it', () => {
+    render(<Field label="Name" help="Shown on invoices"><Input id="custom-name" /></Field>);
+    const input = screen.getByLabelText('Name');
+    expect(input).toHaveAttribute('id', 'custom-name');
+    expect(input).toHaveAccessibleDescription('Shown on invoices');
+    expect(screen.getByText('Shown on invoices').id).toBe('custom-name-help');
+  });
+
+  it('Select, TimeInput and Switch with their own ids are labelled by the Field', () => {
+    render(
+      <>
+        <Field label="Language"><Select id="lang"><option>EN</option></Select></Field>
+        <Field label="Start"><TimeInput id="start" /></Field>
+        <Field label="Alerts"><Switch id="alerts" /></Field>
+      </>,
+    );
+    expect(screen.getByLabelText('Language')).toHaveAttribute('id', 'lang');
+    expect(screen.getByLabelText('Start')).toHaveAttribute('id', 'start');
+    expect(screen.getByRole('switch', { name: 'Alerts' })).toHaveAttribute('id', 'alerts');
+  });
+
+  it('TimezoneSelect consumes Field id, describedby and invalid', () => {
+    render(
+      <Field label="Time zone" help="Used for quiet hours" error="Pick one">
+        <TimezoneSelect value="UTC" onChange={() => {}} zones={['UTC']} detectedZone={null} />
+      </Field>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Time zone' });
+    expect(trigger).toHaveAttribute('aria-invalid', 'true');
+    expect(trigger).toHaveAccessibleDescription('Pick one Used for quiet hours');
+  });
+
+  it('Switch off state uses the contrast tokens; checked keeps a white knob', () => {
+    render(<Switch aria-label="x" />);
+    const sw = screen.getByRole('switch');
+    expect(sw.className).toContain('var(--switch-off-border)');
+    const thumb = sw.querySelector('span') as HTMLElement;
+    expect(thumb.className).toContain('var(--switch-knob-off)');
+    expect(thumb.className).toContain('data-[state=checked]:bg-[#fff]');
+  });
+
+  it('SegmentedControl segments are 44px on coarse pointers', () => {
+    render(<SegmentedControl aria-label="t" value="a" options={[{ value: 'a', label: 'A' }]} />);
+    expect(screen.getByRole('radio').className).toContain('[@media(pointer:coarse)]:min-h-[44px]');
+  });
+});

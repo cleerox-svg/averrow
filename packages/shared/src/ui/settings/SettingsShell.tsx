@@ -13,6 +13,14 @@
 // Router-agnostic: the shell only knows hrefs. Pass `renderLink` to mount a
 // router <Link> (react-router in ops), or `onNavigate` to keep plain anchors but
 // route in JS. `basePath` is wherever the host mounts it ("/settings", ...).
+//
+// View Transitions need the route change to happen INSIDE startViewTransition's
+// callback (after the old snapshot, before the new one). So the slide only runs
+// when `onNavigate` is supplied: the shell intercepts plain left-clicks
+// (preventDefault, which router <Link>s honour), then calls onNavigate(href)
+// inside the callback. `renderLink` WITHOUT `onNavigate` navigates by itself
+// before we could snapshot, so that combination skips the transition and uses
+// the CSS enter animation instead.
 // Switching between home and a section is the host's job (it owns the URL and
 // passes the resulting `activeId`).
 
@@ -20,6 +28,7 @@ import {
   useEffect, useId, useLayoutEffect, useRef, useState,
   type MouseEvent, type ReactNode,
 } from 'react';
+import { flushSync } from 'react-dom';
 import { Badge } from '../Badge';
 import { cn } from '../cn';
 import { PageHeader } from '../PageHeader';
@@ -116,15 +125,20 @@ export function SettingsShell({
   }, [activeId]);
 
   const supportsVT = typeof document !== 'undefined' && typeof (document as ViewTransitionDoc).startViewTransition === 'function';
+  // Only a host-controlled navigation can be placed inside the transition callback.
+  const canTransition = supportsVT && !!onNavigate;
 
-  const beginTransition = (direction: 'forward' | 'back') => {
-    if (isDesktop || !supportsVT) return;
+  const navigateWithTransition = (href: string, direction: 'forward' | 'back') => {
     const doc = document as ViewTransitionDoc;
     const html = document.documentElement;
-    html.setAttribute('data-ds-nav', direction === 'back' ? 'back' : 'forward');
+    html.setAttribute('data-ds-nav', direction);
     const t = doc.startViewTransition!(() => new Promise<void>((resolve) => {
-      pending.current = resolve;
-      setTimeout(resolve, 600); // never hang the page if the route doesn't change
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = () => { if (timer) clearTimeout(timer); resolve(); };
+      pending.current = done;
+      timer = setTimeout(done, 600); // never hang the page if the route doesn't change
+      // The route change happens here: the old snapshot is already taken.
+      flushSync(() => onNavigate?.(href));
     }));
     void Promise.resolve(t.finished).catch(() => undefined).then(() => html.removeAttribute('data-ds-nav'));
   };
@@ -132,15 +146,10 @@ export function SettingsShell({
   const handleClick = (e: MouseEvent<HTMLElement>, href: string) => {
     if (e.defaultPrevented) return;
     const plain = e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
-    if (!plain) return;
-    const dir = href === homeHref ? 'back' : 'forward';
-    if (!renderLink && onNavigate) {
-      e.preventDefault();
-      beginTransition(dir);
-      onNavigate(href);
-      return;
-    }
-    beginTransition(dir);
+    if (!plain || !onNavigate) return;
+    e.preventDefault(); // anchors and router Links both skip their own navigation
+    if (!isDesktop && canTransition) navigateWithTransition(href, href === homeHref ? 'back' : 'forward');
+    else onNavigate(href);
   };
 
   /** Single link factory: the host's renderer (or <a>) + our click handling. */
@@ -150,8 +159,16 @@ export function SettingsShell({
       onClick: (e) => { p.onClick?.(e); handleClick(e, p.href); },
     });
 
-  // Small bar title fades in once the large title scrolls under the bar.
   const largeRef = useRef<HTMLHeadingElement | null>(null);
+  // New screen on mobile: move focus to its title so screen readers announce it.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    if (isDesktop) return;
+    largeRef.current?.focus({ preventScroll: true });
+  }, [activeId, isDesktop]);
+
+  // Small bar title fades in once the large title scrolls under the bar.
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const el = largeRef.current;
@@ -188,7 +205,7 @@ export function SettingsShell({
                               <>
                                 <IconTile size={28} tone={s.tone ?? 'neutral'}>{s.icon}</IconTile>
                                 <span className="ds-rail-label">{s.label}</span>
-                                {hasBadge(s.badge) && <Badge severity="medium" size="xs" label={String(s.badge)} />}
+                                {hasBadge(s.badge) && <Badge severity="medium" size="md" label={String(s.badge)} />}
                               </>
                             ),
                           })}
@@ -212,7 +229,7 @@ export function SettingsShell({
     const label = active?.label ?? title;
     return (
       <div className={cn('ds-sshell', className)} data-layout="mobile" data-screen="detail">
-        <div key={`detail-${activeId}`} className={cn('ds-sshell-screen', !supportsVT && 'ds-sshell-screen--fallback')}>
+        <div key={`detail-${activeId}`} className={cn('ds-sshell-screen', !(canTransition && !isDesktop) && 'ds-sshell-screen--fallback')}>
           <div className="ds-sshell-bar" data-scrolled={scrolled ? 'true' : 'false'}>
             {linkRenderer({
               href: homeHref,
@@ -223,7 +240,7 @@ export function SettingsShell({
             <span />
           </div>
           <div className="ds-sshell-detail">
-            <h1 ref={largeRef} className="ds-sshell-large">{label}</h1>
+            <h1 ref={largeRef} tabIndex={-1} className="ds-sshell-large">{label}</h1>
             {children}
           </div>
         </div>
@@ -234,8 +251,8 @@ export function SettingsShell({
   // ── mobile: home list ──
   return (
     <div className={cn('ds-sshell', className)} data-layout="mobile" data-screen="home">
-      <div key="home" className={cn('ds-sshell-screen ds-sshell-home', !supportsVT && 'ds-sshell-screen--fallback')}>
-        <h1 className="ds-sshell-large">{title}</h1>
+      <div key="home" className={cn('ds-sshell-screen ds-sshell-home', !(canTransition && !isDesktop) && 'ds-sshell-screen--fallback')}>
+        <h1 ref={largeRef} tabIndex={-1} className="ds-sshell-large">{title}</h1>
         {home && <div className="mb-6">{home}</div>}
         {groups.map((g, gi) => (
           <SettingsGroup key={g.label ?? `__${gi}`} title={g.label ?? undefined} aria-label={g.label ? undefined : title}>
@@ -249,7 +266,7 @@ export function SettingsShell({
                 tone={s.tone ?? 'neutral'}
                 title={s.label}
                 description={s.description}
-                trailing={hasBadge(s.badge) ? <Badge severity="medium" size="xs" label={String(s.badge)} /> : undefined}
+                trailing={hasBadge(s.badge) ? <Badge severity="medium" size="md" label={String(s.badge)} /> : undefined}
               />
             ))}
           </SettingsGroup>
