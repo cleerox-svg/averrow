@@ -38,6 +38,8 @@ export function ChannelsSection({
   const denied = push.permission === 'denied';
   const unsupported = !push.supported;
   const blocked = denied || unsupported;
+  // A stale subscription under a revoked permission (or an unsupported browser) is not "on".
+  const pushActive = push.subscribed && !blocked;
   const pushBusy = !!push.busy || autosave.saving('push-toggle');
 
   const togglePush = (next: boolean) => {
@@ -133,7 +135,7 @@ export function ChannelsSection({
     />
   );
 
-  const pushDescription = push.subscribed
+  const pushDescription = pushActive
     ? 'On for this device.'
     : 'Get alerts on this device, even when Averrow is closed.';
   const pushReason = unsupported
@@ -164,7 +166,7 @@ export function ChannelsSection({
           tone="blue"
           title="Push notifications"
           description={pushDescription}
-          disabled={blocked && !push.subscribed}
+          disabled={blocked}
           disabledReason={pushReason}
           loading={pushBusy}
           error={autosave.error('push-toggle')}
@@ -174,7 +176,7 @@ export function ChannelsSection({
               <Switch
                 aria-labelledby={labelId}
                 aria-describedby={descriptionId}
-                checked={push.subscribed}
+                checked={pushActive}
                 disabled={disabled || !online}
                 onCheckedChange={togglePush}
               />
@@ -191,11 +193,11 @@ export function ChannelsSection({
           tone="blue"
           title="Send a test notification"
           description={testResult?.ok ? <span role="status">{testResult.text}</span> : 'Check that alerts reach this device.'}
-          disabled={!push.subscribed}
+          disabled={!pushActive}
           disabledReason="Turn on push to send a test."
           error={testResult && !testResult.ok ? testResult.text : undefined}
           trailing={
-            <Button variant="secondary" size="sm" disabled={!push.subscribed || testBusy || !online} onClick={() => void sendTest()}>
+            <Button variant="secondary" size="sm" className="[@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:px-4" disabled={!pushActive || testBusy || !online} onClick={() => void sendTest()}>
               {testBusy ? 'Sending…' : 'Send test'}
             </Button>
           }
@@ -224,7 +226,8 @@ export function ChannelsSection({
           tone="neutral"
           title="Email address"
           description="Alerts go to the address on your account."
-          trailing={<span className="max-w-[220px] truncate text-[14px] text-[var(--text-secondary)]" title={email ?? undefined}>{email ?? 'Not set'}</span>}
+          stackTrailing
+          trailing={<span className="ds-srow-value text-right text-[14px] text-[var(--text-secondary)] [overflow-wrap:anywhere] max-[479px]:text-left">{email ?? 'Not set'}</span>}
         />
       </SettingsGroup>
 

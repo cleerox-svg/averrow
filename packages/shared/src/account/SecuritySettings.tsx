@@ -224,7 +224,7 @@ export function SecuritySettings({
       type="button"
       variant={variant}
       size="sm"
-      className={TOUCH_MIN}
+      className={variant === 'secondary' ? 'ds-hbtn' : TOUCH_MIN}
       disabled={!supported || adding}
       aria-busy={adding || undefined}
       title={addDisabledReason ?? undefined}
@@ -265,12 +265,12 @@ export function SecuritySettings({
             {(keys || sess) && (
               <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Security summary">
                 {keys && (
-                  <Badge size="md" {...(keys.length > 0 ? { status: 'active' as const } : { status: 'warning' as const })} label={`${keys.length} ${keys.length === 1 ? 'passkey' : 'passkeys'}`} />
+                  <Badge size="md" font="sans" {...(keys.length > 0 ? { status: 'active' as const } : { status: 'warning' as const })} label={`${keys.length} ${keys.length === 1 ? 'passkey' : 'passkeys'}`} />
                 )}
                 {sess && (
-                  <Badge size="md" label={`${sess.sessions.length} active ${sess.sessions.length === 1 ? 'session' : 'sessions'}`} />
+                  <Badge size="md" font="sans" label={`${sess.sessions.length} active ${sess.sessions.length === 1 ? 'session' : 'sessions'}`} />
                 )}
-                <Badge size="md" label={`Signed in with ${signInVia}`} />
+                <Badge size="md" font="sans" label={`Signed in with ${signInVia}`} />
               </div>
             )}
             {noPasskey && (
@@ -393,7 +393,7 @@ export function SecuritySettings({
               title={
                 <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
                   {label}
-                  {s.isCurrent && <Badge status="active" size="md" label="This device" />}
+                  {s.isCurrent && <Badge status="active" size="md" label="This device" font="sans" />}
                 </span>
               }
               description={sessionDescription(s)}
@@ -425,32 +425,44 @@ export function SecuritySettings({
         )}
       </SettingsGroup>
 
-      {/* 4. Sign-out actions */}
-      <DangerZone
-        title="Sign out & reset"
-        actions={[
-          ...(ep.revokeOthers ? [{
-            id: 'others',
-            tone: 'safe' as const,
-            title: 'Sign out other devices',
-            description: "Keeps you signed in here and ends every other session.",
-            actionLabel: 'Sign out other devices',
-            onAction: () => setOthersOpen(true),
-            disabled: sessState.status === 'loading' || (!!sess && (!sess.currentKnown || otherCount === 0)),
-            disabledReason:
+      {/* 4. Sign-out actions: the calm, recommended one first; the red card is only for the irreversible one */}
+      {ep.revokeOthers && (
+        <SettingsGroup title="Sign out" footer="Signed in somewhere you don't recognize? End those sessions first.">
+          <SettingsRow
+            title="Other devices"
+            description="Keeps you signed in here and ends every other session."
+            disabled={sessState.status === 'loading' || (!!sess && (!sess.currentKnown || otherCount === 0))}
+            disabledReason={
               sessState.status === 'loading' ? 'Checking your sessions…'
                 : sess && !sess.currentKnown ? "We couldn't tell which session is this device. Sign in again to use this."
-                  : 'No other devices are signed in.',
-          }] : []),
-          {
-            id: 'everywhere',
-            tone: 'danger' as const,
-            title: 'Sign out everywhere',
-            description: "Ends every session, including this one. You'll need to sign in again.",
-            actionLabel: 'Sign out everywhere',
-            onAction: () => setEverywhereOpen(true),
-          },
-        ]}
+                  : 'No other devices are signed in.'
+            }
+            stackTrailing
+            trailing={(
+              <Button
+                type="button"
+                variant="outline"
+                size="md"
+                className="ds-fill min-h-[44px]"
+                disabled={sessState.status === 'loading' || (!!sess && (!sess.currentKnown || otherCount === 0))}
+                onClick={() => setOthersOpen(true)}
+              >
+                Sign out other devices
+              </Button>
+            )}
+          />
+        </SettingsGroup>
+      )}
+      <DangerZone
+        title="Sign out & reset"
+        actions={[{
+          id: 'everywhere',
+          tone: 'danger' as const,
+          title: 'Every device',
+          description: "Ends every session, including this one. You'll need to sign in again.",
+          actionLabel: 'Sign out everywhere',
+          onAction: () => setEverywhereOpen(true),
+        }]}
         footer="Averrow never stores your Google password. Sign-in is handled by Google."
       />
 

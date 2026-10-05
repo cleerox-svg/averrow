@@ -58,7 +58,7 @@ export function DangerZone({ title = 'Danger zone', actions, footer, className }
               size="md"
               disabled={a.disabled || a.loading}
               onClick={a.onAction}
-              className={cn('min-h-[44px]', (a.tone ?? 'danger') === 'danger' && DANGER_BTN)}
+              className={cn('ds-fill min-h-[44px]', (a.tone ?? 'danger') === 'danger' && DANGER_BTN)}
               data-tone={a.tone ?? 'danger'}
             >
               {a.actionLabel}

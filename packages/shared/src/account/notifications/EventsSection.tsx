@@ -4,9 +4,12 @@
 
 import { useMemo, useState, type ReactElement } from 'react';
 import {
-  Button, ConfirmDialog, Select, SettingsGroup, SettingsRow, Switch,
+  Button, ConfirmDialog, Select, SettingsGroup, SettingsRow, Switch, type IconTileTone,
 } from '../../ui';
-import { BuildingIcon, TrashIcon, BellIcon } from './icons';
+import {
+  AlertTriangleIcon, BellIcon, BuildingIcon, FileCheckIcon, FlagIcon, MailIcon, NewspaperIcon,
+  PauseCircleIcon, RssIcon, ShieldAlertIcon, TrashIcon, TrendUpIcon,
+} from './icons';
 import { buildEventGroups, isEventOn, SUBSCRIPTION_LEVELS } from './helpers';
 import { SavedMark, type Autosave } from './useAutosave';
 import type { SectionCommon } from './ChannelsSection';
@@ -16,6 +19,20 @@ type Props = SectionCommon & Pick<
   NotificationSettingsProps,
   'events' | 'subscriptions' | 'onUpdateEvents' | 'onSetBrandLevel' | 'onRemoveBrand'
 > & { isStaff: boolean };
+
+/** A glyph + tint per event, so a list of switches scans by shape and colour. */
+const EVENT_VISUAL: Record<string, { icon: ReactElement; tone: IconTileTone }> = {
+  brand_threat: { icon: <ShieldAlertIcon />, tone: 'red' },
+  campaign_escalation: { icon: <TrendUpIcon />, tone: 'amber' },
+  email_security_change: { icon: <MailIcon />, tone: 'blue' },
+  takedown_awaiting_approval: { icon: <FileCheckIcon />, tone: 'amber' },
+  intelligence_digest: { icon: <NewspaperIcon />, tone: 'violet' },
+  feed_health: { icon: <RssIcon />, tone: 'green' },
+  platform_feed_at_risk: { icon: <AlertTriangleIcon />, tone: 'amber' },
+  platform_agent_stalled: { icon: <PauseCircleIcon />, tone: 'red' },
+  agent_milestone: { icon: <FlagIcon />, tone: 'green' },
+};
+const FALLBACK_VISUAL = { icon: <BellIcon />, tone: 'blue' as IconTileTone };
 
 export function EventsSection({
   events, subscriptions, isStaff, autosave, online, onUpdateEvents, onSetBrandLevel, onRemoveBrand,
@@ -35,7 +52,7 @@ export function EventsSection({
               <Button
                 variant="ghost"
                 size="sm"
-                className="min-h-11 text-[14px] font-semibold text-[var(--amber-text,var(--amber))]"
+                className="ds-hbtn font-semibold text-[var(--amber-text,var(--amber))]"
                 disabled={autosave.saving(groupKey) || !online}
                 onClick={() => {
                   const next = !allOn;
@@ -49,14 +66,16 @@ export function EventsSection({
           >
             {group.events.map((event) => {
               const key = `event:${event.key}`;
+              const visual = EVENT_VISUAL[event.key] ?? FALLBACK_VISUAL;
               return (
                 <SettingsRow
                   key={event.key}
                   variant="toggle"
-                  icon={<BellIcon />}
-                  tone="blue"
+                  icon={visual.icon}
+                  tone={visual.tone}
                   title={event.title}
                   description={event.description}
+                  fullDescription
                   loading={autosave.saving(key)}
                   error={autosave.error(key) ?? autosave.error(groupKey)}
                   trailing={({ labelId, descriptionId, disabled }) => (

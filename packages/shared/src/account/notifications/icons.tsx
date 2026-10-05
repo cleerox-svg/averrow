@@ -22,3 +22,12 @@ export const LayersIcon = (p: IconProps) => <svg {...base} {...p}><path d="m12 3
 export const ShieldAlertIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6Z" /><path d="M12 8.5v4M12 16h.01" /></svg>;
 export const CheckSmallIcon = (p: IconProps) => <svg {...base} strokeWidth={2.25} {...p}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>;
 export const TrashIcon = (p: IconProps) => <svg {...base} {...p}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></svg>;
+
+// Event-row glyphs (Events tab): one per notification event so rows scan by shape.
+export const TrendUpIcon = (p: IconProps) => <svg {...base} {...p}><path d="m3 17 6-6 4 4 8-8" /><path d="M15 7h6v6" /></svg>;
+export const FileCheckIcon = (p: IconProps) => <svg {...base} {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" /><path d="M14 3v5h5" /><path d="m9 14.5 2 2 4-4.5" /></svg>;
+export const NewspaperIcon = (p: IconProps) => <svg {...base} {...p}><path d="M5 4h11a1 1 0 0 1 1 1v14H6a2 2 0 0 1-2-2V5a1 1 0 0 1 1-1Z" /><path d="M17 9h3v8a2 2 0 0 1-2 2h-1" /><path d="M8 8h6M8 12h6M8 15.5h4" /></svg>;
+export const RssIcon = (p: IconProps) => <svg {...base} {...p}><path d="M5 5a14 14 0 0 1 14 14M5 11a8 8 0 0 1 8 8" /><circle cx="6" cy="18" r="1.2" /></svg>;
+export const AlertTriangleIcon = (p: IconProps) => <svg {...base} {...p}><path d="M12 4 2.8 19.5h18.4Z" /><path d="M12 10v4.5M12 17.2h.01" /></svg>;
+export const PauseCircleIcon = (p: IconProps) => <svg {...base} {...p}><circle cx="12" cy="12" r="9" /><path d="M10 9v6M14 9v6" /></svg>;
+export const FlagIcon = (p: IconProps) => <svg {...base} {...p}><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></svg>;

@@ -69,10 +69,17 @@ export interface CardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'c
   accent?: string;
   /** `none | sm | md | lg`, a number (px) or raw CSS (`'16px 20px'`). Default `md` (20px). */
   padding?: CardPaddingToken | string | number;
+  /**
+   * Default `hidden` (clips the rim lines to the rounded corners). Use `visible` or
+   * `clip` when a descendant needs `position: sticky` (overflow:hidden makes the card
+   * the sticky scroll container, so sticky never engages). `clip` still clips paint
+   * without creating a scroll container.
+   */
+  overflow?: 'hidden' | 'visible' | 'clip';
 }
 
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
-  ({ variant: variantProp = 'base', accent, padding, style, onClick, children, ...props }, ref) => {
+  ({ variant: variantProp = 'base', accent, padding, overflow = 'hidden', style, onClick, children, ...props }, ref) => {
     // `glow` is the pre-6c shared name for the amber look.
     const variant: CardVariant = variantProp === 'glow' ? 'active' : variantProp;
     const v = VARIANT_STYLES[variant];
@@ -99,7 +106,7 @@ export const Card = React.forwardRef<HTMLDivElement, CardProps>(
           border: `1px solid ${border}`,
           borderRadius: 'var(--card-radius)',
           position: 'relative',
-          overflow: 'hidden',
+          overflow,
           cursor: onClick ? 'pointer' : 'default',
           padding: resolveCardPadding(padding),
           boxShadow: variant === 'flat'

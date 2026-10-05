@@ -220,3 +220,16 @@ describe('shared Badge', () => {
     });
   });
 });
+
+describe('Badge font opt-in', () => {
+  it('defaults to uppercase mono; font="sans" is sentence-case sans', () => {
+    const { rerender, container } = render(<Badge status="active" label="This device" />);
+    expect((container.firstChild as HTMLElement).className).toContain('font-mono');
+    expect((container.firstChild as HTMLElement).className).toContain('uppercase');
+    rerender(<Badge status="active" label="This device" font="sans" />);
+    const cls = (container.firstChild as HTMLElement).className;
+    expect(cls).toContain('font-sans');
+    expect(cls).toContain('normal-case');
+    expect(cls).not.toContain('font-mono');
+  });
+});

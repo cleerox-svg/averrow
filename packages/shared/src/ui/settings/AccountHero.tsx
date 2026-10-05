@@ -64,7 +64,7 @@ export function AccountHero({
   name, email, role, roleLabel, passkey, scope, actions, compact = false, loading = false, className,
 }: AccountHeroProps) {
   const wide = useMediaQuery('(min-width: 768px)', true);
-  const avatarSize = compact ? 56 : wide ? 72 : 64;
+  const avatarSize = compact ? 64 : wide ? 72 : 64;
   const padding = wide && !compact ? 'lg' : 20;
 
   if (loading) {
@@ -93,7 +93,7 @@ export function AccountHero({
   const display = (name ?? '').trim() || email || 'Your account';
 
   return (
-    <Card variant="active" accent="var(--amber)" padding={padding} className={className}>
+    <Card variant="active" accent="var(--amber)" padding={padding} className={cn('ds-card-vivid', className)}>
       <div className={cn('ds-hero', compact && 'ds-hero--compact')}>
         <Avatar
           tone="self"
@@ -108,10 +108,10 @@ export function AccountHero({
           {email && <p className="ds-hero-email" title={email}>{email}</p>}
           {(roleBadge || passkey !== null && passkey !== undefined) && (
             <div className="ds-hero-chips">
-              {roleBadge && <Badge {...roleBadge.tone} label={roleBadge.label} size="md" />}
-              {roleKey === 'auditor' && <Badge status="inactive" label="Read-only" size="md" />}
-              {passkey === true && <Badge status="active" label="Passkey on" size="md" />}
-              {passkey === false && <Badge status="pending" label="No passkey" size="md" />}
+              {roleBadge && <Badge {...roleBadge.tone} label={roleBadge.label} size="md" font="sans" />}
+              {roleKey === 'auditor' && <Badge status="inactive" label="Read-only" size="md" font="sans" />}
+              {passkey === true && <Badge status="active" label="Passkey on" size="md" font="sans" />}
+              {passkey === false && <Badge status="pending" label="No passkey" size="md" font="sans" />}
             </div>
           )}
           {scope && (

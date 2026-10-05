@@ -140,3 +140,17 @@ describe('overlay styles survive overlay unmount (M4)', () => {
     expect(menu.style.zIndex).toContain('--z-popover');
   });
 });
+
+describe('Sheet labelledBy', () => {
+  it('is named by the host heading with no duplicate heading', () => {
+    render(
+      <Sheet open onOpenChange={() => {}}>
+        <SheetContent title="Notifications" labelledBy="host-h">
+          <h2 id="host-h">Notifications</h2>
+        </SheetContent>
+      </Sheet>,
+    );
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toHaveAttribute('aria-labelledby', 'host-h');
+    expect(screen.getAllByRole('heading', { name: 'Notifications' })).toHaveLength(1);
+  });
+});

@@ -30,7 +30,8 @@ export const Switch = React.forwardRef<React.ElementRef<typeof SwitchPrimitive.R
           `${DESKTOP}:before:inset-y-[-9px]`,
           'bg-[color-mix(in_srgb,var(--text-primary)_14%,transparent)]',
           'data-[state=checked]:border-transparent data-[state=checked]:[background:linear-gradient(135deg,var(--amber),var(--amber-dim))]',
-          'data-[state=checked]:shadow-[0_0_12px_var(--amber-glow,rgba(229,168,50,0.40))]',
+          // Fill carries the state; only a faint rim, so a list of many switches doesn't glow.
+          'data-[state=checked]:shadow-[0_0_0_1px_color-mix(in_srgb,var(--amber)_35%,transparent)]',
           'transition-[background,box-shadow] duration-[180ms] motion-reduce:transition-none',
           FOCUS_RING,
           'disabled:cursor-not-allowed disabled:opacity-50',

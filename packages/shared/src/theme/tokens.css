@@ -860,6 +860,17 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
 .ds-sgroup { margin-bottom: 24px; }
 @media (min-width: 1024px) { .ds-sgroup { margin-bottom: 28px; } }
 .ds-sgroup-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 4px 8px; }
+/* Header action (Add passkey / Send test / Turn all on): a compact 32px control whose
+   text centre sits on the caption baseline; coarse pointers get a 44px hit area via ::before. */
+.ds-sgroup-head .ds-hbtn { position: relative; height: 32px; min-height: 32px; padding: 0 12px; font-size: 13px; margin-bottom: -8px; }
+@media (pointer: coarse) { .ds-sgroup-head .ds-hbtn::before { content: ""; position: absolute; inset: -6px -4px; } }
+.ds-sgroup-head .ds-hbtn > svg { width: 14px; height: 14px; }
+/* Vivid accent card (hero / install): perceptible glow + rim in both themes */
+.ds-card-vivid { --card-accent-border-pct: 44%; --card-accent-rim-pct: 52%; --card-accent-glow-pct: 20%; }
+[data-theme="light"] .ds-card-vivid { --card-accent-border-pct: 50%; --card-accent-rim-pct: 58%; --card-accent-glow-pct: 24%; }
+/* Self avatar gradient end: how far toward black the dim stop goes (light theme darkens less) */
+:root { --avatar-self-dim-pct: 50%; }
+[data-theme="light"] { --avatar-self-dim-pct: 74%; }
 .ds-sgroup-title {
   margin: 0; font-size: 12px; line-height: 1.3; font-weight: 600; letter-spacing: .06em;
   text-transform: uppercase; color: var(--text-help);
@@ -922,7 +933,16 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
   .ds-srow--stack.ds-srow--plain { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "trailing"; }
   .ds-srow--stack .ds-srow-trailing { display: flex; width: 100%; }
   .ds-srow--stack .ds-srow-trailing > * { flex: 1 1 auto; min-height: 44px; width: 100%; }
+  /* the trailing wrapper is itself a flex row: let a Select fill it, left-aligned (ACCOUNT_DESIGN_SPEC §4.2) */
+  .ds-srow--stack .ds-srow-trailing > span { display: flex; align-items: center; gap: 8px; }
+  .ds-srow--stack .ds-fill { flex: 1 1 auto; width: 100%; min-width: 0; }
+  .ds-srow--stack .ds-select-wrap { flex: 1 1 auto; width: auto; min-width: 0; }
+  .ds-srow--stack .ds-select-wrap > select { width: 100%; min-width: 0; text-align: left; text-align-last: left; }
+  /* long values (an email address) wrap in full instead of truncating */
+  .ds-srow--stack .ds-srow-value { white-space: normal; overflow-wrap: anywhere; word-break: break-all; }
 }
+/* multi-line descriptions (event rows): never clamp on mobile */
+.ds-srow--fulldesc .ds-srow-desc { -webkit-line-clamp: unset; display: block; }
 
 /* CopyField / InlineBanner */
 .ds-copy { display: flex; align-items: center; gap: 4px; min-height: 44px; min-width: 0; }
@@ -935,7 +955,7 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
 
 /* AccountHero (§3) */
 .ds-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; }
-.ds-hero-body { flex: 1 1 260px; min-width: 0; }
+.ds-hero-body { flex: 1 1 200px; min-width: 0; }
 .ds-hero-name { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 800; letter-spacing: -0.3px; color: var(--text-primary); overflow-wrap: anywhere; }
 .ds-hero-email { margin: 2px 0 0; font-size: 14px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-hero-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }

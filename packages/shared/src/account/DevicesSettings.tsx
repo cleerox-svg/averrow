@@ -215,12 +215,12 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
             tone="violet"
             title="Averrow is installed"
             description="You're using the app."
-            trailing={<Badge status="active" label="Installed" size="md" />}
+            trailing={<Badge status="active" label="Installed" size="md" font="sans" />}
           />
         </SettingsGroup>
       ) : (
         <section aria-labelledby="devices-install-title" className="mb-6 min-[1024px]:mb-7">
-          <Card variant="active" accent="var(--violet)" padding={wide ? 'lg' : 20}>
+          <Card variant="active" accent="var(--violet)" padding={wide ? 'lg' : 20} className="ds-card-vivid">
             <div className="flex flex-col gap-4 min-[640px]:flex-row min-[640px]:items-center">
               <div className="flex min-w-0 flex-1 items-start gap-4">
                 <IconTile tone="violet" size={48}><SmartphoneIcon /></IconTile>
@@ -261,7 +261,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       <SettingsGroup
         title="Push devices"
         headerAction={devices.length > 0 ? (
-          <Button type="button" variant="secondary" size="sm" className={touchBtn} onClick={() => { void sendTest(); }} disabled={testing} aria-busy={testing || undefined}>
+          <Button type="button" variant="secondary" size="sm" className="ds-hbtn" onClick={() => { void sendTest(); }} disabled={testing} aria-busy={testing || undefined}>
             <SendIcon width={14} height={14} />
             {testing ? 'Sending…' : 'Send test'}
           </Button>
@@ -299,7 +299,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
               title={(
                 <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span>{name}</span>
-                  {d.id === thisDeviceId && <Badge status="active" label="This device" size="md" />}
+                  {d.id === thisDeviceId && <Badge status="active" label="This device" size="md" font="sans" />}
                 </span>
               )}
               description={deviceDescription(d)}

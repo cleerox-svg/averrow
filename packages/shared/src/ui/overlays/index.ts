@@ -2,8 +2,8 @@
 export { Sheet, SheetTrigger, SheetClose, SheetContent, useSheetClose, type SheetProps, type SheetContentProps } from './Sheet';
 export { Dialog, ConfirmDialog, type DialogProps, type ConfirmDialogProps, type OverlayPresentation } from './Dialog';
 export {
-  Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuGroup, ResponsiveMenu,
-  type MenuContentProps, type MenuItemProps, type ResponsiveMenuProps,
+  Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuGroup, MenuRadioGroup, MenuRadioItem, ResponsiveMenu,
+  type MenuContentProps, type MenuItemProps, type MenuRadioGroupProps, type MenuRadioItemProps, type ResponsiveMenuProps,
 } from './Menu';
 export {
   ToastProvider, useToast, toastDuration, TOAST_DURATION_MS,

@@ -71,7 +71,7 @@ export interface SheetContentProps extends OverlayHeaderProps {
 
 export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(function SheetContent(
   {
-    title, description, icon, hideTitle, children, footer, className, bodyClassName,
+    title, description, icon, hideTitle, labelledBy, children, footer, className, bodyClassName,
     hideHandle = false, fullHeight = false, onOpenAutoFocus, onCloseAutoFocus,
   },
   ref,
@@ -139,6 +139,7 @@ export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
         {...(description ? {} : { 'aria-describedby': undefined })}
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
+        {...(labelledBy ? { "aria-labelledby": labelledBy } : {})}
       >
         <Card
           ref={setRefs}
@@ -177,8 +178,8 @@ export const SheetContent = React.forwardRef<HTMLDivElement, SheetContentProps>(
             </div>
           )}
           <div className={cn('min-h-0 flex-1 overflow-y-auto overscroll-contain', bodyClassName ?? 'px-4 pb-4')}>
-            <div className={hideTitle ? undefined : 'mb-4'}>
-              <OverlayHeader title={title} description={description} icon={icon} hideTitle={hideTitle} />
+            <div className={hideTitle || labelledBy ? undefined : 'mb-4'}>
+              <OverlayHeader title={title} description={description} icon={icon} hideTitle={hideTitle} labelledBy={labelledBy} />
             </div>
             {children}
           </div>

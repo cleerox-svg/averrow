@@ -141,7 +141,7 @@ export function Tabs({
         <button
           key={tab.id}
           {...common}
-          className={cn('shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-3 text-[11px] font-bold border-b-2 bg-transparent cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING_INSET)}
+          className={cn('shrink-0 inline-flex items-center gap-1.5 whitespace-nowrap px-4 py-3 text-[11px] font-bold border-b-2 bg-transparent cursor-pointer', md && 'min-h-[44px] text-[13px] max-[479px]:px-3', FOCUS_RING_INSET)}
           style={{
             borderBottomColor: active ? 'var(--amber)' : 'transparent',
             color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
@@ -214,12 +214,12 @@ export function Tabs({
           {tabs.map(renderTab)}
         </div>
         {edges.left && (
-          <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-6"
-            style={{ background: 'linear-gradient(90deg, var(--bg-page) 0%, transparent 100%)' }} />
+          <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 left-0', size === 'md' ? 'w-12' : 'w-6')}
+            style={{ background: 'linear-gradient(90deg, var(--bg-page) 20%, transparent 100%)' }} />
         )}
         {edges.right && (
-          <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-6"
-            style={{ background: 'linear-gradient(270deg, var(--bg-page) 0%, transparent 100%)' }} />
+          <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 right-0', size === 'md' ? 'w-12' : 'w-6')}
+            style={{ background: 'linear-gradient(270deg, var(--bg-page) 20%, transparent 100%)' }} />
         )}
       </div>
     );

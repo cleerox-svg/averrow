@@ -100,6 +100,8 @@ export function ProfileSettings({
   const toast = useToast();
   const mqDesktop = useMediaQuery('(min-width: 1024px)', true);
   const isDesktop = layout === 'auto' ? mqDesktop : layout === 'desktop';
+  // <480px the Theme row stacks under its text, so the control fills the row.
+  const narrow = useMediaQuery('(max-width: 479px)', false);
   const nameId = useId();
   const nameRef = useRef<HTMLInputElement | null>(null);
 
@@ -287,6 +289,7 @@ export function ProfileSettings({
               aria-label="Theme"
               options={THEME_OPTIONS}
               value={theme}
+              fullWidth={narrow}
               onValueChange={(v) => { void changeTheme(v); }}
             />
           )}
@@ -313,7 +316,10 @@ export function ProfileSettings({
         <SettingsRow
           icon={<IdBadgeIcon />}
           title="Role"
-          trailing={<Badge {...roleTone(user.role)} label={roleLabel(user.role)} size="md" />}
+          // Desktop already shows the role badge in the hero: plain text here, one badge per page.
+          trailing={isDesktop
+            ? <span className="text-[14px] text-[var(--text-secondary)]">{roleLabel(user.role)}</span>
+            : <Badge {...roleTone(user.role)} label={roleLabel(user.role)} size="md" font="sans" />}
         />
         {scope && (
           <SettingsRow icon={<ShieldCheckIcon />} title="Access" description={scope} />

@@ -64,6 +64,12 @@ export interface BadgeProps {
   /** Pulsing dot before the label (only for configs that define a dot). */
   pulse?: boolean;
   label?: string;
+  /**
+   * `mono` (default) = uppercase mono, for data/codes. `sans` = sentence-case
+   * sans, for badges that carry a plain word ("Super admin", "This device").
+   * Opt-in so the platform-wide Badge look is unchanged.
+   */
+  font?: 'mono' | 'sans';
   /** @deprecated Use `severity` / `status` instead. */
   variant?: LegacyVariant;
   children?: ReactNode;
@@ -185,7 +191,7 @@ function resolve(p: BadgeProps): { tone: Tone; fallbackText: string } {
 }
 
 export function Badge(props: BadgeProps) {
-  const { size = 'sm', pulse = false, label, children, className } = props;
+  const { size = 'sm', pulse = false, label, children, className, font = 'mono' } = props;
   const z = SIZE[size];
   const { tone, fallbackText } = resolve(props);
   const showDot = pulse && !!tone.dot;
@@ -197,10 +203,14 @@ export function Badge(props: BadgeProps) {
 
   return (
     <span
-      className={cn('inline-flex items-center whitespace-nowrap font-mono font-extrabold uppercase tracking-[0.12em]', className)}
+      className={cn(
+        'inline-flex items-center whitespace-nowrap',
+        font === 'sans' ? 'font-sans font-semibold normal-case tracking-[0.01em]' : 'font-mono font-extrabold uppercase tracking-[0.12em]',
+        className,
+      )}
       style={{
         gap: showDot ? 5 : 0,
-        fontSize: z.fontSize,
+        fontSize: font === 'sans' ? z.fontSize + 1 : z.fontSize,
         padding: z.padding,
         borderRadius: z.radius,
         background: tone.bg,

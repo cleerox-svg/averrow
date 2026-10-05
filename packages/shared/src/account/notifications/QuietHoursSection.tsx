@@ -150,31 +150,31 @@ export function QuietHoursSection({ prefs, profileTimezone, autosave, online, on
             />
           </>
         )}
+        {draft.enabled && (
+          <div className="flex flex-col gap-2 px-4 pb-4 pt-2 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-end">
+            {autosave.error('quiet-save') && (
+              <FieldError className="min-[640px]:mr-auto">{autosave.error('quiet-save')}</FieldError>
+            )}
+            <SavedMark show={autosave.entry('quiet-save')?.status === 'saved'} />
+            <Button
+              variant="ghost"
+              className="h-11 min-h-11"
+              disabled={!dirty || saving}
+              onClick={() => { setDraft(saved); autosave.clear('quiet-save'); }}
+            >
+              Discard
+            </Button>
+            <Button
+              className="h-11 min-h-11"
+              disabled={!dirty || invalid || saving || !online}
+              onClick={save}
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        )}
       </SettingsGroup>
 
-      {draft.enabled && (
-        <div className="flex flex-col gap-2 min-[640px]:flex-row min-[640px]:items-center min-[640px]:justify-end">
-          {autosave.error('quiet-save') && (
-            <FieldError className="min-[640px]:mr-auto">{autosave.error('quiet-save')}</FieldError>
-          )}
-          <SavedMark show={autosave.entry('quiet-save')?.status === 'saved'} />
-          <Button
-            variant="ghost"
-            className="h-11 min-h-11"
-            disabled={!dirty || saving}
-            onClick={() => { setDraft(saved); autosave.clear('quiet-save'); }}
-          >
-            Discard
-          </Button>
-          <Button
-            className="h-11 min-h-11"
-            disabled={!dirty || invalid || saving || !online}
-            onClick={save}
-          >
-            {saving ? 'Saving…' : 'Save changes'}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

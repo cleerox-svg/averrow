@@ -103,7 +103,7 @@ export function Avatar({
   const dot = severity ? SEV_DOT[String(severity).toLowerCase()] : undefined;
   const dotSize = Math.round(size * 0.28);
   const initial = (text || ([...name.trim()][0] ?? '?')).toUpperCase();
-  const dim = dimColor ?? (self ? `color-mix(in srgb, ${color} 50%, black)` : mix(color, 53));
+  const dim = dimColor ?? (self ? `color-mix(in srgb, ${color} var(--avatar-self-dim-pct, 50%), black)` : mix(color, 53));
 
   const tileStyle: CSSProperties = self
     ? {

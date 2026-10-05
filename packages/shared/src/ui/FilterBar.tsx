@@ -18,7 +18,14 @@ export interface FilterBarProps<V extends string = string> {
     placeholder?: string;
     /** Accessible label (visually hidden). Defaults to the placeholder or "Search". */
     label?: string;
+    /** Enter pressed in the search box. */
+    onSubmit?: (value: string) => void;
   };
+  /**
+   * `sm` (default, dashboard density): 10px mono pills. `md`: legible settings/inbox
+   * density — 11px pills, 13px search, >=44px touch height.
+   */
+  size?: 'sm' | 'md';
   /** Right-side slot for action buttons. */
   actions?: React.ReactNode;
   /** Extra filter rows (e.g. a secondary group). */
@@ -36,9 +43,10 @@ const FOCUS_RING =
 // "show this subset" switches, not a form-style radio selection, and a
 // toggle reads naturally with a count in its name ("Critical, 12").
 export function FilterBar<V extends string = string>({
-  filters, active, onChange, search, actions, children, className, filterLabel,
+  filters, active, onChange, search, actions, children, className, filterLabel, size = 'sm',
 }: FilterBarProps<V>) {
   const searchId = React.useId();
+  const md = size === 'md';
   const searchLabel = search?.label ?? search?.placeholder ?? 'Search';
   return (
     <Card variant="base" padding="10px 16px" className={cn('mb-3', className)}>
@@ -51,9 +59,14 @@ export function FilterBar<V extends string = string>({
               type="search"
               value={search.value}
               onChange={(e) => search.onChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && search.value) { e.preventDefault(); e.stopPropagation(); search.onChange(''); }
+                else if (e.key === 'Enter' && search.onSubmit) { e.preventDefault(); search.onSubmit(search.value); }
+              }}
               placeholder={search.placeholder ?? 'Search...'}
               className={cn(
                 'h-[34px] min-w-[120px] max-w-[320px] flex-[1_1_180px] rounded-lg px-3 text-[12px] font-sans',
+                md && 'h-[40px] text-[13px] [@media(pointer:coarse)]:h-11',
                 'bg-[var(--bg-input)] text-[var(--text-primary)] border border-[var(--border-base)] placeholder:text-[var(--text-secondary)]',
                 'focus-visible:outline-none focus-visible:border-[var(--amber-border)] focus-visible:ring-2 focus-visible:ring-[var(--amber)]',
               )}
@@ -78,6 +91,7 @@ export function FilterBar<V extends string = string>({
                   onClick={() => onChange?.(f.value)}
                   className={cn(
                     'shrink-0 inline-flex items-center gap-[5px] rounded-full px-[14px] py-[5px] font-mono text-[10px] font-bold uppercase tracking-[0.10em] cursor-pointer',
+                    md && 'min-h-[36px] text-[11px] [@media(pointer:coarse)]:min-h-11',
                     FOCUS_RING,
                   )}
                   style={{
@@ -90,7 +104,7 @@ export function FilterBar<V extends string = string>({
                 >
                   {f.label}
                   {f.count !== undefined && (
-                    <span aria-hidden="true" className="text-[9px]" style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
+                    <span aria-hidden="true" className={md ? 'text-[10px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
                       {f.count}
                     </span>
                   )}

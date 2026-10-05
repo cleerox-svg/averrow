@@ -7,10 +7,25 @@ export interface OverlayHeaderProps {
   icon?: React.ReactNode;
   /** Keep the title/description for assistive tech only. */
   hideTitle?: boolean;
+  /**
+   * id of a heading the HOST renders (and styles) itself. The sheet is then labelled by
+   * it (`aria-labelledby`) and the built-in title/description are not exposed, so there
+   * is exactly one heading with that name.
+   */
+  labelledBy?: string;
 }
 
 /** Radix Title/Description + the optional icon tile (title 18/700, body 14/1.5). */
-export function OverlayHeader({ title, description, icon, hideTitle }: OverlayHeaderProps): React.ReactElement {
+export function OverlayHeader({ title, description, icon, hideTitle, labelledBy }: OverlayHeaderProps): React.ReactElement {
+  if (labelledBy) {
+    // Kept in the DOM (Radix looks it up) but removed from layout and the a11y tree.
+    return (
+      <>
+        <DialogPrimitive.Title hidden>{title}</DialogPrimitive.Title>
+        {description ? <DialogPrimitive.Description hidden>{description}</DialogPrimitive.Description> : null}
+      </>
+    );
+  }
   if (hideTitle) {
     return (
       <>

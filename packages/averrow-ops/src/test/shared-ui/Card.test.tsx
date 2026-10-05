@@ -141,3 +141,14 @@ describe('Card', () => {
     expect(screen.getByText('Foot')).toBeInTheDocument();
   });
 });
+
+describe('Card overflow opt-in', () => {
+  it('clips by default and allows visible/clip', () => {
+    const { rerender, container } = render(<Card>x</Card>);
+    expect((container.firstChild as HTMLElement).style.overflow).toBe('hidden');
+    rerender(<Card overflow="visible">x</Card>);
+    expect((container.firstChild as HTMLElement).style.overflow).toBe('visible');
+    rerender(<Card overflow="clip">x</Card>);
+    expect((container.firstChild as HTMLElement).style.overflow).toBe('clip');
+  });
+});

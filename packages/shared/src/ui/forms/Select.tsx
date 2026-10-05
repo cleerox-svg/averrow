@@ -26,7 +26,7 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     const isInvalid = invalid ?? field?.invalid ?? false;
     const inline = variant === 'inline';
     return (
-      <div className={cn('relative', inline ? 'inline-block min-w-[148px]' : 'w-full')}>
+      <div className={cn('relative', inline ? 'ds-select-wrap inline-block min-w-[148px]' : 'w-full')}>
         <select
           {...props}
           ref={ref}

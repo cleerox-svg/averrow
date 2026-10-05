@@ -1,8 +1,9 @@
+import * as React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
-  Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator, ResponsiveMenu,
+  Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuRadioGroup, MenuRadioItem, ResponsiveMenu,
 } from '../../../../../shared/src/ui/overlays';
 import { installDomStubs, stubViewport } from './helpers';
 
@@ -110,5 +111,80 @@ describe('ResponsiveMenu', () => {
     await user.click(screen.getByRole('button', { name: 'Avatar' }));
     await user.click(await screen.findByRole('button', { name: 'Profile' }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('MenuItem tone tints', () => {
+  it('accepts IconTile tones for the icon tile and keeps danger text only for danger', async () => {
+    const user = userEvent.setup();
+    render(
+      <Menu>
+        <MenuTrigger asChild><button type="button">Open</button></MenuTrigger>
+        <MenuContent aria-label="m">
+          <MenuItem tone="violet" icon={<svg data-testid="ic" />}>Devices</MenuItem>
+        </MenuContent>
+      </Menu>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Open' }));
+    const item = await screen.findByRole('menuitem', { name: 'Devices' });
+    expect(item.querySelector('[data-tone="violet"]')).not.toBeNull();
+    expect(item.className).not.toContain('sev-critical');
+  });
+});
+
+describe('MenuRadioGroup', () => {
+  function Choice({ onValueChange }: { onValueChange: (v: string) => void }) {
+    const [v, setV] = React.useState('auto');
+    return (
+      <ResponsiveMenu trigger={<button type="button">Theme menu</button>} title="Appearance">
+        <MenuRadioGroup aria-label="Theme" value={v} onValueChange={(n) => { setV(n); onValueChange(n); }}>
+          <MenuRadioItem value="auto">Auto</MenuRadioItem>
+          <MenuRadioItem value="dark">Dark</MenuRadioItem>
+          <MenuRadioItem value="light">Light</MenuRadioItem>
+        </MenuRadioGroup>
+      </ResponsiveMenu>
+    );
+  }
+
+  it('popover: shows the checked item, is arrow-key reachable and fires onValueChange', async () => {
+    const onValueChange = vi.fn();
+    const user = userEvent.setup();
+    render(<Choice onValueChange={onValueChange} />);
+    screen.getByRole('button', { name: 'Theme menu' }).focus();
+    await user.keyboard('{Enter}');
+    const items = await screen.findAllByRole('menuitemradio');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveAttribute('aria-checked', 'true');
+    expect(items[1]).toHaveAttribute('aria-checked', 'false');
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    await user.keyboard('{ArrowDown}');
+    expect(items[1]).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onValueChange).toHaveBeenCalledWith('dark');
+  });
+
+  it('sheet: radiogroup with checked state, arrow keys move + select, click selects', async () => {
+    stubViewport(true);
+    const onValueChange = vi.fn();
+    const user = userEvent.setup();
+    render(<Choice onValueChange={onValueChange} />);
+    await user.click(screen.getByRole('button', { name: 'Theme menu' }));
+    const group = await screen.findByRole('radiogroup', { name: 'Theme' });
+    expect(group).toBeInTheDocument();
+    const radios = screen.getAllByRole('radio');
+    expect(radios[0]).toHaveAttribute('aria-checked', 'true');
+    radios[0]!.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(onValueChange).toHaveBeenCalledWith('dark');
+    expect(radios[1]).toHaveFocus();
+  });
+
+  it('sheet: closes after a click unless keepOpen', async () => {
+    stubViewport(true);
+    const user = userEvent.setup();
+    render(<Choice onValueChange={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Theme menu' }));
+    await user.click(await screen.findByRole('radio', { name: 'Light' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });

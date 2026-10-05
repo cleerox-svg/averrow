@@ -39,6 +39,8 @@ export interface SettingsRowProps {
   trailing?: ReactNode | ((ctx: SettingsRowControlContext) => ReactNode);
   /** On <480px a wide trailing control (Select/Segmented) drops below the text, full width. */
   stackTrailing?: boolean;
+  /** Show the whole description on mobile (default clamps to 2 lines <768px). */
+  fullDescription?: boolean;
   /** Table-like dense rows (device list): 14px title. */
   dense?: boolean;
   disabled?: boolean;
@@ -61,7 +63,7 @@ export interface SettingsRowProps {
 
 export function SettingsRow({
   variant = 'static', icon, tone = 'neutral', title, description, meta, trailing, stackTrailing = false,
-  dense = false, disabled = false, disabledReason, loading = false, error, onClick, href, renderLink,
+  dense = false, fullDescription = false, disabled = false, disabledReason, loading = false, error, onClick, href, renderLink,
   current = false, className, id,
 }: SettingsRowProps) {
   const uid = useId();
@@ -107,6 +109,7 @@ export function SettingsRow({
     'ds-srow',
     !hasIcon && 'ds-srow--plain',
     dense && 'ds-srow--dense',
+    fullDescription && 'ds-srow--fulldesc',
     stackTrailing && 'ds-srow--stack',
     interactive && 'ds-srow--interactive',
     variant === 'toggle' && 'ds-srow-label',

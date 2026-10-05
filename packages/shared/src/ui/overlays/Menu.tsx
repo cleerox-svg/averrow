@@ -4,7 +4,7 @@ import { cn } from '../cn';
 import { Card } from '../Card';
 import { OverlayStyles } from './overlay-styles';
 import { FOCUS_RING_INSET } from '../forms/focus';
-import { IconTile } from '../settings/IconTile';
+import { IconTile, type IconTileTone } from '../settings/IconTile';
 import { Sheet, SheetContent, SheetTrigger, useSheetClose } from './Sheet';
 import { useIsCompact } from './useMediaQuery';
 
@@ -89,13 +89,13 @@ const DANGER_CLASS = 'text-[var(--sev-critical-text)]';
 
 export interface MenuItemProps {
   children: React.ReactNode;
-  /** 18px glyph; rendered in a neutral 28px tile (red-tinted for `tone="danger"`). */
+  /** 18px glyph in a 28px tile: neutral by default, red for `tone="danger"`, or any IconTile tint (amber | green | blue | violet | red | neutral) to match the section rail. */
   icon?: React.ReactNode;
   /** Secondary line under the label (e.g. "Use a different Google account"). */
   description?: React.ReactNode;
   /** Trailing slot: count Badge, check, chevron… */
   trailing?: React.ReactNode;
-  tone?: 'default' | 'danger';
+  tone?: 'default' | 'danger' | IconTileTone;
   disabled?: boolean;
   /** Call `event.preventDefault()` to keep the menu/sheet open. */
   onSelect?: (event: Event) => void;
@@ -107,7 +107,7 @@ function ItemContent({ icon, description, trailing, tone, children }: Pick<MenuI
   return (
     <>
       {icon ? (
-        <IconTile size={28} tone={danger ? 'red' : 'neutral'} className="[&>svg]:!h-[18px] [&>svg]:!w-[18px]">{icon}</IconTile>
+        <IconTile size={28} tone={danger ? 'red' : tone === 'default' || tone === undefined ? 'neutral' : tone} className="[&>svg]:!h-[18px] [&>svg]:!w-[18px]">{icon}</IconTile>
       ) : null}
       <span className="min-w-0 flex-1">
         <span className="block truncate">{children}</span>
@@ -226,3 +226,118 @@ export function ResponsiveMenu({
     </PresentationContext.Provider>
   );
 }
+
+// ── Choice rows (radio) ────────────────────────────────────────────
+// Checkable 44px rows with a trailing check. Popover: Radix RadioGroup/RadioItem
+// (arrow keys move through the menu, Space/Enter selects). Sheet: a plain
+// radiogroup with the same keys, since Radix menu parts need a menu root.
+
+interface RadioCtx { value: string; onValueChange: (v: string) => void }
+const RadioContext = React.createContext<RadioCtx | null>(null);
+
+function CheckGlyph() {
+  return (
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--amber-text,var(--amber))]">
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
+export interface MenuRadioGroupProps {
+  value: string;
+  onValueChange: (value: string) => void;
+  /** Accessible name of the group (e.g. "Theme"). */
+  'aria-label'?: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
+export const MenuRadioGroup = React.forwardRef<HTMLDivElement, MenuRadioGroupProps>(
+  function MenuRadioGroup({ value, onValueChange, children, className, ...rest }, ref) {
+    const mode = React.useContext(PresentationContext);
+    const ctx = React.useMemo(() => ({ value, onValueChange }), [value, onValueChange]);
+    if (mode === 'sheet') {
+      const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        const keys = ['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft'];
+        if (!keys.includes(e.key)) return;
+        const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)'));
+        if (items.length === 0) return;
+        const at = items.indexOf(document.activeElement as HTMLButtonElement);
+        const dir = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1;
+        const next = items[(at + dir + items.length) % items.length]!;
+        e.preventDefault();
+        next.focus();
+        if (next.dataset.value !== undefined) onValueChange(next.dataset.value); // arrows select without closing, like a native radio group
+      };
+      return (
+        <RadioContext.Provider value={ctx}>
+          <div ref={ref} role="radiogroup" className={className} onKeyDown={onKeyDown} {...rest}>{children}</div>
+        </RadioContext.Provider>
+      );
+    }
+    return (
+      <RadioContext.Provider value={ctx}>
+        <DropdownMenuPrimitive.RadioGroup ref={ref} value={value} onValueChange={onValueChange} className={className} {...rest}>
+          {children}
+        </DropdownMenuPrimitive.RadioGroup>
+      </RadioContext.Provider>
+    );
+  },
+);
+
+export interface MenuRadioItemProps {
+  value: string;
+  children: React.ReactNode;
+  icon?: React.ReactNode;
+  description?: React.ReactNode;
+  disabled?: boolean;
+  /** Keep the menu/sheet open after choosing (default: closes, like any item). */
+  keepOpen?: boolean;
+  className?: string;
+}
+
+export const MenuRadioItem = React.forwardRef<HTMLElement, MenuRadioItemProps>(function MenuRadioItem(
+  { value, children, icon, description, disabled, keepOpen = false, className },
+  ref,
+) {
+  const mode = React.useContext(PresentationContext);
+  const group = React.useContext(RadioContext);
+  const closeSheet = useSheetClose();
+  const checked = group?.value === value;
+  const cls = cn(ITEM_CLASS, checked && 'font-semibold', className);
+  const content = (
+    <ItemContent icon={icon} description={description} tone="default" trailing={checked ? <CheckGlyph /> : undefined}>
+      {children}
+    </ItemContent>
+  );
+
+  if (mode === 'sheet') {
+    return (
+      <button
+        ref={ref as React.Ref<HTMLButtonElement>}
+        type="button"
+        role="radio"
+        data-value={value}
+        aria-checked={checked}
+        tabIndex={checked || !group?.value ? 0 : -1}
+        disabled={disabled}
+        onClick={() => { group?.onValueChange(value); if (!keepOpen) closeSheet?.(); }}
+        className={cn(cls, 'min-h-[48px]')}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <DropdownMenuPrimitive.RadioItem
+      ref={ref as React.Ref<HTMLDivElement>}
+      value={value}
+      disabled={disabled}
+      onSelect={keepOpen ? (e) => e.preventDefault() : undefined}
+      className={cls}
+    >
+      {content}
+    </DropdownMenuPrimitive.RadioItem>
+  );
+});
