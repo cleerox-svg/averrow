@@ -29,6 +29,7 @@ Copy `.env.example` to `.env` and configure:
 | `ANTHROPIC_API_KEY` | Claude Haiku API key | Yes |
 | `GOOGLE_CLIENT_ID` | Google OAuth client ID | Yes |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth client secret | Yes |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile widget secret (Worker secret — `wrangler secret put TURNSTILE_SECRET_KEY`). Needed for `TURNSTILE_MODE=monitor`; **required** for `enforce` (missing → every guarded public form request is refused 503) | No |
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
@@ -204,6 +205,19 @@ Phase 0/1 itself needs no migration (the abuse-mailbox change shipped alongside 
 - Verify the marker after deploy: the newest row should have `responder_guard_version = 1` — `SELECT id, responder_guard_version, responder_suppressed_reason FROM abuse_inbox_messages ORDER BY received_at DESC LIMIT 5;`
 - `wrangler.toml` adds `[[workflows]] abuse-mailbox-triage` → `ABUSE_MAILBOX_TRIAGE` / `AbuseMailboxTriageWorkflow` (exported from `src/index.ts`). `wrangler deploy` creates it; no manual provisioning. The binding is optional in `Env` — staging/dev (no `[[workflows]]` there) and any deploy without it fall back to the hourly `17 * * * *` sweeper.
 - Verify after deploy: forward a test report from a DMARC-passing mailbox; within ~2 min `abuse_inbox_messages.classified_by = 'rules'` and `determination_sent_at` is set; `npx wrangler workflows instances list abuse-mailbox-triage` shows the `abuse-<messageId>` instance; `agent_activity_log` has an `abuse_mailbox_triage` / `abuse_triage_complete` row. A report from a domain without DMARC (`dmarc=none`) is classified but stamped `backscatter:dmarc_not_pass` and gets no ack — expected.
+
+### Cloudflare Turnstile on the public scan + lead forms (2026-10-05)
+
+Server-side verification (`packages/averrow-worker/src/lib/turnstile.ts`) gates `POST /assess`, `POST /api/brand-scan/public`, `POST /api/leads`, `POST /api/v1/public/assess`, `POST /api/v1/public/leads` and `POST /api/v1/public/monitor`. Existing rate limits are unchanged and run first.
+
+- **Switch:** `TURNSTILE_MODE` Worker `[vars]` entry — `off` (default when unset/unrecognised: no siteverify call), `monitor` (verify + log a `turnstile_verdict` line, never block), `enforce` (missing/failed token → 403 `{"success":false,"error":"Verification failed"}`; `POST /assess` instead redirects to `/?error=verification_failed`; a siteverify timeout (3 s), network error or non-2xx **blocks**). Without `TURNSTILE_SECRET_KEY` (logged as `turnstile_secret_missing` once per isolate): `monitor` behaves as `off`, but `enforce` **fails closed** — every guarded request gets **503** `{"success":false,"error":"Verification unavailable"}` (`POST /assess` redirects to `/?error=verification_unavailable`). Always set the secret before switching to `enforce`.
+- **Checks:** siteverify `success`, `hostname` ∈ `averrow.com`, `www.averrow.com`, `averrow.ca`, `www.averrow.ca`, and — when the widget sets `data-action` — `action` must be `scan` (scan/assess endpoints), `lead` (`/api/leads`, `/api/v1/public/leads`) or `monitor` (`/api/v1/public/monitor`). The client IP (`CF-Connecting-IP`) is sent as `remoteip`.
+- **Token transport:** header `CF-Turnstile-Response`, JSON body `turnstileToken` (or `cf-turnstile-response`), or the widget's default form field `cf-turnstile-response` on `POST /assess`.
+- **Owner setup:**
+  1. Cloudflare dashboard → Turnstile → Add widget: hostnames `averrow.com`, `www.averrow.com`, `averrow.ca`, `www.averrow.ca`; widget mode **Managed**. Copy the site key + secret key.
+  2. `cd packages/averrow-worker && npx wrangler secret put TURNSTILE_SECRET_KEY`
+  3. Add to the top-level `[vars]` in `wrangler.toml` (owner-approved change): `TURNSTILE_MODE = "monitor"` and `TURNSTILE_SITE_KEY = "<site key>"`. Leave `[env.staging]` / `[env.dev]` unset (`off`) — their hostnames are not in the allowlist.
+  4. Ship the widget on every page that posts to these endpoints (marketing site, plus the Worker-rendered `/scan` page and `/legacy` homepage), watch `turnstile_verdict` logs until failures are only genuine bots, then set `TURNSTILE_MODE = "enforce"`. Rollback: set it back to `off` (or `monitor`).
 
 ## Manual Deploy
 

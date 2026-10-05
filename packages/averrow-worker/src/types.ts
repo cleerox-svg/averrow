@@ -163,6 +163,21 @@ export interface Env {
    *  (handlers/public.ts handlePublicAssess). Optional override —
    *  defaults to 200/day when unset. Plain var, not a secret. */
   PUBLIC_ASSESS_DAILY_CAP?: string;
+  /** Cloudflare Turnstile rollout switch for the public scan + lead forms
+   *  (lib/turnstile.ts). 'off' (default when unset / unrecognised) → no
+   *  verification. 'monitor' → verify + log, never block. 'enforce' → block
+   *  failed / missing tokens (403, or redirect for the POST /assess form);
+   *  siteverify errors fail closed. Without TURNSTILE_SECRET_KEY,
+   *  'monitor' behaves as 'off' and 'enforce' refuses every guarded
+   *  request (503 "Verification unavailable"). Plain var. */
+  TURNSTILE_MODE?: 'off' | 'monitor' | 'enforce' | (string & {});
+  /** Turnstile widget secret key (siteverify). Set via
+   *  `wrangler secret put TURNSTILE_SECRET_KEY`. */
+  TURNSTILE_SECRET_KEY?: string;
+  /** Turnstile widget site key (public). Plain var — available to
+   *  Worker-rendered pages; the static marketing build reads its own
+   *  build-time copy. */
+  TURNSTILE_SITE_KEY?: string;
   AVERROW_INTERNAL_SECRET?: string;
   /** Bearer token that authenticates the two JWT-minting internal
    *  endpoints — `mint-service-jwt` + `mint-ui-preview-jwt` (S1, Phase 1

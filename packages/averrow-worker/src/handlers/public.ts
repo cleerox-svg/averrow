@@ -12,6 +12,7 @@ import { getPublicStats } from "../lib/public-stats";
 import { getPublicProof } from "../lib/public-proof";
 import { cachedValue } from "../lib/cached-value";
 import { normalizePublicHostname } from "../lib/public-hostname";
+import { turnstileGuardJson } from "../lib/turnstile";
 import { computePublicPosture, publicPostureSummary } from "./brandScan";
 import type { Env } from "../types";
 
@@ -332,6 +333,10 @@ export async function handlePublicAssess(request: Request, env: Env): Promise<Re
     // Rate limit: 10 per IP per hour (shared bucket with POST /assess)
     const limited = await publicAssessIpLimit(request, env);
     if (limited) return limited;
+    const blocked = await turnstileGuardJson(request, env, {
+      route: "POST /api/v1/public/assess", expectedAction: "scan",
+    });
+    if (blocked) return blocked;
     // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
 
@@ -555,6 +560,11 @@ export async function handlePublicLeadCapture(request: Request, env: Env): Promi
     }
     await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
 
+    const blocked = await turnstileGuardJson(request, env, {
+      route: "POST /api/v1/public/leads", expectedAction: "lead",
+    });
+    if (blocked) return blocked;
+
     const body = await request.json().catch(() => null) as {
       email?: string; name?: string; company?: string; role?: string;
       domain?: string; assessment_id?: unknown;
@@ -642,6 +652,11 @@ export async function handlePublicMonitor(request: Request, env: Env): Promise<R
       return json({ success: false, error: "Rate limit exceeded. Please try again in an hour." }, 429, origin);
     }
     await env.CACHE.put(rateLimitKey, String(currentCount + 1), { expirationTtl: 3600 });
+
+    const blocked = await turnstileGuardJson(request, env, {
+      route: "POST /api/v1/public/monitor", expectedAction: "monitor",
+    });
+    if (blocked) return blocked;
 
     const body = await request.json().catch(() => null) as {
       domain?: unknown;
