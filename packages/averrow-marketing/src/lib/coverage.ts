@@ -8,10 +8,12 @@
  * table). Dedicated pages come in a later section. Null = no honest target.
  */
 
+export type CoverageKey = "lookalike" | "tls" | "email" | "social" | "executive" | "apps" | "darkweb" | "abuse";
+
 export type CoveragePlan = "professional" | "business" | "enterprise";
 
 export interface CoverageSurface {
-  key: string;
+  key: CoverageKey;
   name: string;
   plan: CoveragePlan;
   blurb: string;
@@ -29,7 +31,7 @@ export const COVERAGE: readonly CoverageSurface[] = [
     key: "lookalike",
     name: "Lookalike domains",
     plan: "professional",
-    blurb: "Typo, homoglyph and brand-plus-keyword domains, checked when they appear and re-checked until they're gone.",
+    blurb: "Character-swap and brand-plus-keyword domains, checked when they appear and re-checked until they're gone.",
     link: "/platform/threat-detection#lookalike",
   },
   {
@@ -43,28 +45,28 @@ export const COVERAGE: readonly CoverageSurface[] = [
     key: "email",
     name: "Email authentication",
     plan: "professional",
-    blurb: "SPF, DKIM and DMARC graded, so you know whether someone can send as you.",
+    blurb: "SPF, DKIM and DMARC checked, with one grade for your domain.",
     link: "/platform/email-security",
   },
   {
     key: "social",
     name: "Social profiles",
     plan: "professional",
-    blurb: "Fake accounts and handle squatting on the six networks attackers use most.",
+    blurb: "Fake accounts and handle squatting on six major networks.",
     link: "/platform/social-monitoring",
   },
   {
     key: "executive",
     name: "Executive impersonation",
     plan: "professional",
-    blurb: "Fake profiles of your leadership, matched against their real handles.",
+    blurb: "Accounts using your executives' names, flagged when they aren't their official handles.",
     link: "/platform/social-monitoring",
   },
   {
     key: "apps",
     name: "App stores",
     plan: "professional",
-    blurb: "Copycat apps using your name or logo on the Apple App Store.",
+    blurb: "Copycat apps using your name on the Apple App Store.",
     link: "/pricing#compare",
   },
   {
@@ -82,10 +84,6 @@ export const COVERAGE: readonly CoverageSurface[] = [
     link: "/abuse-mailbox",
   },
 ];
-
-export const COVERAGE_BY_KEY: Record<string, CoverageSurface> = Object.fromEntries(
-  COVERAGE.map((s) => [s.key, s]),
-);
 
 /** Six networks on the Social profiles tile (matches pricing + social page). */
 export const SOCIAL_NETWORKS = ["X", "LinkedIn", "Instagram", "TikTok", "GitHub", "YouTube"] as const;

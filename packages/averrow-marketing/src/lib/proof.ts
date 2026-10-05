@@ -139,7 +139,9 @@ export function roundLabel(n: number): string {
 /**
  * Label for the 30-day lookalike count: the live build value rounded, else the
  * published fallback, else null (callers omit the figure; never show 0).
- * Shared by ByTheNumbers and Coverage so both render the same string.
+ * Shared by ByTheNumbers and Coverage so both render the same build string;
+ * the browser refresh in ByTheNumbers then updates every [data-stat="lookalikes"]
+ * on the page, Coverage's included.
  */
 export function lookalikes30dLabel(live: number | null | undefined, fallback: string | null | undefined): string | null {
   if (live) return roundLabel(live);

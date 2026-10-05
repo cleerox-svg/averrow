@@ -314,7 +314,7 @@ const checks = [
 
   function setText(sel: string, text: string | null) {
     if (text === null) return;
-    root?.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+    document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
       el.textContent = text;
     });
   }
