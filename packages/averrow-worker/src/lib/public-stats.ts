@@ -67,10 +67,18 @@ const UNKNOWN: PublicStats = {
   uptime_label: "24/7",
 };
 
+// After a D1 failure, skip D1 for this long (same approach as
+// lib/public-proof.ts) so an outage isn't retried on every page load.
+const FAILED_KEY = "public_stats:failed";
+const FAILURE_TTL_S = 120;
+
 async function readLastKnownGood(env: Env): Promise<PublicStats | null> {
   try {
     const raw = await env.CACHE.get(LKG_KEY);
-    return raw ? (JSON.parse(raw) as PublicStats) : null;
+    if (!raw) return null;
+    // agents_deployed is a code fact, not a D1 read: always the CURRENT
+    // registry size, never the count frozen into an old copy.
+    return { ...(JSON.parse(raw) as PublicStats), agents_deployed: String(REGISTERED_AGENT_COUNT) };
   } catch {
     return null;
   }
@@ -89,6 +97,10 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
     const cached = await env.CACHE.get(CACHE_KEY);
     if (cached) return JSON.parse(cached) as PublicStats;
   } catch { /* ignore */ }
+
+  try {
+    if (await env.CACHE.get(FAILED_KEY)) return (await readLastKnownGood(env)) ?? UNKNOWN;
+  } catch { /* KV transient — try D1 */ }
 
   try {
     // KV-backed inner caches share keys with handlers/stats.ts so the
@@ -141,7 +153,10 @@ export async function getPublicStats(env: Env): Promise<PublicStats> {
     return stats;
   } catch {
     // D1 down or schema missing: serve the last-known-good copy, else
-    // unknowns. Never an invented number.
+    // unknowns. Never an invented number. Negative-cache the failure.
+    try {
+      await env.CACHE.put(FAILED_KEY, "1", { expirationTtl: FAILURE_TTL_S });
+    } catch { /* best-effort */ }
     return (await readLastKnownGood(env)) ?? UNKNOWN;
   }
 }

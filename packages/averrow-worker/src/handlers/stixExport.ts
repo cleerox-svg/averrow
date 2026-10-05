@@ -7,7 +7,7 @@
  */
 
 import { corsHeaders } from "../lib/cors";
-import { buildSTIXBundle, threatToSTIXIndicator } from "../lib/stix";
+import { buildSTIXBundle, threatToSTIXIndicator, safeFilename } from "../lib/stix";
 import type { ThreatInput, BrandInput } from "../lib/stix";
 import type { Env } from "../types";
 
@@ -82,7 +82,7 @@ export async function handleSTIXExport(
     const bundle = await buildSTIXBundle(threats.results, brandInput);
 
     // 5. Return as application/stix+json with download header
-    const filename = `averrow-stix-${brand.canonical_domain}-${Date.now()}.json`;
+    const filename = safeFilename(`averrow-stix-${brand.canonical_domain}-${Date.now()}`) + ".json";
 
     return new Response(JSON.stringify(bundle, null, 2), {
       status: 200,

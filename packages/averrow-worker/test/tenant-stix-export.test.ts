@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
-import { handleTenantStixExport, TENANT_STIX_RATE_LIMIT, safeFilename, parseBeforeCursor } from "../src/handlers/tenantStixExport";
+import { handleTenantStixExport, TENANT_STIX_RATE_LIMIT, safeFilename, parseBeforeCursor, encodeBeforeCursor } from "../src/handlers/tenantStixExport";
 import { buildPattern, stixIdFor, toStixTimestamp, uuidV5, escapeStixPatternValue } from "../src/lib/stix";
 import type { AuthContext } from "../src/middleware/auth";
 import type { STIXBundle, STIXIndicator } from "../src/lib/stix";
@@ -73,9 +73,13 @@ describe("STIX serializer hardening (lib/stix.ts)", () => {
 
   it("sanitises filenames and parses cursors strictly", () => {
     expect(safeFilename('a"b\r\nc/../d')).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(parseBeforeCursor("2026-10-05 01:02:03|t1")).toEqual({ createdAt: "2026-10-05 01:02:03", id: "t1" });
-    expect(parseBeforeCursor("x|t1")).toBeNull();
-    expect(parseBeforeCursor("2026-10-05 01:02:03|")).toBeNull();
+    // Every created_at format a writer produces round-trips.
+    for (const ts of ["2026-10-05 01:02:03", "2026-10-05T01:02:03Z", "2026-10-05T01:02:03.123Z", "2026-10-05T01:02:03+00:00"]) {
+      expect(parseBeforeCursor(encodeBeforeCursor(ts, "t|1"))).toEqual({ createdAt: ts, id: "t|1" });
+    }
+    expect(parseBeforeCursor("nonsense!")).toBeNull();
+    expect(parseBeforeCursor(encodeBeforeCursor("", "t1"))).toBeNull();
+    expect(parseBeforeCursor(btoa('{"a":1}').replace(/=+$/, ""))).toBeNull();
   });
 });
 

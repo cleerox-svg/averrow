@@ -1164,15 +1164,15 @@ ${pageStyles}
 <!-- STAT ROW -->
 <div class="stat-row fade-in-section">
   <div class="stat-item">
-    <div class="stat-value">${stats.uptime_label}</div>
+    <div class="stat-value">${stats.uptime_label ?? "—"}</div>
     <div class="stat-label">Continuous monitoring</div>
   </div>
   <div class="stat-item">
-    <div class="stat-value">${stats.agents_deployed}</div>
+    <div class="stat-value">${stats.agents_deployed ?? "—"}</div>
     <div class="stat-label">AI agents deployed</div>
   </div>
   <div class="stat-item">
-    <div class="stat-value">${stats.feeds_protecting}</div>
+    <div class="stat-value">${stats.feeds_protecting ?? "—"}</div>
     <div class="stat-label">Brand protection feeds</div>
   </div>
 </div>
@@ -1180,11 +1180,11 @@ ${pageStyles}
 <!-- TRUST METRICS — coverage strip -->
 <div class="stat-row fade-in-section" style="margin-top: -0.5rem; opacity: 0.85;">
   <div class="stat-item">
-    <div class="stat-value">${stats.threats_detected}</div>
+    <div class="stat-value">${stats.threats_detected ?? "—"}</div>
     <div class="stat-label">Threats detected to date</div>
   </div>
   <div class="stat-item">
-    <div class="stat-value">${stats.brands_monitored}</div>
+    <div class="stat-value">${stats.brands_monitored ?? "—"}</div>
     <div class="stat-label">Brands in threat catalog</div>
   </div>
 </div>
@@ -1192,8 +1192,8 @@ ${pageStyles}
 <!-- AGENT SQUADRON -->
 <section class="squadron fade-in-section">
   <div class="section-label">Agent Squadron</div>
-  <h2 class="squadron-title">Six core agents. ${stats.agents_deployed} on the field.</h2>
-  <p class="squadron-subtitle">A deployed mesh of ${stats.agents_deployed} AI agents — six core agents shown here, plus specialized agents handling enrichment, infrastructure clustering, takedowns, social discovery, and continuous health monitoring.</p>
+  <h2 class="squadron-title">Six core agents. ${stats.agents_deployed ?? "—"} on the field.</h2>
+  <p class="squadron-subtitle">A deployed mesh of ${stats.agents_deployed ?? "—"} AI agents — six core agents shown here, plus specialized agents handling enrichment, infrastructure clustering, takedowns, social discovery, and continuous health monitoring.</p>
   <div class="agent-grid">
 
     <!-- Sentinel — Signal Red — radar sweep -->

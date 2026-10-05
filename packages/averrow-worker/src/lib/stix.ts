@@ -227,6 +227,11 @@ export function buildPattern(threat: ThreatInput): string {
   return `[domain-name:value = 'unknown']`;
 }
 
+/** Content-Disposition filename stem: only [A-Za-z0-9_-] survive (header-safe). */
+export function safeFilename(name: string): string {
+  return name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "averrow-stix";
+}
+
 // ─── Conversion Functions ───────────────────────────────────
 
 export async function threatToSTIXIndicator(threat: ThreatInput): Promise<STIXIndicator> {
@@ -289,18 +294,21 @@ export async function buildSTIXBundle(
   // 3. Relationships: each indicator "indicates" activity that "targets" the
   //    identity. Deterministic id per (indicator, identity) pair.
   if (includeRelationships) {
-    for (const indicator of indicators) {
+    const relIds = await Promise.all(
+      indicators.map((indicator) => uuidV5(`indicates:${indicator.id}:${identity.id}`)),
+    );
+    indicators.forEach((indicator, i) => {
       objects.push({
         type: 'relationship',
         spec_version: '2.1',
-        id: `relationship--${await uuidV5(`indicates:${indicator.id}:${identity.id}`)}`,
+        id: `relationship--${relIds[i]!}`,
         created: now,
         modified: now,
         relationship_type: 'indicates',
         source_ref: indicator.id,
         target_ref: identity.id,
       });
-    }
+    });
   }
 
   // 4. Wrap in a Bundle (bundle ids are per-export, random v4 is valid)

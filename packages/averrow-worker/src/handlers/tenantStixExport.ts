@@ -24,8 +24,9 @@
  *
  * Bounds: `limit` defaults to 1000, max 5000 indicators per call. The
  * handler reads limit+1 rows, so `X-Averrow-Truncated: true` means more
- * rows exist, and `X-Averrow-Next-Before` carries the keyset cursor
- * (`<created_at>|<id>`) to pass back as `?before=` for the next page. Rate
+ * rows exist, and `X-Averrow-Next-Before` carries an opaque keyset cursor
+ * (base64url of the last row's created_at + id) to pass back as `?before=`
+ * for the next page. Rate
  * limit: 20 exports per hour per (org, user) — `rateLimitCustom`.
  * Plan entitlement: none — no export/API module exists in the entitlement
  * matrix (lib/entitlements.ts) and the same threat rows are already
@@ -34,7 +35,7 @@
 
 import { corsHeaders, json } from "../lib/cors";
 import { audit } from "../lib/audit";
-import { buildSTIXBundle } from "../lib/stix";
+import { buildSTIXBundle, safeFilename } from "../lib/stix";
 import type { BrandInput, STIXBundle, STIXObject, ThreatInput } from "../lib/stix";
 import { verifyOrgAccess } from "../middleware/auth";
 import type { AuthContext } from "../middleware/auth";
@@ -94,22 +95,38 @@ export function toTenantStixThreat(row: ThreatRow): ThreatInput {
   };
 }
 
-/** Content-Disposition filename: only [A-Za-z0-9_-] survive (header-safe). */
-export function safeFilename(name: string): string {
-  return name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120) || "averrow-stix";
+export { safeFilename } from "../lib/stix";
+
+/**
+ * Opaque keyset cursor: base64url(JSON [created_at, id]). Encoding the raw
+ * stored values (rather than validating a timestamp format) means a cursor
+ * the server issued always parses back, whatever format a feed wrote
+ * `created_at` in (`datetime('now')`, ISO with `T`/fraction/`Z`/offset…).
+ * Both values only ever reach SQL as bound parameters.
+ */
+export function encodeBeforeCursor(createdAt: string, id: string): string {
+  const bytes = new TextEncoder().encode(JSON.stringify([createdAt, id]));
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-const CURSOR_TS_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?$/;
-
-/** `before` cursor = `<created_at>|<id>` exactly as returned in
- *  X-Averrow-Next-Before. Null when malformed. */
+/** Inverse of encodeBeforeCursor. Null when malformed or oversized. */
 export function parseBeforeCursor(raw: string): { createdAt: string; id: string } | null {
-  const sep = raw.lastIndexOf("|");
-  if (sep <= 0) return null;
-  const createdAt = raw.slice(0, sep);
-  const id = raw.slice(sep + 1);
-  if (!CURSOR_TS_RE.test(createdAt) || id.length === 0 || id.length > 200) return null;
-  return { createdAt, id };
+  if (raw.length === 0 || raw.length > 512 || !/^[A-Za-z0-9_-]+$/.test(raw)) return null;
+  try {
+    const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!Array.isArray(parsed) || parsed.length !== 2) return null;
+    const [createdAt, id] = parsed as unknown[];
+    if (typeof createdAt !== "string" || typeof id !== "string") return null;
+    if (createdAt.length === 0 || createdAt.length > 64 || id.length === 0 || id.length > 200) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
 }
 
 function badRequest(error: string, origin: string | null): Response {
@@ -189,7 +206,7 @@ export async function handleTenantStixExport(
     const truncated = fetched.length > limit;
     const threatRows = truncated ? fetched.slice(0, limit) : fetched;
     const lastRow = threatRows[threatRows.length - 1];
-    const nextBefore = truncated && lastRow ? `${lastRow.created_at}|${lastRow.id}` : null;
+    const nextBefore = truncated && lastRow ? encodeBeforeCursor(lastRow.created_at, lastRow.id) : null;
 
     // 3. One identity + its indicators/relationships per brand, merged into
     //    a single bundle via the shared serializer.

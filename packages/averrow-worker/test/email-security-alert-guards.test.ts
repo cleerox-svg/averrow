@@ -12,6 +12,8 @@
  * of band (no migration adds them), so the test adds them.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
 
@@ -95,5 +97,18 @@ describe.skipIf(!hasSqlite())("email-security alert guards (real SQLite)", () =>
     resetBrandState();
     await handleScanBrandEmailSecurity(new Request("https://averrow.com/x", { method: "POST" }), env, "b1");
     expect(countAlerts("vmc_expiring")).toBe(2);
+  });
+});
+
+describe("public email-security route rate limit", () => {
+  it("is guarded by the per-IP KV limiter before the handler runs", async () => {
+    const src = readFileSync(fileURLToPath(new URL("../src/routes/public.ts", import.meta.url)), "utf8");
+    const i = src.indexOf('router.get("/api/v1/public/email-security/:domain"');
+    expect(i).toBeGreaterThan(-1);
+    const body = src.slice(i, i + 400);
+    expect(body).toContain("rateLimitCustom(request, env, PUBLIC_EMAIL_SECURITY_RATE_LIMIT)");
+    expect(body.indexOf("rateLimitCustom")).toBeLessThan(body.indexOf("handlePublicEmailSecurity"));
+    const { PUBLIC_EMAIL_SECURITY_RATE_LIMIT } = await import("../src/routes/public");
+    expect(PUBLIC_EMAIL_SECURITY_RATE_LIMIT).toEqual({ key: "pub_email_security", maxRequests: 30, windowSeconds: 3600 });
   });
 });
