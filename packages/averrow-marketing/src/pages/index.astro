@@ -227,7 +227,7 @@ const toneVar: Record<Tone, string> = {
       const value = input?.value.trim() ?? "";
       if (!value) return;
       e.preventDefault();
-      location.assign(`/scan/?domain=${encodeURIComponent(value)}`);
+      location.assign(`/scan/?domain=${encodeURIComponent(value)}&go=1`);
     });
   }
 </script>

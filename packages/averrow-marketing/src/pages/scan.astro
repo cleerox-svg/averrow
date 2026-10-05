@@ -24,7 +24,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   description="Free domain scan: email authentication graded A+ to F, and how many likely lookalikes of your domain are already registered. No sign-up."
 >
   <section class="scan-page" data-sitekey={siteKey} data-base={base} id="scanRoot">
-    <div class="container scan-wrap">
+    <div class="container">
       <div class="section-label" id="scanEyebrow">Free domain scan</div>
       <h1 class="scan-title" id="scanTitle" tabindex="-1">How exposed is your domain?</h1>
 
@@ -61,7 +61,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
       </div>
 
       <!-- LOADING STATE -->
-      <div id="scanLoading" class="scan-loading" hidden>
+      <div id="scanLoading" class="scan-loading" tabindex="-1" aria-busy="false" hidden>
         <span class="scan-spinner" aria-hidden="true"></span>
         <div>
           <p class="scan-loading-main" id="scanLoadingText">Checking email authentication&hellip;</p>
@@ -71,7 +71,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
       <!-- RESULTS STATE -->
       <div id="scanResults" hidden>
-        <p class="scan-meta" id="scanMeta"></p>
+        <p class="scan-meta"><span id="scanMeta"></span><span>no sign-up</span><span>results stay private to this link</span></p>
 
         <div class="scan-grid">
           <article class="scan-card scan-card-grade" aria-labelledby="cardEmailTitle">
@@ -129,7 +129,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
               <button class="btn btn-primary scan-lead-btn" type="submit" id="leadSubmit">Send me the report</button>
               <p class="scan-error" id="leadError" role="alert" hidden></p>
             </form>
-            <p class="scan-success" id="leadDone" hidden></p>
+            <p class="scan-success" id="leadDone" tabindex="-1" hidden></p>
           </article>
         </div>
 
@@ -148,7 +148,6 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
 <style>
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .scan-page { padding: 56px 0 80px; }
-  .scan-wrap { max-width: 1100px; }
   .scan-title {
     font-family: var(--font-display);
     font-size: clamp(2rem, 5vw, 3rem);
@@ -159,8 +158,11 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     margin: 0 0 14px;
     overflow-wrap: anywhere;
   }
-  .scan-title:focus { outline: none; }
+  .scan-title { width: fit-content; max-width: 100%; }
+  /* Programmatic focus (tabindex=-1) shows no ring; keyboard focus would. */
+  .scan-title:focus, #scanLoading:focus, #leadDone:focus { outline: none; }
   .scan-title:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 4px; }
+  #leadDone:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
   .scan-lede { color: var(--text-secondary); max-width: 620px; margin: 0 0 28px; font-size: 1.05rem; line-height: 1.55; }
 
   .scan-form { max-width: 620px; display: grid; gap: 8px; }
@@ -175,25 +177,29 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     padding: 12px 14px;
     color: var(--text-primary);
     background: var(--bg-secondary);
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--text-tertiary);
     border-radius: var(--radius-sm);
   }
+  .scan-field[aria-invalid="true"] { border-color: var(--sev-critical-text); }
   .scan-field::placeholder { color: var(--text-tertiary); }
   .scan-field:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 1px; }
   .scan-lead-btn { justify-self: start; justify-content: center; }
   .scan-row .btn { white-space: nowrap; justify-content: center; }
-  .scan-row .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
+  .scan-page .btn[disabled] { opacity: 0.6; cursor: not-allowed; }
   .scan-turnstile:empty { display: none; }
   .scan-error {
     margin: 0;
     padding: 10px 12px;
     font-size: 0.9rem;
     color: var(--sev-critical-text);
-    background: var(--sev-critical-bg, rgba(239, 68, 68, 0.1));
-    border: 1px solid var(--sev-critical-border, rgba(239, 68, 68, 0.3));
+    background: var(--sev-critical-bg);
+    border: 1px solid var(--sev-critical-border);
     border-radius: var(--radius-sm);
   }
   .scan-error[hidden], .scan-success[hidden] { display: none; }
+  /* Beat `.scan-card p` (0,1,1) so alert/success colours win inside cards. */
+  .scan-card .scan-error { color: var(--sev-critical-text); }
+  .scan-card .scan-success { color: var(--green-text); }
 
   .scan-loading { display: flex; gap: 16px; align-items: center; padding: 24px 0; }
   .scan-loading[hidden] { display: none; }
@@ -211,7 +217,9 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     .scan-spinner { animation: none; border-top-color: var(--border-strong); border-right-color: var(--amber); }
   }
 
-  .scan-meta { color: var(--text-secondary); margin: 0 0 24px; }
+  .scan-meta { color: var(--text-secondary); margin: 0 0 24px; display: flex; flex-wrap: wrap; gap: 4px 0; }
+  .scan-meta span { white-space: nowrap; }
+  .scan-meta span + span::before { content: "\00b7"; margin: 0 8px; }
   .scan-grid { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr; gap: 16px; align-items: start; }
   .scan-card {
     background: var(--bg-secondary);
@@ -253,11 +261,11 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     color: var(--text-secondary);
   }
   .scan-pills b { font-weight: 700; }
-  .scan-pills li[data-tone="ok"] { color: var(--green-text); border-color: rgba(60, 184, 120, 0.4); }
-  .scan-pills li[data-tone="mid"] { color: var(--amber-text); border-color: rgba(229, 168, 50, 0.4); }
-  .scan-pills li[data-tone="bad"] { color: var(--sev-critical-text); border-color: rgba(239, 68, 68, 0.4); }
+  .scan-pills li[data-tone="ok"] { color: var(--green-text); border-color: color-mix(in srgb, var(--green-text) 40%, transparent); }
+  .scan-pills li[data-tone="mid"] { color: var(--amber-text); border-color: color-mix(in srgb, var(--amber-text) 40%, transparent); }
+  .scan-pills li[data-tone="bad"] { color: var(--sev-critical-text); border-color: color-mix(in srgb, var(--sev-critical-text) 40%, transparent); }
 
-  .scan-link { color: var(--amber-text); font-weight: 600; text-decoration: none; font-size: 0.92rem; }
+  .scan-link { color: var(--amber-text); font-weight: 600; text-decoration: none; font-size: 0.92rem; display: inline-flex; align-items: center; min-height: 24px; padding-block: 4px; }
   .scan-link:hover { text-decoration: underline; }
   .scan-link:focus-visible, .scan-again:focus-visible, .scan-consent a:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
 
@@ -269,7 +277,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   .scan-watch { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 0.92rem; color: var(--text-secondary); }
   .scan-gate { display: grid; gap: 8px; border-top: 1px solid var(--border-strong); padding-top: 14px; }
   .scan-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; color: var(--text-secondary); }
-  .scan-consent input { margin-top: 3px; flex: none; accent-color: var(--amber); }
+  .scan-consent input { width: 18px; height: 18px; margin: 1px 0 0; flex: none; accent-color: var(--amber); }
   .scan-consent a { color: var(--amber-text); }
   .scan-success {
     margin: 0;
@@ -277,14 +285,14 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--green-text);
-    border: 1px solid rgba(60, 184, 120, 0.4);
+    border: 1px solid color-mix(in srgb, var(--green-text) 40%, transparent);
     border-radius: var(--radius-sm);
   }
 
   .scan-foot { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-strong); display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; align-items: center; }
   .scan-foot p { margin: 0; font-size: 0.85rem; color: var(--text-tertiary); max-width: 640px; }
   .scan-foot-links { display: flex; gap: 18px; align-items: center; }
-  .scan-again { background: none; border: 0; padding: 0; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; text-decoration: underline; }
+  .scan-again { background: none; border: 0; padding: 4px 0; min-height: 24px; display: inline-flex; align-items: center; font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; text-decoration: underline; }
 
   @media (max-width: 1100px) {
     .scan-grid { grid-template-columns: 1fr; }
@@ -295,6 +303,8 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     .scan-lead-btn { justify-self: stretch; }
     .scan-row .btn { width: 100%; padding: 13px 18px; }
     .scan-foot-links { flex-wrap: wrap; }
+    .scan-meta { flex-direction: column; }
+    .scan-meta span + span::before { content: none; }
   }
 </style>
 
@@ -406,10 +416,22 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   }
 
   /* ---- Helpers -------------------------------------------------------- */
-  function show(pane: HTMLElement, on: boolean) { pane.hidden = !on; }
+  function show(pane: HTMLElement, on: boolean) {
+    pane.hidden = !on;
+    if (pane === loadingPane) pane.setAttribute("aria-busy", on ? "true" : "false");
+  }
   function announce(msg: string) { live.textContent = ""; window.setTimeout(() => { live.textContent = msg; }, 30); }
   function showError(node: HTMLElement, msg: string) { node.textContent = msg; node.hidden = false; }
   function clearError(node: HTMLElement) { node.textContent = ""; node.hidden = true; }
+  function setInvalid(field: HTMLElement, on: boolean) {
+    if (on) field.setAttribute("aria-invalid", "true");
+    else field.removeAttribute("aria-invalid");
+  }
+  function clearLeadInvalid() {
+    setInvalid(leadEmail, false);
+    setInvalid(leadConsent, false);
+    leadConsent.removeAttribute("aria-describedby");
+  }
   function focusTitle() { title.focus({ preventScroll: false }); }
 
   function normalizeDomain(raw: string): string {
@@ -420,7 +442,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     d = d.replace(/:\d+$/, "").replace(/\.$/, "");
     return d;
   }
-  const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+  const DOMAIN_RE = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+([a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
 
   function setUrl(qs: string) {
     try { history.replaceState(null, "", `${location.pathname}${qs}`); } catch { /* ignore */ }
@@ -491,7 +513,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     const whenText = when && !isNaN(when.getTime())
       ? `Checked ${when.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
       : "Checked just now";
-    el("scanMeta").textContent = `${whenText} · no sign-up · results stay private to this link`;
+    el("scanMeta").textContent = whenText;
 
     const g = d.email.grade;
     const gl = el("gradeLetter");
@@ -513,13 +535,14 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     const pct = checked > 0 ? Math.min(100, Math.round((registered / checked) * 100)) : 0;
     el("lookBar").style.width = `${pct}%`;
     el("lookSentence").textContent = checked > 0
-      ? `Of ${checked} likely misspellings of your domain, ${registered} ${registered === 1 ? "is" : "are"} already registered by someone. We don't list them here; the full report does.`
+      ? `${registered} of ${checked} likely lookalikes of your domain ${registered === 1 ? "is" : "are"} registered. Some may be yours; the full report lists them.`
       : "We couldn't check lookalike names for this scan.";
 
     leadForm.hidden = false;
     leadDone.hidden = true;
     leadDone.textContent = "";
     clearError(leadError);
+    clearLeadInvalid();
     leadForm.reset();
     resetWidget("lead");
     void renderWidget("lead", el("leadTurnstile"));
@@ -539,9 +562,10 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     show(loadingPane, false);
     show(inputPane, true);
     scanSubmit.disabled = false;
+    void renderWidget("scan", el("scanTurnstile"));
     if (message) {
+      // #scanError is role=alert, so it announces itself; no live-region echo.
       showError(scanError, message);
-      announce(message);
     } else {
       clearError(scanError);
     }
@@ -553,10 +577,12 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   async function runScan(rawDomain: string) {
     if (busy) return;
     clearError(scanError);
+    setInvalid(domainInput, false);
     const domain = normalizeDomain(rawDomain);
     domainInput.value = domain || rawDomain;
     if (!DOMAIN_RE.test(domain)) {
       showError(scanError, "Enter a valid domain, like yourcompany.com.");
+      setInvalid(domainInput, true);
       domainInput.focus();
       return;
     }
@@ -573,6 +599,7 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     let phase = 0;
     loadingText.textContent = PHASES[0] ?? "";
     announce(`Scanning ${domain}. Usually under a minute.`);
+    loadingPane.focus();
     const ticker = window.setInterval(() => {
       phase = Math.min(phase + 1, PHASES.length - 1);
       loadingText.textContent = PHASES[phase] ?? "";
@@ -604,12 +631,14 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
     show(loadingPane, true);
     loadingText.textContent = "Loading your results…";
     announce("Loading your results.");
+    loadingPane.focus();
     try {
       const data = await callApi<ScanData>(`/api/brand-scan/public/${encodeURIComponent(id)}`, undefined, 30000);
       render(data);
     } catch (err) {
       setUrl("");
       toInput(err instanceof Error ? err.message : "We couldn't load that scan.");
+      domainInput.focus();
     } finally {
       busy = false;
     }
@@ -618,20 +647,25 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   async function submitLead() {
     if (!current || busy) return;
     clearError(leadError);
+    clearLeadInvalid();
     const email = leadEmail.value.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       showError(leadError, "Enter a valid work email address.");
+      setInvalid(leadEmail, true);
       leadEmail.focus();
       return;
     }
     const emailDomain = email.split("@")[1]?.toLowerCase() ?? "";
     if (FREEMAIL.has(emailDomain)) {
       showError(leadError, "Please use a business email address (no free email providers).");
+      setInvalid(leadEmail, true);
       leadEmail.focus();
       return;
     }
     if (!leadConsent.checked) {
       showError(leadError, "Please tick the box to agree to receive the report.");
+      setInvalid(leadConsent, true);
+      leadConsent.setAttribute("aria-describedby", "leadError");
       leadConsent.focus();
       return;
     }
@@ -658,9 +692,12 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
       leadDone.textContent = msg;
       leadDone.hidden = false;
       announce(msg);
+      leadDone.focus();
     } catch (err) {
       resetWidget("lead");
       showError(leadError, err instanceof Error ? err.message : "We couldn't send your request. Please try again.");
+      leadSubmit.disabled = false;
+      leadSubmit.focus();
     } finally {
       busy = false;
       leadSubmit.disabled = false;
@@ -670,6 +707,9 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   /* ---- Wiring --------------------------------------------------------- */
   scanForm.addEventListener("submit", (e) => { e.preventDefault(); void runScan(domainInput.value); });
   leadForm.addEventListener("submit", (e) => { e.preventDefault(); void submitLead(); });
+  domainInput.addEventListener("input", () => setInvalid(domainInput, false));
+  leadEmail.addEventListener("input", () => setInvalid(leadEmail, false));
+  leadConsent.addEventListener("change", () => { setInvalid(leadConsent, false); leadConsent.removeAttribute("aria-describedby"); });
   el("scanAgain").addEventListener("click", () => {
     setUrl("");
     domainInput.value = "";
@@ -682,13 +722,20 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   const params = new URLSearchParams(location.search);
   const qId = params.get("id");
   const qDomain = params.get("domain");
+  // Auto-run only when the visit came from our own homepage hero (it adds
+  // go=1). A bare/shared /scan/?domain=X link only pre-fills the input, so a
+  // third-party page can't make a visitor's browser fire scans.
+  let fromHero = false;
+  try { fromHero = params.get("go") === "1" && !!document.referrer && new URL(document.referrer).origin === location.origin; } catch { /* ignore */ }
   if (qId) {
     void loadExisting(qId);
   } else {
     void renderWidget("scan", el("scanTurnstile"));
     if (qDomain) {
       domainInput.value = qDomain;
-      if (siteKey) {
+      if (!fromHero) {
+        scanSubmit.focus();
+      } else if (siteKey) {
         // Run as soon as the verification token arrives.
         show(inputPane, true);
         onScanToken = () => { onScanToken = null; void runScan(domainInput.value); };
