@@ -6,6 +6,7 @@ import { signJWT, ACCESS_TOKEN_TTL, REFRESH_TOKEN_TTL, ABSOLUTE_SESSION_TTL } fr
 import { hashToken, generateRefreshToken } from "../lib/hash";
 import { buildGoogleAuthURL, exchangeCodeForTokens, fetchGoogleUserInfo, getRedirectUri, CANONICAL_ORIGIN } from "../lib/oauth";
 import { audit } from "../lib/audit";
+import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
 import { loadOrgScopeForToken, isPlatformStaff } from "../middleware/auth";
 import { PLACEHOLDER_EXEMPT_SQL, STAFF_ROLE_LIST_SQL, USER_HAS_CUSTOMER_MEMBERSHIP_SQL } from "../lib/lead-conversion-placeholder";
 import {
@@ -323,9 +324,13 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
   }
 
   // Check forced logout
-  const forcedAt = await env.CACHE.get(`forced_logout:${session.user_id}`);
+  // Same KV value requireAuth reads (legacy plain-number or v2 JSON shape).
+  // The ts stamp is compared against the SESSION's issue time; a listed sid
+  // is this session revoked individually (normally already caught by
+  // revoked_at above — checked here as a backstop).
+  const forced = parseForcedLogout(await env.CACHE.get(forcedLogoutKey(session.user_id)));
   const sessionIat = Math.floor(new Date(session.issued_at).getTime() / 1000);
-  if (forcedAt && sessionIat <= parseInt(forcedAt, 10)) {
+  if (isForcedOut(forced, sessionIat, session.id)) {
     return clearRefreshCookie(json({ success: false, error: "Session invalidated" }, 401, origin));
   }
 
@@ -364,6 +369,7 @@ export async function handleRefreshToken(request: Request, env: Env): Promise<Re
       org_role: membership?.org_role ?? undefined,
       org_scope: orgScope,
       scope: enrollScopeFor(session.role as UserRole, session.auth_method as AuthMethod | null),
+      sid: session.id,
     },
     env.JWT_SECRET,
     ACCESS_TOKEN_TTL,
@@ -783,6 +789,10 @@ export async function issueSession(
   // H-3: privileged non-passkey logins are restricted to passkey enrollment.
   const enrollScope = enrollScopeFor(role, method);
 
+  // Session id first: the access token carries it as `sid` so a per-device
+  // revoke can reject this device's live access tokens (lib/forced-logout.ts).
+  const sessionId = crypto.randomUUID();
+
   // Generate tokens
   const jwtPayload: Omit<import("../types").JWTPayload, "iat" | "exp"> = {
     sub: userId,
@@ -792,13 +802,13 @@ export async function issueSession(
     org_role: membership?.org_role ?? undefined,
     org_scope: orgScope,
     scope: enrollScope,
+    sid: sessionId,
   };
   const accessToken = await signJWT(jwtPayload, env.JWT_SECRET, ACCESS_TOKEN_TTL);
   const refreshToken = generateRefreshToken();
   const refreshHash = await hashToken(refreshToken);
 
   // Create session record
-  const sessionId = crypto.randomUUID();
   // L2: CF-Connecting-IP only — X-Forwarded-For is client-spoofable.
   const ip = request.headers.get("CF-Connecting-IP") ?? null;
   const ua = request.headers.get("User-Agent") ?? null;
@@ -1237,6 +1247,12 @@ const UI_PREVIEW_TENANT: UiPreviewPreset = {
   name: "Claude UI Preview (Tenant)",
   returnTo: "/tenant/",
 };
+/** User ids of the shared UI-preview identities. Many minted preview tokens
+ *  share each id, so self-service session mutations (logout-all,
+ *  revoke-others, per-session revoke) are refused for them — a preview
+ *  holder must not stamp forced_logout on the shared identity. */
+export const UI_PREVIEW_USER_IDS: readonly string[] = [UI_PREVIEW_STAFF.id, UI_PREVIEW_TENANT.id];
+
 /** Roles the staff preview may request. Restricted to `auditor` ONLY
  *  (S1, Phase 1 PR-A): the staff preview must be strictly read-only, and
  *  `analyst`/`admin` both carry mutation permissions (edit_alerts,

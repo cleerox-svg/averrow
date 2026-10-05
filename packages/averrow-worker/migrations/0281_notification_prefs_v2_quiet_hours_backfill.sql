@@ -8,8 +8,9 @@
 -- see an empty window in the new UI and — worse — lose it the first time they
 -- saved a v2 window. This copies the legacy window across once.
 --
--- Rules (see lib/notifications.ts resolveQuietHours, which keeps the legacy
--- columns as a read fallback for one release):
+-- Rules (see lib/notifications.ts resolveQuietHours: delivery reads the v2
+-- window whenever a v2 row exists, and the legacy columns only for users with
+-- no v2 row — so this migration must run before/with that worker):
 --   1. A "complete" window = non-empty start AND non-empty end.
 --   2. Only users with a complete legacy window AND no complete v2 window are
 --      touched. An existing complete v2 window is never overwritten.
@@ -21,8 +22,9 @@
 --   4. A missing v2 row is inserted with the PREF_V2_DEFAULTS values from
 --      handlers/notifications.ts, with two deliberate carry-overs so delivery
 --      does not change for that user: push_severity_floor mirrors their legacy
---      push_notifications toggle ('low' when on, 'off' when off — the delivery
---      gate falls back to that toggle only while no v2 row exists), and the
+--      push_notifications toggle ('info' when on — the v1 toggle pushed every
+--      severity, info included — 'off' when off; the delivery gate falls back
+--      to that toggle only while no v2 row exists), and the
 --      flag in rule 3. (0127 seeded every active user and GET /preferences/v2
 --      auto-seeds, so this branch is rare.)
 --   5. Timezone: the legacy tz when it is non-empty, else the v2 value (the
@@ -44,7 +46,7 @@ INSERT INTO notification_preferences_v2 (
 SELECT
   p.user_id,
   'info',
-  CASE WHEN p.push_notifications = 1 THEN 'low' ELSE 'off' END,
+  CASE WHEN p.push_notifications = 1 THEN 'info' ELSE 'off' END,
   'high',
   'daily', 'medium',
   p.quiet_hours_start, p.quiet_hours_end,

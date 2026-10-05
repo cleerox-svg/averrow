@@ -367,7 +367,15 @@ export interface JWTPayload {
    * protected route. Absent on every normal full session.
    */
   scope?: "passkey_enroll";
-  plan?: UserPlan;    // v1 compat — remove when v1 auth handlers are replaced
+  /**
+   * Session id (`sessions.id`) the token was minted for — set at login
+   * (issueSession) and on refresh. Lets a per-device revoke reject the
+   * device's live access tokens via the `forced_logout:<user>` KV value
+   * (lib/forced-logout.ts). Absent on preview / service tokens and on tokens
+   * minted before this claim existed; those are only subject to the ts gate.
+   */
+  sid?: string;
+  plan?: UserPlan;   // v1 compat — remove when v1 auth handlers are replaced
   iat: number;
   exp: number;
 }

@@ -51,7 +51,8 @@ function resolved(db: SqliteDb, id: string) {
     db,
     `SELECT p.quiet_hours_start, p.quiet_hours_end, p.quiet_hours_tz, p.critical_breakthrough,
             v.quiet_hours_start AS v2_quiet_hours_start, v.quiet_hours_end AS v2_quiet_hours_end,
-            v.quiet_hours_timezone AS v2_quiet_hours_timezone, v.critical_bypasses_quiet AS v2_critical_bypasses_quiet
+            v.quiet_hours_timezone AS v2_quiet_hours_timezone, v.critical_bypasses_quiet AS v2_critical_bypasses_quiet,
+            v.push_severity_floor AS v2_push_severity_floor
        FROM notification_preferences p
        LEFT JOIN notification_preferences_v2 v ON v.user_id = p.user_id
       WHERE p.user_id = ?`,
@@ -72,15 +73,17 @@ describe.skipIf(!hasSqlite())("migration 0281: v1 quiet hours -> v2", () => {
     addUser(db, "u1");
     addV1(db, "u1", { start: "22:00", end: "07:00", tz: "America/Toronto", crit: 0 });
     addV2(db, "u1", { crit: 1 });
-    const before = resolved(db, "u1");
     db.exec(MIGRATION);
     const row = v2(db, "u1");
     expect(row.quiet_hours_start).toBe("22:00");
     expect(row.quiet_hours_end).toBe("07:00");
     expect(row.quiet_hours_timezone).toBe("America/Toronto");
     expect(row.critical_bypasses_quiet).toBe(1);
-    // Delivery resolution is identical before and after.
-    expect(resolved(db, "u1")).toEqual(before);
+    // Delivery now resolves the user's own window (v1 values, v2 crit flag) —
+    // what the pre-H1 resolver produced before the migration. Without the
+    // migration the v2-row-wins rule would see no window (deploy dependency:
+    // 0281 ships before/with the worker).
+    expect(resolved(db, "u1")).toEqual({ start: "22:00", end: "07:00", tz: "America/Toronto", criticalBreakthrough: true });
   });
 
   it("never overwrites a complete v2 window", () => {
@@ -125,7 +128,9 @@ describe.skipIf(!hasSqlite())("migration 0281: v1 quiet hours -> v2", () => {
 
     const r5 = v2(db, "u5");
     expect(r5.critical_bypasses_quiet).toBe(1);
-    expect(r5.push_severity_floor).toBe("low");
+    // 'info' (not 'low'): the v1 fallback pushed every severity incl. info,
+    // so the new row must too or delivery would change (L8).
+    expect(r5.push_severity_floor).toBe("info");
     expect(r5.quiet_hours_timezone).toBe("UTC");
 
     expect(resolved(db, "u4")).toEqual(before4);

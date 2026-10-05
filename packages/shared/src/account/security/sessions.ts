@@ -3,7 +3,7 @@
 // missing fields (a host with an older endpoint) without inventing data.
 
 import type { SecuritySession } from './types';
-import { parseTimestamp } from './time';
+import { toValidDate } from '../time-format';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
@@ -11,12 +11,56 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
 
-/** 203.0.113.42 → 203.0.113.•••  (only used when a host sends a raw address). */
+const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const HEX_GROUP_RE = /^[0-9a-f]{1,4}$/i;
+
+function maskIpv4(ip: string): string | null {
+  const m = IPV4_RE.exec(ip);
+  if (!m || m.slice(1).some((o) => Number(o) > 255)) return null;
+  return `${m[1]}.${m[2]}.${m[3]}.•••`;
+}
+
+/**
+ * Mask the host part of an IP (only used when a host sends a raw address).
+ *   203.0.113.42 → 203.0.113.•••    2001:db8:1:2::9 → 2001:db8:1:••••
+ *   2001::1      → 2001:0:0:••••    ::1             → 0:0:0:••••
+ *   ::ffff:1.2.3.4 → ::ffff:1.2.3.•••
+ * IPv6 keeps the first three groups of the EXPANDED address, so a short
+ * compressed form never passes through whole. Unparseable → null.
+ * Mirror of maskIp in packages/averrow-worker/src/handlers/account-sessions.ts.
+ */
 export function maskIp(ip: string | null): string | null {
   if (!ip) return null;
-  if (ip.includes(':')) return `${ip.split(':').slice(0, 3).join(':')}:••••`;
-  const octets = ip.split('.');
-  return octets.length === 4 ? `${octets.slice(0, 3).join('.')}.•••` : null;
+  const addr = (ip.trim().split('%')[0] ?? '').toLowerCase();
+  if (!addr.includes(':')) return maskIpv4(addr);
+
+  const lastColon = addr.lastIndexOf(':');
+  const tail = addr.slice(lastColon + 1);
+  if (tail.includes('.')) {
+    const v4 = maskIpv4(tail);
+    return v4 ? `${addr.slice(0, lastColon + 1)}${v4}` : null;
+  }
+
+  const halves = addr.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string | undefined): string[] | null => {
+    if (!part) return [];
+    const groups = part.split(':');
+    return groups.every((g) => HEX_GROUP_RE.test(g)) ? groups : null;
+  };
+  const head = parse(halves[0]);
+  const rest = parse(halves[1]);
+  if (!head || !rest) return null;
+  let groups: string[];
+  if (halves.length === 2) {
+    const missing = 8 - head.length - rest.length;
+    if (missing < 1) return null;
+    groups = [...head, ...Array<string>(missing).fill('0'), ...rest];
+  } else {
+    groups = head;
+  }
+  if (groups.length !== 8) return null;
+  return `${groups.slice(0, 3).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}:••••`;
 }
 
 export interface NormalizedSessions {
@@ -53,7 +97,7 @@ export function normalizeSessions(payload: unknown): NormalizedSessions {
 
 /** This device first, then most recently active. */
 export function sortSessions(sessions: SecuritySession[]): SecuritySession[] {
-  const t = (s: SecuritySession) => parseTimestamp(s.lastActiveAt)?.getTime() ?? 0;
+  const t = (s: SecuritySession) => toValidDate(s.lastActiveAt)?.getTime() ?? 0;
   return [...sessions].sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || t(b) - t(a));
 }
 

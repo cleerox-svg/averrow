@@ -493,7 +493,7 @@ export async function createNotification(env: Env, opts: CreateNotificationOpts)
  *   - v2 not present AND v1 push_notifications === 1 (legacy users).
  *
  * Quiet hours + critical breakthrough: resolved as one set by
- * resolveQuietHours — v2's set when it has a complete window, else v1's.
+ * resolveQuietHours — v2's set whenever a v2 row exists, else v1's.
  */
 async function shouldSendPush(
   opts: CreateNotificationOpts,
@@ -523,25 +523,46 @@ async function shouldSendPush(
   return true;
 }
 
-/** The quiet-hours columns of the v1 ⋈ v2 preference join. */
+/** The quiet-hours columns of the v1 ⋈ v2 preference join (plus the v2
+ *  push floor, used only as a "v2 row exists" signal). */
 export type QuietHoursPrefSource = Pick<UserPrefRow,
   | 'quiet_hours_start' | 'quiet_hours_end' | 'quiet_hours_tz' | 'critical_breakthrough'
+  | 'v2_push_severity_floor'
   | 'v2_quiet_hours_start' | 'v2_quiet_hours_end' | 'v2_quiet_hours_timezone'
   | 'v2_critical_bypasses_quiet'>;
 
+/** True when the LEFT JOIN found a notification_preferences_v2 row. Its
+ *  push_severity_floor, quiet_hours_timezone and critical_bypasses_quiet
+ *  columns are NOT NULL, so any of them being non-null means the row exists. */
+function hasV2Row(pref: QuietHoursPrefSource): boolean {
+  return pref.v2_push_severity_floor != null
+    || pref.v2_quiet_hours_timezone != null
+    || pref.v2_critical_bypasses_quiet != null;
+}
+
 /** Pick the quiet-hours set ATOMICALLY from one table — never field-by-field.
  *
- *  GET /api/notifications/preferences/v2 auto-seeds a v2 row with
- *  quiet_hours_timezone='UTC' and NULL start/end, while the ops prefs UI
- *  writes the window to v1. A per-field `v2 ?? v1` merge therefore took
- *  start/end from v1 and the timezone from v2, evaluating the user's window
- *  in UTC. v2's set wins only when it holds a complete window (start AND
- *  end); otherwise v1's set is used whole. Returns null when the chosen set
- *  has no complete window (no quiet hours). */
+ *  A per-field `v2 ?? v1` merge once took start/end from v1 and the timezone
+ *  from the auto-seeded v2 row, evaluating the user's window in UTC, so the
+ *  set always comes whole from one table.
+ *
+ *  Which table: v2 whenever a v2 row EXISTS — the same rule as the push
+ *  channel gate in shouldSendPush. The settings UI writes quiet hours to v2
+ *  only (Phase 3, D4), and turning quiet hours off there writes a NULL v2
+ *  window; falling back to v1 on an incomplete v2 window would resurrect the
+ *  legacy window (migration 0281 copied v1 → v2 without clearing v1) and keep
+ *  suppressing a user who turned quiet hours off. The legacy v1 set is used
+ *  only for users with no v2 row at all.
+ *
+ *  Deploy dependency: migration 0281 must be applied before (or with) this
+ *  worker, so v1-only windows have been copied into existing v2 rows.
+ *
+ *  Returns null when the chosen set has no complete window (no quiet hours). */
 export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs | null {
-  const v2Start = pref.v2_quiet_hours_start ?? null;
-  const v2End = pref.v2_quiet_hours_end ?? null;
-  if (v2Start && v2End) {
+  if (hasV2Row(pref)) {
+    const v2Start = pref.v2_quiet_hours_start ?? null;
+    const v2End = pref.v2_quiet_hours_end ?? null;
+    if (!v2Start || !v2End) return null;
     return {
       start: v2Start,
       end: v2End,
@@ -556,16 +577,12 @@ export function resolveQuietHours(pref: QuietHoursPrefSource): QuietHoursPrefs |
       start: v1Start,
       end: v1End,
       tz: pref.quiet_hours_tz ?? null,
-      // Deliberately NOT part of the atomic set: the critical-breakthrough
-      // flag keeps its pre-existing v2-over-v1 precedence. The auto-seeded
-      // v2 row carries critical_bypasses_quiet=1 while the v1 column
-      // defaults to 0, so reading v1 alone would start holding critical
-      // alerts overnight for users who never touched the checkbox. The
-      // flag carries no timezone, so this can't reintroduce the UTC bug.
-      // Phase 3 (D4): the settings UI now writes quiet hours to v2 only and
-      // migration 0281 copied every complete legacy window into v2, so this
-      // legacy read stays for ONE release as a delivery fallback (old clients
-      // can still PATCH the v1 quiet fields) and is then removed.
+      // Critical-breakthrough precedence (b0ce7f8) is unchanged: the v2 flag
+      // when a v2 row exists, else v1. This branch only runs without a v2
+      // row, so v2_critical_bypasses_quiet is null here and v1 decides; the
+      // `!= null` check is kept so the rule reads the same in both places.
+      // Legacy read kept for ONE release (old clients may PATCH v1 quiet
+      // fields for users who never got a v2 row), then removed.
       criticalBreakthrough: pref.v2_critical_bypasses_quiet != null
         ? pref.v2_critical_bypasses_quiet === 1
         : pref.critical_breakthrough === 1,

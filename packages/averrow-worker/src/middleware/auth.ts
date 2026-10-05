@@ -4,6 +4,7 @@ import { verifyJWT } from "../lib/jwt";
 import { json } from "../lib/cors";
 import { logger } from "../lib/logger";
 import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
+import { forcedLogoutKey, isForcedOut, parseForcedLogout } from "../lib/forced-logout";
 import type { Env, JWTPayload, UserRole } from "../types";
 
 export interface AuthContext {
@@ -28,6 +29,12 @@ export interface AuthContext {
    * sees `enrollOnly === true`.
    */
   enrollOnly: boolean;
+  /**
+   * The token's `sid` claim (sessions.id it was minted for), or null for
+   * tokens without one (preview/service tokens, pre-sid tokens). Optional so
+   * hand-built contexts in tests and helpers stay valid.
+   */
+  sessionId?: string | null;
 }
 
 /**
@@ -89,10 +96,12 @@ async function requireAuthInternal(
     return json({ success: false, error: "passkey_enrollment_required" }, 403, origin);
   }
 
-  // Check for forced logout (admin-initiated session invalidation)
-  const forcedAt = await env.CACHE.get(`forced_logout:${payload.sub}`);
-  if (forcedAt && payload.iat <= parseInt(forcedAt, 10)) {
-    return json({ success: false, error: "Session invalidated by administrator" }, 401, origin);
+  // Forced-logout gate: one KV read carries both the blanket per-user stamp
+  // (iat <= ts) and the per-session revocations (sid listed) — see
+  // lib/forced-logout.ts. Tokens without a `sid` claim only face the stamp.
+  const forced = parseForcedLogout(await env.CACHE.get(forcedLogoutKey(payload.sub)));
+  if (isForcedOut(forced, payload.iat, payload.sid)) {
+    return json({ success: false, error: "Session invalidated" }, 401, origin);
   }
 
   // Verify user still active in DB
@@ -115,6 +124,7 @@ async function requireAuthInternal(
     orgRole: payload.org_role ?? null,
     embeddedScope: payload.org_scope,
     enrollOnly,
+    sessionId: typeof payload.sid === "string" && payload.sid ? payload.sid : null,
   };
 }
 

@@ -68,17 +68,17 @@ export function registerAuthRoutes(router: RouterType<IRequest>): void {
   router.post("/api/auth/sessions/revoke-others", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleRevokeOtherSessions(request, env, ctx.userId);
+    return handleRevokeOtherSessions(request, env, ctx);
   });
   router.delete("/api/auth/sessions/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleRevokeOwnSession(request, env, ctx.userId, request.params["id"] ?? "");
+    return handleRevokeOwnSession(request, env, ctx, request.params["id"] ?? "");
   });
   router.post("/api/auth/logout-all", async (request: Request, env: Env) => {
     const ctx = await requireAuth(request, env);
     if (!isAuthContext(ctx)) return ctx;
-    return handleLogoutEverywhere(request, env, ctx.userId);
+    return handleLogoutEverywhere(request, env, ctx);
   });
 
   // /me must remain reachable by enrollment-scoped sessions so the SPA can

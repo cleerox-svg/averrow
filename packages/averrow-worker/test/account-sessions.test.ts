@@ -4,7 +4,10 @@ import {
   handleRevokeOtherSessions, handleLogoutEverywhere,
 } from "../src/handlers/account-sessions";
 import { hashToken } from "../src/lib/hash";
+import { maskIp as sharedMaskIp } from "../../shared/src/account/security/sessions";
 import type { Env } from "../src/types";
+
+const U1 = { userId: "u1", role: "analyst" as const };
 
 interface Row {
   id: string; user_id: string; refresh_token_hash: string; previous_token_hash: string | null;
@@ -29,6 +32,17 @@ function makeEnv(rows: Row[]) {
           return null;
         },
         async all() {
+          if (sql.includes("RETURNING id")) {
+            const out: Array<{ id: string }> = [];
+            if (sql.includes("id != ?")) {
+              const [uid, keep] = args as string[];
+              for (const r of rows) if (live(r, uid!) && r.id !== keep) { r.revoked_at = "now"; out.push({ id: r.id }); }
+            } else {
+              const [uid] = args as string[];
+              for (const r of rows) if (live(r, uid!)) { r.revoked_at = "now"; out.push({ id: r.id }); }
+            }
+            return { results: out };
+          }
           const [uid] = args as string[];
           return { results: rows.filter((r) => live(r, uid!)) };
         },
@@ -53,7 +67,10 @@ function makeEnv(rows: Row[]) {
   const env = {
     DB: db,
     AUDIT_DB: { prepare: () => ({ bind: () => ({ run: async () => ({}) }) }) },
-    CACHE: { put: async (k: string, v: string) => { kv.set(k, v); } },
+    CACHE: {
+      get: async (k: string) => kv.get(k) ?? null,
+      put: async (k: string, v: string) => { kv.set(k, v); },
+    },
   } as unknown as Env;
   return { env, kv };
 }
@@ -77,6 +94,30 @@ describe("maskIp", () => {
     expect(maskIp(null)).toBeNull();
     expect(maskIp("nonsense")).toBeNull();
   });
+
+  it("never returns a full address, including short compressed IPv6", () => {
+    const cases: Array<[string, string | null]> = [
+      ["10.0.0.5", "10.0.0.•••"],
+      ["2001:0db8:85a3:0000:0000:8a2e:0370:7334", "2001:db8:85a3:••••"],
+      ["2001:db8:85a3::8a2e:370:7334", "2001:db8:85a3:••••"],
+      ["2001::1", "2001:0:0:••••"],
+      ["::1", "0:0:0:••••"],
+      ["::", "0:0:0:••••"],
+      ["FE80::1%eth0", "fe80:0:0:••••"],
+      ["::ffff:1.2.3.4", "::ffff:1.2.3.•••"],
+      ["1.2.3.999", null],
+      ["1:2:3", null],
+      ["1::2::3", null],
+      ["2001:db8::zz", null],
+    ];
+    for (const [ip, want] of cases) {
+      expect(maskIp(ip), ip).toBe(want);
+      // The masked form never contains the original address.
+      if (want) expect(want.includes(ip)).toBe(false);
+      // The shared UI mirror must agree with the worker.
+      expect(sharedMaskIp(ip), `shared ${ip}`).toBe(want);
+    }
+  });
 });
 
 describe("own-session handlers", () => {
@@ -98,17 +139,17 @@ describe("own-session handlers", () => {
   it("revokes another own session, refuses the current one and other users' sessions", async () => {
     const { rows, req } = await seed();
     const { env } = makeEnv(rows);
-    expect((await handleRevokeOwnSession(req(), env, "u1", "s-cur")).status).toBe(400);
-    expect((await handleRevokeOwnSession(req(), env, "u1", "s-other-user")).status).toBe(404);
+    expect((await handleRevokeOwnSession(req(), env, U1, "s-cur")).status).toBe(400);
+    expect((await handleRevokeOwnSession(req(), env, U1, "s-other-user")).status).toBe(404);
     expect(rows.find((r) => r.id === "s-other-user")?.revoked_at).toBeNull();
-    expect((await handleRevokeOwnSession(req(), env, "u1", "s-old")).status).toBe(200);
+    expect((await handleRevokeOwnSession(req(), env, U1, "s-old")).status).toBe(200);
     expect(rows.find((r) => r.id === "s-old")?.revoked_at).not.toBeNull();
   });
 
   it("revoke-others keeps this device and other users untouched", async () => {
     const { rows, req } = await seed();
     const { env } = makeEnv(rows);
-    const res = await handleRevokeOtherSessions(req(), env, "u1");
+    const res = await handleRevokeOtherSessions(req(), env, U1);
     expect(res.status).toBe(200);
     expect(rows.find((r) => r.id === "s-cur")?.revoked_at).toBeNull();
     expect(rows.find((r) => r.id === "s-old")?.revoked_at).not.toBeNull();
@@ -118,7 +159,7 @@ describe("own-session handlers", () => {
   it("revoke-others refuses (409) when the current session cannot be identified", async () => {
     const { rows } = await seed();
     const { env } = makeEnv(rows);
-    const res = await handleRevokeOtherSessions(new Request("https://x/api/auth/sessions/revoke-others", { method: "POST" }), env, "u1");
+    const res = await handleRevokeOtherSessions(new Request("https://x/api/auth/sessions/revoke-others", { method: "POST" }), env, U1);
     expect(res.status).toBe(409);
     expect(rows.filter((r) => r.user_id === "u1").every((r) => r.revoked_at === null)).toBe(true);
   });
@@ -126,7 +167,7 @@ describe("own-session handlers", () => {
   it("logout-all revokes everything for the caller, stamps forced_logout, clears the cookie", async () => {
     const { rows, req } = await seed();
     const { env, kv } = makeEnv(rows);
-    const res = await handleLogoutEverywhere(req("https://x/api/auth/logout-all", "POST"), env, "u1");
+    const res = await handleLogoutEverywhere(req("https://x/api/auth/logout-all", "POST"), env, U1);
     expect(res.status).toBe(200);
     expect(rows.filter((r) => r.user_id === "u1").every((r) => r.revoked_at !== null)).toBe(true);
     expect(rows.find((r) => r.id === "s-other-user")?.revoked_at).toBeNull();

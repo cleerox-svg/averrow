@@ -359,31 +359,39 @@ export async function handleGetPreferences(request: Request, env: Env, userId: s
   }
 }
 
-// PUT /api/notifications/preferences
+// PATCH /api/notifications/preferences (partial: omitted toggles are left as stored)
 export async function handleUpdatePreferences(request: Request, env: Env, userId: string): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
-    const body = await request.json() as Partial<Record<PrefColumn, boolean>> & QuietHoursPayload;
+    const parsed: unknown = await request.json();
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return json({ success: false, error: "Body must be a JSON object" }, 400, origin);
+    }
+    const body = parsed as Partial<Record<PrefColumn, boolean>> & QuietHoursPayload;
 
-    // SQL columns + placeholders + UPDATE clauses are all derived from the
-    // registry — no hand-maintained list to drift from the column set.
-    // Column names come from the typed registry, so SQL injection is impossible.
+    // Step 1: partial upsert of the flat-bool columns. Only toggles PRESENT
+    // in the body are written; an omitted toggle keeps its stored value
+    // (H2: the old full upsert wrote PREF_DEFAULTS for every omitted column,
+    // so flipping one event reset every other toggle and both channels).
+    // A first-ever write inserts the row with PREF_DEFAULTS for the omitted
+    // columns plus the given values. Column names come only from the typed
+    // PREF_COLUMNS allowlist — body keys are never interpolated.
+    const present = PREF_COLUMNS.filter((c) => body[c] !== undefined);
     const colList = PREF_COLUMNS.join(', ');
     const placeholders = PREF_COLUMNS.map(() => '?').join(', ');
-    const updateClauses = PREF_COLUMNS.map((c) => `${c} = excluded.${c}`).join(', ');
-
     const values = PREF_COLUMNS.map((c) => {
       const explicit = body[c];
       const value = explicit !== undefined ? explicit : PREF_DEFAULTS[c];
       return value ? 1 : 0;
     });
+    const onConflict = present.length > 0
+      ? `DO UPDATE SET ${present.map((c) => `${c} = excluded.${c}`).join(', ')}`
+      : 'DO NOTHING';
 
-    // Step 1: upsert the flat-bool columns (existing behavior — unchanged
-    // contract for the still-deployed UI).
     await env.DB.prepare(
       `INSERT INTO notification_preferences (user_id, ${colList})
        VALUES (?, ${placeholders})
-       ON CONFLICT(user_id) DO UPDATE SET ${updateClauses}`
+       ON CONFLICT(user_id) ${onConflict}`
     ).bind(userId, ...values).run();
 
     // Step 2: if the body included quiet-hours fields, update them. Done as
