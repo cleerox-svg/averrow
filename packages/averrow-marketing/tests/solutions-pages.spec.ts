@@ -218,7 +218,9 @@ test.describe("what each page says, and doesn't", () => {
   test("teams without a SOC: Averrow SOC wording, what staff can't do, no response-time promise", async ({ page }) => {
     await open(page, "/solutions/teams-without-a-soc");
     const managed = page.locator("#managed");
-    await expect(managed).toContainText("marked as Averrow SOC");
+    // Only alerts staff hold carry the Averrow SOC assignee; unclaimed status changes are unmarked.
+    await expect(managed).toContainText("alerts they hold are assigned to Averrow SOC");
+    expect(((await page.locator(".pp").textContent()) ?? "")).not.toMatch(/every action/i);
     await expect(managed).toContainText(/acknowledge them, change their status and take them on/i);
     await expect(managed).toContainText(/never submit a takedown without your authorization/i);
     await expect(managed).toContainText(/can't sign or revoke the authorization/i);

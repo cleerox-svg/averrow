@@ -56,7 +56,7 @@ const socFacts = [
 ];
 const socRows: SampleRow[] = [
   { text: "acme-secure-login.example", mono: true, status: "Assigned to Averrow SOC", pill: "Acknowledged", tone: "ok" },
-  { text: "acme-pay.example", mono: true, status: "Triaged by Averrow SOC", pill: "Triaged", tone: "low" },
+  { text: "acme-pay.example", mono: true, status: "Status changed to Triaged", pill: "Triaged", tone: "low" },
   { text: "Takedown draft", status: "Waiting for your approval", pill: "Awaiting approval", tone: "hold" },
 ];
 
@@ -68,7 +68,7 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Averrow SOC",
-    covered: "Our analysts acknowledge and triage your alerts. Their work shows in your console, marked Averrow SOC.",
+    covered: "Our analysts acknowledge and triage your alerts. Status changes show in your console, and alerts they hold are assigned to Averrow SOC.",
     notCovered: "Named analysts, visible working notes, and promised response or resolution times.",
   },
   {
@@ -91,7 +91,7 @@ const scope: ScopeRow[] = [
 
 <ProductPage
   title="Solutions for Teams Without a SOC — Averrow"
-  description="Automated triage takes the first pass on brand threats, and Averrow's analysts can handle your alerts as a service. Every action shows in your console as Averrow SOC."
+  description="Automated triage takes the first pass on brand threats, and Averrow's analysts can handle your alerts as a service. Status changes show in your console, and alerts they hold are assigned to Averrow SOC."
   crumb="Teams without a SOC"
   parent={{ href: "/solutions", label: "Solutions" }}
 >
@@ -120,11 +120,11 @@ const scope: ScopeRow[] = [
     id="managed"
     eyebrow="Averrow SOC"
     heading="Or let our analysts work your alerts."
-    lede="Our analysts can triage and act on alerts for you. You see every action in your console, marked as Averrow SOC."
+    lede="Our analysts can triage and act on alerts for you. Status changes show in your console, and alerts they hold are assigned to Averrow SOC."
   >
     <div class="sol-split">
       <FactList items={socFacts} label="What Averrow analysts can and can't do" />
-      <SampleFrame label="Sample alerts handled by Averrow SOC" rows={socRows} footer="Every action shows in your console as Averrow SOC" />
+      <SampleFrame label="Sample alerts handled by Averrow SOC" rows={socRows} footer="Alerts our analysts hold are assigned to Averrow SOC" />
     </div>
     <p class="sol-more">
       Managed handling is arranged with our team. <a class="link-u" href={`${base}/demo`}>Book a demo</a> and ask for it, or see <a class="link-u" href={`${base}/platform/takedowns`}>how takedowns stay under your control</a>.
