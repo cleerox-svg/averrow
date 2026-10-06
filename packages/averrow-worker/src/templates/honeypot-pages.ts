@@ -1,43 +1,37 @@
 /**
- * Averrow — Honeypot Pages for Spider Traps
- * Served at /admin-portal and /internal-staff — paths listed as Disallow in robots.txt.
- * Malicious bots specifically crawl disallowed paths, making these effective honeypots.
+ * Averrow — Roster bait pages for spam-trap harvesters.
  *
- * Both pages now accept an optional `roster` of seeded addresses. When
- * supplied (the live caller passes the result of readRoster() from
- * lib/auto-seeder-planter.ts), the page renders the up-to-date set so
- * a harvester scraping us in week 4 sees a different list than one in
- * week 1. When omitted (or empty), each page falls back to a built-in
- * default roster so the page never renders blank.
+ * Served at /admin-portal, /internal-staff, /team-directory and
+ * /staff-contacts (src/index.ts on averrow.com and lrxradar.com; the first
+ * two also from the routes/public.ts fallback). The paths are Disallowed in
+ * robots.txt, which is what draws malicious crawlers to them.
+ *
+ * Each page accepts an optional `roster` of seeded addresses. The live
+ * caller passes readRoster() (lib/auto-seeder-planter.ts), so a harvester
+ * scraping in week 4 sees a different list than one in week 1. Entries
+ * whose domain does not route to the Worker (WORKER_ROUTED_MAIL_DOMAINS —
+ * e.g. averrow.com, whose MX is Google Workspace) are dropped: mail to them
+ * never reaches the trap. With nothing left, a built-in default roster on
+ * the page's trap mail domain (trapMailDomain) is used so the page never
+ * renders blank.
+ *
+ * DISCLOSURE_REGISTER G37 (owner decision 2026-10-06): these pages used to
+ * list invented staff ("Robert Taylor — IT Director", …). They now render
+ * addresses only — no person names, job titles or bios — present them as
+ * automated mailboxes, point a human visitor at /contact, and do not name
+ * LRX Enterprises Inc. Every page carries `<meta name="robots"
+ * content="noindex,nofollow">`; the routes add the X-Robots-Tag header via
+ * honeypotHtmlResponse().
  */
-import { wrapPage } from "./shared";
+import { WORKER_ROUTED_MAIL_DOMAINS, trapMailDomain } from "../honeypot";
+import { generateSpiderTraps } from "../seeders/spider-injector";
 import type { RosterEntry } from "../lib/auto-seeder-planter";
 
-const DEFAULT_ADMIN_ROSTER: RosterEntry[] = [
-  { name: "Robert Taylor",  title: "IT Director",       email: "robert.taylor.hp01@averrow.com" },
-  { name: "Lisa Martinez",  title: "DevOps Lead",       email: "lisa.martinez.hp02@trustradar.ca" },
-  { name: "Kevin Park",     title: "Infrastructure",    email: "kevin.park.hp03@averrow.com" },
-];
-
-const DEFAULT_STAFF_ROSTER: RosterEntry[] = [
-  { name: "Amanda White",   title: "Customer Success",  email: "amanda.white.hp04@trustradar.ca" },
-  { name: "Chris Johnson",  title: "Threat Research",   email: "chris.johnson.hp05@averrow.com" },
-  { name: "Rachel Kim",     title: "Product",           email: "rachel.kim.hp06@trustradar.ca" },
-  { name: "Tom Harris",     title: "Compliance",        email: "tom.harris.hp07@averrow.com" },
-];
-
-function renderRosterRows(roster: RosterEntry[]): string {
-  return roster.map(r => `
-    <div class="hp-contact-row">
-      <span class="name">${escapeHtml(r.name)} — ${escapeHtml(r.title)}</span>
-      <a class="email" href="mailto:${escapeHtml(r.email)}">${escapeHtml(r.email)}</a>
-    </div>`).join('');
-}
-
-/** Comment-form mailto list — secondary harvester surface. */
-function renderRosterComment(label: string, roster: RosterEntry[]): string {
-  return `<!-- ${label}: ${roster.map(r => r.email).join(' | ')} -->`;
-}
+/** Seed-format local parts (`<word>-hpNN`, channel "honeypot" in spam-trap.ts). */
+const DEFAULT_ADMIN_LOCALS = ["itops-hp20", "devops-hp21", "infra-hp22"];
+const DEFAULT_STAFF_LOCALS = ["success-hp23", "research-hp24", "product-hp25", "compliance-hp26"];
+const DEFAULT_TEAM_DIRECTORY_LOCALS = ["ops-hp27", "consulting-hp28", "clientrel-hp29", "bizdev-hp30", "strategy-hp31"];
+const DEFAULT_STAFF_CONTACTS_LOCALS = ["pm-hp32", "accounts-hp33", "eng-hp34", "marketing-hp35", "legal-hp36"];
 
 function escapeHtml(s: string): string {
   return s
@@ -48,239 +42,132 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-export function renderAdminPortalPage(roster?: RosterEntry[]): string {
-  const useRoster = (roster && roster.length > 0) ? roster : DEFAULT_ADMIN_ROSTER;
-  return wrapPage(
-    "Admin Portal — Averrow",
-    "Internal administration portal for Averrow platform management.",
-    `
-<style>
-.hp-section {
-  max-width: 720px;
-  margin: 3rem auto;
-  padding: 0 2rem;
+function emailDomain(email: string): string {
+  return (email.split("@")[1] ?? "").toLowerCase();
 }
-.hp-section h1 {
-  font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 1rem;
-}
-.hp-section p {
-  font-size: 15px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  margin-bottom: 0.75rem;
-}
-.hp-contacts {
-  background: var(--bg-secondary, #0d1520);
-  border: 1px solid var(--border-color, rgba(255,255,255,0.08));
-  border-radius: 12px;
-  padding: 1.5rem 2rem;
-  margin-top: 1.5rem;
-}
-.hp-contacts h3 {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: var(--text-tertiary);
-  margin-bottom: 1rem;
-}
-.hp-contact-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.05));
-  font-size: 14px;
-}
-.hp-contact-row:last-child { border-bottom: none; }
-.hp-contact-row .name { color: var(--text-primary); }
-.hp-contact-row .email { color: var(--link-color, #78A0C8); }
-</style>
 
+/** Seeded addresses on a Worker-routed domain, else the default set on the page's trap domain. */
+function resolveAddresses(roster: RosterEntry[] | undefined, defaults: string[], mail: string): string[] {
+  const live = (roster ?? [])
+    .map(r => r.email)
+    .filter(e => WORKER_ROUTED_MAIL_DOMAINS.has(emailDomain(e)));
+  return live.length > 0 ? live : defaults.map(l => `${l}@${mail}`);
+}
+
+function siteBrand(domain: string): string {
+  return trapMailDomain(domain) === "lrxradar.com" ? "LRX Radar" : "Averrow";
+}
+
+const STYLES = `<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0a0e1a;color:#c8d0e0;line-height:1.7}
+a{color:#78A0C8;text-decoration:none}a:hover{text-decoration:underline}
+.hp-nav{background:#060a14;border-bottom:1px solid rgba(255,255,255,.08);padding:1rem 2rem}
+.hp-nav a{font-weight:700;color:#e8edf5}
+.hp-section{max-width:720px;margin:3rem auto;padding:0 2rem}
+.hp-section h1{font-size:28px;font-weight:700;color:#e8edf5;margin-bottom:1rem}
+.hp-section p{font-size:15px;color:#9aa6bb;margin-bottom:.75rem}
+.hp-contacts{background:#0d1520;border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:1.5rem 2rem;margin-top:1.5rem}
+.hp-contacts h2{font-family:ui-monospace,monospace;font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:#6b778c;margin-bottom:1rem}
+.hp-contact-row{padding:.5rem 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:14px}
+.hp-contact-row:last-child{border-bottom:none}
+.hp-footer{border-top:1px solid rgba(255,255,255,.06);padding:1.5rem 2rem;text-align:center;font-size:13px;color:#4a5a73;margin-top:3rem}
+</style>`;
+
+interface RosterPageSpec {
+  /** Page slug for spider-trap address tagging, e.g. "admin-portal". */
+  slug: string;
+  title: string;
+  heading: string;
+  intro: string;
+  listLabel: string;
+  commentLabel: string;
+  defaults: string[];
+}
+
+function renderRosterPage(spec: RosterPageSpec, roster: RosterEntry[] | undefined, domain: string): string {
+  const mail = trapMailDomain(domain);
+  const brand = siteBrand(domain);
+  const addresses = resolveAddresses(roster, spec.defaults, mail);
+  const rows = addresses.map(e => `
+    <div class="hp-contact-row"><a href="mailto:${escapeHtml(e)}">${escapeHtml(e)}</a></div>`).join("");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>${escapeHtml(spec.title)} — ${brand}</title>
+<meta name="description" content="Automated mailbox listing.">
+${STYLES}
+</head>
+<body>
+<nav class="hp-nav"><a href="/">${brand}</a></nav>
 <section class="hp-section">
-  <h1>Administration Portal</h1>
-  <p>This area is restricted to authorized Averrow staff. If you need access, please contact the IT department.</p>
-  <p>For platform issues, reach out to the operations team below.</p>
-
+  <h1>${escapeHtml(spec.heading)}</h1>
+  <p>${escapeHtml(spec.intro)} These mailboxes are automated and are not read by people.</p>
+  <p>To reach ${brand}, use the <a href="/contact">contact page</a>.</p>
   <div class="hp-contacts">
-    <h3>Admin Contacts</h3>
-    ${renderRosterRows(useRoster)}
+    <h2>${escapeHtml(spec.listLabel)}</h2>
+    ${rows}
   </div>
 </section>
-${renderRosterComment("Admin support", useRoster)}
-`
-  );
+<footer class="hp-footer">&copy; 2026 ${brand}. All rights reserved.</footer>
+<!-- ${escapeHtml(spec.commentLabel)}: ${addresses.map(escapeHtml).join(" | ")} -->
+${generateSpiderTraps(mail, "bait-" + spec.slug)}
+</body>
+</html>`;
 }
 
-export function renderInternalStaffPage(roster?: RosterEntry[]): string {
-  const useRoster = (roster && roster.length > 0) ? roster : DEFAULT_STAFF_ROSTER;
-  return wrapPage(
-    "Internal Staff Directory — Averrow",
-    "Internal staff directory for Averrow employees.",
-    `
-<section class="hp-section">
-  <h1>Staff Directory</h1>
-  <p>Internal use only. For external inquiries, please use our <a href="/contact">contact page</a>.</p>
-
-  <div class="hp-contacts">
-    <h3>Department Leads</h3>
-    ${renderRosterRows(useRoster)}
-  </div>
-</section>
-${renderRosterComment("Staff directory", useRoster)}
-
-<style>
-.hp-section { max-width: 720px; margin: 3rem auto; padding: 0 2rem; }
-.hp-section h1 { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 1rem; }
-.hp-section p { font-size: 15px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 0.75rem; }
-.hp-contacts { background: var(--bg-secondary, #0d1520); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.5rem 2rem; margin-top: 1.5rem; }
-.hp-contacts h3 { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-tertiary); margin-bottom: 1rem; }
-.hp-contact-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.05)); font-size: 14px; }
-.hp-contact-row:last-child { border-bottom: none; }
-.hp-contact-row .name { color: var(--text-primary); }
-.hp-contact-row .email { color: var(--link-color, #78A0C8); }
-</style>
-`
-  );
+export function renderAdminPortalPage(roster?: RosterEntry[], domain = "averrow.com"): string {
+  return renderRosterPage({
+    slug: "admin-portal",
+    title: "Administration",
+    heading: "Administration area",
+    intro: "Restricted area.",
+    listLabel: "Operations mailboxes",
+    commentLabel: "Admin support",
+    defaults: DEFAULT_ADMIN_LOCALS,
+  }, roster, domain);
 }
 
-// ─── Wave-2 PR-AC additions ──────────────────────────────────────
-//
-// Two extra bait surfaces so harvesters that URL-filter on the first
-// two paths still get a yield from us. Same roster-rotation pattern;
-// each pulls from its own auto-seeder location key so the three pages
-// surface distinct addresses (more distinct entries in the harvester's
-// list = more first-touch opportunities).
-//
-// Per the Wave-2 audit recommendation: target 5-10 addresses per page,
-// each on a CMS-style page that looks like real internal content.
-
-const DEFAULT_TEAM_DIRECTORY_ROSTER: RosterEntry[] = [
-  { name: "Emily Wilson",   title: "Operations Director",         email: "emily.wilson.hp08@averrow.com" },
-  { name: "Marcus Bennett", title: "Senior Consultant",           email: "marcus.bennett.hp09@trustradar.ca" },
-  { name: "Sophie Lee",     title: "Client Relations Manager",    email: "sophie.lee.hp10@averrow.com" },
-  { name: "Daniel Foster",  title: "Business Development Lead",   email: "daniel.foster.hp11@trustradar.ca" },
-  { name: "Hannah Murphy",  title: "Strategy Analyst",            email: "hannah.murphy.hp12@averrow.com" },
-];
-
-const DEFAULT_STAFF_CONTACTS_ROSTER: RosterEntry[] = [
-  { name: "Owen Hughes",    title: "Project Manager",             email: "owen.hughes.hp13@averrow.com" },
-  { name: "Zoe Bailey",     title: "Account Executive",           email: "zoe.bailey.hp14@trustradar.ca" },
-  { name: "Lucas Reyes",    title: "Engineering Manager",         email: "lucas.reyes.hp15@averrow.com" },
-  { name: "Chloe Cooper",   title: "Marketing Director",          email: "chloe.cooper.hp16@trustradar.ca" },
-  { name: "Henry Singh",    title: "Compliance Officer",          email: "henry.singh.hp17@averrow.com" },
-];
-
-export function renderTeamDirectoryPage(roster?: RosterEntry[]): string {
-  const useRoster = (roster && roster.length > 0) ? roster : DEFAULT_TEAM_DIRECTORY_ROSTER;
-  return wrapPage(
-    "Team Directory — Averrow",
-    "Internal team directory and contact information.",
-    `
-<section class="hp-section">
-  <h1>Team Directory</h1>
-  <p>The Averrow team page is currently undergoing migration. The fallback contact list below remains in place for legacy escalation paths.</p>
-  <p>If you've been redirected here from an outdated bookmark, please update to <a href="/about">/about</a>.</p>
-
-  <div class="hp-contacts">
-    <h3>Direct Contacts</h3>
-    ${renderRosterRows(useRoster)}
-  </div>
-</section>
-${renderRosterComment("Team directory", useRoster)}
-
-<style>
-.hp-section { max-width: 720px; margin: 3rem auto; padding: 0 2rem; }
-.hp-section h1 { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 1rem; }
-.hp-section p { font-size: 15px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 0.75rem; }
-.hp-contacts { background: var(--bg-secondary, #0d1520); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.5rem 2rem; margin-top: 1.5rem; }
-.hp-contacts h3 { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-tertiary); margin-bottom: 1rem; }
-.hp-contact-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.05)); font-size: 14px; }
-.hp-contact-row:last-child { border-bottom: none; }
-.hp-contact-row .name { color: var(--text-primary); }
-.hp-contact-row .email { color: var(--link-color, #78A0C8); }
-</style>
-`
-  );
+export function renderInternalStaffPage(roster?: RosterEntry[], domain = "averrow.com"): string {
+  return renderRosterPage({
+    slug: "internal-staff",
+    title: "Internal mailboxes",
+    heading: "Internal mailboxes",
+    intro: "Internal routing addresses.",
+    listLabel: "Routing addresses",
+    commentLabel: "Internal routing",
+    defaults: DEFAULT_STAFF_LOCALS,
+  }, roster, domain);
 }
 
-export function renderStaffContactsPage(roster?: RosterEntry[]): string {
-  const useRoster = (roster && roster.length > 0) ? roster : DEFAULT_STAFF_CONTACTS_ROSTER;
-  return wrapPage(
-    "Staff Contacts — Averrow",
-    "Internal staff contact list for cross-team escalations.",
-    `
-<section class="hp-section">
-  <h1>Staff Contacts</h1>
-  <p>Cross-team escalation directory. Direct external inquiries to <a href="/contact">/contact</a>.</p>
+// Wave-2 PR-AC: two extra bait surfaces so harvesters that URL-filter on the
+// first two paths still get a yield. Each reads its own auto-seeder location
+// key, so the pages surface distinct addresses.
 
-  <div class="hp-contacts">
-    <h3>Escalation Contacts</h3>
-    ${renderRosterRows(useRoster)}
-  </div>
-</section>
-${renderRosterComment("Staff contacts", useRoster)}
+export function renderTeamDirectoryPage(roster?: RosterEntry[], domain = "averrow.com"): string {
+  return renderRosterPage({
+    slug: "team-directory",
+    title: "Mailbox directory",
+    heading: "Mailbox directory",
+    intro: "Legacy routing addresses kept for old bookmarks.",
+    listLabel: "Legacy addresses",
+    commentLabel: "Mailbox directory",
+    defaults: DEFAULT_TEAM_DIRECTORY_LOCALS,
+  }, roster, domain);
+}
 
-<style>
-.hp-section { max-width: 720px; margin: 3rem auto; padding: 0 2rem; }
-.hp-section h1 { font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--text-primary); margin-bottom: 1rem; }
-.hp-section p { font-size: 15px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 0.75rem; }
-.hp-contacts { background: var(--bg-secondary, #0d1520); border: 1px solid var(--border-color, rgba(255,255,255,0.08)); border-radius: 12px; padding: 1.5rem 2rem; margin-top: 1.5rem; }
-.hp-contacts h3 { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.15em; color: var(--text-tertiary); margin-bottom: 1rem; }
-.hp-contact-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.05)); font-size: 14px; }
-.hp-contact-row:last-child { border-bottom: none; }
-.hp-contact-row .name { color: var(--text-primary); }
-.hp-contact-row .email { color: var(--link-color, #78A0C8); }
-</style>
-
-<style>
-.hp-section {
-  max-width: 720px;
-  margin: 3rem auto;
-  padding: 0 2rem;
-}
-.hp-section h1 {
-  font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 1rem;
-}
-.hp-section p {
-  font-size: 15px;
-  color: var(--text-secondary);
-  line-height: 1.7;
-  margin-bottom: 0.75rem;
-}
-.hp-contacts {
-  background: var(--bg-secondary, #0d1520);
-  border: 1px solid var(--border-color, rgba(255,255,255,0.08));
-  border-radius: 12px;
-  padding: 1.5rem 2rem;
-  margin-top: 1.5rem;
-}
-.hp-contacts h3 {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: var(--text-tertiary);
-  margin-bottom: 1rem;
-}
-.hp-contact-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.05));
-  font-size: 14px;
-}
-.hp-contact-row:last-child { border-bottom: none; }
-.hp-contact-row .name { color: var(--text-primary); }
-.hp-contact-row .email { color: var(--link-color, #78A0C8); }
-</style>
-`
-  );
+export function renderStaffContactsPage(roster?: RosterEntry[], domain = "averrow.com"): string {
+  return renderRosterPage({
+    slug: "staff-contacts",
+    title: "Escalation mailboxes",
+    heading: "Escalation mailboxes",
+    intro: "Cross-team escalation routing.",
+    listLabel: "Escalation addresses",
+    commentLabel: "Escalation routing",
+    defaults: DEFAULT_STAFF_CONTACTS_LOCALS,
+  }, roster, domain);
 }

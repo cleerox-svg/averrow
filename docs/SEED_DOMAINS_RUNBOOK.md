@@ -49,6 +49,8 @@ Audit-recommended expansion (Wave 2.1) of the seeded-honeypot domain footprint f
 
    Open `https://<new-domain>/admin-portal` in a browser — should render the bait page with five visible mailto links. View source to confirm the addresses match the freshly planted seeds.
 
+   The page shows a domain's own seeds only when that domain's mail reaches the Worker (`WORKER_ROUTED_MAIL_DOMAINS` in `src/honeypot.ts`: averrow.ca, trustradar.ca, lrxradar.com). Otherwise it reads the roster planted for `trapMailDomain(<domain>)` (averrow.ca), and seeded addresses on a non-routed domain are never rendered: averrow.com pages show the averrow.ca roster. Add a domain to that set only after its MX is CF Email Routing with a catch-all to the Worker (`docs/EMAIL_ROUTING_RUNBOOK.md`). The pages list addresses only, with no names or job titles (G37).
+
 ## Pausing or retiring a domain
 
 - **Pause** (stop new seeds, keep historical):

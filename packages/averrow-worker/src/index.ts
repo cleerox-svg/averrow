@@ -6,7 +6,7 @@ import { applySecurityHeaders } from "./middleware/security";
 import { handleDmarcEmail } from "./dmarc-receiver";
 import type { EmailMessage } from "./dmarc-receiver";
 import { handleSpamTrapEmail } from "./spam-trap";
-import { serveHoneypotPage } from "./honeypot";
+import { serveHoneypotPage, honeypotHtmlResponse, trapMailDomain } from "./honeypot";
 import { serveLrxRadarPage } from "./templates/honeypot-lrx";
 import { renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage, renderStaffContactsPage } from "./templates/honeypot-pages";
 import { logHoneypotVisit } from "./lib/honeypot-visit-logger";
@@ -227,6 +227,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
       //   /internal-staff           → original Disallow-in-robots bait
       //   /team-directory   (PR-AC) → new bait surface, distinct content shape
       //   /staff-contacts   (PR-AC) → new bait surface, distinct content shape
+      //   (the four roster pages list addresses only — no people, noindex;
+      //    src/templates/honeypot-pages.ts)
       //
       // Wave-2 widened the hostname check from averrow.com only to the
       // full set of platform domains so harvesters that geolocate or
@@ -245,6 +247,11 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         // been logged as `lrxradar:<path>`, so keep that for its bait pages
         // rather than merging them into the averrow.com counts.
         const visitKey = (p: string) => (serveDomain === "lrxradar.com" ? `lrxradar:${p}` : p);
+        // Rosters are read from the trap MAIL domain's seed location: on
+        // averrow.com that is averrow.ca (Recon plants it weekly; averrow.ca
+        // itself 301s here, so it was never shown). averrow.com's own roster
+        // is @averrow.com, whose Workspace MX never delivers to the trap.
+        const rosterDomain = trapMailDomain(serveDomain);
         const honeypotPages = ["/team", "/careers"];
         if (honeypotPages.includes(url.pathname)) {
           ctx.waitUntil(logHoneypotVisit(env, request, url.pathname));
@@ -253,34 +260,26 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         if (url.pathname === "/admin-portal") {
           ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/admin-portal")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/admin-portal`, 16);
-          return applySecurityHeaders(new Response(renderAdminPortalPage(roster), {
-            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
-          }));
+          const roster = await readRoster(env, `auto-seeder:${rosterDomain}:/admin-portal`, 16);
+          return applySecurityHeaders(honeypotHtmlResponse(renderAdminPortalPage(roster, serveDomain)));
         }
         if (url.pathname === "/internal-staff") {
           ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/internal-staff")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/internal-staff`, 16);
-          return applySecurityHeaders(new Response(renderInternalStaffPage(roster), {
-            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
-          }));
+          const roster = await readRoster(env, `auto-seeder:${rosterDomain}:/internal-staff`, 16);
+          return applySecurityHeaders(honeypotHtmlResponse(renderInternalStaffPage(roster, serveDomain)));
         }
         if (url.pathname === "/team-directory") {
           ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/team-directory")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/team-directory`, 16);
-          return applySecurityHeaders(new Response(renderTeamDirectoryPage(roster), {
-            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
-          }));
+          const roster = await readRoster(env, `auto-seeder:${rosterDomain}:/team-directory`, 16);
+          return applySecurityHeaders(honeypotHtmlResponse(renderTeamDirectoryPage(roster, serveDomain)));
         }
         if (url.pathname === "/staff-contacts") {
           ctx.waitUntil(logHoneypotVisit(env, request, visitKey("/staff-contacts")));
           const { readRoster } = await import('./lib/auto-seeder-planter');
-          const roster = await readRoster(env, `auto-seeder:${serveDomain}:/staff-contacts`, 16);
-          return applySecurityHeaders(new Response(renderStaffContactsPage(roster), {
-            headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
-          }));
+          const roster = await readRoster(env, `auto-seeder:${rosterDomain}:/staff-contacts`, 16);
+          return applySecurityHeaders(honeypotHtmlResponse(renderStaffContactsPage(roster, serveDomain)));
         }
       }
 

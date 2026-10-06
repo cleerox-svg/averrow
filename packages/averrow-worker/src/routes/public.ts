@@ -16,7 +16,7 @@ import { renderHomepage } from "../templates/homepage";
 import { renderStatusPage } from "../templates/status";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
-import { serveHoneypotPage } from "../honeypot";
+import { serveHoneypotPage, honeypotHtmlResponse } from "../honeypot";
 import { renderNotFoundPage } from "../templates/not-found";
 import { renderAdminPortalPage, renderInternalStaffPage } from "../templates/honeypot-pages";
 import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
@@ -295,8 +295,8 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   // host (workers.dev, staging). Same page either way: a neutral mailbox
   // listing with noindex meta + X-Robots-Tag, no people (G37).
   router.get("/team", () => serveHoneypotPage("team", "averrow.com"));
-  router.get("/admin-portal", htmlPage(renderAdminPortalPage));
-  router.get("/internal-staff", htmlPage(renderInternalStaffPage));
+  router.get("/admin-portal", () => honeypotHtmlResponse(renderAdminPortalPage(), "public, max-age=300, s-maxage=600"));
+  router.get("/internal-staff", () => honeypotHtmlResponse(renderInternalStaffPage(), "public, max-age=300, s-maxage=600"));
 
   // ─── robots.txt & sitemap.xml ──────────────────────────────────────
   router.get("/robots.txt", () =>

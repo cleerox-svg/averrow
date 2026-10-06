@@ -28,6 +28,9 @@
  * reaches the Worker. A page served on averrow.com therefore publishes
  * averrow.ca addresses (trapMailDomain).
  *
+ * /careers: the invented job postings are gone; it is a neutral recruiting
+ * intake mailbox page in the same shape as /team.
+ *
  * /team (DISCLOSURE_REGISTER G37, owner decision 2026-10-06): the page used
  * to present invented people as the Averrow team. It now names no people,
  * titles or bios and does not claim to be a team page: it is a neutral
@@ -85,10 +88,11 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
     { label: "Registrar records", email: `admin-wh01@${mail}` },
   ];
 
-  const jobListings = [
-    { title: "Senior Threat Intelligence Analyst", dept: "Security Research", email: `hr-hp01@${mail}` },
-    { title: "Full-Stack Engineer (Cloudflare Workers)", dept: "Engineering", email: `dev-gp01@${mail}` },
-    { title: "Product Manager — AI Agents", dept: "Product", email: `hr-hp01@${mail}` },
+  // /careers: no job postings (they were invented) — just the recruiting
+  // intake mailbox, labelled as automated, with a pointer to /contact.
+  const careersAddresses = [
+    { label: "Recruiting intake", email: `hr-hp01@${mail}` },
+    { label: "Engineering intake", email: `dev-gp01@${mail}` },
   ];
 
   let content: string;
@@ -110,23 +114,20 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
       <p class="hp-cta">To reach Averrow, use the <a href="/contact">contact form</a>.</p>
     </div>`;
   } else if (page === "careers") {
-    const jobCards = jobListings.map(j => `
+    const rows = careersAddresses.map(d => `
       <div class="hp-card">
-        <div class="hp-card-name">${j.title}</div>
-        <div class="hp-card-title">${j.dept}</div>
-        <p class="hp-card-desc">We're looking for talented individuals to join our growing team. Remote-friendly, competitive compensation, equity.</p>
-        <a href="mailto:${j.email}?subject=Application: ${j.title}" class="hp-apply">Apply via Email</a>
+        <div class="hp-card-title">${d.label}</div>
+        <a href="mailto:${d.email}">${d.email}</a>
       </div>`).join("");
 
     content = `
     <div class="hp-hero">
-      <h1>Careers at Averrow</h1>
-      <p>Join us in making brand threat intelligence accessible to every organization.</p>
+      <h1>Recruiting mailbox</h1>
+      <p>Automated intake addresses. No positions are listed here and these mailboxes are not read by people.</p>
     </div>
     <div class="hp-section">
-      <div class="hp-grid">${jobCards}</div>
-      <p class="hp-cta">HR inquiries: <a href="mailto:${primaryEmail}">${primaryEmail}</a></p>
-      <p class="hp-cta">Engineering roles: <a href="mailto:dev-gp01@${mail}">dev-gp01@${mail}</a></p>
+      <div class="hp-grid">${rows}</div>
+      <p class="hp-cta">To reach Averrow, use the <a href="/contact">contact form</a>.</p>
     </div>`;
   } else {
     content = `
@@ -141,7 +142,9 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
 
   const schemaEmails = page === "team"
     ? directoryAddresses.map(d => d.email)
-    : [primaryEmail];
+    : page === "careers"
+      ? careersAddresses.map(d => d.email)
+      : [primaryEmail];
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -149,8 +152,8 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow">
-<title>${page === "team" ? "Mailbox directory" : page === "careers" ? "Careers" : page.charAt(0).toUpperCase() + page.slice(1)} — Averrow</title>
-<meta name="description" content="${page === "team" ? "Automated mailbox directory." : "Averrow — AI-powered brand threat intelligence by LRX Enterprises Inc."}">
+<title>${page === "team" ? "Mailbox directory" : page === "careers" ? "Recruiting mailbox" : page.charAt(0).toUpperCase() + page.slice(1)} — Averrow</title>
+<meta name="description" content="${page === "team" || page === "careers" ? "Automated mailbox directory." : "Averrow — AI-powered brand threat intelligence."}">
 <meta name="reply-to" content="${primaryEmail}">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script type="application/ld+json">${JSON.stringify({
@@ -174,11 +177,7 @@ a{color:#00d4ff;text-decoration:none}a:hover{text-decoration:underline}
 .hp-section{max-width:960px;margin:0 auto;padding:3rem 2rem}
 .hp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem}
 .hp-card{background:#0d1528;border:1px solid rgba(0,212,255,.1);border-radius:8px;padding:1.5rem;text-align:center}
-.hp-card-name{font-size:1.1rem;font-weight:600;color:#e8edf5;margin-bottom:.25rem}
 .hp-card-title{font-size:.85rem;color:#00d4ff;margin-bottom:.75rem}
-.hp-card-desc{font-size:.9rem;color:#7a8ba8;margin-bottom:.75rem}
-.hp-apply{display:inline-block;padding:.5rem 1.25rem;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.25);border-radius:6px;font-size:.9rem;color:#00d4ff;transition:background .2s}
-.hp-apply:hover{background:rgba(0,212,255,.18);text-decoration:none}
 .hp-cta{text-align:center;margin-top:1.5rem;color:#7a8ba8}
 .hp-footer{background:#060a14;border-top:1px solid rgba(0,212,255,.08);padding:1.5rem 2rem;text-align:center;font-size:.85rem;color:#4a5a73;margin-top:3rem}
 .hp-footer a{color:#7a8ba8}
@@ -196,7 +195,7 @@ a{color:#00d4ff;text-decoration:none}a:hover{text-decoration:underline}
 </nav>
 ${content}
 <footer class="hp-footer">
-  <p>&copy; 2026 LRX Enterprises Inc. All rights reserved.</p>
+  <p>&copy; 2026 Averrow. All rights reserved.</p>
   <p><a href="https://averrow.com">Averrow</a> &middot; <a href="mailto:${primaryEmail}">${primaryEmail}</a></p>
 </footer>
 <!-- ${primaryEmail} -->
@@ -210,10 +209,15 @@ ${generateSpiderTraps(mail, "honey-" + page)}
 </body>
 </html>`;
 
+  return honeypotHtmlResponse(html);
+}
+
+/** HTML response for any honeypot page: always carries the X-Robots-Tag. */
+export function honeypotHtmlResponse(html: string, cacheControl = "public, max-age=86400"): Response {
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=86400",
+      "Cache-Control": cacheControl,
       "X-Robots-Tag": HONEYPOT_X_ROBOTS_TAG,
     },
   });
