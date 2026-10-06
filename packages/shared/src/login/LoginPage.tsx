@@ -17,7 +17,7 @@
 // lastSignInMethod.write(...) so a same-device callback always
 // finds the right method.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { LoginPageProps, SignInMethod } from './types';
 
 type MagicLinkState =
@@ -34,6 +34,10 @@ const DEFAULT_ERROR_COPY: Record<string, string> = {
   signin_failed:        'Sign-in failed. Try again.',
 };
 
+// Only well-formed codes are echoed back; anything else is attacker-supplied
+// text (content spoofing via ?error=<sentence>) and gets generic copy.
+const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
+
 export function LoginPage(props: LoginPageProps) {
   const {
     branding, apiClient, passkeyAdapter, lastSignInMethod,
@@ -41,6 +45,7 @@ export function LoginPage(props: LoginPageProps) {
     oauthLoginPath = `/api/auth/login?return_to=${encodeURIComponent(returnTo)}`,
     magicLinkRequestPath = '/api/auth/magic-link/request',
     errorCopy: errorCopyOverride,
+    onGoogleSignIn, googleErrorCopy, footerLinks, magicLinkSentCopy,
   } = props;
 
   const errorCopy = { ...DEFAULT_ERROR_COPY, ...(errorCopyOverride ?? {}) };
@@ -48,8 +53,17 @@ export function LoginPage(props: LoginPageProps) {
   // OAuth round-trip errors land here as ?error=foo
   const url = typeof window !== 'undefined' ? new URL(window.location.href) : null;
   const errorParam = url?.searchParams.get('error') ?? null;
+  // Own-property + string check: `?error=__proto__` / `?error=constructor`
+  // must not resolve to Object.prototype members.
+  const knownCopy = errorParam !== null
+    && Object.prototype.hasOwnProperty.call(errorCopy, errorParam)
+    && typeof errorCopy[errorParam] === 'string'
+    ? errorCopy[errorParam]
+    : null;
   const errorMessage = errorParam
-    ? errorCopy[errorParam] ?? `Sign-in error: ${errorParam}`
+    ? knownCopy ?? (SAFE_ERROR_CODE.test(errorParam)
+        ? `Sign-in error: ${errorParam}`
+        : 'Sign-in failed. Try again.')
     : null;
 
   const [email, setEmail] = useState('');
@@ -59,6 +73,22 @@ export function LoginPage(props: LoginPageProps) {
   const [passkeyBusy, setPasskeyBusy] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
   const conditionalStarted = useRef(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+
+  const googleInFlight = useRef(false);
+  const emailErrorId = useId();
+
+  // The page-level error sits at the bottom of the card (Averrow's layout).
+  // When a NEW Google error appears after mount, move focus to it so it is
+  // scrolled into view on phones. A ?error= from the URL is not focused
+  // (role="alert" announces it) so existing host behaviour is unchanged.
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const pageError = googleError ?? errorMessage;
+  useEffect(() => {
+    if (googleError) errorRef.current?.focus();
+  }, [googleError]);
+  const hasError = errorParam !== null || googleError !== null;
 
   // Read the device's last-used method to pick the primary CTA.
   // Returns null on first-ever visit; we fall back to "show all"
@@ -99,6 +129,7 @@ export function LoginPage(props: LoginPageProps) {
   const handlePasskey = async () => {
     setPasskeyBusy(true);
     setPasskeyError(null);
+    setGoogleError(null);
     lastSignInMethod.write('passkey');
     try {
       const ok = await passkeyAdapter.signIn({
@@ -113,8 +144,31 @@ export function LoginPage(props: LoginPageProps) {
     }
   };
 
-  const handleGoogle = () => {
+  const handleGoogle = async () => {
     lastSignInMethod.write('google');
+    if (onGoogleSignIn) {
+      if (googleInFlight.current) return;
+      googleInFlight.current = true;
+      setGoogleBusy(true);
+      setGoogleError(null);
+      try {
+        await onGoogleSignIn();
+        // Success: the host navigates (like passkey), so stay busy. A host
+        // handler that resolves without navigating leaves the button busy.
+      } catch (err) {
+        // Rendered as a React text child (escaped) — never as HTML.
+        let message: string | null = null;
+        if (googleErrorCopy) {
+          try { message = googleErrorCopy(err); } catch { message = null; }
+        } else if (err instanceof Error && err.message) {
+          message = err.message;
+        }
+        setGoogleError(message || 'Google sign-in failed. Try again.');
+        googleInFlight.current = false;
+        setGoogleBusy(false);
+      }
+      return;
+    }
     if (typeof window !== 'undefined') {
       window.location.href = oauthLoginPath;
     }
@@ -126,6 +180,7 @@ export function LoginPage(props: LoginPageProps) {
       setMagicLink({ kind: 'error', message: 'Enter your email first.' });
       return;
     }
+    setGoogleError(null);
     setMagicLink({ kind: 'sending' });
     lastSignInMethod.write('magic-link');
     try {
@@ -156,6 +211,7 @@ export function LoginPage(props: LoginPageProps) {
       type="button"
       onClick={() => void handlePasskey()}
       disabled={passkeyBusy}
+      data-testid="login-passkey"
       className="inline-flex w-full items-center justify-center gap-2 font-mono uppercase"
       style={{
         background: variant === 'primary'
@@ -193,7 +249,10 @@ export function LoginPage(props: LoginPageProps) {
     <button
       key="google"
       type="button"
-      onClick={handleGoogle}
+      onClick={() => void handleGoogle()}
+      disabled={googleBusy || undefined}
+      aria-busy={googleBusy || undefined}
+      data-testid="login-google"
       className="inline-flex w-full items-center justify-center font-mono uppercase"
       style={{
         background: variant === 'primary'
@@ -215,11 +274,11 @@ export function LoginPage(props: LoginPageProps) {
               'inset 0 -1px 0 rgba(0,0,0,0.20)',
             ].join(', ')
           : 'none',
-        cursor: 'pointer',
+        cursor: googleBusy ? 'wait' : 'pointer',
         width:  '100%',
       }}
     >
-      Sign in with Google
+      {googleBusy ? 'Signing in…' : 'Sign in with Google'}
     </button>
   );
 
@@ -231,9 +290,9 @@ export function LoginPage(props: LoginPageProps) {
   //   Returning Google:         Google primary; passkey + magic-link via "Other ways"
   //   Returning magic-link:     no top buttons; magic-link block primary; others via "Other ways"
   //   Sign-in error / showAll:  full menu (all supported methods)
-  const showOptions = showAll || !lastMethod || (errorParam !== null);
-  const showPasskey = passkeySupported && (lastMethod === 'passkey' || showAll || errorParam !== null);
-  const showGoogle  = !lastMethod || lastMethod === 'google' || showAll || errorParam !== null;
+  const showOptions = showAll || !lastMethod || hasError;
+  const showPasskey = passkeySupported && (lastMethod === 'passkey' || showAll || hasError);
+  const showGoogle  = !lastMethod || lastMethod === 'google' || showAll || hasError;
 
   const buttons: React.ReactNode[] = [];
 
@@ -248,13 +307,14 @@ export function LoginPage(props: LoginPageProps) {
     if (showPasskey) buttons.push(passkeyButton('secondary'));
   } else {
     if (showGoogle)  buttons.push(googleButton('primary'));
-    if (showPasskey && (showAll || errorParam !== null)) {
+    if (showPasskey && (showAll || hasError)) {
       buttons.push(passkeyButton('secondary'));
     }
   }
 
   return (
     <section
+      data-testid="login-page"
       className="flex min-h-screen items-center justify-center px-4 py-12 sm:px-6 sm:py-24"
       style={{ background: 'var(--bg-page)' }}
     >
@@ -333,7 +393,7 @@ export function LoginPage(props: LoginPageProps) {
         </div>
 
         {/* "Welcome back" pill for returning users */}
-        {lastMethod && !errorParam && !showAll && (
+        {lastMethod && !errorParam && googleError === null && !showAll && (
           <p
             className="mt-6 font-mono uppercase"
             style={{
@@ -353,13 +413,18 @@ export function LoginPage(props: LoginPageProps) {
         </div>
 
         {passkeyError && (
-          <p className="mt-2 font-mono" style={{ color: 'var(--sev-critical)', fontSize: 11 }}>
+          <p
+            role="alert"
+            data-testid="login-passkey-error"
+            className="mt-2 font-mono"
+            style={{ color: 'var(--sev-critical)', fontSize: 11 }}
+          >
             {passkeyError}
           </p>
         )}
 
         {/* "Other ways to sign in" disclosure */}
-        {lastMethod && !showAll && !errorParam && (
+        {lastMethod && !showAll && !errorParam && googleError === null && (
           <button
             type="button"
             onClick={() => setShowAll(true)}
@@ -403,6 +468,7 @@ export function LoginPage(props: LoginPageProps) {
           {magicLink.kind === 'sent' ? (
             <div
               role="status"
+              data-testid="login-magic-link-sent"
               style={{
                 background: 'var(--bg-input)',
                 border: '1px solid var(--green)',
@@ -413,10 +479,14 @@ export function LoginPage(props: LoginPageProps) {
                 lineHeight: 1.45,
               }}
             >
-              <strong style={{ color: 'var(--green)' }}>Check your inbox.</strong>
-              {' '}We sent a sign-in link to{' '}
-              <span className="font-mono">{magicLink.email}</span>. The link
-              expires in {magicLink.minutes} minutes and can only be used once.
+              {magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : (
+                <>
+                  <strong style={{ color: 'var(--green)' }}>Check your inbox.</strong>
+                  {' '}We sent a sign-in link to{' '}
+                  <span className="font-mono">{magicLink.email}</span>. The link
+                  expires in {magicLink.minutes} minutes and can only be used once.
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => setMagicLink({ kind: 'idle' })}
@@ -446,6 +516,9 @@ export function LoginPage(props: LoginPageProps) {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 disabled={magicLink.kind === 'sending'}
+                data-testid="login-email"
+                aria-invalid={magicLink.kind === 'error' || undefined}
+                aria-describedby={magicLink.kind === 'error' ? emailErrorId : undefined}
                 style={{
                   flex: 1,
                   background: 'var(--bg-input)',
@@ -461,6 +534,7 @@ export function LoginPage(props: LoginPageProps) {
                 type="button"
                 onClick={() => void requestLink()}
                 disabled={magicLink.kind === 'sending'}
+                data-testid="login-magic-link-submit"
                 className="font-mono uppercase"
                 style={{
                   background: lastMethod === 'magic-link'
@@ -484,7 +558,13 @@ export function LoginPage(props: LoginPageProps) {
             </div>
           )}
           {magicLink.kind === 'error' && (
-            <p className="mt-2 font-mono" style={{ color: 'var(--sev-critical)', fontSize: 11 }}>
+            <p
+              id={emailErrorId}
+              role="alert"
+              data-testid="login-magic-link-error"
+              className="mt-2 font-mono"
+              style={{ color: 'var(--sev-critical)', fontSize: 11 }}
+            >
               {magicLink.message}
             </p>
           )}
@@ -496,9 +576,16 @@ export function LoginPage(props: LoginPageProps) {
           )}
         </div>
 
-        {errorMessage && (
-          <p className="mt-6 font-mono" style={{ color: 'var(--sev-critical)', fontSize: 12 }}>
-            {errorMessage}
+        {pageError && (
+          <p
+            ref={errorRef}
+            tabIndex={-1}
+            role="alert"
+            data-testid="login-error"
+            className="mt-6 font-mono"
+            style={{ color: 'var(--sev-critical)', fontSize: 12, outline: 'none' }}
+          >
+            {pageError}
           </p>
         )}
 
@@ -514,6 +601,12 @@ export function LoginPage(props: LoginPageProps) {
         >
           {branding.footerPillars}
         </p>
+
+        {footerLinks != null && (
+          <div className="mt-4" data-testid="login-footer-links">
+            {footerLinks}
+          </div>
+        )}
       </div>
     </section>
   );

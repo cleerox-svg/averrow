@@ -98,4 +98,23 @@ export interface LoginPageProps {
    *  e.g. { invalid_link: "That link is malformed." }. Defaults
    *  shown in components if not provided. */
   errorCopy?:             Record<string, string>;
+  /** Replaces the Google button's default `window.location.href =
+   *  oauthLoginPath` navigation (e.g. a native Capacitor shell that can't
+   *  use web OAuth redirects). While the promise is pending the button is
+   *  disabled, `aria-busy`, and reads "Signing in…". If it rejects, the
+   *  message shows in the page error area (see `googleErrorCopy`).
+   *  Omitted → unchanged redirect behaviour. */
+  onGoogleSignIn?:        () => Promise<void>;
+  /** Maps an error thrown by `onGoogleSignIn` to display text. Default: the
+   *  thrown `Error.message`, or "Google sign-in failed. Try again." when
+   *  there is none. Always rendered as plain text, never HTML. */
+  googleErrorCopy?:       (error: unknown) => string;
+  /** Slot rendered inside the card, under the footer pillars (e.g.
+   *  Privacy / Delete account links required by app stores). */
+  footerLinks?:           ReactNode;
+  /** Replaces the whole body of the magic-link "sent" confirmation (the
+   *  "Check your inbox… sent a sign-in link to X…" text; the "Use a
+   *  different email" control stays). Use for invite-only products that
+   *  must not confirm an address exists. */
+  magicLinkSentCopy?:     (email: string) => ReactNode;
 }

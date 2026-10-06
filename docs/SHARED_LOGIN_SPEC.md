@@ -200,6 +200,41 @@ fixed order is intentional. **FarmTrack must mirror this behavior**
 to keep parity. The button styling (green passkey, amber Google,
 neutral Send-link) is unchanged.
 
+### Optional host props (added 2026-10 — FarmTrack vendoring gaps)
+
+All optional. With them omitted, styles, text, element order and behaviour
+are unchanged; the ONLY markup differences from before are: the stable
+`data-testid`s below, `role="alert"` on error text, `tabIndex={-1}` +
+`outline: none` on the page-level error, and `aria-invalid` /
+`aria-describedby` on the email input while a magic-link error is showing.
+They are host capabilities, not visual deltas, and do not widen §1's
+per-product deltas.
+
+| Prop | Effect |
+|---|---|
+| `onGoogleSignIn?: () => Promise<void>` | Replaces the `oauthLoginPath` redirect (native shells that can't use web OAuth). While pending the Google button is `disabled`, `aria-busy`, labelled "Signing in…". A rejection shows in the page error area and re-enables the button; a second click while pending is ignored. On success the button stays busy — **the host must navigate** (like passkey). |
+| `googleErrorCopy?: (err: unknown) => string` | Maps a thrown error to text. Default: `Error.message`, else "Google sign-in failed. Try again." If it throws, the generic text is used. Always rendered as plain text, never HTML. |
+| `footerLinks?: ReactNode` | Slot inside the card, under the footer pillars (e.g. Privacy / Delete account for Google Play). |
+| `magicLinkSentCopy?: (email) => ReactNode` | Replaces the body of the "link sent" confirmation (not the "Use a different email" control). Invite-only products use it to avoid confirming an address exists. |
+
+**Stable test ids** (fixed, not a prop): `login-page`, `login-google`,
+`login-passkey`, `login-email`, `login-magic-link-submit`,
+`login-magic-link-sent`, `login-magic-link-error`, `login-passkey-error`,
+`login-error` (page-level error).
+
+**Error accessibility:** every error element is `role="alert"`; the
+magic-link error is linked to the email input via `aria-describedby`
+(`useId`) + `aria-invalid`. The page-level error stays at the bottom of the
+card (moving it above the form would change Averrow's layout). A `?error=`
+from the URL is announced but NOT focused (unchanged behaviour); a NEW Google
+error appearing after mount takes focus (`tabIndex={-1}`), which scrolls it
+into view on phones. A Google error also forces the full method menu (like
+`?error=`) and clears when the user starts passkey or magic-link sign-in.
+`?error=` codes resolve only via own string properties of `errorCopy`
+(`__proto__` / `constructor` fall through); an unknown code is echoed as
+"Sign-in error: <code>" only if it matches `^[a-z0-9_]{1,40}$`, otherwise
+"Sign-in failed. Try again." (no attacker-supplied sentences on the page).
+
 ### Brand-locked theme (added 2026-06, login audit F2)
 
 The login is a **brand surface** and renders in the **dark brand theme
