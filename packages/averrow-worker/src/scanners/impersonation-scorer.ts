@@ -2,13 +2,19 @@
  * Impersonation Risk Scorer
  *
  * Scores the likelihood that a social media account is impersonating a brand
- * based on multiple signals: name similarity, account characteristics,
- * handle permutation match, verification status, etc.
+ * (or, via executive-monitor, a person) from the signals the caller observed.
+ *
+ * Reason strings must describe only what was actually observed. Both callers
+ * (scanners/social-monitor.ts, scanners/executive-monitor.ts) run a HEAD-only
+ * existence probe: they see the HANDLE, never the display name, bio, follower
+ * count, account age or verification badge. `name_similarity` and
+ * `uses_brand_keywords` are therefore computed on the handle, and the reasons
+ * say "handle".
  */
 
 export interface ImpersonationSignals {
-  name_similarity: number;        // 0-1 (Levenshtein-based)
-  uses_brand_keywords: boolean;
+  name_similarity: number;        // 0-1 (Levenshtein-based), handle vs subject name
+  uses_brand_keywords: boolean;   // handle contains the brand name / domain label
   account_age_suspicious: boolean;
   low_followers: boolean;
   verified: boolean;
@@ -19,6 +25,11 @@ export interface ImpersonationResult {
   score: number;          // 0.0-1.0
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   reasons: string[];
+}
+
+export interface ScoreImpersonationOptions {
+  /** What the handle is compared against, for reason text. Default "the brand name". */
+  subject?: string;
 }
 
 // Signal weights for scoring
@@ -34,7 +45,11 @@ const WEIGHTS = {
 /**
  * Score impersonation risk based on multiple signals.
  */
-export function scoreImpersonation(signals: ImpersonationSignals): ImpersonationResult {
+export function scoreImpersonation(
+  signals: ImpersonationSignals,
+  options: ScoreImpersonationOptions = {},
+): ImpersonationResult {
+  const subject = options.subject ?? 'the brand name';
   const reasons: string[] = [];
   let score = 0;
 
@@ -42,16 +57,16 @@ export function scoreImpersonation(signals: ImpersonationSignals): Impersonation
   if (signals.name_similarity > 0.5) {
     score += signals.name_similarity * WEIGHTS.name_similarity;
     if (signals.name_similarity > 0.8) {
-      reasons.push(`Account name is very similar to brand (${(signals.name_similarity * 100).toFixed(0)}% match)`);
+      reasons.push(`Handle is very similar to ${subject} (${(signals.name_similarity * 100).toFixed(0)}% match)`);
     } else {
-      reasons.push(`Account name resembles brand (${(signals.name_similarity * 100).toFixed(0)}% match)`);
+      reasons.push(`Handle resembles ${subject} (${(signals.name_similarity * 100).toFixed(0)}% match)`);
     }
   }
 
   // Brand keyword usage
   if (signals.uses_brand_keywords) {
     score += WEIGHTS.uses_brand_keywords;
-    reasons.push('Account name or bio contains brand keywords');
+    reasons.push('Handle contains the brand name or domain');
   }
 
   // Suspicious account age
@@ -66,16 +81,20 @@ export function scoreImpersonation(signals: ImpersonationSignals): Impersonation
     reasons.push('Account has suspiciously low follower count');
   }
 
-  // Not verified (inverse signal)
+  // Not verified (inverse signal). The weight still applies, but no reason
+  // is emitted: neither caller can observe verification (HEAD-only probe),
+  // so `verified` is always passed as an assumed `false`. Stating "not
+  // verified" would claim a fact that was never checked. The score math is
+  // deliberately unchanged here; whether an unobserved signal should carry
+  // weight is a separate scoring decision.
   if (!signals.verified) {
     score += WEIGHTS.not_verified;
-    reasons.push('Account is not verified');
   }
 
   // Handle is a known permutation of the brand
   if (signals.handle_is_permutation) {
     score += WEIGHTS.handle_is_permutation;
-    reasons.push('Handle is a permutation of the official brand handle');
+    reasons.push(`Handle is a permutation of ${subject}`);
   }
 
   // Clamp to [0, 1]

@@ -1904,39 +1904,44 @@ export async function handleReassessSocialProfile(
 
     // Only a real AI assessment replaces the rule-based result (G26). On a
     // fallback (AI_MODE=rules_only skip, failed call, invalid reply) the
-    // row is left as the scorer wrote it and the response says so.
+    // row is left as the scorer wrote it and the caller gets a 409: no
+    // assessment exists, so this is not a success.
     const applied = await persistSocialAssessment(
       env.DB,
       assessment,
       { kind: "id", brandId, profileId },
       new Date().toISOString(),
     );
-    if (!applied) {
-      // Nothing was written — the row read above is current.
-      return json({
-        success: true,
-        data: {
-          profile,
-          assessment: null,
-          ai_applied: false,
-          reason: assessment.fallbackReason,
-        },
-      }, 200, origin);
-    }
 
     await audit(env, {
       action: "social_profile_ai_reassess",
       userId,
       resourceType: "social_profile",
       resourceId: profileId,
-      details: {
-        brand_id: brandId,
-        classification: assessment.classification,
-        confidence: assessment.confidence,
-        action: assessment.action,
-      },
+      details: applied
+        ? {
+            brand_id: brandId,
+            ai_applied: true,
+            classification: assessment.classification,
+            confidence: assessment.confidence,
+            action: assessment.action,
+          }
+        : {
+            brand_id: brandId,
+            ai_applied: false,
+            reason: assessment.fallbackReason,
+          },
+      outcome: applied ? "success" : "failure",
       request,
     });
+
+    if (!applied) {
+      return json({
+        success: false,
+        error: "No assessment available",
+        reason: assessment.fallbackReason,
+      }, 409, origin);
+    }
 
     const updated = await env.DB.prepare(
       "SELECT * FROM social_profiles WHERE id = ?"

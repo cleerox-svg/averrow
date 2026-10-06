@@ -2,15 +2,12 @@
  * G26 — the social rules-only fallback never overwrites the rule-based
  * result and never stores "AI assessment unavailable" text.
  *
- * Covers the assessor (fallback reason + neutral text), the shared write
+ * Covers the assessor (fallback reason + neutral text) and the shared write
  * helper used by the scanner and the staff re-assess endpoint (real SQL
- * against the migration-derived social_profiles schema), and the 0287
- * repair migration.
+ * against the migration-derived social_profiles schema).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { hasSqlite, openDerivedDb, d1FromSqlite, type SqliteDb } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
 import type { AgentContext } from "../src/lib/agentRunner";
@@ -189,10 +186,19 @@ describe.skipIf(!hasSqlite())("persistSocialAssessment", () => {
     }
   }
 
-  it("a real AI assessment is written; a manual classification is kept", async () => {
+  // The staff PATCH (handlers/brands.ts handleUpdateSocialProfile) stores
+  // the acting user's id in classified_by — never the literal 'manual'.
+  const STAFF_USER_ID = "usr_7f3a9c2e41d84b0f";
+
+  it("a real AI assessment is written; a person's classification (user id) is kept", async () => {
     const raw = openDb();
     insertRuleRow(raw);
-    insertRuleRow(raw, { id: "p2", handle: "acme_help", classified_by: "manual", classification: "legitimate", classification_confidence: 1 });
+    insertRuleRow(raw, {
+      id: "p2", handle: "acme_help", classified_by: STAFF_USER_ID, classification: "legitimate",
+      classification_confidence: 1, classification_reason: "Partner account, confirmed with the brand.",
+    });
+    insertRuleRow(raw, { id: "p3", handle: "acme", classified_by: "system", classification: "official", classification_confidence: null });
+    insertRuleRow(raw, { id: "p4", handle: "acme_hq", classified_by: "auto_discovery", classification: "official", classification_confidence: 0.6 });
     const ai: Output = {
       classification: "impersonation",
       confidence: 0.95,
@@ -205,87 +211,30 @@ describe.skipIf(!hasSqlite())("persistSocialAssessment", () => {
       fallbackReason: null,
     };
     const db = d1FromSqlite(raw);
-    expect(await persistSocialAssessment(db, ai, { kind: "id", brandId: "b1", profileId: "p1" }, "2026-10-06T00:00:00Z")).toBe(true);
-    expect(await persistSocialAssessment(db, ai, { kind: "handle", brandId: "b1", platform: "twitter", handle: "acme_help" }, "2026-10-06T00:00:00Z")).toBe(true);
+    const now = "2026-10-06T00:00:00Z";
+    expect(await persistSocialAssessment(db, ai, { kind: "id", brandId: "b1", profileId: "p1" }, now)).toBe(true);
+    expect(await persistSocialAssessment(db, ai, { kind: "handle", brandId: "b1", platform: "twitter", handle: "acme_help" }, now)).toBe(true);
+    expect(await persistSocialAssessment(db, ai, { kind: "id", brandId: "b1", profileId: "p3" }, now)).toBe(true);
+    expect(await persistSocialAssessment(db, ai, { kind: "id", brandId: "b1", profileId: "p4" }, now)).toBe(true);
 
     const p1 = getRow(raw, "p1");
     expect(p1.classification).toBe("impersonation");
     expect(p1.severity).toBe("CRITICAL");
     expect(p1.classification_reason).toBe(ai.reasoning);
-    expect(p1.ai_assessed_at).toBe("2026-10-06T00:00:00Z");
+    expect(p1.ai_assessed_at).toBe(now);
     expect(p1.impersonation_score).toBe(0.75); // never touched by the assessor
 
     const p2 = getRow(raw, "p2");
+    expect(p2.classified_by).toBe(STAFF_USER_ID);
     expect(p2.classification).toBe("legitimate");
     expect(p2.classification_confidence).toBe(1);
-  });
-});
+    expect(p2.classification_reason).toBe("Partner account, confirmed with the brand.");
+    // The AI's own view is still recorded in the ai_* columns.
+    expect(p2.ai_assessment).toBe(ai.reasoning);
+    expect(p2.ai_assessed_at).toBe(now);
 
-// ─── 0287 repair migration ───────────────────────────────────────────
-
-const OLD_SIMILAR = "Handle resembles brand name but AI assessment was unavailable. Flagged for manual review.";
-const OLD_OTHER = "AI assessment was unavailable. Low-confidence algorithmic fallback applied.";
-
-describe.skipIf(!hasSqlite())("migration 0287 social fallback scrub", () => {
-  const sql = readFileSync(resolve(__dirname, "..", "migrations", "0287_social_fallback_text_scrub.sql"), "utf8");
-
-  function seed(raw: SqliteDb): void {
-    // Impersonation-scan row reclassified 'legitimate' by the old fallback.
-    insertRuleRow(raw, {
-      id: "scan_hi", impersonation_score: 0.8, classification: "legitimate", classification_confidence: 0.3,
-      severity: "LOW", classification_reason: OLD_OTHER, ai_assessment: OLD_OTHER, ai_confidence: 0.3,
-      ai_action: "safe", ai_assessed_at: "2026-09-01T00:00:00Z",
-      impersonation_signals: JSON.stringify(["AI assessment unavailable — algorithmic fallback"]),
-    });
-    insertRuleRow(raw, {
-      id: "scan_mid", handle: "acme_mid", impersonation_score: 0.5, classification: "suspicious", classification_confidence: 0.4,
-      severity: "MEDIUM", classification_reason: OLD_SIMILAR, ai_assessment: OLD_SIMILAR, ai_confidence: 0.4,
-      ai_action: "review", ai_assessed_at: "2026-09-01T00:00:00Z",
-      impersonation_signals: JSON.stringify(["Handle contains brand name", "Not verified", "AI assessment unavailable"]),
-    });
-    // Official-handle check row the fallback misread.
-    insertRuleRow(raw, {
-      id: "official", handle: "acme", classified_by: "system", impersonation_score: 0, classification: "legitimate",
-      classification_confidence: 0.3, severity: "LOW", classification_reason: OLD_OTHER, ai_assessment: OLD_OTHER,
-    });
-    // Manual decision with fallback text: classification kept, text cleared.
-    insertRuleRow(raw, {
-      id: "manual", handle: "acme_m", classified_by: "manual", classification: "legitimate", classification_confidence: 1,
-      classification_reason: OLD_OTHER, ai_assessment: OLD_OTHER,
-    });
-    // Real AI reasoning — untouched.
-    insertRuleRow(raw, {
-      id: "real_ai", handle: "acme_real", classification: "impersonation", classification_reason: "Real AI reasoning text here.",
-      ai_assessment: "Real AI reasoning text here.", ai_confidence: 0.9,
-    });
-  }
-
-  it("restores rule-based classification, clears the fallback text, leaves real data alone, and is idempotent", () => {
-    const raw = openDb();
-    seed(raw);
-    const realBefore = getRow(raw, "real_ai");
-    raw.exec(sql);
-
-    const hi = getRow(raw, "scan_hi");
-    expect(hi).toMatchObject({
-      classification: "impersonation", classification_confidence: 0.8, severity: "HIGH",
-      classification_reason: null, ai_assessment: null, ai_confidence: null, ai_action: null, ai_assessed_at: null,
-      impersonation_signals: "[]",
-    });
-    expect(getRow(raw, "scan_mid")).toMatchObject({
-      classification: "suspicious", classification_confidence: 0.5, severity: "MEDIUM",
-      classification_reason: null, impersonation_signals: "[]",
-    });
-    expect(getRow(raw, "official")).toMatchObject({
-      classification: "official", classification_confidence: null, severity: "LOW", classification_reason: null,
-    });
-    expect(getRow(raw, "manual")).toMatchObject({
-      classification: "legitimate", classification_confidence: 1, classification_reason: null, ai_assessment: null,
-    });
-    expect(getRow(raw, "real_ai")).toEqual(realBefore);
-
-    const snapshot = (raw.prepare("SELECT * FROM social_profiles ORDER BY id").all());
-    raw.exec(sql);
-    expect(raw.prepare("SELECT * FROM social_profiles ORDER BY id").all()).toEqual(snapshot);
+    // Machine writers are not people: their classification is replaceable.
+    expect(getRow(raw, "p3").classification).toBe("impersonation");
+    expect(getRow(raw, "p4").classification).toBe("impersonation");
   });
 });

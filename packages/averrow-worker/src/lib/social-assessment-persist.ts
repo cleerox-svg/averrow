@@ -18,11 +18,17 @@
  * evidence reused, and reclassified handles it didn't recognise as
  * `legitimate`.
  *
- * Manual classifications (`classified_by = 'manual'`) are kept on the AI
- * path too, as before.
+ * A person's classification is never overwritten on the AI path either:
+ * when the row's `classified_by` is human (any non-null value outside
+ * 'system' / 'ai' / 'auto_discovery' — the staff PATCH stores the user's
+ * id, never the literal 'manual'; see HUMAN_CLASSIFIED_SQL in
+ * `lib/social-scan-persist.ts`), the classification, confidence and
+ * `classification_reason` are kept and only the `ai_*` fields, signals and
+ * severity are written.
  */
 
 import type { SocialAiAssessorOutput } from "../agents/social-ai-assessor";
+import { HUMAN_CLASSIFIED_SQL } from "./social-scan-persist";
 
 /** Which row to update: by (brand, platform, handle) from the scanner, or by id. */
 export type SocialProfileTarget =
@@ -47,14 +53,17 @@ const SET_CLAUSE = `
   ai_action = ?,
   ai_evidence_draft = ?,
   classification = CASE
-    WHEN classified_by = 'manual' THEN classification
+    WHEN ${HUMAN_CLASSIFIED_SQL} THEN classification
     ELSE ?
   END,
   classification_confidence = CASE
-    WHEN classified_by = 'manual' THEN classification_confidence
+    WHEN ${HUMAN_CLASSIFIED_SQL} THEN classification_confidence
     ELSE ?
   END,
-  classification_reason = ?,
+  classification_reason = CASE
+    WHEN ${HUMAN_CLASSIFIED_SQL} THEN classification_reason
+    ELSE ?
+  END,
   impersonation_signals = ?,
   severity = CASE
     WHEN ? >= 0.9 THEN 'CRITICAL'
