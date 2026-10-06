@@ -22,6 +22,7 @@ import {
 } from './section-icons';
 import { formatRelativeTime, formatShortDate } from './time-format';
 import { parseUserAgent } from './security/userAgent';
+import { useProductName } from './product-name';
 
 // ── contracts ───────────────────────────────────────────────
 
@@ -72,15 +73,15 @@ export interface DevicesSettingsProps {
   iosSteps?: readonly string[];
 }
 
-const DEFAULT_IOS_STEPS: readonly string[] = [
+const defaultIosSteps = (product: string): readonly string[] => [
   'Tap the Share button at the bottom of Safari (the square with the up arrow).',
   'Scroll down and pick Add to Home Screen.',
-  'Tap Add in the top-right. Averrow will install.',
-  'Open Averrow from your Home Screen and come back here to turn on alerts.',
+  `Tap Add in the top-right. ${product} will install.`,
+  `Open ${product} from your Home Screen and come back here to turn on alerts.`,
 ];
 
-const MANUAL_STEPS: ReadonlyArray<{ where: string; how: ReactNode }> = [
-  { where: 'Chrome or Edge on a computer', how: 'Click the install icon in the address bar, or open the menu and choose Install Averrow.' },
+const manualSteps = (product: string): ReadonlyArray<{ where: string; how: ReactNode }> => [
+  { where: 'Chrome or Edge on a computer', how: `Click the install icon in the address bar, or open the menu and choose Install ${product}.` },
   { where: 'Chrome on Android', how: 'Open the menu and choose Install app or Add to Home screen.' },
   { where: 'Firefox on Android', how: 'Open the menu and choose Install.' },
   { where: 'Safari on iPhone or iPad', how: 'Tap Share, then Add to Home Screen.' },
@@ -132,7 +133,9 @@ type ListState =
   | { status: 'error' }
   | { status: 'ready'; devices: PushDeviceRow[] };
 
-export function DevicesSettings({ install, push, version, onClearCache, onTurnOnPush, iosSteps = DEFAULT_IOS_STEPS }: DevicesSettingsProps) {
+export function DevicesSettings({ install, push, version, onClearCache, onTurnOnPush, iosSteps }: DevicesSettingsProps) {
+  const product = useProductName();
+  const steps = iosSteps ?? defaultIosSteps(product);
   const toast = useToast();
   const wide = useMediaQuery('(min-width: 640px)', true);
 
@@ -143,7 +146,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
     if (install.canInstall) {
       const outcome = await install.install();
       if (outcome === 'unavailable') setInstallSheet('manual');
-      else if (outcome === 'accepted') toast.success('Averrow is installing.');
+      else if (outcome === 'accepted') toast.success(`${product} is installing.`);
       return;
     }
     setInstallSheet(install.isIos ? 'ios' : 'manual');
@@ -213,7 +216,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
           <SettingsRow
             icon={<SmartphoneIcon />}
             tone="violet"
-            title="Averrow is installed"
+            title={`${product} is installed`}
             description="You're using the app."
             trailing={<Badge status="active" label="Installed" size="md" font="sans" />}
           />
@@ -225,7 +228,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
               <div className="flex min-w-0 flex-1 items-start gap-4">
                 <IconTile tone="violet" size={48}><SmartphoneIcon /></IconTile>
                 <div className="min-w-0">
-                  <h2 id="devices-install-title" className="m-0 text-[18px] font-bold leading-[1.3] text-[var(--text-primary)]">Install Averrow</h2>
+                  <h2 id="devices-install-title" className="m-0 text-[18px] font-bold leading-[1.3] text-[var(--text-primary)]">Install {product}</h2>
                   <p className="m-0 mt-1 text-[14px] leading-[1.5] text-[var(--text-secondary)]">
                     Faster launch, full-screen, and reliable notifications.
                   </p>
@@ -254,7 +257,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       )}
       {push.supported && push.needsInstall && (
         <InlineBanner className="mb-4" tone="info" title="Install the app first">
-          On iPhone and iPad, notifications work once Averrow is on your Home Screen.
+          On iPhone and iPad, notifications work once {product} is on your Home Screen.
         </InlineBanner>
       )}
 
@@ -337,7 +340,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
         open={removing !== null}
         onOpenChange={(o) => { if (!o) setRemoving(null); }}
         title="Stop sending notifications to this device?"
-        description={removing ? `${deviceName(removing)} will stop receiving Averrow notifications.` : undefined}
+        description={removing ? `${deviceName(removing)} will stop receiving ${product} notifications.` : undefined}
         consequence={removing && removing.id === thisDeviceId
           ? "This is the device you're using now. You can turn push back on from Notifications."
           : 'You can turn push back on from that device at any time.'}
@@ -352,7 +355,7 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
           tone="primary"
           title="Clear local cache?"
           description="Removes app files saved on this device so the latest version loads."
-          consequence="You'll stay signed in. Averrow will reload."
+          consequence={`You'll stay signed in. ${product} will reload.`}
           confirmLabel="Clear cache"
           onConfirm={onClearCache}
         />
@@ -361,24 +364,24 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       <Dialog
         open={installSheet === 'ios'}
         onOpenChange={(o) => { if (!o) setInstallSheet(null); }}
-        title="Add Averrow to your Home Screen"
+        title={`Add ${product} to your Home Screen`}
         description="Safari doesn't offer a one-tap install, so it takes a few steps."
         icon={<ShareIcon />}
         footer={<Button type="button" variant="secondary" size="lg" onClick={() => setInstallSheet(null)}>Got it</Button>}
       >
-        <StepList steps={iosSteps} />
+        <StepList steps={steps} />
       </Dialog>
 
       <Dialog
         open={installSheet === 'manual'}
         onOpenChange={(o) => { if (!o) setInstallSheet(null); }}
-        title="Install Averrow"
+        title={`Install ${product}`}
         description="Your browser didn't offer an install prompt this time. Install it from the browser instead."
         icon={<DownloadIcon />}
         footer={<Button type="button" variant="secondary" size="lg" onClick={() => setInstallSheet(null)}>Got it</Button>}
       >
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
-          {MANUAL_STEPS.map((s) => (
+          {manualSteps(product).map((s) => (
             <li key={s.where} className="text-[15px] leading-[1.5] text-[var(--text-secondary)] min-[768px]:text-[14px]">
               <strong className="font-semibold text-[var(--text-primary)]">{s.where}.</strong> {s.how}
             </li>

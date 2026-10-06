@@ -751,6 +751,12 @@ design: `docs/ACCOUNT_DESIGN_SPEC.md`. Adoption guide: `docs/SHARED_LOGIN_SPEC.m
 `getAccountSections`. They take data + callbacks (no router, no api module).
 Ops mounts them at `/settings/*`, tenant at `/tenant/account/*`.
 
+**Product name** — page copy ("Install Averrow", "Shown across Averrow") reads
+`useProductName()` (`account/product-name.tsx`), default `"Averrow"`, so Averrow
+renders unchanged. A vendoring product wraps its account routes once in
+`<ProductNameProvider name="FarmTrack">`. Context only, no per-page prop. New
+account copy must use the hook, never a literal product name.
+
 **Kit pieces** (all re-exported from `@averrow/shared/ui`; named exports, no `@/`
 or router imports):
 

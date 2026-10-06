@@ -24,6 +24,7 @@ import {
   type SecuritySettingsProps,
 } from './security/types';
 import { parseUserAgent } from './security/userAgent';
+import { useProductName } from './product-name';
 
 const VISIBLE_SESSIONS = 5;
 const TOUCH_MIN = 'max-md:min-h-[44px]';
@@ -129,6 +130,7 @@ export function SecuritySettings({
   signInProvider = 'Google', endpoints, className,
 }: SecuritySettingsProps) {
   const toast = useToast();
+  const product = useProductName();
   const ep: SecurityEndpoints = useMemo(() => ({ ...DEFAULT_SECURITY_ENDPOINTS, ...endpoints }), [endpoints]);
   const supported = useMemo(() => {
     try { return passkeys.isSupported(); } catch { return false; }
@@ -218,7 +220,7 @@ export function SecuritySettings({
   const current = sess?.sessions.find((s) => s.isCurrent);
   const signInVia = signInMethodLabel(current?.authMethod ?? null) ?? signInProvider;
 
-  const addDisabledReason = !supported ? "This browser doesn't support passkeys. Open Averrow in a browser that does, like Safari, Chrome or Edge." : null;
+  const addDisabledReason = !supported ? `This browser doesn't support passkeys. Open ${product} in a browser that does, like Safari, Chrome or Edge.` : null;
   const addButton = (variant: 'primary' | 'secondary') => (
     <Button
       type="button"
@@ -463,7 +465,7 @@ export function SecuritySettings({
           actionLabel: 'Sign out everywhere',
           onAction: () => setEverywhereOpen(true),
         }]}
-        footer="Averrow never stores your Google password. Sign-in is handled by Google."
+        footer={`${product} never stores your Google password. Sign-in is handled by Google.`}
       />
 
       {/* Dialogs */}

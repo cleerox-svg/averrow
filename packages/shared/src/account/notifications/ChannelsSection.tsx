@@ -10,6 +10,7 @@ import {
 } from './icons';
 import { CADENCE_OPTIONS, FLOOR_OPTIONS, FLOOR_OPTIONS_WITH_OFF } from './helpers';
 import { SavedMark, type Autosave } from './useAutosave';
+import { useProductName } from '../product-name';
 import type {
   GroupCadence, NotificationSettingsProps, SeverityFloor, SeverityFloorWithOff,
 } from './types';
@@ -32,6 +33,7 @@ export function ChannelsSection({
   prefs, push, email, devicesHref, renderLink, isStaff, isSuperAdmin, autosave, online,
   onUpdatePrefs, onEnablePush, onDisablePush, onSendTestPush,
 }: Props): ReactElement {
+  const product = useProductName();
   const [testBusy, setTestBusy] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -137,10 +139,10 @@ export function ChannelsSection({
 
   const pushDescription = pushActive
     ? 'On for this device.'
-    : 'Get alerts on this device, even when Averrow is closed.';
+    : `Get alerts on this device, even when ${product} is closed.`;
   const pushReason = unsupported
     ? (push.needsInstall
-        ? 'Add Averrow to your Home Screen to turn on push.'
+        ? `Add ${product} to your Home Screen to turn on push.`
         : "This browser can't receive push notifications.")
     : denied ? 'Allow notifications in your browser to turn this on.' : undefined;
 
@@ -154,7 +156,7 @@ export function ChannelsSection({
       {unsupported && (
         <InlineBanner tone="info" title="Push isn't available here">
           {push.needsInstall
-            ? 'On iPhone and iPad, add Averrow to your Home Screen first (Share, then Add to Home Screen), then open it from there.'
+            ? `On iPhone and iPad, add ${product} to your Home Screen first (Share, then Add to Home Screen), then open it from there.`
             : "This browser can't receive push notifications. Email and the in-app bell still work."}
         </InlineBanner>
       )}
