@@ -31,12 +31,26 @@
  * <=640px: a vertical timeline, no switch. Both layouts are rendered and one
  * is hidden by CSS (display:none also removes it from the accessibility tree).
  */
+interface Props {
+  /** Section H2. Default is the homepage headline; deep-dive pages already lead with it in the H1. */
+  title?: string;
+  /** Show the "How takedowns work" link (off on /platform/takedowns itself). */
+  showHowLink?: boolean;
+  /** Labels for the three automation levels (homepage: Manual / Approve first / Automatic). */
+  modeLabels?: { manual: string; approve: string; auto: string };
+}
+const {
+  title = "You set the rules. We do the filing.",
+  showHowLink = true,
+  modeLabels = { manual: "Manual", approve: "Approve first", auto: "Automatic" },
+} = Astro.props;
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const modes = [
-  { key: "manual", label: "Manual" },
-  { key: "approve", label: "Approve first" },
-  { key: "auto", label: "Automatic" },
+  { key: "manual", label: modeLabels.manual },
+  { key: "approve", label: modeLabels.approve },
+  { key: "auto", label: modeLabels.auto },
 ];
 
 const timeline = [
@@ -52,7 +66,7 @@ const timeline = [
   <div class="tf-head">
     <div>
       <div class="tf-eyebrow">From finding to takedown</div>
-      <h2 class="tf-h" id="tf-title">You set the rules. We do the filing.</h2>
+      <h2 class="tf-h" id="tf-title">{title}</h2>
       <p class="tf-lede">
         Every finding arrives with its evidence. Sign an authorization, set your rules, and Averrow
         files abuse reports for lookalike domains and phishing URLs with registrars and hosting
@@ -151,7 +165,7 @@ const timeline = [
     <span class="tf-illus">Illustrative example · names and domains changed</span>
     <span class="tf-ctas">
       <a class="btn btn-primary" href={`${base}/scan`} data-cta="takedownflow-scan">Scan your domain</a>
-      <a class="tf-link" href={`${base}/platform/campaign-intelligence#takedowns`} data-cta="takedownflow-how">How takedowns work &rarr;</a>
+      {showHowLink && <a class="tf-link" href={`${base}/platform/takedowns`} data-cta="takedownflow-how">How takedowns work &rarr;</a>}
     </span>
   </div>
 </section>

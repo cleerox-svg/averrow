@@ -1,0 +1,175 @@
+---
+/*
+ * /platform/lookalike-domains (Section 8, phase 1). Built on the product-page
+ * kit in src/components/product/.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md rows L24-L34, §3.1, §3.9): coverage
+ * is "character swaps, extra or missing letters, brand plus common words",
+ * with no further permutation names, no keyword list, no registry or
+ * newly-registered-domain source name, no counts of variants, no cadence beyond
+ * the approved "hourly certificate checks" and "usually within a day". It never
+ * claims every variant is checked within a day (the first-contact backlog makes
+ * that untrue). Samples: fictional brand Acme, `.example` domains only.
+ */
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import StepList from "../../components/product/StepList.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import ProofStrip from "../../components/product/ProofStrip.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import SampleRows from "../../components/product/SampleRows.astro";
+import type { SampleRow, ScopeRow, Step } from "../../components/product/types";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const heroRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Registered yesterday, serving a login page", pill: "High", tone: "high" },
+  { text: "acrne.example", mono: true, status: "Mail server added", pill: "Medium", tone: "med" },
+  { text: "acme-pay.example", mono: true, status: "Parked", pill: "Low", tone: "low" },
+];
+
+const steps: Step[] = [
+  {
+    title: "Generate",
+    text: "For every domain you protect, we generate the lookalikes an attacker would register: character swaps, extra or missing letters, and your brand plus common words.",
+    output: {
+      label: "Sample generated lookalikes of acme.example",
+      rows: [
+        { text: "acrne.example", mono: true, status: "Character swap", pill: "Generated", tone: "low" },
+        { text: "acmee.example", mono: true, status: "Extra letter", pill: "Generated", tone: "low" },
+        { text: "acme-pay.example", mono: true, status: "Brand plus a common word", pill: "Generated", tone: "low" },
+      ],
+      note: "and more, for every domain on your account",
+    },
+  },
+  {
+    title: "Watch",
+    text: "New registrations are flagged from registry data, usually within a day of registration. Domains that are already registered are re-checked, so you hear when one starts serving a website or receiving mail.",
+    output: {
+      label: "Sample watch events",
+      rows: [
+        { text: "acme-secure-login.example", mono: true, status: "Registered yesterday", pill: "New", tone: "new" },
+        { text: "acrne.example", mono: true, status: "Mail server added", pill: "Changed", tone: "med" },
+        { text: "acme-pay.example", mono: true, status: "Still parked, re-checked", pill: "Watching", tone: "low" },
+      ],
+    },
+  },
+  {
+    title: "Act",
+    text: "We look at what the domain actually serves, so a parked page and a live login page are not treated the same. You get an alert, and a takedown is drafted with its evidence. Nothing is filed without your approval or your signed rules.",
+    output: {
+      label: "Sample alert and takedown draft",
+      rows: [
+        { text: "acme-secure-login.example", mono: true, status: "Serving a login page", pill: "High", tone: "high" },
+        { text: "Takedown draft", status: "Evidence summary attached", pill: "Awaiting approval", tone: "hold" },
+      ],
+    },
+  },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Which domains",
+    covered: "Lookalikes of the domains and brands on your account.",
+    notCovered: "Lookalikes of domains that aren't on your account.",
+  },
+  {
+    area: "Kinds of lookalike",
+    covered: "Character swaps, extra or missing letters, and your brand plus common words.",
+    notCovered: "Every possible variation of your name.",
+  },
+  {
+    area: "Timing",
+    covered: "Newly registered lookalikes are usually flagged within a day of registration. Registered ones are re-checked.",
+    notCovered: "A promise that every generated variant is checked within a day.",
+  },
+  {
+    area: "What we look at",
+    covered: "Whether a lookalike is registered, whether it serves a website or receives mail, and what the page serves.",
+    notCovered: "Proof of intent. A level like High is a likelihood, and you decide what to act on.",
+  },
+  {
+    area: "Certificates",
+    covered: "Certificate-transparency checks every hour for certificates issued to names that look like your brands.",
+    notCovered: "Alerts the moment a certificate is issued, and brands you haven't added.",
+  },
+  {
+    area: "Your own domains",
+    covered: "Your official domains are recognised and set aside automatically. Tell us your CDNs and partners and we exclude them too.",
+    notCovered: "Self-serve allow-listing in the console. Our team adds them for you.",
+  },
+  {
+    area: "Removal",
+    covered: "Takedowns drafted for lookalike domains, with an evidence summary. Removed domains are re-checked.",
+    notCovered: "Filing anything without your approval or your signed rules.",
+  },
+];
+---
+
+<ProductPage
+  title="Lookalike Domain Monitoring — Averrow"
+  description="Know when someone registers your name. Averrow generates the lookalikes of every domain you protect, flags new registrations, checks what they serve and drafts the takedown for your approval."
+  crumb="Lookalike domains"
+>
+  <ProductHero
+    surface="lookalike"
+    title="Know when someone registers your name."
+    sub="We generate the lookalikes of every domain you protect, flag the ones that get registered, and look at what they serve. You decide what gets taken down."
+  >
+    <SampleFrame slot="sample" label="Sample lookalike findings" rows={heroRows} footer="Takedown drafted, waiting for your approval" />
+  </ProductHero>
+
+  <ProofStrip stats={["lookalikes", "brands"]} />
+
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Generate, watch, act."
+    lede="Three steps run for every domain on your account. Each one produces something you can see in your console."
+  >
+    <StepList steps={steps} where="lookalike" />
+  </ProductSection>
+
+  <ProductSection
+    id="certificates"
+    eyebrow="Certificates"
+    heading="Hourly certificate checks."
+    lede="We check certificate-transparency logs every hour for certificates issued to names that look like your brands, so a lookalike that gets a certificate shows up before it's used."
+  >
+    <div class="ld-cert">
+      <SampleFrame label="Sample certificate finding">
+        <SampleRows rows={[{ text: "acme-login.example", mono: true, status: "Certificate issued 2 hours ago", pill: "New cert", tone: "new" }]} />
+      </SampleFrame>
+    </div>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What's covered, and what isn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Lookalike domain monitoring: covered and not covered" />
+    <p class="ld-more">
+      Takedowns for lookalike domains follow your rules: <a href={`${base}/platform/takedowns`}>see how takedowns work</a>.
+    </p>
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/platform/lookalike-domains"
+    include={["/platform/takedowns", "/platform/impersonation", "/platform/threat-detection"]}
+    heading="After the domain, the rest of the impersonation"
+  />
+
+  <PageCTA heading="Find the lookalikes of your domain." body="Run a free domain scan, no signup. Or book a demo and we'll set up monitoring for your domains with you." />
+</ProductPage>
+
+<style>
+  .ld-cert { max-width: 520px; }
+  .ld-more { margin: 0; font-size: 14px; color: var(--text-secondary); }
+  .ld-more a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .ld-more a:hover { border-bottom-color: var(--accent); }
+</style>

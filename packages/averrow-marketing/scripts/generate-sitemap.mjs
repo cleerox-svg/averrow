@@ -16,7 +16,7 @@
  * are listed at the bottom — they're not in Astro's output but
  * still need to be in the sitemap so crawlers find them.
  */
-import { readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +77,9 @@ async function main() {
   const urls = new Set();
 
   for await (const file of walk(DIST)) {
+    // Retired URLs ship a meta-refresh stub (src/components/Redirect.astro);
+    // they are redirects, not pages, so they never belong in the sitemap.
+    if (file.endsWith("index.html") && (await readFile(file, "utf8")).includes('http-equiv="refresh"')) continue;
     urls.add(urlFor(file));
   }
 

@@ -1,0 +1,49 @@
+---
+/*
+ * A titled section of a Platform page: eyebrow, H2, optional lede, then the
+ * slot (StepList, ScopeTable, cards...). Gives every page the same rhythm and
+ * the same anchor ids. Set `id` for in-page links (e.g. "certificates").
+ */
+interface Props {
+  id?: string;
+  eyebrow?: string;
+  heading: string;
+  lede?: string;
+}
+const { id, eyebrow, heading, lede } = Astro.props;
+const hid = id ? `${id}-title` : undefined;
+---
+
+<section class="ps-sec" id={id} aria-labelledby={hid}>
+  <div class="ps-head">
+    {eyebrow && <div class="ps-eyebrow">{eyebrow}</div>}
+    <h2 class="ps-h" id={hid}>{heading}</h2>
+    {lede && <p class="ps-lede">{lede}</p>}
+  </div>
+  <slot />
+</section>
+
+<style>
+  .ps-sec { max-width: 1280px; margin: 0 auto; padding: 56px 24px 40px; display: grid; gap: 24px; scroll-margin-top: 80px; }
+  .ps-head { display: grid; gap: 10px; min-width: 0; }
+  .ps-eyebrow {
+    font: 600 12px var(--font-mono);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-section, var(--accent));
+  }
+  .ps-h {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(24px, 3vw, 30px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+    color: var(--text-primary);
+  }
+  .ps-lede { margin: 0; max-width: 62ch; font-size: 15px; line-height: 1.55; color: var(--text-secondary); }
+  @media (max-width: 640px) {
+    .ps-sec { padding: 40px 16px 28px; gap: 16px; }
+  }
+</style>

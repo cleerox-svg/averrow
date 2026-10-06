@@ -22,7 +22,7 @@ const MODES = ["Manual", "Approve first", "Automatic"];
 const FORBIDDEN_IN_SECTION = ["blocklist", "real-time", "one-click", "%", "minutes", "hours"];
 
 // Pages checked site-wide for the retired "blocklist" wording.
-const SITE_PAGES = ["/", "/platform", "/platform/campaign-intelligence", "/pricing", "/why-averrow"];
+const SITE_PAGES = ["/", "/platform", "/platform/campaign-intelligence", "/platform/takedowns", "/platform/lookalike-domains", "/pricing", "/why-averrow"];
 
 async function openHome(page: Page) {
   await page.route("**/api/v1/public/stats", (route) => route.abort());
@@ -144,16 +144,14 @@ test.describe("Takedown flow (desktop)", () => {
     await expectMode(page, "auto", "Automatic");
   });
 
-  test("'How takedowns work' resolves to campaign-intelligence#takedowns; Scan CTA targets /scan", async ({ page }) => {
+  test("'How takedowns work' resolves to /platform/takedowns; Scan CTA targets /scan", async ({ page }) => {
     await openHome(page);
     const how = page.locator('#takedown-flow a[data-cta="takedownflow-how"]');
     await expect(how).toHaveText(/How takedowns work/);
     const howHref = (await how.getAttribute("href")) ?? "";
-    expect(howHref).toMatch(/\/platform\/campaign-intelligence#takedowns$/);
-    const [howPath, hash] = howHref.split("#");
-    const res = await page.request.get(howPath);
+    expect(howHref).toMatch(/\/platform\/takedowns$/);
+    const res = await page.request.get(howHref);
     expect(res.status()).toBe(200);
-    expect(await res.text()).toMatch(new RegExp(`\\bid=["']${hash}["']`));
 
     const scan = page.locator('#takedown-flow a[data-cta="takedownflow-scan"]');
     await expect(scan).toHaveText(/Scan your domain/);
@@ -166,8 +164,8 @@ test.describe("Takedown flow (desktop)", () => {
     // Following the link lands on the page with the anchor present.
     await how.scrollIntoViewIfNeeded();
     await how.click();
-    await expect(page).toHaveURL(/\/platform\/campaign-intelligence#takedowns$/);
-    await expect(page.locator("#takedowns")).toHaveCount(1);
+    await expect(page).toHaveURL(/\/platform\/takedowns$/);
+    await expect(page.locator("h1")).toHaveText("You set the rules. We do the filing.");
   });
 
   test("disclosure guard: section text has no forbidden claim words", async ({ page }) => {

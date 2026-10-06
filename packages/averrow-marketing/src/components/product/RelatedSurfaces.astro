@@ -1,0 +1,73 @@
+---
+/*
+ * "Related" cards linking to the other Platform pages. The list, labels and
+ * one-line descriptions come from the Platform dropdown in src/lib/nav.ts, so
+ * a renamed page updates here too. The overview and the current page are never
+ * listed.
+ *
+ * Props: current (this page's path, e.g. "/platform/takedowns"), include
+ * (optional paths to show, in order; default = every other deep dive),
+ * heading, eyebrow.
+ */
+import { NAV_LINKS } from "../../lib/nav";
+
+interface Props {
+  current: string;
+  include?: string[];
+  eyebrow?: string;
+  heading?: string;
+}
+const { current, include, eyebrow = "Related", heading = "Keep going" } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const all = (NAV_LINKS.find((l) => l.href === "/platform")?.children ?? []).filter(
+  (c) => c.href !== "/platform" && c.href !== current,
+);
+const cards = include
+  ? include.map((h) => all.find((c) => c.href === h)).filter((c): c is NonNullable<typeof c> => !!c)
+  : all;
+---
+
+{cards.length > 0 && (
+  <section class="rs" aria-labelledby="rs-title">
+    <div class="rs-head">
+      <div class="rs-eyebrow">{eyebrow}</div>
+      <h2 class="rs-h" id="rs-title">{heading}</h2>
+    </div>
+    <ul class="rs-grid" role="list">
+      {cards.map((c) => (
+        <li>
+          <a class="rs-c" href={`${base}${c.href}`}>
+            <b>{c.label}</b>
+            {c.desc && <span>{c.desc}</span>}
+            <em aria-hidden="true">&rarr;</em>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </section>
+)}
+
+<style>
+  .rs { max-width: 1280px; margin: 0 auto; padding: 56px 24px 40px; display: grid; gap: 20px; }
+  .rs-eyebrow { font: 600 12px var(--font-mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--accent-section, var(--accent)); margin-bottom: 10px; }
+  .rs-h { margin: 0; font: 800 clamp(22px, 2.6vw, 26px) / 1.15 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); }
+  .rs-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .rs-c {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    height: 100%;
+    padding: 16px 40px 16px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    text-decoration: none;
+    min-width: 0;
+  }
+  .rs-c:hover { border-color: var(--accent); text-decoration: none; }
+  .rs-c b { font: 700 15px var(--font-display); color: var(--text-primary); }
+  .rs-c span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .rs-c em { position: absolute; right: 16px; top: 16px; font-style: normal; color: var(--amber-text); }
+  @media (max-width: 640px) { .rs { padding: 40px 16px 28px; } }
+</style>

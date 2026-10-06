@@ -26,8 +26,14 @@ import CoverageSample from "./CoverageSample.astro";
 import { COVERAGE, PLAN_LABEL, SOCIAL_NETWORKS } from "../lib/coverage";
 import { lookalikes30dLabel } from "../lib/proof";
 
+interface Props {
+  /** Show the Lookalike tile's 30-day count. Off where a dated ProofStrip carries it instead. */
+  showProof?: boolean;
+}
+const { showProof = true } = Astro.props;
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const lookalikes = lookalikes30dLabel(liveStats.live.lookalikes_found_30d, liveStats.fallbacks.lookalikes_found_30d);
+const lookalikes = showProof ? lookalikes30dLabel(liveStats.live.lookalikes_found_30d, liveStats.fallbacks.lookalikes_found_30d) : null;
 
 const surfaces = COVERAGE.map((s) => ({
   ...s,

@@ -1,0 +1,29 @@
+---
+/*
+ * The one CTA pair used on every Platform page: "Scan your domain" (primary,
+ * /scan) and "Book a demo" (secondary, /demo). ProductHero and PageCTA both
+ * render this so the labels and targets cannot drift. `where` namespaces the
+ * data-cta analytics tag (e.g. "hero" -> hero-scan / hero-demo).
+ */
+interface Props {
+  where: string;
+  center?: boolean;
+}
+const { where, center = false } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<div class:list={["pp-cta", { center }]} data-cta-pair>
+  <a class="btn btn-primary" href={`${base}/scan`} data-cta={`${where}-scan`}>Scan your domain</a>
+  <a class="btn btn-outline" href={`${base}/demo`} data-cta={`${where}-demo`}>Book a demo</a>
+</div>
+
+<style>
+  .pp-cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .pp-cta.center { justify-content: center; }
+  .pp-cta .btn { min-height: 44px; justify-content: center; }
+  @media (max-width: 480px) {
+    .pp-cta { flex-direction: column; }
+    .pp-cta .btn { width: 100%; }
+  }
+</style>

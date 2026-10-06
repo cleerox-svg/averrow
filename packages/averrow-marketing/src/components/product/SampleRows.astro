@@ -1,0 +1,55 @@
+---
+/*
+ * Row renderer shared by SampleFrame and StepList's output fragments, so the
+ * pill look is defined once. Tokens only: pill backgrounds are a token mixed
+ * with transparent, text uses the theme-aware *-text tokens (AA in both themes).
+ * Fictional brand Acme / `.example` domains only (docs/DISCLOSURE_REGISTER.md).
+ */
+import type { SampleRow } from "./types";
+
+interface Props {
+  rows: SampleRow[];
+  note?: string;
+}
+const { rows, note } = Astro.props;
+---
+
+<div class="sr-rows">
+  {rows.map((r) => (
+    <div class="sr-r">
+      <span class:list={["sr-t", { mono: r.mono }]}>{r.text}</span>
+      <span class={`sr-pill ${r.tone}`}>{r.pill}</span>
+      {r.status && <span class="sr-s">{r.status}</span>}
+    </div>
+  ))}
+  {note && <div class="sr-note">{note}</div>}
+</div>
+
+<style is:global>
+  .sr-rows { display: grid; gap: 10px; min-width: 0; }
+  .sr-r {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 10px;
+    row-gap: 2px;
+    align-items: center;
+    min-width: 0;
+  }
+  .sr-t { font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+  .sr-t.mono { font-family: var(--font-mono); font-size: 12.5px; }
+  .sr-s { grid-column: 1 / -1; font-size: 12px; line-height: 1.4; color: var(--text-secondary); }
+  .sr-note { font: 500 12px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .sr-pill {
+    font: 600 12px var(--font-mono);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 1px 9px;
+    white-space: nowrap;
+  }
+  .sr-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 12%, transparent); }
+  .sr-pill.med  { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 12%, transparent); }
+  .sr-pill.low  { color: var(--sev-low-text); background: color-mix(in srgb, var(--sev-low) 12%, transparent); }
+  .sr-pill.new  { color: var(--amber-text); background: var(--accent-bg); }
+  .sr-pill.hold { color: var(--amber-text); background: var(--accent-bg); }
+  .sr-pill.ok   { color: var(--green-text); background: color-mix(in srgb, var(--green) 12%, transparent); }
+</style>

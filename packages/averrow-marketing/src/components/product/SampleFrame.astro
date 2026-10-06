@@ -1,0 +1,73 @@
+---
+/*
+ * "Illustrative" sample card for a product page. Fictional brand (Acme) and
+ * `.example` domains only; outcomes ("High", "Likely fake"), never scores,
+ * signals, thresholds or permutation names (docs/DISCLOSURE_REGISTER.md).
+ * Always visibly tagged so it cannot be read as a customer's real finding.
+ *
+ * Props: label (accessible name), rows (SampleRow[]), note, footer (a one-line
+ * outcome under the rows, e.g. "Takedown drafted, waiting for your approval").
+ * A default slot replaces the rows for custom fragments.
+ */
+import SampleRows from "./SampleRows.astro";
+import type { SampleRow } from "./types";
+
+interface Props {
+  label: string;
+  rows?: SampleRow[];
+  note?: string;
+  footer?: string;
+}
+const { label, rows, note, footer } = Astro.props;
+---
+
+<figure class="sf" role="group" aria-label={label}>
+  <figcaption class="sf-h">
+    <span class="sf-tag">Illustrative</span>
+    <span class="sf-fict">Fictional brand, example domains</span>
+  </figcaption>
+  <div class="sf-b">
+    {rows && <SampleRows rows={rows} note={note} />}
+    <slot />
+  </div>
+  {footer && <div class="sf-f">{footer}</div>}
+</figure>
+
+<style>
+  .sf {
+    margin: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    min-width: 0;
+  }
+  .sf-h {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 12px;
+    flex-wrap: wrap;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sf-tag {
+    font: 700 12px var(--font-mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--amber-text);
+    border: 1px solid var(--amber-text);
+    border-radius: 999px;
+    padding: 1px 9px;
+  }
+  .sf-fict { font: 500 12px var(--font-mono); color: var(--text-secondary); }
+  .sf-b { padding: 16px; display: grid; gap: 12px; min-width: 0; }
+  .sf-f {
+    padding: 11px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--accent-bg);
+    font: 600 13px var(--font-display);
+    color: var(--text-primary);
+  }
+</style>

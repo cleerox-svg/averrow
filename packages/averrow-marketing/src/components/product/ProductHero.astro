@@ -1,0 +1,102 @@
+---
+/*
+ * Hero for a Platform page. Eyebrow = surface name + plan tag, both read from
+ * src/lib/coverage.ts so they cannot drift from the homepage Coverage grid.
+ *
+ * Props
+ *   surface   CoverageKey   take the eyebrow name and plan tag from coverage.ts
+ *   eyebrow   string        overrides the name (pages that are not a surface)
+ *   plan      CoveragePlan | null   overrides the plan tag; null hides it
+ *   title     string        the H1: an outcome, not a feature list
+ *   sub       string        one-line subhead
+ * Slots
+ *   sample    right-hand column, normally <SampleFrame>
+ * The CTA pair is fixed (CtaPair): Scan your domain / Book a demo.
+ */
+import CtaPair from "./CtaPair.astro";
+import { COVERAGE, PLAN_LABEL, type CoverageKey, type CoveragePlan } from "../../lib/coverage";
+
+interface Props {
+  surface?: CoverageKey;
+  eyebrow?: string;
+  plan?: CoveragePlan | null;
+  title: string;
+  sub: string;
+}
+const { surface, eyebrow, plan, title, sub } = Astro.props;
+
+const s = surface ? COVERAGE.find((c) => c.key === surface) : undefined;
+const name = eyebrow ?? s?.name ?? "Platform";
+const planKey: CoveragePlan | null = plan === undefined ? (s?.plan ?? null) : plan;
+const planLabel = planKey ? PLAN_LABEL[planKey].full : null;
+const hasSample = Astro.slots.has("sample");
+---
+
+<section class="ph" aria-labelledby="ph-title">
+  <div class:list={["ph-in", { solo: !hasSample }]}>
+    <div class="ph-copy">
+      <div class="ph-eyebrow">
+        <span>{name}</span>
+        {planLabel && <span class={`ph-plan ${planKey}`}>{planLabel}</span>}
+      </div>
+      <h1 class="ph-h" id="ph-title">{title}</h1>
+      <p class="ph-sub">{sub}</p>
+      <CtaPair where="hero" />
+    </div>
+    {hasSample && (
+      <div class="ph-sample"><slot name="sample" /></div>
+    )}
+  </div>
+</section>
+
+<style>
+  .ph { background: var(--gradient-hero); border-bottom: 1px solid var(--border); }
+  .ph-in {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 24px 56px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 40px;
+    align-items: center;
+  }
+  .ph-in.solo { grid-template-columns: minmax(0, 1fr); }
+  .ph-copy { display: grid; gap: 18px; justify-items: start; min-width: 0; }
+  .ph-eyebrow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    font: 600 12px var(--font-mono);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent-section, var(--accent));
+  }
+  .ph-plan {
+    letter-spacing: 0.06em;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 2px 10px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .ph-plan.business { color: var(--sev-low-text); border-color: var(--sev-low-text); }
+  .ph-plan.enterprise { color: var(--btn-primary-ink); background: var(--btn-primary-bg); border-color: transparent; }
+  .ph-h {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(34px, 5vw, 56px);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+    color: var(--text-primary);
+  }
+  .ph-sub { margin: 0; max-width: 56ch; font-size: 18px; line-height: 1.55; color: var(--text-secondary); }
+  .ph-sample { min-width: 0; }
+
+  @media (max-width: 900px) {
+    .ph-in { grid-template-columns: minmax(0, 1fr); gap: 28px; padding: 36px 16px 40px; }
+    .ph-sub { font-size: 16px; }
+  }
+</style>

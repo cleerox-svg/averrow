@@ -1,0 +1,55 @@
+---
+/*
+ * Layout for every Platform page (/platform and its seven deep dives).
+ *
+ *   <ProductPage title description crumb="Lookalike domains">
+ *     <ProductHero .../>
+ *     <ProductSection ...><StepList/></ProductSection>
+ *     <ProofStrip/> <ScopeTable/> <RelatedSurfaces/> <PageCTA/>
+ *   </ProductPage>
+ *
+ * Wraps the site Layout (nav, footer, theme) and adds a breadcrumb back to the
+ * overview. Omit `crumb` on the overview itself. All colours come from the
+ * tokens in src/styles/tokens.css, so both themes work with no per-theme rules.
+ */
+import Layout from "../../layouts/Layout.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Short page name for the breadcrumb; omit on /platform. */
+  crumb?: string;
+  jsonLd?: Record<string, unknown>;
+}
+const { title, description, crumb, jsonLd } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<Layout title={title} description={description} jsonLd={jsonLd}>
+  {crumb && (
+    <nav class="pp-crumb" aria-label="Breadcrumb">
+      <a href={`${base}/platform`}>Platform</a>
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">{crumb}</span>
+    </nav>
+  )}
+  <div class="pp">
+    <slot />
+  </div>
+</Layout>
+
+<style>
+  .pp { overflow-x: clip; }
+  .pp-crumb {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 14px 24px 0;
+    display: flex;
+    gap: 8px;
+    font: 500 13px var(--font-mono);
+    color: var(--text-secondary);
+  }
+  .pp-crumb a { color: var(--text-secondary); text-decoration: none; border-bottom: 1px solid var(--border-strong); }
+  .pp-crumb a:hover { color: var(--text-primary); border-bottom-color: var(--accent); }
+  @media (max-width: 640px) { .pp-crumb { padding: 12px 16px 0; } }
+</style>

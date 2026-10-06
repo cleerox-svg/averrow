@@ -1,0 +1,246 @@
+---
+/*
+ * /platform/takedowns (Section 8, phase 1). Built on the product-page kit and
+ * reuses the homepage TakedownFlow (Section 5) so the two cannot disagree.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md §3.7, §3.9, G21 shipped): Averrow
+ * files abuse reports for lookalike domains and phishing URLs under an
+ * authorization the customer signs, at the level they choose. "Nothing is
+ * filed without your approval or your signed rules" is approved. No speed or
+ * success numbers (owner decision, S1.5), no provider, API or send-mode names,
+ * no per-run limits or cadences, no "one-click", no blocklists / Safe
+ * Browsing, no "automatic" for hosting providers. Social, app and paste-site
+ * removals are drafted with evidence, not filed. Statuses are the customer's
+ * own labels (packages/averrow-tenant/src/lib/takedowns.ts STATUS_LABELS).
+ */
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import TakedownFlow from "../../components/TakedownFlow.astro";
+import type { SampleRow, ScopeRow } from "../../components/product/types";
+
+const heroRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Waiting for your approval", pill: "Draft", tone: "hold" },
+  { text: "acme-payroll-login.example", mono: true, status: "Report sent to the registrar, ticket 48213", pill: "Submitted", tone: "low" },
+  { text: "acme-login-help.example", mono: true, status: "Re-checked, alert if it returns", pill: "Taken down", tone: "ok" },
+];
+
+const modes = [
+  {
+    name: "Off",
+    sub: "Manual",
+    text: "You approve each one, and we file it. Nothing goes out automatically.",
+  },
+  {
+    name: "Semi-auto",
+    sub: "Approval for anything outside your rules",
+    text: "Takedowns outside your rules wait until someone on your team approves them. You can make that all of them.",
+  },
+  {
+    name: "Auto",
+    sub: "Within your signed scope",
+    text: "Filed automatically within your signed scope and any monthly limit you set.",
+  },
+];
+
+const statuses = [
+  { name: "Draft", text: "Waiting for your approval." },
+  { name: "Requested", text: "You approved it. It's ready to file." },
+  { name: "Submitted", text: "Filed with the registrar or host." },
+  { name: "Pending response", text: "Waiting for the provider." },
+  { name: "Taken down", text: "Removed. We re-check, and alert you if it returns." },
+];
+const endings = [
+  { name: "Failed", text: "Closed without a removal." },
+  { name: "Expired", text: "Closed without a removal." },
+  { name: "Withdrawn", text: "You withdrew it." },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Domains and phishing URLs",
+    covered: "Abuse reports to registrars and hosting providers, under your authorization, at the level you choose. Registrar reports can go out automatically.",
+    notCovered: "Automatic filing with hosting providers. Our team files those, within your rules or once you approve.",
+  },
+  {
+    area: "Social profiles, apps and paste sites",
+    covered: "Removals are drafted with the evidence, ready to file with the platform. Paste sites on Business and up.",
+    notCovered: "Filing them for you, or telling you they are taken down.",
+  },
+  {
+    area: "Your control",
+    covered: "Approve or withdraw any pending takedown. Set a monthly limit on automatic filing, and we pause and tell you when it's reached.",
+    notCovered: "Filing anything without your approval or your signed rules.",
+  },
+  {
+    area: "Evidence and history",
+    covered: "An evidence summary for every draft, and every submission in one history, with the provider's response and ticket number where there is one.",
+    notCovered: "Every provider reply. Not all replies reach the history.",
+  },
+  {
+    area: "Stay-down",
+    covered: "Removed domains are re-checked, and you're alerted if one comes back.",
+    notCovered: "A guarantee that a removed domain stays down.",
+  },
+  {
+    area: "Speed and outcomes",
+    covered: "A status for every takedown, from draft to taken down.",
+    notCovered: "Promised removal times or success rates. Outcomes depend on the registrar or host.",
+  },
+];
+---
+
+<ProductPage
+  title="Takedowns — Averrow"
+  description="You set the rules. We do the filing. Averrow files abuse reports for lookalike domains and phishing URLs under an authorization you sign, at the automation level you choose."
+  crumb="Takedowns"
+>
+  <ProductHero
+    eyebrow="Takedowns"
+    plan="professional"
+    title="You set the rules. We do the filing."
+    sub="Averrow files abuse reports for lookalike domains and phishing URLs with registrars and hosting providers, under an authorization you sign, at the automation level you choose."
+  >
+    <SampleFrame slot="sample" label="Sample takedown queue" rows={heroRows} footer="Nothing is filed without your approval or your signed rules" />
+  </ProductHero>
+
+  <ProductSection
+    id="automation"
+    eyebrow="Your rules"
+    heading="Choose how much runs on its own."
+    lede="Set the automation level for your organisation. You can change it at any time."
+  >
+    <ul class="td-modes" role="list">
+      {modes.map((m) => (
+        <li class="td-mode">
+          <h3>{m.name}</h3>
+          <span class="td-sub">{m.sub}</span>
+          <p>{m.text}</p>
+        </li>
+      ))}
+    </ul>
+  </ProductSection>
+
+  <ProductSection
+    id="authorization"
+    eyebrow="Authorization"
+    heading="Nothing is filed in your name without your say."
+    lede="You sign an authorization that sets what Averrow may file for you. You can revoke it any time."
+  >
+    <ul class="td-points" role="list">
+      <li><b>You sign it.</b><span>The authorization is signed by your organisation, and it defines the scope we file within.</span></li>
+      <li><b>We can't file without it.</b><span>Our analysts can't submit anything without your authorization, and can't submit what your rules wouldn't allow unless you've approved it.</span></li>
+      <li><b>You can stop it.</b><span>Approve or withdraw any pending takedown from your queue, set any monthly limit on automatic filing, or revoke the authorization.</span></li>
+    </ul>
+  </ProductSection>
+
+  <TakedownFlow
+    title="From finding to takedown"
+    showHowLink={false}
+    modeLabels={{ manual: "Off", approve: "Semi-auto", auto: "Auto" }}
+  />
+
+  <ProductSection
+    id="statuses"
+    eyebrow="Status"
+    heading="Follow every takedown."
+    lede="Each takedown in your console has one of these statuses, so you always know where it stands."
+  >
+    <ol class="td-flow" role="list" aria-label="Takedown statuses, in order">
+      {statuses.map((s, i) => (
+        <li>
+          <span class="td-i" aria-hidden="true">{i + 1}</span>
+          <b>{s.name}</b>
+          <span>{s.text}</span>
+        </li>
+      ))}
+    </ol>
+    <ul class="td-end" role="list" aria-label="Other outcomes">
+      {endings.map((s) => (
+        <li><b>{s.name}</b><span>{s.text}</span></li>
+      ))}
+    </ul>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What we file, and what we don't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Takedowns: covered and not covered" />
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/platform/takedowns"
+    include={["/platform/lookalike-domains", "/platform/impersonation", "/platform/abuse-mailbox"]}
+    heading="Where takedowns come from"
+  />
+
+  <PageCTA heading="Keep control of what gets filed." body="Run a free domain scan, no signup. Or book a demo and we'll show you the approval queue and the rules." />
+</ProductPage>
+
+<style>
+  .td-modes, .td-points, .td-end, .td-flow { list-style: none; margin: 0; padding: 0; }
+  .td-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .td-mode {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 0;
+  }
+  .td-mode h3 { margin: 0; font: 700 18px var(--font-display); color: var(--text-primary); }
+  .td-sub { font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--amber-text); }
+  .td-mode p { margin: 4px 0 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+
+  .td-points { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--border-strong); border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
+  .td-points li { background: var(--bg-secondary); padding: 16px; display: grid; gap: 6px; align-content: start; }
+  .td-points b { font: 700 15px var(--font-display); color: var(--text-primary); }
+  .td-points span { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+
+  .td-flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; counter-reset: none; }
+  .td-flow li {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    min-width: 0;
+  }
+  .td-i {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    font: 600 12px var(--font-mono);
+    color: var(--text-secondary);
+  }
+  .td-flow b, .td-end b { font: 700 15px var(--font-display); color: var(--text-primary); }
+  .td-flow li > span:last-child, .td-end span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .td-end { display: flex; flex-wrap: wrap; gap: 10px; }
+  .td-end li { display: grid; gap: 4px; flex: 1 1 200px; border: 1px dashed var(--border-strong); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+
+  @media (max-width: 1100px) {
+    .td-flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 900px) {
+    .td-modes, .td-points { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .td-flow { grid-template-columns: minmax(0, 1fr); }
+    .td-flow li { grid-template-columns: auto 1fr; align-items: center; column-gap: 10px; }
+    .td-flow li > span:last-child { grid-column: 2; }
+  }
+</style>

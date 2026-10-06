@@ -1,917 +1,252 @@
 ---
 /*
- * Platform page. Hero with Platform Status panel, sticky cap-nav,
- * four capability sections (Continuous Monitoring / Email Posture /
- * Social / Automated Analysis), architecture flow, integrations split,
- * CTA. Ported from packages/averrow-worker/src/templates/platform.ts.
+ * /platform: the overview (Section 8, phase 1). Replaces the old four-capability
+ * page. Shows all eight surfaces (the homepage Coverage grid, so names, plan
+ * labels and links come from src/lib/coverage.ts), links to the deep-dive pages,
+ * and absorbs the true parts of the retired /platform/ai-agents page under
+ * #how-it-works (that URL now redirects here).
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md L10, L24, L25, L34, §3.5, §3.6, §3.8):
+ * no "AI" wording (prod runs rules-only), no agent counts or codenames, no
+ * "notices when it moves" (L25), operations are an Enterprise capability and
+ * labelled so, "four signal streams" is never used, and the integrations list
+ * uses one status vocabulary with no customer email/push delivery claim (L24).
+ * Samples are illustrative, fictional brand Acme, `.example` domains.
  */
-import Layout from "../layouts/Layout.astro";
+import ProductPage from "../components/product/ProductPage.astro";
+import ProductHero from "../components/product/ProductHero.astro";
+import ProductSection from "../components/product/ProductSection.astro";
+import SampleFrame from "../components/product/SampleFrame.astro";
+import ProofStrip from "../components/product/ProofStrip.astro";
+import RelatedSurfaces from "../components/product/RelatedSurfaces.astro";
+import PageCTA from "../components/product/PageCTA.astro";
+import Coverage from "../components/Coverage.astro";
+import type { SampleRow } from "../components/product/types";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const queueRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Lookalike domain, serving a login page", pill: "High", tone: "high" },
+  { text: "@acme_support", mono: true, status: "Instagram, not your official account", pill: "Likely fake", tone: "high" },
+  { text: "“Acme Pay”", status: "App Store, developer is not Acme", pill: "Copycat", tone: "high" },
+  { text: "acme.example", mono: true, status: "Email authentication, DMARC missing", pill: "Weak", tone: "med" },
+];
+
+const stages = [
+  {
+    name: "Threat detection",
+    role: "Feeds and certificates",
+    text: "Watches phishing and malware intelligence, certificate-transparency logs and DNS data, and passes every new hit on for scoring.",
+  },
+  {
+    name: "Scoring and triage",
+    role: "How much it matters",
+    text: "Weighs every new detection against what else is known about the brand. Low-value noise is dismissed automatically, with the reason recorded, so your queue holds what needs a decision.",
+  },
+  {
+    name: "Infrastructure correlation",
+    role: "The campaign behind an alert",
+    plan: "Enterprise",
+    text: "Links phishing domains, IPs and certificates that share infrastructure into operations. On Enterprise, threats are linked to the campaign they belong to, and you're alerted when a significant campaign or a known actor targets your brand.",
+  },
+  {
+    name: "DNS resolution",
+    role: "Where a threat lives",
+    text: "Resolves the domains and hostnames behind threats to IP addresses, keeping infrastructure data current as attackers rotate hosting.",
+  },
+  {
+    name: "Geo and provider mapping",
+    role: "Hosting and region",
+    text: "Maps resolved infrastructure to where it's hosted, by provider, region and network, so attacks from the same infrastructure read as one picture.",
+  },
+  {
+    name: "Plain-language summaries",
+    role: "Readable, and tied to evidence",
+    text: "Writes a short summary of each situation from the same evidence, so the explanation always matches the signals and you can act without reading raw records.",
+  },
+];
+
+const ratingRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Live web and mail servers", pill: "Lookalike", tone: "med" },
+  { text: "acme-payroll-login.example", mono: true, status: "Live web and mail servers", pill: "Lookalike", tone: "med" },
+  { text: "@acme_support", mono: true, status: "X, not your official account", pill: "Likely fake", tone: "high" },
+  { text: "acme.example", mono: true, status: "Email authentication", pill: "Weak", tone: "med" },
+];
+
+type Status = "business" | "request" | "roadmap";
+const STATUS_LABEL: Record<Status, string> = {
+  business: "Business and Enterprise",
+  request: "On request",
+  roadmap: "Roadmap",
+};
+const integrations: Array<{ name: string; desc: string; status: Status }> = [
+  { name: "Webhooks", desc: "Alert and takedown events, set up with our team.", status: "business" },
+  { name: "Splunk", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "Microsoft Sentinel", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "QRadar", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "Jira and ServiceNow", desc: "Ticketing connectors, set up with our team.", status: "business" },
+  { name: "STIX 2.1 export", desc: "A standard threat-intelligence format, delivered by our team.", status: "request" },
+  { name: "Slack", desc: "Team alert channels.", status: "roadmap" },
+];
 ---
 
-<Layout
+<ProductPage
   title="Digital Risk Protection Platform — Averrow"
-  description="Averrow is a Digital Risk Protection platform: brand protection across phishing, domains, email, and social, with rule-based correlation fused into one exposure picture."
+  description="Averrow watches eight places impersonation happens, brings every finding into one queue with its evidence, and files takedowns under rules you set."
 >
-  <section class="plat-hero">
-    <div class="container">
-      <div class="plat-hero-section-label">The Platform</div>
-      <h1>One platform.<br /><span class="hero-accent">Full transparency.</span><br />Zero blind spots.</h1>
-      <p>
-        Continuous monitoring across phishing, domains, email, and social
-        &mdash; fused into a single brand exposure picture by automated
-        analysis that shows its work: deterministic, rule-based
-        correlation, with plain-language summaries on top and nothing
-        hidden in a black box.
-      </p>
-      <div class="plat-status" aria-label="Platform status">
-        <div class="plat-status-label">
-          <a href={`${base}/status`}>View live platform status &rarr;</a>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductHero
+    eyebrow="The platform"
+    title="Every place your brand is impersonated, in one queue."
+    sub="Averrow watches eight places impersonation happens, brings every finding into one queue with its evidence, and files takedowns under rules you set."
+  >
+    <SampleFrame slot="sample" label="Sample findings across surfaces" rows={queueRows} footer="One queue, every surface, with the evidence" />
+  </ProductHero>
 
-  <div class="cap-nav">
-    <div class="cap-nav-inner">
-      <a href="#monitoring" class="cap-tab active">Continuous Monitoring</a>
-      <a href="#email-posture" class="cap-tab">Email Posture Engine</a>
-      <a href="#social" class="cap-tab">Social Monitoring</a>
-      <a href="#agents" class="cap-tab">Automated Analysis</a>
-    </div>
-  </div>
+  <ProofStrip stats={["threats", "operations", "brands", "lookalikes"]} />
+  <p class="pv-status">Platform health is public. <a href={`${base}/status`}>View live status &rarr;</a></p>
 
-  <section class="cap-section" id="monitoring">
-    <div class="cap-row">
-      <div class="cap-text">
-        <div class="section-label">Capability 01</div>
-        <h2>Continuous Brand Monitoring</h2>
-        <p>Averrow's threat detection engine monitors phishing databases, malware feeds, CT logs, and DNS intelligence around the clock &mdash; surfacing anyone targeting your brand as they appear.</p>
-        <ul class="cap-features">
-          <li>Continuous scanning across 40+ threat and intelligence sources</li>
-          <li>Hourly certificate-transparency checks</li>
-          <li>Automatic deduplication and false positive filtering</li>
-          <li>Safe domains allowlist to reduce noise</li>
-          <li>Automated scoring and triage on detection</li>
-        </ul>
-        <a href="/platform/threat-detection" style="display:inline-block;margin-top:1.5rem;color: var(--amber-text);font-weight:600;font-family:var(--font-display);text-decoration:none;">Explore threat detection &rarr;</a>
-      </div>
-      <div class="cap-visual">
-        <div class="radar-container">
-          <div class="radar-svg-wrap">
-            <svg viewBox="0 0 180 180" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <radialGradient id="radarTrailGrad" cx="50%" cy="50%" r="50%" gradientUnits="objectBoundingBox">
-                  <stop offset="0%" stop-color="#3CB878" stop-opacity="0.35"/>
-                  <stop offset="70%" stop-color="#3CB878" stop-opacity="0.1"/>
-                  <stop offset="100%" stop-color="#3CB878" stop-opacity="0"/>
-                </radialGradient>
-              </defs>
-              <circle cx="90" cy="90" r="88" fill="rgba(4,8,16,0.75)"/>
-              <circle cx="90" cy="90" r="22" fill="none" stroke="rgba(120,160,200,0.18)" stroke-width="0.75"/>
-              <circle cx="90" cy="90" r="44" fill="none" stroke="rgba(120,160,200,0.14)" stroke-width="0.75"/>
-              <circle cx="90" cy="90" r="66" fill="none" stroke="rgba(120,160,200,0.10)" stroke-width="0.75"/>
-              <circle cx="90" cy="90" r="87" fill="none" stroke="rgba(120,160,200,0.08)" stroke-width="1"/>
-              <line x1="3" y1="90" x2="177" y2="90" stroke="rgba(120,160,200,0.07)" stroke-width="0.5"/>
-              <line x1="90" y1="3" x2="90" y2="177" stroke="rgba(120,160,200,0.07)" stroke-width="0.5"/>
-              <g class="radar-sweep-group">
-                <path d="M 90 90 L 90 4 A 86 86 0 0 0 15.5 47 Z" fill="url(#radarTrailGrad)"/>
-                <line x1="90" y1="90" x2="90" y2="4" stroke="#3CB878" stroke-width="1.5" opacity="0.95"/>
-              </g>
-              <circle cx="118" cy="52" r="3.5" fill="#C83C3C" class="radar-dot"/>
-              <circle cx="50" cy="120" r="3"   fill="#E5A832" class="radar-dot-2"/>
-              <circle cx="133" cy="110" r="3"  fill="#DCAA32" class="radar-dot-3"/>
-              <circle cx="68" cy="44" r="2.5"  fill="#0A8AB5" class="radar-dot-4"/>
-              <circle cx="90" cy="90" r="3" fill="#3CB878" opacity="0.9"/>
-              <circle cx="90" cy="90" r="7" fill="none" stroke="#3CB878" stroke-width="0.75" opacity="0.3"/>
-            </svg>
+  <Coverage showProof={false} />
+
+  <RelatedSurfaces
+    current="/platform"
+    include={["/platform/takedowns", "/platform/threat-detection", "/platform/campaign-intelligence"]}
+    eyebrow="Beyond the eight surfaces"
+    heading="What happens after a finding"
+  />
+
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Rule-based analysis you can check."
+    lede="Detection and correlation run on deterministic rules, so every score traces back to evidence you can see. There is no black box between a signal and the decision."
+  >
+    <ol class="pv-stages" role="list">
+      {stages.map((s, i) => (
+        <li class="pv-stage">
+          <span class="pv-n" aria-hidden="true">{i + 1}</span>
+          <div>
+            <h3>{s.name}{s.plan && <span class="pv-plan">{s.plan}</span>}</h3>
+            <span class="pv-role">{s.role}</span>
+            <p>{s.text}</p>
           </div>
-          <div class="feed-grid">
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#C83C3C"></span><span class="feed-badge-text">Phishing databases</span></div>
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#E5A832"></span><span class="feed-badge-text">Malware URL feeds</span></div>
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#DCAA32"></span><span class="feed-badge-text">Threat intel feeds</span></div>
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#0A8AB5"></span><span class="feed-badge-text">CT logs</span></div>
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#3CB878"></span><span class="feed-badge-text">DNS intelligence</span></div>
-            <div class="feed-badge"><span class="feed-badge-bar" style="background:#C83C3C"></span><span class="feed-badge-text">Paste &amp; leak-site mentions</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+        </li>
+      ))}
+    </ol>
 
-  <section class="exec-teaser">
-    <div class="container">
-      <div class="exec-teaser-card">
-        <div class="exec-teaser-body">
-          <h3>Executive exposure, before it&rsquo;s a targeted attack</h3>
-          <p>
-            Add your executives to a watchlist, and Averrow monitors
-            paste sites and ransomware leak-site victim lists for mentions
-            of them by name, and watches the same six social platforms for
-            accounts impersonating them. A name surfacing in a paste or a
-            leak-site post is often an early signal of a targeted attack in
-            the making, and it&rsquo;s one most teams have no visibility
-            into until it&rsquo;s too late.
-          </p>
-        </div>
+    <div class="pv-rate">
+      <div class="pv-rate-copy">
+        <h3>One situation, rated as one.</h3>
+        <p>
+          Averrow looks at look-alikes, impersonation accounts, app listings, leak-site mentions,
+          certificates and your email posture together and rates the situation as one, not as a
+          list of unrelated rows.
+        </p>
+        <p>
+          The same signals feed one exposure score per brand, which combines active threats,
+          impersonation, app listings, leak-site mentions and email posture.
+        </p>
       </div>
+      <SampleFrame label="Sample situation rating" rows={ratingRows} footer="Rated High, as one situation" />
     </div>
-  </section>
+  </ProductSection>
 
-  <section class="cap-section" id="email-posture">
-    <div class="cap-row reversed">
-      <div class="cap-text">
-        <div class="section-label">Capability 02</div>
-        <h2>Email Security Posture Engine</h2>
-        <p>Most companies don&rsquo;t know their email can be spoofed. Averrow grades your SPF, DKIM, DMARC, and MX configuration on an A+ through F scale &mdash; and tells you exactly which gap an attacker would exploit first.</p>
-        <ul class="cap-features">
-          <li>SPF record validation</li>
-          <li>DKIM multi-selector verification</li>
-          <li>DMARC policy assessment</li>
-          <li>MX provider detection and scoring</li>
-          <li>A+ through F grading methodology</li>
-        </ul>
-        <div class="callout">Built around the email-authentication gaps attackers exploit.</div>
-        <a href="/platform/email-security" style="display:inline-block;margin-top:1.5rem;color: var(--amber-text);font-weight:600;font-family:var(--font-display);text-decoration:none;">Explore email security &rarr;</a>
-      </div>
-      <div class="cap-visual">
-        <div class="email-item"><span>SPF Record</span><span class="email-pass">PASS &#10003;</span></div>
-        <div class="email-item"><span>DKIM (google)</span><span class="email-pass">PASS &#10003;</span></div>
-        <div class="email-item"><span>DKIM (proofpoint)</span><span class="email-pass">PASS &#10003;</span></div>
-        <div class="email-item"><span>DMARC Policy</span><span class="email-pass">reject &#10003;</span></div>
-        <div class="email-item email-last"><span>MX Provider</span><span class="email-mx">Google Workspace</span></div>
-        <div class="email-grade-wrap">
-          <div class="email-grade-ring">
-            <svg viewBox="0 0 96 96">
-              <circle class="grade-ring-track" cx="48" cy="48" r="42"/>
-              <circle class="grade-ring-fill" cx="48" cy="48" r="42"/>
-            </svg>
-            <div class="email-grade-inner">
-              <div class="email-grade-letter">A+</div>
-              <div class="email-grade-sub">Grade</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="integrations"
+    eyebrow="Integrations"
+    heading="Works with your existing stack."
+    lede="Alerts appear in your Averrow console. On Business and Enterprise they can also go to your webhook or SIEM, set up with our team."
+  >
+    <ul class="pv-int" role="list">
+      {integrations.map((i) => (
+        <li>
+          <b>{i.name}</b>
+          <span>{i.desc}</span>
+          <em class={i.status}>{STATUS_LABEL[i.status]}</em>
+        </li>
+      ))}
+    </ul>
+  </ProductSection>
 
-  <section class="cap-section" id="social">
-    <div class="cap-row">
-      <div class="cap-text">
-        <div class="section-label">Capability 03</div>
-        <h2>Social Media Monitoring</h2>
-        <p>Impersonation on social is the fastest-growing attack vector. Averrow monitors six platforms &mdash; X, LinkedIn, Instagram, TikTok, GitHub, and YouTube &mdash; for fake accounts, handle squatting, and unauthorized brand usage, with confidence scoring so you only see what actually warrants action.</p>
-        <ul class="cap-features">
-          <li>Automated profile assessment (confidence scoring)</li>
-          <li>Auto-discovery of brand accounts from company websites</li>
-          <li>Cross-correlation with threat intelligence feeds</li>
-          <li>Manual classification and takedown evidence generation</li>
-          <li>Handle permutation generation and monitoring</li>
-          <li>Executive name monitoring across platforms</li>
-        </ul>
-        <a href="/platform/social-monitoring" style="display:inline-block;margin-top:1.5rem;color: var(--amber-text);font-weight:600;font-family:var(--font-display);text-decoration:none;">Explore social monitoring &rarr;</a>
-      </div>
-      <div class="cap-visual">
-        <div class="social-eyebrow">Monitoring Status &middot; Illustrative</div>
-        <div class="social-grid">
-          <div class="social-item"><div class="social-name">X</div><div class="social-status"><span class="social-dot green"></span>Verified</div></div>
-          <div class="social-item"><div class="social-name">LinkedIn</div><div class="social-status"><span class="social-dot green"></span>Verified</div></div>
-          <div class="social-item"><div class="social-name">Instagram</div><div class="social-status"><span class="social-dot amber"></span>Unclaimed</div></div>
-          <div class="social-item"><div class="social-name">TikTok</div><div class="social-status"><span class="social-dot grey"></span>N/A</div></div>
-          <div class="social-item"><div class="social-name">GitHub</div><div class="social-status"><span class="social-dot green"></span>Verified</div></div>
-          <div class="social-item"><div class="social-name">YouTube</div><div class="social-status"><span class="social-dot red"></span>Squatted</div></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="cap-section" id="agents">
-    <div class="cap-row reversed">
-      <div class="cap-text">
-        <div class="section-label">Capability 04</div>
-        <h2>Automated Analysis</h2>
-        <p>Detection and correlation are deterministic and rule-based, so every score traces back to evidence you can see. Automated analysis cross-references signals across email, domains, social, and threat feeds to produce a single Brand Exposure Score and plain-language threat summaries your team can act on.</p>
-        <ul class="cap-features">
-          <li>Cross-system signal fusion (email + social + threats + domains)</li>
-          <li>Social signals included in risk scoring</li>
-          <li>Composite Brand Exposure Score</li>
-          <li>Plain-language threat summaries</li>
-          <li>Takedown evidence assembled automatically</li>
-        </ul>
-        <a href="/platform/ai-agents" style="display:inline-block;margin-top:1.5rem;color: var(--amber-text);font-weight:600;font-family:var(--font-display);text-decoration:none;">Explore automated analysis &rarr;</a>
-      </div>
-      <div class="cap-visual">
-        <div class="agent-grid-vert">
-          <div class="agent-row" style="border-left-color:#C83C3C;"><div class="ar-name" style="color:var(--red-text);">Threat Detection</div><div class="ar-role">Certificate &amp; domain surveillance</div><div class="ar-desc">Continuous monitoring across threat feeds and certificate logs.</div></div>
-          <div class="agent-row" style="border-left-color:#E5A832;"><div class="ar-name" style="color:var(--amber-text);">Scoring &amp; Triage</div><div class="ar-role">Composite exposure scoring</div><div class="ar-desc">Classifies, scores and prioritises threat severity.</div></div>
-          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Infrastructure Correlation</div><div class="ar-role">Linking shared infrastructure</div><div class="ar-desc">Groups threats into operations by shared hosting, certificates and registration patterns.</div></div>
-          <div class="agent-row" style="border-left-color:#065A78;"><div class="ar-name" style="color:var(--blue-text);">DNS Resolution</div><div class="ar-role">Infrastructure resolution</div><div class="ar-desc">Resolves domains to hosts as attackers rotate infrastructure.</div></div>
-          <div class="agent-row" style="border-left-color:#8A8F9C;"><div class="ar-name" style="color:var(--slate-text);">Timeline &amp; Narrative</div><div class="ar-role">Plain-language incident writeups</div><div class="ar-desc">Captures threat timelines and plain-language summaries.</div></div>
-          <div class="agent-row" style="border-left-color:#3CB878;"><div class="ar-name" style="color:var(--green-text);">Geo &amp; Provider Mapping</div><div class="ar-role">Hosting &amp; regional mapping</div><div class="ar-desc">Maps resolved infrastructure to provider and region.</div></div>
-          <div class="agent-row" style="border-left-color:#0A8AB5;"><div class="ar-name" style="color:var(--blue-text);">Takedowns</div><div class="ar-role">Removal requests</div><div class="ar-desc">Files removal requests with hosts and registrars, and keeps every submission and provider response in one history.</div></div>
-        </div>
-        <div class="narrative-block">
-          <div class="narrative-label"><span class="narrative-dot"></span> Illustrative example</div>
-          &ldquo;A phishing domain matching your brand was registered 48 hours ago with active MX records, combined with your current DKIM gap on the proofpoint selector. This creates a HIGH-severity compound risk &mdash; attackers can send spoofed emails that pass basic checks.&rdquo;
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="ci-teaser">
-    <div class="container">
-      <div class="ci-teaser-row">
-        <div class="ci-teaser-text">
-          <div class="section-label">Beyond Detection &middot; Higher-Tier Capability</div>
-          <h2>When threats share infrastructure, Averrow sees the campaign</h2>
-          <p>
-            The four capabilities above catch individual threats. Campaign
-            Intelligence goes a layer deeper &mdash; it links phishing
-            domains, IPs, and certificates that share infrastructure into
-            operations, so you see the campaign behind each alert, and
-            notice when it moves. Available on the Enterprise plan.
-          </p>
-          <a href={`${base}/platform/campaign-intelligence`} class="ci-teaser-link">Explore campaign intelligence &rarr;</a>
-        </div>
-        <div class="ci-teaser-visual">
-          <div class="ci-teaser-node ci-teaser-node-a">TLS Cert</div>
-          <div class="ci-teaser-node ci-teaser-node-b">Shared ASN</div>
-          <div class="ci-teaser-node ci-teaser-node-c">Registrar</div>
-          <div class="ci-teaser-center">Campaign</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="int-section">
-    <div class="container">
-      <div class="section-label" style="text-align:center;">Integrations</div>
-      <h2 class="int-h2">Works With Your Existing Stack</h2>
-      <p class="int-p">Export data and receive alerts in the tools you already use.</p>
-    </div>
-
-    <div class="int-grid">
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="int-card-name">STIX 2.1 export</div><div class="int-card-desc">Standard threat intelligence format, delivered by our team</div><span class="int-card-status planned">On request</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div><div class="int-card-name">Webhooks</div><div class="int-card-desc">Alert and takedown events, set up with our team</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div><div class="int-card-name">Splunk</div><div class="int-card-desc">SIEM connector, set up with our team</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10"/></svg></div><div class="int-card-name">Microsoft Sentinel</div><div class="int-card-desc">Cloud SIEM connector, set up with our team</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg></div><div class="int-card-name">QRadar</div><div class="int-card-desc">Security analytics connector, set up with our team</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/></svg></div><div class="int-card-name">Jira &amp; ServiceNow</div><div class="int-card-desc">Ticketing connectors, set up with our team</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div><div class="int-card-name">Email</div><div class="int-card-desc">Alert delivery</div><span class="int-card-status live">Live</span></div>
-      <div class="int-card"><div class="int-card-icon planned"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg></div><div class="int-card-name">Slack</div><div class="int-card-desc">Team alert channels</div><span class="int-card-status planned">Coming Soon</span></div>
-    </div>
-
-  </section>
-
-  <section class="plat-cta">
-    <div class="container">
-      <h2>See what&rsquo;s already targeting your brand.</h2>
-      <p>Run a free domain scan &mdash; no signup, no credit card.</p>
-      <div class="plat-cta-actions">
-        <a href={`${base}/scan`} class="btn btn-primary">Scan your domain</a>
-        <a href={`${base}/pricing`} class="btn btn-outline">See Plans</a>
-      </div>
-    </div>
-  </section>
-</Layout>
+  <PageCTA />
+</ProductPage>
 
 <style>
-  /* ── HERO ── */
-  .plat-hero {
-    padding: 5rem 0 3rem;
-    text-align: center;
-    background: var(--gradient-hero);
-    position: relative;
-    overflow: hidden;
-  }
-  .plat-hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(36px, 5vw, 64px);
-    font-weight: 800;
-    margin-bottom: 1rem;
-    line-height: 1.05;
-  }
-  .hero-accent { color: var(--amber-text); }
-  .plat-hero p {
-    font-size: 18px;
-    color: var(--text-secondary);
-    max-width: 620px;
-    margin: 0 auto 2.25rem;
-    line-height: 1.6;
-  }
-  .plat-hero-section-label {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 0.85rem;
-  }
+  .pv-status { max-width: 1280px; margin: 0 auto; padding: 4px 24px 0; font: 500 13px var(--font-mono); color: var(--text-secondary); }
+  .pv-status a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .pv-status a:hover { border-bottom-color: var(--accent); }
 
-  /* ── PLATFORM STATUS LINK ── */
-  .plat-status {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 1rem 1.25rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--glass-card-bg, rgba(22,30,48,0.55));
-    backdrop-filter: blur(12px) saturate(160%);
-    -webkit-backdrop-filter: blur(12px) saturate(160%);
-    text-align: center;
-    font-family: var(--font-mono);
-  }
-  .plat-status-label {
-    font-family: var(--font-display);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-  .plat-status-label a { color: var(--amber-text); text-decoration: none; }
-  .plat-status-label a:hover { text-decoration: underline; }
-
-  /* ── CAP NAV ── */
-  .cap-nav {
-    position: sticky;
-    top: 64px;
-    z-index: 50;
+  .pv-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .pv-stage {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
     background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    padding: 0.6rem 0;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-  }
-  :global([data-theme="light"]) .cap-nav {
-    background: rgba(248,247,245,0.8);
-    border-bottom-color: rgba(226,221,213,0.5);
-  }
-  .cap-nav-inner {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 2rem;
-    display: flex;
-    gap: 0.5rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-  .cap-tab {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 500;
-    padding: 0.5rem 1.25rem;
-    border-radius: 100px;
     border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    text-decoration: none;
-    transition: all 0.2s;
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 0;
   }
-  .cap-tab:hover,
-  .cap-tab.active {
-    background: var(--accent-bg);
-    border-color: var(--accent);
-    color: var(--accent);
-    text-decoration: none;
-  }
-
-  /* ── CAPABILITY SECTIONS ── */
-  .cap-section { padding: 3rem 0; position: relative; }
-  .cap-section:nth-of-type(odd) { background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%); }
-  .cap-section:nth-of-type(even) { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
-  .cap-row {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 0 2rem;
+  .pv-n {
+    flex: none;
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2.5rem;
-    align-items: center;
-  }
-  .cap-row.reversed { direction: rtl; }
-  .cap-row.reversed > * { direction: ltr; }
-  .cap-text :global(.section-label) {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--accent-section, var(--accent));
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    margin-bottom: 0.75rem;
-  }
-  .cap-text h2 {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 36px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .cap-text p {
-    font-size: 16px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    margin-bottom: 1.5rem;
-  }
-  .cap-features {
-    list-style: none;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .cap-features li {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 15px;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    font: 600 12px var(--font-mono);
     color: var(--text-secondary);
   }
-  .cap-features li::before {
-    content: "\2713";
-    color: var(--green);
-    font-weight: 700;
+  .pv-stage > div { display: grid; gap: 4px; min-width: 0; }
+  .pv-stage h3 { margin: 0; font: 700 16px var(--font-display); color: var(--text-primary); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pv-plan {
+    font: 600 12px var(--font-mono);
+    color: var(--btn-primary-ink);
+    background: var(--btn-primary-bg);
+    border-radius: 999px;
+    padding: 1px 9px;
   }
-  .callout {
-    background: var(--accent-bg);
-    border: 1px solid rgba(229,168,50,0.18);
-    border-radius: var(--radius-md);
-    padding: 1rem 1.25rem;
-    font-size: 0.85rem;
-    color: var(--accent);
-    font-weight: 500;
-    margin-top: 1rem;
-  }
+  .pv-role { font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+  .pv-stage p { margin: 4px 0 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
 
-  /* ── EXECUTIVE EXPOSURE CALLOUT ── */
-  .exec-teaser { padding: 0 0 1rem; }
-  .exec-teaser-card {
-    padding: 1.5rem 2rem;
-    background: rgba(14,26,43,0.4);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-  :global([data-theme="light"]) .exec-teaser-card { background: rgba(255,255,255,0.5); }
-  .exec-teaser-body { max-width: 760px; margin: 0 auto; text-align: center; }
-  .exec-teaser-body h3 {
-    font-family: var(--font-display);
-    font-size: 1.15rem;
-    font-weight: 700;
-    margin-bottom: 0.6rem;
-  }
-  .exec-teaser-body p {
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    line-height: 1.65;
-  }
+  .pv-rate { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: center; margin-top: 16px; }
+  .pv-rate-copy { display: grid; gap: 12px; min-width: 0; }
+  .pv-rate-copy h3 { margin: 0; font: 800 22px/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); }
+  .pv-rate-copy p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-secondary); max-width: 56ch; }
 
-  .cap-visual {
-    background: rgba(14,26,43,0.55);
-    border: 1px solid rgba(120,160,200,0.12);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-  :global([data-theme="light"]) .cap-visual {
-    background: rgba(255,255,255,0.72);
-    border-color: rgba(26,31,46,0.08);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-  }
-
-  /* Radar visual */
-  .radar-container { display: flex; flex-direction: column; align-items: center; gap: 1.25rem; }
-  .radar-svg-wrap { width: 180px; height: 180px; flex-shrink: 0; }
-  .radar-sweep-group { transform-origin: 90px 90px; animation: radarRotate 3s linear infinite; }
-  @keyframes radarRotate {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-  @media (prefers-reduced-motion: reduce) { .radar-sweep-group { animation: none; } }
-  .feed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; width: 100%; }
-  .feed-badge {
-    display: flex;
-    align-items: stretch;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: 0.78rem;
-    font-weight: 500;
-    overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  .feed-badge-bar { width: 3px; flex-shrink: 0; }
-  .feed-badge-text { padding: 0.5rem 0.75rem; }
-
-  /* Email grade ring */
-  .email-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.72rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.85rem;
-  }
-  .email-last { border-bottom: none; }
-  .email-pass {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--green-text);
-    font-weight: 600;
-  }
-  .email-mx {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-  }
-  .email-grade-wrap {
-    display: flex;
-    justify-content: center;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-  }
-  .email-grade-ring { position: relative; width: 96px; height: 96px; }
-  .email-grade-ring svg { width: 96px; height: 96px; }
-  .grade-ring-track { fill: none; stroke: rgba(60,184,120,0.12); stroke-width: 6; }
-  .grade-ring-fill {
-    fill: none;
-    stroke: var(--green);
-    stroke-width: 6;
-    stroke-linecap: round;
-    transform: rotate(-90deg);
-    transform-origin: 48px 48px;
-    stroke-dasharray: 263.9;
-    stroke-dashoffset: 13.2;
-    filter: drop-shadow(0 0 5px rgba(60,184,120,0.45));
-  }
-  .email-grade-inner {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-  .email-grade-letter {
-    font-family: var(--font-display);
-    font-size: 2rem;
-    font-weight: 800;
-    color: var(--green-text);
-    line-height: 1;
-  }
-  .email-grade-sub {
-    font-family: var(--font-mono);
-    font-size: 0.58rem;
-    color: rgba(60,184,120,0.65);
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    margin-top: 1px;
-  }
-  :global([data-theme="light"]) .email-grade-sub { color: var(--green-dim); }
-
-  /* Social grid */
-  .social-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-tertiary);
-    margin-bottom: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .social-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
-  .social-item {
-    text-align: center;
-    padding: 1rem 0.75rem;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-  }
-  .social-name {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    margin-bottom: 0.3rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .social-status {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
-  }
-  .social-dot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .social-dot.green { background: var(--green); }
-  .social-dot.amber { background: var(--amber); }
-  .social-dot.red   { background: var(--red); }
-  .social-dot.grey  { background: var(--text-tertiary); }
-
-  /* Agent grid */
-  .agent-grid-vert { display: flex; flex-direction: column; gap: 0.6rem; }
-  .agent-row {
-    padding: 0.85rem 1rem;
-    background: rgba(14,26,43,0.45);
-    border-radius: var(--radius-md);
-    border-left: 3px solid transparent;
-    border-top: 1px solid rgba(255,255,255,0.03);
-    border-right: 1px solid rgba(255,255,255,0.03);
-    border-bottom: 1px solid rgba(255,255,255,0.03);
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.25rem 0.75rem;
-  }
-  .ar-desc { flex-basis: 100%; font-size: 0.82rem; line-height: 1.5; color: var(--text-secondary); }
-  :global([data-theme="light"]) .agent-row { background: rgba(255,255,255,0.6); }
-  .ar-name {
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 0.95rem;
-    letter-spacing: 0.04em;
-  }
-  .ar-role {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    opacity: 0.7;
-  }
-  .narrative-block {
-    margin-top: 1rem;
-    border-left: 3px solid var(--red);
-    padding: 1rem 1.25rem;
-    background: rgba(200,60,60,0.05);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-  }
-  .narrative-label {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--red-text);
-    margin-bottom: 0.5rem;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-  .narrative-dot {
-    width: 6px;
-    height: 6px;
-    background: var(--red);
-    border-radius: 50%;
-    animation: narrative-pulse 2s infinite;
-  }
-  @keyframes narrative-pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(200,60,60,0.55); }
-    70%  { box-shadow: 0 0 0 8px rgba(200,60,60,0); }
-    100% { box-shadow: 0 0 0 0 rgba(200,60,60,0); }
-  }
-
-  @media (max-width: 768px) {
-    .cap-row,
-    .cap-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
-    .social-grid { grid-template-columns: repeat(2, 1fr); }
-    .feed-grid { grid-template-columns: 1fr; }
-  }
-
-  /* ── CAMPAIGN INTELLIGENCE TEASER ── */
-  .ci-teaser {
-    padding: 3.5rem 0;
-    background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-  .ci-teaser-row {
+  .pv-int { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .pv-int li {
     display: grid;
-    grid-template-columns: 1.2fr 1fr;
-    gap: 2.5rem;
-    align-items: center;
-  }
-  .ci-teaser-text h2 {
-    font-family: var(--font-display);
-    font-size: clamp(22px, 3vw, 30px);
-    font-weight: 700;
-    margin: 0.5rem 0 1rem;
-  }
-  .ci-teaser-text p {
-    font-size: 15px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    margin-bottom: 1.25rem;
-  }
-  .ci-teaser-link {
-    display: inline-block;
-    color: var(--amber-text);
-    font-weight: 600;
-    font-family: var(--font-display);
-    text-decoration: none;
-  }
-  .ci-teaser-link:hover { text-decoration: underline; }
-  .ci-teaser-visual {
-    position: relative;
-    height: 220px;
-    background: rgba(14,26,43,0.5);
+    gap: 6px;
+    align-content: start;
+    background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 0;
   }
-  :global([data-theme="light"]) .ci-teaser-visual {
-    background: rgba(255,255,255,0.6);
-    border-color: rgba(226,221,213,0.5);
-  }
-  .ci-teaser-node {
-    position: absolute;
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    padding: 0.4rem 0.75rem;
-    border-radius: 100px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
+  .pv-int b { font: 700 15px var(--font-display); color: var(--text-primary); }
+  .pv-int span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .pv-int em {
+    justify-self: start;
+    font: 600 12px var(--font-mono);
+    font-style: normal;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 1px 9px;
     color: var(--text-secondary);
   }
-  .ci-teaser-node-a { top: 18%; left: 8%; }
-  .ci-teaser-node-b { top: 14%; right: 10%; }
-  .ci-teaser-node-c { bottom: 16%; left: 14%; }
-  .ci-teaser-center {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    font-weight: 700;
-    padding: 0.6rem 1.1rem;
-    border-radius: 100px;
-    background: var(--accent-bg);
-    border: 1px solid var(--amber);
-    color: var(--amber-text);
-  }
-  @media (max-width: 768px) {
-    .ci-teaser-row { grid-template-columns: 1fr; }
-    .ci-teaser-visual { height: 160px; }
-  }
+  .pv-int em.business { color: var(--sev-low-text); border-color: var(--sev-low-text); }
+  .pv-int em.request { color: var(--amber-text); border-color: var(--amber-text); }
 
-  /* ── INTEGRATIONS ── */
-  .int-section {
-    padding: 3rem 0;
-    text-align: center;
-    background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  @media (max-width: 1100px) {
+    .pv-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  .int-h2 {
-    font-family: var(--font-display);
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
+  @media (max-width: 900px) {
+    .pv-rate { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   }
-  .int-p { color: var(--text-secondary); margin-bottom: 0; }
-  .int-group-label {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    margin: 1.5rem auto 0.75rem;
-    max-width: 1400px;
-    padding: 0 2rem;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  .int-group-label::after {
-    content: "";
-    flex: 1;
-    height: 1px;
-    background: linear-gradient(90deg, var(--border), transparent);
-  }
-  .int-grid {
-    max-width: 1400px;
-    margin: 0.5rem auto 0;
-    padding: 0 2rem;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-  }
-  .int-card {
-    background: rgba(14,26,43,0.5);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem 1.25rem;
-    text-align: center;
-    transition: all 0.3s;
-    position: relative;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  :global([data-theme="light"]) .int-card {
-    background: rgba(255,255,255,0.6);
-    border-color: rgba(226,221,213,0.5);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.9);
-  }
-  .int-card:hover {
-    border-color: rgba(229,168,50,0.45);
-    transform: translateY(-5px);
-    box-shadow: 0 0 28px rgba(229,168,50,0.14), 0 8px 24px rgba(0,0,0,0.2);
-  }
-  .int-card-icon {
-    width: 52px;
-    height: 52px;
-    margin: 0 auto 0.875rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--radius-md);
-    transition: transform 0.3s;
-  }
-  .int-card:hover .int-card-icon { transform: scale(1.1); }
-  .int-card-icon svg { width: 28px; height: 28px; }
-  .int-card-icon.live { background: var(--green-bg); color: var(--green-text); }
-  .int-card-icon.planned { background: var(--accent-bg); color: var(--amber-text); }
-  .int-card-name {
-    font-size: 15px;
-    font-weight: 700;
-    margin-bottom: 0.35rem;
-  }
-  .int-card-desc {
-    font-size: 0.72rem;
-    color: var(--text-tertiary);
-    line-height: 1.4;
-    margin-bottom: 0.5rem;
-  }
-  .int-card-status {
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding: 0.2rem 0.5rem;
-    border-radius: 100px;
-    display: inline-block;
-  }
-  .int-card-status.live { background: var(--green-bg); color: var(--green-text); }
-  .int-card-status.planned { background: var(--accent-bg); color: var(--text-tertiary); }
-  @media (max-width: 768px) { .int-grid { grid-template-columns: repeat(2, 1fr); } }
-
-  /* ── CTA ── */
-  .plat-cta { padding: 3rem 0; text-align: center; }
-  .plat-cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .plat-cta p {
-    color: var(--text-secondary);
-    max-width: 480px;
-    margin: 0 auto 2rem;
-  }
-  .plat-cta-actions {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
+  @media (max-width: 640px) {
+    .pv-stages { grid-template-columns: minmax(0, 1fr); }
+    .pv-status { padding: 4px 16px 0; }
   }
 </style>
-
-<script>
-  // Sticky cap-nav scroll-spy: set the active tab to the section
-  // currently most in view as the user scrolls.
-  (function () {
-    const sections = ["monitoring", "email-posture", "social", "agents"];
-    const tabs = document.querySelectorAll<HTMLAnchorElement>(".cap-tab");
-    if (!("IntersectionObserver" in window)) return;
-    const observer = new IntersectionObserver(
-      entries => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            tabs.forEach(t => t.classList.remove("active"));
-            const match = document.querySelector<HTMLAnchorElement>(`.cap-tab[href="#${entry.target.id}"]`);
-            match?.classList.add("active");
-          }
-        });
-      },
-      { threshold: 0.4 },
-    );
-    sections.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) observer.observe(el);
-    });
-  })();
-</script>

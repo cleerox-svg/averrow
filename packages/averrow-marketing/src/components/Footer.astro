@@ -6,11 +6,13 @@
  * (pre-cutover) or / (post-cutover). Hosts the site's theme toggle.
  */
 import ThemeCycle from "../islands/ThemeCycle";
-import { LOGIN_HREF } from "../lib/nav";
+import { LOGIN_HREF, NAV_LINKS } from "../lib/nav";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const withBase = (href: string) => `${base}${href}`;
 const year = new Date().getFullYear();
+// The Platform dropdown is the single list of the eight platform pages.
+const platformPages = NAV_LINKS.find((l) => l.href === "/platform")?.children ?? [];
 ---
 
 <footer class="footer">
@@ -37,9 +39,15 @@ const year = new Date().getFullYear();
       </div>
 
       <div class="footer-col">
+        <div class="footer-col-title">Platform</div>
+        <ul>
+          {platformPages.map((p) => <li><a href={withBase(p.href)}>{p.label}</a></li>)}
+        </ul>
+      </div>
+
+      <div class="footer-col">
         <div class="footer-col-title">Product</div>
         <ul>
-          <li><a href={withBase("/platform")}>Platform</a></li>
           <li><a href={withBase("/solutions")}>Solutions</a></li>
           <li><a href={withBase("/pricing")}>Plans</a></li>
           <li><a href={withBase("/scan")}>Scan your domain</a></li>
@@ -56,7 +64,6 @@ const year = new Date().getFullYear();
           <li><a href={withBase("/blog")}>Blog</a></li>
           <li><a href={withBase("/changelog")}>Changelog</a></li>
           <li><a href={withBase("/security")}>Security</a></li>
-          <li><a href={withBase("/abuse-mailbox")}>Abuse Mailbox</a></li>
           <li><a href={withBase("/status")}>Status</a></li>
           <li><a href={withBase("/report-abuse")}>Report Abuse</a></li>
         </ul>

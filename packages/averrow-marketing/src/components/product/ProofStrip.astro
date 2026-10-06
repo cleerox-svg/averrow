@@ -1,0 +1,85 @@
+---
+/*
+ * A row of live aggregate numbers, always dated, or nothing at all.
+ *
+ * Values come from src/data/stats.json (the build-time snapshot of the public
+ * stats endpoint, written by scripts/fetch-stats.mjs) through the same helpers
+ * the homepage uses (src/lib/proof.ts), so a page never shows a number the
+ * homepage would not. A stat whose value is missing is dropped; if none
+ * resolve, or the snapshot has no valid date, the whole strip is omitted.
+ * There are deliberately no static fallbacks here (no "40+", no "24/7"): the
+ * one fallback that exists (lookalikes_found_30d) is a published figure that
+ * lookalikes30dLabel already governs.
+ *
+ * Props: stats (ProofKey[], in display order), heading (optional).
+ * Disclosure: counts only; "lookalikes" is "found", never "newly registered".
+ */
+import liveStats from "../../data/stats.json";
+import { lookalikes30dLabel, utcDate } from "../../lib/proof";
+import type { ProofKey } from "./types";
+
+interface Props {
+  stats: ProofKey[];
+  heading?: string;
+}
+const { stats, heading = "The platform, by the numbers" } = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const live = liveStats.live;
+
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+
+const resolve: Record<ProofKey, { value: string | null; label: string }> = {
+  threats: { value: nonEmpty(liveStats.threats_detected), label: "threats tracked" },
+  operations: { value: nonEmpty(liveStats.proof?.operations_tracked), label: "active operations" },
+  brands: { value: nonEmpty(liveStats.proof?.monitored_brands), label: "brands under continuous monitoring" },
+  lookalikes: {
+    value: lookalikes30dLabel(live.lookalikes_found_30d, liveStats.fallbacks?.lookalikes_found_30d),
+    label: "registered lookalike domains found in the last 30 days",
+  },
+  providers: { value: nonEmpty(liveStats.providers_mapped), label: "hosting providers mapped" },
+};
+
+const items = stats.map((k) => ({ key: k, ...resolve[k] })).filter((i): i is { key: ProofKey; value: string; label: string } => !!i.value);
+const stamp = utcDate(liveStats.generated_at);
+const show = items.length > 0 && !!stamp;
+---
+
+{show && (
+  <section class="pst" aria-label={heading} data-proof-strip>
+    <dl class="pst-grid">
+      {items.map((i) => (
+        <div class="pst-i" data-proof-stat={i.key}>
+          <dt>{i.label}</dt>
+          <dd>{i.value}</dd>
+        </div>
+      ))}
+    </dl>
+    <p class="pst-f">
+      <time datetime={liveStats.generated_at}>As of {stamp}</time>
+      <span aria-hidden="true">&middot;</span>
+      <a href={`${base}/resources/methodology`}>How we count each number</a>
+    </p>
+  </section>
+)}
+
+<style>
+  .pst { max-width: 1280px; margin: 0 auto; padding: 24px 24px 8px; display: grid; gap: 12px; }
+  .pst-grid {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .pst-i { background: var(--bg-secondary); padding: 14px 16px; display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 4px; min-width: 0; }
+  .pst-i dd { margin: 0; font: 800 26px/1.1 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .pst-i dt { font-size: 13px; line-height: 1.4; color: var(--text-secondary); }
+  .pst-f { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font: 500 12px var(--font-mono); color: var(--text-secondary); }
+  .pst-f a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .pst-f a:hover { border-bottom-color: var(--accent); }
+  @media (max-width: 640px) { .pst { padding: 16px 16px 4px; } }
+</style>

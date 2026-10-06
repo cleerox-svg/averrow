@@ -3,9 +3,12 @@
  * homepage hero chips and the Coverage section (Section 4), so names and plan
  * tags cannot drift apart. Plans mirror src/pages/pricing.astro.
  *
- * `link` is the closest EXISTING page that actually describes the surface
- * (path relative to the site base; `#compare` is the pricing comparison
- * table). Dedicated pages come in a later section. Null = no honest target.
+ * `link` is the page that describes the surface (path relative to the site
+ * base; `#compare` is the pricing comparison table). The eight Platform pages
+ * (Section 8) are /platform/lookalike-domains, /impersonation, /threat-detection,
+ * /email-security, /takedowns, /abuse-mailbox and /campaign-intelligence, plus
+ * the /platform overview. Apps still points at the plans comparison until the
+ * Impersonation page (phase 2) carries an app-store section. Null = no honest target.
  */
 
 export type CoverageKey = "lookalike" | "tls" | "email" | "social" | "executive" | "apps" | "darkweb" | "abuse";
@@ -32,14 +35,14 @@ export const COVERAGE: readonly CoverageSurface[] = [
     name: "Lookalike domains",
     plan: "professional",
     blurb: "Character-swap and brand-plus-keyword domains, checked when they appear and re-checked until they're gone.",
-    link: "/platform/threat-detection#lookalike",
+    link: "/platform/lookalike-domains",
   },
   {
     key: "tls",
     name: "TLS certificates",
     plan: "professional",
     blurb: "Certificate-transparency checks every hour for certificates issued to brand-like names.",
-    link: "/platform/threat-detection#what-we-monitor",
+    link: "/platform/lookalike-domains#certificates",
   },
   {
     key: "email",
@@ -53,14 +56,14 @@ export const COVERAGE: readonly CoverageSurface[] = [
     name: "Social profiles",
     plan: "professional",
     blurb: "Fake accounts and handle squatting on six major networks.",
-    link: "/platform/social-monitoring",
+    link: "/platform/impersonation",
   },
   {
     key: "executive",
     name: "Executive impersonation",
     plan: "professional",
     blurb: "Accounts using your executives' names, flagged when they aren't their official handles.",
-    link: "/platform/social-monitoring",
+    link: "/platform/impersonation",
   },
   {
     key: "apps",
@@ -81,7 +84,7 @@ export const COVERAGE: readonly CoverageSurface[] = [
     name: "Abuse mailbox",
     plan: "enterprise",
     blurb: "A branded inbox for suspicious emails, classified automatically and fed into your threat queue.",
-    link: "/abuse-mailbox",
+    link: "/platform/abuse-mailbox",
   },
 ];
 
