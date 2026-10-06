@@ -1,573 +1,249 @@
 ---
 /*
- * Abuse Mailbox product page. Customer-branded report-fraud inbox with
- * automated classification and automated response. Self-contained: hero, how-it-
- * works, #setup (forwarding guide — the tenant UI deep-links here), what
- * you get, CTA.
+ * /platform/abuse-mailbox (Section 8, phase 2B). Built on the product-page kit
+ * in src/components/product/. Enterprise.
  *
- * Copy is non-proprietary per CLAUDE.md §9b — no internal agent codenames,
- * no infra detail.
+ * Disclosure (docs/DISCLOSURE_REGISTER.md L32, §3.2): the alias is a dedicated
+ * address in the form verify-<slug>@averrow.com (no address on the customer's own
+ * domain, G31). Reporters get an instant acknowledgement and a verdict in about
+ * two minutes; replies only go to reporters whose own mail passes authentication
+ * (backscatter guard). No "AI decides", no model, cap or rule detail. Phishing
+ * confirmed by the rules is promoted to a threat and a takedown is drafted, which
+ * waits for approval or the customer's signed rules. The mailbox page replaces the
+ * old callback lead form with the standard CTA pair. Sample: fictional brand Acme,
+ * `.example` domains only. The #setup section is deep-linked from the tenant app.
  */
-import Layout from "../../layouts/Layout.astro";
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import StepList from "../../components/product/StepList.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import { LOGIN_HREF } from "../../lib/nav";
+import type { ScopeRow, Step } from "../../components/product/types";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const steps: Step[] = [
+  {
+    title: "Forward",
+    text: "Customers and staff forward suspicious email to your address. Each reporter gets an instant acknowledgement.",
+    output: {
+      label: "Sample report received",
+      rows: [{ text: "Report received", status: "Forwarded to verify-acme@averrow.com", pill: "Acknowledged", tone: "ok" }],
+    },
+  },
+  {
+    title: "Triage",
+    text: "We unpack the original message, read SPF, DKIM and DMARC from the forwarded headers, extract its links and classify it.",
+    output: {
+      label: "Sample triage findings",
+      rows: [
+        { text: "Sender authentication", status: "SPF and DKIM failed", pill: "Failed", tone: "high" },
+        { text: "Matches a brand you monitor", pill: "Matched", tone: "new" },
+      ],
+    },
+  },
+  {
+    title: "Resolve",
+    text: "The reporter gets a verdict in about two minutes. Phishing that our rules confirm becomes a threat, and a takedown is drafted for your approval.",
+    output: {
+      label: "Sample outcome",
+      rows: [
+        { text: "acme-secure-login.example", mono: true, status: "Added to your threat feed", pill: "Threat", tone: "high" },
+        { text: "Takedown draft", status: "Evidence summary attached", pill: "Awaiting approval", tone: "hold" },
+      ],
+    },
+  },
+];
+
+const setup = [
+  {
+    title: "We provision your address.",
+    text: "A dedicated report address for your organisation, in the form verify-yourname@averrow.com. It is live as soon as it exists.",
+  },
+  {
+    title: "Share it.",
+    text: "Publish it where customers report fraud, and set staff to forward anything suspicious.",
+  },
+  {
+    title: "Forward suspicious mail.",
+    text: "Each report is acknowledged at once. Verdicts and escalations appear in your console.",
+  },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Your address",
+    covered: "A dedicated address for your organisation. Reports route straight into your console.",
+    notCovered: "An address on your own domain.",
+  },
+  {
+    area: "Reporters",
+    covered: "An instant acknowledgement, then a verdict in about two minutes.",
+    notCovered: "A reply to a sender whose own mail fails authentication. We never write back to forged addresses.",
+  },
+  {
+    area: "Reading each report",
+    covered: "The original message unpacked from the forward, its links extracted, and SPF, DKIM and DMARC read from the forwarded headers.",
+    notCovered: "Certainty. A verdict is a classification, and you decide what to act on.",
+  },
+  {
+    area: "Threats and takedowns",
+    covered: "Phishing that our rules confirm is promoted to a threat, matched to the brands you monitor, with a takedown drafted and waiting for your approval.",
+    notCovered: "Filing anything without your approval or your signed rules.",
+  },
+  {
+    area: "Noise control",
+    covered: "Per-sender throttling, so one sender can't flood the inbox.",
+    notCovered: "Replacing your mail filtering. The mailbox handles what people report.",
+  },
+  {
+    area: "Intelligence",
+    covered: "A rollup of what your reports are surfacing: threats, providers and takedowns.",
+    notCovered: "Other organisations' reports. The rollup covers your own.",
+  },
+];
 ---
 
-<Layout
+<ProductPage
   title="Abuse Mailbox — Averrow"
-  description="Give your customers and staff one address to report suspicious email. Every report is classified automatically, with an automated second opinion on borderline cases. Confirmed phishing moves into your threat feed."
+  description="One address for customers and staff to report suspicious email. Each report is acknowledged at once, classified, and answered with a verdict. Confirmed phishing becomes a threat with a takedown drafted for your approval."
+  crumb="Abuse mailbox"
 >
-  <section class="am-hero">
-    <div class="container">
-      <div class="am-eyebrow">Abuse Mailbox</div>
-      <h1>One address to report fraud.<br /><span class="hero-accent">Automatic triage.</span></h1>
-      <p>
-        Give your customers and team a single inbox to forward suspicious
-        email. Every report is acknowledged instantly and classified
-        automatically, with an automated second opinion on borderline
-        cases. Confirmed phishing moves into your threat feed, and the
-        reporter gets a clear verdict back. Your abuse inbox becomes a
-        live detection feed instead of an unread folder.
-      </p>
+  <ProductHero
+    surface="abuse"
+    title="One address to report suspicious email."
+    sub="Customers and staff forward it. Each report is acknowledged at once, and the reporter gets a verdict back in about two minutes. Confirmed phishing becomes a threat with a takedown drafted for your approval."
+  >
+    <SampleFrame slot="sample" label="Sample determination email" footer="Takedown drafted, waiting for your approval">
+      <div class="ae">
+        <dl class="ae-meta">
+          <div><dt>From</dt><dd>Averrow Abuse Triage</dd></div>
+          <div><dt>Subject</dt><dd>Averrow &middot; Phishing confirmed (Ref: 3F9A2C1B)</dd></div>
+        </dl>
+        <div class="ae-body">
+          <span class="ae-verdict">Phishing confirmed</span>
+          <p class="ae-lead">The message you reported is a credential-phishing attempt impersonating your brand. Here's what we found.</p>
+          <h3 class="ae-h">What we found</h3>
+          <ul class="ae-list" role="list">
+            <li>Sender authentication failed (SPF and DKIM)</li>
+            <li>A link to <span class="ae-mono">acme-secure-login.example</span>, a lookalike of your domain</li>
+            <li>Matches a brand you monitor</li>
+          </ul>
+          <h3 class="ae-h">Next steps</h3>
+          <ul class="ae-list" role="list">
+            <li>Don't open the link, and warn anyone who may have.</li>
+            <li>We've added it to your threat feed and drafted a takedown for your approval.</li>
+          </ul>
+        </div>
+      </div>
+    </SampleFrame>
+  </ProductHero>
 
-      <div class="am-flow" aria-label="How a report moves through the mailbox">
-        <div class="am-flow-step">
-          <div class="am-flow-num">01</div>
-          <div class="am-flow-name">Forwarded</div>
-          <div class="am-flow-desc">Suspicious email lands at your alias</div>
-        </div>
-        <div class="am-flow-arrow" aria-hidden="true">&rarr;</div>
-        <div class="am-flow-step">
-          <div class="am-flow-num">02</div>
-          <div class="am-flow-name">Triaged</div>
-          <div class="am-flow-desc">Classified automatically, threat extracted</div>
-        </div>
-        <div class="am-flow-arrow" aria-hidden="true">&rarr;</div>
-        <div class="am-flow-step">
-          <div class="am-flow-num">03</div>
-          <div class="am-flow-name">Resolved</div>
-          <div class="am-flow-desc">Reporter gets a verdict; you get a threat</div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Forward, triage, resolve."
+    lede="Every forwarded message is checked, not just stored."
+  >
+    <StepList steps={steps} where="abuse" />
+  </ProductSection>
 
-  <section class="am-section" id="how">
-    <div class="am-row">
-      <div class="am-text">
-        <div class="section-label">How it works</div>
-        <h2>From forwarded email to confirmed threat</h2>
-        <p>
-          The mailbox doesn&rsquo;t just store reports &mdash; it checks
-          them. Each forwarded message is unpacked down to the original
-          suspicious email, then classified automatically.
-        </p>
-        <ul class="am-features">
-          <li>Unpacks the original message from inside the forward</li>
-          <li>Extracts URLs, attachments, and sender authentication (SPF / DKIM / DMARC)</li>
-          <li>Automatic classification, with an automated second opinion on borderline cases</li>
-          <li>Confirmed phishing moves into your threat feed</li>
-          <li>Matches the report against the brands you already monitor</li>
-        </ul>
-      </div>
-      <div class="am-visual">
-        <div class="am-eyebrow-sm">The determination email</div>
-        <div class="am-email">
-          <div class="am-email-meta">
-            <div class="am-email-meta-row"><span>From</span><span class="am-mono">Averrow Abuse Triage</span></div>
-            <div class="am-email-meta-row"><span>Subject</span><span class="am-mono">Averrow &middot; Phishing confirmed (Ref: 3F9A2C1B)</span></div>
-          </div>
-          <div class="am-email-body">
-            <div class="am-email-brand">
-              <span class="am-email-mark" aria-hidden="true">
-                <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
-                  <rect width="32" height="32" rx="6" fill="#0C1220" />
-                  <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="#C83C3C" />
-                  <path d="M14.5 22H17.5L16 18Z" fill="#0C1220" />
-                </svg>
-              </span>
-              <span class="am-email-brandname">Averrow Abuse Triage</span>
-            </div>
-            <div class="am-email-verdict">Phishing &mdash; confirmed</div>
-            <p class="am-email-lead">The message you reported is a credential-phishing attempt impersonating your brand. Here&rsquo;s what we found.</p>
-            <div class="am-email-section-label">What we found</div>
-            <ul class="am-email-list">
-              <li>Sender authentication failed (SPF and DKIM)</li>
-              <li>2 credential-harvesting links on a 3-day-old lookalike domain</li>
-              <li>Matches a brand you monitor</li>
-            </ul>
-            <div class="am-email-section-label">Recommended next steps</div>
-            <ul class="am-email-list">
-              <li>Don&rsquo;t interact with the links; warn recipients who may have</li>
-              <li>We&rsquo;ve added it to your threat feed and flagged it for takedown</li>
-            </ul>
-            <div class="am-email-foot">Ref 3F9A2C1B &middot; averrow.com &middot; Unsubscribe</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="setup"
+    eyebrow="Setup"
+    heading="Live in three steps."
+    lede="No software to install and no inbox to migrate. Getting protected is forwarding mail."
+  >
+    <ol class="am-setup" role="list">
+      {setup.map((s, i) => (
+        <li>
+          <span class="am-n" aria-hidden="true">{i + 1}</span>
+          <div><b>{s.title}</b><span>{s.text}</span></div>
+        </li>
+      ))}
+    </ol>
+    <p class="am-cust">
+      Already a customer? Your address and forwarding instructions are in the Abuse Mailbox module in your console.
+      <a href={`${base}${LOGIN_HREF}`}>Log in</a>
+    </p>
+  </ProductSection>
 
-  <section class="am-section am-alt">
-    <div class="container am-grid-wrap">
-      <div class="section-label" style="text-align:center;">What you get</div>
-      <h2 class="am-center-h2">An abuse inbox that works for you</h2>
-      <div class="am-grid">
-        <div class="am-card">
-          <div class="am-card-title">Your own branded alias</div>
-          <div class="am-card-desc">A dedicated report address for your customers and staff &mdash; reports route straight into your tenant.</div>
-        </div>
-        <div class="am-card">
-          <div class="am-card-title">Auto-acknowledgement</div>
-          <div class="am-card-desc">Every reporter gets an instant confirmation, then a determination once their report is triaged.</div>
-        </div>
-        <div class="am-card">
-          <div class="am-card-title">Unified inbox</div>
-          <div class="am-card-desc">Status workflow, classification filters, and search across every report &mdash; with full message drill-down.</div>
-        </div>
-        <div class="am-card">
-          <div class="am-card-title">Threat promotion</div>
-          <div class="am-card-desc">Confirmed phishing becomes a tracked threat automatically &mdash; correlated with the brands you monitor.</div>
-        </div>
-        <div class="am-card">
-          <div class="am-card-title">Noise control</div>
-          <div class="am-card-desc">Per-sender throttling and automatic classification keep the inbox signal, not spam.</div>
-        </div>
-        <div class="am-card">
-          <div class="am-card-title">Intel rollup</div>
-          <div class="am-card-desc">See the campaigns, providers, and takedowns your customers&rsquo; reports are surfacing.</div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="scope"
+    eyebrow="What you get"
+    heading="What the mailbox does, and what it doesn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Abuse mailbox: covered and not covered" />
+  </ProductSection>
 
-  <section class="am-section" id="setup">
-    <div class="am-row reversed">
-      <div class="am-text">
-        <div class="section-label">Setup</div>
-        <h2>Live in three steps</h2>
-        <p>
-          Once your alias is provisioned, getting protected is as simple as
-          forwarding mail. No software to install, no inbox migration.
-        </p>
-        <ol class="am-steps">
-          <li><strong>Get your alias.</strong> We provision a dedicated report address for your brand (for example, <span class="am-mono">report@yourbrand</span>) inside your tenant.</li>
-          <li><strong>Share it.</strong> Publish it where customers report fraud, and set staff to forward anything suspicious.</li>
-          <li><strong>Forward suspicious mail.</strong> Each report is acknowledged instantly; verdicts and escalations appear in your inbox &mdash; usually within minutes.</li>
-        </ol>
-        <div class="am-callout">Already a customer? Your alias and forwarding instructions live in the Abuse Mailbox module inside your dashboard.</div>
-      </div>
-      <div class="am-visual">
-        <div class="am-eyebrow-sm">Setup Checklist</div>
-        <div class="am-check"><span class="am-check-mark">&#10003;</span> Branded report alias provisioned</div>
-        <div class="am-check"><span class="am-check-mark">&#10003;</span> Forwarding instructions in-app</div>
-        <div class="am-check"><span class="am-check-mark">&#10003;</span> Instant auto-acknowledgement</div>
-        <div class="am-check"><span class="am-check-mark">&#10003;</span> Automatic classification of every report</div>
-        <div class="am-check am-check-last"><span class="am-check-mark">&#10003;</span> Verdicts + threat promotion</div>
-      </div>
-    </div>
-  </section>
+  <RelatedSurfaces
+    current="/platform/abuse-mailbox"
+    include={["/platform/takedowns", "/platform/email-security", "/platform/threat-detection"]}
+    heading="Where reports go next"
+  />
 
-  <section class="am-cta" id="contact">
-    <div class="container">
-      <h2>Turn your abuse inbox into a detection feed.</h2>
-      <p>Want it for your brand? Leave your details and the Averrow team will reach out about the Abuse Mailbox &mdash; a quick call or a written reply, whichever you prefer.</p>
-      <form id="amLeadForm" class="am-lead-form" novalidate>
-        <input type="text" id="amName" name="name" placeholder="Your name" autocomplete="name" aria-label="Your name" required />
-        <input type="email" id="amEmail" name="email" placeholder="Work email" autocomplete="email" aria-label="Work email" required />
-        <!-- Honeypot: hidden from real users; bots fill it and get silently dropped server-side. -->
-        <div class="hp-field" aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden;">
-          <label for="amCompanyWebsite">Company Website</label>
-          <input type="text" id="amCompanyWebsite" name="company_website" tabindex="-1" autocomplete="off" />
-        </div>
-        <button type="submit" class="btn btn-primary" id="amLeadBtn">Request a callback</button>
-      </form>
-      <div class="am-lead-msg" id="amLeadMsg" role="status" aria-live="polite"></div>
-    </div>
-  </section>
-</Layout>
+  <PageCTA
+    heading="Turn your abuse inbox into a detection feed."
+    body="Run a free domain scan, no signup. Or book a demo and we'll show you the mailbox and set up your address."
+  />
+</ProductPage>
 
 <style>
-  .am-hero {
-    padding: 5rem 0 3rem;
-    text-align: center;
-    background: var(--gradient-hero);
-    position: relative;
-    overflow: hidden;
-  }
-  .am-hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(34px, 5vw, 60px);
-    font-weight: 800;
-    margin-bottom: 1rem;
-    line-height: 1.06;
-  }
-  .hero-accent { color: var(--amber-text); }
-  .am-hero p {
-    font-size: 18px;
-    color: var(--text-secondary);
-    max-width: 640px;
-    margin: 0 auto 2rem;
-    line-height: 1.6;
-  }
-  .am-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 0.85rem;
-  }
-  .am-cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
-
-  /* Flow strip */
-  .am-flow {
-    max-width: 760px;
-    margin: 2.75rem auto 0;
-    display: flex;
-    align-items: stretch;
-    justify-content: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-  .am-flow-step {
-    flex: 1;
-    min-width: 180px;
-    padding: 1.1rem 1rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: var(--glass-card-bg, rgba(22,30,48,0.55));
-    backdrop-filter: blur(12px) saturate(160%);
-    -webkit-backdrop-filter: blur(12px) saturate(160%);
-    text-align: left;
-  }
-  .am-flow-num {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--amber-text);
-    letter-spacing: 0.1em;
-  }
-  .am-flow-name {
-    font-family: var(--font-display);
-    font-size: 16px;
-    font-weight: 700;
-    margin: 6px 0 4px;
-  }
-  .am-flow-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.45; }
-  .am-flow-arrow { display: flex; align-items: center; color: var(--text-tertiary); font-size: 20px; }
-  @media (max-width: 640px) { .am-flow-arrow { display: none; } }
-
-  /* Sections */
-  .am-section { padding: 3.25rem 0; position: relative; }
-  .am-section.am-alt { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%); }
-  .am-row {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 2rem;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2.5rem;
-    align-items: center;
-  }
-  .am-row.reversed { direction: rtl; }
-  .am-row.reversed > * { direction: ltr; }
-  .section-label {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--accent, var(--amber));
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    margin-bottom: 0.75rem;
-  }
-  .am-text h2 {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 34px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .am-text p { font-size: 16px; color: var(--text-secondary); line-height: 1.7; margin-bottom: 1.5rem; }
-  .am-features { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-  .am-features li { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 15px; color: var(--text-secondary); line-height: 1.5; }
-  .am-features li::before { content: "\2713"; color: var(--green); font-weight: 700; flex-shrink: 0; }
-  .am-steps { padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.85rem; }
-  .am-steps li { font-size: 15px; color: var(--text-secondary); line-height: 1.6; }
-  .am-steps strong { color: var(--text-primary); }
-  .am-callout {
-    background: var(--accent-bg, rgba(229,168,50,0.08));
-    border: 1px solid rgba(229,168,50,0.18);
-    border-radius: var(--radius-md);
-    padding: 1rem 1.25rem;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    margin-top: 1.5rem;
-  }
-
-  .am-visual {
-    background: rgba(14,26,43,0.55);
-    border: 1px solid rgba(120,160,200,0.12);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-  :global([data-theme="light"]) .am-visual {
-    background: rgba(255,255,255,0.72);
-    border-color: rgba(26,31,46,0.08);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-  }
-  .am-eyebrow-sm {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 600;
-    color: var(--text-tertiary);
-    margin-bottom: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-  .am-mono { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-secondary); }
-  /* Determination email mockup (Averrow-branded — the real artifact) */
-  .am-email {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    background: var(--bg-tertiary);
-  }
-  .am-email-meta {
-    padding: 0.7rem 1rem;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255,255,255,0.02);
-  }
-  :global([data-theme="light"]) .am-email-meta { background: rgba(0,0,0,0.02); }
-  .am-email-meta-row {
-    display: flex;
-    gap: 0.6rem;
-    font-size: 0.76rem;
-    padding: 0.12rem 0;
-  }
-  .am-email-meta-row > span:first-child {
-    color: var(--text-tertiary);
-    text-transform: uppercase;
+  .ae { display: grid; gap: 12px; }
+  .ae-meta { margin: 0; display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .ae-meta > div { display: flex; gap: 10px; font-size: 13px; min-width: 0; }
+  .ae-meta dt { flex: none; min-width: 58px; font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-meta dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+  .ae-body { display: grid; gap: 8px; justify-items: start; }
+  .ae-verdict {
+    font: 700 12px var(--font-mono);
     letter-spacing: 0.06em;
-    font-size: 0.66rem;
-    min-width: 3.4rem;
-    padding-top: 1px;
-  }
-  .am-email-body { padding: 1.1rem 1.25rem 1rem; }
-  .am-email-brand { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.9rem; }
-  .am-email-mark { display: inline-flex; box-shadow: 0 0 16px rgba(200,60,60,0.35); border-radius: 6px; }
-  .am-email-brandname {
-    font-family: var(--font-display);
-    font-weight: 700;
-    font-size: 0.82rem;
-    letter-spacing: 0.04em;
-    color: var(--text-primary);
-  }
-  .am-email-verdict {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--sev-critical-text);
-    background: rgba(200,60,60,0.08);
-    border: 1px solid rgba(200,60,60,0.25);
-    border-radius: 100px;
-    padding: 0.25rem 0.7rem;
-    margin-bottom: 0.75rem;
+    color: var(--sev-high-text);
+    background: color-mix(in srgb, var(--sev-high) 12%, transparent);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 1px 10px;
   }
-  .am-email-lead { font-size: 0.86rem; color: var(--text-secondary); line-height: 1.55; margin-bottom: 1rem; }
-  .am-email-section-label {
-    font-family: var(--font-mono);
-    font-size: 0.64rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-tertiary);
-    margin: 0.75rem 0 0.4rem;
-  }
-  .am-email-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
-  .am-email-list li {
-    position: relative;
-    padding-left: 1.1rem;
-    font-size: 0.82rem;
-    color: var(--text-secondary);
-    line-height: 1.45;
-  }
-  .am-email-list li::before { content: "\2022"; position: absolute; left: 0.2rem; color: var(--red); }
-  .am-email-foot {
-    margin-top: 1.1rem;
-    padding-top: 0.7rem;
-    border-top: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-size: 0.66rem;
-    color: var(--text-tertiary);
-    letter-spacing: 0.03em;
-  }
-  .am-check {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.65rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.86rem;
-    color: var(--text-secondary);
-  }
-  .am-check-last { border-bottom: none; }
-  .am-check-mark { color: var(--green-text); font-weight: 700; }
+  .ae-lead { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-primary); }
+  .ae-h { margin: 6px 0 0; font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-list { list-style: disc; margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .ae-mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); overflow-wrap: anywhere; }
 
-  /* What you get grid */
-  .am-grid-wrap { max-width: 1240px; }
-  .am-center-h2 {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 34px);
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .am-grid {
+  .am-setup { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .am-setup li {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-  .am-card {
-    background: rgba(14,26,43,0.5);
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.4rem 1.25rem;
-    transition: all 0.25s;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    border-radius: 12px;
+    padding: 16px;
   }
-  :global([data-theme="light"]) .am-card {
-    background: rgba(255,255,255,0.6);
-    border-color: rgba(226,221,213,0.5);
+  .am-setup li > div { display: grid; gap: 6px; min-width: 0; }
+  .am-n {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    font: 600 12px var(--font-mono);
+    color: var(--text-secondary);
   }
-  .am-card:hover {
-    border-color: rgba(229,168,50,0.4);
-    transform: translateY(-4px);
-    box-shadow: 0 0 24px rgba(229,168,50,0.1), 0 8px 24px rgba(0,0,0,0.2);
-  }
-  .am-card-title { font-size: 15px; font-weight: 700; margin-bottom: 0.4rem; }
-  .am-card-desc { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+  .am-setup b { font: 700 16px var(--font-display); color: var(--text-primary); }
+  .am-setup span:not(.am-n) { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .am-cust { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .am-cust a { margin-left: 4px; color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .am-cust a:hover { border-bottom-color: var(--accent); }
 
-  /* CTA */
-  .am-cta { padding: 3.25rem 0; text-align: center; }
-  .am-cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(26px, 3vw, 34px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .am-cta p { color: var(--text-secondary); max-width: 520px; margin: 0 auto 2rem; }
-
-  /* Lead-gen form */
-  .am-lead-form {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: center;
-    flex-wrap: wrap;
-    max-width: 640px;
-    margin: 0 auto;
-  }
-  .am-lead-form input {
-    flex: 1 1 200px;
-    min-width: 0;
-    padding: 0.75rem 1rem;
-    font-family: var(--font-body);
-    font-size: 0.92rem;
-    color: var(--text-primary);
-    background: var(--bg-tertiary);
-    border: 1.5px solid var(--border);
-    border-radius: var(--radius-sm);
-    outline: none;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .am-lead-form input::placeholder { color: var(--text-tertiary); }
-  .am-lead-form input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-bg);
-  }
-  .am-lead-form .btn { flex: 0 0 auto; }
-  .am-lead-msg {
-    margin: 1rem auto 0;
-    max-width: 520px;
-    font-size: 0.88rem;
-    font-weight: 500;
-    min-height: 1.2em;
-  }
-  .am-lead-msg.success { color: var(--green-text); }
-  .am-lead-msg.error { color: var(--red-text); }
-
-  @media (max-width: 768px) {
-    .am-row, .am-row.reversed { grid-template-columns: 1fr; gap: 2rem; direction: ltr; }
-    .am-grid { grid-template-columns: 1fr; }
-    .am-lead-form { flex-direction: column; }
-    .am-lead-form .btn { width: 100%; justify-content: center; }
+  @media (max-width: 900px) {
+    .am-setup { grid-template-columns: minmax(0, 1fr); }
   }
 </style>
-
-<script>
-  // Abuse Mailbox lead capture. Reuses the existing /api/contact endpoint
-  // (same as the Contact page) — tagged interest='abuse-mailbox' with an
-  // auto-filled message so the visitor only provides name + work email.
-  const form = document.getElementById("amLeadForm") as HTMLFormElement | null;
-  const btn = document.getElementById("amLeadBtn") as HTMLButtonElement | null;
-  const msg = document.getElementById("amLeadMsg") as HTMLElement | null;
-
-  if (form && btn && msg) {
-    const defaultLabel = btn.textContent ?? "Request a callback";
-    form.addEventListener("submit", async (e: Event) => {
-      e.preventDefault();
-      msg.className = "am-lead-msg";
-
-      const name = (form.elements.namedItem("name") as HTMLInputElement)?.value.trim() ?? "";
-      const email = (form.elements.namedItem("email") as HTMLInputElement)?.value.trim() ?? "";
-      const company_website = (form.elements.namedItem("company_website") as HTMLInputElement)?.value ?? "";
-
-      if (!name || !email) {
-        msg.textContent = "Please enter your name and work email.";
-        msg.classList.add("error");
-        return;
-      }
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        msg.textContent = "Please enter a valid email address.";
-        msg.classList.add("error");
-        return;
-      }
-
-      btn.disabled = true;
-      btn.textContent = "Sending…";
-      try {
-        const res = await fetch("/api/contact", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name,
-            email,
-            interest: "abuse-mailbox",
-            message: "Requested a callback about the Abuse Mailbox from the /platform/abuse-mailbox page.",
-            company_website,
-          }),
-        });
-        if (res.ok) {
-          msg.textContent = "Thanks — we'll be in touch within one business day.";
-          msg.classList.add("success");
-          form.reset();
-        } else {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          msg.textContent = data.error ?? "Something went wrong. Please try again.";
-          msg.classList.add("error");
-        }
-      } catch {
-        msg.textContent = "Network error. Please check your connection and try again.";
-        msg.classList.add("error");
-      } finally {
-        btn.disabled = false;
-        btn.textContent = defaultLabel;
-      }
-    });
-  }
-</script>

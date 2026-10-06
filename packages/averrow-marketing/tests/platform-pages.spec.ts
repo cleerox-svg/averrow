@@ -41,9 +41,15 @@ const KIT_PAGES = [
   { path: "/platform", h1: /every place your brand is impersonated/i, crumb: false, plan: null as string | null },
   { path: "/platform/lookalike-domains", h1: /know when someone registers your name/i, crumb: true, plan: "Professional+" },
   { path: "/platform/takedowns", h1: /you set the rules\. we do the filing\./i, crumb: true, plan: "Professional+" },
+  { path: "/platform/email-security", h1: /know your email grade before an attacker does/i, crumb: true, plan: "Professional+" },
+  { path: "/platform/abuse-mailbox", h1: /one address to report suspicious email/i, crumb: true, plan: "Enterprise" },
+  // Phase 2A.
+  { path: "/platform/impersonation", h1: /find the accounts pretending to be you/i, crumb: true, plan: "Professional+" },
+  { path: "/platform/threat-detection", h1: /hear it from us before your customers do/i, crumb: true, plan: null as string | null },
+  { path: "/platform/campaign-intelligence", h1: /see the operation, not just the symptom/i, crumb: true, plan: "Enterprise" },
 ];
 /** Pages moved or renamed in phase 1 (content is rewritten in phase 2). */
-const MOVED_PAGES = ["/platform/impersonation", "/platform/abuse-mailbox"];
+const MOVED_PAGES: string[] = [];
 
 async function setTheme(page: Page, theme: "dark" | "light") {
   await page.addInitScript((t) => {
@@ -168,6 +174,109 @@ test.describe("kit pages render with the CTA pair", () => {
     await expect(page.locator(".st-table thead th")).toHaveText([/^Area$/, /^\+Covered$/, /^.Not covered$/]);
     // Honest limit: never promise every variant within a day.
     await expect(page.locator(".st-table")).toContainText("A promise that every generated variant is checked within a day.");
+  });
+});
+
+// ── phase 2A pages: impersonation, threat detection, campaign intelligence ──
+
+/** Phrases that must never appear on these pages (docs/DISCLOSURE_REGISTER.md L24-L34). */
+const PHASE_2A_BANNED: RegExp[] = [
+  /notices? when|know when it moves|alert you when an operation/i,
+  /evidence package/i,
+  /display name/i,
+  /\blogos?\b/i,
+  /registrar|registration (?:pattern|detail)/i,
+  /open phishing-feed|community feed/i,
+  /24\/7/,
+  /capability 0\d/i,
+  /de-?duplicat/i,
+  /infrastructure rows/i,
+  /homoglyph|tld swap/i,
+  /watch(?:ing)? the stream/i,
+  /\bregistered \d+ (?:hours?|days?) ago/i,
+];
+
+test.describe("phase 2A pages: structure and banned claims", () => {
+  test.use({ viewport: DESKTOP });
+
+  for (const p of ["/platform/impersonation", "/platform/threat-detection", "/platform/campaign-intelligence"]) {
+    test(`${p}: CTA pair, one hero sample, scope table, no banned phrases`, async ({ page }) => {
+      await open(page, p);
+      await expect(page.locator(".ph [data-cta-pair]")).toHaveCount(1);
+      await expect(page.locator(".pc [data-cta-pair]")).toHaveCount(1);
+      await expect(page.locator(".ph .sf")).toHaveCount(1);
+      await expect(page.locator(".ph .sf .sf-tag")).toHaveText("Illustrative");
+      await expect(page.locator(".st-table thead th")).toHaveText([/^Area$/, /^\+Covered$/, /^.Not covered$/]);
+      const text = (await page.locator(".pp").textContent()) ?? "";
+      for (const re of PHASE_2A_BANNED) expect(text, `${p} matched ${re}`).not.toMatch(re);
+      // "40+ sources" is allowed once, and nowhere on the proof strip.
+      expect((text.match(/40\+/g) ?? []).length).toBeLessThanOrEqual(1);
+      // No pricing.
+      expect(text).not.toMatch(/\$\s?\d|per month|\/mo\b/i);
+    });
+  }
+
+  test("/platform/impersonation: six networks, four anchored sections, executive limits", async ({ page }) => {
+    await open(page, "/platform/impersonation");
+    await expect(page.locator("#fake-profiles .imp-nets li")).toHaveText(["X", "LinkedIn", "Instagram", "TikTok", "GitHub", "YouTube"]);
+    for (const id of ["fake-profiles", "executives", "app-stores", "trademark", "scope"]) {
+      await expect(page.locator(`section#${id}`), `#${id}`).toHaveCount(1);
+    }
+    const exec = page.locator("#executives");
+    for (const n of ["X", "Instagram", "TikTok", "GitHub", "YouTube"]) await expect(exec).toContainText(n);
+    await expect(exec).not.toContainText(/linkedin/i);
+    await expect(exec).not.toContainText(/paste|leak/i);
+    await expect(exec).toContainText(/no photo or biometric data/i);
+    await expect(page.locator("#fake-profiles")).toContainText(/no photo, bio or follower analysis/i);
+    await expect(page.locator("#app-stores")).toContainText(/Apple App Store only/);
+    await expect(page.locator("#app-stores")).not.toContainText(/google play[^.]*\b(?:covered|monitored)\b(?!\.)/i);
+    await expect(page.locator("#trademark")).toContainText(/no new detection source/i);
+    // No ✓ tick table survives.
+    await expect(page.locator(".pp table:not(.st-table)")).toHaveCount(0);
+    expect(((await page.locator(".pp").textContent()) ?? "")).not.toMatch(/[\u2713\u2714]/);
+  });
+
+  test("/platform/threat-detection: about five sections, no feed table, links to lookalikes, hourly certificates", async ({ page }) => {
+    await open(page, "/platform/threat-detection");
+    expect(await page.locator(".pp .ps-sec").count()).toBeLessThanOrEqual(6);
+    await expect(page.locator(".pp table:not(.st-table)")).toHaveCount(0);
+    await expect(page.locator("#feeds")).toContainText("40+");
+    await expect(page.locator("#certificates")).toContainText("every hour");
+    await expect(page.locator("#certificates a[href$='/platform/lookalike-domains']")).toHaveCount(1);
+    await expect(page.locator("#dark-web")).toContainText(/paste sites and ransomware victim lists/i);
+    // Sample sits in the hero and shows a certificate time, not a registration age.
+    const hero = page.locator(".ph .sf");
+    await expect(hero).toContainText("Certificate");
+    await expect(hero).toContainText("Issued 36 hours ago");
+    await expect(hero).not.toContainText(/registered/i);
+    // No static stats: the numbers come from the dated strip only.
+    await expect(page.locator(".ph")).not.toContainText(/\b40\+|24\/7/);
+  });
+
+  test("/platform/campaign-intelligence: accessible cluster graph, takedown consent line", async ({ page }) => {
+    await open(page, "/platform/campaign-intelligence");
+    const svg = page.locator(".ph svg[role='img']");
+    await expect(svg).toHaveCount(1);
+    const labelled = (await svg.getAttribute("aria-labelledby")) ?? "";
+    expect(labelled.split(" ").length).toBe(2);
+    for (const id of labelled.split(" ")) expect(await svg.locator(`#${id}`).textContent(), `#${id}`).toMatch(/\S/);
+    await expect(page.locator(".ph .cmp-fig figcaption")).toContainText(/shared certificate and shared hosting/i);
+    await expect(svg).toContainText("Shared");
+    await expect(page.locator(".ph .sf")).toContainText("One operation");
+    await expect(page.locator("#takedowns")).toContainText("Nothing is filed without your approval or your signed rules");
+    await expect(page.locator("#takedowns")).toContainText(/revoke the authorization/i);
+    // Only domain and IP threats are linked; the page says so.
+    await expect(page.locator("#scope")).toContainText(/social accounts, apps, leak-site mentions and executive findings/i);
+  });
+
+  test("anchors named in coverage.ts exist", async ({ page }) => {
+    for (const [p, ids] of [
+      ["/platform/impersonation", ["fake-profiles", "executives", "app-stores", "trademark"]],
+      ["/platform/threat-detection", ["dark-web", "certificates"]],
+    ] as const) {
+      await open(page, p);
+      for (const id of ids) await expect(page.locator(`#${id}`), `${p}#${id}`).toHaveCount(1);
+    }
   });
 });
 
@@ -333,7 +442,7 @@ test.describe("ProofStrip", () => {
     ),
   );
 
-  for (const p of ["/platform", "/platform/lookalike-domains"]) {
+  for (const p of ["/platform", "/platform/lookalike-domains", "/platform/threat-detection", "/platform/campaign-intelligence"]) {
     test(`${p}: every number is dated and comes from stats.json`, async ({ page }) => {
       await open(page, p);
       const strip = page.locator("[data-proof-strip]");
@@ -405,14 +514,15 @@ test.describe("disclosure + data guards", () => {
       expect(text.length).toBeGreaterThan(500);
       for (const re of FORBIDDEN) expect(text, `${pg.path} matched ${re}`).not.toMatch(re);
       // Only the fictional .example world appears in samples.
-      const real = text.match(/\b[a-z0-9-]+\.(?:com|net|org|io|co|ca|app|dev|ai|info)\b/gi) ?? [];
+      // averrow.com is our own: the abuse-mailbox alias is verify-<name>@averrow.com.
+      const real = (text.match(/\b[a-z0-9-]+\.(?:com|net|org|io|co|ca|app|dev|ai|info)\b/gi) ?? []).filter((d) => d.toLowerCase() !== "averrow.com");
       expect(real, `${pg.path} shows real-looking domains`).toEqual([]);
     });
   }
 });
 
 /** Kit selectors for the type-size and contrast checks (excludes the reused Coverage / TakedownFlow). */
-const KIT_SCOPE = ".ph, .sf, .sl, .st, .pst, .rs, .pc, .ps-sec, .pv-stages, .pv-rate, .pv-int, .td-modes, .td-points, .td-flow, .td-end, .pp-crumb";
+const KIT_SCOPE = ".ph, .sf, .sl, .st, .pst, .rs, .pc, .ps-sec, .pv-stages, .pv-rate, .pv-int, .td-modes, .td-points, .td-flow, .td-end, .pp-crumb, .eg, .ae, .am-setup, .am-cust";
 
 test.describe("type size and contrast", () => {
   test.use({ viewport: DESKTOP });
@@ -499,5 +609,165 @@ test.describe("type size and contrast", () => {
         expect(result.low, "AA contrast failures").toEqual([]);
       });
     }
+  }
+});
+
+
+// ── phase 2B: /platform/email-security and /platform/abuse-mailbox ───────
+
+const ES = "/platform/email-security";
+const AM = "/platform/abuse-mailbox";
+
+/** WCAG contrast of an element's text against its effective (composited) background. */
+async function contrastOf(page: Page, selector: string) {
+  return page.locator(selector).first().evaluate((el) => {
+    const parse = (c: string) => {
+      const m = c.match(/^(?:rgba?|color)\(([^)]+)\)$/);
+      const p = m![1]!.replace("srgb", "").split(/[,\s/]+/).filter(Boolean).map(Number);
+      const srgb = c.startsWith("color(");
+      return { r: srgb ? p[0]! * 255 : p[0]!, g: srgb ? p[1]! * 255 : p[1]!, b: srgb ? p[2]! * 255 : p[2]!, a: p[3] ?? 1 };
+    };
+    const lum = (c: { r: number; g: number; b: number }) => {
+      const f = (v: number) => ((v / 255) <= 0.03928 ? v / 255 / 12.92 : (((v / 255) + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+    };
+    let bg = { r: 255, g: 255, b: 255, a: 1 };
+    const layers: Array<ReturnType<typeof parse>> = [];
+    for (let n: Element | null = el; n; n = n.parentElement) {
+      const c = parse(getComputedStyle(n).backgroundColor);
+      if (c.a > 0) layers.push(c);
+      if (c.a === 1) break;
+    }
+    for (const l of layers.reverse()) bg = { r: l.r * l.a + bg.r * (1 - l.a), g: l.g * l.a + bg.g * (1 - l.a), b: l.b * l.a + bg.b * (1 - l.a), a: 1 };
+    const fg = parse(getComputedStyle(el).color);
+    const L1 = lum(fg);
+    const L2 = lum(bg);
+    return { ratio: (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05), size: parseFloat(getComputedStyle(el).fontSize) };
+  });
+}
+
+test.describe("/platform/email-security", () => {
+  test.use({ viewport: DESKTOP });
+
+  test("hero sample is the labelled grade; no 'Capability 02' eyebrow", async ({ page }) => {
+    await open(page, ES);
+    const sample = page.locator(".ph .sf");
+    await expect(sample.locator(".sf-tag")).toHaveText("Illustrative");
+    await expect(sample).toContainText("BIMI");
+    await expect(sample.getByRole("img", { name: "Sample grade: A+" })).toBeVisible();
+    await expect(page.locator(".pp")).not.toContainText(/capability 0\d/i);
+  });
+
+  test("method copy matches the engine: BIMI present; no provider cards, 'resolves cleanly' or grade definitions", async ({ page }) => {
+    await open(page, ES);
+    const text = ((await page.locator(".pp").textContent()) ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/12\+ (common )?selectors/);
+    expect(text).toMatch(/10-lookup limit/);
+    expect(text).toMatch(/BIMI/);
+    expect(text).toMatch(/certificate is reachable/);
+    expect(text).toMatch(/reported separately from the grade/);
+    // Retired claims (DISCLOSURE_REGISTER L28, §3.10).
+    expect(text).not.toMatch(/resolves cleanly/i);
+    expect(text).not.toMatch(/provider-aware|own conventions(?!\. The same)|secondary provider gap(?! in)/i);
+    expect(text).not.toMatch(/fully hardened|no effective protection|VMC (is )?validated/i);
+    expect(text).not.toMatch(/Google Workspace|Microsoft 365|Proofpoint|Mimecast/);
+    await expect(page.locator(".es-provider-card, .es-grade-row")).toHaveCount(0);
+  });
+
+  test("closing CTA says the free scan shows this grade", async ({ page }) => {
+    await open(page, ES);
+    await expect(page.locator(".pc")).toContainText(/free domain scan/i);
+    await expect(page.locator(".pc")).toContainText(/shows exactly this grade/i);
+    await expect(page.locator(".pc").getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", /\/scan$/);
+  });
+
+  for (const theme of ["dark", "light"] as const) {
+    test(`${theme}: the Grade label is >= 12px and meets AA`, async ({ page }) => {
+      await open(page, ES, theme);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+      const label = page.locator(".eg-sub");
+      await expect(label).toHaveText("Grade");
+      const { ratio, size } = await contrastOf(page, ".eg-sub");
+      expect(size, "Grade label font size").toBeGreaterThanOrEqual(12);
+      expect(ratio, "Grade label contrast").toBeGreaterThanOrEqual(4.5);
+      const letter = await contrastOf(page, ".eg-letter");
+      expect(letter.ratio, "grade letter contrast").toBeGreaterThanOrEqual(3);
+    });
+  }
+});
+
+test.describe("/platform/abuse-mailbox", () => {
+  test.use({ viewport: DESKTOP });
+
+  test("determination email is in the hero, labelled Illustrative, with the real alias form", async ({ page }) => {
+    await open(page, AM);
+    const sample = page.locator(".ph .sf");
+    await expect(sample.locator(".sf-tag")).toHaveText("Illustrative");
+    await expect(sample).toContainText("Averrow Abuse Triage");
+    await expect(sample).toContainText("Phishing confirmed");
+    const html = await page.content();
+    expect(html).not.toContain("report@yourbrand");
+    await expect(page.locator(".pp")).toContainText("verify-yourname@averrow.com");
+  });
+
+  test("#setup exists once and holds the three setup steps; customers link to Log in", async ({ page }) => {
+    await open(page, AM);
+    await expect(page.locator("#setup")).toHaveCount(1);
+    await expect(page.locator("#setup .am-setup > li")).toHaveCount(3);
+    const login = page.locator("#setup").getByRole("link", { name: "Log in" });
+    const nav = await page.locator('a[data-cta="nav-login"]').first().getAttribute("href");
+    await expect(login).toHaveAttribute("href", nav ?? "/login");
+  });
+
+  test("no lead form and no callback request; one 'what you get' table; no setup checklist", async ({ page }) => {
+    await open(page, AM);
+    await expect(page.locator(".pp form, .pp input, .pp textarea")).toHaveCount(0);
+    await expect(page.locator("#amLeadForm")).toHaveCount(0);
+    await expect(page.locator(".pp")).not.toContainText(/request a callback/i);
+    await expect(page.locator(".pp [data-scope-table]")).toHaveCount(1);
+    await expect(page.locator(".am-card, .am-grid, .am-check")).toHaveCount(0);
+    await expect(page.getByText("Setup Checklist")).toHaveCount(0);
+  });
+
+  test("true claims are kept; retired ones are gone", async ({ page }) => {
+    await open(page, AM);
+    const text = ((await page.locator(".pp").textContent()) ?? "").replace(/\s+/g, " ");
+    expect(text).toMatch(/instant acknowledg/i);
+    expect(text).toMatch(/about two minutes/i);
+    expect(text).toMatch(/SPF, DKIM and DMARC from the forwarded headers/i);
+    expect(text).toMatch(/takedown (is )?drafted/i);
+    expect(text).toMatch(/awaiting approval|your approval/i);
+    expect(text).toMatch(/per-sender throttling/i);
+    expect(text).toMatch(/rollup/i);
+    expect(text).not.toMatch(/second opinion|automated classification|usually within minutes/i);
+  });
+
+  test("Enterprise tag and the standard CTA pair (primary: free scan)", async ({ page }) => {
+    await open(page, AM);
+    await expect(page.locator(".ph-plan")).toHaveText("Enterprise");
+    for (const sel of [".ph [data-cta-pair]", ".pc [data-cta-pair]"]) {
+      const pair = page.locator(sel);
+      await expect(pair.getByRole("link", { name: "Scan your domain" })).toHaveAttribute("href", /\/scan$/);
+      await expect(pair.getByRole("link", { name: "Book a demo" })).toHaveAttribute("href", /\/demo$/);
+    }
+  });
+});
+
+test.describe("phase 2B pages at 390px", () => {
+  test.use({ viewport: PHONE });
+
+  for (const p of [ES, AM]) {
+    test(`${p}: no horizontal scroll, one H1, hero sample inside the viewport`, async ({ page }) => {
+      await open(page, p);
+      await page.waitForLoadState("networkidle").catch(() => {});
+      await page.evaluate(() => document.querySelectorAll("details").forEach((d) => d.setAttribute("open", "")));
+      const m = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, body: document.body.scrollWidth, vw: window.innerWidth }));
+      expect(Math.max(m.doc, m.body), `${p} scrollWidth vs ${m.vw}`).toBeLessThanOrEqual(m.vw);
+      await expect(page.locator("h1")).toHaveCount(1);
+      const box = await page.locator(".ph .sf").boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE.width);
+    });
   }
 });

@@ -1,423 +1,269 @@
 ---
 /*
- * Campaign Intelligence deep dive — child of /platform.
+ * /platform/campaign-intelligence (Section 8, phase 2A, Enterprise). Built on
+ * the product-page kit in src/components/product/.
  *
- * Distinct from the four base capabilities (Threat Detection, Email
- * Security, Social Monitoring, Automated Analysis): campaign intelligence is a
- * higher-tier capability built on top of them — it correlates threats
- * that share infrastructure into a single campaign, tracks that
- * infrastructure as it moves, and (where warranted) associates it with
- * a known actor profile at a stated confidence level, never a bare
- * assertion.
- *
- * Structure cloned from threat-detection.astro (hero, section-label
- * rhythm, monitor-card grid, 01/02/03 pipeline, cross-link footer,
- * CTA); page-scoped `ci-` class prefix. No stat row — nothing here is
- * instrumented, so no numbers are shown.
+ * Disclosure (docs/DISCLOSURE_REGISTER.md rows L25, L33, §3.5, §3.9):
+ *  - Claims only what customers get: an alert when a significant campaign or a
+ *    known actor targets their brand; each threat shows the campaign it belongs
+ *    to; actor links come from public reporting.
+ *  - Clustering signals are named no further than "shared certificates and
+ *    hosting". No "registrar" or "registration pattern", no lane names, no
+ *    thresholds, no cadence.
+ *  - Nothing about noticing or alerting when an operation moves (staff-only,
+ *    G27), and no actor "infrastructure rows" (no runtime writer).
+ *  - Only domain and IP threats are linked: social, app, leak-site and
+ *    executive findings are not (said in the scope table).
+ *  - The takedown consent line is kept.
+ * The cluster graph is illustrative: fictional brand Acme, `.example` domains.
  */
-import Layout from "../../layouts/Layout.astro";
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import StepList from "../../components/product/StepList.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import ProofStrip from "../../components/product/ProofStrip.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import type { SampleRow, ScopeRow, Step } from "../../components/product/types";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-const signals = [
-  { color: "#C83C3C", title: "Shared certificates", desc: "Certificates reused across lookalike domains." },
-  { color: "#E5A832", title: "Shared hosting", desc: "Seemingly unrelated threats sitting on the same hosting or network infrastructure." },
-  { color: "#0A8AB5", title: "Shared registration details", desc: "Registration patterns that stay durable even as domains rotate." },
+/** Illustrative graph: four look-alike domains, two shared things, one operation. */
+const domains = [
+  { label: "acme-login.example", y: 30 },
+  { label: "acme-pay.example", y: 100 },
+  { label: "acrne.example", y: 170 },
+  { label: "acme-help.example", y: 240 },
+];
+const BOX_W = 138;
+const BOX_H = 32;
+const cert = { x: 168, y: 58, w: 86, h: 58 };
+const host = { x: 168, y: 154, w: 86, h: 58 };
+const op = { x: 276, y: 105, w: 64, h: 70 };
+// Which domains share which hub.
+const certLinks = [0, 1, 2];
+const hostLinks = [2, 3];
+
+const steps: Step[] = [
+  {
+    title: "Record",
+    text: "Every new threat is recorded with the certificates and hosting behind it.",
+    output: {
+      label: "Sample recorded threats",
+      rows: [
+        { text: "acme-login.example", mono: true, status: "Certificate and hosting recorded", pill: "Recorded", tone: "low" },
+        { text: "acme-pay.example", mono: true, status: "Certificate and hosting recorded", pill: "Recorded", tone: "low" },
+      ],
+    },
+  },
+  {
+    title: "Link",
+    text: "Threats that share certificates or hosting are connected into one operation, instead of being logged as unrelated.",
+    output: {
+      label: "Sample linked threats",
+      rows: [
+        { text: "acme-login.example", mono: true, status: "Shares a certificate with acme-pay.example", pill: "Linked", tone: "new" },
+        { text: "acrne.example", mono: true, status: "Shares hosting with acme-help.example", pill: "Linked", tone: "new" },
+      ],
+      note: "four domains, one operation",
+    },
+  },
+  {
+    title: "Name",
+    text: "Where public reporting names the actor behind infrastructure we've clustered, we link it. If the evidence doesn't support a name, we don't give one.",
+    output: {
+      label: "Sample actor link",
+      rows: [{ text: "Operation 4821", status: "An actor named in public reporting", pill: "Public report", tone: "low" }],
+    },
+  },
 ];
 
-const siblingLinks = [
-  { href: "/platform/threat-detection", title: "Threat Detection", desc: "How the detection engine finds phishing, lookalikes, and malicious infrastructure." },
-  { href: "/platform/email-security", title: "Email Security Posture", desc: "SPF, DKIM, DMARC, and MX graded A+ through F." },
-  { href: "/platform/impersonation", title: "Social Monitoring", desc: "Impersonation and handle-squatting detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube." },
-  { href: "/platform#how-it-works", title: "Automated Analysis", desc: "How signals are correlated and fused into one exposure score." },
+const youGetRows: SampleRow[] = [
+  { text: "A significant campaign is targeting Acme", status: "Alert, with the campaign it belongs to", pill: "Campaign alert", tone: "high" },
+  { text: "A known threat actor is targeting Acme", status: "Alert, with the actor from public reporting", pill: "Actor alert", tone: "high" },
+  { text: "acme-login.example", mono: true, status: "Shows the campaign this threat belongs to", pill: "Campaign 4821", tone: "low" },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Which threats",
+    covered: "Look-alike domains and other domain and IP threats against your brand.",
+    notCovered: "Social accounts, apps, leak-site mentions and executive findings are not linked into operations.",
+  },
+  {
+    area: "How they're linked",
+    covered: "Shared certificates and hosting.",
+    notCovered: "A guarantee that every related domain is found. Infrastructure we can't see isn't linked.",
+  },
+  {
+    area: "Alerts",
+    covered: "You are alerted when a significant campaign or a known threat actor targets your brand.",
+    notCovered: "An alert for every campaign. Only significant ones, or ones tied to a known actor, reach you.",
+  },
+  {
+    area: "On each threat",
+    covered: "The campaign it belongs to, shown with the threat.",
+    notCovered: "A full operation map in the console. Today you see the campaign link on each threat.",
+  },
+  {
+    area: "Actors",
+    covered: "Where public reporting names the actor behind clustered infrastructure, we link it.",
+    notCovered: "Naming who is behind an operation when public reporting doesn't.",
+  },
+  {
+    area: "Removal",
+    covered: "Takedowns for look-alike domains and phishing URLs, under an authorization you sign.",
+    notCovered: "Filing anything without your approval or your signed rules.",
+  },
 ];
 ---
 
-<Layout
+<ProductPage
   title="Campaign Intelligence — Averrow"
-  description="How Averrow's Digital Risk Protection platform links phishing domains, IPs, and certificates that share infrastructure into operations, so you see the campaign behind each alert."
+  description="Averrow links look-alike domains that share certificates and hosting into one operation, so you see the campaign behind each alert."
+  crumb="Campaign intelligence"
 >
-  <section class="ci-hero">
-    <div class="container">
-      <a class="ci-breadcrumb" href={`${base}/platform`}>&larr; Platform Overview</a>
-      <div class="ci-eyebrow">Campaign Intelligence</div>
-      <h1>See the operation,<br /><span class="ci-accent">not just the symptom.</span></h1>
-      <p>
-        Attackers rarely build one-off infrastructure. The same
-        certificate, hosting, or registration pattern shows up behind a
-        dozen lookalike domains. Averrow links phishing domains, IPs, and
-        certificates that share infrastructure into operations, and
-        notices when an operation moves.
-        Your team stops triaging isolated alerts and starts seeing the
-        operation behind them.
-      </p>
-    </div>
-  </section>
+  <ProductHero
+    eyebrow="Campaign intelligence"
+    plan="enterprise"
+    title="See the operation, not just the symptom."
+    sub="Attackers reuse certificates and hosting. We link the look-alike domains that share them into one operation, so you see the campaign behind each alert."
+  >
+    <SampleFrame slot="sample" label="Sample operation graph">
+      <figure class="cmp-fig">
+        <svg
+          class="cmp-svg"
+          viewBox="-2 -2 344 284"
+          role="img"
+          aria-labelledby="cmp-g-title cmp-g-desc"
+        >
+          <title id="cmp-g-title">Four look-alike domains linked into one operation</title>
+          <desc id="cmp-g-desc">
+            Illustrative graph. Acme-login, acme-pay and acrne share one certificate. Acrne and acme-help share hosting. Because the two shared items overlap on acrne, all four domains are linked into one operation.
+          </desc>
 
-  <!-- ── THE SIGNAL ── -->
-  <section class="ci-section" id="signal">
-    <div class="container">
-      <div class="section-label">The Signal</div>
-      <h2>Infrastructure doesn&rsquo;t lie, even when a domain name does</h2>
-      <p class="ci-section-p">
-        A phishing kit gets torn down. The domain expires. A new lookalike
-        goes live a week later &mdash; but it&rsquo;s sitting behind the
-        same certificates, the same hosting network, the same
-        registration pattern. Attackers reuse infrastructure
-        because standing it up from scratch is slow and expensive. That
-        reuse is the signal.
-      </p>
-      <div class="ci-signal-grid">
-        {signals.map((s) => (
-          <div class="ci-signal-card">
-            <span class="ci-signal-bar" style={`background:${s.color}`}></span>
-            <div class="ci-signal-body">
-              <h3>{s.title}</h3>
-              <p>{s.desc}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  </section>
+          <g class="cmp-edges" aria-hidden="true">
+            {certLinks.map((i) => (
+              <line x1={BOX_W} y1={domains[i]!.y + BOX_H / 2} x2={cert.x} y2={cert.y + cert.h / 2} />
+            ))}
+            {hostLinks.map((i) => (
+              <line x1={BOX_W} y1={domains[i]!.y + BOX_H / 2} x2={host.x} y2={host.y + host.h / 2} />
+            ))}
+            <line class="out" x1={cert.x + cert.w} y1={cert.y + cert.h / 2} x2={op.x} y2={op.y + op.h / 2} />
+            <line class="out" x1={host.x + host.w} y1={host.y + host.h / 2} x2={op.x} y2={op.y + op.h / 2} />
+          </g>
 
-  <!-- ── HOW IT WORKS ── -->
-  <section class="ci-section ci-section-alt" id="how-it-works">
-    <div class="container">
-      <div class="section-label">How It Works</div>
-      <h2>From individual threat to connected campaign</h2>
-      <div class="ci-pipeline-grid">
-        <div class="ci-pipeline-card">
-          <div class="ci-pipeline-num">01</div>
-          <h3>Every new threat is fingerprinted.</h3>
-          <p>Its infrastructure &mdash; certificates, IPs, hosting, and registration details &mdash; is captured alongside it.</p>
-        </div>
-        <div class="ci-pipeline-card">
-          <div class="ci-pipeline-num">02</div>
-          <h3>Shared infrastructure gets linked automatically.</h3>
-          <p>A new threat matching an existing one&rsquo;s infrastructure is connected into the same campaign, not logged as unrelated.</p>
-        </div>
-        <div class="ci-pipeline-card">
-          <div class="ci-pipeline-num">03</div>
-          <h3>Actor links come from public reporting, not guesswork.</h3>
-          <p>Where public reporting names the actor behind infrastructure we&rsquo;ve clustered, we link it. Averrow shows you what the evidence supports, not a name pulled out of the air.</p>
-        </div>
-      </div>
-    </div>
-  </section>
+          {domains.map((d) => (
+            <g class="cmp-dom">
+              <rect x="0" y={d.y} width={BOX_W} height={BOX_H} rx="8" />
+              <text x={BOX_W / 2} y={d.y + BOX_H / 2 + 4} text-anchor="middle">{d.label}</text>
+            </g>
+          ))}
 
-  <!-- ── IN YOUR PLATFORM ── -->
-  <section class="ci-section" id="in-platform">
-    <div class="container">
-      <div class="section-label">In Your Platform</div>
-      <h2>Every threat actor has a campaign profile</h2>
-      <p class="ci-section-p">
-        Campaign intelligence isn&rsquo;t a separate dashboard you have to
-        learn &mdash; it surfaces inside the Threat Actor view your team
-        already works from. Open a threat actor profile and you get the
-        full picture in one place:
-      </p>
-      <div class="ci-profile-grid">
-        <div class="ci-profile-card">
-          <h3>Brands targeted</h3>
-          <p>Every brand this actor&rsquo;s campaigns have touched.</p>
-        </div>
-        <div class="ci-profile-card">
-          <h3>Attributed threats</h3>
-          <p>The individual detections tied to this actor, so you can move from pattern back to evidence.</p>
-        </div>
-        <div class="ci-profile-card">
-          <h3>Infrastructure rows</h3>
-          <p>ASN, IP range, domain, hosting provider, first observed, last observed, and confidence &mdash; per piece of infrastructure.</p>
-        </div>
-      </div>
-      <p class="ci-close-p">
-        Infrastructure that moves is still infrastructure you can watch.
-        A profile that shows where an actor has been hosted before is a
-        head start on where they&rsquo;ll show up next.
-      </p>
-    </div>
-  </section>
+          <g class="cmp-hub">
+            <rect x={cert.x} y={cert.y} width={cert.w} height={cert.h} rx="10" />
+            <text x={cert.x + cert.w / 2} y={cert.y + 25} text-anchor="middle">Shared</text>
+            <text x={cert.x + cert.w / 2} y={cert.y + 43} text-anchor="middle">certificate</text>
+          </g>
+          <g class="cmp-hub">
+            <rect x={host.x} y={host.y} width={host.w} height={host.h} rx="10" />
+            <text x={host.x + host.w / 2} y={host.y + 25} text-anchor="middle">Shared</text>
+            <text x={host.x + host.w / 2} y={host.y + 43} text-anchor="middle">hosting</text>
+          </g>
 
-  <!-- ── TAKEDOWNS (execution, under authorization) ── -->
-  <section class="ci-section" id="takedowns">
-    <div class="container">
-      <div class="section-label">From Pattern To Action</div>
-      <h2>Takedowns, executed &mdash; under your authorization</h2>
-      <div class="ci-takedown-card">
-        <p>
-          Detection is only useful if something happens next. Averrow
-          doesn&rsquo;t just flag threats &mdash; it files abuse
-          reports for lookalike domains and phishing URLs with domain
-          registrars and hosting providers, and reaches out to abuse
-          contacts by email. Every submission happens under a takedown
-          authorization you sign and control, within limits you set, at
-          the automation level you choose: manual, semi-automatic with
-          your approval, or fully automatic. Automatic sending covers
-          registrar reports; hosting-provider reports are filed by our
-          team. Removals for social
-          profiles, apps and paste sites are drafted with the evidence,
-          ready to file with the platform. Nothing is filed for you without
-          your approval or your signed rules. You can revoke the
-          authorization at any time.
-        </p>
-      </div>
-    </div>
-  </section>
+          <g class="cmp-op">
+            <rect x={op.x} y={op.y} width={op.w} height={op.h} rx="12" />
+            <text x={op.x + op.w / 2} y={op.y + 30} text-anchor="middle">One</text>
+            <text x={op.x + op.w / 2} y={op.y + 48} text-anchor="middle">operation</text>
+          </g>
+        </svg>
+        <figcaption>
+          Four look-alike domains, linked through a shared certificate and shared hosting, resolve to one operation.
+        </figcaption>
+      </figure>
+    </SampleFrame>
+  </ProductHero>
 
-  <!-- ── CROSS-LINKS ── -->
-  <section class="ci-section ci-section-alt" id="explore-more">
-    <div class="container">
-      <div class="section-label" style="text-align:center;">Explore The Platform</div>
-      <h2 class="ci-explore-h2">Campaign intelligence builds on the rest of the platform</h2>
-      <div class="ci-explore-grid">
-        {siblingLinks.map((s) => (
-          <a class="ci-explore-card" href={`${base}${s.href}`}>
-            <h3>{s.title}</h3>
-            <p>{s.desc}</p>
-          </a>
-        ))}
-      </div>
-    </div>
-  </section>
+  <ProofStrip stats={["operations", "threats"]} />
 
-  <!-- ── CTA ── -->
-  <section class="ci-cta">
-    <div class="container">
-      <h2>Stop reading a list of alerts.<br />Start seeing the operation.</h2>
-      <p>Campaign Intelligence is part of the Enterprise plan. See it running against your own brand in a live demo.</p>
-      <div class="ci-cta-actions">
-        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
-      </div>
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Record, link, name."
+    lede="Domains get taken down and new ones appear. The certificates and hosting behind them are slower to change, and that reuse is the signal."
+  >
+    <StepList steps={steps} where="campaign" />
+  </ProductSection>
+
+  <ProductSection
+    id="what-you-get"
+    eyebrow="What you get"
+    heading="Alerts and a campaign on every threat."
+    lede="You don't learn a new dashboard. The campaign shows up where your team already works, and the alerts reach you when it matters."
+  >
+    <div class="cmp-get">
+      <SampleFrame label="Sample campaign alerts and threat" rows={youGetRows} />
+      <ul class="cmp-facts" role="list">
+        <li><b>Alerts that matter.</b> You're alerted when a significant campaign or a known threat actor targets your brand.</li>
+        <li><b>The campaign on each threat.</b> Every linked threat shows the campaign it belongs to.</li>
+        <li><b>Actors from public reporting.</b> Where reporting names the actor, we show it. We don't guess.</li>
+      </ul>
     </div>
-  </section>
-</Layout>
+  </ProductSection>
+
+  <ProductSection
+    id="takedowns"
+    eyebrow="From pattern to action"
+    heading="Takedowns, under your authorization."
+  >
+    <p class="cmp-consent">
+      Takedowns for look-alike domains and phishing URLs run under an authorization you sign and control, within limits you set, at the automation level you choose: manual, semi-automatic with your approval, or automatic. Nothing is filed without your approval or your signed rules, and you can revoke the authorization at any time.
+      <a href={`${base}/platform/takedowns`}>See how takedowns work</a>.
+    </p>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What's covered, and what isn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Campaign intelligence: covered and not covered" />
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/platform/campaign-intelligence"
+    include={["/platform/lookalike-domains", "/platform/threat-detection", "/platform/takedowns"]}
+    heading="Campaign intelligence builds on the rest of the platform"
+  />
+
+  <PageCTA heading="See the operation behind your alerts." body="Campaign intelligence is part of the Enterprise plan. Book a demo and we'll show it running against your own brand." />
+</ProductPage>
 
 <style>
-  /* ── HERO ── */
-  .ci-hero {
-    padding: 5rem 0 3rem;
-    text-align: center;
-    background: var(--gradient-hero);
-    position: relative;
-    overflow: hidden;
-  }
-  .ci-breadcrumb {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-bottom: 1.25rem;
-    text-decoration: none;
-  }
-  .ci-breadcrumb:hover { color: var(--amber-text); text-decoration: none; }
-  .ci-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 0.85rem;
-  }
-  .ci-hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(32px, 5vw, 56px);
-    font-weight: 800;
-    margin-bottom: 1rem;
-    line-height: 1.08;
-  }
-  .ci-accent { color: var(--amber-text); }
-  .ci-hero p {
-    font-size: 18px;
-    color: var(--text-secondary);
-    max-width: 680px;
-    margin: 0 auto;
-    line-height: 1.6;
-  }
+  .cmp-fig { margin: 0; display: grid; gap: 10px; }
+  .cmp-svg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+  .cmp-fig figcaption { font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
 
-  /* ── SECTION SHELL ── */
-  .ci-section { padding: 3.5rem 0; }
-  .ci-section-alt { background: var(--bg-secondary); }
-  .ci-section h2 {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 34px);
-    font-weight: 700;
-    margin-bottom: 0.85rem;
-    max-width: 720px;
-  }
-  .ci-section-p {
-    font-size: 16px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    max-width: 720px;
-    margin-bottom: 2rem;
-  }
-  .ci-close-p {
-    font-size: 15px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    max-width: 720px;
-    margin-top: 1.5rem;
-  }
+  .cmp-edges line { stroke: var(--text-tertiary); stroke-width: 1.5; }
+  .cmp-edges line.out { stroke: var(--accent); stroke-width: 2; }
+  .cmp-dom rect { fill: var(--bg-primary); stroke: var(--border-strong); stroke-width: 1; }
+  .cmp-dom text { font: 500 12px var(--font-mono); fill: var(--text-primary); }
+  .cmp-hub rect { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
+  .cmp-hub text { font: 600 12px var(--font-display); fill: var(--text-primary); }
+  .cmp-op rect { fill: var(--accent-bg-strong); stroke: var(--accent); stroke-width: 2; }
+  .cmp-op text { font: 700 12px var(--font-display); fill: var(--text-primary); }
 
-  /* ── SIGNAL GRID ── */
-  .ci-signal-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-  .ci-signal-card {
-    display: flex;
-    align-items: stretch;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-  .ci-signal-bar { width: 4px; flex-shrink: 0; }
-  .ci-signal-body { padding: 1.1rem 1.25rem; }
-  .ci-signal-body h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
-  .ci-signal-body p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
+  .cmp-get { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .cmp-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
+  .cmp-facts li { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); padding-left: 14px; border-left: 2px solid var(--accent); }
+  .cmp-facts b { color: var(--text-primary); font-weight: 700; }
 
-  /* ── PIPELINE ── */
-  .ci-pipeline-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.25rem;
-    margin-top: 1.5rem;
-  }
-  .ci-pipeline-card {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-  }
-  .ci-pipeline-num {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--amber-text);
-    letter-spacing: 0.1em;
-    margin-bottom: 0.6rem;
-  }
-  .ci-pipeline-card h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: 0.5rem; line-height: 1.35; }
-  .ci-pipeline-card p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; }
-  .ci-pipeline-card em { color: var(--text-primary); font-style: normal; font-weight: 600; }
+  .cmp-consent { margin: 0; max-width: 70ch; font-size: 15px; line-height: 1.65; color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .cmp-consent a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .cmp-consent a:hover { border-bottom-color: var(--accent); }
 
-  /* ── PROFILE CARDS (light row, not a table) ── */
-  .ci-profile-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.25rem;
-  }
-  .ci-profile-card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1.25rem;
-  }
-  .ci-section .ci-profile-card { background: var(--bg-tertiary); }
-  .ci-profile-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
-  .ci-profile-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
-
-  /* ── TAKEDOWN CARD ── */
-  .ci-takedown-card {
-    max-width: 780px;
-    background: rgba(14,26,43,0.55);
-    border: 1px solid rgba(120,160,200,0.14);
-    border-radius: var(--radius-lg);
-    padding: 1.75rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-  :global([data-theme="light"]) .ci-takedown-card {
-    background: rgba(255,255,255,0.72);
-    border-color: rgba(26,31,46,0.08);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-  }
-  .ci-takedown-card p {
-    font-size: 0.95rem;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    margin: 0;
-  }
-
-  /* ── EXPLORE MORE ── */
-  .ci-explore-h2 {
-    font-family: var(--font-display);
-    font-size: clamp(22px, 3vw, 30px);
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .ci-explore-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-  }
-  .ci-explore-card {
-    display: block;
-    background: rgba(14,26,43,0.5);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem 1.25rem;
-    text-decoration: none;
-    transition: all 0.25s;
-  }
-  :global([data-theme="light"]) .ci-explore-card {
-    background: rgba(255,255,255,0.6);
-    border-color: rgba(226,221,213,0.5);
-  }
-  .ci-explore-card:hover {
-    border-color: var(--amber);
-    transform: translateY(-4px);
-    text-decoration: none;
-  }
-  .ci-explore-card h3 {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 0.4rem;
-  }
-  .ci-explore-card p {
-    font-size: 0.82rem;
-    color: var(--text-tertiary);
-    line-height: 1.5;
-  }
-
-  /* ── CTA ── */
-  .ci-cta { padding: 3.5rem 0; text-align: center; }
-  .ci-cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-    line-height: 1.2;
-  }
-  .ci-cta p {
-    color: var(--text-secondary);
-    max-width: 520px;
-    margin: 0 auto 2rem;
-  }
-  .ci-cta-actions {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  /* ── RESPONSIVE ── */
-  @media (max-width: 900px) {
-    .ci-signal-grid { grid-template-columns: repeat(2, 1fr); }
-    .ci-pipeline-grid { grid-template-columns: 1fr; }
-    .ci-profile-grid { grid-template-columns: 1fr; }
-    .ci-explore-grid { grid-template-columns: repeat(2, 1fr); }
-  }
-  @media (max-width: 560px) {
-    .ci-signal-grid { grid-template-columns: 1fr; }
-    .ci-explore-grid { grid-template-columns: 1fr; }
-  }
+  @media (max-width: 800px) { .cmp-get { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 </style>

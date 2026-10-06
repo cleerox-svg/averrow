@@ -1,813 +1,217 @@
 ---
 /*
- * Threat Detection deep dive — child of /platform.
- * Expands Capability 01 ("Continuous Brand Monitoring") from platform.astro
- * into a full page: feed coverage, pipeline mechanics, lookalike/typosquat
- * methodology, detection → assessment → alert flow, false-positive
- * management, and one clearly-labeled illustrative sample alert.
+ * /platform/threat-detection (Section 8, phase 2A). Built on the product-page
+ * kit in src/components/product/. Scope: threat feeds, phishing and malware
+ * URLs, certificates, and paste-site and ransomware leak-site mentions.
  *
- * Structure cloned from platform.astro; visual vocabulary (radar, feed
- * badges, narrative block, cap-nav-style section rhythm) reused via a
- * page-scoped `dd-td-` class prefix.
+ * Disclosure (docs/DISCLOSURE_REGISTER.md rows L29-L31, L33, L34, §3.1, §3.4,
+ * §3.9):
+ *  - No logo matching, no cross-feed de-duplication (it is per source), no
+ *    self-serve safe domains (staff add them), no executives on paste or leak
+ *    sites, no keyword list, no permutation names, no scoring signals, no
+ *    "open phishing-feed community" (say "phishing intelligence sources").
+ *  - Look-alike content lives on /platform/lookalike-domains; linked, not repeated.
+ *  - Certificates: checked hourly, for customer brands. Never "we watch the stream".
+ *  - Dark web = paste sites and ransomware victim lists only. No credential
+ *    leaks, forums or markets, no source names.
+ *  - "40+ sources" appears once in copy. Every other figure is the dated ProofStrip.
+ *  - The sample shows "certificate issued N hours ago" (what a certificate
+ *    log can know), never a registration age.
+ * Samples: fictional brand Acme, `.example` domains only.
  */
-import Layout from "../../layouts/Layout.astro";
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import ProofStrip from "../../components/product/ProofStrip.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import type { SampleRow, ScopeRow } from "../../components/product/types";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const heroRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Found by an hourly certificate check", pill: "High", tone: "high" },
+];
+const facts: Array<[string, string]> = [
+  ["Certificate", "Issued 36 hours ago"],
+  ["Hosting", "Web server live, mail (MX) records present"],
+  ["Name", "Your brand plus words a login page would use"],
+];
+
+const certRows: SampleRow[] = [
+  { text: "acme-login.example", mono: true, status: "Certificate issued 2 hours ago", pill: "New cert", tone: "new" },
+];
+const darkRows: SampleRow[] = [
+  { text: "Paste mentioning acme.example", status: "Found on a public paste site", pill: "New", tone: "new" },
+  { text: "Acme Co on a ransomware victim list", status: "Listed on a leak site", pill: "New", tone: "new" },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Phishing and malware URLs",
+    covered: "Reports from phishing intelligence sources and malware URL lists, matched to your domains and brand.",
+    notCovered: "Attacks that never appear in a source we read, and the source names themselves.",
+  },
+  {
+    area: "Repeat reports",
+    covered: "Repeat reports from a source are collapsed into one record.",
+    notCovered: "Merging the same URL reported by different sources into a single alert.",
+  },
+  {
+    area: "Certificates",
+    covered: "Certificate-transparency checks every hour, for your brands.",
+    notCovered: "Alerts the moment a certificate is issued, and brands you haven't added.",
+  },
+  {
+    area: "Paste sites and ransomware lists",
+    covered: "Mentions of your brand and domains on public paste sites and on ransomware victim lists.",
+    notCovered: "Leaked credentials, closed forums and marketplaces, and mentions of executives.",
+  },
+  {
+    area: "Your own domains",
+    covered: "Tell us your official domains, CDNs and partners and we exclude them.",
+    notCovered: "Self-serve allow-listing in the console. Our team adds them for you.",
+  },
+];
 ---
 
-<Layout
+<ProductPage
   title="Threat Detection — Averrow"
-  description="How Averrow's Digital Risk Protection platform detects phishing, lookalike domains, and paste-site and leak-site mentions of your brand — 40+ sources, continuous scanning."
+  description="Phishing and malware URLs, certificates, and paste-site and ransomware leak-site mentions, matched to your brand and scored before they reach you."
+  crumb="Threat detection"
 >
-  <section class="dd-td-hero">
-    <div class="container">
-      <a class="dd-td-breadcrumb" href={`${base}/platform`}>&larr; Platform Overview</a>
-      <div class="dd-td-eyebrow">Capability 01 &middot; Threat Detection</div>
-      <h1>See attacks<br /><span class="dd-td-accent">as they surface.</span></h1>
-      <p>
-        The threat detection engine correlates 40+ threat and intelligence
-        sources continuously &mdash; phishing databases, malware URL
-        lists, Certificate Transparency logs, DNS intelligence, and
-        paste-site and ransomware leak-site mentions &mdash; and runs every
-        match through automated scoring and triage before it reaches your
-        team.
-      </p>
-      <div class="dd-td-stat-row" aria-label="Detection coverage summary">
-        <div class="dd-td-stat">
-          <div class="dd-td-stat-num">40+</div>
-          <div class="dd-td-stat-label">Feeds &amp; sources</div>
-        </div>
-        <div class="dd-td-stat">
-          <div class="dd-td-stat-num">6</div>
-          <div class="dd-td-stat-label">Feed categories</div>
-        </div>
-        <div class="dd-td-stat">
-          <div class="dd-td-stat-num">24/7</div>
-          <div class="dd-td-stat-label">Continuous scanning</div>
-        </div>
+  <ProductHero
+    eyebrow="Threat detection"
+    plan={null}
+    title="Hear it from us before your customers do."
+    sub="We read threat sources and certificate logs, match what they report to your brands, and send you one alert, with the reason, when something clears assessment."
+  >
+    <SampleFrame slot="sample" label="Sample detection alert" rows={heroRows}>
+      <dl class="thd-facts">
+        {facts.map(([k, v]) => (
+          <div><dt>{k}</dt><dd>{v}</dd></div>
+        ))}
+      </dl>
+      <div class="thd-why">
+        <span>Automated assessment</span>
+        <p>A certificate was issued 36 hours ago for a domain that combines your brand name with words a real login page would use. It now has a live web server and mail records, so it can serve a page and handle mail. Suggested next step: draft a takedown.</p>
       </div>
-    </div>
-  </section>
+    </SampleFrame>
+  </ProductHero>
 
-  <!-- ── WHAT WE MONITOR ── -->
-  <section class="dd-td-section" id="what-we-monitor">
-    <div class="container">
-      <div class="section-label">What We Monitor</div>
-      <h2>Six feed categories. One exposure picture.</h2>
-      <p class="dd-td-section-p">
-        Every feed is normalized into the same threat record, so a phishing
-        hit, a newly-issued lookalike certificate, and a paste-site mention
-        all show up in the same place &mdash; correlated, not scattered
-        across six different dashboards.
-      </p>
-      <div class="dd-td-monitor-grid">
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#C83C3C"></span>
-          <div class="dd-td-monitor-body">
-            <h3>Phishing databases</h3>
-            <p>Live phishing URLs targeting your domains, your logo, and your lookalikes, sourced from the open phishing-feed community.</p>
-          </div>
-        </div>
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#E5A832"></span>
-          <div class="dd-td-monitor-body">
-            <h3>Malware URL feeds</h3>
-            <p>Malicious payload hosts and drive-by download infrastructure that could be staged behind a brand-lookalike domain.</p>
-          </div>
-        </div>
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#DCAA32"></span>
-          <div class="dd-td-monitor-body">
-            <h3>Threat-intel feeds</h3>
-            <p>Indicators of compromise cross-referenced across the wider threat-intelligence community, not just your own sightings.</p>
-          </div>
-        </div>
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#0A8AB5"></span>
-          <div class="dd-td-monitor-body">
-            <h3>Certificate Transparency logs</h3>
-            <p>Every public CA logs every certificate it issues. We watch that stream for new certs on domains that look like yours &mdash; often before a site is even live.</p>
-          </div>
-        </div>
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#3CB878"></span>
-          <div class="dd-td-monitor-body">
-            <h3>DNS intelligence</h3>
-            <p>Resolution, hosting, and routing changes on tracked domains &mdash; a dormant lookalike that suddenly gets an MX record is a signal worth acting on.</p>
-          </div>
-        </div>
-        <div class="dd-td-monitor-card">
-          <span class="dd-td-monitor-bar" style="background:#C83C3C"></span>
-          <div class="dd-td-monitor-body">
-            <h3>Paste &amp; leak-site mentions</h3>
-            <p>Paste-site and ransomware leak-site mentions of your brand, domains, and executives, so an early sign of a targeted attack shows up as a brand-exposure signal, not a surprise.</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProofStrip stats={["threats", "providers"]} />
 
-  <!-- ── FEED COVERAGE TABLE ── -->
-  <section class="dd-td-section dd-td-section-alt" id="feed-coverage">
-    <div class="container">
-      <div class="section-label">Feed Coverage</div>
-      <h2>What each category catches</h2>
-      <p class="dd-td-scroll-hint" aria-hidden="true">Scroll to see more &rarr;</p>
-      <div class="dd-td-table-wrap">
-        <table class="dd-td-table">
-          <thead>
-            <tr>
-              <th>Feed category</th>
-              <th>What it catches</th>
-              <th>Coverage</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td>Phishing databases</td><td>Live phishing URLs</td><td>Global</td></tr>
-            <tr><td>Malware URL feeds</td><td>Malicious payload hosts</td><td>Global</td></tr>
-            <tr><td>Threat-intel feeds</td><td>Cross-community indicators of compromise</td><td>Global</td></tr>
-            <tr><td>Certificate Transparency logs</td><td>New TLS certificates on lookalike domains, checked hourly</td><td>Public CAs</td></tr>
-            <tr><td>DNS intelligence</td><td>Resolution &amp; hosting changes</td><td>Global</td></tr>
-            <tr><td>Paste &amp; leak-site mentions</td><td>Paste-site and ransomware leak-site mentions of your brand</td><td>Global</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="dd-td-table-note">These six categories span 40+ individual sources, reconciled continuously by the threat detection engine.</p>
-    </div>
-  </section>
+  <ProductSection
+    id="feeds"
+    eyebrow="Threat sources"
+    heading="Phishing and malware URLs, matched to your brand."
+    lede="We read 40+ sources. When one names a domain or URL that matches your brand, it becomes a record that is checked and scored before anyone is alerted."
+  >
+    <ul class="thd-cards" role="list">
+      <li>
+        <h3>Phishing URLs</h3>
+        <p>Live phishing pages reported by phishing intelligence sources, matched to your domains and your brand name.</p>
+      </li>
+      <li>
+        <h3>Malware URLs</h3>
+        <p>Malicious payload hosts and download infrastructure from malware URL lists, checked against the same brand matching.</p>
+      </li>
+      <li>
+        <h3>One record, then one alert</h3>
+        <p>Repeat reports from a source are collapsed into one record. Anything that clears assessment reaches you with a plain-language reason.</p>
+      </li>
+    </ul>
+  </ProductSection>
 
-  <!-- ── HOW THE PIPELINE WORKS ── -->
-  <section class="dd-td-section" id="pipeline">
-    <div class="container">
-      <div class="section-label">How It Works</div>
-      <h2>The scanning pipeline</h2>
-      <div class="dd-td-pipeline-grid">
-        <div class="dd-td-pipeline-card">
-          <div class="dd-td-pipeline-num">01</div>
-          <h3>Continuous, not batch</h3>
-          <p>Sources are checked around the clock rather than on a nightly schedule, so a new phishing URL or a freshly-logged lookalike certificate enters the pipeline promptly.</p>
-        </div>
-        <div class="dd-td-pipeline-card">
-          <div class="dd-td-pipeline-num">02</div>
-          <h3>One record, many sources</h3>
-          <p>Every source is normalised into the same threat record, so findings from different feeds can be correlated instead of living in separate dashboards.</p>
-        </div>
-        <div class="dd-td-pipeline-card">
-          <div class="dd-td-pipeline-num">03</div>
-          <h3>Deduplicated automatically</h3>
-          <p>If three feeds report the same phishing domain, that&rsquo;s one detection record &mdash; not three duplicate alerts landing in your team&rsquo;s queue.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── LOOKALIKE / TYPOSQUAT METHODOLOGY ── -->
-  <section class="dd-td-section dd-td-section-alt" id="lookalike">
-    <div class="container">
-      <div class="section-label">Lookalike &amp; Typosquat Detection</div>
-      <h2>What we look for</h2>
-      <p class="dd-td-section-p">
-        Attackers rarely register your exact domain &mdash; they register
-        something close enough to fool a rushed click. Every brand we
-        monitor gets continuous lookalike-domain coverage: newly registered
-        look-alikes, character swaps, and brand-plus-keyword domains.
-        Examples below use a placeholder brand and are illustrative only.
-      </p>
-      <div class="dd-td-technique-grid">
-        <div class="dd-td-technique-card">
-          <h3>Newly registered look-alikes</h3>
-          <p>Domains registered close to your brand name, caught shortly after they appear.</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">yourbrand.support</span></div>
-        </div>
-        <div class="dd-td-technique-card">
-          <h3>Character swaps</h3>
-          <p>Visually similar, extra, missing, or swapped characters &mdash; close enough to survive a glance on a small screen.</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">y0urbrand.com</span></div>
-        </div>
-        <div class="dd-td-technique-card">
-          <h3>Prefix / suffix combinations</h3>
-          <p>The brand name wrapped in credibility words attackers know convert &mdash; &ldquo;secure,&rdquo; &ldquo;login,&rdquo; &ldquo;verify,&rdquo; &ldquo;support.&rdquo;</p>
-          <div class="dd-td-example"><span class="dd-td-example-from">yourbrand.com</span><span class="dd-td-example-arrow">&rarr;</span><span class="dd-td-example-to">secure-yourbrand-login.com</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── DETECTION → AUTOMATED ASSESSMENT → ALERT ── -->
-  <section class="dd-td-section" id="flow">
-    <div class="container">
-      <div class="section-label">From Signal to Action</div>
-      <h2>Detection &rarr; automated assessment &rarr; alert</h2>
-      <div class="dd-td-flow-row">
-        <div class="dd-td-flow-card">
-          <div class="dd-td-flow-icon" style="color:#C83C3C;background:rgba(200,60,60,0.1)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          </div>
-          <h3>Detection</h3>
-          <p>A feed, a CT log, or a DNS change surfaces a domain, URL, or mention matching your brand.</p>
-        </div>
-        <div class="dd-td-flow-arrow" aria-hidden="true">&rarr;</div>
-        <div class="dd-td-flow-card">
-          <div class="dd-td-flow-icon" style="color:#E5A832;background:rgba(229,168,50,0.1)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4 4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z"/><path d="M6 21v-2a6 6 0 0 1 12 0v2"/></svg>
-          </div>
-          <h3>Automated assessment</h3>
-          <p>Deduplicated, checked against your safe-domains allowlist, and scored on signs of real intent &mdash; registration age, active hosting, MX records.</p>
-        </div>
-        <div class="dd-td-flow-arrow" aria-hidden="true">&rarr;</div>
-        <div class="dd-td-flow-card">
-          <div class="dd-td-flow-icon" style="color:#3CB878;background:rgba(60,184,120,0.1)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          </div>
-          <h3>Alert</h3>
-          <p>Only what clears assessment reaches your team &mdash; with a plain-language summary of why it matters, not a raw feed row.</p>
-        </div>
-      </div>
-      <p class="dd-td-flow-note">
-        The analysis behind the assessment step is covered in depth on
-        <a href={`${base}/platform#how-it-works`}>the Automated Analysis page</a>.
+  <ProductSection
+    id="certificates"
+    eyebrow="Certificates"
+    heading="Certificates, checked every hour."
+    lede="Every hour we check certificate-transparency logs for certificates issued to names that look like your brands. A new certificate often appears before the site does. Look-alike domains themselves are covered on their own page."
+  >
+    <div class="thd-cert">
+      <SampleFrame label="Sample certificate finding" rows={certRows} />
+      <p class="thd-more">
+        Registrations, character swaps and brand-plus-word domains: <a href={`${base}/platform/lookalike-domains`}>see lookalike domain monitoring</a>.
       </p>
     </div>
-  </section>
+  </ProductSection>
 
-  <!-- ── FALSE POSITIVE MANAGEMENT ── -->
-  <section class="dd-td-section dd-td-section-alt" id="false-positives">
-    <div class="container">
-      <div class="section-label">Keeping The Signal Clean</div>
-      <h2>False-positive management</h2>
-      <div class="dd-td-fp-grid">
-        <div class="dd-td-fp-card">
-          <h3>Safe-domains allowlist</h3>
-          <p>Mark your own CDNs, marketing partners, and dev environments safe once, and every future feed hit against them is filtered before it ever reaches an alert.</p>
-        </div>
-        <div class="dd-td-fp-card">
-          <h3>Cross-feed deduplication</h3>
-          <p>The same domain reported by multiple feeds collapses into a single detection record instead of duplicate alerts competing for attention.</p>
-        </div>
-        <div class="dd-td-fp-card">
-          <h3>Automated triage as final filter</h3>
-          <p>Before an alert is raised, the finding is scored on more than a pattern match, so low-value noise is dismissed automatically and your queue stays weighted toward things worth acting on.</p>
-        </div>
-      </div>
+  <ProductSection
+    id="dark-web"
+    eyebrow="Dark web · Business and above"
+    heading="Paste sites and ransomware victim lists."
+    lede="We check public paste sites and ransomware leak-site victim lists for your brand and domains, so an early sign of a targeted attack reaches you as an alert."
+  >
+    <div class="thd-cert">
+      <SampleFrame label="Sample paste and leak-site findings" rows={darkRows} />
+      <p class="thd-more">
+        These two source types only. We don't cover leaked credentials, closed forums or marketplaces.
+      </p>
     </div>
-  </section>
+  </ProductSection>
 
-  <!-- ── SAMPLE ALERT (ILLUSTRATIVE) ── -->
-  <section class="dd-td-section" id="sample-alert">
-    <div class="container">
-      <div class="section-label">Sample Output</div>
-      <h2>What a detection looks like</h2>
-      <p class="dd-td-illustrative-tag">Illustrative example &mdash; not a real detection or customer.</p>
-      <div class="dd-td-alert-card">
-        <div class="dd-td-alert-head">
-          <span class="dd-td-alert-sev">HIGH</span>
-          <span class="dd-td-alert-domain">acme-secure-login[.]com</span>
-        </div>
-        <div class="dd-td-alert-meta">
-          <div><span>Detected via</span><strong>Certificate Transparency logs</strong></div>
-          <div><span>Registered</span><strong>36 hours ago</strong></div>
-          <div><span>Hosting</span><strong>Active, MX records present</strong></div>
-          <div><span>Pattern match</span><strong>Prefix/suffix combination</strong></div>
-        </div>
-        <div class="dd-td-alert-narrative">
-          <div class="dd-td-alert-narrative-label"><span class="dd-td-alert-dot"></span> Automated assessment</div>
-          &ldquo;A certificate was issued 36 hours ago for a domain combining your
-          brand name with &lsquo;secure&rsquo; and &lsquo;login&rsquo; &mdash; a pattern common in
-          credential-phishing kits. The domain now resolves with active MX
-          records, meaning it can both host a fake login page and send
-          spoofed email. Recommended: initiate takedown evidence collection.&rdquo;
-        </div>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="quiet"
+    eyebrow="Fewer false alarms"
+    heading="Assessed before you hear about it."
+    lede="Matching a name is not the same as a threat. Findings are scored on signs of real intent, and low-value noise is dismissed automatically."
+  >
+    <ul class="thd-cards" role="list">
+      <li>
+        <h3>Your own domains are set aside</h3>
+        <p>Your official domains are recognised automatically. Tell us your CDNs and partners and we exclude them too.</p>
+      </li>
+      <li>
+        <h3>Scored on intent</h3>
+        <p>A parked page and a live login page are not treated the same, and the alert says why it was raised.</p>
+      </li>
+      <li>
+        <h3>You decide what happens next</h3>
+        <p>Takedowns are drafted for your approval or your signed rules, never filed without them.</p>
+      </li>
+    </ul>
+  </ProductSection>
 
-  <!-- ── CROSS-LINKS ── -->
-  <section class="dd-td-section dd-td-section-alt" id="explore-more">
-    <div class="container">
-      <div class="section-label" style="text-align:center;">Explore The Platform</div>
-      <h2 class="dd-td-explore-h2">Threat detection is one of Averrow&rsquo;s core capabilities</h2>
-      <div class="dd-td-explore-grid">
-        <a class="dd-td-explore-card" href={`${base}/platform/email-security`}>
-          <h3>Email Security</h3>
-          <p>SPF, DKIM, DMARC, and MX graded A+ through F.</p>
-        </a>
-        <a class="dd-td-explore-card" href={`${base}/platform/impersonation`}>
-          <h3>Social Monitoring</h3>
-          <p>Impersonation detection across X, LinkedIn, Instagram, TikTok, GitHub, and YouTube.</p>
-        </a>
-        <a class="dd-td-explore-card" href={`${base}/platform#how-it-works`}>
-          <h3>Automated Analysis</h3>
-          <p>The correlation and scoring behind every assessment.</p>
-        </a>
-        <a class="dd-td-explore-card" href={`${base}/platform/campaign-intelligence`}>
-          <h3>Campaign Intelligence</h3>
-          <p>Threats that share infrastructure, connected into a single campaign.</p>
-        </a>
-        <a class="dd-td-explore-card" href={`${base}/platform`}>
-          <h3>Platform Overview</h3>
-          <p>The full platform, one exposure picture.</p>
-        </a>
-      </div>
-    </div>
-  </section>
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What's covered, and what isn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Threat detection: covered and not covered" />
+  </ProductSection>
 
-  <!-- ── CTA ── -->
-  <section class="dd-td-cta">
-    <div class="container">
-      <h2>See what&rsquo;s already targeting your brand.</h2>
-      <p>Run a free domain scan, or talk to us about full deployment.</p>
-      <div class="dd-td-cta-actions">
-        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
-      </div>
-    </div>
-  </section>
-</Layout>
+  <RelatedSurfaces
+    current="/platform/threat-detection"
+    include={["/platform/lookalike-domains", "/platform/takedowns", "/platform/campaign-intelligence"]}
+    heading="From detection to action"
+  />
+
+  <PageCTA heading="See what's already targeting your brand." body="Run a free domain scan, no signup. Or book a demo and we'll walk through your brands." />
+</ProductPage>
 
 <style>
-  /* ── HERO ── */
-  .dd-td-hero {
-    padding: 5rem 0 3rem;
-    text-align: center;
-    background: var(--gradient-hero);
-    position: relative;
-    overflow: hidden;
-  }
-  .dd-td-breadcrumb {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-bottom: 1.25rem;
-    text-decoration: none;
-  }
-  .dd-td-breadcrumb:hover { color: var(--amber-text); text-decoration: none; }
-  .dd-td-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--amber-text);
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    margin-bottom: 0.85rem;
-  }
-  .dd-td-hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(32px, 5vw, 56px);
-    font-weight: 800;
-    margin-bottom: 1rem;
-    line-height: 1.08;
-  }
-  .dd-td-accent { color: var(--amber-text); }
-  .dd-td-hero p {
-    font-size: 18px;
-    color: var(--text-secondary);
-    max-width: 640px;
-    margin: 0 auto 2.25rem;
-    line-height: 1.6;
-  }
-  .dd-td-stat-row {
-    display: flex;
-    justify-content: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-  .dd-td-stat {
-    min-width: 140px;
-    padding: 0.9rem 1.25rem;
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border);
-    background: rgba(22,30,48,0.55);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  :global([data-theme="light"]) .dd-td-stat { background: rgba(255,255,255,0.65); }
-  .dd-td-stat-num {
-    font-family: var(--font-display);
-    font-size: 1.6rem;
-    font-weight: 800;
-    color: var(--amber-text);
-    line-height: 1.1;
-  }
-  .dd-td-stat-label {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-top: 0.25rem;
-  }
+  .thd-facts { margin: 0; display: grid; gap: 8px; }
+  .thd-facts div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; font-size: 13px; line-height: 1.45; }
+  .thd-facts dt { font: 600 12px var(--font-mono); color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; padding-top: 1px; }
+  .thd-facts dd { margin: 0; color: var(--text-primary); min-width: 0; }
+  .thd-why { border-top: 1px solid var(--border); padding-top: 12px; display: grid; gap: 6px; }
+  .thd-why span { font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-text); }
+  .thd-why p { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-secondary); }
 
-  /* ── SECTION SHELL ── */
-  .dd-td-section { padding: 3.5rem 0; }
-  .dd-td-section-alt { background: var(--bg-secondary); }
-  .dd-td-section h2 {
-    font-family: var(--font-display);
-    font-size: clamp(24px, 3vw, 34px);
-    font-weight: 700;
-    margin-bottom: 0.85rem;
-    max-width: 720px;
-  }
-  .dd-td-section-p {
-    font-size: 16px;
-    color: var(--text-secondary);
-    line-height: 1.7;
-    max-width: 720px;
-    margin-bottom: 2rem;
-  }
+  .thd-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .thd-cards li { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .thd-cards h3 { margin: 0; font: 700 16px var(--font-display); color: var(--text-primary); }
+  .thd-cards p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
 
-  /* ── WHAT WE MONITOR ── */
-  .dd-td-monitor-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-  .dd-td-monitor-card {
-    display: flex;
-    align-items: stretch;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-  .dd-td-monitor-bar { width: 4px; flex-shrink: 0; }
-  .dd-td-monitor-body { padding: 1.1rem 1.25rem; }
-  .dd-td-monitor-body h3 {
-    font-size: 1rem;
-    font-weight: 700;
-    margin-bottom: 0.4rem;
-  }
-  .dd-td-monitor-body p {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    line-height: 1.55;
-  }
+  .thd-cert { max-width: 520px; display: grid; gap: 14px; }
+  .thd-more { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .thd-more a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
+  .thd-more a:hover { border-bottom-color: var(--accent); }
 
-  /* ── FEED COVERAGE TABLE ── */
-  .dd-td-scroll-hint {
-    display: none;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--text-tertiary);
-    margin-top: 1.5rem;
-    margin-bottom: 0.5rem;
-  }
-  .dd-td-table-wrap {
-    position: relative;
-    overflow-x: auto;
-    margin-top: 1.5rem;
-  }
-  /* Right-edge fade so the off-screen "Coverage" column reads as
-     scrollable content rather than a hard-cropped table on narrow
-     viewports. Purely decorative — overflow-x:auto still does the work. */
-  .dd-td-table-wrap::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 32px;
-    background: linear-gradient(to right, transparent, var(--bg-secondary));
-    pointer-events: none;
-  }
-  .dd-td-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: var(--bg-primary);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    border: 1px solid var(--border);
-  }
-  .dd-td-section-alt .dd-td-table { background: var(--bg-secondary); }
-  .dd-td-table th {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-tertiary);
-    text-align: left;
-    padding: 1rem;
-    background: var(--bg-tertiary);
-    border-bottom: 1px solid var(--border);
-  }
-  .dd-td-table td {
-    font-size: 14px;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--border);
-    color: var(--text-secondary);
-  }
-  .dd-td-table tr:last-child td { border-bottom: none; }
-  .dd-td-table td:first-child { font-weight: 600; color: var(--text-primary); }
-  .dd-td-table-note {
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    color: var(--text-tertiary);
-    margin-top: 1rem;
-  }
-
-  /* ── PIPELINE ── */
-  .dd-td-pipeline-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.25rem;
-    margin-top: 1.5rem;
-  }
-  .dd-td-pipeline-card {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-  }
-  .dd-td-pipeline-num {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--amber-text);
-    letter-spacing: 0.1em;
-    margin-bottom: 0.6rem;
-  }
-  .dd-td-pipeline-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 0.5rem; }
-  .dd-td-pipeline-card p { font-size: 0.88rem; color: var(--text-secondary); line-height: 1.6; }
-
-  /* ── LOOKALIKE TECHNIQUES ── */
-  .dd-td-technique-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1rem;
-  }
-  .dd-td-technique-card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1.25rem;
-  }
-  .dd-td-section-alt .dd-td-technique-card { background: var(--bg-tertiary); }
-  .dd-td-technique-card h3 { font-size: 0.98rem; font-weight: 700; margin-bottom: 0.5rem; }
-  .dd-td-technique-card p {
-    font-size: 0.84rem;
-    color: var(--text-secondary);
-    line-height: 1.55;
-    margin-bottom: 0.9rem;
-  }
-  .dd-td-example {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    flex-wrap: wrap;
-  }
-  .dd-td-example-from { color: var(--text-tertiary); }
-  .dd-td-example-arrow { color: var(--amber-text); }
-  .dd-td-example-to { color: var(--red-text); font-weight: 600; }
-
-  /* ── FLOW ── */
-  .dd-td-flow-row {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr auto 1fr;
-    gap: 1rem;
-    align-items: stretch;
-    margin-top: 1.5rem;
-  }
-  .dd-td-flow-card {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-  }
-  .dd-td-flow-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 0.85rem;
-  }
-  .dd-td-flow-icon svg { width: 22px; height: 22px; }
-  .dd-td-flow-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.4rem; }
-  .dd-td-flow-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; }
-  .dd-td-flow-arrow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-tertiary);
-    font-size: 1.4rem;
-  }
-  .dd-td-flow-note {
-    font-size: 0.85rem;
-    color: var(--text-tertiary);
-    margin-top: 1.5rem;
-  }
-  .dd-td-flow-note a { color: var(--amber-text); }
-
-  /* ── FALSE POSITIVES ── */
-  .dd-td-fp-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.25rem;
-  }
-  .dd-td-fp-card {
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: 1.25rem;
-  }
-  .dd-td-fp-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
-  .dd-td-fp-card p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.6; }
-
-  /* ── SAMPLE ALERT ── */
-  .dd-td-illustrative-tag {
-    display: inline-block;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    background: var(--accent-bg);
-    border: 1px solid var(--border);
-    border-radius: 100px;
-    padding: 0.3rem 0.85rem;
-    margin-bottom: 1.5rem;
-  }
-  .dd-td-alert-card {
-    max-width: 720px;
-    background: rgba(14,26,43,0.55);
-    border: 1px solid rgba(120,160,200,0.14);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.04);
-  }
-  :global([data-theme="light"]) .dd-td-alert-card {
-    background: rgba(255,255,255,0.72);
-    border-color: rgba(26,31,46,0.08);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
-  }
-  .dd-td-alert-head {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.1rem;
-    flex-wrap: wrap;
-  }
-  .dd-td-alert-sev {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--sev-high-text);
-    background: rgba(251,146,60,0.12);
-    border: 1px solid rgba(251,146,60,0.3);
-    border-radius: 100px;
-    padding: 0.25rem 0.75rem;
-  }
-  .dd-td-alert-domain {
-    font-family: var(--font-mono);
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-  .dd-td-alert-meta {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.75rem 1.5rem;
-    padding-bottom: 1.1rem;
-    margin-bottom: 1.1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .dd-td-alert-meta div { display: flex; flex-direction: column; gap: 0.15rem; }
-  .dd-td-alert-meta span {
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .dd-td-alert-meta strong { font-size: 0.85rem; color: var(--text-secondary); font-weight: 600; }
-  .dd-td-alert-narrative {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    line-height: 1.65;
-  }
-  .dd-td-alert-narrative-label {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    color: var(--amber-text);
-    margin-bottom: 0.6rem;
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-  .dd-td-alert-dot {
-    width: 6px;
-    height: 6px;
-    background: var(--amber);
-    border-radius: 50%;
-    box-shadow: 0 0 0 0 rgba(229,168,50,0.55);
-    animation: dd-td-pulse 1.8s ease-out infinite;
-  }
-  @keyframes dd-td-pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(229,168,50,0.55); }
-    70%  { box-shadow: 0 0 0 8px rgba(229,168,50,0); }
-    100% { box-shadow: 0 0 0 0 rgba(229,168,50,0); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dd-td-alert-dot { animation: none; box-shadow: 0 0 0 4px rgba(229,168,50,0.2); }
-  }
-
-  /* ── EXPLORE MORE ── */
-  .dd-td-explore-h2 {
-    font-family: var(--font-display);
-    font-size: clamp(22px, 3vw, 30px);
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  .dd-td-explore-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-  }
-  .dd-td-explore-card {
-    display: block;
-    background: rgba(14,26,43,0.5);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 1.5rem 1.25rem;
-    text-decoration: none;
-    transition: all 0.25s;
-  }
-  :global([data-theme="light"]) .dd-td-explore-card {
-    background: rgba(255,255,255,0.6);
-    border-color: rgba(226,221,213,0.5);
-  }
-  .dd-td-explore-card:hover {
-    border-color: var(--amber);
-    transform: translateY(-4px);
-    text-decoration: none;
-  }
-  .dd-td-explore-card h3 {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 0.4rem;
-  }
-  .dd-td-explore-card p {
-    font-size: 0.82rem;
-    color: var(--text-tertiary);
-    line-height: 1.5;
-  }
-
-  /* ── CTA ── */
-  .dd-td-cta { padding: 3.5rem 0; text-align: center; }
-  .dd-td-cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .dd-td-cta p {
-    color: var(--text-secondary);
-    max-width: 480px;
-    margin: 0 auto 2rem;
-  }
-  .dd-td-cta-actions {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  /* ── LIGHT THEME CONTRAST OVERRIDES ──
-     Severity badge is tuned for dark backgrounds and drops below
-     WCAG AA (4.5:1) as text on the light theme's pale tinted pill.
-     Darkened here for [data-theme="light"] only; dark theme unchanged. */
-  :global([data-theme="light"]) .dd-td-alert-sev { color: #a34c08; }
-
-  /* ── RESPONSIVE ── */
-  @media (max-width: 900px) {
-    .dd-td-monitor-grid { grid-template-columns: repeat(2, 1fr); }
-    .dd-td-pipeline-grid { grid-template-columns: 1fr; }
-    .dd-td-technique-grid { grid-template-columns: repeat(2, 1fr); }
-    .dd-td-fp-grid { grid-template-columns: 1fr; }
-    .dd-td-explore-grid { grid-template-columns: repeat(2, 1fr); }
-    .dd-td-flow-row { grid-template-columns: 1fr; }
-    .dd-td-flow-arrow { transform: rotate(90deg); }
-  }
-  @media (max-width: 560px) {
-    .dd-td-monitor-grid { grid-template-columns: 1fr; }
-    .dd-td-technique-grid { grid-template-columns: 1fr; }
-    .dd-td-explore-grid { grid-template-columns: 1fr; }
-    .dd-td-alert-meta { grid-template-columns: 1fr; }
-    .dd-td-stat-row { gap: 0.6rem; }
-    .dd-td-stat { min-width: 100px; padding: 0.75rem 1rem; }
-  }
-  @media (max-width: 700px) {
-    .dd-td-scroll-hint { display: block; }
-  }
+  @media (max-width: 900px) { .thd-cards { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 420px) { .thd-facts div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
 </style>

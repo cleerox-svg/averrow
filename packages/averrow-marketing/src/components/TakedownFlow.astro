@@ -21,7 +21,7 @@
  * file with the platform. "Revoke any time" is true of the authorization.
  * Fragments are labelled illustrative and carry no figures.
  *
- * Progressive enhancement: the server HTML is the "Approve first" state with
+ * Progressive enhancement: the server HTML is the "Semi-auto" state with
  * the automation switch hidden (a switch that does nothing is worse than none).
  * A small inline script reveals the switch as a radiogroup (roving tabindex,
  * arrow keys) and swaps stage 3's card + caption. Hidden states use the
@@ -36,13 +36,13 @@ interface Props {
   title?: string;
   /** Show the "How takedowns work" link (off on /platform/takedowns itself). */
   showHowLink?: boolean;
-  /** Labels for the three automation levels (homepage: Manual / Approve first / Automatic). */
+  /** Labels for the three automation levels (Off / Semi-auto / Auto, the names the Takedowns page and the console use). */
   modeLabels?: { manual: string; approve: string; auto: string };
 }
 const {
   title = "You set the rules. We do the filing.",
   showHowLink = true,
-  modeLabels = { manual: "Manual", approve: "Approve first", auto: "Automatic" },
+  modeLabels = { manual: "Off", approve: "Semi-auto", auto: "Auto" },
 } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -56,7 +56,7 @@ const modes = [
 const timeline = [
   { title: "Found", text: "Lands in your queue with its severity.", hl: false },
   { title: "Evidence", text: "Assembled automatically.", hl: false },
-  { title: "Your rules", text: "Manual, approve first or automatic.", hl: true },
+  { title: "Your rules", text: "Off, semi-auto or auto.", hl: true },
   { title: "Filed", text: "Every submission, with the provider's response and ticket number where there is one.", hl: false },
   { title: "Watched", text: "Alerted if a removed domain returns.", hl: false },
 ];

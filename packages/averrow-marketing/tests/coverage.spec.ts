@@ -97,7 +97,7 @@ test.describe("Coverage section (desktop)", () => {
       }
     }
     // The anchors named in the spec are actually used.
-    for (const a of ["#compare", "#certificates", "#what-we-monitor"]) {
+    for (const a of ["#compare", "#certificates", "#dark-web"]) {
       expect(hrefs.some((h) => h.endsWith(a)), `some tile links to ${a}`).toBe(true);
     }
   });

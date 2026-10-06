@@ -7,8 +7,8 @@
  * base; `#compare` is the pricing comparison table). The eight Platform pages
  * (Section 8) are /platform/lookalike-domains, /impersonation, /threat-detection,
  * /email-security, /takedowns, /abuse-mailbox and /campaign-intelligence, plus
- * the /platform overview. Apps still points at the plans comparison until the
- * Impersonation page (phase 2) carries an app-store section. Null = no honest target.
+ * the /platform overview. Social, Executive and Apps point at their own
+ * sections of /platform/impersonation. Null = no honest target.
  */
 
 export type CoverageKey = "lookalike" | "tls" | "email" | "social" | "executive" | "apps" | "darkweb" | "abuse";
@@ -56,28 +56,28 @@ export const COVERAGE: readonly CoverageSurface[] = [
     name: "Social profiles",
     plan: "professional",
     blurb: "Fake accounts and handle squatting on six major networks.",
-    link: "/platform/impersonation",
+    link: "/platform/impersonation#fake-profiles",
   },
   {
     key: "executive",
     name: "Executive impersonation",
     plan: "professional",
     blurb: "Accounts using your executives' names, flagged when they aren't their official handles.",
-    link: "/platform/impersonation",
+    link: "/platform/impersonation#executives",
   },
   {
     key: "apps",
     name: "App stores",
     plan: "professional",
     blurb: "Copycat apps using your name on the Apple App Store.",
-    link: "/pricing#compare",
+    link: "/platform/impersonation#app-stores",
   },
   {
     key: "darkweb",
     name: "Dark web",
     plan: "business",
     blurb: "Mentions of your brand on paste sites and ransomware leak sites.",
-    link: "/platform/threat-detection#what-we-monitor",
+    link: "/platform/threat-detection#dark-web",
   },
   {
     key: "abuse",
