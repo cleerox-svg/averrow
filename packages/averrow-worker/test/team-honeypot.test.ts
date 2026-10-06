@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
-import { serveHoneypotPage, HONEYPOT_X_ROBOTS_TAG } from "../src/honeypot";
+import { serveHoneypotPage, HONEYPOT_X_ROBOTS_TAG, trapMailDomain } from "../src/honeypot";
 import { registerPublicRoutes } from "../src/routes/public";
 import { renderRobotsTxt, renderSitemapXml } from "../src/templates/robots-sitemap";
 import type { Env } from "../src/types";
@@ -35,11 +35,27 @@ describe("/team honeypot page", () => {
     expect(HONEYPOT_X_ROBOTS_TAG).toContain("noindex");
   });
 
-  it("still publishes trap addresses for harvesters", async () => {
+  it("still publishes trap addresses for harvesters, on a Worker-routed mail domain", async () => {
     const html = await serveHoneypotPage("team", "averrow.com").text();
-    expect(html).toContain("mailto:hr-hp01@averrow.com");
-    expect(html).toMatch(/mailto:spider-honey-team-\d{8}@averrow\.com/);
-    expect(html).toMatch(/spider-honey-team-footer-\d{8}@averrow\.com/);
+    expect(html).toContain("mailto:hr-hp01@averrow.ca");
+    expect(html).toMatch(/mailto:spider-honey-team-\d{8}@averrow\.ca/);
+    expect(html).toMatch(/spider-honey-team-footer-\d{8}@averrow\.ca/);
+  });
+
+  it("never publishes an @averrow.com address (Google Workspace MX rejects unknown users)", async () => {
+    for (const page of ["team", "careers", "contact"]) {
+      const html = await serveHoneypotPage(page, "averrow.com").text();
+      expect(html, page).not.toMatch(/[\w.+-]+@averrow\.com/);
+    }
+  });
+
+  it("maps web domains to Email-Routing mail domains", () => {
+    expect(trapMailDomain("averrow.com")).toBe("averrow.ca");
+    expect(trapMailDomain("www.averrow.com")).toBe("averrow.ca");
+    expect(trapMailDomain("averrow-staging.workers.dev")).toBe("averrow.ca");
+    expect(trapMailDomain("trustradar.ca")).toBe("trustradar.ca");
+    expect(trapMailDomain("www.lrxradar.com")).toBe("lrxradar.com");
+    expect(trapMailDomain("averrow.ca")).toBe("averrow.ca");
   });
 
   it("points a human visitor at the real contact form", async () => {

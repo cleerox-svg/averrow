@@ -567,6 +567,8 @@ navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV c
                                brand_scans rows and auto-delivered qualified_reports
                                (generated_by='auto:lead_capture') older than 90 days in batches;
                                scan_leads untouched)
+                              (UTC hour 0 also: lib/contact-rate.ts purges expired contact_rate
+                               counter rows — the D1 per-IP and daily-email caps for /api/contact)
 orchestrator: 7 * * * *     (hourly at :07 — feeds, agent dispatch, Workflows)
 enricher:     8 * * * *     (hourly at :08 — own invocation so it doesn't share CPU
                              with the orchestrator's analyst inline-await. Decoupled

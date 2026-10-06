@@ -13,6 +13,7 @@
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import { getDbContext, getReadSession } from "../lib/db";
+import { logger } from "../lib/logger";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
 
@@ -78,7 +79,8 @@ export async function handleListContactSubmissions(request: Request, env: Env): 
       200,
       origin,
     );
-  } catch {
+  } catch (err) {
+    logger.error("contact-submissions-list-failed", { error: err instanceof Error ? err.message : String(err) });
     return json({ success: false, error: "Failed to load contact submissions" }, 500, origin);
   }
 }
@@ -101,34 +103,43 @@ export async function handleUpdateContactSubmission(
       return json({ success: false, error: "`handled` must be true or false" }, 400, origin);
     }
 
+    // Each UPDATE matches only a row whose state actually changes, so
+    // `changes` says whether anything happened: re-marking a handled row (or
+    // reopening an open one) is a no-op that writes no audit row.
     const result = handled
       ? await env.DB.prepare(
           `UPDATE contact_submissions
-              SET handled_at = COALESCE(handled_at, datetime('now')),
-                  handled_by = COALESCE(handled_by, ?)
-            WHERE id = ?`,
+              SET handled_at = datetime('now'), handled_by = ?
+            WHERE id = ? AND handled_at IS NULL`,
         ).bind(ctx.userId, id).run()
       : await env.DB.prepare(
-          `UPDATE contact_submissions SET handled_at = NULL, handled_by = NULL WHERE id = ?`,
+          `UPDATE contact_submissions SET handled_at = NULL, handled_by = NULL
+            WHERE id = ? AND handled_at IS NOT NULL`,
         ).bind(id).run();
+    const changed = (result.meta?.changes ?? 0) > 0;
 
-    if ((result.meta?.changes ?? 0) === 0) {
-      return json({ success: false, error: "Submission not found" }, 404, origin);
+    if (changed) {
+      await audit(env, {
+        action: handled ? "contact_submission_handled" : "contact_submission_reopened",
+        userId: ctx.userId,
+        resourceType: "contact_submission",
+        resourceId: id,
+        request,
+      });
     }
-
-    await audit(env, {
-      action: handled ? "contact_submission_handled" : "contact_submission_reopened",
-      userId: ctx.userId,
-      resourceType: "contact_submission",
-      resourceId: id,
-      request,
-    });
 
     const row = await env.DB.prepare(
       `SELECT ${LIST_COLUMNS} FROM contact_submissions WHERE id = ?`,
     ).bind(id).first<ContactSubmissionRow>();
+    if (!row) {
+      return json({ success: false, error: "Submission not found" }, 404, origin);
+    }
     return json({ success: true, data: row }, 200, origin);
-  } catch {
+  } catch (err) {
+    logger.error("contact-submission-update-failed", {
+      submissionId: id,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return json({ success: false, error: "Failed to update contact submission" }, 500, origin);
   }
 }

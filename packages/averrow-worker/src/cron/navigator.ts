@@ -39,6 +39,7 @@ import {
   type NrdRetentionResult,
 } from '../lib/nrd-retention';
 import { purgeExpiredBrandScans, type BrandScanPurgeResult } from '../lib/brand-scan-retention';
+import { purgeExpiredContactRate, type ContactRatePurgeResult } from '../lib/contact-rate';
 import { reconcileDarkWeb } from '../lib/dark-web-reconciler';
 import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
@@ -198,6 +199,7 @@ interface NavigatorImplResult {
   nrdRetentionResult: NrdRetentionResult | null;
   /** brand_scans 90-day retention outcome — hour-0 ticks only. */
   brandScanPurgeResult: BrandScanPurgeResult | null;
+  contactRatePurgeResult: ContactRatePurgeResult | null;
 }
 
 async function runNavigatorImpl(
@@ -220,6 +222,7 @@ async function runNavigatorImpl(
   let reaperResult: ReaperResult | null = null;
   let nrdRetentionResult: NrdRetentionResult | null = null;
   let brandScanPurgeResult: BrandScanPurgeResult | null = null;
+  let contactRatePurgeResult: ContactRatePurgeResult | null = null;
   let status: 'success' | 'partial' | 'failed' = 'success';
   let errorMessage: string | undefined;
 
@@ -399,6 +402,14 @@ async function runNavigatorImpl(
       brandScanPurgeResult = await purgeExpiredBrandScans(env, {
         softCapMs: Math.max(0, NAVIGATOR_SOFT_CAP_MS - (Date.now() - start)),
       });
+    }
+
+    // ── 2f. contact_rate expiry (public contact-form counters) ──
+    // Hour-only gate (cron-audit rule). Keys are window-scoped, so expired
+    // rows are dead weight; one indexed read when nothing is due, at most
+    // CONTACT_RATE_PURGE_MAX_BATCHES bounded DELETEs otherwise. Never throws.
+    if (scheduledTime.getUTCHours() === 0 && !isOverCap()) {
+      contactRatePurgeResult = await purgeExpiredContactRate(env);
     }
   } catch (err) {
     status = 'failed';
@@ -729,6 +740,7 @@ async function runNavigatorImpl(
     reaperResult,
     nrdRetentionResult,
     brandScanPurgeResult,
+    contactRatePurgeResult,
   };
 }
 
@@ -964,6 +976,17 @@ export const navigatorAgent: AgentModule = {
         summary: `brand-scan-retention: deleted=${bp.deleted} reports=${bp.reports_deleted} batches=${bp.batches} more=${bp.more_remaining ? 'yes' : 'no'}${bp.error ? ` err="${bp.error.slice(0, 120)}"` : ''}`,
         severity: bp.error ? 'medium' : 'info',
         details: { ...bp },
+      });
+    }
+
+    // contact_rate expiry — only when it deleted something or failed.
+    if (result.contactRatePurgeResult && (result.contactRatePurgeResult.deleted > 0 || result.contactRatePurgeResult.error)) {
+      const cp = result.contactRatePurgeResult;
+      agentOutputs.push({
+        type: 'diagnostic',
+        summary: `contact-rate-expiry: deleted=${cp.deleted} batches=${cp.batches} more=${cp.more_remaining ? 'yes' : 'no'}${cp.error ? ` err="${cp.error.slice(0, 120)}"` : ''}`,
+        severity: cp.error ? 'medium' : 'info',
+        details: { ...cp },
       });
     }
 

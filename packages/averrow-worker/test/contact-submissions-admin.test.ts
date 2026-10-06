@@ -116,7 +116,7 @@ async function real(): Promise<Real> {
 
 interface Call { sql: string; binds: unknown[] }
 
-function makeDataEnv(opts: { changes?: number } = {}) {
+function makeDataEnv(opts: { changes?: number; missing?: boolean } = {}) {
   const calls: Call[] = [];
   const stmt = (sql: string) => {
     const call: Call = { sql, binds: [] };
@@ -130,7 +130,8 @@ function makeDataEnv(opts: { changes?: number } = {}) {
         return { results: [{ id: "s1", name: "Dana" }] as unknown as T[] };
       },
       async first<T>() {
-        return (/COUNT\(\*\)/.test(sql) ? { n: 7 } : { id: "s1", handled_at: "2026-10-06" }) as unknown as T;
+        if (/COUNT\(\*\)/.test(sql)) return { n: 7 } as unknown as T;
+        return (opts.missing ? null : { id: "s1", handled_at: "2026-10-06" }) as unknown as T;
       },
       async run() {
         return { success: true, meta: { changes: opts.changes ?? 1 } };
@@ -213,7 +214,28 @@ describe("handleUpdateContactSubmission", () => {
 
   it("404s on an unknown id", async () => {
     const { handleUpdateContactSubmission } = await real();
-    const res = await handleUpdateContactSubmission(patch({ handled: true }), makeDataEnv({ changes: 0 }).env, CTX, "nope");
+    const { env, audits } = makeDataEnv({ changes: 0, missing: true });
+    const res = await handleUpdateContactSubmission(patch({ handled: true }), env, CTX, "nope");
     expect(res.status).toBe(404);
+    expect(audits).toHaveLength(0);
+  });
+
+  it("only touches a row whose state changes (handled_at guard in the WHERE)", async () => {
+    const { handleUpdateContactSubmission } = await real();
+    const h = makeDataEnv();
+    await handleUpdateContactSubmission(patch({ handled: true }), h.env, CTX, "s1");
+    expect(h.calls.find((c) => /^\s*UPDATE/.test(c.sql))!.sql).toMatch(/AND handled_at IS NULL/);
+    const r = makeDataEnv();
+    await handleUpdateContactSubmission(patch({ handled: false }), r.env, CTX, "s1");
+    expect(r.calls.find((c) => /^\s*UPDATE/.test(c.sql))!.sql).toMatch(/AND handled_at IS NOT NULL/);
+  });
+
+  it("a PATCH that changes nothing returns the row and writes no audit row", async () => {
+    const { handleUpdateContactSubmission } = await real();
+    const { env, audits } = makeDataEnv({ changes: 0 });
+    const res = await handleUpdateContactSubmission(patch({ handled: true }), env, CTX, "s1");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { id: string } }).data.id).toBe("s1");
+    expect(audits).toHaveLength(0);
   });
 });
