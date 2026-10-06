@@ -8,8 +8,10 @@
  * new ones equal to a lookalike_domains / phantom_domains domain (the
  * matchable filter — test/nrd-hagezi-matchable.test.ts covers it in depth), the snapshot advances
  * only after every D1 write succeeded, format guards (sort order, empty, HTML,
- * truncated), the per-run cap, registered_date derivation, and that the
- * needle-indexed brand matcher equals the naive scan.
+ * truncated), the per-run cap, registered_date derivation, and the
+ * combosquat brand-keyword semantics (token boundary, generic keywords only
+ * with a STRONG lure word, homoglyphs, canonical exclusion, first-brand-wins,
+ * per-run keyword demotion — lib/nrd-brand-match.ts).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -19,8 +21,13 @@ import { join } from "node:path";
 import {
   nrd_hagezi,
   ingestNrdHagezi,
+  BrandMatcher,
+  brandKeywords,
+  buildBrandKeywords,
   collectBrandMatchRows,
+  isGenericKeyword,
   registeredDateFromHeader,
+  registrableLabels,
   NRD_HAGEZI_URL,
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
@@ -506,72 +513,160 @@ describe("registeredDateFromHeader", () => {
   });
 });
 
-// ─── Indexed matcher ≡ naive scan ────────────────────────────────────
+// ─── Brand-keyword (combosquat) semantics ────────────────────────────
 
-type Brand = { id: string; domain: string; needles: string[] };
+/** Brands as the feed builds them from D1 rows (load order = priority). */
+const brandsOf = (...rows: Array<[id: string, name: string, canonical: string]>) =>
+  buildBrandKeywords(rows.map(([id, name, canonical_domain]) => ({ id, name, canonical_domain })));
 
-/** The pre-index implementation, verbatim semantics. */
-function naive(domains: string[], brands: Brand[]) {
-  const matched = new Set<string>();
-  const rows: Array<[string, string]> = [];
-  let dup = 0;
-  for (const domain of domains) {
-    for (const brand of brands) {
-      if (domain === brand.domain) continue;
-      if (!brand.needles.some((n) => domain.includes(n))) continue;
-      if (matched.has(domain)) { dup++; break; }
-      matched.add(domain);
-      rows.push([domain, brand.id]);
-      break;
+/** domain → winning brand id, for the domains that matched. */
+const winners = (domains: string[], brands: ReturnType<typeof brandsOf>) =>
+  Object.fromEntries(collectBrandMatchRows(domains, brands).rows.map((r) => [r.malicious_domain, r.target_brand_id]));
+
+describe("brand keywords + classification", () => {
+  it("derives name, hyphenated-name and (distinctive-only) canonical-label keywords", () => {
+    expect(brandKeywords("PayPal", "paypal.com")).toEqual([{ keyword: "paypal", generic: false }]);
+    expect(brandKeywords("Standard Chartered", "sc.com")).toEqual([
+      { keyword: "standardchartered", generic: false },
+      { keyword: "standard-chartered", generic: false },
+    ]);
+    // Distinctive canonical label added alongside the name.
+    expect(brandKeywords("Zelle", "zellepay.com")).toEqual([
+      { keyword: "zelle", generic: false },
+      { keyword: "zellepay", generic: false },
+    ]);
+    // Generic canonical label (revenue.ie) is NOT added.
+    expect(brandKeywords("Revenue Ireland", "revenue.ie").map((k) => k.keyword)).toEqual([
+      "revenueireland",
+      "revenue-ireland",
+    ]);
+    // A canonical with a subdomain or a path names the parent brand → no label keyword.
+    expect(brandKeywords("Apple TV+", "tv.apple.com").map((k) => k.keyword)).toEqual(["appletv", "apple-tv"]);
+    expect(brandKeywords("LinkedIn Learning", "linkedin.com/learning").map((k) => k.keyword)).toEqual([
+      "linkedinlearning",
+      "linkedin-learning",
+    ]);
+    // Short names are generic; apostrophes/diacritics folded; <3 chars and NEVER words dropped.
+    expect(brandKeywords("AT&T", "att.com")).toEqual([{ keyword: "att", generic: true }]);
+    expect(brandKeywords("Lowe's", "lowes.com")).toEqual([{ keyword: "lowes", generic: false }]);
+    expect(brandKeywords("Hydro-Québec", "hydroquebec.com").map((k) => k.keyword)).toEqual([
+      "hydroquebec",
+      "hydro-quebec",
+    ]);
+    expect(brandKeywords("HP", "hp.com")).toEqual([]);
+    expect(brandKeywords("Mail", "mail.ru")).toEqual([]);
+    expect(brandKeywords("Www", "www.gov.uk")).toEqual([]);
+  });
+
+  it("generic = ≤4 chars or a curated dictionary word (hyphens ignored); everything else distinctive", () => {
+    for (const k of ["att", "line", "dhl", "booking", "apple", "office", "first-national-bank", "intel"]) {
+      expect(isGenericKeyword(k), k).toBe(true);
     }
-  }
-  return { rows, dup };
-}
-
-/** Deterministic PRNG (mulberry32) so a failure is reproducible from the seed. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-describe("collectBrandMatchRows — indexed matcher equals the naive scan", () => {
-  it("on 300 randomized inputs (small alphabet → dense overlaps, canonical collisions, repeats, empty needles)", () => {
-    const alphabet = "abc1.-";
-    for (let seed = 1; seed <= 300; seed++) {
-      const r = rng(seed);
-      const pick = <T,>(xs: T[]): T => xs[Math.floor(r() * xs.length)]!;
-      const word = (min: number, max: number) =>
-        Array.from({ length: min + Math.floor(r() * (max - min + 1)) }, () => pick([...alphabet])).join("");
-
-      const domains = Array.from({ length: 1 + Math.floor(r() * 40) }, () => word(1, 9));
-      // Inject repeats.
-      for (let k = 0; k < 3; k++) if (domains.length) domains.push(pick(domains));
-      const brands: Brand[] = Array.from({ length: Math.floor(r() * 12) }, (_, i) => ({
-        id: `b${i}`,
-        // Often a canonical domain that is literally in the list.
-        domain: r() < 0.4 && domains.length ? pick(domains) : word(1, 6),
-        needles: Array.from({ length: Math.floor(r() * 4) }, () => (r() < 0.03 ? "" : word(1, 4))),
-      }));
-
-      const got = collectBrandMatchRows(domains, brands);
-      const want = naive(domains, brands);
-      expect(
-        { rows: got.rows.map((x) => [x.malicious_domain, x.target_brand_id]), dup: got.inPayloadDuplicates },
-        `seed ${seed}`,
-      ).toEqual({ rows: want.rows, dup: want.dup });
+    for (const k of ["paypal", "coinbase", "docusign", "tiktok", "standard-chartered", "zellepay"]) {
+      expect(isGenericKeyword(k), k).toBe(false);
     }
   });
 
-  it("emits the same ThreatRow fields as before", () => {
-    const { rows } = collectBrandMatchRows(["acmeb4nk-secure.example"], [
-      { id: "b_acme", domain: "acmebank.com", needles: ["acmebank", "acmeb4nk"] },
+  it("registrableLabels drops the public suffix (incl. ccSLDs like co.uk)", () => {
+    expect(registrableLabels("paypal.com")).toEqual(["paypal"]);
+    expect(registrableLabels("paypal-login.co.uk")).toEqual(["paypal-login"]);
+    expect(registrableLabels("006zhiboonline.com.cn")).toEqual(["006zhiboonline"]);
+    expect(registrableLabels("secure.paypal-help.com")).toEqual(["secure", "paypal-help"]);
+    expect(registrableLabels("paypal.uk.com")).toEqual(["paypal", "uk"]);
+  });
+});
+
+describe("collectBrandMatchRows — combosquat semantics", () => {
+  it("distinctive keyword: a delimited token or concatenated with lure/glue words and digits, never embedded", () => {
+    const brands = brandsOf(["b_pp", "PayPal", "paypal.com"]);
+    const hits = [
+      "paypal.to", // TLD swap
+      "paypal-secure-login.com",
+      "secure.paypal-help.com",
+      "paypal24.shop",
+      "mypaypal.com",
+      "paypalverify.net",
+      "securepaypal.com",
+      "paypal-xk7q.biz", // other hyphen segments are unconstrained
+    ];
+    const misses = [
+      "unpaypalable.com", // embedded in a word
+      "paypalshirts.com", // "shirts" is not lure vocabulary
+      "wpaypal.com",
+      "paypal.com", // the brand's own canonical domain
+    ];
+    const got = winners([...hits, ...misses], brands);
+    expect(Object.keys(got).sort()).toEqual([...hits].sort());
+  });
+
+  it("homoglyph variants match distinctive keywords only", () => {
+    const brands = brandsOf(["b_ms", "Microsoft", "microsoft.com"], ["b_att", "AT&T", "att.com"]);
+    expect(winners(["micros0ft-support.net", "rnicrosoft.com", "4tt-login.com", "att-login.com"], brands)).toEqual({
+      "micros0ft-support.net": "b_ms",
+      "att-login.com": "b_att",
+    });
+  });
+
+  it("generic keyword needs a STRONG lure word in its segment or an adjacent one", () => {
+    const brands = brandsOf(["b_att", "AT&T", "att.com"], ["b_line", "Line", "line.me"]);
+    const hits = [
+      "att-login.com",
+      "attverify.net",
+      "my-att-account.com", // adjacent "account" segment
+      "att2fa.io", // "2fa" is a STRONG word
+      "line-login.com",
+      "secure-line-update.com",
+    ];
+    const misses = [
+      "att.com.mx", // no lure word
+      "att-store.com", // WEAK glue only
+      "attic-login.com", // embedded in a word
+      "battle.net",
+      "att-x7q-login.com", // lure word not adjacent
+      "onlineline.hair", // the old matcher's #1 noise source
+      "006zhiboonline.com.cn",
+      "line.xyz",
+      "mylinelogin.com", // "my" is WEAK, so the segment does not decompose over STRONG words
+    ];
+    const got = winners([...hits, ...misses], brands);
+    expect(Object.keys(got).sort()).toEqual([...hits].sort());
+  });
+
+  it("first brand wins across keywords; a canonical domain falls through to the next brand", () => {
+    const brands = brandsOf(
+      ["b_cb", "Coinbase", "coinbase.com"],
+      ["b_cb_org", "Coinbase", "coinbase.org"],
+      ["b_pp", "PayPal", "paypal.com"],
+    );
+    expect(winners(["coinbase.com", "coinbase.org", "coinbase-login.com", "paypal-coinbase.com"], brands)).toEqual({
+      "coinbase.com": "b_cb_org",
+      "coinbase.org": "b_cb",
+      "coinbase-login.com": "b_cb",
+      "paypal-coinbase.com": "b_cb", // lower brand index, not leftmost occurrence
+    });
+  });
+
+  it("demotes a flooding distinctive keyword to generic for the rest of the run (deterministic, shared by keyword text)", () => {
+    const brands = brandsOf(["b1", "Acmecorp", "acmecorp.com"], ["b2", "Acmecorp", "acmecorp.net"]);
+    const m = new BrandMatcher(brands, { demoteAfter: 3 });
+    const { rows } = m.collect(
+      ["acmecorp-1.io", "acmecorp-2.io", "acmecorp-3.io", "acmecorp-4.io", "acmecorp-login.io", "acmecorp-5.io"],
+      new Set<string>(),
+    );
+    // After 3 rows "acmecorp" needs a lure word; b2 (same keyword) does not pick up the rest.
+    expect(rows.map((r) => [r.malicious_domain, r.target_brand_id])).toEqual([
+      ["acmecorp-1.io", "b1"],
+      ["acmecorp-2.io", "b1"],
+      ["acmecorp-3.io", "b1"],
+      ["acmecorp-login.io", "b1"],
     ]);
+    expect(m.demotedKeywords()).toEqual(["acmecorp"]);
+    // Per-call helper starts fresh: demotion never leaks across runs.
+    expect(collectBrandMatchRows(["acmecorp-4.io"], brands, new Set(), { demoteAfter: 3 }).rows).toHaveLength(1);
+  });
+
+  it("emits the same ThreatRow fields as before", () => {
+    const { rows } = collectBrandMatchRows(["acmeb4nk-secure.example"], brandsOf(["b_acme", "Acme Bank", "acmebank.com"]));
     expect(rows).toEqual([{
       id: threatId("nrd_hagezi", "domain", "acmeb4nk-secure.example"),
       source_feed: "nrd_hagezi",
@@ -586,10 +681,10 @@ describe("collectBrandMatchRows — indexed matcher equals the naive scan", () =
   });
 
   it("carries the seen-set across calls when one is passed", () => {
-    const brands = [{ id: "a", domain: "acme.com", needles: ["acme"] }];
+    const brands = brandsOf(["a", "Acmecorp", "acmecorp.com"]);
     const matched = new Set<string>();
-    expect(collectBrandMatchRows(["acme-1.io"], brands, matched).rows).toHaveLength(1);
-    const second = collectBrandMatchRows(["acme-1.io"], brands, matched);
+    expect(collectBrandMatchRows(["acmecorp-1.io"], brands, matched).rows).toHaveLength(1);
+    const second = collectBrandMatchRows(["acmecorp-1.io"], brands, matched);
     expect(second).toEqual({ rows: [], inPayloadDuplicates: 1 });
   });
 });

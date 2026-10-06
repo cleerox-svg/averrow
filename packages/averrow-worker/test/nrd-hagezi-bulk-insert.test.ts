@@ -137,7 +137,9 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
 
   it("1,500 matches insert with ≤100 binds/statement, O(N/chunk) round trips and zero KV ops", async () => {
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
-    const matching = Array.from({ length: 1500 }, (_, i) => `acmebank-${i}.example`);
+    // "-login-": over NRD_KEYWORD_DEMOTE_AFTER rows the keyword is matched as
+    // generic, which needs a STRONG lure word next to it.
+    const matching = Array.from({ length: 1500 }, (_, i) => `acmebank-login-${i}.example`);
     const noise = Array.from({ length: 500 }, (_, i) => `unrelated-${i}.example`);
     serve([...matching, ...noise]);
     const { kv, ops } = countingKv();
@@ -176,7 +178,8 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
 
   it("a retry that re-diffs the same list (snapshot not advanced) yields 0 new, all duplicates, threat_count unchanged", async () => {
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
-    const domains = [...Array.from({ length: 120 }, (_, i) => `acmebank-${i}.example`), "plain.example"];
+    // "-login-": 120 rows > NRD_KEYWORD_DEMOTE_AFTER (see the 1,500-row case).
+    const domains = [...Array.from({ length: 120 }, (_, i) => `acmebank-login-${i}.example`), "plain.example"];
     serve(domains);
 
     const first = await ingest(countingKv().kv);
@@ -219,27 +222,34 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
   });
 
   it("one brand per domain (first brand wins); a brand's canonical domain falls through to the next brand", async () => {
+    // Both brands carry the distinctive keyword "acmebank" (name / name).
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
-    seedBrand("b_bank", "Bank", "bank.example");
+    seedBrand("b_acme_eu", "AcmeBank", "acmebank.eu");
+    seedBrand("b_bank", "Bank", "bank.example"); // "bank": generic (≤4 chars)
     serve([
-      "acmebank-login.example", // matches both → first brand (b_acme)
-      "acmebank.com", // canonical for b_acme → skipped for it, still matches b_bank ("bank")
-      "bank.example", // b_bank's own canonical, matches no other brand → no threat
-      "mybank-secure.example", // b_bank only
+      "acmebank-login.example", // matches both acmebank brands → first brand (b_acme)
+      "acmebank.com", // canonical for b_acme → skipped for it, falls through to b_acme_eu
+      "acmebank.eu", // b_acme_eu's canonical, but b_acme comes first → b_acme
+      "bank-secure.example", // generic "bank" + adjacent STRONG lure word → b_bank
+      "mybank-secure.example", // "my" is not a STRONG word, so "mybank" is no generic token → no threat
+      "bank.example", // b_bank's own canonical (and no lure word) → no threat
     ]);
 
     const result = await ingest(countingKv().kv);
 
-    expect(result).toEqual({ itemsFetched: 4, itemsNew: 3, itemsDuplicate: 0, itemsError: 0 });
+    expect(result).toEqual({ itemsFetched: 6, itemsNew: 4, itemsDuplicate: 0, itemsError: 0 });
     const brandOf = (d: string) =>
       (raw.prepare("SELECT target_brand_id AS b FROM threats WHERE malicious_domain = ?").all(d) as Array<{ b: string }>)
         .map((r) => r.b);
     expect(brandOf("acmebank-login.example")).toEqual(["b_acme"]);
-    expect(brandOf("acmebank.com")).toEqual(["b_bank"]);
+    expect(brandOf("acmebank.com")).toEqual(["b_acme_eu"]);
+    expect(brandOf("acmebank.eu")).toEqual(["b_acme"]);
+    expect(brandOf("bank-secure.example")).toEqual(["b_bank"]);
+    expect(brandOf("mybank-secure.example")).toEqual([]);
     expect(brandOf("bank.example")).toEqual([]);
-    expect(brandOf("mybank-secure.example")).toEqual(["b_bank"]);
-    expect(brandThreatCount("b_acme")).toBe(1);
-    expect(brandThreatCount("b_bank")).toBe(2);
+    expect(brandThreatCount("b_acme")).toBe(2);
+    expect(brandThreatCount("b_acme_eu")).toBe(1);
+    expect(brandThreatCount("b_bank")).toBe(1);
   });
 
   it("a failing threat-insert batch counts its whole chunk as itemsError; other chunks land; counters bump only for landed rows", async () => {
@@ -247,7 +257,11 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     // is one transaction, so a thrown chunk is rolled back in full.
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
     const n = 120; // chunks of 50: [0..49] ok, [50..99] throws, [100..119] ok
-    serve(Array.from({ length: n }, (_, i) => `acmebank-${i}.example`));
+    // Byte-sorted, so chunk membership follows sort order — the asserted
+    // domains below are picked by sorted index. "-login-": n > the demotion
+    // threshold (see the 1,500-row case).
+    const listed = Array.from({ length: n }, (_, i) => `acmebank-login-${i}.example`).sort();
+    serve(listed);
 
     let threatBatches = 0;
     const inner = db;
@@ -267,8 +281,8 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(threatBatches).toBe(Math.ceil(n / THREAT_INSERT_CHUNK));
     expect(result).toEqual({ itemsFetched: n, itemsNew: 70, itemsDuplicate: 0, itemsError: THREAT_INSERT_CHUNK });
     expect(count("SELECT COUNT(*) AS n FROM threats WHERE source_feed = 'nrd_hagezi'")).toBe(70);
-    expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = 'acmebank-50.example'")).toBe(0);
-    expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = 'acmebank-100.example'")).toBe(1);
+    expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = ?", listed[50])).toBe(0);
+    expect(count("SELECT COUNT(*) AS n FROM threats WHERE malicious_domain = ?", listed[100])).toBe(1);
     expect(brandThreatCount("b_acme")).toBe(70);
     // The failed chunk must be retried: the snapshot is NOT advanced.
     expect(r2.ops.put).toBe(0);
@@ -302,17 +316,21 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
 describe("collectBrandMatchRows (pure)", () => {
   it("is first-brand-wins, skips canonical per brand, and counts in-list repeats", () => {
     const brands = [
-      { id: "a", domain: "acme.com", needles: ["acme"] },
-      { id: "b", domain: "shop.com", needles: ["acme", "shop"] },
+      { id: "a", domain: "acmecorp.com", keywords: [{ keyword: "acmecorp", generic: false }] },
+      {
+        id: "b",
+        domain: "shopco.com",
+        keywords: [{ keyword: "acmecorp", generic: false }, { keyword: "shopco", generic: false }],
+      },
     ];
     const { rows, inPayloadDuplicates } = collectBrandMatchRows(
-      ["acme-x.io", "acme.com", "acme-x.io", "nothing.io", "shop-y.io"],
+      ["acmecorp-x.io", "acmecorp.com", "acmecorp-x.io", "nothing.io", "shopco-y.io"],
       brands,
     );
     expect(rows.map((r) => [r.malicious_domain, r.target_brand_id])).toEqual([
-      ["acme-x.io", "a"],
-      ["acme.com", "b"],
-      ["shop-y.io", "b"],
+      ["acmecorp-x.io", "a"],
+      ["acmecorp.com", "b"],
+      ["shopco-y.io", "b"],
     ]);
     expect(inPayloadDuplicates).toBe(1);
   });
