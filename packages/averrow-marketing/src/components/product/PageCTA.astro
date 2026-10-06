@@ -1,0 +1,45 @@
+---
+/*
+ * Closing call to action for a Platform page: heading, one line, then the
+ * shared CTA pair (Scan your domain / Book a demo). Props override the copy;
+ * the buttons are not overridable so every page closes the same way.
+ */
+import CtaPair from "./CtaPair.astro";
+
+interface Props {
+  heading?: string;
+  body?: string;
+}
+const {
+  heading = "See what's already targeting your brand.",
+  body = "Run a free domain scan, no signup. Or book a demo and we'll walk through your brands.",
+} = Astro.props;
+---
+
+<section class="pc" aria-labelledby="pc-title">
+  <div class="pc-in">
+    <h2 class="pc-h" id="pc-title">{heading}</h2>
+    <p class="pc-p">{body}</p>
+    <CtaPair where="closing" center />
+  </div>
+</section>
+
+<style>
+  .pc { padding: 40px 24px 56px; }
+  .pc-in {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    text-align: center;
+    display: grid;
+    gap: 14px;
+    justify-items: center;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    box-shadow: var(--shadow-md);
+  }
+  .pc-h { margin: 0; font: 800 clamp(24px, 3vw, 32px) / 1.1 var(--font-display); letter-spacing: -0.025em; text-wrap: balance; color: var(--text-primary); }
+  .pc-p { margin: 0; max-width: 56ch; font-size: 16px; line-height: 1.55; color: var(--text-secondary); }
+  @media (max-width: 640px) { .pc { padding: 28px 16px 40px; } .pc-in { padding: 28px 16px; } }
+</style>

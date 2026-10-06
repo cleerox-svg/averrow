@@ -27,14 +27,15 @@ export const NAV_LINKS: NavLink[] = [
   {
     href: "/platform",
     label: "Platform",
-    also: ["/abuse-mailbox"],
     children: [
       { href: "/platform", label: "Platform overview", desc: "Everything Averrow watches, in one place" },
+      { href: "/platform/lookalike-domains", label: "Lookalike domains", desc: "Know when someone registers your name" },
+      { href: "/platform/impersonation", label: "Impersonation", desc: "Fake profiles and executive impersonation" },
       { href: "/platform/threat-detection", label: "Threat detection", desc: "Domains, certificates, feeds" },
-      { href: "/platform/social-monitoring", label: "Social monitoring", desc: "Fake profiles on six platforms" },
       { href: "/platform/email-security", label: "Email security", desc: "SPF, DKIM and DMARC posture" },
+      { href: "/platform/takedowns", label: "Takedowns", desc: "You set the rules, we do the filing" },
+      { href: "/platform/abuse-mailbox", label: "Abuse mailbox", desc: "Triage reported phishing" },
       { href: "/platform/campaign-intelligence", label: "Campaign intelligence", desc: "Operations behind the attacks" },
-      { href: "/abuse-mailbox", label: "Abuse mailbox", desc: "Triage reported phishing" },
     ],
   },
   {

@@ -12,6 +12,7 @@
 //
 // Phase B sprint 4.
 
+import { maskedClassifiedBySql } from "./tenantUserMasking";
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
@@ -181,7 +182,7 @@ export async function handleGetBrandAppStoreFindings(
     `SELECT id, brand_id, store, app_id, bundle_id, app_name,
             developer_name, developer_id, app_url, icon_url,
             rating, rating_count, release_date,
-            classification, classified_by, classification_confidence,
+            classification, ${maskedClassifiedBySql("classified_by")}, classification_confidence,
             classification_reason, ai_assessment, impersonation_score,
             severity, status, created_at
      FROM app_store_listings

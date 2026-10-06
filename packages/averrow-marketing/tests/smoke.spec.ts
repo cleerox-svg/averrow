@@ -13,7 +13,7 @@ const PAGES: Array<{
   heading: RegExp;
 }> = [
   { path: "/",             title: /Averrow/,             heading: /who is attacking your brand/i },
-  { path: "/platform",     title: /Platform/,            heading: /one platform/i },
+  { path: "/platform",     title: /Platform/,            heading: /every place your brand is impersonated/i },
   { path: "/pricing",      title: /^Plans — Averrow/,     heading: /plans built around\s*what you need watched/i },
   // Keep this loose: copy on About changes, the page's subject (threat actors) does not.
   { path: "/about",        title: /About/,               heading: /threat actors/i },
@@ -85,8 +85,16 @@ test("/sitemap.xml lists at least the ported routes", async ({ request }) => {
     "/blog",
     "/changelog",
     "/report-abuse",
+    "/platform/lookalike-domains",
+    "/platform/impersonation",
+    "/platform/takedowns",
+    "/platform/abuse-mailbox",
   ]) {
     expect(body, `sitemap missing ${p}`).toContain(p);
+  }
+  // Retired URLs are redirects, not pages: never listed.
+  for (const gone of ["/platform/ai-agents", "/platform/social-monitoring", "https://averrow.com/abuse-mailbox"]) {
+    expect(body, `sitemap must not list ${gone}`).not.toContain(`${gone}<`);
   }
 });
 

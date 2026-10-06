@@ -1,0 +1,30 @@
+---
+/*
+ * A short list of bold-led facts with an accent rule on the left ("Five
+ * networks. X, Instagram, ..."). Shared by the impersonation and campaign
+ * pages so the look is defined once.
+ *
+ * Props: items ({ lead, text }[]), label (optional accessible name for the list).
+ */
+interface Props {
+  items: Array<{ lead: string; text: string }>;
+  label?: string;
+}
+const { items, label } = Astro.props;
+---
+
+<ul class="fl" role="list" aria-label={label}>
+  {items.map((i) => <li><b>{i.lead}</b> {i.text}</li>)}
+</ul>
+
+<style>
+  .fl { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
+  .fl li {
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+    padding-left: 14px;
+    border-left: 2px solid var(--accent);
+  }
+  .fl b { color: var(--text-primary); font-weight: 700; }
+</style>

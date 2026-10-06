@@ -77,3 +77,15 @@ export async function maskTenantUserRefsForRows<T extends Record<string, unknown
   const labels = await resolveTenantUserLabels(env, collectUserRefIds(rows, fields));
   return rows.map((r) => maskTenantUserRefs(r, labels, fields));
 }
+
+/**
+ * SQL expression for a `classified_by` column on a tenant READ path. Staff
+ * classifications store the classifier's user id; a staff id is never shown to
+ * a customer, so it reads as "Averrow SOC". Machine values ('ai', 'system',
+ * 'rules', …) and customer ids pass through. `col` is a fixed column reference
+ * chosen by the caller, never request input.
+ */
+export function maskedClassifiedBySql(col: string): string {
+  return `CASE WHEN EXISTS (SELECT 1 FROM users su WHERE su.id = ${col} AND su.role <> 'client')
+            THEN '${AVERROW_SOC_LABEL}' ELSE ${col} END AS classified_by`;
+}

@@ -7,7 +7,7 @@ and responds — promoting confirmed phishing/malware into the threat
 pipeline and emailing the reporter a determination.
 
 This is the canonical reference for the feature. It is internal/staff
-documentation — see the marketing page (`/abuse-mailbox`) for the
+documentation — see the marketing page (`/platform/abuse-mailbox`) for the
 customer-facing pitch and the in-app module for the customer setup flow.
 
 ---
@@ -407,9 +407,9 @@ for a customer org is operational, not engineering:
 
 ## 6. Customer-facing surfaces
 
-- **Setup / how-to-forward:** the marketing product page `/abuse-mailbox`
-  (section `#setup`). The tenant UI links here from the empty-inbox state.
-- **Product pitch:** `/abuse-mailbox` (marketing) + a pricing line item.
+- **Setup / how-to-forward:** the marketing product page `/platform/abuse-mailbox`
+  (section `#setup`; the old `/abuse-mailbox` URL 301s there). The tenant UI links here from the empty-inbox state.
+- **Product pitch:** `/platform/abuse-mailbox` (marketing) + a pricing line item.
 - **In-app:** tenant module at `/modules/abuse-mailbox` shows the alias,
   forwarding instructions, the unified inbox, per-message drill-down, and
   an intel summary.

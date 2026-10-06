@@ -1,0 +1,237 @@
+---
+/*
+ * /platform/abuse-mailbox (Section 8, phase 2B). Built on the product-page kit
+ * in src/components/product/. Enterprise.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md L32, §3.2): the alias is a dedicated
+ * address in the form verify-<slug>@averrow.com (no address on the customer's own
+ * domain, G31). Reporters get an instant acknowledgement and a verdict in about
+ * two minutes; replies only go to reporters whose own mail passes authentication
+ * (backscatter guard). No "AI decides", no model, cap or rule detail. Phishing
+ * confirmed by the rules is promoted to a threat and a takedown is drafted, which
+ * waits for approval or the customer's signed rules. The mailbox page replaces the
+ * old callback lead form with the standard CTA pair. Sample: fictional brand Acme,
+ * `.example` domains only. The #setup section is deep-linked from the tenant app.
+ */
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import StepList from "../../components/product/StepList.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import { LOGIN_HREF } from "../../lib/nav";
+import type { ScopeRow, Step } from "../../components/product/types";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const steps: Step[] = [
+  {
+    title: "Forward",
+    text: "Customers and staff forward suspicious email to your address. Reporters whose mail passes authentication get an instant acknowledgement.",
+    output: {
+      label: "Sample report received",
+      rows: [{ text: "Report received", status: "Forwarded to verify-acme@averrow.com", pill: "Acknowledged", tone: "ok" }],
+    },
+  },
+  {
+    title: "Triage",
+    text: "We unpack the original message, read SPF, DKIM and DMARC from the forwarded headers, extract its links and classify it.",
+    output: {
+      label: "Sample triage findings",
+      rows: [
+        { text: "Sender authentication", status: "SPF and DKIM failed", pill: "Failed", tone: "high" },
+        { text: "Matches a brand you monitor", pill: "Matched", tone: "new" },
+      ],
+    },
+  },
+  {
+    title: "Resolve",
+    text: "A reporter whose mail passes authentication gets a verdict in about two minutes. Phishing that our rules confirm becomes a threat, and a takedown is drafted, waiting for your approval or filed under your signed rules.",
+    output: {
+      label: "Sample outcome",
+      rows: [
+        { text: "acme-secure-login.example", mono: true, status: "Added to your threat feed", pill: "Threat", tone: "high" },
+        { text: "Takedown draft", status: "Evidence summary attached", pill: "Awaiting approval", tone: "hold" },
+      ],
+    },
+  },
+];
+
+const setup = [
+  {
+    title: "We provision your address.",
+    text: "A dedicated report address for your organisation, in the form verify-yourname@averrow.com. It is live as soon as it exists.",
+  },
+  {
+    title: "Share it.",
+    text: "Publish it where customers report fraud, and set staff to forward anything suspicious.",
+  },
+  {
+    title: "Forward suspicious mail.",
+    text: "Reports are classified on arrival. Verdicts and escalations appear in your console.",
+  },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Your address",
+    covered: "A dedicated address for your organisation. Reports route straight into your console.",
+    notCovered: "An address on your own domain.",
+  },
+  {
+    area: "Reporters",
+    covered: "For reporters whose mail passes authentication, an instant acknowledgement, then a verdict in about two minutes.",
+    notCovered: "A reply to a sender whose own mail fails authentication. We never write back to forged addresses.",
+  },
+  {
+    area: "Reading each report",
+    covered: "The original message unpacked from the forward, its links extracted, and SPF, DKIM and DMARC read from the forwarded headers.",
+    notCovered: "Certainty. A verdict is a classification, and you decide what to act on.",
+  },
+  {
+    area: "Threats and takedowns",
+    covered: "Phishing that our rules confirm is promoted to a threat, matched to the brands you monitor, with a takedown drafted, waiting for your approval or filed under your signed rules.",
+    notCovered: "Filing anything without your approval or your signed rules.",
+  },
+  {
+    area: "Noise control",
+    covered: "Per-sender throttling, so one sender can't flood the inbox.",
+    notCovered: "Replacing your mail filtering. The mailbox handles what people report.",
+  },
+  {
+    area: "Intelligence",
+    covered: "A rollup of what your reports are surfacing: threats, providers and takedowns.",
+    notCovered: "Other organisations' reports. The rollup covers your own.",
+  },
+];
+---
+
+<ProductPage
+  title="Abuse Mailbox — Averrow"
+  description="One address for customers and staff to report suspicious email. Each report is classified and answered with a verdict. Confirmed phishing becomes a threat with a takedown drafted, waiting for your approval or filed under your signed rules."
+  crumb="Abuse mailbox"
+>
+  <ProductHero
+    surface="abuse"
+    title="One address to report suspicious email."
+    sub="Customers and staff forward it. Reporters whose mail passes authentication get an instant acknowledgement and a verdict in about two minutes. Confirmed phishing becomes a threat with a takedown drafted, waiting for your approval or filed under your signed rules."
+  >
+    <SampleFrame slot="sample" label="Sample determination email" footer="Takedown drafted, waiting for your approval or filed under your signed rules">
+      <div class="ae">
+        <dl class="ae-meta">
+          <div><dt>From</dt><dd>Averrow Abuse Triage</dd></div>
+          <div><dt>Subject</dt><dd>Averrow &middot; Phishing confirmed (Ref: 3F9A2C1B)</dd></div>
+        </dl>
+        <div class="ae-body">
+          <span class="ae-verdict">Phishing confirmed</span>
+          <p class="ae-lead">The message you reported is a credential-phishing attempt impersonating your brand. Here's what we found.</p>
+          <p class="ae-h">What we found</p>
+          <ul class="ae-list" role="list">
+            <li>Sender authentication failed (SPF and DKIM)</li>
+            <li>A link to <span class="ae-mono">acme-secure-login.example</span>, a lookalike of your domain</li>
+            <li>Matches a brand you monitor</li>
+          </ul>
+          <p class="ae-h">Next steps</p>
+          <ul class="ae-list" role="list">
+            <li>Don't open the link, and warn anyone who may have.</li>
+            <li>We've added it to your threat feed and drafted a takedown, waiting for your approval or filed under your signed rules.</li>
+          </ul>
+        </div>
+      </div>
+    </SampleFrame>
+  </ProductHero>
+
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Forward, triage, resolve."
+    lede="Every forwarded message is checked, not just stored."
+  >
+    <StepList steps={steps} />
+  </ProductSection>
+
+  <ProductSection
+    id="setup"
+    eyebrow="Setup"
+    heading="Live in three steps."
+    lede="No software to install and no inbox to migrate. Getting protected is forwarding mail."
+  >
+    <ol class="am-setup" role="list">
+      {setup.map((s, i) => (
+        <li>
+          <span class="num-dot" aria-hidden="true">{i + 1}</span>
+          <div><b>{s.title}</b><span>{s.text}</span></div>
+        </li>
+      ))}
+    </ol>
+    <p class="am-cust">
+      Already a customer? Your address and forwarding instructions are in the Abuse Mailbox module in your console.
+      <a class="link-u" href={`${base}${LOGIN_HREF}`}>Log in</a>
+    </p>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="What you get"
+    heading="What the mailbox does, and what it doesn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Abuse mailbox: covered and not covered" />
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/platform/abuse-mailbox"
+    include={["/platform/takedowns", "/platform/email-security", "/platform/threat-detection"]}
+    heading="Where reports go next"
+  />
+
+  <PageCTA
+    heading="Turn your abuse inbox into a detection feed."
+    body="Run a free domain scan, no signup. Or book a demo and we'll show you the mailbox and set up your address."
+  />
+</ProductPage>
+
+<style>
+  .ae { display: grid; gap: 12px; }
+  .ae-meta { margin: 0; display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .ae-meta > div { display: flex; gap: 10px; font-size: 13px; min-width: 0; }
+  .ae-meta dt { flex: none; min-width: 58px; font: 600 12px var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-meta dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+  .ae-body { display: grid; gap: 8px; justify-items: start; }
+  .ae-verdict {
+    font: 700 12px var(--font-mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--sev-high-text);
+    background: color-mix(in srgb, var(--sev-high) 12%, transparent);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 1px 10px;
+  }
+  .ae-lead { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-primary); }
+  .ae-h { margin: 6px 0 0; font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .ae-list { list-style: disc; margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .ae-mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); overflow-wrap: anywhere; }
+
+  .am-setup { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .am-setup li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .am-setup li > div { display: grid; gap: 6px; min-width: 0; }
+  .am-setup b { font: 700 16px var(--font-display); color: var(--text-primary); }
+  .am-setup span:not(.num-dot) { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .am-cust { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+
+  @media (max-width: 900px) {
+    .am-setup { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>

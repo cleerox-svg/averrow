@@ -17,6 +17,7 @@
 //
 // Phase B sprint 7.
 
+import { maskedClassifiedBySql } from "./tenantUserMasking";
 import { json, corsHeaders } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess, ORG_ROLE_HIERARCHY } from "../middleware/auth";
@@ -448,7 +449,7 @@ export async function handleGetBrandTrademarkFindings(
     env.DB.prepare(
       `SELECT id, brand_id, asset_id, found_url, found_context, found_image_url,
               found_at, found_phash, match_distance, match_confidence,
-              classification, classified_by, classification_confidence,
+              classification, ${maskedClassifiedBySql("classified_by")}, classification_confidence,
               classification_reason, ai_assessment, ai_action,
               severity, status, first_seen, last_seen
        FROM trademark_findings

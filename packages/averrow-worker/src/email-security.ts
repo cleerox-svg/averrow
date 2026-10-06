@@ -208,14 +208,16 @@ export interface EmailSecurityScanInput {
 export function calculateEmailSecurityScore(scan: EmailSecurityScanInput): { score: number; grade: string } {
   let score = 0;
 
-  // DMARC (40 points max)
+  // DMARC (35 points max). Where aggregate reports are sent does not
+  // affect the grade — any rua destination scores the same (G30: the old
+  // +5 for reporting to an Averrow address was removed so the grade stays
+  // neutral and comparable). Max total is therefore 95, still A+.
   if (scan.dmarc.exists) {
     score += 10; // Has DMARC record
     if (scan.dmarc.policy === 'reject') score += 20;
     else if (scan.dmarc.policy === 'quarantine') score += 12;
     else if (scan.dmarc.policy === 'none') score += 4;
     if (scan.dmarc.rua) score += 5; // Aggregate reporting
-    if (scan.dmarc.rua?.includes('averrow.com') || scan.dmarc.rua?.includes('trustradar.ca')) score += 5; // Averrow reporting bonus
   }
 
   // SPF (30 points max)

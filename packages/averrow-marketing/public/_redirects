@@ -1,0 +1,13 @@
+# Section 8 (Platform pages): retired URLs, permanent. Cloudflare Workers Static
+# Assets reads this file from the Worker's public/ directory (copied there by
+# scripts/sync-to-worker.mjs) and applies it before any asset is looked up.
+# Browsers keep the visitor's own #fragment through a 301 when the destination
+# has none, so the tenant app's /abuse-mailbox#setup deep link still lands on
+# the setup section. Each retired page also ships a src/pages stub (Redirect.astro)
+# as a fallback for hosts that do not read this file.
+/platform/ai-agents /platform#how-it-works 301
+/platform/ai-agents/ /platform#how-it-works 301
+/platform/social-monitoring /platform/impersonation 301
+/platform/social-monitoring/ /platform/impersonation 301
+/abuse-mailbox /platform/abuse-mailbox 301
+/abuse-mailbox/ /platform/abuse-mailbox 301

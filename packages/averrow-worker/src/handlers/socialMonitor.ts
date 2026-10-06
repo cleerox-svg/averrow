@@ -5,6 +5,7 @@
 import { json } from "../lib/cors";
 import { audit } from "../lib/audit";
 import { runSocialMonitorForBrand } from "../scanners/social-monitor";
+import { upsertSocialScanImpersonation } from "../lib/social-scan-persist";
 import type { Env } from "../types";
 import { isPlatformStaff } from "../middleware/auth";
 
@@ -300,32 +301,18 @@ export async function handleTriggerSocialScan(
           result.suspiciousAccountUrl ?? null,
         ).run();
       } else {
-        // Impersonation scan result — upsert with score-based classification
-        const classification = result.impersonationScore >= 0.7 ? "impersonation" : "suspicious";
-        await env.DB.prepare(`
-          INSERT INTO social_profiles
-            (id, brand_id, platform, handle, profile_url, display_name,
-             classification, classified_by, classification_confidence,
-             impersonation_score, impersonation_signals, severity, status, last_checked)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'ai', ?, ?, ?, ?, 'active', datetime('now'))
-          ON CONFLICT (brand_id, platform, handle) DO UPDATE SET
-            impersonation_score = excluded.impersonation_score,
-            impersonation_signals = excluded.impersonation_signals,
-            severity = excluded.severity,
-            classification = excluded.classification,
-            classification_confidence = excluded.classification_confidence,
-            last_checked = datetime('now'),
-            updated_at = datetime('now')
-        `).bind(
-          profileId, result.brandId, result.platform, handle,
-          result.suspiciousAccountUrl ?? null,
-          result.suspiciousAccountName ?? null,
-          classification,
-          result.impersonationScore,
-          result.impersonationScore,
-          JSON.stringify(result.impersonationSignals),
-          result.severity,
-        ).run();
+        // Impersonation scan result — shared rules-path upsert (keeps a
+        // person's classification; writes the deterministic reason).
+        await upsertSocialScanImpersonation(env.DB, profileId, {
+          brandId: result.brandId,
+          platform: result.platform,
+          handle,
+          profileUrl: result.suspiciousAccountUrl ?? null,
+          displayName: result.suspiciousAccountName ?? null,
+          score: result.impersonationScore,
+          signals: result.impersonationSignals,
+          severity: result.severity,
+        });
       }
 
       // Create alerts for HIGH/CRITICAL

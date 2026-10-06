@@ -323,7 +323,7 @@ export async function runExecutiveMonitorForExec(
         verified: false, // HEAD-only — assume unverified (conservative)
         handle_is_permutation: true, // by construction
       };
-      const scored = scoreImpersonation(signals);
+      const scored = scoreImpersonation(signals, { subject: "the executive's name" });
 
       const isOfficialHandle =
         officialForPlatform !== undefined && officialForPlatform === probedHandle;

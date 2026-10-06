@@ -14,6 +14,7 @@
 // Gates: org access + requireModule('social') + brand-membership
 // via org_brands. super_admin bypasses for support flows.
 
+import { maskedClassifiedBySql } from "./tenantUserMasking";
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
@@ -182,7 +183,7 @@ export async function handleGetBrandSocialFindings(
   const profiles = await env.DB.prepare(
     `SELECT id, brand_id, platform, handle, profile_url, display_name,
             bio, avatar_url, followers_count, verified,
-            classification, classified_by, classification_confidence,
+            classification, ${maskedClassifiedBySql("classified_by")}, classification_confidence,
             classification_reason, ai_assessment, impersonation_score,
             impersonation_signals, severity, status, created_at
      FROM social_profiles

@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 /*
  * Homepage "From finding to takedown" (Section 5, TakedownFlow.astro): five
  * stages, an automation switch that is progressive enhancement (server HTML is
- * the "Approve first" state), a vertical timeline on phones, and a disclosure
+ * the "Semi-auto" state, labelled Off / Semi-auto / Auto as on /platform/takedowns), a vertical timeline on phones, and a disclosure
  * guard (docs/DISCLOSURE_REGISTER.md).
  *
  * Both the five-column flow and the mobile list are rendered and one is hidden
@@ -15,14 +15,14 @@ const DESKTOP = { width: 1280, height: 900 };
 const PHONE = { width: 390, height: 844 };
 
 const STAGES = ["Found", "Evidence", "Your rules", "Filed", "Watched"];
-const MODES = ["Manual", "Approve first", "Automatic"];
+const MODES = ["Off", "Semi-auto", "Auto"];
 
 // Words/claims that must never appear in the section (speed, cadence, success
 // rates, vendor-ish marketing). Case-insensitive substring match.
 const FORBIDDEN_IN_SECTION = ["blocklist", "real-time", "one-click", "%", "minutes", "hours"];
 
 // Pages checked site-wide for the retired "blocklist" wording.
-const SITE_PAGES = ["/", "/platform", "/platform/campaign-intelligence", "/pricing", "/why-averrow"];
+const SITE_PAGES = ["/", "/platform", "/platform/campaign-intelligence", "/platform/takedowns", "/platform/lookalike-domains", "/pricing", "/why-averrow"];
 
 async function openHome(page: Page) {
   await page.route("**/api/v1/public/stats", (route) => route.abort());
@@ -48,7 +48,7 @@ async function expectMode(page: Page, mode: "manual" | "approve" | "auto", label
   const radios = page.locator('#takedown-flow [role="radio"]');
   await expect(radios).toHaveCount(3);
   await expect(page.locator('#takedown-flow [role="radio"][aria-checked="true"]')).toHaveCount(1);
-  await expect(page.getByRole("radio", { name: label })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: label, exact: true })).toHaveAttribute("aria-checked", "true");
   // Visibility is real (display:none), and exactly one card + one caption show.
   const v = await visibleModes(page);
   expect(v.card).toEqual([mode]);
@@ -86,74 +86,72 @@ test.describe("Takedown flow (desktop)", () => {
     await expect(page.getByText("We file the takedowns.")).toHaveCount(0);
   });
 
-  test("automation switch: radiogroup of 3, Approve first checked by default", async ({ page }) => {
+  test("automation switch: radiogroup of 3, Semi-auto checked by default", async ({ page }) => {
     await openHome(page);
     const group = page.getByRole("radiogroup", { name: "Automation level" });
     await expect(group).toBeVisible();
     const radios = group.getByRole("radio");
     await expect(radios).toHaveCount(3);
     expect((await radios.allTextContents()).map((t) => t.trim())).toEqual(MODES);
-    await expectMode(page, "approve", "Approve first");
+    await expectMode(page, "approve", "Semi-auto");
     // Roving tabindex: only the checked radio is in the tab order.
-    await expect(page.getByRole("radio", { name: "Approve first" })).toHaveAttribute("tabindex", "0");
-    await expect(page.getByRole("radio", { name: "Manual" })).toHaveAttribute("tabindex", "-1");
-    await expect(page.getByRole("radio", { name: "Automatic" })).toHaveAttribute("tabindex", "-1");
+    await expect(page.getByRole("radio", { name: "Semi-auto", exact: true })).toHaveAttribute("tabindex", "0");
+    await expect(page.getByRole("radio", { name: "Off", exact: true })).toHaveAttribute("tabindex", "-1");
+    await expect(page.getByRole("radio", { name: "Auto", exact: true })).toHaveAttribute("tabindex", "-1");
   });
 
   test("clicking a radio swaps stage 3 card + caption and truly hides the rest", async ({ page }) => {
     await openHome(page);
     await flow(page).scrollIntoViewIfNeeded();
-    await page.getByRole("radio", { name: "Manual" }).click();
-    await expectMode(page, "manual", "Manual");
+    await page.getByRole("radio", { name: "Off", exact: true }).click();
+    await expectMode(page, "manual", "Off");
     await expect(stage3(page)).toContainText("Draft ready");
     await expect(stage3(page)).toContainText("You approve each one, and our team files it.");
 
-    await page.getByRole("radio", { name: "Automatic" }).click();
-    await expectMode(page, "auto", "Automatic");
+    await page.getByRole("radio", { name: "Auto", exact: true }).click();
+    await expectMode(page, "auto", "Auto");
     await expect(stage3(page)).toContainText("Within your monthly limit");
     await expect(stage3(page)).toContainText("Filed automatically within your rules and any monthly limit you set.");
 
-    await page.getByRole("radio", { name: "Approve first" }).click();
-    await expectMode(page, "approve", "Approve first");
+    await page.getByRole("radio", { name: "Semi-auto", exact: true }).click();
+    await expectMode(page, "approve", "Semi-auto");
     await expect(stage3(page)).toContainText("Waiting for your approval");
   });
 
   test("arrow keys move and wrap the selection, focus follows", async ({ page }) => {
     await openHome(page);
     await flow(page).scrollIntoViewIfNeeded();
-    const approve = page.getByRole("radio", { name: "Approve first" });
+    const approve = page.getByRole("radio", { name: "Semi-auto", exact: true });
     await approve.focus();
 
     await page.keyboard.press("ArrowRight");
-    await expectMode(page, "auto", "Automatic");
-    await expect(page.getByRole("radio", { name: "Automatic" })).toBeFocused();
+    await expectMode(page, "auto", "Auto");
+    await expect(page.getByRole("radio", { name: "Auto", exact: true })).toBeFocused();
 
-    await page.keyboard.press("ArrowRight"); // wraps to Manual
-    await expectMode(page, "manual", "Manual");
-    await expect(page.getByRole("radio", { name: "Manual" })).toBeFocused();
+    await page.keyboard.press("ArrowRight"); // wraps to Off
+    await expectMode(page, "manual", "Off");
+    await expect(page.getByRole("radio", { name: "Off", exact: true })).toBeFocused();
 
-    await page.keyboard.press("ArrowLeft"); // wraps back to Automatic
-    await expectMode(page, "auto", "Automatic");
+    await page.keyboard.press("ArrowLeft"); // wraps back to Auto
+    await expectMode(page, "auto", "Auto");
 
     await page.keyboard.press("ArrowDown"); // Down == Right
-    await expectMode(page, "manual", "Manual");
+    await expectMode(page, "manual", "Off");
     await page.keyboard.press("ArrowUp"); // Up == Left
-    await expectMode(page, "auto", "Automatic");
+    await expectMode(page, "auto", "Auto");
     // A non-arrow key changes nothing.
     await page.keyboard.press("a");
-    await expectMode(page, "auto", "Automatic");
+    await expectMode(page, "auto", "Auto");
   });
 
-  test("'How takedowns work' resolves to campaign-intelligence#takedowns; Scan CTA targets /scan", async ({ page }) => {
+  test("'How takedowns work' resolves to /platform/takedowns; Scan CTA targets /scan", async ({ page }) => {
     await openHome(page);
     const how = page.locator('#takedown-flow a[data-cta="takedownflow-how"]');
     await expect(how).toHaveText(/How takedowns work/);
     const howHref = (await how.getAttribute("href")) ?? "";
-    expect(howHref).toMatch(/\/platform\/campaign-intelligence#takedowns$/);
-    const [howPath, hash] = howHref.split("#");
-    const res = await page.request.get(howPath);
+    expect(howHref).toMatch(/\/platform\/takedowns$/);
+    const res = await page.request.get(howHref);
     expect(res.status()).toBe(200);
-    expect(await res.text()).toMatch(new RegExp(`\\bid=["']${hash}["']`));
 
     const scan = page.locator('#takedown-flow a[data-cta="takedownflow-scan"]');
     await expect(scan).toHaveText(/Scan your domain/);
@@ -166,8 +164,8 @@ test.describe("Takedown flow (desktop)", () => {
     // Following the link lands on the page with the anchor present.
     await how.scrollIntoViewIfNeeded();
     await how.click();
-    await expect(page).toHaveURL(/\/platform\/campaign-intelligence#takedowns$/);
-    await expect(page.locator("#takedowns")).toHaveCount(1);
+    await expect(page).toHaveURL(/\/platform\/takedowns$/);
+    await expect(page.locator("h1")).toHaveText("You set the rules. We do the filing.");
   });
 
   test("disclosure guard: section text has no forbidden claim words", async ({ page }) => {
@@ -178,13 +176,15 @@ test.describe("Takedown flow (desktop)", () => {
     for (const word of FORBIDDEN_IN_SECTION) {
       expect(text, `section must not contain "${word}"`).not.toContain(word.toLowerCase());
     }
+    // DISCLOSURE_REGISTER §3.7: "Approve first" is a Never-say for Semi-auto (the default auto-files LOW/MEDIUM).
+    expect(text).not.toContain("approve first");
   });
 });
 
 // ── no JavaScript ───────────────────────────────────────────────────────
 
 test.describe("Takedown flow (JS disabled)", () => {
-  test("server HTML shows Approve first only; switch stays hidden", async ({ browser, baseURL }) => {
+  test("server HTML shows Semi-auto only; switch stays hidden", async ({ browser, baseURL }) => {
     const context = await browser.newContext({ baseURL, javaScriptEnabled: false, viewport: DESKTOP });
     try {
       const page = await context.newPage();

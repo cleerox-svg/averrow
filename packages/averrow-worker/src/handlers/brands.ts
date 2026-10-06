@@ -18,6 +18,8 @@ import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
 import { scopeCacheSegment } from "../lib/scope-cache-key";
+import { countExposureLookalikes } from "../lib/lookalike-exposure";
+import { persistSocialAssessment } from "../lib/social-assessment-persist";
 import type { Env } from "../types";
 import type { OrgScope } from "../middleware/auth";
 
@@ -1861,9 +1863,7 @@ export async function handleReassessSocialProfile(
       "SELECT c.name FROM campaigns c JOIN threats t ON t.campaign_id = c.id WHERE t.target_brand_id = ? AND c.status = 'active' LIMIT 3"
     ).bind(brand.id).all<{ name: string }>();
 
-    const lookalikes = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM lookalike_domains WHERE brand_id = ? AND status = 'active'"
-    ).bind(brand.id).first<{ n: number }>();
+    const lookalikeCount = await countExposureLookalikes(env.DB, brand.id);
 
     const otherSuspicious = await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM social_profiles WHERE brand_id = ? AND classification IN ('suspicious','impersonation') AND status = 'active' AND id != ?"
@@ -1893,7 +1893,7 @@ export async function handleReassessSocialProfile(
       existingThreats: threats.results.map(t => `${t.threat_type}: ${t.malicious_url}`).slice(0, 10),
       emailSecurityGrade: emailGrade?.grade || null,
       activeCampaigns: campaigns.results.map(c => c.name).slice(0, 10),
-      lookalikeDomainsFound: lookalikes?.n || 0,
+      lookalikeDomainsFound: lookalikeCount,
       otherImpersonationProfiles: otherSuspicious?.n || 0,
     };
 
@@ -1902,60 +1902,46 @@ export async function handleReassessSocialProfile(
       return json({ success: false, error: "AI assessment unavailable" }, 503, origin);
     }
 
-    const now = new Date().toISOString();
-    await env.DB.prepare(`
-      UPDATE social_profiles SET
-        ai_assessment = ?,
-        ai_confidence = ?,
-        ai_action = ?,
-        ai_evidence_draft = ?,
-        classification = CASE
-          WHEN classified_by = 'manual' THEN classification
-          ELSE ?
-        END,
-        classification_confidence = CASE
-          WHEN classified_by = 'manual' THEN classification_confidence
-          ELSE ?
-        END,
-        classification_reason = ?,
-        impersonation_signals = ?,
-        severity = CASE
-          WHEN ? >= 0.9 THEN 'CRITICAL'
-          WHEN ? >= 0.7 THEN 'HIGH'
-          WHEN ? >= 0.4 THEN 'MEDIUM'
-          ELSE 'LOW'
-        END,
-        ai_assessed_at = ?,
-        updated_at = ?
-      WHERE id = ? AND brand_id = ?
-    `).bind(
-      assessment.reasoning,
-      assessment.confidence,
-      assessment.action,
-      assessment.evidenceDraft,
-      assessment.classification,
-      assessment.confidence,
-      assessment.reasoning,
-      JSON.stringify([...assessment.signals, ...assessment.crossCorrelations]),
-      assessment.confidence, assessment.confidence, assessment.confidence,
-      now,
-      now,
-      profileId, brandId,
-    ).run();
+    // Only a real AI assessment replaces the rule-based result (G26). On a
+    // fallback (AI_MODE=rules_only skip, failed call, invalid reply) the
+    // row is left as the scorer wrote it and the caller gets a 409: no
+    // assessment exists, so this is not a success.
+    const applied = await persistSocialAssessment(
+      env.DB,
+      assessment,
+      { kind: "id", brandId, profileId },
+      new Date().toISOString(),
+    );
 
     await audit(env, {
       action: "social_profile_ai_reassess",
       userId,
       resourceType: "social_profile",
       resourceId: profileId,
-      details: {
-        brand_id: brandId,
-        classification: assessment.classification,
-        confidence: assessment.confidence,
-        action: assessment.action,
-      },
+      details: applied
+        ? {
+            brand_id: brandId,
+            ai_applied: true,
+            classification: assessment.classification,
+            confidence: assessment.confidence,
+            action: assessment.action,
+          }
+        : {
+            brand_id: brandId,
+            ai_applied: false,
+            reason: assessment.fallbackReason,
+          },
+      outcome: applied ? "success" : "failure",
       request,
     });
+
+    if (!applied) {
+      return json({
+        success: false,
+        error: "No assessment available",
+        reason: assessment.fallbackReason,
+      }, 409, origin);
+    }
 
     const updated = await env.DB.prepare(
       "SELECT * FROM social_profiles WHERE id = ?"
@@ -1965,6 +1951,7 @@ export async function handleReassessSocialProfile(
       success: true,
       data: {
         profile: updated,
+        ai_applied: true,
         assessment: {
           classification: assessment.classification,
           confidence: assessment.confidence,

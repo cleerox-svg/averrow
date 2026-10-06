@@ -1,0 +1,36 @@
+---
+/*
+ * Fallback stub for a retired URL. The real 301 is served by Cloudflare from
+ * public/_redirects (copied to the Worker's static assets by the build), which
+ * runs before any asset is looked up. This stub only renders when something
+ * serves the built files without that layer (astro preview, local dev, another
+ * static host), so the old URL still lands on the new one.
+ *
+ * Standalone document on purpose (no Layout): no nav, no analytics, noindex
+ * (no rel=canonical: the destination is a different page, not a duplicate).
+ * The inline script keeps the visitor's own #fragment when the destination has none (the tenant app links to
+ * /abuse-mailbox#setup); browsers already do this for a real 301.
+ */
+interface Props {
+  to: string;
+}
+const { to } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const target = `${base}${to}`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting…</title>
+    <meta name="robots" content="noindex" />
+    <meta http-equiv="refresh" content={`0; url=${target}`} />
+    <script is:inline define:vars={{ target }}>
+      location.replace(target.indexOf("#") === -1 ? target + location.hash : target);
+    </script>
+  </head>
+  <body>
+    <p>This page has moved to <a href={target}>{target}</a>.</p>
+  </body>
+</html>

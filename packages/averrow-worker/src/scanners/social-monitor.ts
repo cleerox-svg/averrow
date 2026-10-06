@@ -23,6 +23,12 @@ import {
   type SocialAiAssessorOutput,
 } from '../agents/social-ai-assessor';
 import { computeBrandExposureScore } from '../lib/brand-scoring';
+import { countExposureLookalikes } from '../lib/lookalike-exposure';
+import { persistSocialAssessment } from '../lib/social-assessment-persist';
+import {
+  SOCIAL_DISCOVERY_UPSERT_SQL,
+  upsertSocialScanImpersonation,
+} from '../lib/social-scan-persist';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -279,29 +285,9 @@ export async function runSocialDiscoveryBatch(env: Env, limit: number = 10): Pro
         const handles: Record<string, string> = {};
 
         for (const profile of discovered) {
-          // Upsert into social_profiles as official
-          await env.DB.prepare(`
-            INSERT INTO social_profiles
-              (id, brand_id, platform, handle, profile_url, classification,
-               classified_by, classification_confidence, last_checked, status)
-            VALUES (?, ?, ?, ?, ?, 'official', 'auto_discovery', ?, datetime('now'), 'active')
-            ON CONFLICT (brand_id, platform, handle) DO UPDATE SET
-              classification = CASE
-                WHEN classified_by = 'manual' THEN classification
-                ELSE 'official'
-              END,
-              classified_by = CASE
-                WHEN classified_by = 'manual' THEN classified_by
-                ELSE 'auto_discovery'
-              END,
-              classification_confidence = CASE
-                WHEN classified_by = 'manual' THEN classification_confidence
-                ELSE excluded.classification_confidence
-              END,
-              profile_url = excluded.profile_url,
-              last_checked = datetime('now'),
-              updated_at = datetime('now')
-          `).bind(
+          // Upsert into social_profiles as official (a person's
+          // classification is kept — HUMAN_CLASSIFIED_SQL).
+          await env.DB.prepare(SOCIAL_DISCOVERY_UPSERT_SQL).bind(
             crypto.randomUUID(), brand.id, profile.platform, profile.handle,
             profile.profileUrl, profile.confidence,
           ).run();
@@ -439,31 +425,19 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
             result.suspiciousAccountUrl ?? null,
           ).run();
         } else {
-          const classification = result.impersonationScore >= 0.7 ? 'impersonation' : 'suspicious';
-          await env.DB.prepare(`
-            INSERT INTO social_profiles
-              (id, brand_id, platform, handle, profile_url, display_name,
-               classification, classified_by, classification_confidence,
-               impersonation_score, impersonation_signals, severity, status, last_checked)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'ai', ?, ?, ?, ?, 'active', datetime('now'))
-            ON CONFLICT (brand_id, platform, handle) DO UPDATE SET
-              impersonation_score = excluded.impersonation_score,
-              impersonation_signals = excluded.impersonation_signals,
-              severity = excluded.severity,
-              classification = excluded.classification,
-              classification_confidence = excluded.classification_confidence,
-              last_checked = datetime('now'),
-              updated_at = datetime('now')
-          `).bind(
-            profileId, result.brandId, result.platform, handle,
-            result.suspiciousAccountUrl ?? null,
-            result.suspiciousAccountName ?? null,
-            classification,
-            result.impersonationScore,
-            result.impersonationScore,
-            JSON.stringify(result.impersonationSignals),
-            result.severity,
-          ).run();
+          // Rules path: score/signals/severity refresh every scan; the
+          // classification + deterministic reason refresh only when no person
+          // has classified the row.
+          await upsertSocialScanImpersonation(env.DB, profileId, {
+            brandId: result.brandId,
+            platform: result.platform,
+            handle,
+            profileUrl: result.suspiciousAccountUrl ?? null,
+            displayName: result.suspiciousAccountName ?? null,
+            score: result.impersonationScore,
+            signals: result.impersonationSignals,
+            severity: result.severity,
+          });
         }
 
         // 4. Create alerts for HIGH/CRITICAL severity
@@ -518,11 +492,22 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
         r.impersonationScore >= 0.3 || r.checkType === 'handle_check'
       );
 
-      for (const profile of profilesToAssess) {
+      // Brand-constant cross-reference inputs: read once per brand, not once
+      // per profile. (otherImpersonationProfiles is a snapshot taken after
+      // step 3's upserts; an AI reclassification inside the loop below is
+      // no longer reflected in later profiles' counts.)
+      let brandContext: {
+        existingThreats: string[];
+        emailSecurityGrade: string | null;
+        activeCampaigns: string[];
+        lookalikeDomainsFound: number;
+        otherImpersonationProfiles: number;
+        brandAliases: string[];
+        brandKeywords: string[];
+        officialHandles: Record<string, string>;
+      } | null = null;
+      if (profilesToAssess.length > 0) {
         try {
-          const handle = profile.handleChecked.replace(/^@/, '');
-
-          // Gather cross-reference data
           const threats = await env.DB.prepare(
             "SELECT malicious_url, threat_type FROM threats WHERE target_brand_id = ? AND status = 'active' LIMIT 5"
           ).bind(brand.id).all<{ malicious_url: string; threat_type: string }>();
@@ -535,9 +520,7 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
             "SELECT c.name FROM campaigns c JOIN threats t ON t.campaign_id = c.id WHERE t.target_brand_id = ? AND c.status = 'active' LIMIT 3"
           ).bind(brand.id).all<{ name: string }>();
 
-          const lookalikes = await env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM lookalike_domains WHERE brand_id = ? AND status = 'active'"
-          ).bind(brand.id).first<{ n: number }>();
+          const lookalikeCount = await countExposureLookalikes(env.DB, brand.id);
 
           const otherSuspicious = await env.DB.prepare(
             "SELECT COUNT(*) AS n FROM social_profiles WHERE brand_id = ? AND classification IN ('suspicious','impersonation') AND status = 'active'"
@@ -558,12 +541,36 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
             officialHandles = brand.official_handles ? JSON.parse(brand.official_handles) : {};
           } catch { /* non-fatal */ }
 
-          const agentInput: SocialAiAssessorInput = {
-            brandName: brand.brand_name,
-            brandDomain: brand.domain,
+          brandContext = {
+            existingThreats: threats.results.map(t => `${t.threat_type}: ${t.malicious_url}`).slice(0, 10),
+            emailSecurityGrade: emailGrade?.grade || null,
+            activeCampaigns: campaigns.results.map(c => c.name).slice(0, 10),
+            lookalikeDomainsFound: lookalikeCount,
+            otherImpersonationProfiles: otherSuspicious?.n || 0,
             brandAliases,
             brandKeywords,
             officialHandles,
+          };
+        } catch (ctxErr) {
+          logger.warn("social_ai_assessment_context_error", {
+            brand_id: brand.id,
+            error: ctxErr instanceof Error ? ctxErr.message : String(ctxErr),
+          });
+        }
+      }
+
+      const bc = brandContext;
+      for (const profile of profilesToAssess) {
+        if (!bc) break;
+        try {
+          const handle = profile.handleChecked.replace(/^@/, '');
+
+          const agentInput: SocialAiAssessorInput = {
+            brandName: brand.brand_name,
+            brandDomain: brand.domain,
+            brandAliases: bc.brandAliases,
+            brandKeywords: bc.brandKeywords,
+            officialHandles: bc.officialHandles,
             platform: profile.platform,
             handle,
             profileUrl: profile.suspiciousAccountUrl || '',
@@ -572,11 +579,11 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
             followersCount: null,
             verified: false,
             accountCreated: null,
-            existingThreats: threats.results.map(t => `${t.threat_type}: ${t.malicious_url}`).slice(0, 10),
-            emailSecurityGrade: emailGrade?.grade || null,
-            activeCampaigns: campaigns.results.map(c => c.name).slice(0, 10),
-            lookalikeDomainsFound: lookalikes?.n || 0,
-            otherImpersonationProfiles: otherSuspicious?.n || 0,
+            existingThreats: bc.existingThreats,
+            emailSecurityGrade: bc.emailSecurityGrade,
+            activeCampaigns: bc.activeCampaigns,
+            lookalikeDomainsFound: bc.lookalikeDomainsFound,
+            otherImpersonationProfiles: bc.otherImpersonationProfiles,
           };
 
           // Each per-profile assessment is its own social_ai_assessor
@@ -586,46 +593,15 @@ export async function runSocialMonitorBatch(env: Env): Promise<{
           const { data: assessment } = await runSyncAgent<SocialAiAssessorOutput>(env, socialAiAssessorAgent, agentInput);
           if (!assessment) continue;
 
-          const now2 = new Date().toISOString();
-          await env.DB.prepare(`
-            UPDATE social_profiles SET
-              ai_assessment = ?,
-              ai_confidence = ?,
-              ai_action = ?,
-              ai_evidence_draft = ?,
-              classification = CASE
-                WHEN classified_by = 'manual' THEN classification
-                ELSE ?
-              END,
-              classification_confidence = CASE
-                WHEN classified_by = 'manual' THEN classification_confidence
-                ELSE ?
-              END,
-              classification_reason = ?,
-              impersonation_signals = ?,
-              severity = CASE
-                WHEN ? >= 0.9 THEN 'CRITICAL'
-                WHEN ? >= 0.7 THEN 'HIGH'
-                WHEN ? >= 0.4 THEN 'MEDIUM'
-                ELSE 'LOW'
-              END,
-              ai_assessed_at = ?,
-              updated_at = ?
-            WHERE brand_id = ? AND platform = ? AND handle = ?
-          `).bind(
-            assessment.reasoning,
-            assessment.confidence,
-            assessment.action,
-            assessment.evidenceDraft,
-            assessment.classification,
-            assessment.confidence,
-            assessment.reasoning,
-            JSON.stringify([...assessment.signals, ...assessment.crossCorrelations]),
-            assessment.confidence, assessment.confidence, assessment.confidence,
-            now2,
-            now2,
-            brand.id, profile.platform, handle,
-          ).run();
+          // Only a real AI assessment replaces the rule-based result; a
+          // fallback (AI_MODE=rules_only skip, failed call, invalid reply)
+          // leaves the scorer's classification/score/signals untouched (G26).
+          await persistSocialAssessment(
+            env.DB,
+            assessment,
+            { kind: 'handle', brandId: brand.id, platform: profile.platform, handle },
+            new Date().toISOString(),
+          );
         } catch (aiErr) {
           logger.warn("social_ai_assessment_error", {
             brand_id: brand.id,

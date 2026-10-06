@@ -1,0 +1,98 @@
+---
+/*
+ * Three steps, each with a real output fragment (what the customer actually
+ * sees at that step, in the fictional Acme world). Desktop: three columns.
+ * Below 640px: a list of <details> (first one open) so the page stays short.
+ * Both layouts are rendered and one is hidden by CSS, the same pattern as the
+ * homepage Coverage section (display:none also removes it from the a11y tree).
+ *
+ * Props: steps (Step[]: title, text, output {label, rows, note}). No ids are
+ * generated, so a page can hold more than one list.
+ */
+import SampleRows from "./SampleRows.astro";
+import type { Step } from "./types";
+
+interface Props {
+  steps: Step[];
+}
+const { steps } = Astro.props;
+---
+
+<div class="sl">
+  <ol class="sl-grid" role="list">
+    {steps.map((s, i) => (
+      <li class="sl-st">
+        <div class="sl-n"><span class="num-dot" aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></div>
+        <p>{s.text}</p>
+        <div class="sl-out" role="group" aria-label={s.output.label}>
+          <SampleRows rows={s.output.rows} note={s.output.note} />
+        </div>
+      </li>
+    ))}
+  </ol>
+
+  <div class="sl-list">
+    {steps.map((s, i) => (
+      <details class="sl-d" open={i === 0}>
+        <summary><span class="num-dot" aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></summary>
+        <div class="sl-db">
+          <p>{s.text}</p>
+          <div class="sl-out" role="group" aria-label={s.output.label}>
+            <SampleRows rows={s.output.rows} note={s.output.note} />
+          </div>
+        </div>
+      </details>
+    ))}
+  </div>
+</div>
+
+<style>
+  .sl-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .sl-st {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .sl-n { display: flex; align-items: center; gap: 10px; }
+  .sl-n h3, .sl-d h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
+  .sl-st p, .sl-db p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .sl-out {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--bg-primary);
+    padding: 10px 12px;
+    min-width: 0;
+  }
+
+  .sl-list { display: none; }
+  .sl-d { border-bottom: 1px solid var(--border); background: var(--bg-secondary); }
+  .sl-d:last-child { border-bottom: 0; }
+  .sl-d summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    min-height: 48px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .sl-d summary::-webkit-details-marker { display: none; }
+  .sl-d summary h3 { flex: 1; min-width: 0; font-size: 15px; }
+  .sl-d summary::after { content: "+"; font: 600 18px var(--font-mono); color: var(--text-secondary); }
+  .sl-d[open] summary::after { content: "\2212"; }
+  .sl-d summary:focus-visible { outline: 2px solid var(--amber-text); outline-offset: -2px; }
+  .sl-db { padding: 0 12px 14px; display: grid; gap: 12px; }
+
+  @media (max-width: 900px) and (min-width: 641px) {
+    .sl-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 640px) {
+    .sl-grid { display: none; }
+    .sl-list { display: grid; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  }
+</style>

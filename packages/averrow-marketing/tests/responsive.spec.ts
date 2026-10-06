@@ -35,7 +35,10 @@ import { test, expect, type Page } from "@playwright/test";
 const ROUTES = [
   "/",
   "/platform/",
-  "/platform/social-monitoring/",
+  "/platform/lookalike-domains/",
+  "/platform/impersonation/",
+  "/platform/takedowns/",
+  "/platform/abuse-mailbox/",
   "/platform/campaign-intelligence/",
   "/platform/email-security/",
   "/platform/threat-detection/",

@@ -97,7 +97,7 @@ test.describe("Coverage section (desktop)", () => {
       }
     }
     // The anchors named in the spec are actually used.
-    for (const a of ["#compare", "#lookalike", "#what-we-monitor"]) {
+    for (const a of ["#compare", "#certificates", "#dark-web"]) {
       expect(hrefs.some((h) => h.endsWith(a)), `some tile links to ${a}`).toBe(true);
     }
   });
@@ -154,7 +154,7 @@ test.describe("Coverage section (390px)", () => {
     await first.locator("summary").click();
     await expect(first).toHaveAttribute("open", "");
     await expect(first.locator(".cv-db")).toBeVisible();
-    await expect(first.locator(".cv-more")).toHaveAttribute("href", /\/platform\/threat-detection#lookalike$/);
+    await expect(first.locator(".cv-more")).toHaveAttribute("href", /\/platform\/lookalike-domains$/);
     await first.locator("summary").click();
     await expect(first).not.toHaveAttribute("open", /.*/);
   });

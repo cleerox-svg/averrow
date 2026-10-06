@@ -76,9 +76,13 @@ Queries `{domain}` for MX records and identifies the email provider by matching 
 
 ## Scoring System
 
-The composite score is out of 100 points, weighted as follows:
+The composite score is a point total with a maximum of 95, weighted as
+follows. (DMARC used to carry a further +5 when aggregate reports went to
+an Averrow address; that bonus was removed in 2026-10 (G30) so the grade is
+neutral and comparable. No grade band moved: a fully configured domain
+scores 95, still A+, and only domains reporting to Averrow lost 5 points.)
 
-### DMARC (40 points max)
+### DMARC (35 points max)
 
 | Condition | Points |
 |-----------|--------|
@@ -86,8 +90,7 @@ The composite score is out of 100 points, weighted as follows:
 | Policy = `reject` | +20 |
 | Policy = `quarantine` | +12 |
 | Policy = `none` | +4 |
-| Aggregate reporting (`rua`) configured | +5 |
-| Reports sent to Averrow (`averrow.com` or legacy `trustradar.ca`) | +5 |
+| Aggregate reporting (`rua`) configured, any destination | +5 |
 
 ### SPF (30 points max)
 
@@ -104,6 +107,7 @@ The composite score is out of 100 points, weighted as follows:
 | Condition | Points |
 |-----------|--------|
 | At least one DKIM selector found | +20 |
+| No selector found, but MX is an enterprise provider (Google Workspace, Microsoft 365, Proofpoint, Mimecast, Barracuda) | +10 |
 
 ### MX (10 points max)
 
@@ -115,7 +119,7 @@ The composite score is out of 100 points, weighted as follows:
 
 | Grade | Score Range |
 |-------|------------|
-| A+ | 90-100 |
+| A+ | 90-95 |
 | A | 80-89 |
 | B | 70-79 |
 | C | 55-69 |

@@ -169,7 +169,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | GET | `/api/brands/:id/social-profiles` | Staff | List discovered social profiles for the brand |
 | PATCH | `/api/brands/:id/social-profiles/:profileId` | Staff | Classify / update a discovered social profile |
 | POST | `/api/brands/:id/discover-social` | Staff | Trigger social-link discovery for the brand |
-| POST | `/api/brands/:id/social-profiles/:profileId/assess` | Staff | Re-assess a social profile |
+| POST | `/api/brands/:id/social-profiles/:profileId/assess` | Staff | Re-assess a social profile with the social AI assessor. Only a real AI assessment is written (`data.ai_applied: true`, `data.assessment`). A person's classification (`classified_by` holding a user id) is never overwritten (classification, confidence and reason are kept; the `ai_*` fields, signals and severity are written). When no AI assessment is available (`AI_MODE=rules_only` skip, failed call, invalid reply) nothing is written, the rule-based classification/score/signals stand, and the response is **409** `{ success: false, error: "No assessment available", reason: "ai_skipped" \| "ai_error" \| "ai_invalid" }` (G26). Both paths write an `audit_log` row (`social_profile_ai_reassess`, `details.ai_applied`; outcome `failure` on the 409). 503 when the assessor returned nothing at all. |
 | POST | `/api/brands/:id/compute-score` | Staff | Recompute brand threat score |
 
 ## Brand Profiles (RETIRED 2026-05-07)
