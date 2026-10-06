@@ -17,3 +17,7 @@
 CREATE INDEX IF NOT EXISTS idx_lookalike_brand_exposure
   ON lookalike_domains(brand_id, status)
   WHERE registered = 1;
+
+-- Refresh planner stats so the new index is chosen over idx_lookalike_registered
+-- (earlier migrations ANALYZEd this table before the index existed).
+ANALYZE lookalike_domains;
