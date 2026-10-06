@@ -200,6 +200,32 @@ fixed order is intentional. **FarmTrack must mirror this behavior**
 to keep parity. The button styling (green passkey, amber Google,
 neutral Send-link) is unchanged.
 
+### Optional host props (added 2026-10 — FarmTrack vendoring gaps)
+
+All optional; **omitted = identical to before** (same styles, text, element
+structure and behaviour). They are host capabilities, not visual deltas, and
+do not widen §1's per-product deltas.
+
+| Prop | Effect |
+|---|---|
+| `onGoogleSignIn?: () => Promise<void>` | Replaces the `oauthLoginPath` redirect (native shells that can't use web OAuth). While pending the Google button is `disabled`, `aria-busy`, labelled "Signing in…". A rejection shows in the page error area. |
+| `googleErrorCopy?: (err: unknown) => string` | Maps a thrown error to text. Default: `Error.message`, else "Google sign-in failed. Try again." Always rendered as plain text, never HTML. |
+| `footerLinks?: ReactNode` | Slot inside the card, under the footer pillars (e.g. Privacy / Delete account for Google Play). |
+| `magicLinkSentCopy?: (email) => ReactNode` | Replaces the body of the "link sent" confirmation (not the "Use a different email" control). Invite-only products use it to avoid confirming an address exists. |
+
+**Stable test ids** (fixed, not a prop): `login-page`, `login-google`,
+`login-passkey`, `login-email`, `login-magic-link-submit`,
+`login-magic-link-sent`, `login-magic-link-error`, `login-passkey-error`,
+`login-error` (page-level error).
+
+**Error accessibility:** every error element is `role="alert"`; the
+magic-link error is linked to the email input via `aria-describedby` +
+`aria-invalid`. The page-level error stays at the bottom of the card (moving it
+above the form would change Averrow's layout), so it takes **focus**
+(`tabIndex={-1}`, no outline) when it appears, which scrolls it into view on
+phones. `?error=` codes resolve only via own string properties of `errorCopy`
+(`?error=__proto__` / `constructor` fall through to "Sign-in error: <code>").
+
 ### Brand-locked theme (added 2026-06, login audit F2)
 
 The login is a **brand surface** and renders in the **dark brand theme
