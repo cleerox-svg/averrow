@@ -144,6 +144,15 @@ export const PRODUCT_GLUE: Readonly<Record<string, ReadonlySet<string>>> = {
   amazon: new Set(["prime", "pay"]),
 };
 
+/**
+ * Own-property lookup into PRODUCT_GLUE. A plain index would resolve a
+ * keyword like `constructor` to Object.prototype and throw in the adjacency
+ * walk, failing every retry of the run.
+ */
+export function productGlueFor(keyword: string): ReadonlySet<string> | undefined {
+  return Object.hasOwn(PRODUCT_GLUE, keyword) ? PRODUCT_GLUE[keyword] : undefined;
+}
+
 /** Neutral glue words: allowed next to a DISTINCTIVE needle, never sufficient for a generic one. */
 export const WEAK_WORDS: ReadonlySet<string> = new Set([
   ...GLUE_WORDS,
@@ -564,7 +573,7 @@ export class BrandMatcher {
             this.kwText.push(k.keyword);
             this.kwGeneric.push(generic);
             this.kwDigitVariant.push(digitVariant);
-            this.kwProduct.push(PRODUCT_GLUE[k.keyword]);
+            this.kwProduct.push(productGlueFor(k.keyword));
             this.kwFlatLen.push(flat.length);
             slots.set(generic, kw);
           }

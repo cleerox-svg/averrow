@@ -826,6 +826,14 @@ describe("collectBrandMatchRows — combosquat semantics", () => {
     expect(m.demotedKeywords()).toEqual(["zelle", "zellepay"]);
   });
 
+  it("a keyword that names an Object.prototype member (constructor) never resolves product glue", () => {
+    const brands = brandsOf(["b_c", "Constructor", "constructor.io"]);
+    const m = new BrandMatcher(brands, { demoteAfter: 1 });
+    expect(() =>
+      m.collect(["constructor-1.io", "constructor-2.io", "constructor-login.io", "constructor-x-login.io"], new Set<string>()),
+    ).not.toThrow();
+  });
+
   it("demotes a flooding distinctive keyword to generic for the rest of the run (deterministic, shared by keyword text)", () => {
     const brands = brandsOf(["b1", "Acmecorp", "acmecorp.com"], ["b2", "Acmecorp", "acmecorp.net"]);
     const m = new BrandMatcher(brands, { demoteAfter: 3 });
@@ -931,7 +939,7 @@ function refQualifies(core: string, i: number, j: number, rule: RefRule, keyword
     const R = refDecompose(core.slice(j, b), REF_STRONG_GLUE);
     if (!L.ok || !R.ok) return false;
     if (L.strong || R.strong) return true;
-    const product = PRODUCT_GLUE[keyword];
+    const product = Object.hasOwn(PRODUCT_GLUE, keyword) ? PRODUCT_GLUE[keyword] : undefined;
     const walk = (from: number, step: number): boolean => {
       for (let t = from + step; t >= 0 && t < segs.length; t += step) {
         const text = segs[t]!;
