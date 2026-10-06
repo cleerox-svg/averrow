@@ -30,6 +30,7 @@ import {
 } from './section-icons';
 import { SignOutRow } from './SignOutRow';
 import { formatFullDate } from './time-format';
+import { useProductName } from './product-name';
 
 export interface ProfileSettingsUser {
   id: string;
@@ -93,6 +94,7 @@ export function ProfileSettings({
   onSignOut, onDirtyChange, layout = 'auto',
 }: ProfileSettingsProps) {
   const toast = useToast();
+  const product = useProductName();
   const mqDesktop = useMediaQuery('(min-width: 1024px)', true);
   const isDesktop = layout === 'auto' ? mqDesktop : layout === 'desktop';
   // <480px the Theme row stacks under its text, so the control fills the row.
@@ -237,7 +239,7 @@ export function ProfileSettings({
 
       <SettingsGroup title="Personal info">
         <form onSubmit={(e) => { void saveName(e); }} className="flex flex-col gap-4 p-4 min-[768px]:p-5" noValidate>
-          <Field label="Display name" id={nameId} help="Shown across Averrow. Leave blank to use your Google name.">
+          <Field label="Display name" id={nameId} help={`Shown across ${product}. Leave blank to use your Google name.`}>
             <Input
               ref={nameRef}
               value={draft}

@@ -22,5 +22,6 @@ export {
 } from './time-format';
 export * from './security';
 export * from './notifications';
+export { ProductNameProvider, useProductName, DEFAULT_PRODUCT_NAME } from './product-name';
 export type { AccountApiClient, AccountApiResponse } from './api-types';
 export { createFieldVersions, type FieldVersions } from './field-versions';
