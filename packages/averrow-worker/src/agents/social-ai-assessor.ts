@@ -99,8 +99,16 @@ export const SocialAiAssessorOutputSchema = z.object({
   signals: z.array(z.string().min(1).max(240)).max(20),
   crossCorrelations: z.array(z.string().min(1).max(240)).max(20),
   /** True iff the AI returned a parseable assessment that passed the
-   *  output schema. False means the algorithmic fallback was used. */
+   *  output schema. False means the algorithmic fallback was used —
+   *  callers must then leave the rule-based classification, score,
+   *  severity and signals untouched (G26, lib/social-assessment-persist.ts). */
   aiSucceeded: z.boolean(),
+  /** Why the fallback was used (null when `aiSucceeded`):
+   *  - `ai_skipped`  — deliberate skip, no request left the Worker
+   *                    (AI_MODE=rules_only → AiDisabledError, budget throttle)
+   *  - `ai_error`    — the call failed (api_error / network / parse)
+   *  - `ai_invalid`  — the model answered but the reply failed the schema */
+  fallbackReason: z.enum(["ai_skipped", "ai_error", "ai_invalid"]).nullable(),
 });
 
 export type SocialAiAssessorOutput = z.infer<typeof SocialAiAssessorOutputSchema>;
@@ -188,9 +196,22 @@ function buildUserPrompt(input: SocialAiAssessorInput): string {
   ].join("\n");
 }
 
-// ─── Algorithmic fallback (matches legacy lib) ──────────────────
+// ─── Algorithmic fallback ───────────────────────────────────────
+//
+// Used when no AI assessment is available. Its output is NEVER written
+// over the rule-based row (the caller checks `aiSucceeded`); it exists so
+// the sync agent always returns a schema-valid result. Text is neutral and
+// claims only what this function checked: the handle against the brand
+// name and the configured official handle. It never says AI was
+// "unavailable", never asserts an unobserved signal (verification, bio),
+// and never emits cross-correlations, which it does not compute.
 
-function algorithmicFallback(input: SocialAiAssessorInput): SocialAiAssessorOutput {
+export type SocialAssessorFallbackReason = NonNullable<SocialAiAssessorOutput["fallbackReason"]>;
+
+export function algorithmicFallback(
+  input: SocialAiAssessorInput,
+  fallbackReason: SocialAssessorFallbackReason,
+): SocialAiAssessorOutput {
   const handleLower = input.handle.toLowerCase();
   const brandLower = input.brandName.toLowerCase().replace(/[^a-z0-9]/g, "");
   const isSimilar = brandLower.length > 0 && (handleLower.includes(brandLower) || brandLower.includes(handleLower));
@@ -208,29 +229,32 @@ function algorithmicFallback(input: SocialAiAssessorInput): SocialAiAssessorOutp
       signals: ["Matches configured official handle"],
       crossCorrelations: [],
       aiSucceeded: false,
+      fallbackReason,
     };
   }
-  if (isSimilar && !input.verified) {
+  if (isSimilar) {
     return {
       classification: "suspicious",
       confidence: 0.4,
       action: "review",
-      reasoning: "Handle resembles brand name but AI assessment was unavailable. Flagged for manual review.",
+      reasoning: "The handle contains the brand name. Flagged for analyst review.",
       evidenceDraft: null,
-      signals: ["Handle contains brand name", "Not verified", "AI assessment unavailable"],
+      signals: ["Handle contains brand name"],
       crossCorrelations: [],
       aiSucceeded: false,
+      fallbackReason,
     };
   }
   return {
-    classification: "legitimate",
+    classification: "suspicious",
     confidence: 0.3,
-    action: "safe",
-    reasoning: "AI assessment was unavailable. Low-confidence algorithmic fallback applied.",
+    action: "review",
+    reasoning: "Flagged by automated handle matching. Pending analyst review.",
     evidenceDraft: null,
-    signals: ["AI assessment unavailable — algorithmic fallback"],
+    signals: [],
     crossCorrelations: [],
     aiSucceeded: false,
+    fallbackReason,
   };
 }
 
@@ -301,7 +325,7 @@ export const socialAiAssessorAgent: AgentModule = {
           severity: "high",
           details: { issues, ai_raw: parsed, promptVersion: PROMPT_VERSION },
         });
-        result = algorithmicFallback(input);
+        result = algorithmicFallback(input, "ai_invalid");
       } else {
         const cls = aiParsed.data.classification.toLowerCase();
         const act = aiParsed.data.action.toLowerCase();
@@ -323,6 +347,7 @@ export const socialAiAssessorAgent: AgentModule = {
           signals: aiParsed.data.signals.slice(0, 20).map((s) => s.slice(0, 240)),
           crossCorrelations: aiParsed.data.cross_correlations.slice(0, 20).map((s) => s.slice(0, 240)),
           aiSucceeded: true,
+          fallbackReason: null,
         };
 
         const finalCheck = SocialAiAssessorOutputSchema.safeParse(candidate);
@@ -334,7 +359,7 @@ export const socialAiAssessorAgent: AgentModule = {
             severity: "high",
             details: { issues, ai_raw: parsed, promptVersion: PROMPT_VERSION },
           });
-          result = algorithmicFallback(input);
+          result = algorithmicFallback(input, "ai_invalid");
         } else {
           result = finalCheck.data;
         }
@@ -343,7 +368,8 @@ export const socialAiAssessorAgent: AgentModule = {
       // A deliberate skip (AI_MODE=rules_only / budget throttle) means no
       // request left — use the fallback quietly. Only a real failure
       // warrants the medium diagnostic row.
-      if (!isDeliberateAiSkip(classifyAnthropicFailure(err))) {
+      const skipped = isDeliberateAiSkip(classifyAnthropicFailure(err));
+      if (!skipped) {
         const errMsg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
         agentOutputs.push({
           type: "diagnostic",
@@ -352,7 +378,7 @@ export const socialAiAssessorAgent: AgentModule = {
           details: { error: errMsg, promptVersion: PROMPT_VERSION },
         });
       }
-      result = algorithmicFallback(input);
+      result = algorithmicFallback(input, skipped ? "ai_skipped" : "ai_error");
     }
 
     const finalParse = SocialAiAssessorOutputSchema.safeParse(result);

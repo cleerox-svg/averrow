@@ -169,7 +169,7 @@ Staff-only (`requireStaff` — analyst, sales, support, billing, auditor, admin,
 | GET | `/api/brands/:id/social-profiles` | Staff | List discovered social profiles for the brand |
 | PATCH | `/api/brands/:id/social-profiles/:profileId` | Staff | Classify / update a discovered social profile |
 | POST | `/api/brands/:id/discover-social` | Staff | Trigger social-link discovery for the brand |
-| POST | `/api/brands/:id/social-profiles/:profileId/assess` | Staff | Re-assess a social profile |
+| POST | `/api/brands/:id/social-profiles/:profileId/assess` | Staff | Re-assess a social profile with the social AI assessor. Only a real AI assessment is written (`data.ai_applied: true`, `data.assessment`). When no AI assessment is available (`AI_MODE=rules_only` skip, failed call, invalid reply) nothing is written, the rule-based classification/score/signals stand, and the response is `{ profile, assessment: null, ai_applied: false, reason: "ai_skipped" \| "ai_error" \| "ai_invalid" }` (G26). |
 | POST | `/api/brands/:id/compute-score` | Staff | Recompute brand threat score |
 
 ## Brand Profiles (RETIRED 2026-05-07)

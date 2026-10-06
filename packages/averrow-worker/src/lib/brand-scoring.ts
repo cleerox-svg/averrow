@@ -26,6 +26,7 @@
  */
 
 import type { Env } from "../types";
+import { countExposureLookalikes } from "./lookalike-exposure";
 
 const WEIGHTS = {
   threat_activity: 0.24,       // active threats targeting this brand
@@ -84,11 +85,10 @@ export async function computeBrandExposureScore(
     (socialProfiles?.suspicious || 0) * 10
   );
 
-  // 4. Domain risk (lookalike domains)
-  const lookalikes = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM lookalike_domains WHERE brand_id = ? AND status = 'active'"
-  ).bind(brandId).first<{ n: number }>();
-  const domainScore = Math.min(100, (lookalikes?.n || 0) * 5);
+  // 4. Domain risk — registered, live look-alikes (monitoring /
+  //    confirmed_threat). See lib/lookalike-exposure.ts (G25).
+  const lookalikeCount = await countExposureLookalikes(env.DB, brandId);
+  const domainScore = Math.min(100, lookalikeCount * 5);
 
   // 5. Campaign association
   const campaigns = await env.DB.prepare(
