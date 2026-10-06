@@ -12,7 +12,7 @@
 /* ── RESET ── */
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 96px; } /* clear the 64px sticky nav on anchor jumps and focus */
 
 body {
   font-family: var(--font-body);
@@ -184,9 +184,9 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 .nav-brand-sub {
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
   margin-top: 2px;
@@ -405,10 +405,13 @@ img, video, svg { max-width: 100%; height: auto; }
   justify-content: center;
 }
 
-/* Squeeze before collapsing: at ≤1120px drop the brand sub-label and
-   the secondary demo button (still in the hamburger + hero). */
-@media (max-width: 1120px) {
+/* The 12px brand sub-label needs room: drop it at ≤1240px. */
+@media (max-width: 1240px) {
   .nav-brand-sub { display: none; }
+}
+/* Squeeze before collapsing: at ≤1120px drop the secondary demo button
+   (still in the hamburger + hero). */
+@media (max-width: 1120px) {
   .nav-inner { gap: 14px; }
   .nav-link { padding: 8px 9px; }
   .nav-link.is-active::after { left: 9px; right: 9px; }
@@ -430,7 +433,7 @@ img, video, svg { max-width: 100%; height: auto; }
 }
 .footer-grid {
   display: grid;
-  grid-template-columns: 1.4fr repeat(5, 1fr);
+  grid-template-columns: 1.4fr repeat(6, 1fr);
   gap: 2rem;
   margin-bottom: 2rem;
 }
@@ -480,16 +483,14 @@ img, video, svg { max-width: 100%; height: auto; }
   font-size: 0.75rem;
   color: var(--text-tertiary);
 }
-/* 901-1100px: brand on its own row, then all five link columns on one row
-   (the old 3-column grid left an empty cell under the 5 columns). */
+/* 901-1100px: brand on its own row, then all six link columns on one row. */
 @media (max-width: 1100px) {
-  .footer-grid { grid-template-columns: repeat(5, 1fr); gap: 1.5rem; }
+  .footer-grid { grid-template-columns: repeat(6, 1fr); gap: 1.5rem; }
   .footer-brand-block { grid-column: 1 / -1; }
 }
-/* <=900px: two columns; the odd fifth column spans the row so no cell is empty. */
+/* <=900px: two columns (six link columns = three even rows, no empty cell). */
 @media (max-width: 900px) {
   .footer-grid { grid-template-columns: 1fr 1fr; }
-  .footer-col:last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 540px) {
   .footer-grid { grid-template-columns: 1fr 1fr; gap: 1.5rem 1rem; }
@@ -513,4 +514,12 @@ img, video, svg { max-width: 100%; height: auto; }
   border: 1px solid var(--border-strong);
   font: 600 12px var(--font-mono);
   color: var(--text-secondary);
+}
+
+/* ── SOLUTIONS SPLIT LAYOUT (the four role pages: facts beside a sample) ──
+   One shared two-column grid and one breakpoint (900px), instead of a copy per page. */
+.sol-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.sol-more { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+@media (max-width: 900px) {
+  .sol-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }

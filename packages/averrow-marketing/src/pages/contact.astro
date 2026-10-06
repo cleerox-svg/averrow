@@ -32,6 +32,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
     <aside class="ct-side" aria-labelledby="ct-side-h">
       <h2 id="ct-side-h">Or email us directly</h2>
+      <div class="ct-card">
       <ul role="list">
         {CONTACT_ROUTES.map((r) => (
           <li>
@@ -44,15 +45,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p class="ct-f">
         Averrow is operated by {LEGAL_ENTITY}, a Canadian company. More on the <a href={`${base}/company`}>Company page</a>.
       </p>
+      </div>
     </aside>
   </div>
 </ProductPage>
 
 <style>
   .ct { max-width: 1280px; margin: 0 auto; padding: 40px 24px 64px; display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+  /* Both columns start with the same h2, so the headings share one top edge and size. */
   .ct h2 { margin: 0 0 14px; font: 800 24px/1.15 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); }
   .ct-form, .ct-side { min-width: 0; }
-  .ct-side { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .ct-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
   .ct-side ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
   .ct-side li { display: grid; gap: 2px; }
   .ct-l { font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }

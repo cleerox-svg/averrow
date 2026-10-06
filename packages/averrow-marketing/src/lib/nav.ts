@@ -55,15 +55,15 @@ export const NAV_LINKS: NavLink[] = [
   {
     href: "/resources",
     label: "Research",
-    also: ["/blog", "/docs", "/changelog"],
+    also: ["/blog", "/docs", "/changelog", "/security"],
   },
   {
     href: "/company",
     label: "Company",
     // Press and Careers are anchors on /company (#press, #careers); /press and
-    // /careers redirect there. Security stays reachable from the Research
-    // footer column and still lights this hub up.
-    also: ["/about", "/why-averrow", "/contact", "/security"],
+    // /careers redirect there. Security is listed under Research in the footer,
+    // so it lights up Research (not this hub).
+    also: ["/about", "/why-averrow", "/contact"],
     children: [
       { href: "/company", label: "Company", desc: "The company behind Averrow" },
       { href: "/about", label: "About", desc: "Why Averrow exists" },

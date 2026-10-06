@@ -1,6 +1,6 @@
 ---
 /*
- * Footer — 5-column layout (brand + Product / Resources / Company / Legal).
+ * Footer — brand + six link columns (Platform / Solutions / Get started / Research / Company / Legal).
  * Mirrors the back-end footer pattern. Internal links pick up the
  * Astro base prefix so they work whether we're under /marketing/*
  * (pre-cutover) or / (post-cutover). Hosts the site's theme toggle.
@@ -52,6 +52,12 @@ const companyPages = NAV_LINKS.find((l) => l.href === "/company")?.children ?? [
         <div class="footer-col-title">Solutions</div>
         <ul>
           {solutionPages.map((p) => <li><a href={withBase(p.href)}>{p.label}</a></li>)}
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Get started</div>
+        <ul>
           <li><a href={withBase("/pricing")}>Plans</a></li>
           <li><a href={withBase("/scan")}>Scan your domain</a></li>
           <li><a href={withBase("/demo")}>Book a demo</a></li>

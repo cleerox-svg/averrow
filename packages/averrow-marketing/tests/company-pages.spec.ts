@@ -391,7 +391,7 @@ test.describe("copy rules", () => {
 
   test("/contact has no Security Report option and points security to the mailbox", async ({ page }) => {
     await open(page, "/contact");
-    await expect(page.locator("#cf-interest option")).toHaveText(["General question", "Product demo", "Plans and enterprise"]);
+    await expect(page.locator("#cf-interest option")).toHaveText(["General question", "Product demo", "Plans and enterprise", "Partnership"]);
     await expect(page.locator("#content").getByRole("link", { name: "security@averrow.com" })).toHaveAttribute("href", "mailto:security@averrow.com");
   });
 
@@ -692,5 +692,193 @@ test.describe("ContactForm POST contract", () => {
     await expect(alert).toBeFocused();
     // The form is still there and the button is usable again.
     await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  });
+});
+
+// ── PR #1808 review fixes ───────────────────────────────────────────────
+
+test.describe("form: sticky nav never covers the focused field or the alert", () => {
+  for (const vp of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    for (const p of ["/contact", "/demo"]) {
+      test(`${p} at ${vp.width}: after an empty submit the focused field and the summary sit below the nav`, async ({ page }) => {
+        await page.setViewportSize(vp);
+        await open(page, p);
+        await page.getByRole("button", { name: /send message|request a demo/i }).scrollIntoViewIfNeeded();
+        await page.getByRole("button", { name: /send message|request a demo/i }).click();
+        await expect(page.locator("#cf-name")).toBeFocused();
+        // Let any scroll settle.
+        await page.waitForTimeout(150);
+        const geo = await page.evaluate(() => {
+          const nav = document.querySelector("nav.nav")!.getBoundingClientRect();
+          const f = document.querySelector("#cf-name")!.getBoundingClientRect();
+          const a = document.querySelector("[data-cf-alert]")!.getBoundingClientRect();
+          return { navBottom: nav.bottom, fTop: f.top, fBottom: f.bottom, aTop: a.top, vh: window.innerHeight };
+        });
+        expect(geo.fTop, "field below the nav").toBeGreaterThanOrEqual(geo.navBottom);
+        expect(geo.fBottom, "field inside the viewport").toBeLessThanOrEqual(geo.vh);
+        expect(geo.aTop, "alert summary below the nav").toBeGreaterThanOrEqual(geo.navBottom);
+      });
+    }
+  }
+
+  test("controls and the alert carry a scroll-margin for the sticky nav", async ({ page }) => {
+    await open(page, "/contact");
+    for (const sel of ["#cf-name", "#cf-interest", "#cf-message", "[data-cf-alert]"]) {
+      const m = await page.locator(sel).evaluate((el) => parseFloat(getComputedStyle(el).scrollMarginTop));
+      expect(m, sel).toBeGreaterThanOrEqual(90);
+    }
+  });
+});
+
+test.describe("form: interest, prefill, hint wiring and layout", () => {
+  test.use({ viewport: DESKTOP });
+
+  test("?interest=partnership pre-selects Partnership and posts it", async ({ page }) => {
+    await open(page, "/contact?interest=partnership");
+    await expect(page.locator("#cf-interest")).toHaveValue("partnership");
+    let body: Record<string, unknown> | null = null;
+    await page.route("**/api/contact", async (r) => {
+      body = r.request().postDataJSON() as Record<string, unknown>;
+      await r.fulfill({ status: 200, contentType: "application/json", body: '{"success":true}' });
+    });
+    await page.locator("#cf-name").fill("Ada Example");
+    await page.locator("#cf-email").fill("ada@msp.example");
+    await page.locator("#cf-message").fill("Partnering.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(page.locator("[data-cf-success]")).toBeVisible();
+    expect(body).toMatchObject({ interest: "partnership" });
+  });
+
+  test("an unknown ?interest value is ignored", async ({ page }) => {
+    await open(page, "/contact?interest=bogus");
+    await expect(page.locator("#cf-interest")).toHaveValue("general");
+  });
+
+  test("the MSSP page links to the prefilled form", async ({ page }) => {
+    await open(page, "/solutions/mssp");
+    await page.locator("a[data-cta='mssp-partner']").click();
+    await expect(page).toHaveURL(/\/contact\?interest=partnership/);
+    await expect(page.locator("#cf-interest")).toHaveValue("partnership");
+  });
+
+  test("/demo: the domain hint is wired with aria-describedby before any error", async ({ page }) => {
+    await open(page, "/demo");
+    await expect(page.locator("#cf-domain")).toHaveAttribute("aria-describedby", "cf-domain-hint");
+    await expect(page.locator("#cf-domain-hint")).toBeVisible();
+  });
+
+  test("the select chevron is a currentColor mask, not a hard-coded colour", async ({ page }) => {
+    await open(page, "/contact");
+    const info = await page.locator("#cf-interest").evaluate((el) => {
+      const s = getComputedStyle(el.parentElement!, "::after");
+      return { bg: getComputedStyle(el).backgroundImage, mask: s.maskImage, color: s.backgroundColor };
+    });
+    expect(info.bg).toBe("none");
+    expect(info.mask).toContain("svg");
+    expect(info.color).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
+  test("the empty alert adds no gap above the form", async ({ page }) => {
+    await open(page, "/contact");
+    const gap = await page.evaluate(() => {
+      const root = document.querySelector("[data-contact-form]")!.getBoundingClientRect();
+      const note = document.querySelector(".cf-note")!.getBoundingClientRect();
+      const pad = parseFloat(getComputedStyle(document.querySelector("[data-contact-form]")!).paddingTop);
+      return note.top - root.top - pad;
+    });
+    expect(gap).toBeLessThanOrEqual(1);
+  });
+
+  test("/contact: both column headings share a top edge and a size", async ({ page }) => {
+    await open(page, "/contact");
+    const h = await page.evaluate(() => ["#ct-form-h", "#ct-side-h"].map((s) => {
+      const el = document.querySelector(s)!;
+      return { top: Math.round(el.getBoundingClientRect().top), size: getComputedStyle(el).fontSize };
+    }));
+    expect(h[0]!.top).toBe(h[1]!.top);
+    expect(h[0]!.size).toBe(h[1]!.size);
+  });
+});
+
+test.describe("/company: grids, press cards, dates and mailbox source", () => {
+  test.use({ viewport: DESKTOP });
+
+  test("trust and asset grids leave no orphan row; press cards are equal height", async ({ page }) => {
+    await open(page, "/company");
+    for (const [sel, expected] of [["#trust li", [3, 2]], ["#press .co-assets li", [4, 3]]] as const) {
+      const tops = await page.locator(sel).evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+      const counts = [...new Set(tops)].map((t) => tops.filter((x) => x === t).length);
+      expect(counts, sel).toEqual(expected);
+      // The last row fills the grid width: no hanging single tile.
+      const edges = await page.locator(sel).evaluateAll((els) => {
+        const grid = els[0]!.parentElement!.getBoundingClientRect();
+        const last = els[els.length - 1]!.getBoundingClientRect();
+        return { gridRight: Math.round(grid.right), lastRight: Math.round(last.right) };
+      });
+      expect(edges.lastRight, sel).toBe(edges.gridRight);
+    }
+    const h = await page.locator(".co-bp, .co-ff").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+    expect(new Set(h).size, "press cards equal height").toBe(1);
+  });
+
+  test("every h3 in the company sections renders at one size", async ({ page }) => {
+    await open(page, "/company");
+    const sizes = await page.locator("#content h3").evaluateAll((els) => [...new Set(els.map((e) => getComputedStyle(e).fontSize))]);
+    expect(sizes).toHaveLength(1);
+  });
+
+  test("trust and contact cards: 4 mailboxes in one row at 1280, no orphan", async ({ page }) => {
+    await open(page, "/company");
+    const tops = await page.locator("#contact .co-card").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+    expect(new Set(tops).size).toBe(1);
+  });
+
+  test("phone: grids stay inside the viewport with no orphan tile", async ({ page }) => {
+    await page.setViewportSize(PHONE);
+    await open(page, "/company");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const w = await page.locator("#press .co-assets li").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
+    expect(w[w.length - 1]).toBeGreaterThanOrEqual(Math.max(...w));
+  });
+
+  test("one date source: FactGrid reads the same snapshot date as ProofStrip", async ({ page }) => {
+    const stats = JSON.parse(fs.readFileSync(path.join(ROOT, "src/data/stats.json"), "utf8")) as { generated_at: string };
+    await open(page, "/company");
+    await expect(page.locator("[data-fact-grid] time")).toHaveAttribute("datetime", stats.generated_at.slice(0, 10));
+    await open(page, "/solutions");
+    await expect(page.locator("[data-proof-strip] time")).toHaveAttribute("datetime", stats.generated_at);
+    const day = (s: string) => new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+    await expect(page.locator("[data-proof-strip] time")).toContainText(day(stats.generated_at));
+    await open(page, "/company");
+    await expect(page.locator("[data-fact-grid] time")).toContainText(day(stats.generated_at));
+  });
+
+  test("the press and careers mailbox comes from CONTACT_ROUTES (hello@)", async ({ page }) => {
+    await open(page, "/company");
+    await expect(page.locator("#press .ps-lede, #press p").first()).toBeVisible();
+    await expect(page.locator("#press")).toContainText("hello@averrow.com");
+    await expect(page.locator("#careers a")).toHaveAttribute("href", "mailto:hello@averrow.com");
+    const src = fs.readFileSync(path.join(ROOT, "src/pages/company/index.astro"), "utf8");
+    expect(src).not.toContain("hello@averrow.com");
+  });
+});
+
+test.describe("nav brand sub-line and blog link", () => {
+  test("the brand sub-line is at least 12px where it shows", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, "/");
+    const sub = page.locator(".nav .nav-brand-sub");
+    await expect(sub).toBeVisible();
+    expect(await sub.evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(12);
+    // It never pushes the nav into overflow.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const overflow = await page.locator(".nav-inner").evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+
+  test("the MSSP blog post no longer points at /partners", async () => {
+    const src = fs.readFileSync(path.join(ROOT, "src/content/blog/brand-threat-intelligence-for-mssps.mdx"), "utf8");
+    expect(src).not.toContain("(/partners)");
+    expect(src).toContain("(/solutions/mssp)");
   });
 });

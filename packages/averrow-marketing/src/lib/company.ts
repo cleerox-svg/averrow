@@ -14,9 +14,6 @@ export const LEGAL_ENTITY = "LRX Enterprises Inc.";
 /** The only sentence about replies anywhere on the site. */
 export const REPLY_LINE = "We'll reply by email.";
 
-/** Date the facts block was last checked against the register (ISO, UTC). */
-export const FACTS_AS_OF = "2026-10-06";
-
 export interface ContactRoute {
   key: "sales" | "support" | "security" | "privacy";
   label: string;
@@ -30,6 +27,11 @@ export const CONTACT_ROUTES: readonly ContactRoute[] = [
   { key: "security", label: "Security", email: "security@averrow.com", text: "Report a vulnerability or a security concern." },
   { key: "privacy", label: "Privacy", email: "privacy@averrow.com", text: "Privacy questions and data requests." },
 ];
+
+/** Address for one of the four routes, so pages never hard-code a mailbox. */
+export function contactEmail(key: ContactRoute["key"]): string {
+  return CONTACT_ROUTES.find((r) => r.key === key)?.email ?? "";
+}
 
 /** Press boilerplate. Approved phrasing: DISCLOSURE_REGISTER L42/L43 and section 3.11. */
 export const BOILERPLATE =

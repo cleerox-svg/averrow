@@ -16,9 +16,10 @@ import ProductSection from "../../components/product/ProductSection.astro";
 import FactGrid from "../../components/product/FactGrid.astro";
 import FactList from "../../components/product/FactList.astro";
 import PageCTA from "../../components/product/PageCTA.astro";
-import { BOILERPLATE, BRAND_ASSETS, CONTACT_ROUTES, FACTS_AS_OF, LEGAL_ENTITY, REPLY_LINE } from "../../lib/company";
+import { BOILERPLATE, BRAND_ASSETS, CONTACT_ROUTES, LEGAL_ENTITY, REPLY_LINE, contactEmail } from "../../lib/company";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const hello = contactEmail("support");
 
 const facts = [
   { label: "Operated by", value: LEGAL_ENTITY, note: "A Canadian-incorporated company." },
@@ -56,7 +57,7 @@ const fastFacts = [
   />
 
   <ProductSection id="facts" eyebrow="At a glance" heading="Company facts">
-    <FactGrid items={facts} asOf={FACTS_AS_OF} />
+    <FactGrid items={facts} />
     <p class="co-more">
       More about us: <a href={`${base}/about`}>About Averrow</a>, <a href={`${base}/why-averrow`}>Why Averrow</a>.
     </p>
@@ -90,7 +91,7 @@ const fastFacts = [
     </ul>
   </ProductSection>
 
-  <ProductSection id="press" eyebrow="Press" heading="Press kit" lede="Boilerplate, fast facts and brand assets for media. For interviews or detail, email hello@averrow.com.">
+  <ProductSection id="press" eyebrow="Press" heading="Press kit" lede={`Boilerplate, fast facts and brand assets for media. For interviews or detail, email ${hello}.`}>
     <div class="co-press">
       <div class="co-bp" data-boilerplate>
         <div class="co-bp-h">
@@ -123,7 +124,7 @@ const fastFacts = [
   <ProductSection id="careers" eyebrow="Careers" heading="No open roles right now.">
     <p class="co-careers">
       There is nothing to apply for at the moment. If you would like to introduce yourself anyway, email
-      <a href="mailto:hello@averrow.com">hello@averrow.com</a>. {REPLY_LINE}
+      <a href={`mailto:${hello}`}>{hello}</a>. {REPLY_LINE}
     </p>
   </ProductSection>
 
@@ -135,21 +136,24 @@ const fastFacts = [
   .co-more a, .co-careers a, .co-note a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
   .co-more a:hover, .co-careers a:hover { border-bottom-color: var(--accent); }
 
-  .co-routes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .co-routes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
   .co-card { display: grid; gap: 8px; align-content: start; min-width: 0; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
   .co-card h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
   .co-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .co-mail { font: 600 14px var(--font-mono); color: var(--text-primary); overflow-wrap: anywhere; border-bottom: 1px solid var(--accent); justify-self: start; text-decoration: none; }
   .co-mail:hover { color: var(--accent-hover); }
 
-  .co-links { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  /* Trust: 5 links as 3 + 2 on a 6-column grid (the last row stretches), 2 + 2 + 1 then 1 column below. */
+  .co-links { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+  .co-links li { grid-column: span 2; min-width: 0; }
+  .co-links li:nth-child(n + 4) { grid-column: span 3; }
   .co-link { display: grid; gap: 4px; height: 100%; min-height: 44px; padding: 14px 16px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; text-decoration: none; }
   .co-link:hover { border-color: var(--accent); }
   .co-link-t { font: 700 15px var(--font-display); color: var(--text-primary); }
   .co-link-d { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
 
-  .co-press { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-  .co-bp, .co-ff { min-width: 0; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+  .co-press { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 20px; align-items: stretch; }
+  .co-bp, .co-ff { min-width: 0; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: grid; gap: 12px; align-content: start; }
   .co-bp-h { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
   .co-bp h3, .co-ff h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
   .co-bp p { margin: 0; font-size: 15px; line-height: 1.65; color: var(--text-primary); }
@@ -157,15 +161,31 @@ const fastFacts = [
   .co-copy[hidden] { display: none; }
   .co-copied { min-height: 1.2em; font: 600 13px var(--font-mono); color: var(--green-text); }
   .co-sub { margin: 12px 0 0; font: 700 17px var(--font-display); color: var(--text-primary); }
+  .co-link-t { display: block; }
   .co-note { margin: 0; font-size: 14px; color: var(--text-secondary); max-width: 62ch; }
-  .co-assets { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+  /* Assets: 7 files as 4 + 3 on a 12-column grid. */
+  .co-assets { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; }
+  .co-assets li { grid-column: span 3; min-width: 0; }
+  .co-assets li:nth-child(n + 5) { grid-column: span 4; }
+  .co-asset { height: 100%; }
   .co-asset { display: grid; gap: 2px; min-height: 44px; padding: 12px 14px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; text-decoration: none; }
   .co-asset:hover { border-color: var(--accent); }
   .co-asset-n { font: 600 14px var(--font-display); color: var(--text-primary); }
   .co-asset-d { font: 500 12px var(--font-mono); color: var(--text-secondary); }
   .co-careers { margin: 0; max-width: 62ch; font-size: 16px; line-height: 1.6; color: var(--text-secondary); }
 
-  @media (max-width: 900px) { .co-press { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 1000px) { .co-routes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 900px) {
+    .co-press { grid-template-columns: minmax(0, 1fr); }
+    .co-links li, .co-links li:nth-child(n + 4) { grid-column: span 3; }
+    .co-links li:last-child { grid-column: 1 / -1; }
+    .co-assets li, .co-assets li:nth-child(n + 5) { grid-column: span 6; }
+    .co-assets li:last-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 560px) {
+    .co-routes { grid-template-columns: minmax(0, 1fr); }
+    .co-links li, .co-links li:nth-child(n + 4), .co-links li:last-child { grid-column: 1 / -1; }
+  }
 </style>
 
 <script>

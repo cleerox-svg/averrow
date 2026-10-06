@@ -150,7 +150,7 @@ const scope: ScopeRow[] = [
     heading="Misuse of your name, in one view."
     lede="The trademark view gathers what the other monitors find into one place, for the team that decides what to enforce."
   >
-    <div class="bl-split">
+    <div class="sol-split">
       <FactList items={trademarkFacts} label="The trademark view" />
       <SampleFrame label="Sample trademark view" rows={trademarkRows} />
     </div>
@@ -163,7 +163,7 @@ const scope: ScopeRow[] = [
     lede="Legal sets the scope once. Averrow files within it."
   >
     <FactList items={authFacts} label="How authorization works" />
-    <p class="bl-more">
+    <p class="sol-more">
       <a class="link-u" href={`${base}/platform/takedowns`}>See how takedowns work</a>, including every status.
     </p>
   </ProductSection>
@@ -210,10 +210,7 @@ const scope: ScopeRow[] = [
   .bl-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .bl-out { border-top: 1px solid var(--border); padding-top: 12px; }
   .bl-card a { justify-self: start; font-size: 14px; }
-  .bl-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-  .bl-more { margin: 0; font-size: 14px; color: var(--text-secondary); }
   @media (max-width: 900px) {
     .bl-cards { grid-template-columns: minmax(0, 1fr); }
-    .bl-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  }
+    }
 </style>

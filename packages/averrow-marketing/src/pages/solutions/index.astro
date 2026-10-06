@@ -110,18 +110,26 @@ const roles: RoleCard[] = [
     <ul class="sh-grid" role="list">
       {roles.map((r) => (
         <li>
-          <a class="sh-card" href={`${base}${r.href}`} data-solution={r.href}>
+          <article class="sh-card" data-solution={r.href}>
             <span class="sh-role">{r.role}</span>
-            <h3>{r.title}</h3>
+            <h3><a class="sh-link" href={`${base}${r.href}`}>{r.title}</a></h3>
             <p>{r.text}</p>
             <div class="sh-sample" role="group" aria-label={`Sample for ${r.role}`}>
               <span class="sh-tag">Illustrative sample</span>
               <SampleRows rows={r.rows} />
             </div>
-            <span class="sh-go">{r.cta} <span aria-hidden="true">&rarr;</span></span>
-          </a>
+            <span class="sh-go" aria-hidden="true">{r.cta} &rarr;</span>
+          </article>
         </li>
       ))}
+      <li>
+        <article class="sh-card sh-help">
+          <span class="sh-role">Not sure?</span>
+          <h3><a class="sh-link" href={`${base}/scan`}>Start with a scan of your domain.</a></h3>
+          <p>See what Averrow finds for your own brand, free and with no signup. It shows which role's view you'd use most.</p>
+          <span class="sh-go" aria-hidden="true">Scan your domain &rarr;</span>
+        </article>
+      </li>
     </ul>
   </ProductSection>
 
@@ -129,29 +137,39 @@ const roles: RoleCard[] = [
 </ProductPage>
 
 <style>
-  .sh-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
-  .sh-grid li { min-width: 0; }
+  .sh-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .sh-grid li { min-width: 0; display: flex; }
+  /* One card per cell: a flex column, so the sample and the CTA line up along the bottom of every row. */
   .sh-card {
-    display: grid;
+    position: relative;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
-    align-content: start;
-    height: 100%;
+    width: 100%;
     padding: 18px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: 14px;
-    text-decoration: none;
-    color: inherit;
     min-width: 0;
   }
-  .sh-card:hover { border-color: var(--accent); text-decoration: none; }
-  .sh-card:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .sh-card:hover, .sh-card:focus-within { border-color: var(--accent); }
+  .sh-help { background: transparent; border-style: dashed; border-color: var(--border-strong); }
+  /* The heading text is the link; its ::after stretches over the whole card so the card is one click target
+     without the sample (or anything else) living inside the anchor. */
+  .sh-link { color: inherit; text-decoration: none; }
+  .sh-link::after { content: ""; position: absolute; inset: 0; border-radius: 14px; }
+  .sh-link:focus-visible { outline: none; }
+  .sh-link:focus-visible::after { outline: 2px solid var(--amber-text); outline-offset: 2px; }
   .sh-role { font: 600 12px var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-section, var(--accent)); }
-  .sh-card h3 { margin: 0; font: 800 20px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); text-wrap: balance; }
+  .sh-card h3 { margin: 0; font: 800 20px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); text-wrap: pretty; }
   .sh-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
-  .sh-sample { display: grid; gap: 10px; padding: 12px; background: var(--bg-primary, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+  .sh-sample { display: grid; gap: 10px; margin-top: auto; padding: 12px; background: var(--bg-primary, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
   .sh-tag { justify-self: start; font: 700 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-text); border: 1px solid var(--amber-text); border-radius: 999px; padding: 1px 9px; }
   .sh-go { font: 700 14px var(--font-display); color: var(--amber-text); }
+  .sh-help .sh-go { margin-top: auto; }
+  @media (max-width: 1000px) {
+    .sh-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 640px) {
     .sh-grid { grid-template-columns: minmax(0, 1fr); }
   }

@@ -10,7 +10,7 @@
  * service is sold (owner decision, 2026-10-06). What staff can do on a
  * customer's alerts: acknowledge and triage them (status changes), claim them,
  * and keep their own working notes. What the customer sees: status changes and
- * an assignee shown as "Averrow SOC", and the audit log naming "Averrow SOC".
+ * an assignee shown as "Averrow SOC".
  * Staff notes are NOT shown to the customer (the tenant view strips every
  * staff_* field), staff are never named, and staff cannot sign or revoke the
  * customer's takedown authorization or create or edit their investigations.
@@ -50,7 +50,7 @@ const triageRows: SampleRow[] = [
 
 const socFacts = [
   { lead: "Acknowledge and triage.", text: "Our analysts work your alerts from the Averrow console: they acknowledge them, change their status and take them on." },
-  { lead: "You see the work.", text: "The status changes show in your console, and an alert they hold is assigned to Averrow SOC. Their audit-log entries read Averrow SOC too. Staff are never named, and their working notes stay internal." },
+  { lead: "You see the work.", text: "The status changes show in your console, and an alert they hold is assigned to Averrow SOC. Staff are never named, and their working notes stay internal." },
   { lead: "Takedowns stay yours.", text: "Our analysts never submit a takedown without your authorization: your approval, or rules you've signed. They can't sign or revoke the authorization." },
   { lead: "Your cases stay yours.", text: "Analysts can't create or edit your investigations." },
 ];
@@ -78,8 +78,8 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Your records",
-    covered: "Your investigations, takedown requests and authorization stay in your hands.",
-    notCovered: "Our analysts creating or editing them, or signing and revoking your authorization.",
+    covered: "Your investigations and your takedown authorization stay in your hands. Our analysts may draft takedowns; nothing is filed without your approval or signed rules.",
+    notCovered: "Our analysts creating or editing your investigations, or signing and revoking your authorization.",
   },
   {
     area: "Setup",
@@ -108,9 +108,9 @@ const scope: ScopeRow[] = [
     id="triage"
     eyebrow="Automated triage"
     heading="A queue of decisions, not raw alerts."
-    lede="Triage runs on every finding before you see it."
+    lede="Automatic triage runs on most finding types before you see them: threats, social, app-store, executive and look-alike alerts."
   >
-    <div class="ts-split">
+    <div class="sol-split">
       <FactList items={triageFacts} label="How automated triage works" />
       <SampleFrame label="Sample triaged queue" rows={triageRows} />
     </div>
@@ -122,11 +122,11 @@ const scope: ScopeRow[] = [
     heading="Or let our analysts work your alerts."
     lede="Our analysts can triage and act on alerts for you. You see every action in your console, marked as Averrow SOC."
   >
-    <div class="ts-split">
+    <div class="sol-split">
       <FactList items={socFacts} label="What Averrow analysts can and can't do" />
       <SampleFrame label="Sample alerts handled by Averrow SOC" rows={socRows} footer="Every action shows in your console as Averrow SOC" />
     </div>
-    <p class="ts-more">
+    <p class="sol-more">
       Managed handling is arranged with our team. <a class="link-u" href={`${base}/demo`}>Book a demo</a> and ask for it, or see <a class="link-u" href={`${base}/platform/takedowns`}>how takedowns stay under your control</a>.
     </p>
   </ProductSection>
@@ -156,10 +156,3 @@ const scope: ScopeRow[] = [
   <PageCTA heading="Hand over the first pass." body="Run a free domain scan, no signup. Or book a demo and we'll walk through the queue, the triage and managed handling." />
 </ProductPage>
 
-<style>
-  .ts-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-  .ts-more { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
-  @media (max-width: 800px) {
-    .ts-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
-  }
-</style>

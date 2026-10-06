@@ -2,13 +2,17 @@
 /*
  * A dated grid of company facts: label, value, optional note, under one
  * "as of" line. Used once, on /company. A fact grid without a date reads as
- * permanent, so `asOf` (an ISO date, YYYY-MM-DD) is required and rendered as
- * a <time>. Values are plain text from the owner-confirmed facts in
+ * permanent, so the line is rendered as a <time>. The date is the build's
+ * stats.json snapshot date (the same source ProofStrip uses, so no two
+ * stamps on the site can disagree); with no valid date the line is omitted. Values are plain text from the owner-confirmed facts in
  * docs/DISCLOSURE_REGISTER.md section 3.11; never put a number here that is
  * not backed there.
  *
- * Props: items ({ label, value, note? }[]), asOf (ISO date), heading (accessible name).
+ * Props: items ({ label, value, note? }[]), heading (accessible name).
  */
+import liveStats from "../../data/stats.json";
+import { utcDate } from "../../lib/proof";
+
 interface Fact {
   label: string;
   value: string;
@@ -16,16 +20,11 @@ interface Fact {
 }
 interface Props {
   items: Fact[];
-  asOf: string;
   heading?: string;
 }
-const { items, asOf, heading = "Company facts" } = Astro.props;
-const stamp = new Date(`${asOf}T00:00:00Z`).toLocaleDateString("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-});
+const { items, heading = "Company facts" } = Astro.props;
+const asOf = liveStats.generated_at;
+const stamp = utcDate(asOf);
 ---
 
 <section class="fg" aria-label={heading} data-fact-grid>
@@ -37,7 +36,7 @@ const stamp = new Date(`${asOf}T00:00:00Z`).toLocaleDateString("en-GB", {
       </div>
     ))}
   </dl>
-  <p class="fg-f"><time datetime={asOf}>Facts as of {stamp}</time></p>
+  {stamp && <p class="fg-f"><time datetime={asOf.slice(0, 10)}>Facts as of {stamp}</time></p>}
 </section>
 
 <style>

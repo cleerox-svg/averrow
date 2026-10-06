@@ -89,14 +89,14 @@ test.describe("solutions pages render with the CTA pair", () => {
     const lead = page.locator(".pc a[data-cta='mssp-partner']");
     await expect(lead).toHaveCount(1);
     await expect(lead).toHaveText("Talk to us about partnering");
-    await expect(lead).toHaveAttribute("href", /\/contact$/);
+    await expect(lead).toHaveAttribute("href", /\/contact\?interest=partnership$/);
   });
 
   test("/solutions: five role cards, each with a real sample and a link that resolves", async ({ page }) => {
     await open(page, "/solutions");
-    const cards = page.locator(".sh-card");
+    const cards = page.locator(".sh-card:not(.sh-help)");
     await expect(cards).toHaveCount(5);
-    const hrefs = await cards.evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).getAttribute("href")));
+    const hrefs = await cards.locator("h3 a.sh-link").evaluateAll((as) => as.map((a) => (a as HTMLAnchorElement).getAttribute("href")));
     expect(hrefs.map((h) => (h ?? "").replace(/\/$/, ""))).toEqual([
       "/solutions/security-teams",
       "/solutions/brand-and-legal",
@@ -110,6 +110,55 @@ test.describe("solutions pages render with the CTA pair", () => {
       await expect(cards.nth(i).locator("svg")).toHaveCount(0);
     }
     for (const h of hrefs) expect((await page.request.get(h ?? "")).status(), `card link ${h}`).toBe(200);
+  });
+
+  test("/solutions: the heading text is the link, the sample sits outside it, and the cards line up", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(page, "/solutions");
+    const cards = page.locator(".sh-card");
+    // Six cells: five roles plus the "Not sure?" scan card, so the last row isn't half empty.
+    await expect(cards).toHaveCount(6);
+    await expect(page.locator(".sh-help a")).toHaveAttribute("href", /\/scan$/);
+    // No card is wrapped in an anchor, and no anchor contains the sample.
+    await expect(page.locator("a.sh-card")).toHaveCount(0);
+    await expect(page.locator("a:has(.sh-sample)")).toHaveCount(0);
+    // One link per card, named by the heading text.
+    for (let i = 0; i < 6; i++) await expect(cards.nth(i).locator("a")).toHaveCount(1);
+    // The stretched ::after makes the whole card clickable.
+    // Clicking the description text (not the heading) still follows the link, via the stretched ::after.
+    await Promise.all([page.waitForURL(/\/solutions\/security-teams/), cards.first().locator("p").click({ force: true })]);
+  });
+
+  test("/solutions: samples and CTAs align across a row, in 3 columns at 1280, 1 at 390", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await open(page, "/solutions");
+    const geo = await page.locator(".sh-card").evaluateAll((els) =>
+      els.map((e) => {
+        const r = e.getBoundingClientRect();
+        const s = e.querySelector(".sh-sample")?.getBoundingClientRect();
+        const g = e.querySelector(".sh-go")!.getBoundingClientRect();
+        return { top: Math.round(r.top), h: Math.round(r.height), sampleBottom: s ? Math.round(s.bottom) : null, goBottom: Math.round(g.bottom) };
+      }),
+    );
+    const rows = new Map<number, typeof geo>();
+    for (const g of geo) rows.set(g.top, [...(rows.get(g.top) ?? []), g]);
+    expect([...rows.values()].map((r) => r.length)).toEqual([3, 3]);
+    for (const row of rows.values()) {
+      expect(new Set(row.map((c) => c.h)).size, "equal card heights in a row").toBe(1);
+      expect(new Set(row.map((c) => c.goBottom)).size, "CTAs share a baseline").toBe(1);
+    }
+    for (const row of rows.values()) {
+      const sb = row.map((c) => c.sampleBottom).filter((v) => v !== null);
+      expect(new Set(sb).size, "samples share a bottom edge").toBeLessThanOrEqual(1);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    const lefts = await page.locator(".sh-card").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
+    expect(new Set(lefts).size).toBe(1);
+  });
+
+  test("/solutions: no card title contains a forced line break", async ({ page }) => {
+    await open(page, "/solutions");
+    await expect(page.locator(".sh-card h3 br")).toHaveCount(0);
   });
 
   test("RelatedSurfaces reads the Platform and Solutions dropdowns (source prop)", async ({ page }) => {
@@ -175,6 +224,16 @@ test.describe("what each page says, and doesn't", () => {
     await expect(managed).toContainText(/can't sign or revoke the authorization/i);
     await expect(managed).toContainText(/can't create or edit your investigations/i);
     await expect(managed).toContainText(/Staff are never named/);
+    // Staff alert actions do not reach the customer's audit log, so the page must not say they do.
+    expect(((await page.locator(".pp").textContent()) ?? "")).not.toMatch(/audit[- ]log/i);
+    // Takedowns: staff may draft; nothing is filed without approval or signed rules. The records row
+    // limits itself to investigations and the authorization.
+    const records = page.locator("#scope tr", { hasText: "Your records" });
+    await expect(records).toContainText("Your investigations and your takedown authorization");
+    await expect(records).toContainText("Our analysts may draft takedowns; nothing is filed without your approval or signed rules.");
+    await expect(records).not.toContainText(/takedown requests/i);
+    await expect(page.locator("#triage")).toContainText("Automatic triage runs on most finding types before you see them");
+    await expect(page.locator("#triage")).not.toContainText("every finding");
     await expect(page.locator("#scope")).toContainText(/promised response or resolution times/i);
     const text = (await page.locator(".pp").textContent()) ?? "";
     expect(text).not.toMatch(/within (?:\d+|one|an?|a few) (?:minutes?|hours?|business days?|days?)/i);
@@ -411,10 +470,21 @@ test.describe("nav and footer", () => {
     await expect(col("Solutions")).toHaveCount(1);
   });
 
-  test("the Company hub still lights up on About, Why Averrow, Contact and Security", async ({ page }) => {
-    for (const p of ["/company", "/about", "/why-averrow", "/contact", "/security"]) {
+  test("the Company hub lights up on About, Why Averrow and Contact; Security lights Research (its footer home)", async ({ page }) => {
+    for (const p of ["/company", "/about", "/why-averrow", "/contact"]) {
       await open(page, p);
       await expect(page.locator(".nav-link.is-active"), p).toHaveAttribute("data-path", "/company");
     }
+    await open(page, "/security");
+    await expect(page.locator(".nav-link.is-active")).toHaveAttribute("data-path", "/resources");
+    // Not in the Company dropdown, and the footer lists it under Research.
+    expect(await hrefsIn(page, ".nav-item:has(> .nav-link[data-path='/company']) .nav-menu a")).not.toContain("/security");
+    expect(await hrefsIn(page, ".footer-col:has(.footer-col-title:text-is('Research')) a")).toContain("/security");
+  });
+
+  test("footer: Solutions lists only the role pages; Plans, scan, demo and log in sit under Get started", async ({ page }) => {
+    await open(page, "/");
+    expect(await hrefsIn(page, ".footer-col:has(.footer-col-title:text-is('Solutions')) a")).toEqual(SOLUTIONS);
+    expect(await hrefsIn(page, ".footer-col:has(.footer-col-title:text-is('Get started')) a")).toEqual(["/pricing", "/scan", "/demo", "/login"]);
   });
 });

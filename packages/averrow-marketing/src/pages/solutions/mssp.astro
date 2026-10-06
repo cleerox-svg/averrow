@@ -143,7 +143,7 @@ const scope: ScopeRow[] = [
     heading="Today, and not yet."
     lede="MSSPs ask the same questions first, so here is the plain answer."
   >
-    <div class="ms-split">
+    <div class="sol-split">
       <div class="ms-col">
         <h3>Available now</h3>
         <FactList items={availableNow} label="Available now" />
@@ -194,18 +194,14 @@ const scope: ScopeRow[] = [
   />
 
   <PageCTA heading="Let's talk about partnering." body="Tell us about your clients and your stack. Or run a free domain scan, no signup, or book a demo and we'll show you an organisation and the routing.">
-    <a class="btn btn-primary ms-partner" href={`${base}/contact`} data-cta="mssp-partner">Talk to us about partnering</a>
+    <a class="btn btn-primary ms-partner" href={`${base}/contact?interest=partnership`} data-cta="mssp-partner">Talk to us about partnering</a>
   </PageCTA>
 </ProductPage>
 
 <style>
-  .ms-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
   .ms-col { display: grid; gap: 12px; min-width: 0; }
   .ms-col h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
   .ms-partner { min-height: 44px; justify-content: center; }
-  @media (max-width: 800px) {
-    .ms-split { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-  }
   @media (max-width: 480px) {
     .ms-partner { width: 100%; }
   }

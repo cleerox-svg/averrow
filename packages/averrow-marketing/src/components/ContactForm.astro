@@ -5,7 +5,10 @@
  * the Astro build never touches the API. Body fields are unchanged:
  *   { name, email, company, companySize, interest, message, company_website }
  * and the demo variant also sends `domain` (a new optional field the worker
- * accepts) and drops `interest`. `message` is required because the server
+ * accepts) and has no interest select; it always sends `interest: "demo"`. The
+ * contact variant's interest select also offers "partnership", and a
+ * `?interest=partnership` query pre-selects it (the MSSP page links there).
+ * `message` is required because the server
  * requires it. There is no Turnstile on this form (the endpoint relies on the
  * honeypot field and a per-IP rate limit), so none is wired here.
  *
@@ -52,6 +55,7 @@ const interests: Array<[string, string]> = [
   ["general", "General question"],
   ["demo", "Product demo"],
   ["enterprise", "Plans and enterprise"],
+  ["partnership", "Partnership"],
 ];
 
 const fields: Field[] = [
@@ -117,15 +121,18 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
               inputmode={f.inputmode}
               required={f.required}
               data-error={f.error}
+              aria-describedby={f.hint ? `cf-${f.id}-hint` : undefined}
               data-hint={f.hint ? `cf-${f.id}-hint` : undefined}
               autocapitalize={f.id === "email" || f.id === "domain" ? "none" : undefined}
               spellcheck={f.id === "email" || f.id === "domain" ? "false" : undefined}
             />
           )}
           {f.kind === "select" && (
-            <select id={`cf-${f.id}`} name={f.id} autocomplete={f.autocomplete}>
-              {f.options?.map(([v, l]) => <option value={v}>{l}</option>)}
-            </select>
+            <div class="cf-sel">
+              <select id={`cf-${f.id}`} name={f.id} autocomplete={f.autocomplete}>
+                {f.options?.map(([v, l]) => <option value={v}>{l}</option>)}
+              </select>
+            </div>
           )}
           {f.kind === "textarea" && (
             <textarea id={`cf-${f.id}`} name={f.id} rows="5" autocomplete={f.autocomplete} required={f.required} data-error={f.error}></textarea>
@@ -147,6 +154,7 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
 
 <style>
   .cf {
+    position: relative;
     --field-border: var(--text-secondary);
     --field-error: var(--red-text);
     min-width: 0;
@@ -185,11 +193,29 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
   .cf select {
     padding-right: 38px;
     cursor: pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23888' stroke-width='1.6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
+  }
+  /* The chevron is a currentColor mask, so it follows the theme's text colour. */
+  .cf-sel { position: relative; min-width: 0; color: var(--text-secondary); }
+  .cf-sel::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    pointer-events: none;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='black' stroke-width='1.6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='black' stroke-width='1.6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
   }
   .cf textarea { min-height: 128px; resize: vertical; }
+  /* Keep a focused control and the error summary clear of the sticky nav (64px tall). */
+  .cf input,
+  .cf select,
+  .cf textarea,
+  .cf-alert,
+  .cf-success { scroll-margin-top: 96px; }
   .cf input:focus-visible,
   .cf select:focus-visible,
   .cf textarea:focus-visible,
@@ -210,7 +236,8 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
     margin: 0;
   }
   .cf-err::before { content: "Error: "; font-weight: 700; }
-  .cf-alert:empty { display: block; padding: 0; margin: 0; border: 0; height: 0; overflow: hidden; }
+  /* Stay in the DOM (live region) but out of flow while empty, so it takes no grid row and leaves no gap. */
+  .cf-alert:empty { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; }
   .cf-alert :global(p) { margin: 0 0 6px; }
   .cf-alert :global(ul) { margin: 0; padding-left: 18px; }
   .cf-alert :global(a) { color: inherit; text-decoration: underline; }
@@ -248,6 +275,13 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
     type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
     const controls = (): Control[] =>
       Array.from(form.querySelectorAll<Control>("input[name], select[name], textarea[name]")).filter((c) => c.name !== "company_website");
+
+    // ?interest=partnership pre-selects the matching option (contact variant only).
+    const wanted = new URLSearchParams(location.search).get("interest");
+    const interestSel = form.elements.namedItem("interest");
+    if (wanted && interestSel instanceof HTMLSelectElement && Array.from(interestSel.options).some((o) => o.value === wanted)) {
+      interestSel.value = wanted;
+    }
 
     const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const DOMAIN = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/;
@@ -326,14 +360,20 @@ const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "T
           ul.append(li);
         }
         alertBox.replaceChildren(p, ul);
-        invalid[0]!.c.focus();
+        // Show the summary first (clear of the sticky nav via scroll-margin), then focus the
+        // first invalid field without letting the browser scroll it back under the nav.
+        alertBox.scrollIntoView({ block: "start", behavior: "instant" });
+        const first = invalid[0]!.c;
+        first.focus({ preventScroll: true });
+        const r = first.getBoundingClientRect();
+        if (r.bottom > window.innerHeight) first.scrollIntoView({ block: "nearest", behavior: "instant" });
         return;
       }
 
       const data: Record<string, string> = {};
       for (const c of controls()) data[c.name] = valueOf(c);
       data.company_website = (form.elements.namedItem("company_website") as HTMLInputElement | null)?.value ?? "";
-      // The demo variant has no interest select; /api/contact stores whatever `interest` it is given.
+      // The demo variant has no interest select, so it sends a fixed one; the worker labels it.
       if (demo) data.interest = "demo";
 
       submit.disabled = true;
