@@ -5,7 +5,9 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
-import { serveHoneypotPage, honeypotHtmlResponse, HONEYPOT_X_ROBOTS_TAG, trapMailDomain } from "../src/honeypot";
+import {
+  serveHoneypotPage, serveHoneypotDomain, honeypotHtmlResponse, HONEYPOT_X_ROBOTS_TAG, trapMailDomain,
+} from "../src/honeypot";
 import { serveLrxRadarPage } from "../src/templates/honeypot-lrx";
 import {
   renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage, renderStaffContactsPage,
@@ -141,9 +143,14 @@ function titleElementTexts(html: string): string[] {
   return out;
 }
 
-// A roster as readRoster() returns it: name-shaped local parts with
-// synthesized display names and titles, on routed and non-routed domains.
+// A roster mixing role-style seeds (what the planter plants now) with
+// legacy name-shaped seeds still active in seed_addresses, on routed and
+// non-routed domains. The legacy name/title fields are filled in to prove
+// the pages never render them.
 const LIVE_ROSTER: RosterEntry[] = [
+  { email: "helpdesk-hp417@averrow.ca", name: "", title: "", id: 4 },
+  { email: "payroll-hp233@lrxradar.com", name: "", title: "", id: 5 },
+  { email: "noc-hp512@averrow.com", name: "", title: "", id: 6 },
   { email: "sarah.chen@averrow.ca", name: "Sarah Chen", title: "Operations Director", id: 1 },
   { email: "jwilson@lrxradar.com", name: "J. Wilson", title: "IT Director", id: 2 },
   { email: "kevin.park@averrow.com", name: "Kevin Park", title: "DevOps Lead", id: 3 },
@@ -208,15 +215,29 @@ describe("every honeypot page", () => {
     }
   });
 
-  it("roster pages keep live seeded addresses on routed domains and drop the rest", () => {
+  it("roster pages keep role-style seeds on routed domains and drop the rest", () => {
     const html = renderAdminPortalPage([...LIVE_ROSTER], "averrow.com");
-    expect(html).toContain("mailto:sarah.chen@averrow.ca");
-    expect(html).toContain("mailto:jwilson@lrxradar.com");
-    expect(html).not.toContain("kevin.park@averrow.com");
-    // Default roster on the page's trap mail domain when nothing routable is seeded.
-    const fallback = renderStaffContactsPage([LIVE_ROSTER[2]!], "averrow.com");
+    expect(html).toContain("mailto:helpdesk-hp417@averrow.ca");
+    expect(html).toContain("mailto:payroll-hp233@lrxradar.com");
+    expect(html).not.toContain("noc-hp512@averrow.com");
+    // Legacy name-shaped seeds are never rendered, even on a routed domain.
+    expect(html).not.toContain("sarah.chen@averrow.ca");
+    expect(html).not.toContain("jwilson@lrxradar.com");
+    expect(html).not.toContain("kevin.park");
+    // Default roster on the page's trap mail domain when nothing renderable is seeded.
+    const fallback = renderStaffContactsPage(LIVE_ROSTER.filter(r => r.id !== 4 && r.id !== 5), "averrow.com");
     expect(fallback).toMatch(/mailto:[\w-]+-hp\d+@averrow\.ca/);
     expect(renderTeamDirectoryPage(undefined, "lrxradar.com")).toMatch(/mailto:[\w-]+-hp\d+@lrxradar\.com/);
+  });
+
+  it("roster pages publish no name-shaped address at all", async () => {
+    for (const p of await allHoneypotPages()) {
+      for (const m of p.html.matchAll(/mailto:([^"@]+)@/g)) {
+        const local = m[1]!;
+        expect(local, `${p.label}: ${local}`).not.toMatch(/\./);
+        for (const n of FIRST_NAME_POOL) expect(local.toLowerCase(), `${p.label}: ${local}`).not.toContain(n.toLowerCase());
+      }
+    }
   });
 
   it("lrxradar.com keeps its robots.txt and sitemap as they were", async () => {
@@ -237,6 +258,44 @@ describe("every honeypot page", () => {
       expect(html, path).toContain('content="noindex,nofollow"');
       for (const s of OLD_INVENTED_NAMES) expect(html, `${path}: ${s}`).not.toContain(s);
       expect(html, path).not.toMatch(/LRX Enterprises/);
+    }
+  });
+});
+
+// KV-hosted throwaway trap sites (`honeypot-site:<host>:<page>`).
+describe("serveHoneypotDomain", () => {
+  function kvEnv(store: Record<string, string>): Pick<Env, "CACHE"> {
+    return { CACHE: { get: async (k: string) => store[k] ?? null } as unknown as Env["CACHE"] };
+  }
+  const store = {
+    "honeypot-site:trap.example:index": "<html>index</html>",
+    "honeypot-site:trap.example:team": "<html>team</html>",
+    "honeypot-site:trap.example:robots": "User-agent: *",
+    "honeypot-site:trap.example:sitemap": "<urlset/>",
+  };
+
+  it("serves HTML pages with the X-Robots-Tag, keeping status and cache", async () => {
+    for (const path of ["/", "/team", "/about"]) {
+      const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("X-Robots-Tag"), path).toBe(HONEYPOT_X_ROBOTS_TAG);
+      expect(res.headers.get("Content-Type"), path).toContain("text/html");
+      expect(res.headers.get("Cache-Control"), path).toBe("public, max-age=86400");
+    }
+  });
+
+  it("keeps robots.txt and sitemap.xml content types", async () => {
+    const robots = await serveHoneypotDomain(new URL("https://trap.example/robots.txt"), kvEnv(store));
+    expect(robots.headers.get("Content-Type")).toBe("text/plain");
+    expect(await robots.text()).toBe("User-agent: *");
+    const sitemap = await serveHoneypotDomain(new URL("https://trap.example/sitemap.xml"), kvEnv(store));
+    expect(sitemap.headers.get("Content-Type")).toBe("application/xml");
+  });
+
+  it("404s unknown paths and missing KV pages", async () => {
+    for (const path of ["/nope", "/contact", "/constructor"]) {
+      const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
+      expect(res.status, path).toBe(404);
     }
   });
 });

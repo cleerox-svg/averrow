@@ -43,6 +43,7 @@
  */
 
 import { generateSpiderTraps } from "./seeders/spider-injector";
+import type { Env } from "./types";
 
 /** Header value for every honeypot page: keep it out of search and AI indexes. */
 export const HONEYPOT_X_ROBOTS_TAG = "noindex, nofollow";
@@ -221,4 +222,32 @@ export function honeypotHtmlResponse(html: string, cacheControl = "public, max-a
       "X-Robots-Tag": HONEYPOT_X_ROBOTS_TAG,
     },
   });
+}
+
+/**
+ * KV-hosted throwaway trap sites (`honeypot-site:<host>:<page>`, written by
+ * the honeypot generator). HTML pages go through honeypotHtmlResponse so
+ * they carry the X-Robots-Tag like every other honeypot page; robots.txt
+ * and sitemap.xml keep their own content types. Missing page or KV key → 404.
+ */
+export async function serveHoneypotDomain(url: URL, env: Pick<Env, "CACHE">): Promise<Response> {
+  const pageMap: Record<string, string> = {
+    "/": "index", "/contact": "contact", "/team": "team", "/about": "team",
+    "/robots.txt": "robots", "/sitemap.xml": "sitemap",
+  };
+  const page = Object.prototype.hasOwnProperty.call(pageMap, url.pathname) ? pageMap[url.pathname] : undefined;
+  if (!page) return new Response("Not Found", { status: 404 });
+
+  const content = await env.CACHE.get(`honeypot-site:${url.hostname}:${page}`);
+  if (!content) return new Response("Not Found", { status: 404 });
+
+  if (page === "robots" || page === "sitemap") {
+    return new Response(content, {
+      headers: {
+        "Content-Type": page === "sitemap" ? "application/xml" : "text/plain",
+        "Cache-Control": "public, max-age=86400",
+      },
+    });
+  }
+  return honeypotHtmlResponse(content);
 }

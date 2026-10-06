@@ -8,8 +8,10 @@
  *
  * Each page accepts an optional `roster` of seeded addresses. The live
  * caller passes readRoster() (lib/auto-seeder-planter.ts), so a harvester
- * scraping in week 4 sees a different list than one in week 1. Entries
- * whose domain does not route to the Worker (WORKER_ROUTED_MAIL_DOMAINS —
+ * scraping in week 4 sees a different list than one in week 1. Only
+ * role-style mailboxes (`<function>-hp<digits>`, isRoleMailboxAddress) are
+ * rendered — never a person-name local part, so legacy `first.last` seeds
+ * are skipped. Entries whose domain does not route to the Worker (WORKER_ROUTED_MAIL_DOMAINS —
  * e.g. averrow.com, whose MX is Google Workspace) are dropped: mail to them
  * never reaches the trap. With nothing left, a built-in default roster on
  * the page's trap mail domain (trapMailDomain) is used so the page never
@@ -25,9 +27,9 @@
  */
 import { WORKER_ROUTED_MAIL_DOMAINS, trapMailDomain } from "../honeypot";
 import { generateSpiderTraps } from "../seeders/spider-injector";
-import type { RosterEntry } from "../lib/auto-seeder-planter";
+import { isRoleMailboxAddress, type RosterEntry } from "../lib/auto-seeder-planter";
 
-/** Seed-format local parts (`<word>-hpNN`, channel "honeypot" in spam-trap.ts). */
+/** Seed-format local parts (`<word>-hpNN`, channel "honeypot" in spam-trap.ts) — same shape the planter plants. */
 const DEFAULT_ADMIN_LOCALS = ["itops-hp20", "devops-hp21", "infra-hp22"];
 const DEFAULT_STAFF_LOCALS = ["success-hp23", "research-hp24", "product-hp25", "compliance-hp26"];
 const DEFAULT_TEAM_DIRECTORY_LOCALS = ["ops-hp27", "consulting-hp28", "clientrel-hp29", "bizdev-hp30", "strategy-hp31"];
@@ -46,11 +48,16 @@ function emailDomain(email: string): string {
   return (email.split("@")[1] ?? "").toLowerCase();
 }
 
-/** Seeded addresses on a Worker-routed domain, else the default set on the page's trap domain. */
+/**
+ * Seeded role-style addresses on a Worker-routed domain, else the default
+ * set on the page's trap domain. Name-shaped legacy seeds (`sarah.chen@…`,
+ * planted before G37) are dropped here too, not only in readRoster, so no
+ * caller can publish an invented person's address.
+ */
 function resolveAddresses(roster: RosterEntry[] | undefined, defaults: string[], mail: string): string[] {
   const live = (roster ?? [])
     .map(r => r.email)
-    .filter(e => WORKER_ROUTED_MAIL_DOMAINS.has(emailDomain(e)));
+    .filter(e => isRoleMailboxAddress(e) && WORKER_ROUTED_MAIL_DOMAINS.has(emailDomain(e)));
   return live.length > 0 ? live : defaults.map(l => `${l}@${mail}`);
 }
 

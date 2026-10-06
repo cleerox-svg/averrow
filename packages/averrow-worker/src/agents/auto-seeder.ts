@@ -1,9 +1,9 @@
 /**
  * Recon (auto_seeder) — weekly bulk seeding of spam-trap addresses.
  *
- * Plants synthetic Firstname.Lastname@<honeypot-domain> addresses
- * into seed_addresses, attributed to seeded_location =
- * 'auto-seeder:<domain>:<page>'. The /admin-portal and /internal-staff
+ * Plants role-style mailbox addresses (`<function>-hp<NNN>@<honeypot-domain>`,
+ * never person names — G37) into seed_addresses, attributed to
+ * seeded_location = 'auto-seeder:<domain>:<page>'. The four roster bait
  * page handlers (src/index.ts) read this same seeded_location at
  * render time and embed every active row as a visible mailto:
  * link, so the next time a harvester scrapes us they pick up the
