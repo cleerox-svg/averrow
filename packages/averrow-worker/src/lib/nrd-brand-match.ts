@@ -43,7 +43,13 @@ import { threatId } from "../feeds/types";
  *     its digit/symbol-only variants (o→0, l/i→1, a→4/@, e→3, s→5/$ — no
  *     l↔i letter swap) as DISTINCTIVE needles: a dictionary word with a digit
  *     swapped in (`amaz0n`, `app1e`, `0utlook`, `dr0pbox`) is itself the
- *     impersonation signal. Such a variant must not touch another digit
+ *     impersonation signal — but only in a lure context: the variant
+ *     qualifies when the GENERIC rule holds, OR when everything else in the
+ *     registrable part is VARIANT_CONTEXT/STRONG words and digits
+ *     (`amaz0n-login.com`, `0utlook-webmail.com`, `dr0pbox-share.com`), OR
+ *     when it stands alone (`amaz0n.com`) and the keyword is ≥6 chars.
+ *     `sh3ll-scripts.com`, `un1tyapp.com`, `thr3e-media.com`, `metr0.io`
+ *     (5 chars, bare) do not. It must also not touch another digit
  *     (`merak123.world` is not `meraki`).
  *
  * ── Matching (per domain) ──
@@ -58,19 +64,27 @@ import { threatId } from "../feeds/types";
  *     `docsharepoint.top`, `amaz0n-login.com` match; `canvashouse.uk`,
  *     `betonline.com` (T Online), `bahiahondastatepark.com` do not.
  *   * GENERIC needle: the rest of its segment ∈ (STRONG ∪ GLUE ∪ digits)*,
- *     AND a STRONG word is present — in that segment, or in the nearest
- *     non-GLUE segment on either side, provided that segment is made only of
- *     STRONG/GLUE words and digits (GLUE-only segments such as `com`, `www`,
- *     `id`, `prime`, `24` are transparent). `att-login.com`, `dhlpayment.net`,
- *     `att.com-login.net`, `apple-id-verify.com`, `myamazon-account.com`,
- *     `amazon-prime-login.com` match; `line-store.com`, `onlineline.hair`,
- *     `frontier-era-security.com` do not.
+ *     AND a STRONG word is present — in that segment, or in the next
+ *     segment on either side, provided that segment is made only of
+ *     STRONG/GLUE words and digits. Skipped when looking for that segment
+ *     (URL-mimicry and the brand's own product names only): `com` right of
+ *     the keyword (`att.com-login`), `www` left of it (`www-att-login`), and
+ *     the keyword's PRODUCT_GLUE (`apple-id-verify`, `amazon-prime-login`).
+ *     Nothing else is transparent — not digits, not other glue:
+ *     `unity-id-support`, `metro-prime-security`, `frontier-2024-update`,
+ *     `metro-www-alerts` do not match. `att-login.com`, `dhlpayment.net`,
+ *     `myamazon-account.com`, `appleid-verify.com` match; `line-store.com`,
+ *     `onlineline.hair`, `frontier-era-security.com` do not.
  * STRONG = phishing/parcel-scam action words (login, verify, secure, wallet,
- * refund, billing, support, tracking, parcel, redelivery, customs, ...).
- * WEAK = neutral glue allowed next to a distinctive needle (my, official,
- * app, web, doc, share, ...). GLUE = the few WEAK words that may also sit
- * next to a GENERIC keyword (my, id, pay, prime, www, com) — never enough on
- * their own.
+ * refund, billing, support, tracking, parcel, redelivery, shipment, ...).
+ * Words that are ALSO ordinary business vocabulary for dictionary brands
+ * (delivery, customs, limited — `subway-delivery.com`, `att-customs.com`,
+ * `three-limited.com`) are WEAK instead: they still count next to a
+ * distinctive keyword (`coinbase-limited.com`) but never satisfy the generic
+ * rule. WEAK = neutral glue allowed next to a distinctive needle (my,
+ * official, app, web, doc, share, ...). GLUE = the few WEAK words that may
+ * also sit inside a GENERIC keyword's own segment (my, id, pay, prime, www,
+ * com) — never enough on their own.
  *
  * ── Winner (deterministic, order-independent of D1) ──
  * Among qualifying occurrences of all brands: the LONGEST needle wins
@@ -89,9 +103,11 @@ import { threatId } from "../feeds/types";
  * `nrd_hagezi_keywords_demoted` — add them to GENERIC_KEYWORDS). The busiest
  * brand on a measured day had ~30 rows, so this only fires on an
  * unanticipated dictionary word (a new brand called "Home"), capping its
- * distinctive-path flood at 100 rows per brand per run. Deterministic: the
- * list is processed in byte-sorted order, so a retry demotes at the same
- * domain.
+ * distinctive-path flood at 100 rows per brand per run. Deterministic for
+ * an IDENTICAL diff only: domains are processed in byte-sorted order, so a
+ * retry against the same snapshot and list demotes at the same domain; a
+ * run whose new-domain set differs (a different snapshot, or the per-run
+ * cap deferring a tail) can demote at a different domain.
  *
  * Cost: needle lookups are a Map probe per (position × distinct needle
  * length), independent of brand count; the segment decomposition only runs
@@ -104,17 +120,29 @@ export const STRONG_WORDS: ReadonlySet<string> = new Set([
   "login", "logon", "signin", "signon", "secure", "security", "verify", "verification", "verified",
   "account", "accounts", "acct", "auth", "authenticate", "authentication", "password", "passwd",
   "unlock", "unlocked", "recovery", "recover", "reset", "confirm", "confirmation", "validate",
-  "validation", "suspended", "suspend", "locked", "limited", "kyc", "sso", "mfa", "2fa", "otp",
+  "validation", "suspended", "suspend", "locked", "kyc", "sso", "mfa", "2fa", "otp",
   "wallet", "refund", "refunds", "billing", "invoice", "payment", "payments", "helpdesk", "support",
   "customerservice", "airdrop", "claim", "update", "updates", "alert", "alerts", "notice",
   "notification", "restore",
-  // parcel smishing lures ("toll"/"package" left out: TollBit, software
-  // packages — measured false positives on the real list)
-  "tracking", "parcel", "parcels", "delivery", "redelivery", "redeliver", "shipment", "customs",
+  // parcel smishing lures that are scam-specific. "delivery"/"customs" are
+  // WEAK (food/telco brands' own vocabulary: subway-delivery, att-customs);
+  // "toll"/"package" are left out (TollBit, software packages).
+  "tracking", "parcel", "parcels", "redelivery", "redeliver", "shipment",
 ]);
 
-/** Glue that may also sit next to a GENERIC keyword (and is transparent between segments). */
+/** Glue that may also sit inside a GENERIC keyword's own segment (`appleid`, `myamazon`, `amazonpay`). */
 export const GLUE_WORDS: ReadonlySet<string> = new Set(["my", "id", "pay", "prime", "www", "com"]);
+
+/**
+ * A generic keyword's own product names: segments that are transparent when
+ * looking for the STRONG segment (`apple-id-verify`, `amazon-prime-login`).
+ * Deliberately brand-specific — generic glue is NOT transparent
+ * (`unity-id-support`, `metro-prime-security`).
+ */
+export const PRODUCT_GLUE: Readonly<Record<string, ReadonlySet<string>>> = {
+  apple: new Set(["id", "pay"]),
+  amazon: new Set(["prime", "pay"]),
+};
 
 /** Neutral glue words: allowed next to a DISTINCTIVE needle, never sufficient for a generic one. */
 export const WEAK_WORDS: ReadonlySet<string> = new Set([
@@ -123,7 +151,20 @@ export const WEAK_WORDS: ReadonlySet<string> = new Set([
   "access", "connect", "portal", "center", "centre", "team", "desk", "help", "service", "services",
   "customer", "care", "bank", "banking", "card", "cards", "mail", "webmail", "inbox", "store",
   "shop", "info", "doc", "docs", "document", "documents", "drive", "file", "files", "share", "office",
-  "cloud",
+  "cloud", "delivery", "customs", "limited",
+]);
+
+/**
+ * Context in which a GENERIC keyword's digit variant counts without the
+ * generic rule: STRONG ∪ these. WEAK minus the ordinary-business words that
+ * make a stylised dictionary word read as a product/company name
+ * (`un1tyapp`, `m3tro-store`, `0ne-online`).
+ */
+export const VARIANT_CONTEXT_WORDS: ReadonlySet<string> = new Set([
+  ...GLUE_WORDS,
+  "official", "access", "connect", "portal", "help", "service", "services", "customer", "care",
+  "bank", "banking", "card", "cards", "mail", "webmail", "inbox", "doc", "docs", "document",
+  "documents", "drive", "file", "files", "share", "office", "cloud",
 ]);
 
 /**
@@ -188,6 +229,9 @@ const DIGIT_HOMOGLYPHS: Record<string, string[]> = {
 
 /** Brand → its keywords matched as generic for the rest of the run after this many distinctive-path rows. */
 export const NRD_KEYWORD_DEMOTE_AFTER = 100;
+
+/** A generic keyword's digit variant may stand alone (`amaz0n.com`) only from this length (`metr0.io` may not). */
+const VARIANT_BARE_MIN_LEN = 6;
 
 /** Shortest keyword (hyphens ignored) that can match at all. */
 const MIN_KEYWORD_LEN = 3;
@@ -326,13 +370,17 @@ export function keywordNeedles(spec: BrandKeywordSpec): KeywordNeedle[] {
 
 const DISTINCTIVE_VOCAB: ReadonlySet<string> = new Set([...STRONG_WORDS, ...WEAK_WORDS]);
 const GENERIC_VOCAB: ReadonlySet<string> = new Set([...STRONG_WORDS, ...GLUE_WORDS]);
+const VARIANT_VOCAB: ReadonlySet<string> = new Set([...STRONG_WORDS, ...VARIANT_CONTEXT_WORDS]);
 const lengthsOf = (s: ReadonlySet<string>) => [...new Set([...s].map((w) => w.length))].sort((a, b) => a - b);
 const DISTINCTIVE_LENGTHS = lengthsOf(DISTINCTIVE_VOCAB);
 const GENERIC_LENGTHS = lengthsOf(GENERIC_VOCAB);
+const VARIANT_LENGTHS = lengthsOf(VARIANT_VOCAB);
 
 /** Bit flags per prefix/suffix position. */
 const DECOMPOSES = 1;
 const HAS_STRONG = 2;
+/** At least one vocabulary word (not only digits) was consumed. */
+const HAS_WORD = 4;
 
 interface Decomposition {
   /** pre[j]: flags for seg[0, j). */
@@ -368,7 +416,7 @@ function decompose(seg: string, vocab: ReadonlySet<string>, lengths: number[]): 
       if (!(p & DECOMPOSES)) continue;
       const w = seg.substring(j - L, j);
       if (!vocab.has(w)) continue;
-      f |= DECOMPOSES | (p & HAS_STRONG) | (STRONG_WORDS.has(w) ? HAS_STRONG : 0);
+      f |= DECOMPOSES | HAS_WORD | (p & HAS_STRONG) | (STRONG_WORDS.has(w) ? HAS_STRONG : 0);
     }
     pre[j] = f;
   }
@@ -382,7 +430,7 @@ function decompose(seg: string, vocab: ReadonlySet<string>, lengths: number[]): 
       if (!(s & DECOMPOSES)) continue;
       const w = seg.substring(j, j + L);
       if (!vocab.has(w)) continue;
-      f |= DECOMPOSES | (s & HAS_STRONG) | (STRONG_WORDS.has(w) ? HAS_STRONG : 0);
+      f |= DECOMPOSES | HAS_WORD | (s & HAS_STRONG) | (STRONG_WORDS.has(w) ? HAS_STRONG : 0);
     }
     suf[j] = f;
   }
@@ -397,6 +445,7 @@ class SegmentedDomain {
   readonly segOf: Int16Array;
   private readonly distinctive: Array<Decomposition | undefined> = [];
   private readonly generic: Array<Decomposition | undefined> = [];
+  private readonly variant: Array<Decomposition | undefined> = [];
 
   constructor(readonly core: string) {
     this.segOf = new Int16Array(core.length);
@@ -420,7 +469,7 @@ class SegmentedDomain {
     return this.starts.length;
   }
 
-  private seg(s: number): string {
+  seg(s: number): string {
     return this.core.substring(this.starts[s]!, this.ends[s]!);
   }
 
@@ -434,21 +483,33 @@ class SegmentedDomain {
     return (this.generic[s] ??= decompose(this.seg(s), GENERIC_VOCAB, GENERIC_LENGTHS));
   }
 
+  /** Decomposition over STRONG ∪ VARIANT_CONTEXT (generic keywords' digit variants). */
+  variantOf(s: number): Decomposition {
+    return (this.variant[s] ??= decompose(this.seg(s), VARIANT_VOCAB, VARIANT_LENGTHS));
+  }
+
   /** Flags of segment `s` as a whole over STRONG ∪ GLUE ∪ digits. */
   wholeGeneric(s: number): number {
     return this.genericOf(s).pre[this.ends[s]! - this.starts[s]!]!;
   }
 
+  /** Flags of segment `s` as a whole over STRONG ∪ VARIANT_CONTEXT ∪ digits. */
+  wholeVariant(s: number): number {
+    return this.variantOf(s).pre[this.ends[s]! - this.starts[s]!]!;
+  }
+
   /**
-   * Walking from segment `from` in direction `step`, skip GLUE-only segments
-   * (com, www, id, prime, digits); true when the first other segment is made
-   * only of STRONG/GLUE words and digits and contains a STRONG word.
+   * Walking from segment `from` in direction `step`: skip `com` (rightward
+   * only — `brand.com-login`), `www` (leftward only — `www-brand-login`) and
+   * the keyword's own PRODUCT_GLUE; true when the next segment is made only
+   * of STRONG/GLUE words and digits and contains a STRONG word.
    */
-  strongBeyond(from: number, step: 1 | -1): boolean {
+  strongBeyond(from: number, step: 1 | -1, product: ReadonlySet<string> | undefined): boolean {
     for (let t = from + step; t >= 0 && t < this.count; t += step) {
+      const text = this.seg(t);
+      if ((step === 1 && text === "com") || (step === -1 && text === "www") || product?.has(text)) continue;
       const f = this.wholeGeneric(t);
-      if (!(f & DECOMPOSES)) return false;
-      if (f & HAS_STRONG) return true;
+      return (f & DECOMPOSES) !== 0 && (f & HAS_STRONG) !== 0;
     }
     return false;
   }
@@ -478,6 +539,8 @@ export class BrandMatcher {
   private readonly kwText: string[] = [];
   private readonly kwGeneric: boolean[] = [];
   private readonly kwDigitVariant: boolean[] = [];
+  private readonly kwProduct: Array<ReadonlySet<string> | undefined> = [];
+  private readonly kwFlatLen: number[] = [];
   private readonly demoteAfter: number;
   /** Distinctive-path rows this run, per brand index. */
   private readonly rowsByBrand = new Map<number, number>();
@@ -501,6 +564,8 @@ export class BrandMatcher {
             this.kwText.push(k.keyword);
             this.kwGeneric.push(generic);
             this.kwDigitVariant.push(digitVariant);
+            this.kwProduct.push(PRODUCT_GLUE[k.keyword]);
+            this.kwFlatLen.push(flat.length);
             slots.set(generic, kw);
           }
           let list = this.index.get(needle);
@@ -547,7 +612,7 @@ export class BrandMatcher {
           if (this.brands[e.bi]!.domain === domain) continue;
           if (this.kwDigitVariant[e.kw] && touchesDigit(core, i, i + len)) continue;
           segmented ??= new SegmentedDomain(core);
-          if (this.qualifies(segmented, i, i + len, this.isGeneric(e.kw))) {
+          if (this.qualifies(segmented, i, i + len, e.kw)) {
             bestLen = len;
             bestBi = e.bi;
             bestKw = e.kw;
@@ -559,18 +624,43 @@ export class BrandMatcher {
     return bestKw < 0 ? null : { bi: bestBi, kw: bestKw };
   }
 
-  /** Occurrence core[i, j) is a delimited/lure-concatenated token (module header). */
-  private qualifies(d: SegmentedDomain, i: number, j: number, generic: boolean): boolean {
+  /** Occurrence core[i, j) of needle slot `kw` qualifies (module header, "Matching"). */
+  private qualifies(d: SegmentedDomain, i: number, j: number, kw: number): boolean {
     const si = d.segOf[i]!;
     const sj = d.segOf[j - 1]!;
     if (si < 0 || sj < 0) return false; // needle starts/ends on a delimiter
-    const pi = i - d.starts[si]!;
-    const pj = j - d.starts[sj]!;
-    const l = (generic ? d.genericOf(si) : d.distinctiveOf(si)).pre[pi]!;
-    const r = (generic ? d.genericOf(sj) : d.distinctiveOf(sj)).suf[pj]!;
+    if (this.isGeneric(kw)) return this.genericRule(d, i, j, si, sj, kw);
+    if (!this.kwDigitVariant[kw]) {
+      const pi = i - d.starts[si]!;
+      const pj = j - d.starts[sj]!;
+      return (d.distinctiveOf(si).pre[pi]! & DECOMPOSES) !== 0 && (d.distinctiveOf(sj).suf[pj]! & DECOMPOSES) !== 0;
+    }
+    // Digit variant of a GENERIC keyword: generic rule, or a whole-core lure context.
+    return this.genericRule(d, i, j, si, sj, kw) || this.variantContext(d, i, j, si, sj, kw);
+  }
+
+  private genericRule(d: SegmentedDomain, i: number, j: number, si: number, sj: number, kw: number): boolean {
+    const l = d.genericOf(si).pre[i - d.starts[si]!]!;
+    const r = d.genericOf(sj).suf[j - d.starts[sj]!]!;
     if (!(l & DECOMPOSES) || !(r & DECOMPOSES)) return false;
-    if (!generic) return true;
-    return (l & HAS_STRONG) !== 0 || (r & HAS_STRONG) !== 0 || d.strongBeyond(si, -1) || d.strongBeyond(sj, 1);
+    if ((l & HAS_STRONG) !== 0 || (r & HAS_STRONG) !== 0) return true;
+    const product = this.kwProduct[kw];
+    return d.strongBeyond(si, -1, product) || d.strongBeyond(sj, 1, product);
+  }
+
+  /** Everything outside the occurrence is STRONG/VARIANT_CONTEXT words + digits; bare only for ≥6-char keywords. */
+  private variantContext(d: SegmentedDomain, i: number, j: number, si: number, sj: number, kw: number): boolean {
+    const l = d.variantOf(si).pre[i - d.starts[si]!]!;
+    const r = d.variantOf(sj).suf[j - d.starts[sj]!]!;
+    if (!(l & DECOMPOSES) || !(r & DECOMPOSES)) return false;
+    let words = (l | r) & HAS_WORD;
+    for (let t = 0; t < d.count; t++) {
+      if (t >= si && t <= sj) continue;
+      const f = d.wholeVariant(t);
+      if (!(f & DECOMPOSES)) return false;
+      words |= f & HAS_WORD;
+    }
+    return words !== 0 || this.kwFlatLen[kw]! >= VARIANT_BARE_MIN_LEN;
   }
 
   collect(domains: string[], matched: Set<string>): { rows: ThreatRow[]; inPayloadDuplicates: number } {

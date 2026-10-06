@@ -22,7 +22,9 @@ export {
   GENERIC_KEYWORDS,
   GLUE_WORDS,
   NRD_KEYWORD_DEMOTE_AFTER,
+  PRODUCT_GLUE,
   STRONG_WORDS,
+  VARIANT_CONTEXT_WORDS,
   WEAK_WORDS,
   brandKeywords,
   buildBrandKeywords,
@@ -84,16 +86,16 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  * `micros0ft-support`), never embedded in another word. GENERIC keywords (≤4
  * chars, a curated dictionary word, or a lure word: line, att, booking,
  * apple, …) also need a STRONG phishing/parcel word (login, verify, wallet,
- * refund, tracking, …) in their segment or in the nearest non-glue segment
- * (glue such as my/id/pay/prime/www/com is transparent: `att.com-login`,
- * `apple-id-verify`); their digit-swapped variants (`amaz0n`, `app1e`) match
- * as distinctive. Winner: longest needle, then lowest brand id (brands are
+ * refund, tracking, …) in their segment or in the next segment (only `com`
+ * right of the keyword, `www` left of it and the brand's own product names
+ * are skipped: `att.com-login`, `apple-id-verify`); their digit-swapped
+ * variants (`amaz0n`, `0utlook`) match only in a lure context. Winner: longest needle, then lowest brand id (brands are
  * loaded ORDER BY b.id), so attribution never depends on D1 row order. A
  * brand with NRD_KEYWORD_DEMOTE_AFTER (100) distinctive-path rows in one run
  * has its keywords demoted to the generic rule for the rest of that run
  * (`nrd_hagezi_keywords_demoted` log; opts.keywordDemoteAfter in tests). The
  * old substring match produced 43,010 threats on the first full Hagezi day
- * (51,564 on a 443K-domain sample); the new rules give ~315/day on the same
+ * (51,564 on a 443K-domain sample); the new rules give ~316/day on the same
  * samples. Canonical-domain exclusion, one row per domain and the ThreatRow
  * fields are unchanged.
  *
