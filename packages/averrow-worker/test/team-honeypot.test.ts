@@ -5,7 +5,14 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
-import { serveHoneypotPage, HONEYPOT_X_ROBOTS_TAG, trapMailDomain } from "../src/honeypot";
+import {
+  serveHoneypotPage, serveHoneypotDomain, honeypotHtmlResponse, HONEYPOT_X_ROBOTS_TAG, trapMailDomain,
+} from "../src/honeypot";
+import { serveLrxRadarPage } from "../src/templates/honeypot-lrx";
+import {
+  renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage, renderStaffContactsPage,
+} from "../src/templates/honeypot-pages";
+import type { RosterEntry } from "../src/lib/auto-seeder-planter";
 import { registerPublicRoutes } from "../src/routes/public";
 import { renderRobotsTxt, renderSitemapXml } from "../src/templates/robots-sitemap";
 import type { Env } from "../src/types";
@@ -83,5 +90,213 @@ describe("/team is not advertised", () => {
 
   it("is not named in robots.txt (that would advertise it)", () => {
     expect(renderRobotsTxt()).not.toMatch(/\/team(?!-directory)/);
+  });
+});
+
+// G37 follow-up: every OTHER honeypot page — the lrxradar.com trap site, the
+// four roster bait pages, /careers — names no real or invented person and
+// never names LRX Enterprises Inc. (Averrow's real parent company).
+
+// Every invented person any honeypot template ever carried.
+const OLD_INVENTED_NAMES = [
+  ...FORBIDDEN.slice(0, 9),
+  "Michael Torres", "Robert Taylor", "Lisa Martinez", "Kevin Park", "Amanda White",
+  "Chris Johnson", "Rachel Kim", "Tom Harris", "Emily Wilson", "Marcus Bennett",
+  "Sophie Lee", "Daniel Foster", "Hannah Murphy", "Owen Hughes", "Zoe Bailey",
+  "Lucas Reyes", "Chloe Cooper", "Henry Singh",
+];
+// Job titles and person-card wording the old pages used.
+const OLD_TITLES = [
+  "CEO", "CTO", "Founder", "VP Engineering", "Head of Threat Research", "IT Director",
+  "DevOps Lead", "Department Leads", "Operations Director", "Senior Consultant",
+  "Account Executive", "Marketing Director", "Compliance Officer", "Our Team",
+  "Senior Threat Intelligence Analyst", "Product Manager",
+];
+// First names drawn by the auto-seeder planter plus the old templates.
+const FIRST_NAME_POOL = [
+  "Sarah", "James", "Emily", "Michael", "Olivia", "David", "Emma", "Robert", "Sophia",
+  "William", "Ava", "Daniel", "Mia", "Matthew", "Isabella", "Andrew", "Charlotte", "Ryan",
+  "Amelia", "Nathan", "Lisa", "Kevin", "Amanda", "Chris", "Rachel", "Tom", "Jessica",
+  "Brian", "Megan", "Eric", "Sophie", "Marcus", "Hannah", "Ethan", "Maya", "Owen", "Zoe",
+  "Lucas", "Chloe", "Henry", "Claude", "Jennifer",
+];
+const POOL_NAME_RE = new RegExp(`\\b(?:${FIRST_NAME_POOL.join("|")})\\s+[A-Z][a-z]*\\.?`);
+const FIRST_LAST_RE = /\b[A-Z][a-z]+ [A-Z][a-z]+\b/;
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/g, " ")
+    .replace(/<style[\s\S]*?<\/style>/g, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+}
+
+/** Text of <title> and of every element whose class names a person card's name/title slot. */
+function titleElementTexts(html: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/<title>([^<]*)<\/title>/g)) out.push(m[1] ?? "");
+  for (const m of html.matchAll(/<(\w+)[^>]*class="[^"]*\b(?:[\w-]*name|[\w-]*title)\b[^"]*"[^>]*>([^<]*)</g)) {
+    out.push(m[2] ?? "");
+  }
+  return out;
+}
+
+// A roster mixing role-style seeds (what the planter plants now) with
+// legacy name-shaped seeds still active in seed_addresses, on routed and
+// non-routed domains. The legacy name/title fields are filled in to prove
+// the pages never render them.
+const LIVE_ROSTER: RosterEntry[] = [
+  { email: "helpdesk-hp417@averrow.ca", name: "", title: "", id: 4 },
+  { email: "payroll-hp233@lrxradar.com", name: "", title: "", id: 5 },
+  { email: "noc-hp512@averrow.com", name: "", title: "", id: 6 },
+  { email: "sarah.chen@averrow.ca", name: "Sarah Chen", title: "Operations Director", id: 1 },
+  { email: "jwilson@lrxradar.com", name: "J. Wilson", title: "IT Director", id: 2 },
+  { email: "kevin.park@averrow.com", name: "Kevin Park", title: "DevOps Lead", id: 3 },
+];
+
+interface RenderedPage { label: string; html: string; robotsHeader: string | null }
+
+async function allHoneypotPages(): Promise<RenderedPage[]> {
+  const pages: RenderedPage[] = [];
+  const add = async (label: string, res: Response) =>
+    pages.push({ label, robotsHeader: res.headers.get("X-Robots-Tag"), html: await res.text() });
+
+  for (const path of ["/", "/contact", "/team", "/about", "/unknown"]) {
+    await add(`lrxradar.com${path}`, serveLrxRadarPage(path));
+  }
+  for (const page of ["team", "careers", "contact"]) {
+    await add(`honeypot:${page}`, serveHoneypotPage(page, "averrow.com"));
+  }
+  const renderers = { renderAdminPortalPage, renderInternalStaffPage, renderTeamDirectoryPage, renderStaffContactsPage };
+  for (const [name, render] of Object.entries(renderers)) {
+    for (const domain of ["averrow.com", "lrxradar.com"]) {
+      for (const [rosterLabel, roster] of [["default", undefined], ["live", LIVE_ROSTER]] as const) {
+        await add(`${name}(${domain}, ${rosterLabel})`, honeypotHtmlResponse(render(roster ? [...roster] : undefined, domain)));
+      }
+    }
+  }
+  return pages;
+}
+
+describe("every honeypot page", () => {
+  it("names no invented person, job title or person card", async () => {
+    for (const p of await allHoneypotPages()) {
+      const text = visibleText(p.html);
+      for (const s of [...OLD_INVENTED_NAMES, ...OLD_TITLES]) expect(text, `${p.label}: ${s}`).not.toContain(s);
+      expect(text, p.label).not.toMatch(POOL_NAME_RE);
+      expect(p.html, p.label).not.toMatch(/team-card|hp-card-name|class="name"/);
+      for (const t of titleElementTexts(p.html)) {
+        expect(t, `${p.label}: title element "${t}"`).not.toMatch(FIRST_LAST_RE);
+        expect(t, p.label).not.toMatch(POOL_NAME_RE);
+      }
+    }
+  });
+
+  it("never names LRX Enterprises", async () => {
+    for (const p of await allHoneypotPages()) {
+      expect(p.html, p.label).not.toMatch(/LRX Enterprises/i);
+    }
+  });
+
+  it("carries noindex in a meta tag and the X-Robots-Tag header", async () => {
+    for (const p of await allHoneypotPages()) {
+      expect(p.html, p.label).toContain('<meta name="robots" content="noindex,nofollow">');
+      expect(p.robotsHeader, p.label).toBe(HONEYPOT_X_ROBOTS_TAG);
+    }
+  });
+
+  it("publishes trap addresses only on Worker-routed mail domains", async () => {
+    for (const p of await allHoneypotPages()) {
+      expect(p.html, p.label).toMatch(/mailto:[\w.+-]+@(?:averrow\.ca|trustradar\.ca|lrxradar\.com)/);
+      // averrow.com's Workspace MX rejects unknown users: never a trap there.
+      expect(p.html, p.label).not.toMatch(/mailto:[\w.+-]+@averrow\.com/);
+    }
+  });
+
+  it("roster pages keep role-style seeds on routed domains and drop the rest", () => {
+    const html = renderAdminPortalPage([...LIVE_ROSTER], "averrow.com");
+    expect(html).toContain("mailto:helpdesk-hp417@averrow.ca");
+    expect(html).toContain("mailto:payroll-hp233@lrxradar.com");
+    expect(html).not.toContain("noc-hp512@averrow.com");
+    // Legacy name-shaped seeds are never rendered, even on a routed domain.
+    expect(html).not.toContain("sarah.chen@averrow.ca");
+    expect(html).not.toContain("jwilson@lrxradar.com");
+    expect(html).not.toContain("kevin.park");
+    // Default roster on the page's trap mail domain when nothing renderable is seeded.
+    const fallback = renderStaffContactsPage(LIVE_ROSTER.filter(r => r.id !== 4 && r.id !== 5), "averrow.com");
+    expect(fallback).toMatch(/mailto:[\w-]+-hp\d+@averrow\.ca/);
+    expect(renderTeamDirectoryPage(undefined, "lrxradar.com")).toMatch(/mailto:[\w-]+-hp\d+@lrxradar\.com/);
+  });
+
+  it("roster pages publish no name-shaped address at all", async () => {
+    for (const p of await allHoneypotPages()) {
+      for (const m of p.html.matchAll(/mailto:([^"@]+)@/g)) {
+        const local = m[1]!;
+        expect(local, `${p.label}: ${local}`).not.toMatch(/\./);
+        for (const n of FIRST_NAME_POOL) expect(local.toLowerCase(), `${p.label}: ${local}`).not.toContain(n.toLowerCase());
+      }
+    }
+  });
+
+  it("lrxradar.com keeps its robots.txt and sitemap as they were", async () => {
+    expect(await serveLrxRadarPage("/robots.txt").text()).toBe(
+      "User-agent: *\nAllow: /\nSitemap: https://lrxradar.com/sitemap.xml\n",
+    );
+    expect(await serveLrxRadarPage("/sitemap.xml").text()).toContain("https://lrxradar.com/team");
+  });
+
+  it("the router fallbacks for /admin-portal and /internal-staff are neutral and noindex", async () => {
+    const router: RouterType<IRequest> = Router();
+    registerPublicRoutes(router);
+    for (const path of ["/admin-portal", "/internal-staff"]) {
+      const res = (await router.fetch(new Request(`https://averrow-staging.workers.dev${path}`), {} as Env)) as Response;
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("X-Robots-Tag"), path).toBe(HONEYPOT_X_ROBOTS_TAG);
+      const html = await res.text();
+      expect(html, path).toContain('content="noindex,nofollow"');
+      for (const s of OLD_INVENTED_NAMES) expect(html, `${path}: ${s}`).not.toContain(s);
+      expect(html, path).not.toMatch(/LRX Enterprises/);
+    }
+  });
+});
+
+// KV-hosted throwaway trap sites (`honeypot-site:<host>:<page>`).
+describe("serveHoneypotDomain", () => {
+  function kvEnv(store: Record<string, string>): Pick<Env, "CACHE"> {
+    return { CACHE: { get: async (k: string) => store[k] ?? null } as unknown as Env["CACHE"] };
+  }
+  const store = {
+    "honeypot-site:trap.example:index": "<html>index</html>",
+    "honeypot-site:trap.example:team": "<html>team</html>",
+    "honeypot-site:trap.example:robots": "User-agent: *",
+    "honeypot-site:trap.example:sitemap": "<urlset/>",
+  };
+
+  it("serves HTML pages with the X-Robots-Tag, keeping status and cache", async () => {
+    for (const path of ["/"]) {
+      const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("X-Robots-Tag"), path).toBe(HONEYPOT_X_ROBOTS_TAG);
+      expect(res.headers.get("Content-Type"), path).toContain("text/html");
+      expect(res.headers.get("Cache-Control"), path).toBe("public, max-age=86400");
+    }
+  });
+
+  it("keeps robots.txt and sitemap.xml content types", async () => {
+    const robots = await serveHoneypotDomain(new URL("https://trap.example/robots.txt"), kvEnv(store));
+    expect(robots.headers.get("Content-Type")).toBe("text/plain");
+    expect(await robots.text()).toBe("User-agent: *");
+    const sitemap = await serveHoneypotDomain(new URL("https://trap.example/sitemap.xml"), kvEnv(store));
+    expect(sitemap.headers.get("Content-Type")).toBe("application/xml");
+  });
+
+  it("404s unknown paths and missing KV pages", async () => {
+    // /team and /about: the stored generated person-card page is never served.
+    for (const path of ["/nope", "/contact", "/constructor", "/team", "/about"]) {
+      const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
+      expect(res.status, path).toBe(404);
+    }
   });
 });

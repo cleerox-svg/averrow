@@ -1,16 +1,27 @@
 /**
- * LRX Radar Honeypot Site — Full honeypot domain served at lrxradar.com.
- * Operated by Averrow (averrow.com) — LRX Enterprises Inc.
+ * LRX Radar Honeypot Site — Full honeypot domain served at lrxradar.com
+ * (operated by Averrow). lrxradar.com's MX is Cloudflare Email Routing with
+ * a catch-all to the Worker, so every @lrxradar.com address below reaches
+ * src/spam-trap.ts (docs/EMAIL_ROUTING_RUNBOOK.md).
  *
- * Professional-looking cybersecurity consulting site with trap addresses
- * embedded in visible links, schema.org JSON-LD, meta tags, HTML comments,
- * and hidden spider trap divs.
+ * Plausible brand-monitoring vendor site with trap addresses embedded in
+ * visible links, schema.org JSON-LD, meta tags, HTML comments, and hidden
+ * spider trap divs. Visits are logged by src/index.ts as `lrxradar:<path>`.
+ *
+ * DISCLOSURE_REGISTER G37 (owner decision 2026-10-06): the site names no
+ * people (the old /team page invented a CEO, CTO and staff, with bios) and
+ * does not name LRX Enterprises Inc., Averrow's real parent company — the
+ * copyright line uses the site's own brand. /team is a department mailbox
+ * directory. Every page carries `<meta name="robots" content="noindex,nofollow">`
+ * plus the X-Robots-Tag header. robots.txt and sitemap.xml are unchanged.
+ * Addresses harvested from the old page (ceo@, sarah.chen@, …) still reach
+ * the trap through the catch-all.
  */
 
 import { generateSpiderTraps } from "../seeders/spider-injector";
+import { HONEYPOT_X_ROBOTS_TAG } from "../honeypot";
 
 const BRAND = "LRX Radar";
-const COMPANY = "LRX Enterprises Inc.";
 const DOMAIN = "lrxradar.com";
 
 // ── Trap address assignments ────────────────────────────────────
@@ -19,10 +30,6 @@ const TRAPS = {
   info: "info@lrxradar.com",
   support: "support@lrxradar.com",
   sales: "sales@lrxradar.com",
-  ceo: "ceo@lrxradar.com",
-  cto: "cto@lrxradar.com",
-  sarah: "sarah.chen@lrxradar.com",
-  james: "james.wilson@lrxradar.com",
   admin: "admin@lrxradar.com",
   billing: "billing@lrxradar.com",
   security: "security@lrxradar.com",
@@ -52,9 +59,6 @@ a{color:#00d4ff;text-decoration:none}a:hover{text-decoration:underline}
 .card h3{color:#e8edf5;font-size:1.1rem;margin-bottom:.5rem}
 .card p{color:#7a8ba8;font-size:.9rem;margin-bottom:.75rem}
 .card a{font-size:.9rem}
-.team-card{text-align:center;padding:2rem 1.5rem}
-.team-card .name{font-size:1.1rem;font-weight:600;color:#e8edf5;margin-bottom:.25rem}
-.team-card .title{font-size:.85rem;color:#00d4ff;margin-bottom:.75rem}
 .form-group{margin-bottom:1.25rem}
 .form-group label{display:block;font-size:.85rem;color:#7a8ba8;margin-bottom:.4rem}
 .form-group input,.form-group textarea{width:100%;padding:.65rem .85rem;background:#111d35;border:1px solid rgba(0,212,255,.15);border-radius:6px;color:#e8edf5;font-size:.95rem;font-family:inherit}
@@ -68,7 +72,7 @@ function nav(): string {
   <a href="/" class="nav-brand">${BRAND}</a>
   <div class="nav-links">
     <a href="/about">About</a>
-    <a href="/team">Team</a>
+    <a href="/team">Directory</a>
     <a href="/contact">Contact</a>
   </div>
 </nav>`;
@@ -76,7 +80,7 @@ function nav(): string {
 
 function footer(page: string): string {
   return `<footer class="footer">
-  <p>&copy; 2026 ${COMPANY}. All rights reserved.</p>
+  <p>&copy; 2026 ${BRAND}. All rights reserved.</p>
   <p><a href="mailto:${TRAPS.info}">${TRAPS.info}</a> &middot; <a href="/about">About</a> &middot; <a href="/contact">Contact</a></p>
 </footer>
 <!-- Contact: ${TRAPS.contact} -->
@@ -89,8 +93,8 @@ function spiderAndHidden(page: string): string {
   <a href="mailto:${TRAPS.billing}">billing</a>
   <a href="mailto:${TRAPS.security}">security</a>
   <a href="mailto:${TRAPS.hr}">hr</a>
-  <a href="/team-directory">Team directory</a>
-  <a href="/staff-contacts">Staff contacts</a>
+  <a href="/team-directory">Mailbox directory</a>
+  <a href="/staff-contacts">Escalation mailboxes</a>
 </div>
 ${generateSpiderTraps(DOMAIN, "lrx-" + page)}`;
 }
@@ -117,6 +121,7 @@ function wrapLrx(title: string, description: string, page: string, body: string,
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
 <title>${title} — ${BRAND}</title>
 <meta name="description" content="${description}">
 <meta name="reply-to" content="${TRAPS.contact}">
@@ -135,7 +140,7 @@ ${footer(page)}
 
 function renderHome(): string {
   return wrapLrx(
-    "Brand Monitoring & Threat Intelligence",
+    "Brand monitoring & threat intelligence",
     "LRX Radar provides real-time brand monitoring, threat intelligence, and phishing detection for businesses.",
     "home",
     `<div class="hero">
@@ -171,7 +176,7 @@ function renderHome(): string {
 
 function renderContact(): string {
   return wrapLrx(
-    "Contact Us",
+    "Contact us",
     "Get in touch with the LRX Radar team for demos, pricing, and support.",
     "contact",
     `<div class="hero">
@@ -203,55 +208,42 @@ function renderContact(): string {
 }
 
 function renderTeam(): string {
+  const departments: Array<{ label: string; email: string }> = [
+    { label: "General inquiries", email: TRAPS.contact },
+    { label: "Sales", email: TRAPS.sales },
+    { label: "Customer support", email: TRAPS.support },
+    { label: "Billing", email: TRAPS.billing },
+    { label: "Recruiting", email: TRAPS.hr },
+  ];
+  const cards = departments.map(d => `
+    <div class="card">
+      <h3>${d.label}</h3>
+      <a href="mailto:${d.email}">${d.email}</a>
+    </div>`).join("");
   return wrapLrx(
-    "Our Team",
-    "Meet the team behind LRX Radar — cybersecurity experts building the next generation of brand protection.",
+    "Contact directory",
+    "Department mailboxes for LRX Radar.",
     "team",
     `<div class="hero">
-  <h1>Our Team</h1>
-  <p>A team of cybersecurity veterans, data engineers, and AI researchers building smarter brand protection.</p>
+  <h1>Contact directory</h1>
+  <p>Reach the right department directly.</p>
 </div>
 <section class="section">
-  <div class="cards">
-    <div class="card team-card">
-      <div class="name">Claude Leroux</div>
-      <div class="title">CEO &amp; Founder</div>
-      <p>15+ years in cybersecurity. Former threat intelligence lead at a Big Four firm.</p>
-      <a href="mailto:${TRAPS.ceo}">${TRAPS.ceo}</a>
-    </div>
-    <div class="card team-card">
-      <div class="name">Sarah Chen</div>
-      <div class="title">CTO</div>
-      <p>AI/ML engineer specializing in NLP-based threat detection and classification systems.</p>
-      <a href="mailto:${TRAPS.sarah}">${TRAPS.sarah}</a>
-    </div>
-    <div class="card team-card">
-      <div class="name">James Wilson</div>
-      <div class="title">VP Engineering</div>
-      <p>Full-stack engineer with deep experience in edge computing and distributed systems.</p>
-      <a href="mailto:${TRAPS.james}">${TRAPS.james}</a>
-    </div>
-    <div class="card team-card">
-      <div class="name">Michael Torres</div>
-      <div class="title">Head of Threat Research</div>
-      <p>Published researcher in phishing detection and brand abuse taxonomy.</p>
-      <a href="mailto:${TRAPS.cto}">${TRAPS.cto}</a>
-    </div>
+  <div class="cards">${cards}
   </div>
-  <p style="margin-top:2rem;text-align:center">General inquiries: <a href="mailto:${TRAPS.contact}">${TRAPS.contact}</a></p>
 </section>`,
-    [TRAPS.ceo, TRAPS.sarah, TRAPS.james, TRAPS.cto],
+    [TRAPS.sales, TRAPS.support, TRAPS.billing, TRAPS.hr],
   );
 }
 
 function renderAbout(): string {
   return wrapLrx(
     "About",
-    "LRX Radar is a brand threat intelligence platform built by LRX Enterprises Inc.",
+    "LRX Radar is a brand monitoring and threat intelligence platform.",
     "about",
     `<div class="hero">
   <h1>About ${BRAND}</h1>
-  <p>${BRAND} is a brand monitoring and threat intelligence platform built by ${COMPANY}.</p>
+  <p>${BRAND} is a brand monitoring and threat intelligence platform.</p>
 </div>
 <section class="section">
   <h2>Our Mission</h2>
@@ -320,6 +312,10 @@ export function serveLrxRadarPage(pathname: string): Response {
   }
 
   return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+      "X-Robots-Tag": HONEYPOT_X_ROBOTS_TAG,
+    },
   });
 }

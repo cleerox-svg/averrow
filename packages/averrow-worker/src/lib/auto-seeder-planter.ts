@@ -3,8 +3,8 @@
  * the active roster for the public honeypot pages.
  *
  * Design:
- *   The /admin-portal and /internal-staff pages on averrow.com are
- *   crawler bait — bots scraping disallowed paths (per robots.txt)
+ *   The /admin-portal, /internal-staff, /team-directory and /staff-contacts
+ *   pages are crawler bait — bots scraping disallowed paths (per robots.txt)
  *   harvest the email addresses listed there and feed them into spam
  *   campaigns. Historically the listed addresses were hardcoded in
  *   the template (7 total, never rotated), which is why 96 of 101
@@ -14,121 +14,95 @@
  *   page renders the latest active set. The auto-seeder agent adds
  *   ~6 fresh addresses per page every Sunday, so a harvester that
  *   scrapes us in week 4 sees a different set than one in week 1.
- *   Address volume grows linearly: ~12 addresses/week × 52 = ~600
- *   per year. Plenty of trap surface even before external posting.
  *
- *   "Realistic" address synthesis: first.last@<domain> for employee
- *   channel, drawn from the same FIRST/LAST/TITLE name pools the
- *   honeypot-generator already uses. Every address is unique because
- *   we suffix a short cohort id (yyMMdd of seed week) when the raw
- *   first.last collides — keeps the address looking realistic without
- *   hp-style numeric suffixes that smart spammers might pattern-match.
+ *   Address shape (DISCLOSURE_REGISTER G37, owner decision 2026-10-06 —
+ *   "no invented people on any honeypot page"): addresses are role-style
+ *   mailboxes, NEVER person names, not even in the local part. Each one is
+ *   `<function word>-hp<number>` (e.g. `helpdesk-hp417@averrow.ca`) — the
+ *   same seed format as the template defaults (`itops-hp20`), which
+ *   parseTrapAddress (spam-trap.ts) files under the "honeypot" channel.
+ *   Rows planted before this change were `first.last`-shaped; readRoster
+ *   filters them out so they are never rendered again (they stay active
+ *   as traps — a harvester that already has them still gets caught).
  */
 
 import type { Env } from "../types";
 import { logger } from "./logger";
 
-// ─── Realistic name pools ────────────────────────────────────────
+// ─── Role / function word pool ───────────────────────────────────
 //
-// Same shape as honeypot-generator.ts uses for the Haiku-rendered
-// trap sites — duplicated here intentionally so the auto-seeder is
-// self-contained and doesn't hot-import the honeypot generator's
-// AI-call dependencies on its weekly cron path.
+// Department and mailbox-function words only. Lowercase letters, no
+// separators: parseTrapAddress' seed regex is `^[\w]+-([a-z]{2})\d+$`, so a
+// hyphen inside the word would stop the address being filed as "honeypot".
+// No word may be (or start like) a personal name.
+export const ROLE_WORDS = [
+  "ops", "itops", "helpdesk", "servicedesk", "billing", "accounts",
+  "procurement", "securitydesk", "noc", "payroll", "vendors", "compliance",
+  "onboarding", "facilities", "finance", "legal", "audit", "infra",
+  "devops", "records", "treasury", "purchasing", "dispatch", "intake",
+] as const;
 
-const FIRST_NAMES = [
-  "Sarah", "James", "Emily", "Michael", "Olivia", "David", "Emma", "Robert",
-  "Sophia", "William", "Ava", "Daniel", "Mia", "Matthew", "Isabella",
-  "Andrew", "Charlotte", "Ryan", "Amelia", "Nathan", "Lisa", "Kevin",
-  "Amanda", "Chris", "Rachel", "Tom", "Jessica", "Brian", "Megan", "Eric",
-  "Sophie", "Marcus", "Hannah", "Ethan", "Maya", "Owen", "Zoe", "Lucas",
-  "Chloe", "Henry",
-];
-const LAST_NAMES = [
-  "Chen", "Williams", "Patel", "Johnson", "Kim", "Singh", "Brown", "Lee",
-  "Garcia", "Wilson", "Thompson", "Martinez", "Anderson", "Taylor", "Thomas",
-  "White", "Harris", "Clark", "Lewis", "Walker", "Park", "Cooper", "Bennett",
-  "Reyes", "Nguyen", "Foster", "Ramirez", "Hughes", "Murphy", "Bailey",
-];
-const TITLES = [
-  "Operations Director", "Senior Consultant", "Client Relations Manager",
-  "Business Development Lead", "Strategy Analyst", "Project Manager",
-  "Account Executive", "IT Director", "DevOps Lead", "Infrastructure Engineer",
-  "Customer Success Manager", "Product Manager", "Compliance Officer",
-  "Threat Research Lead", "Engineering Manager", "Marketing Director",
-];
+/**
+ * Local parts the roster pages may render: `<word>-hp<digits>`, the shape
+ * of both the planter's addresses and the template defaults. Anything
+ * else — notably legacy `sarah.chen` / `schen42` rows — is never shown.
+ */
+export const ROLE_MAILBOX_LOCAL_RE = /^[a-z]+-hp\d+$/;
+
+export function isRoleMailboxAddress(address: string): boolean {
+  const local = (address.split("@")[0] ?? "").toLowerCase();
+  return ROLE_MAILBOX_LOCAL_RE.test(local);
+}
 
 export interface RosterEntry {
   /** Full mailto address as embedded in the page. */
   email: string;
-  /** "Firstname Lastname" — used for the visible name column. */
+  /**
+   * Retained for shape compatibility; always "" — the pages render
+   * addresses only (G37), so no person name is ever synthesized.
+   */
   name: string;
-  /** Plausible-sounding job title. */
+  /** Retained for shape compatibility; always "". */
   title: string;
   /** seed_addresses.id — null when row hasn't been persisted yet. */
   id?: number;
 }
 
 // Non-negative modulo. JS `%` keeps the sign of the dividend, so a negative
-// `seed` would compute FIRST_NAMES[-n] === undefined and crash localPart's
-// .toLowerCase(). Guard every index through this.
+// `seed` would index ROLE_WORDS[-n] === undefined. Guard every index through
+// this.
 function modIndex(n: number, len: number): number {
   return ((Math.trunc(n) % len) + len) % len;
 }
 
 /**
- * Synthesize a unique Firstname Lastname pair using the seed week as a
- * cohort hint. The cohort suffix is only used if a raw first.last
- * collides with an existing seed_address — keeps most addresses
- * looking like real people, not "user-2026-04-29@…".
+ * Ordered role-mailbox local-part candidates for one seed:
+ * `<word>-hp<100–999>`, mixing the seed through different prime offsets
+ * so a contiguous run of seeds spreads across words and numbers. Three-digit
+ * numbers keep these clear of the template defaults (hp01–hp36). Pool:
+ * 24 words × 900 numbers = 21,600 addresses per domain before the
+ * cohort-tagged fallback is needed.
  */
-export function synthName(seed: number): { firstName: string; lastName: string; title: string } {
-  // Mix the seed through three different prime offsets so a contiguous
-  // run of seeds doesn't produce three Sarah Chens.
-  const firstName = FIRST_NAMES[modIndex(seed * 7 + 3, FIRST_NAMES.length)]!;
-  const lastName = LAST_NAMES[modIndex(seed * 11 + 5, LAST_NAMES.length)]!;
-  const title = TITLES[modIndex(seed * 13 + 1, TITLES.length)]!;
-  return { firstName, lastName, title };
-}
-
-function localPart(firstName: string, lastName: string, suffix?: string): string {
-  const base = `${firstName.toLowerCase()}.${lastName.toLowerCase()}`;
-  return suffix ? `${base}.${suffix}` : base;
+export function roleLocalPartVariants(seed: number): string[] {
+  const out: string[] = [];
+  for (let k = 0; k < 8; k++) {
+    const word = ROLE_WORDS[modIndex(seed * 7 + k * 5, ROLE_WORDS.length)]!;
+    const n = modIndex(seed * 13 + k * 101, 900) + 100;
+    const lp = `${word}-hp${n}`;
+    if (!out.includes(lp)) out.push(lp);
+  }
+  return out;
 }
 
 /**
- * Ordered local-part candidates for one synthetic name. The 40×30 name
- * pool saturates after ~1,200 plants, and the old fallback was always
- * `first.last.YYYYMMDD` — a machine-obvious date stamp that list-cleaning
- * and harvester heuristics drop on sight. By 2026-09 most new seeds were
- * that shape. These are the conventions real corporate directories use,
- * so a collision lands on another plausible address instead.
- */
-export function localPartVariants(firstName: string, lastName: string, seed: number): string[] {
-  const f = firstName.toLowerCase();
-  const l = lastName.toLowerCase();
-  const nn = String(modIndex(seed, 90) + 10); // 10–99, e.g. a hire-cohort number
-  return [
-    `${f}.${l}`,
-    `${f[0]}${l}`,
-    `${f}.${l[0]}`,
-    `${f}_${l}`,
-    `${f}${l}`,
-    `${f[0]}.${l}`,
-    `${f}.${l}${nn}`,
-    `${f[0]}${l}${nn}`,
-  ];
-}
-
-/**
- * Plant a batch of N synthetic employee-style addresses for the given
+ * Plant a batch of N role-style mailbox addresses for the given
  * (domain, page) target. seeded_location is keyed on the page so the
  * honeypot handlers can query the right roster at render time.
  *
- * Uses INSERT OR IGNORE on the address column (UNIQUE in schema) so
- * collisions silently skip. Candidates are localPartVariants()
- * (first.last, flast, first.l, first_last, …) then the cohort-suffixed
- * form; one SELECT picks the first free one. The 40×30 = 1,200 name pool is saturated in production, so
- * collisions are the common case, not a rare one.
+ * Candidates are roleLocalPartVariants() then a cohort-tagged
+ * `<word>-hp<YYYYMMDD>` last resort; one SELECT picks the first free one,
+ * and INSERT OR IGNORE (address is UNIQUE) guards the race with a
+ * concurrent planter.
  *
  * Returns the rows that actually landed so the caller can report
  * itemsCreated honestly.
@@ -136,33 +110,30 @@ export function localPartVariants(firstName: string, lastName: string, seed: num
 export async function plantBatch(
   env: Env,
   opts: {
-    domain: string;            // 'averrow.com' | 'lrxradar.com' | 'trustradar.ca'
-    seedLocationKey: string;   // e.g. 'auto-seeder:averrow.com:/admin-portal'
+    domain: string;            // 'averrow.ca' | 'lrxradar.com' | 'trustradar.ca' | …
+    seedLocationKey: string;   // e.g. 'auto-seeder:averrow.ca:/admin-portal'
     count: number;
-    cohortTag: string;         // e.g. '20260429' — used as the last.first suffix on collision
+    cohortTag: string;         // e.g. '20260429' — the number on the last-resort candidate
   },
 ): Promise<RosterEntry[]> {
   const planted: RosterEntry[] = [];
   // `>>> 0` coerces to UNSIGNED 32-bit. The old `& 0xffffffff` produced a
-  // SIGNED int (negative when bit 31 is set), which made synthName index with
-  // a negative modulo → undefined name → crash. The bug surfaced on a ~50-day
-  // cycle (Date.now() mod 2^32 spends ~25 days above 2^31); it silently zeroed
-  // out all planting from ~2026-06-01, drying up the spam trap.
+  // SIGNED int (negative when bit 31 is set) and crashed the name lookup on
+  // a ~50-day cycle, silently zeroing out all planting from ~2026-06-01.
   const baseSeed = Date.now() >>> 0;
 
   for (let i = 0; i < opts.count; i++) {
-    const { firstName, lastName, title } = synthName(baseSeed + i);
-    // Cohort-tagged form stays as the last resort so a fully saturated
-    // name still plants rather than silently dropping.
+    const seed = baseSeed + i;
+    const variants = roleLocalPartVariants(seed);
+    // Cohort-tagged form stays as the last resort so a saturated pool
+    // still plants rather than silently dropping.
     const tries = [
-      ...localPartVariants(firstName, lastName, baseSeed + i).map(lp => `${lp}@${opts.domain}`),
-      `${localPart(firstName, lastName, opts.cohortTag)}@${opts.domain}`,
+      ...variants.map(lp => `${lp}@${opts.domain}`),
+      `${variants[0]!.replace(/-hp\d+$/, '')}-hp${opts.cohortTag}@${opts.domain}`,
     ];
 
     // One read for all candidates, then one INSERT of the first free one:
-    // 2 round-trips per seed however saturated the pool gets. Walking the
-    // candidates with INSERT OR IGNORE would cost up to 9 per seed inside
-    // the orchestrator tick's shared D1 query budget.
+    // 2 round-trips per seed however saturated the pool gets.
     try {
       const placeholders = tries.map(() => '?').join(', ');
       const taken = await env.DB.prepare(
@@ -172,18 +143,18 @@ export async function plantBatch(
       const address = tries.find((a) => !takenSet.has(a));
       if (!address) continue;
 
-      // OR IGNORE still guards the race with a concurrent planter.
+      // channel 'honeypot' matches how parseTrapAddress files `-hpNN`.
       const result = await env.DB.prepare(
         `INSERT OR IGNORE INTO seed_addresses
            (address, domain, channel, seeded_location, status)
-         VALUES (?, ?, 'employee', ?, 'active')`,
+         VALUES (?, ?, 'honeypot', ?, 'active')`,
       ).bind(address, opts.domain, opts.seedLocationKey).run();
 
       if ((result.meta?.changes ?? 0) > 0) {
         planted.push({
           email: address,
-          name: `${firstName} ${lastName}`,
-          title,
+          name: '',
+          title: '',
           id: result.meta?.last_row_id as number | undefined,
         });
       }
@@ -199,19 +170,18 @@ export async function plantBatch(
 }
 
 /**
- * Read the latest active roster for a given seed_location, used by
- * the page render handlers. Returns up to `limit` rows, newest-first.
+ * Read the latest active role-style roster for a given seed_location, used
+ * by the page render handlers. Returns up to `limit` rows, newest-first.
  *
- * The address column is the only thing persisted, so we re-derive the
- * displayed name + title at render time from the same synth function.
- * This keeps seed_addresses narrow (just the email) while still letting
- * the page show plausible name/title pairs that match the email's
- * first.last shape.
+ * Only `<word>-hp<digits>` addresses are returned (isRoleMailboxAddress):
+ * legacy name-shaped rows planted before G37 are skipped. The SQL over-reads
+ * (limit × 4, capped) so a location still dominated by legacy rows can fill
+ * the page; with nothing qualifying the caller falls back to the template's
+ * default roster.
  *
  * Best-effort: if the DB read throws or returns empty, callers fall
- * back to a hardcoded default roster (renderAdminPortalPage,
- * renderInternalStaffPage). Honeypot pages must always render — silent
- * "we lost the page entirely" is worse than "we showed last week's set."
+ * back to a hardcoded default roster. Honeypot pages must always render —
+ * silent "we lost the page entirely" is worse than "we showed last week's set."
  */
 export async function readRoster(
   env: Env,
@@ -225,24 +195,12 @@ export async function readRoster(
        WHERE seeded_location = ? AND status = 'active'
        ORDER BY id DESC
        LIMIT ?`,
-    ).bind(seedLocationKey, limit).all<{ id: number; address: string }>();
+    ).bind(seedLocationKey, Math.min(limit * 4, 200)).all<{ id: number; address: string }>();
 
-    return (rows.results ?? []).map((row) => {
-      // Re-derive name + title from the address local-part so the page
-      // shows e.g. "Sarah Chen — Operations Director" next to the
-      // sarah.chen@... mailto. We re-use synthName() with a hash of the
-      // address as the seed so the same address always renders with
-      // the same name/title — no flicker between renders.
-      const local = row.address.split('@')[0] ?? row.address;
-      const titleSeed = hashString(local);
-      const { title } = synthName(titleSeed);
-      return {
-        id: row.id,
-        email: row.address,
-        name: displayNameFromLocalPart(local),
-        title,
-      };
-    });
+    return (rows.results ?? [])
+      .filter((row) => isRoleMailboxAddress(row.address))
+      .slice(0, limit)
+      .map((row) => ({ id: row.id, email: row.address, name: '', title: '' }));
   } catch (err) {
     logger.warn('auto_seeder_read_roster_failed', {
       seedLocationKey,
@@ -253,49 +211,10 @@ export async function readRoster(
 }
 
 /**
- * "sarah.chen" → "Sarah Chen", "s.chen" → "S. Chen", "sarah.c" →
- * "Sarah C.", "sarah_chen42" → "Sarah Chen", "sarahchen" → "Sarah Chen",
- * "schen" → "S. Chen". Unknown single tokens render capitalized.
- */
-export function displayNameFromLocalPart(local: string): string {
-  const stripped = local.replace(/\d+$/, '');
-  const part = (s: string) => (s.length === 1 ? `${s.toUpperCase()}.` : capitalize(s));
-  const [first = '', last = ''] = stripped.split(/[._]/);
-  if (last) return `${part(first)} ${part(last)}`;
-
-  // Separator-less shapes ("sarahchen", "schen"): recover the split from
-  // the same name pools the planter draws from.
-  const lasts = LAST_NAMES.map((n) => n.toLowerCase());
-  for (const f of FIRST_NAMES.map((n) => n.toLowerCase())) {
-    if (stripped.startsWith(f) && lasts.includes(stripped.slice(f.length))) {
-      return `${capitalize(f)} ${capitalize(stripped.slice(f.length))}`;
-    }
-  }
-  if (stripped.length > 1 && lasts.includes(stripped.slice(1))) {
-    return `${stripped[0]!.toUpperCase()}. ${capitalize(stripped.slice(1))}`;
-  }
-  return part(first);
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function hashString(s: string): number {
-  // FNV-1a 32-bit hash. Stable across reloads, fast in V8, no deps.
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
-  }
-  return h >>> 0;
-}
-
-/**
  * Build the cohortTag for the current seed week: 'YYYYMMDD' of the
- * scheduled run start. Used as the address suffix on name collisions
- * and as a hint in agent_outputs so the operator can see what cohort
- * a given address came from.
+ * scheduled run start. Used as the number on the last-resort address
+ * candidate and as a hint in agent_outputs so the operator can see what
+ * cohort a given address came from.
  */
 export function cohortTag(now: Date = new Date()): string {
   const y = now.getUTCFullYear();
