@@ -65,6 +65,14 @@ describe('roleLocalPartVariants', () => {
       for (const n of PERSON_NAMES) expect(w).not.toBe(n);
     }
   });
+
+  it('holds no word the inbound mail router sends to the abuse mailbox first', () => {
+    // index.ts email(): verify-/verify_/report-/abuse- prefixes and these
+    // bare locals go to the abuse mailbox before the spam trap.
+    for (const w of ROLE_WORDS) {
+      expect(['abuse', 'phishing', 'report', 'security', 'verify']).not.toContain(w);
+    }
+  });
 });
 
 describe('isRoleMailboxAddress', () => {

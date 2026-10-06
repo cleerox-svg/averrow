@@ -275,7 +275,7 @@ describe("serveHoneypotDomain", () => {
   };
 
   it("serves HTML pages with the X-Robots-Tag, keeping status and cache", async () => {
-    for (const path of ["/", "/team", "/about"]) {
+    for (const path of ["/"]) {
       const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
       expect(res.status, path).toBe(200);
       expect(res.headers.get("X-Robots-Tag"), path).toBe(HONEYPOT_X_ROBOTS_TAG);
@@ -293,7 +293,8 @@ describe("serveHoneypotDomain", () => {
   });
 
   it("404s unknown paths and missing KV pages", async () => {
-    for (const path of ["/nope", "/contact", "/constructor"]) {
+    // /team and /about: the stored generated person-card page is never served.
+    for (const path of ["/nope", "/contact", "/constructor", "/team", "/about"]) {
       const res = await serveHoneypotDomain(new URL(`https://trap.example${path}`), kvEnv(store));
       expect(res.status, path).toBe(404);
     }

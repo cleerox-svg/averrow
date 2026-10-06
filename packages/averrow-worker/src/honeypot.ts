@@ -229,10 +229,13 @@ export function honeypotHtmlResponse(html: string, cacheControl = "public, max-a
  * the honeypot generator). HTML pages go through honeypotHtmlResponse so
  * they carry the X-Robots-Tag like every other honeypot page; robots.txt
  * and sitemap.xml keep their own content types. Missing page or KV key → 404.
+ * The stored `team` page (generated "name, title" person cards) is never
+ * served: no honeypot page shows invented people (G37), so /team and
+ * /about 404 even when that KV key exists.
  */
 export async function serveHoneypotDomain(url: URL, env: Pick<Env, "CACHE">): Promise<Response> {
   const pageMap: Record<string, string> = {
-    "/": "index", "/contact": "contact", "/team": "team", "/about": "team",
+    "/": "index", "/contact": "contact",
     "/robots.txt": "robots", "/sitemap.xml": "sitemap",
   };
   const page = Object.prototype.hasOwnProperty.call(pageMap, url.pathname) ? pageMap[url.pathname] : undefined;
