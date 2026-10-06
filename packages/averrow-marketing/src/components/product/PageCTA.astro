@@ -2,7 +2,9 @@
 /*
  * Closing call to action for a Platform page: heading, one line, then the
  * shared CTA pair (Scan your domain / Book a demo). Props override the copy;
- * the buttons are not overridable so every page closes the same way.
+ * the buttons are not overridable so every page closes the same way. A page
+ * with its own lead action (the MSSP page's "Talk to us about partnering") can
+ * pass it in the default slot; it renders above the pair, which stays.
  */
 import CtaPair from "./CtaPair.astro";
 
@@ -20,6 +22,7 @@ const {
   <div class="pc-in">
     <h2 class="pc-h" id="pc-title">{heading}</h2>
     <p class="pc-p">{body}</p>
+    <slot />
     <CtaPair where="closing" center />
   </div>
 </section>

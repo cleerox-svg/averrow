@@ -1,27 +1,31 @@
 ---
 /*
- * "Related" cards linking to the other Platform pages. The list, labels and
- * one-line descriptions come from the Platform dropdown in src/lib/nav.ts, so
- * a renamed page updates here too. The overview and the current page are never
- * listed.
+ * "Related" cards linking to other pages of one hub. The list, labels and
+ * one-line descriptions come from that hub's dropdown in src/lib/nav.ts, so a
+ * renamed page updates here too. The hub overview and the current page are
+ * never listed.
  *
- * Props: current (this page's path, e.g. "/platform/takedowns"), include
- * (optional paths to show, in order; default = every other deep dive),
+ * Props: current (this page's path, e.g. "/platform/takedowns"), source (which
+ * hub's dropdown to read: "platform" by default, or "solutions", so a Solutions
+ * page can link to the Platform pages behind it or to the other roles),
+ * include (optional paths to show, in order; default = every other child),
  * heading, eyebrow.
  */
 import { NAV_LINKS } from "../../lib/nav";
 
 interface Props {
   current: string;
+  source?: "platform" | "solutions";
   include?: string[];
   eyebrow?: string;
   heading?: string;
 }
-const { current, include, eyebrow = "Related", heading = "Keep going" } = Astro.props;
+const { current, source = "platform", include, eyebrow = "Related", heading = "Keep going" } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const all = (NAV_LINKS.find((l) => l.href === "/platform")?.children ?? []).filter(
-  (c) => c.href !== "/platform" && c.href !== current,
+const hub = `/${source}`;
+const all = (NAV_LINKS.find((l) => l.href === hub)?.children ?? []).filter(
+  (c) => c.href !== hub && c.href !== current,
 );
 const cards = include
   ? include.map((h) => all.find((c) => c.href === h)).filter((c): c is NonNullable<typeof c> => !!c)

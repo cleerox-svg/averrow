@@ -1,0 +1,73 @@
+---
+/*
+ * The integrations a Solutions page can name, with one status vocabulary
+ * (Business and Enterprise / On request / Roadmap) so no page can call a
+ * connector "live" or imply it is self-configured. Wording follows
+ * docs/DISCLOSURE_REGISTER.md rows L14, L15 and §3.6: webhooks and the SIEM and
+ * ticketing connectors carry alert and takedown events, are set up with our
+ * team, and belong to Business and Enterprise; STIX 2.1 is "on request".
+ * (/platform keeps its own copy of this list; both read the same register rows.)
+ *
+ * Props: only (optional names to show, in order; default = all), label.
+ */
+type Status = "business" | "request" | "roadmap";
+
+interface Props {
+  only?: string[];
+  label?: string;
+}
+const { only, label = "Integrations and their availability" } = Astro.props;
+
+const STATUS_LABEL: Record<Status, string> = {
+  business: "Business and Enterprise",
+  request: "On request",
+  roadmap: "Roadmap",
+};
+const all: Array<{ name: string; desc: string; status: Status }> = [
+  { name: "Webhooks", desc: "Alert and takedown events to an endpoint you give us, set up with our team.", status: "business" },
+  { name: "Splunk", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "Microsoft Sentinel", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "QRadar", desc: "SIEM connector, set up with our team.", status: "business" },
+  { name: "Jira and ServiceNow", desc: "Ticketing connectors, set up with our team.", status: "business" },
+  { name: "STIX 2.1 export", desc: "A standard threat-intelligence format, delivered by our team.", status: "request" },
+  { name: "Slack", desc: "Team alert channels.", status: "roadmap" },
+];
+const items = only ? only.map((n) => all.find((i) => i.name === n)).filter((i): i is NonNullable<typeof i> => !!i) : all;
+---
+
+<ul class="il" role="list" aria-label={label}>
+  {items.map((i) => (
+    <li>
+      <b>{i.name}</b>
+      <span>{i.desc}</span>
+      <em class={i.status}>{STATUS_LABEL[i.status]}</em>
+    </li>
+  ))}
+</ul>
+
+<style>
+  .il { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .il li {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 0;
+  }
+  .il b { font: 700 15px var(--font-display); color: var(--text-primary); }
+  .il span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
+  .il em {
+    justify-self: start;
+    font: 600 12px var(--font-mono);
+    font-style: normal;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 1px 9px;
+    color: var(--text-secondary);
+  }
+  .il em.business { color: var(--sev-low-text); border-color: var(--sev-low-text); }
+  .il em.request { color: var(--amber-text); border-color: var(--amber-text); }
+</style>

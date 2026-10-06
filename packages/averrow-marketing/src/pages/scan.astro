@@ -58,6 +58,16 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
           <div id="scanTurnstile" class="scan-turnstile"></div>
           <p class="scan-error" id="scanError" role="alert" hidden></p>
         </form>
+
+        <section class="scan-why" aria-labelledby="scanWhyTitle">
+          <h2 class="scan-why-h" id="scanWhyTitle">Why new companies get targeted</h2>
+          <p class="scan-why-p">A new brand looks like an easy target, even when it isn't. Three things attackers watch for:</p>
+          <ul class="scan-why-list" role="list">
+            <li><b>A freshly registered domain.</b> New domains often have no email enforcement and no monitoring yet, so a lookalike or a spoofed email is cheap to try.</li>
+            <li><b>Email set up in a hurry.</b> SPF, DKIM and DMARC are often left until later, and that gap is what a spoofer checks first.</li>
+            <li><b>Funding and press.</b> A launch or an announcement puts your name in front of more people, including the ones registering lookalike domains and fake accounts to ride the attention.</li>
+          </ul>
+        </section>
       </div>
 
       <!-- LOADING STATE -->
@@ -164,6 +174,13 @@ const siteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? "";
   .scan-title:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 4px; }
   #leadDone:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
   .scan-lede { color: var(--text-secondary); max-width: 620px; margin: 0 0 28px; font-size: 1.05rem; line-height: 1.55; }
+
+  .scan-why { margin-top: 40px; max-width: 620px; display: grid; gap: 10px; }
+  .scan-why-h { margin: 0; font: 800 clamp(20px, 2.4vw, 24px) / 1.15 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); }
+  .scan-why-p { margin: 0; font-size: 15px; line-height: 1.55; color: var(--text-secondary); }
+  .scan-why-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .scan-why-list li { padding-left: 14px; border-left: 2px solid var(--accent); font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); }
+  .scan-why-list b { color: var(--text-primary); font-weight: 700; }
 
   .scan-form { max-width: 620px; display: grid; gap: 8px; }
   .scan-form label,

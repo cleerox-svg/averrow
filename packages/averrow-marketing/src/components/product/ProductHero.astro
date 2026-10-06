@@ -9,6 +9,8 @@
  *   plan      CoveragePlan | null   overrides the plan tag; null hides it
  *   title     string        the H1: an outcome, not a feature list
  *   sub       string        one-line subhead
+ *   cta       boolean       show the CTA pair (default true); false only where
+ *                           the pair would point at the page itself (/demo)
  * Slots
  *   sample    right-hand column, normally <SampleFrame>
  * The CTA pair is fixed (CtaPair): Scan your domain / Book a demo.
@@ -22,8 +24,9 @@ interface Props {
   plan?: CoveragePlan | null;
   title: string;
   sub: string;
+  cta?: boolean;
 }
-const { surface, eyebrow, plan, title, sub } = Astro.props;
+const { surface, eyebrow, plan, title, sub, cta = true } = Astro.props;
 
 const s = surface ? COVERAGE.find((c) => c.key === surface) : undefined;
 const name = eyebrow ?? s?.name ?? "Platform";
@@ -41,7 +44,7 @@ const hasSample = Astro.slots.has("sample");
       </div>
       <h1 class="ph-h" id="ph-title">{title}</h1>
       <p class="ph-sub">{sub}</p>
-      <CtaPair where="hero" />
+      {cta && <CtaPair where="hero" />}
     </div>
     {hasSample && (
       <div class="ph-sample"><slot name="sample" /></div>

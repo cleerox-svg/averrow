@@ -76,11 +76,24 @@ async function main() {
 
   const urls = new Set();
 
+  // Belt and braces for the stub check below: never list a URL that
+  // public/_redirects retires, whatever its built file looks like.
+  const retired = new Set();
+  const redirectsFile = join(ROOT, "public", "_redirects");
+  if (existsSync(redirectsFile)) {
+    for (const line of (await readFile(redirectsFile, "utf8")).split("\n")) {
+      const from = line.trim().split(/\s+/)[0];
+      if (from && !from.startsWith("#")) retired.add(from.replace(/\/$/, "") || "/");
+    }
+  }
+
   for await (const file of walk(DIST)) {
     // Retired URLs ship a meta-refresh stub (src/components/Redirect.astro);
     // they are redirects, not pages, so they never belong in the sitemap.
     if (file.endsWith("index.html") && (await readFile(file, "utf8")).includes('http-equiv="refresh"')) continue;
-    urls.add(urlFor(file));
+    const url = urlFor(file);
+    if (retired.has(url.slice(SITE.length).replace(/\/$/, "") || "/")) continue;
+    urls.add(url);
   }
 
   for (const route of WORKER_ROUTES) {

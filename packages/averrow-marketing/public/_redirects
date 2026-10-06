@@ -11,3 +11,18 @@
 /platform/social-monitoring/ /platform/impersonation 301
 /abuse-mailbox /platform/abuse-mailbox 301
 /abuse-mailbox/ /platform/abuse-mailbox 301
+
+# Section 9 (Solutions and Company): retired URLs, permanent. /partners is
+# absorbed into /solutions/mssp; /press and /careers become anchors on /company;
+# startups points at the free scan (its "why new companies get targeted" copy
+# now sits on /scan); mid-market is replaced by teams-without-a-soc.
+/partners /solutions/mssp 301
+/partners/ /solutions/mssp 301
+/press /company#press 301
+/press/ /company#press 301
+/careers /company#careers 301
+/careers/ /company#careers 301
+/solutions/startups /scan 301
+/solutions/startups/ /scan 301
+/solutions/mid-market /solutions/teams-without-a-soc 301
+/solutions/mid-market/ /solutions/teams-without-a-soc 301

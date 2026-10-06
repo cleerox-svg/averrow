@@ -1,0 +1,60 @@
+---
+/*
+ * A dated grid of company facts: label, value, optional note, under one
+ * "as of" line. Used once, on /company. A fact grid without a date reads as
+ * permanent, so `asOf` (an ISO date, YYYY-MM-DD) is required and rendered as
+ * a <time>. Values are plain text from the owner-confirmed facts in
+ * docs/DISCLOSURE_REGISTER.md section 3.11; never put a number here that is
+ * not backed there.
+ *
+ * Props: items ({ label, value, note? }[]), asOf (ISO date), heading (accessible name).
+ */
+interface Fact {
+  label: string;
+  value: string;
+  note?: string;
+}
+interface Props {
+  items: Fact[];
+  asOf: string;
+  heading?: string;
+}
+const { items, asOf, heading = "Company facts" } = Astro.props;
+const stamp = new Date(`${asOf}T00:00:00Z`).toLocaleDateString("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+---
+
+<section class="fg" aria-label={heading} data-fact-grid>
+  <dl class="fg-grid">
+    {items.map((i) => (
+      <div class="fg-i">
+        <dt>{i.label}</dt>
+        <dd>{i.value}{i.note && <span class="fg-n">{i.note}</span>}</dd>
+      </div>
+    ))}
+  </dl>
+  <p class="fg-f"><time datetime={asOf}>Facts as of {stamp}</time></p>
+</section>
+
+<style>
+  .fg { display: grid; gap: 12px; min-width: 0; }
+  .fg-grid {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--border-strong);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .fg-i { background: var(--bg-secondary); padding: 14px 16px; display: grid; gap: 4px; align-content: start; min-width: 0; }
+  .fg-i dt { font: 600 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); }
+  .fg-i dd { margin: 0; font: 700 16px/1.35 var(--font-display); color: var(--text-primary); overflow-wrap: anywhere; }
+  .fg-n { display: block; margin-top: 2px; font: 400 13px/1.45 var(--font-body); color: var(--text-secondary); }
+  .fg-f { margin: 0; font: 500 12px var(--font-mono); color: var(--text-secondary); }
+</style>

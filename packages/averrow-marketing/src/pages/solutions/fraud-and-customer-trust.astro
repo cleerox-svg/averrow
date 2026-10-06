@@ -1,0 +1,189 @@
+---
+/*
+ * /solutions/fraud-and-customer-trust (Section 9A). Built on the product-page
+ * kit in src/components/product/. Role page for fraud, abuse and customer
+ * trust teams: the Abuse Mailbox (Enterprise) and phishing-site takedowns
+ * (Professional and above), each labelled with its plan.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md L11, L32, §3.2, §3.7): the mailbox is
+ * Enterprise; every report is classified automatically by rules, with no "AI
+ * decides"; reporters whose own mail passes authentication get an
+ * acknowledgement and a verdict; we never reply to a sender whose mail fails
+ * authentication; phishing that the rules confirm becomes a threat with a
+ * takedown drafted, waiting for approval or filed under signed rules. No
+ * times, no SLA. Takedown modes are Off / Semi-auto / Auto. Samples: fictional
+ * brand Acme, `.example` domains only.
+ */
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import FactList from "../../components/product/FactList.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import { COVERAGE, PLAN_LABEL } from "../../lib/coverage";
+import type { SampleRow, ScopeRow } from "../../components/product/types";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+// Plan labels come from coverage.ts so they cannot drift from the homepage.
+const mailboxPlan = PLAN_LABEL[COVERAGE.find((c) => c.key === "abuse")?.plan ?? "enterprise"].full;
+const takedownPlan = PLAN_LABEL.professional.full;
+
+const heroRows: SampleRow[] = [
+  { text: "Report received", status: "Forwarded by a customer", pill: "Acknowledged", tone: "ok" },
+  { text: "acme-secure-login.example", mono: true, status: "Phishing confirmed by our rules. Added to your threat feed.", pill: "Threat", tone: "high" },
+  { text: "Takedown draft", status: "Evidence summary attached", pill: "Awaiting approval", tone: "hold" },
+];
+
+const mailboxFacts = [
+  { lead: "One address.", text: "Your organisation gets a dedicated Averrow address, set up by our team. Customers and staff forward suspicious email to it." },
+  { lead: "Every report is read.", text: "We unpack the original message, read SPF, DKIM and DMARC from the forwarded headers, extract its links and classify it automatically." },
+  { lead: "Reporters hear back.", text: "A reporter whose own mail passes authentication gets an acknowledgement, then a verdict. We never write back to a sender whose mail fails authentication." },
+  { lead: "Phishing becomes a threat.", text: "Phishing that our rules confirm is added to your threat feed, matched to the brands you monitor, with a takedown drafted for your approval." },
+];
+const mailboxRows: SampleRow[] = [
+  { text: "Report received", status: "Forwarded to your Averrow address", pill: "Acknowledged", tone: "ok" },
+  { text: "Sender authentication", status: "SPF and DKIM failed", pill: "Failed", tone: "high" },
+  { text: "Matches a brand you monitor", pill: "Matched", tone: "new" },
+  { text: "acme-secure-login.example", mono: true, status: "Added to your threat feed", pill: "Threat", tone: "high" },
+];
+
+const modes = [
+  { name: "Off", sub: "Manual", text: "You approve each one, and we file it. Nothing goes out automatically." },
+  { name: "Semi-auto", sub: "Approval for anything outside your rules", text: "Takedowns outside your rules wait until someone on your team approves them." },
+  { name: "Auto", sub: "Within your signed scope", text: "Filed automatically within your signed scope and any monthly limit you set." },
+];
+const takedownRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Waiting for your approval", pill: "Draft", tone: "hold" },
+  { text: "acme-payroll-login.example", mono: true, status: "Report sent to the registrar, ticket 48213", pill: "Submitted", tone: "low" },
+  { text: "acme-login-help.example", mono: true, status: "Re-checked, alert if it returns", pill: "Taken down", tone: "ok" },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Abuse Mailbox",
+    covered: `${mailboxPlan} only. A dedicated Averrow address for your organisation, with reports routed into your console.`,
+    notCovered: "An address on your own domain, and any plan below Enterprise.",
+  },
+  {
+    area: "Reading reports",
+    covered: "Each message is unpacked, its authentication headers read, its links extracted and the report classified automatically.",
+    notCovered: "Certainty. A verdict is a classification, and you decide what to act on.",
+  },
+  {
+    area: "Replies",
+    covered: "Acknowledgement and verdict to reporters whose own mail passes authentication.",
+    notCovered: "A reply to a sender whose mail fails authentication, and a promised reply time.",
+  },
+  {
+    area: "Phishing-site takedowns",
+    covered: `${takedownPlan}. Abuse reports for lookalike domains and phishing URLs, with an evidence summary, filed with your approval or under your signed rules.`,
+    notCovered: "Filing without your approval or signed rules, and a promise that a provider will remove a site. Removal is the provider's decision.",
+  },
+  {
+    area: "Stay-down",
+    covered: "Removed domains are re-checked, and you're alerted if one returns.",
+    notCovered: "A guarantee that a removed domain stays down.",
+  },
+];
+---
+
+<ProductPage
+  title="Solutions for Fraud and Customer Trust — Averrow"
+  description="Give customers one address to report suspicious email with the Abuse Mailbox (Enterprise), and have phishing sites aimed at your brand drafted for takedown under your approval or signed rules."
+  crumb="Fraud and customer trust"
+  parent={{ href: "/solutions", label: "Solutions" }}
+>
+  <ProductHero
+    eyebrow="For fraud and customer-trust teams"
+    plan={null}
+    title="Turn what customers report into takedowns."
+    sub="Give customers and staff one address to forward suspicious email to, and have the phishing sites behind it drafted for takedown, filed only with your approval or under your signed rules."
+  >
+    <SampleFrame slot="sample" label="Sample reported phishing" rows={heroRows} footer="Nothing is filed without your approval or your signed rules" />
+  </ProductHero>
+
+  <ProductSection
+    id="abuse-mailbox"
+    eyebrow={`Abuse Mailbox · ${mailboxPlan}`}
+    heading="One address to report suspicious email."
+    lede="Customers already forward what looks wrong. The mailbox reads it, classifies it and tells you whether it's phishing aimed at your brand."
+  >
+    <div class="ft-split">
+      <FactList items={mailboxFacts} label="How the Abuse Mailbox works" />
+      <SampleFrame label="Sample abuse mailbox report" rows={mailboxRows} footer="Reports route straight into your console" />
+    </div>
+    <p class="ft-more">
+      <a class="link-u" href={`${base}/platform/abuse-mailbox`}>See the Abuse Mailbox in full</a>, including setup.
+    </p>
+  </ProductSection>
+
+  <ProductSection
+    id="takedowns"
+    eyebrow={`Phishing-site takedowns · ${takedownPlan}`}
+    heading="Filed only with your say."
+    lede="Every phishing site we find, from a report or from our own monitoring, can be drafted for takedown. You choose how much runs on its own."
+  >
+    <ul class="ft-modes" role="list">
+      {modes.map((m) => (
+        <li class="ft-mode">
+          <h3>{m.name}</h3>
+          <span class="ft-sub">{m.sub}</span>
+          <p>{m.text}</p>
+        </li>
+      ))}
+    </ul>
+    <SampleFrame label="Sample takedown queue" rows={takedownRows} footer="Nothing is filed without your approval or your signed rules" />
+    <p class="ft-more">
+      <a class="link-u" href={`${base}/platform/takedowns`}>See how takedowns work</a>, including every status.
+    </p>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What's covered, and what isn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Fraud and customer trust: covered and not covered" />
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/solutions/fraud-and-customer-trust"
+    include={["/platform/abuse-mailbox", "/platform/takedowns", "/platform/lookalike-domains"]}
+    heading="The platform behind this role"
+  />
+  <RelatedSurfaces
+    current="/solutions/fraud-and-customer-trust"
+    source="solutions"
+    include={["/solutions/security-teams", "/solutions/brand-and-legal"]}
+    eyebrow="Other roles"
+    heading="Where the work gets shared"
+  />
+
+  <PageCTA heading="Make every report count." body="Run a free domain scan, no signup. Or book a demo and we'll show you the Abuse Mailbox and the approval queue." />
+</ProductPage>
+
+<style>
+  .ft-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .ft-modes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .ft-mode {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    min-width: 0;
+  }
+  .ft-mode h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
+  .ft-sub { font: 600 12px var(--font-mono); color: var(--amber-text); }
+  .ft-mode p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .ft-more { margin: 0; font-size: 14px; color: var(--text-secondary); }
+  @media (max-width: 900px) {
+    .ft-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+    .ft-modes { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>

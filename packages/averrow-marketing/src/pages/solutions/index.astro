@@ -1,242 +1,158 @@
 ---
 /*
- * Solutions overview. Hero + three persona cards (Mid-Market, MSSP,
- * Startups) each linking to its dedicated page, closing CTA.
- * Structure/tokens cloned from ../platform.astro.
+ * /solutions (Section 9A): the hub, organised by buyer role. Built on the
+ * product-page kit. Each card shows a small illustrative sample (a mini
+ * SampleRows) rather than an icon and a checklist, so a visitor sees what that
+ * role actually looks at.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md §3.11, L14, L15, L37, L38): no prices,
+ * no AI, no times, no multi-org console, no white-label, no email-alert
+ * delivery. The Abuse Mailbox is labelled Enterprise. Samples: fictional brand
+ * Acme, `.example` domains only. Numbers come from ProofStrip only.
  */
-import Layout from "../../layouts/Layout.astro";
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleRows from "../../components/product/SampleRows.astro";
+import ProofStrip from "../../components/product/ProofStrip.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import type { SampleRow } from "../../components/product/types";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+interface RoleCard {
+  href: string;
+  role: string;
+  title: string;
+  text: string;
+  rows: SampleRow[];
+  cta: string;
+}
+
+const roles: RoleCard[] = [
+  {
+    href: "/solutions/security-teams",
+    role: "Security teams",
+    title: "Phishing and lookalikes, into your SIEM.",
+    text: "Find lookalike domains and certificates aimed at your brand, triage by rule, and route events to the tools you run.",
+    rows: [
+      { text: "acme-secure-login.example", mono: true, status: "Serving a login page", pill: "High", tone: "high" },
+      { text: "acme-login.example", mono: true, status: "Certificate issued 2 hours ago", pill: "New cert", tone: "new" },
+    ],
+    cta: "See security teams",
+  },
+  {
+    href: "/solutions/brand-and-legal",
+    role: "Brand and legal",
+    title: "Fake profiles, copycat apps, executives.",
+    text: "Find who is using your name, see it in one trademark view, and file takedowns under your signed authorization.",
+    rows: [
+      { text: "@acme_support", mono: true, status: "On X. Brand name plus a support word.", pill: "Likely impersonation", tone: "high" },
+      { text: "Acme Rewards Wallet", status: "Apple App Store. Uses your name.", pill: "Copycat", tone: "high" },
+    ],
+    cta: "See brand and legal",
+  },
+  {
+    href: "/solutions/fraud-and-customer-trust",
+    role: "Fraud and customer trust",
+    title: "Reported phishing, taken down.",
+    text: "Give customers one address to report suspicious email (Abuse Mailbox, Enterprise), and draft takedowns for the sites behind it.",
+    rows: [
+      { text: "Report received", status: "Forwarded by a customer", pill: "Acknowledged", tone: "ok" },
+      { text: "Takedown draft", status: "Evidence summary attached", pill: "Awaiting approval", tone: "hold" },
+    ],
+    cta: "See fraud and customer trust",
+  },
+  {
+    href: "/solutions/teams-without-a-soc",
+    role: "Teams without a SOC",
+    title: "The first pass, done for you.",
+    text: "Automated triage, plus Averrow's analysts handling your alerts as a service, marked as Averrow SOC in your console.",
+    rows: [
+      { text: "acme.example", mono: true, status: "Your own domain, set aside", pill: "Set aside", tone: "ok" },
+      { text: "acme-secure-login.example", mono: true, status: "Assigned to Averrow SOC", pill: "Acknowledged", tone: "ok" },
+    ],
+    cta: "See teams without a SOC",
+  },
+  {
+    href: "/solutions/mssp",
+    role: "MSSPs and partners",
+    title: "One organisation per client.",
+    text: "Isolated client organisations set up by our team, with alert and takedown events routed into your own SIEM.",
+    rows: [
+      { text: "Acme organisation", status: "Set up by our team for one client", pill: "Ready", tone: "ok" },
+      { text: "Alert raised", status: "Acme organisation, sent to your SIEM", pill: "Routed", tone: "ok" },
+    ],
+    cta: "See MSSPs and partners",
+  },
+];
 ---
 
-<Layout
-  title="Solutions — Averrow"
-  description="Digital Risk Protection for how your team actually works — mid-market companies without a SOC, MSSPs adding a new offering, and startups protecting their name."
+<ProductPage
+  title="Solutions by Role — Averrow"
+  description="Averrow watches the same places for everyone. Choose your role to see what you'd work with: security teams, brand and legal, fraud and customer trust, teams without a SOC, and MSSPs."
 >
-  <section class="sol-hero">
-    <div class="container">
-      <div class="section-label" style="text-align:center;">Solutions</div>
-      <h1>Solutions for<br /><span class="hero-accent">every team.</span></h1>
-      <p>
-        Same automated analysis. Same 40+ threat &amp; intelligence sources. Configured
-        around how your organization actually operates &mdash; not a one-size
-        dashboard. Pick the path that matches your team.
-      </p>
-    </div>
-  </section>
+  <ProductHero
+    eyebrow="Solutions"
+    plan={null}
+    title="Start from the job you do."
+    sub="Averrow watches the same places for every team. What changes is what you do with a finding. Choose your role to see it."
+  />
 
-  <section class="sol-persona-section">
-    <div class="container">
-      <div class="sol-persona-grid">
-        <a href={`${base}/solutions/mid-market`} class="sol-persona-card">
-          <div class="sol-persona-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 21V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v15" />
-              <path d="M12 21V10a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v11" />
-              <path d="M4 21h16" />
-              <line x1="7" y1="9" x2="7" y2="9.01" />
-              <line x1="7" y1="13" x2="7" y2="13.01" />
-              <line x1="7" y1="17" x2="7" y2="17.01" />
-              <line x1="15" y1="13" x2="15" y2="13.01" />
-              <line x1="15" y1="17" x2="15" y2="17.01" />
-            </svg>
-          </div>
-          <div class="sol-persona-eyebrow">50&ndash;500 Employees</div>
-          <h2 class="sol-persona-title">Mid-Market</h2>
-          <p class="sol-persona-desc">Brand protection without a SOC &mdash; continuous monitoring that takes the first pass off the analyst team you don&rsquo;t have.</p>
-          <ul class="sol-persona-list">
-            <li>Automated triage, so your team reviews decisions instead of raw alerts</li>
-            <li>Professional plan for continuous monitoring</li>
-            <li>Alerts in your console; webhook / SIEM on Business and Enterprise</li>
-          </ul>
-          <span class="sol-persona-link">See the Mid-Market path &rarr;</span>
-        </a>
+  <ProofStrip stats={["brands", "lookalikes", "threats"]} />
 
-        <a href={`${base}/solutions/mssp`} class="sol-persona-card">
-          <div class="sol-persona-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3z" />
-              <circle cx="12" cy="11" r="1.3" fill="currentColor" stroke="none" />
-              <circle cx="8.5" cy="14" r="1.3" fill="currentColor" stroke="none" />
-              <circle cx="15.5" cy="14" r="1.3" fill="currentColor" stroke="none" />
-              <line x1="12" y1="11" x2="8.5" y2="14" />
-              <line x1="12" y1="11" x2="15.5" y2="14" />
-            </svg>
-          </div>
-          <div class="sol-persona-eyebrow">Managed Security Providers</div>
-          <h2 class="sol-persona-title">MSSP &amp; MDR</h2>
-          <p class="sol-persona-desc">Add brand threat intelligence to your services &mdash; multi-tenant, built to sit inside an existing stack.</p>
-          <ul class="sol-persona-list">
-            <li>Org-isolated multi-tenant architecture</li>
-            <li>Webhooks and SIEM / ticketing connectors, set up with our team</li>
-            <li>One account covers multiple client brands</li>
-          </ul>
-          <span class="sol-persona-link">See the MSSP path &rarr;</span>
-        </a>
+  <ProductSection
+    id="roles"
+    eyebrow="By role"
+    heading="Five ways teams use Averrow."
+    lede="Each page shows the findings that role works with, what it can send to your tools, and what isn't covered."
+  >
+    <ul class="sh-grid" role="list">
+      {roles.map((r) => (
+        <li>
+          <a class="sh-card" href={`${base}${r.href}`} data-solution={r.href}>
+            <span class="sh-role">{r.role}</span>
+            <h3>{r.title}</h3>
+            <p>{r.text}</p>
+            <div class="sh-sample" role="group" aria-label={`Sample for ${r.role}`}>
+              <span class="sh-tag">Illustrative sample</span>
+              <SampleRows rows={r.rows} />
+            </div>
+            <span class="sh-go">{r.cta} <span aria-hidden="true">&rarr;</span></span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  </ProductSection>
 
-        <a href={`${base}/solutions/startups`} class="sol-persona-card">
-          <div class="sol-persona-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2c2.5 2 4 5.5 4 9 0 2-1 4-1 4H9s-1-2-1-4c0-3.5 1.5-7 4-9z" />
-              <circle cx="12" cy="9" r="1.5" />
-              <path d="M9 15l-2.5 5" />
-              <path d="M15 15l2.5 5" />
-              <path d="M9 21h6" />
-            </svg>
-          </div>
-          <div class="sol-persona-eyebrow">Early-Stage &amp; Fast-Growing</div>
-          <h2 class="sol-persona-title">Startups</h2>
-          <p class="sol-persona-desc">Protect your brand from day one &mdash; new domains and thin email config make young companies easy targets.</p>
-          <ul class="sol-persona-list">
-            <li>Free domain scan, no signup</li>
-            <li>A+ through F email posture grading</li>
-            <li>A count of registered lookalike domains</li>
-          </ul>
-          <span class="sol-persona-link">See the Startup path &rarr;</span>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <section class="sol-cta">
-    <div class="container">
-      <h2>Not sure which fits? Talk to us.</h2>
-      <p>Get a walkthrough of the platform tailored to your team, or see what&rsquo;s already targeting your brand in minutes.</p>
-      <div class="sol-cta-actions">
-        <a href={`${base}/demo`} class="btn btn-primary">Get a Demo</a>
-        <a href={`${base}/scan`} class="btn btn-outline">Scan your domain</a>
-      </div>
-    </div>
-  </section>
-</Layout>
+  <PageCTA heading="Not sure which role fits?" body="Run a free domain scan, no signup. Or book a demo and we'll show you the view that fits your team." />
+</ProductPage>
 
 <style>
-  .sol-hero {
-    padding: 5rem 0 3rem;
-    text-align: center;
-    background: var(--gradient-hero);
-  }
-  .sol-hero h1 {
-    font-family: var(--font-display);
-    font-size: clamp(36px, 5vw, 64px);
-    font-weight: 800;
-    margin-bottom: 1rem;
-    line-height: 1.05;
-  }
-  .hero-accent { color: var(--amber-text); }
-  .sol-hero p {
-    font-size: 18px;
-    color: var(--text-secondary);
-    max-width: 640px;
-    margin: 0 auto;
-    line-height: 1.7;
-  }
-
-  .sol-persona-section { padding: 3rem 0 4rem; }
-  .sol-persona-grid {
+  .sh-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .sh-grid li { min-width: 0; }
+  .sh-card {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 1.5rem;
-  }
-  .sol-persona-card {
-    display: flex;
-    flex-direction: column;
+    gap: 10px;
+    align-content: start;
+    height: 100%;
+    padding: 18px;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 2rem;
+    border-radius: 14px;
     text-decoration: none;
     color: inherit;
-    transition: all 0.3s;
+    min-width: 0;
   }
-  .sol-persona-card:hover {
-    border-color: var(--accent);
-    transform: translateY(-4px);
-    box-shadow: var(--shadow-glow);
-    text-decoration: none;
-  }
-  .sol-persona-icon {
-    width: 52px;
-    height: 52px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--radius-md);
-    background: var(--accent-bg);
-    color: var(--accent);
-    margin-bottom: 1.25rem;
-  }
-  .sol-persona-icon svg { width: 26px; height: 26px; }
-  .sol-persona-eyebrow {
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-tertiary);
-    margin-bottom: 0.5rem;
-  }
-  .sol-persona-title {
-    font-family: var(--font-display);
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin-bottom: 0.6rem;
-  }
-  .sol-persona-desc {
-    font-size: 0.92rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin-bottom: 1.25rem;
-  }
-  .sol-persona-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    flex: 1;
-  }
-  .sol-persona-list li {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-  }
-  .sol-persona-list li::before {
-    content: "\2713";
-    color: var(--green);
-    font-weight: 700;
-    flex-shrink: 0;
-  }
-  .sol-persona-link {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--accent);
-  }
-
-  .sol-cta { padding: 3rem 0 4rem; text-align: center; }
-  .sol-cta h2 {
-    font-family: var(--font-display);
-    font-size: clamp(28px, 3vw, 36px);
-    font-weight: 700;
-    margin-bottom: 1rem;
-  }
-  .sol-cta p {
-    color: var(--text-secondary);
-    max-width: 520px;
-    margin: 0 auto 2rem;
-  }
-  .sol-cta-actions {
-    display: flex;
-    gap: 1rem;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  @media (max-width: 900px) {
-    .sol-persona-grid { grid-template-columns: 1fr; }
+  .sh-card:hover { border-color: var(--accent); text-decoration: none; }
+  .sh-card:focus-visible { outline: 2px solid var(--amber-text); outline-offset: 2px; }
+  .sh-role { font: 600 12px var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent-section, var(--accent)); }
+  .sh-card h3 { margin: 0; font: 800 20px/1.2 var(--font-display); letter-spacing: -0.02em; color: var(--text-primary); text-wrap: balance; }
+  .sh-card p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .sh-sample { display: grid; gap: 10px; padding: 12px; background: var(--bg-primary, var(--bg-secondary)); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+  .sh-tag { justify-self: start; font: 700 12px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber-text); border: 1px solid var(--amber-text); border-radius: 999px; padding: 1px 9px; }
+  .sh-go { font: 700 14px var(--font-display); color: var(--amber-text); }
+  @media (max-width: 640px) {
+    .sh-grid { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

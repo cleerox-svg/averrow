@@ -1,6 +1,7 @@
 ---
 /*
- * Layout for every Platform page (/platform and its seven deep dives).
+ * Layout for every Platform page (/platform and its seven deep dives) and, with
+ * `parent`, for the Solutions pages.
  *
  *   <ProductPage title description crumb="Lookalike domains">
  *     <ProductHero .../>
@@ -17,18 +18,20 @@ import Layout from "../../layouts/Layout.astro";
 interface Props {
   title: string;
   description: string;
-  /** Short page name for the breadcrumb; omit on /platform. */
+  /** Short page name for the breadcrumb; omit on a hub overview. */
   crumb?: string;
+  /** Hub the breadcrumb points back to. Defaults to Platform; Solutions pages pass { href: "/solutions", label: "Solutions" }. */
+  parent?: { href: string; label: string };
   jsonLd?: Record<string, unknown>;
 }
-const { title, description, crumb, jsonLd } = Astro.props;
+const { title, description, crumb, parent = { href: "/platform", label: "Platform" }, jsonLd } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
 <Layout title={title} description={description} jsonLd={jsonLd}>
   {crumb && (
     <nav class="pp-crumb" aria-label="Breadcrumb">
-      <a href={`${base}/platform`}>Platform</a>
+      <a href={`${base}${parent.href}`}>{parent.label}</a>
       <span aria-hidden="true">/</span>
       <span aria-current="page">{crumb}</span>
     </nav>
