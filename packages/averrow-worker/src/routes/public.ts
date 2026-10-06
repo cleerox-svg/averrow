@@ -16,7 +16,7 @@ import { renderHomepage } from "../templates/homepage";
 import { renderStatusPage } from "../templates/status";
 import { renderPrivacyPage } from "../templates/privacy";
 import { renderTermsPage } from "../templates/terms";
-import { renderTeamPage } from "../templates/team";
+import { serveHoneypotPage } from "../honeypot";
 import { renderNotFoundPage } from "../templates/not-found";
 import { renderAdminPortalPage, renderInternalStaffPage } from "../templates/honeypot-pages";
 import { renderRobotsTxt, renderSitemapXml } from "../templates/robots-sitemap";
@@ -290,7 +290,11 @@ export function registerPublicRoutes(router: RouterType<IRequest>): void {
   router.get("/terms", htmlPage(renderTermsPage));
 
   // ─── Spider Trap Honeypot Pages ─────────────────────────────────────
-  router.get("/team", htmlPage(renderTeamPage));
+  // On the production hostnames src/index.ts serves /team (and logs the
+  // visit) before this router runs; this is the fallback for any other
+  // host (workers.dev, staging). Same page either way: a neutral mailbox
+  // listing with noindex meta + X-Robots-Tag, no people (G37).
+  router.get("/team", () => serveHoneypotPage("team", "averrow.com"));
   router.get("/admin-portal", htmlPage(renderAdminPortalPage));
   router.get("/internal-staff", htmlPage(renderInternalStaffPage));
 

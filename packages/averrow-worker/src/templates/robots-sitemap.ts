@@ -63,7 +63,7 @@ export function renderSitemapXml(): string {
   const staticPages = [
     "/scan",
     "/status",
-    "/team",
+    // /team is a spam-trap honeypot (src/honeypot.ts, noindex): never list it.
     "/privacy",
     "/terms",
   ];

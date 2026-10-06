@@ -6,8 +6,18 @@
  * Anti-spam (added 2026-08): a hidden honeypot field (`company_website`)
  * that real users never see or fill, plus a per-IP KV rate limit. The
  * marketing contact/demo/abuse-mailbox forms all POST here.
+ *
+ * After the row is stored, staff are emailed (lib/contact-notify.ts, G33);
+ * the outcome lands in `notified_at` / `notify_status`. The email is
+ * best-effort: a send failure never fails the submission.
+ *
+ * The sender's IP is used only for the KV rate-limit key and is never
+ * stored (`ip_address` is written NULL — G38, privacy policy).
  */
 import { json } from "../lib/cors";
+import { logger } from "../lib/logger";
+import { normalizePublicHostname } from "../lib/public-hostname";
+import { notifyContactSubmission } from "../lib/contact-notify";
 import type { Env } from "../types";
 
 interface ContactBody {
@@ -17,6 +27,9 @@ interface ContactBody {
   companySize?: string;
   interest?: string;
   message?: string;
+  // Optional company domain (the demo form sends it). Validated with
+  // normalizePublicHostname; an invalid value is a 400.
+  domain?: unknown;
   // Honeypot — rendered off-screen + aria-hidden in the forms, so a real
   // user never populates it. A non-empty value ⇒ a bot filled the hidden
   // field.
@@ -65,6 +78,19 @@ export async function handleContactSubmission(
       );
     }
 
+    let domain: string | null = null;
+    if (body.domain !== undefined && body.domain !== null && body.domain !== "") {
+      domain = normalizePublicHostname(body.domain, { stripWww: true });
+      if (!domain) {
+        return json(
+          { success: false, error: "Please enter a valid domain (e.g. example.com)." },
+          400,
+          origin,
+        );
+      }
+    }
+
+    // Used only for the rate-limit key below; never persisted (G38).
     const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
 
     // Per-IP rate limit — check before the insert so a flood of otherwise
@@ -83,27 +109,44 @@ export async function handleContactSubmission(
     }
 
     const id = crypto.randomUUID();
+    const company = body.company?.trim() || null;
+    const companySize = body.companySize?.trim() || null;
+    const interest = body.interest?.trim() || null;
 
+    // ip_address is bound as NULL: the column stays for compatibility but
+    // the IP is not stored.
     await env.DB.prepare(
-      `INSERT INTO contact_submissions (id, name, email, company, company_size, interest, message, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO contact_submissions (id, name, email, company, company_size, interest, message, domain, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
     )
-      .bind(
-        id,
-        name,
-        email,
-        body.company?.trim() ?? null,
-        body.companySize?.trim() ?? null,
-        body.interest?.trim() ?? null,
-        message,
-        ip,
-      )
+      .bind(id, name, email, company, companySize, interest, message, domain)
       .run();
 
     // Only count successful, persisted submissions toward the limit.
     await env.CACHE.put(rateKey, String(currentCount + 1), {
       expirationTtl: CONTACT_RATE_WINDOW_SECONDS,
     });
+
+    // Best effort from here on: the row is committed and the visitor gets
+    // success whatever happens to the email or the status stamp.
+    try {
+      const status = await notifyContactSubmission(env, {
+        id, name, email, company, companySize, interest, domain, message,
+      });
+      await env.DB.prepare(
+        `UPDATE contact_submissions
+            SET notify_status = ?,
+                notified_at = CASE WHEN ? = 'sent' THEN datetime('now') ELSE NULL END
+          WHERE id = ?`,
+      )
+        .bind(status, status, id)
+        .run();
+    } catch (err) {
+      logger.warn("contact-notify-stamp-failed", {
+        submissionId: id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     return json({ success: true, data: { id } }, 200, origin);
   } catch (err) {
