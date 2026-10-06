@@ -17,7 +17,7 @@
 // lastSignInMethod.write(...) so a same-device callback always
 // finds the right method.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { LoginPageProps, SignInMethod } from './types';
 
 type MagicLinkState =
@@ -33,6 +33,10 @@ const DEFAULT_ERROR_COPY: Record<string, string> = {
   account_deactivated:  'This account has been deactivated.',
   signin_failed:        'Sign-in failed. Try again.',
 };
+
+// Only well-formed codes are echoed back; anything else is attacker-supplied
+// text (content spoofing via ?error=<sentence>) and gets generic copy.
+const SAFE_ERROR_CODE = /^[a-z0-9_]{1,40}$/;
 
 export function LoginPage(props: LoginPageProps) {
   const {
@@ -57,7 +61,9 @@ export function LoginPage(props: LoginPageProps) {
     ? errorCopy[errorParam]
     : null;
   const errorMessage = errorParam
-    ? knownCopy ?? `Sign-in error: ${errorParam}`
+    ? knownCopy ?? (SAFE_ERROR_CODE.test(errorParam)
+        ? `Sign-in error: ${errorParam}`
+        : 'Sign-in failed. Try again.')
     : null;
 
   const [email, setEmail] = useState('');
@@ -70,14 +76,19 @@ export function LoginPage(props: LoginPageProps) {
   const [googleBusy, setGoogleBusy] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
 
-  // The page-level error is rendered at the bottom of the card (Averrow's
-  // layout). Move focus to it when it appears so it is scrolled into view
-  // and announced instead of sitting below the fold on phones.
+  const googleInFlight = useRef(false);
+  const emailErrorId = useId();
+
+  // The page-level error sits at the bottom of the card (Averrow's layout).
+  // When a NEW Google error appears after mount, move focus to it so it is
+  // scrolled into view on phones. A ?error= from the URL is not focused
+  // (role="alert" announces it) so existing host behaviour is unchanged.
   const errorRef = useRef<HTMLParagraphElement>(null);
   const pageError = googleError ?? errorMessage;
   useEffect(() => {
-    if (pageError) errorRef.current?.focus();
-  }, [pageError]);
+    if (googleError) errorRef.current?.focus();
+  }, [googleError]);
+  const hasError = errorParam !== null || googleError !== null;
 
   // Read the device's last-used method to pick the primary CTA.
   // Returns null on first-ever visit; we fall back to "show all"
@@ -118,6 +129,7 @@ export function LoginPage(props: LoginPageProps) {
   const handlePasskey = async () => {
     setPasskeyBusy(true);
     setPasskeyError(null);
+    setGoogleError(null);
     lastSignInMethod.write('passkey');
     try {
       const ok = await passkeyAdapter.signIn({
@@ -135,20 +147,24 @@ export function LoginPage(props: LoginPageProps) {
   const handleGoogle = async () => {
     lastSignInMethod.write('google');
     if (onGoogleSignIn) {
+      if (googleInFlight.current) return;
+      googleInFlight.current = true;
       setGoogleBusy(true);
       setGoogleError(null);
       try {
         await onGoogleSignIn();
+        // Success: the host navigates (like passkey), so stay busy. A host
+        // handler that resolves without navigating leaves the button busy.
       } catch (err) {
         // Rendered as a React text child (escaped) — never as HTML.
-        setGoogleError(
-          googleErrorCopy
-            ? googleErrorCopy(err)
-            : err instanceof Error && err.message
-              ? err.message
-              : 'Google sign-in failed. Try again.',
-        );
-      } finally {
+        let message: string | null = null;
+        if (googleErrorCopy) {
+          try { message = googleErrorCopy(err); } catch { message = null; }
+        } else if (err instanceof Error && err.message) {
+          message = err.message;
+        }
+        setGoogleError(message || 'Google sign-in failed. Try again.');
+        googleInFlight.current = false;
         setGoogleBusy(false);
       }
       return;
@@ -164,6 +180,7 @@ export function LoginPage(props: LoginPageProps) {
       setMagicLink({ kind: 'error', message: 'Enter your email first.' });
       return;
     }
+    setGoogleError(null);
     setMagicLink({ kind: 'sending' });
     lastSignInMethod.write('magic-link');
     try {
@@ -273,9 +290,9 @@ export function LoginPage(props: LoginPageProps) {
   //   Returning Google:         Google primary; passkey + magic-link via "Other ways"
   //   Returning magic-link:     no top buttons; magic-link block primary; others via "Other ways"
   //   Sign-in error / showAll:  full menu (all supported methods)
-  const showOptions = showAll || !lastMethod || (errorParam !== null);
-  const showPasskey = passkeySupported && (lastMethod === 'passkey' || showAll || errorParam !== null);
-  const showGoogle  = !lastMethod || lastMethod === 'google' || showAll || errorParam !== null;
+  const showOptions = showAll || !lastMethod || hasError;
+  const showPasskey = passkeySupported && (lastMethod === 'passkey' || showAll || hasError);
+  const showGoogle  = !lastMethod || lastMethod === 'google' || showAll || hasError;
 
   const buttons: React.ReactNode[] = [];
 
@@ -290,7 +307,7 @@ export function LoginPage(props: LoginPageProps) {
     if (showPasskey) buttons.push(passkeyButton('secondary'));
   } else {
     if (showGoogle)  buttons.push(googleButton('primary'));
-    if (showPasskey && (showAll || errorParam !== null)) {
+    if (showPasskey && (showAll || hasError)) {
       buttons.push(passkeyButton('secondary'));
     }
   }
@@ -376,7 +393,7 @@ export function LoginPage(props: LoginPageProps) {
         </div>
 
         {/* "Welcome back" pill for returning users */}
-        {lastMethod && !errorParam && !showAll && (
+        {lastMethod && !errorParam && googleError === null && !showAll && (
           <p
             className="mt-6 font-mono uppercase"
             style={{
@@ -407,7 +424,7 @@ export function LoginPage(props: LoginPageProps) {
         )}
 
         {/* "Other ways to sign in" disclosure */}
-        {lastMethod && !showAll && !errorParam && (
+        {lastMethod && !showAll && !errorParam && googleError === null && (
           <button
             type="button"
             onClick={() => setShowAll(true)}
@@ -501,7 +518,7 @@ export function LoginPage(props: LoginPageProps) {
                 disabled={magicLink.kind === 'sending'}
                 data-testid="login-email"
                 aria-invalid={magicLink.kind === 'error' || undefined}
-                aria-describedby={magicLink.kind === 'error' ? 'login-email-error' : undefined}
+                aria-describedby={magicLink.kind === 'error' ? emailErrorId : undefined}
                 style={{
                   flex: 1,
                   background: 'var(--bg-input)',
@@ -542,7 +559,7 @@ export function LoginPage(props: LoginPageProps) {
           )}
           {magicLink.kind === 'error' && (
             <p
-              id="login-email-error"
+              id={emailErrorId}
               role="alert"
               data-testid="login-magic-link-error"
               className="mt-2 font-mono"
@@ -585,7 +602,7 @@ export function LoginPage(props: LoginPageProps) {
           {branding.footerPillars}
         </p>
 
-        {footerLinks && (
+        {footerLinks != null && (
           <div className="mt-4" data-testid="login-footer-links">
             {footerLinks}
           </div>
