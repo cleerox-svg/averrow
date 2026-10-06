@@ -20,11 +20,15 @@ export {
 export {
   BrandMatcher,
   GENERIC_KEYWORDS,
+  GLUE_WORDS,
   NRD_KEYWORD_DEMOTE_AFTER,
+  STRONG_WORDS,
+  WEAK_WORDS,
   brandKeywords,
   buildBrandKeywords,
   collectBrandMatchRows,
   isGenericKeyword,
+  keywordNeedles,
   registrableLabels,
 } from "../lib/nrd-brand-match";
 export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
@@ -58,23 +62,6 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  *      R2 archive, and (c) brand-matches ALL of them, inserting the matches
  *      via bulkInsertThreats in the same flush — so memory stays bounded
  *      even if a brand keyword floods.
- *
- * Brand matching (lib/nrd-brand-match.ts, redesigned 2026-10-06) looks for
- * COMBOSQUATS only — exact dnstwist typosquats are claimed precisely via
- * nrd_domains + lib/lookalike-nrd-matcher.ts. A brand keyword (display name,
- * hyphenated name, or the canonical domain's registrable label when that is
- * distinctive) counts only as a '-'/'.'-delimited token or concatenated with
- * lure/glue words and digits (`paypal-secure-login`, `coinbasevalidate`,
- * `micros0ft-support`), never embedded in another word. GENERIC keywords (≤4
- * chars or a curated dictionary word: line, att, booking, apple, …) also need
- * a STRONG phishing word (login, verify, wallet, refund, …) in or next to
- * their segment and get no homoglyph variants. A distinctive keyword that
- * yields NRD_KEYWORD_DEMOTE_AFTER (100) rows in one run is demoted to generic
- * for the rest of that run (`nrd_hagezi_keywords_demoted` log). The old
- * substring match produced 43,010 threats on the first full Hagezi day
- * (51,564 on a 443K-domain sample); the new rules give ~310/day on the same
- * sample. First-brand-wins, canonical-domain exclusion, one row per domain
- * and the ThreatRow fields are unchanged.
  *   4. Every today-line that is old (in the snapshot) or was actually
  *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
  *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
@@ -87,6 +74,28 @@ export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
+ *
+ * Brand matching (lib/nrd-brand-match.ts, redesigned 2026-10-06) looks for
+ * COMBOSQUATS only — exact dnstwist typosquats are claimed precisely via
+ * nrd_domains + lib/lookalike-nrd-matcher.ts. A brand keyword (display name,
+ * hyphenated name, or the canonical domain's registrable label when that is
+ * distinctive) counts only as a '-'/'.'-delimited token or concatenated with
+ * lure/glue words and digits (`paypal-secure-login`, `coinbasevalidate`,
+ * `micros0ft-support`), never embedded in another word. GENERIC keywords (≤4
+ * chars, a curated dictionary word, or a lure word: line, att, booking,
+ * apple, …) also need a STRONG phishing/parcel word (login, verify, wallet,
+ * refund, tracking, …) in their segment or in the nearest non-glue segment
+ * (glue such as my/id/pay/prime/www/com is transparent: `att.com-login`,
+ * `apple-id-verify`); their digit-swapped variants (`amaz0n`, `app1e`) match
+ * as distinctive. Winner: longest needle, then lowest brand id (brands are
+ * loaded ORDER BY b.id), so attribution never depends on D1 row order. A
+ * brand with NRD_KEYWORD_DEMOTE_AFTER (100) distinctive-path rows in one run
+ * has its keywords demoted to the generic rule for the rest of that run
+ * (`nrd_hagezi_keywords_demoted` log; opts.keywordDemoteAfter in tests). The
+ * old substring match produced 43,010 threats on the first full Hagezi day
+ * (51,564 on a 443K-domain sample); the new rules give ~315/day on the same
+ * samples. Canonical-domain exclusion, one row per domain and the ThreatRow
+ * fields are unchanged.
  *
  * What lands in nrd_domains (D1 write cut, owner decision 2026-10-05): only
  * new domains EQUAL to a `lookalike_domains.domain` or a
@@ -209,6 +218,8 @@ export interface NrdIngestOptions {
   maxNewPerRun?: number;
   /** Override NRD_FLUSH_EVERY (tests). */
   flushEvery?: number;
+  /** Override NRD_KEYWORD_DEMOTE_AFTER (tests). */
+  keywordDemoteAfter?: number;
 }
 
 export const nrd_hagezi: FeedModule = {
@@ -315,7 +326,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let archiveFirst: string | null = null;
     let archived = 0;
 
-    const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB));
+    const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB), { demoteAfter: opts.keywordDemoteAfter });
     // Carried across flushes so an in-list repeat split over two chunks is
     // still one threat + one in-payload duplicate.
     const matched = new Set<string>();
@@ -465,10 +476,12 @@ async function loadBrandKeywords(db: D1Database): Promise<BrandMatchEntry[]> {
     `SELECT b.id, b.name, b.canonical_domain
      FROM brands b
      INNER JOIN monitored_brands mb ON mb.brand_id = b.id
-     WHERE mb.status = 'active'`
+     WHERE mb.status = 'active'
+     ORDER BY b.id`
   ).all<{ id: string; name: string; canonical_domain: string }>();
-  // Deduped by brand id; keywords classified generic/distinctive once per
-  // run (lib/nrd-brand-match.ts).
+  // Sorted + deduped by brand id (buildBrandKeywords sorts again, so the
+  // lowest-id tie-break never depends on D1 row order); keywords classified
+  // generic/distinctive once per run (lib/nrd-brand-match.ts).
   return buildBrandKeywords(brands.results);
 }
 

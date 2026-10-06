@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { nrd_hagezi, collectBrandMatchRows, NRD_SNAPSHOT_KEY } from "../src/feeds/nrd_hagezi";
+import { nrd_hagezi, ingestNrdHagezi, collectBrandMatchRows, NRD_SNAPSHOT_KEY } from "../src/feeds/nrd_hagezi";
 import { THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
 import { threatId } from "../src/feeds/types";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
@@ -221,23 +221,24 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(ops).toEqual({ get: 0, put: 0 });
   });
 
-  it("one brand per domain (first brand wins); a brand's canonical domain falls through to the next brand", async () => {
+  it("one brand per domain (longest needle, then lowest id); a brand's canonical domain falls through to the next brand", async () => {
     // Both brands carry the distinctive keyword "acmebank" (name / name).
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
     seedBrand("b_acme_eu", "AcmeBank", "acmebank.eu");
     seedBrand("b_bank", "Bank", "bank.example"); // "bank": generic (≤4 chars)
     serve([
-      "acmebank-login.example", // matches both acmebank brands → first brand (b_acme)
+      "acmebank-login.example", // matches both acmebank brands (same needle length) → lowest id (b_acme)
       "acmebank.com", // canonical for b_acme → skipped for it, falls through to b_acme_eu
       "acmebank.eu", // b_acme_eu's canonical, but b_acme comes first → b_acme
       "bank-secure.example", // generic "bank" + adjacent STRONG lure word → b_bank
-      "mybank-secure.example", // "my" is not a STRONG word, so "mybank" is no generic token → no threat
+      "mybank-secure.example", // GLUE "my" may sit next to a generic keyword → b_bank
+      "bankshop-secure.example", // "shop" is WEAK, not GLUE → "bankshop" is no generic token → no threat
       "bank.example", // b_bank's own canonical (and no lure word) → no threat
     ]);
 
     const result = await ingest(countingKv().kv);
 
-    expect(result).toEqual({ itemsFetched: 6, itemsNew: 4, itemsDuplicate: 0, itemsError: 0 });
+    expect(result).toEqual({ itemsFetched: 7, itemsNew: 5, itemsDuplicate: 0, itemsError: 0 });
     const brandOf = (d: string) =>
       (raw.prepare("SELECT target_brand_id AS b FROM threats WHERE malicious_domain = ?").all(d) as Array<{ b: string }>)
         .map((r) => r.b);
@@ -245,11 +246,32 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     expect(brandOf("acmebank.com")).toEqual(["b_acme_eu"]);
     expect(brandOf("acmebank.eu")).toEqual(["b_acme"]);
     expect(brandOf("bank-secure.example")).toEqual(["b_bank"]);
-    expect(brandOf("mybank-secure.example")).toEqual([]);
+    expect(brandOf("mybank-secure.example")).toEqual(["b_bank"]);
+    expect(brandOf("bankshop-secure.example")).toEqual([]);
     expect(brandOf("bank.example")).toEqual([]);
     expect(brandThreatCount("b_acme")).toBe(2);
     expect(brandThreatCount("b_acme_eu")).toBe(1);
-    expect(brandThreatCount("b_bank")).toBe(1);
+    expect(brandThreatCount("b_bank")).toBe(2);
+  });
+
+  it("keyword demotion carries across flushes within one run (per brand, deterministic in list order)", async () => {
+    seedBrand("b_acme", "Acme Bank", "acmebank.com"); // keywords acmebank + acme-bank, one brand counter
+    serve([
+      "acmebank-1.example",
+      "acme-bank-2.example", // second spelling counts toward the same brand
+      "acmebank-3.example",
+      "acmebank-4.example", // 4th+ distinctive-only rows: brand demoted → need a STRONG word
+      "acmebank-5.example",
+      "acmebank-login-6.example", // still matches under the generic rule
+    ]);
+    const env = { DB: db, CACHE: countingKv().kv, GEOIP_STAGING: r2.bucket, NRD_ARCHIVE: fakeR2Bucket().bucket } as unknown as Env;
+
+    // flushEvery 2 → three flushes; the demotion at row 3 must survive into the next flush.
+    const result = await ingestNrdHagezi({ env, feedName: "nrd_hagezi", feedUrl: "" }, { flushEvery: 2, keywordDemoteAfter: 3 });
+
+    expect(result).toEqual({ itemsFetched: 6, itemsNew: 4, itemsDuplicate: 0, itemsError: 0 });
+    const domains = (raw.prepare("SELECT malicious_domain AS d FROM threats ORDER BY d").all() as Array<{ d: string }>).map((r) => r.d);
+    expect(domains).toEqual(["acme-bank-2.example", "acmebank-1.example", "acmebank-3.example", "acmebank-login-6.example"]);
   });
 
   it("a failing threat-insert batch counts its whole chunk as itemsError; other chunks land; counters bump only for landed rows", async () => {
