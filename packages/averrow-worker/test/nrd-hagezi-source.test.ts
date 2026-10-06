@@ -8,8 +8,10 @@
  * new ones equal to a lookalike_domains / phantom_domains domain (the
  * matchable filter — test/nrd-hagezi-matchable.test.ts covers it in depth), the snapshot advances
  * only after every D1 write succeeded, format guards (sort order, empty, HTML,
- * truncated), the per-run cap, registered_date derivation, and that the
- * needle-indexed brand matcher equals the naive scan.
+ * truncated), the per-run cap, registered_date derivation, and the
+ * combosquat brand-keyword semantics (token boundary, generic keywords only
+ * with a STRONG lure word, homoglyphs, canonical exclusion, first-brand-wins,
+ * per-run keyword demotion — lib/nrd-brand-match.ts).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -19,8 +21,19 @@ import { join } from "node:path";
 import {
   nrd_hagezi,
   ingestNrdHagezi,
+  BrandMatcher,
+  brandKeywords,
+  buildBrandKeywords,
   collectBrandMatchRows,
+  GLUE_WORDS,
+  isGenericKeyword,
+  keywordNeedles,
+  PRODUCT_GLUE,
+  STRONG_WORDS,
+  VARIANT_CONTEXT_WORDS,
+  WEAK_WORDS,
   registeredDateFromHeader,
+  registrableLabels,
   NRD_HAGEZI_URL,
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
@@ -506,72 +519,342 @@ describe("registeredDateFromHeader", () => {
   });
 });
 
-// ─── Indexed matcher ≡ naive scan ────────────────────────────────────
+// ─── Brand-keyword (combosquat) semantics ────────────────────────────
 
-type Brand = { id: string; domain: string; needles: string[] };
+/** Brands as the feed builds them from D1 rows (load order = priority). */
+const brandsOf = (...rows: Array<[id: string, name: string, canonical: string]>) =>
+  buildBrandKeywords(rows.map(([id, name, canonical_domain]) => ({ id, name, canonical_domain })));
 
-/** The pre-index implementation, verbatim semantics. */
-function naive(domains: string[], brands: Brand[]) {
-  const matched = new Set<string>();
-  const rows: Array<[string, string]> = [];
-  let dup = 0;
-  for (const domain of domains) {
-    for (const brand of brands) {
-      if (domain === brand.domain) continue;
-      if (!brand.needles.some((n) => domain.includes(n))) continue;
-      if (matched.has(domain)) { dup++; break; }
-      matched.add(domain);
-      rows.push([domain, brand.id]);
-      break;
+/** domain → winning brand id, for the domains that matched. */
+const winners = (domains: string[], brands: ReturnType<typeof brandsOf>) =>
+  Object.fromEntries(collectBrandMatchRows(domains, brands).rows.map((r) => [r.malicious_domain, r.target_brand_id]));
+
+describe("brand keywords + classification", () => {
+  it("derives name, hyphenated-name and (distinctive-only) canonical-label keywords", () => {
+    expect(brandKeywords("PayPal", "paypal.com")).toEqual([{ keyword: "paypal", generic: false }]);
+    expect(brandKeywords("Standard Chartered", "sc.com")).toEqual([
+      { keyword: "standardchartered", generic: false },
+      { keyword: "standard-chartered", generic: false },
+    ]);
+    // Distinctive canonical label added alongside the name.
+    expect(brandKeywords("Zelle", "zellepay.com")).toEqual([
+      { keyword: "zelle", generic: false },
+      { keyword: "zellepay", generic: false },
+    ]);
+    // Generic canonical label (revenue.ie) is NOT added.
+    expect(brandKeywords("Revenue Ireland", "revenue.ie").map((k) => k.keyword)).toEqual([
+      "revenueireland",
+      "revenue-ireland",
+    ]);
+    // A canonical with a subdomain or a path names the parent brand → no label keyword.
+    expect(brandKeywords("Apple TV+", "tv.apple.com").map((k) => k.keyword)).toEqual(["appletv", "apple-tv"]);
+    expect(brandKeywords("LinkedIn Learning", "linkedin.com/learning").map((k) => k.keyword)).toEqual([
+      "linkedinlearning",
+      "linkedin-learning",
+    ]);
+    // Short names are generic; apostrophes/diacritics folded; <3 chars and NEVER words dropped.
+    expect(brandKeywords("AT&T", "att.com")).toEqual([{ keyword: "att", generic: true }]);
+    expect(brandKeywords("Lowe's", "lowes.com")).toEqual([{ keyword: "lowes", generic: false }]);
+    expect(brandKeywords("Hydro-Québec", "hydroquebec.com").map((k) => k.keyword)).toEqual([
+      "hydroquebec",
+      "hydro-quebec",
+    ]);
+    expect(brandKeywords("HP", "hp.com")).toEqual([]);
+    expect(brandKeywords("Mail", "mail.ru")).toEqual([]);
+    expect(brandKeywords("Www", "www.gov.uk")).toEqual([]);
+  });
+
+  it("generic = ≤4 chars, a curated dictionary word, or itself lure vocabulary (hyphens ignored); else distinctive", () => {
+    for (const k of ["att", "line", "dhl", "booking", "apple", "office", "first-national-bank", "intel", "support", "wallet", "portal", "tracking"]) {
+      expect(isGenericKeyword(k), k).toBe(true);
     }
-  }
-  return { rows, dup };
-}
-
-/** Deterministic PRNG (mulberry32) so a failure is reproducible from the seed. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-describe("collectBrandMatchRows — indexed matcher equals the naive scan", () => {
-  it("on 300 randomized inputs (small alphabet → dense overlaps, canonical collisions, repeats, empty needles)", () => {
-    const alphabet = "abc1.-";
-    for (let seed = 1; seed <= 300; seed++) {
-      const r = rng(seed);
-      const pick = <T,>(xs: T[]): T => xs[Math.floor(r() * xs.length)]!;
-      const word = (min: number, max: number) =>
-        Array.from({ length: min + Math.floor(r() * (max - min + 1)) }, () => pick([...alphabet])).join("");
-
-      const domains = Array.from({ length: 1 + Math.floor(r() * 40) }, () => word(1, 9));
-      // Inject repeats.
-      for (let k = 0; k < 3; k++) if (domains.length) domains.push(pick(domains));
-      const brands: Brand[] = Array.from({ length: Math.floor(r() * 12) }, (_, i) => ({
-        id: `b${i}`,
-        // Often a canonical domain that is literally in the list.
-        domain: r() < 0.4 && domains.length ? pick(domains) : word(1, 6),
-        needles: Array.from({ length: Math.floor(r() * 4) }, () => (r() < 0.03 ? "" : word(1, 4))),
-      }));
-
-      const got = collectBrandMatchRows(domains, brands);
-      const want = naive(domains, brands);
-      expect(
-        { rows: got.rows.map((x) => [x.malicious_domain, x.target_brand_id]), dup: got.inPayloadDuplicates },
-        `seed ${seed}`,
-      ).toEqual({ rows: want.rows, dup: want.dup });
+    for (const k of ["paypal", "coinbase", "docusign", "tiktok", "standard-chartered", "zellepay"]) {
+      expect(isGenericKeyword(k), k).toBe(false);
     }
   });
 
-  it("emits the same ThreatRow fields as before", () => {
-    const { rows } = collectBrandMatchRows(["acmeb4nk-secure.example"], [
-      { id: "b_acme", domain: "acmebank.com", needles: ["acmebank", "acmeb4nk"] },
+  it("needles: distinctive → all homoglyphs; generic ≥5 chars → digit/symbol variants only, as distinctive; generic ≤4 → none", () => {
+    const pp = keywordNeedles({ keyword: "paypal", generic: false });
+    expect(pp.every((n) => !n.generic && !n.digitVariant)).toBe(true);
+    expect(pp.map((n) => n.needle)).toEqual(expect.arrayContaining(["paypal", "payp4l", "paypa1", "paypai", "p@ypal"]));
+    const apple = keywordNeedles({ keyword: "apple", generic: true });
+    expect(apple[0]).toEqual({ needle: "apple", generic: true, digitVariant: false });
+    expect(apple.slice(1).every((n) => !n.generic && n.digitVariant)).toBe(true);
+    expect(apple.map((n) => n.needle)).toEqual(expect.arrayContaining(["app1e", "4pple", "@pple", "appl3"]));
+    expect(apple.map((n) => n.needle)).not.toContain("appie"); // no l↔i letter swap for generic words
+    expect(keywordNeedles({ keyword: "att", generic: true })).toEqual([{ needle: "att", generic: true, digitVariant: false }]);
+  });
+
+  it("buildBrandKeywords sorts by brand id (tie-break never depends on D1 row order) and dedupes", () => {
+    const rows = [
+      { id: "b_z", name: "Zetacorp", canonical_domain: "zetacorp.com" },
+      { id: "b_a", name: "Acmecorp", canonical_domain: "acmecorp.com" },
+      { id: "b_z", name: "Zetacorp", canonical_domain: "zetacorp.com" },
+    ];
+    expect(buildBrandKeywords(rows).map((b) => b.id)).toEqual(["b_a", "b_z"]);
+    expect(buildBrandKeywords([...rows].reverse()).map((b) => b.id)).toEqual(["b_a", "b_z"]);
+  });
+
+  it("registrableLabels drops the public suffix (incl. ccSLDs like co.uk)", () => {
+    expect(registrableLabels("paypal.com")).toEqual(["paypal"]);
+    expect(registrableLabels("paypal-login.co.uk")).toEqual(["paypal-login"]);
+    expect(registrableLabels("006zhiboonline.com.cn")).toEqual(["006zhiboonline"]);
+    expect(registrableLabels("secure.paypal-help.com")).toEqual(["secure", "paypal-help"]);
+    expect(registrableLabels("paypal.uk.com")).toEqual(["paypal", "uk"]);
+  });
+});
+
+describe("collectBrandMatchRows — combosquat semantics", () => {
+  it("distinctive keyword: a delimited token or concatenated with lure/glue words and digits, never embedded", () => {
+    const brands = brandsOf(["b_pp", "PayPal", "paypal.com"]);
+    const hits = [
+      "paypal.to", // TLD swap
+      "paypal-secure-login.com",
+      "secure.paypal-help.com",
+      "paypal24.shop",
+      "mypaypal.com",
+      "paypalverify.net",
+      "securepaypal.com",
+      "paypal-xk7q.biz", // other hyphen segments are unconstrained
+    ];
+    const misses = [
+      "unpaypalable.com", // embedded in a word
+      "paypalshirts.com", // "shirts" is not lure vocabulary
+      "wpaypal.com",
+      "paypal.com", // the brand's own canonical domain
+    ];
+    const got = winners([...hits, ...misses], brands);
+    expect(Object.keys(got).sort()).toEqual([...hits].sort());
+  });
+
+  it("homoglyph variants match distinctive keywords only", () => {
+    const brands = brandsOf(["b_ms", "Microsoft", "microsoft.com"], ["b_att", "AT&T", "att.com"]);
+    expect(winners(["micros0ft-support.net", "rnicrosoft.com", "4tt-login.com", "att-login.com"], brands)).toEqual({
+      "micros0ft-support.net": "b_ms",
+      "att-login.com": "b_att",
+    });
+  });
+
+  it("generic keyword needs a STRONG lure word in its segment or an adjacent one", () => {
+    const brands = brandsOf(["b_att", "AT&T", "att.com"], ["b_line", "Line", "line.me"]);
+    const hits = [
+      "att-login.com",
+      "attverify.net",
+      "my-att-account.com", // adjacent "account" segment
+      "att2fa.io", // "2fa" is a STRONG word
+      "line-login.com",
+      "secure-line-update.com",
+      "mylinelogin.com", // GLUE "my" may sit next to a generic keyword
+      "att.com-login.net", // "com" right of the keyword is transparent (brand.com-login mimicry)
+      "www-att-login.com", // "www" left of the keyword is transparent
+    ];
+    const misses = [
+      "att.com.mx", // no lure word
+      "att-store.com", // WEAK glue only
+      "attic-login.com", // embedded in a word
+      "battle.net",
+      "att-x7q-login.com", // lure word not adjacent
+      "onlineline.hair", // the old matcher's #1 noise source
+      "006zhiboonline.com.cn",
+      "line.xyz",
+      "line-shop-login.com", // "shop" is WEAK, not GLUE: blocks the walk to "login"
+      "my-att-id.com", // GLUE only, no STRONG word
+      "att-24-www-login.com", // digit segments are not transparent
+      "att-www-login.com", // "www" is transparent only LEFT of the keyword
+      "att-customs.com", // "customs" is WEAK: a telco's own vocabulary
+    ];
+    const got = winners([...hits, ...misses], brands);
+    expect(Object.keys(got).sort()).toEqual([...hits].sort());
+  });
+
+  it("M1/M2 combosquats on stop-listed and short brands hit; near misses don't", () => {
+    const brands = brandsOf(
+      ["b_amazon", "Amazon", "amazon.com"],
+      ["b_apple", "Apple", "apple.com"],
+      ["b_att", "AT&T", "att.com"],
+      ["b_dhl", "DHL", "dhl.com"],
+      ["b_dropbox", "Dropbox", "dropbox.com"],
+      ["b_outlook", "Outlook", "outlook.com"],
+    );
+    const want: Record<string, string> = {
+      "amaz0n-login.com": "b_amazon", // digit variant of a generic word = distinctive
+      "app1e-login.com": "b_apple",
+      "amaz0n.com": "b_amazon", // bare digit-swapped squat of a ≥6-char keyword
+      "0utlook-webmail.com": "b_outlook",
+      "dr0pbox-share.com": "b_dropbox",
+      "appleid-verify.com": "b_apple", // GLUE "id" in the keyword's segment
+      "apple-id-verify.com": "b_apple", // GLUE-only "id" segment is transparent
+      "amazonpay-refund.com": "b_amazon",
+      "myamazon-account.com": "b_amazon",
+      "amazon-prime-login.com": "b_amazon",
+      "dhl-tracking.com": "b_dhl", // parcel-scam STRONG words
+      "dhl-parcel-redelivery.com": "b_dhl",
+      "att.com-login.net": "b_att",
+    };
+    const misses = [
+      "amazon-store.com", // WEAK only
+      "amazonpay.com", // GLUE only
+      "my-apple-id.com",
+      "apple-farm-login.com", // "farm" is not glue: STRONG word not reachable
+      "app1es.com", // variant embedded in a longer word
+      "amaz0n123.com", // digit variant touching other digits (merak123.world class)
+      "4pple7.net",
+      "dhl-package.com", // "package" deliberately not STRONG (software packages)
+      "dr0pboxing.net",
+      "app1e.com", // bare variant of a 5-char keyword: too common a stylisation (trade-off)
+    ];
+    expect(winners([...Object.keys(want), ...misses], brands)).toEqual(want);
+  });
+
+  it("N1: a generic keyword's digit variant needs the generic rule or a whole-core lure context", () => {
+    const brands = brandsOf(
+      ["b_amazon", "Amazon", "amazon.com"],
+      ["b_intel", "Intel", "intel.com"],
+      ["b_metro", "Metro", "metro.ca"],
+      ["b_outlook", "Outlook", "outlook.com"],
+      ["b_shell", "Shell", "shell.com"],
+      ["b_three", "Three", "three.co.uk"],
+      ["b_unity", "Unity", "unity.com"],
+    );
+    const want: Record<string, string> = {
+      "amaz0n.com": "b_amazon",
+      "amaz0n-login.com": "b_amazon",
+      "0utlook-webmail.com": "b_outlook", // VARIANT_CONTEXT word, no STRONG needed
+      "un1ty-login.com": "b_unity", // generic rule
+      "m3tro-secure-portal.com": "b_metro",
+    };
+    const misses = [
+      "sh3ll-scripts.com",
+      "1ntel-labs.com",
+      "un1ty-games.com",
+      "m3tro-city.com",
+      "thr3e-media.com",
+      "metr0.io", // bare, 5-char keyword
+      "un1tyapp.com", // "app" is business vocabulary, not VARIANT_CONTEXT
+      "m3tro-store.com",
+    ];
+    expect(winners([...Object.keys(want), ...misses], brands)).toEqual(want);
+  });
+
+  it("N2: delivery/customs/limited never satisfy the generic rule, but still count next to a distinctive keyword", () => {
+    const brands = brandsOf(
+      ["b_att", "AT&T", "att.com"],
+      ["b_cb", "Coinbase", "coinbase.com"],
+      ["b_dhl", "DHL", "dhl.com"],
+      ["b_dom", "Dominos", "dominos.com"],
+      ["b_front", "Frontier", "frontier.com"],
+      ["b_metro", "Metro", "metro.ca"],
+      ["b_subway", "Subway", "subway.com"],
+      ["b_sushi", "SushiSwap", "sushi.com"],
+      ["b_three", "Three", "three.co.uk"],
+    );
+    const want: Record<string, string> = {
+      "dhl-tracking.com": "b_dhl",
+      "dhl-redelivery.com": "b_dhl",
+      "dhl-shipment-parcel.com": "b_dhl",
+      "coinbase-limited.com": "b_cb",
+      "coinbase-delivery.com": "b_cb",
+    };
+    const misses = [
+      "sushi-delivery.com",
+      "subway-delivery.com",
+      "dominos-delivery.com",
+      "metro-delivery.com",
+      "att-customs.com",
+      "frontier-limited.com",
+      "three-limited.com",
+      "dhl-delivery.com", // trade-off: "delivery" alone no longer carries a short brand
+    ];
+    expect(winners([...Object.keys(want), ...misses], brands)).toEqual(want);
+  });
+
+  it("N3: only com (right), www (left) and the brand's own PRODUCT_GLUE are transparent between segments", () => {
+    const brands = brandsOf(
+      ["b_amazon", "Amazon", "amazon.com"],
+      ["b_apple", "Apple", "apple.com"],
+      ["b_front", "Frontier", "frontier.com"],
+      ["b_metro", "Metro", "metro.ca"],
+      ["b_unity", "Unity", "unity.com"],
+    );
+    const want: Record<string, string> = {
+      "apple-id-verify.com": "b_apple",
+      "apple-pay-refund.com": "b_apple",
+      "amazon-prime-login.com": "b_amazon",
+      "amazon-pay-refund.com": "b_amazon",
+      "metro.com-security.net": "b_metro",
+      "www-metro-alerts.com": "b_metro",
+      "unityid-support.com": "b_unity", // GLUE inside the keyword's own segment is still fine
+    };
+    const misses = [
+      "metro-prime-security.com", // prime is Amazon's product glue, not Metro's
+      "frontier-2024-update.com",
+      "unity-id-support.com",
+      "metro-www-alerts.com",
+      "apple-prime-login.com",
+    ];
+    expect(winners([...Object.keys(want), ...misses], brands)).toEqual(want);
+  });
+
+  it("winner: longest needle, then lowest brand index; a canonical domain falls through to the next brand", () => {
+    const brands = brandsOf(
+      ["b_cb", "Coinbase", "coinbase.com"],
+      ["b_cb_org", "Coinbase", "coinbase.org"],
+      ["b_pp", "PayPal", "paypal.com"],
+    );
+    expect(winners(["coinbase.com", "coinbase.org", "coinbase-login.com", "paypal-coinbase.com"], brands)).toEqual({
+      "coinbase.com": "b_cb_org",
+      "coinbase.org": "b_cb",
+      "coinbase-login.com": "b_cb",
+      "paypal-coinbase.com": "b_cb", // longer needle (coinbase > paypal), not leftmost occurrence
+    });
+    // Equal needle length → lowest index (= lowest id after buildBrandKeywords); longer beats lower index.
+    const tie = brandsOf(["b_2", "Zetaco", "zetaco.com"], ["b_1", "Acmeco", "acmeco.com"], ["b_0", "Amazonaws", "amazonaws.com"], ["b_9", "Amazon", "amazon.com"]);
+    expect(winners(["zetaco-acmeco.com", "amazonaws-login.com"], tie)).toEqual({
+      "zetaco-acmeco.com": "b_1",
+      "amazonaws-login.com": "b_0",
+    });
+  });
+
+  it("demotion counts rows per BRAND across all its keyword spellings; demoted homoglyph variants still match, but only with a STRONG word", () => {
+    const brands = brandsOf(["b_z", "Zelle", "zellepay.com"]); // keywords: zelle, zellepay
+    const m = new BrandMatcher(brands, { demoteAfter: 2 });
+    const { rows } = m.collect(
+      ["zelle-1.io", "zellepay-2.io", "zelle-3.io", "zellepay-4.io", "z3lle-5.io", "z3lle-login.io", "zellepay-refund.io"],
+      new Set<string>(),
+    );
+    expect(rows.map((r) => r.malicious_domain)).toEqual(["zelle-1.io", "zellepay-2.io", "z3lle-login.io", "zellepay-refund.io"]);
+    expect(m.demotedKeywords()).toEqual(["zelle", "zellepay"]);
+  });
+
+  it("a keyword that names an Object.prototype member (constructor) never resolves product glue", () => {
+    const brands = brandsOf(["b_c", "Constructor", "constructor.io"]);
+    const m = new BrandMatcher(brands, { demoteAfter: 1 });
+    expect(() =>
+      m.collect(["constructor-1.io", "constructor-2.io", "constructor-login.io", "constructor-x-login.io"], new Set<string>()),
+    ).not.toThrow();
+  });
+
+  it("demotes a flooding distinctive keyword to generic for the rest of the run (deterministic, shared by keyword text)", () => {
+    const brands = brandsOf(["b1", "Acmecorp", "acmecorp.com"], ["b2", "Acmecorp", "acmecorp.net"]);
+    const m = new BrandMatcher(brands, { demoteAfter: 3 });
+    const { rows } = m.collect(
+      ["acmecorp-1.io", "acmecorp-2.io", "acmecorp-3.io", "acmecorp-4.io", "acmecorp-login.io", "acmecorp-5.io"],
+      new Set<string>(),
+    );
+    // After 3 rows "acmecorp" needs a lure word; b2 (same keyword) does not pick up the rest.
+    expect(rows.map((r) => [r.malicious_domain, r.target_brand_id])).toEqual([
+      ["acmecorp-1.io", "b1"],
+      ["acmecorp-2.io", "b1"],
+      ["acmecorp-3.io", "b1"],
+      ["acmecorp-login.io", "b1"],
     ]);
+    expect(m.demotedKeywords()).toEqual(["acmecorp"]);
+    // Per-call helper starts fresh: demotion never leaks across runs.
+    expect(collectBrandMatchRows(["acmecorp-4.io"], brands, new Set(), { demoteAfter: 3 }).rows).toHaveLength(1);
+  });
+
+  it("emits the same ThreatRow fields as before", () => {
+    const { rows } = collectBrandMatchRows(["acmeb4nk-secure.example"], brandsOf(["b_acme", "Acme Bank", "acmebank.com"]));
     expect(rows).toEqual([{
       id: threatId("nrd_hagezi", "domain", "acmeb4nk-secure.example"),
       source_feed: "nrd_hagezi",
@@ -586,11 +869,173 @@ describe("collectBrandMatchRows — indexed matcher equals the naive scan", () =
   });
 
   it("carries the seen-set across calls when one is passed", () => {
-    const brands = [{ id: "a", domain: "acme.com", needles: ["acme"] }];
+    const brands = brandsOf(["a", "Acmecorp", "acmecorp.com"]);
     const matched = new Set<string>();
-    expect(collectBrandMatchRows(["acme-1.io"], brands, matched).rows).toHaveLength(1);
-    const second = collectBrandMatchRows(["acme-1.io"], brands, matched);
+    expect(collectBrandMatchRows(["acmecorp-1.io"], brands, matched).rows).toHaveLength(1);
+    const second = collectBrandMatchRows(["acmecorp-1.io"], brands, matched);
     expect(second).toEqual({ rows: [], inPayloadDuplicates: 1 });
+  });
+});
+
+// ─── Property: indexed best() ≡ brute-force per-brand reference ──────
+
+/** Deterministic PRNG (mulberry32) so a failure is reproducible from the seed. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const REF_STRONG_GLUE = new Set([...STRONG_WORDS, ...GLUE_WORDS]);
+const REF_STRONG_WEAK = new Set([...STRONG_WORDS, ...WEAK_WORDS]);
+const REF_STRONG_VARIANT = new Set([...STRONG_WORDS, ...VARIANT_CONTEXT_WORDS]);
+
+/** Naive: can `s` be split into vocab words + single digits; can some split contain a STRONG word / any word? */
+function refDecompose(s: string, vocab: Set<string>): { ok: boolean; strong: boolean; word: boolean } {
+  const memo = new Map<number, { ok: boolean; strong: boolean; word: boolean }>();
+  const go = (i: number): { ok: boolean; strong: boolean; word: boolean } => {
+    if (i === s.length) return { ok: true, strong: false, word: false };
+    const hit = memo.get(i);
+    if (hit) return hit;
+    let ok = false;
+    let strong = false;
+    let word = false;
+    if (/[0-9]/.test(s[i]!)) {
+      const r = go(i + 1);
+      if (r.ok) { ok = true; strong ||= r.strong; word ||= r.word; }
+    }
+    for (const w of vocab) {
+      if (!s.startsWith(w, i)) continue;
+      const r = go(i + w.length);
+      if (r.ok) { ok = true; strong ||= r.strong || STRONG_WORDS.has(w); word = true; }
+    }
+    const out = { ok, strong, word };
+    memo.set(i, out);
+    return out;
+  };
+  return go(0);
+}
+
+type RefRule = "distinctive" | "generic" | "variant";
+
+function refQualifies(core: string, i: number, j: number, rule: RefRule, keyword: string): boolean {
+  const isDelim = (c: string | undefined) => c === "-" || c === ".";
+  if (isDelim(core[i]) || isDelim(core[j - 1])) return false;
+  let a = i;
+  while (a > 0 && !isDelim(core[a - 1])) a--;
+  let b = j;
+  while (b < core.length && !isDelim(core[b])) b++;
+  const segs = core.split(/[-.]/);
+  const si = core.slice(0, i).split(/[-.]/).length - 1;
+  const sj = core.slice(0, j).split(/[-.]/).length - 1;
+
+  const genericRule = (): boolean => {
+    const L = refDecompose(core.slice(a, i), REF_STRONG_GLUE);
+    const R = refDecompose(core.slice(j, b), REF_STRONG_GLUE);
+    if (!L.ok || !R.ok) return false;
+    if (L.strong || R.strong) return true;
+    const product = Object.hasOwn(PRODUCT_GLUE, keyword) ? PRODUCT_GLUE[keyword] : undefined;
+    const walk = (from: number, step: number): boolean => {
+      for (let t = from + step; t >= 0 && t < segs.length; t += step) {
+        const text = segs[t]!;
+        if ((step === 1 && text === "com") || (step === -1 && text === "www") || product?.has(text)) continue;
+        const d = refDecompose(text, REF_STRONG_GLUE);
+        return d.ok && d.strong;
+      }
+      return false;
+    };
+    return walk(si, -1) || walk(sj, 1);
+  };
+
+  if (rule === "generic") return genericRule();
+  if (rule === "distinctive") {
+    return refDecompose(core.slice(a, i), REF_STRONG_WEAK).ok && refDecompose(core.slice(j, b), REF_STRONG_WEAK).ok;
+  }
+  if (genericRule()) return true;
+  const L = refDecompose(core.slice(a, i), REF_STRONG_VARIANT);
+  const R = refDecompose(core.slice(j, b), REF_STRONG_VARIANT);
+  if (!L.ok || !R.ok) return false;
+  let word = L.word || R.word;
+  for (let t = 0; t < segs.length; t++) {
+    if (t >= si && t <= sj) continue;
+    const d = refDecompose(segs[t]!, REF_STRONG_VARIANT);
+    if (!d.ok) return false;
+    word ||= d.word;
+  }
+  return word || keyword.replace(/-/g, "").length >= 6;
+}
+
+/** Every brand × keyword × needle × occurrence; winner = longest needle, then lowest brand index. */
+function refBest(domain: string, brands: ReturnType<typeof buildBrandKeywords>): number {
+  const core = registrableLabels(domain).join(".");
+  let best = -1;
+  let bestLen = 0;
+  brands.forEach((b, bi) => {
+    if (b.domain === domain) return;
+    for (const k of b.keywords) {
+      for (const n of keywordNeedles(k)) {
+        for (let i = core.indexOf(n.needle); i >= 0; i = core.indexOf(n.needle, i + 1)) {
+          const j = i + n.needle.length;
+          if (n.digitVariant && ((i > 0 && /[0-9]/.test(core[i - 1]!)) || (j < core.length && /[0-9]/.test(core[j]!)))) continue;
+          const rule: RefRule = n.generic ? "generic" : n.digitVariant ? "variant" : "distinctive";
+          if (!refQualifies(core, i, j, rule, k.keyword)) continue;
+          if (n.needle.length > bestLen || (n.needle.length === bestLen && bi < best)) {
+            best = bi;
+            bestLen = n.needle.length;
+          }
+        }
+      }
+    }
+  });
+  return best;
+}
+
+describe("BrandMatcher — indexed best() equals a brute-force per-brand reference", () => {
+  it("on 1000 seeded random inputs (dense keyword/vocab/digit/delimiter overlaps, canonical collisions, shared keywords)", () => {
+    const tokens = [
+      "acme", "acmeco", "acmecorp", "apple", "app1e", "amazon", "amaz0n", "paypal", "payp4l", "att", "line", "zeta",
+      "login", "secure", "my", "id", "com", "www", "pay", "prime", "shop", "help", "tracking", "app", "webmail",
+      "delivery",
+      "x", "q", "z", "7", "24", "0", "1", "-", ".", "-", ".",
+    ];
+    const pool: Array<[string, string]> = [
+      ["Acme", "acme.com"], ["Acmeco", "acmeco.com"], ["Acmecorp", "acmecorp.com"], ["Acme Corp", "acmecorp.net"],
+      ["Apple", "apple.com"], ["PayPal", "paypal.com"], ["AT&T", "att.com"], ["Line", "line.me"],
+      ["Zeta Co", "zetaco.io"], ["Paypal", "paypal.org"], ["Amazon", "amazon.com"],
+    ];
+    for (let seed = 1; seed <= 1000; seed++) {
+      const r = rng(seed);
+      const pick = <T,>(xs: T[]): T => xs[Math.floor(r() * xs.length)]!;
+      const domains = new Set<string>();
+      const nDomains = 5 + Math.floor(r() * 30);
+      for (let k = 0; k < nDomains; k++) {
+        let label = "";
+        const parts = 1 + Math.floor(r() * 6);
+        // Half the time join with explicit delimiters, so multi-segment shapes
+        // (`kw-www-login`, `kw.com-login`, `kw-id-verify`) are dense too.
+        const sep = () => (r() < 0.5 ? "" : pick(["-", "-", "."]));
+        for (let p = 0; p < parts; p++) label += (p > 0 ? sep() : "") + pick(tokens);
+        label = label.replace(/^[-.]+|[-.]+$/g, "").replace(/[-.]{2,}/g, "-");
+        if (label === "") label = "x";
+        domains.add(`${label}.${pick(["com", "net", "co.uk", "io"])}`);
+      }
+      const list = [...domains];
+      const rows = Array.from({ length: 1 + Math.floor(r() * 7) }, (_, i) => {
+        const [name, canonical] = pick(pool);
+        return { id: `b${Math.floor(r() * 5)}${i}`, name, canonical_domain: r() < 0.3 ? pick(list) : canonical };
+      });
+      const brands = buildBrandKeywords(rows);
+      const m = new BrandMatcher(brands, { demoteAfter: Number.POSITIVE_INFINITY });
+      for (const d of list) {
+        const got = m.best(d);
+        expect(got ? got.bi : -1, `seed ${seed} domain ${d}`).toBe(refBest(d, brands));
+      }
+    }
   });
 });
 

@@ -1,7 +1,7 @@
-import type { FeedModule, FeedContext, FeedResult, ThreatRow } from "./types";
-import { threatId } from "./types";
+import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { bulkInsertThreats } from "../lib/feedRunner";
 import { logger } from "../lib/logger";
+import { BrandMatcher, buildBrandKeywords, type BrandMatchEntry } from "../lib/nrd-brand-match";
 import {
   NRD_ARCHIVE_PREFIX,
   NRD_DOMAINS_PER_STATEMENT,
@@ -17,6 +17,23 @@ export {
   NRD_STATEMENTS_PER_BATCH,
   storeNrdReference,
 } from "../lib/nrd-store";
+export {
+  BrandMatcher,
+  GENERIC_KEYWORDS,
+  GLUE_WORDS,
+  NRD_KEYWORD_DEMOTE_AFTER,
+  PRODUCT_GLUE,
+  STRONG_WORDS,
+  VARIANT_CONTEXT_WORDS,
+  WEAK_WORDS,
+  brandKeywords,
+  buildBrandKeywords,
+  collectBrandMatchRows,
+  isGenericKeyword,
+  keywordNeedles,
+  registrableLabels,
+} from "../lib/nrd-brand-match";
+export type { BrandKeywordSpec, BrandMatchEntry } from "../lib/nrd-brand-match";
 
 /**
  * NRD Feed — Newly Registered Domains via Hagezi's NRD 7-day list.
@@ -46,7 +63,7 @@ export {
  *      "What lands in nrd_domains" below, (b) streams ALL of them into the
  *      R2 archive, and (c) brand-matches ALL of them, inserting the matches
  *      via bulkInsertThreats in the same flush — so memory stays bounded
- *      even if a generic brand keyword matches a large share of the day.
+ *      even if a brand keyword floods.
  *   4. Every today-line that is old (in the snapshot) or was actually
  *      flushed is gzip-streamed into the NEW snapshot as it is read. A new
  *      domain beyond the per-run cap (NRD_MAX_NEW_PER_RUN) is left OUT of
@@ -59,6 +76,28 @@ export {
  *   5. The snapshot is PUT to R2 only after every D1 write succeeded, so a
  *      failed run leaves the old snapshot and the retry re-diffs (INSERT OR
  *      IGNORE + deterministic threatId make that idempotent).
+ *
+ * Brand matching (lib/nrd-brand-match.ts, redesigned 2026-10-06) looks for
+ * COMBOSQUATS only — exact dnstwist typosquats are claimed precisely via
+ * nrd_domains + lib/lookalike-nrd-matcher.ts. A brand keyword (display name,
+ * hyphenated name, or the canonical domain's registrable label when that is
+ * distinctive) counts only as a '-'/'.'-delimited token or concatenated with
+ * lure/glue words and digits (`paypal-secure-login`, `coinbasevalidate`,
+ * `micros0ft-support`), never embedded in another word. GENERIC keywords (≤4
+ * chars, a curated dictionary word, or a lure word: line, att, booking,
+ * apple, …) also need a STRONG phishing/parcel word (login, verify, wallet,
+ * refund, tracking, …) in their segment or in the next segment (only `com`
+ * right of the keyword, `www` left of it and the brand's own product names
+ * are skipped: `att.com-login`, `apple-id-verify`); their digit-swapped
+ * variants (`amaz0n`, `0utlook`) match only in a lure context. Winner: longest needle, then lowest brand id (brands are
+ * loaded ORDER BY b.id), so attribution never depends on D1 row order. A
+ * brand with NRD_KEYWORD_DEMOTE_AFTER (100) distinctive-path rows in one run
+ * has its keywords demoted to the generic rule for the rest of that run
+ * (`nrd_hagezi_keywords_demoted` log; opts.keywordDemoteAfter in tests). The
+ * old substring match produced 43,010 threats on the first full Hagezi day
+ * (51,564 on a 443K-domain sample); the new rules give ~316/day on the same
+ * samples. Canonical-domain exclusion, one row per domain and the ThreatRow
+ * fields are unchanged.
  *
  * What lands in nrd_domains (D1 write cut, owner decision 2026-10-05): only
  * new domains EQUAL to a `lookalike_domains.domain` or a
@@ -172,16 +211,6 @@ const BODY_IDLE_TIMEOUT_MS = 60_000;
 /** Characters buffered before a write into the snapshot CompressionStream. */
 const SNAPSHOT_WRITE_CHARS = 64 * 1024;
 
-/** Common homoglyph substitutions for brand matching */
-const HOMOGLYPHS: Record<string, string[]> = {
-  l: ["1", "i"],
-  o: ["0"],
-  i: ["1", "l"],
-  a: ["4", "@"],
-  e: ["3"],
-  s: ["5", "$"],
-};
-
 /** New domains buffered before a flush (filtered storeNrdReference +
  *  archive + brand match): exactly one db.batch() call per flush. */
 export const NRD_FLUSH_EVERY = NRD_DOMAINS_PER_STATEMENT * NRD_STATEMENTS_PER_BATCH;
@@ -191,9 +220,9 @@ export interface NrdIngestOptions {
   maxNewPerRun?: number;
   /** Override NRD_FLUSH_EVERY (tests). */
   flushEvery?: number;
+  /** Override NRD_KEYWORD_DEMOTE_AFTER (tests). */
+  keywordDemoteAfter?: number;
 }
-
-type BrandKeyword = { id: string; domain: string; needles: string[] };
 
 export const nrd_hagezi: FeedModule = {
   ingest: (ctx) => ingestNrdHagezi(ctx),
@@ -299,7 +328,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     let archiveFirst: string | null = null;
     let archived = 0;
 
-    const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB));
+    const matcher = new BrandMatcher(await loadBrandKeywords(ctx.env.DB), { demoteAfter: opts.keywordDemoteAfter });
     // Carried across flushes so an in-list repeat split over two chunks is
     // still one threat + one in-payload duplicate.
     const matched = new Set<string>();
@@ -359,6 +388,13 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
     if (deferred > 0) {
       logger.warn("nrd_hagezi_deferred", { newTotal, processed: newProcessed, deferred, cap: maxNew });
     }
+    const demoted = matcher.demotedKeywords();
+    if (demoted.length > 0) {
+      // A "distinctive" keyword flooded (≥ NRD_KEYWORD_DEMOTE_AFTER rows this
+      // run) and was matched as generic afterwards — a stop-list candidate
+      // for GENERIC_KEYWORDS (lib/nrd-brand-match.ts).
+      logger.warn("nrd_hagezi_keywords_demoted", { keywords: demoted.slice(0, 50), count: demoted.length });
+    }
 
     // Archive whenever every nrd_domains write landed (we got here, so
     // storeNrdReference never threw) — independent of threat-insert errors:
@@ -401,6 +437,7 @@ export async function ingestNrdHagezi(ctx: FeedContext, opts: NrdIngestOptions =
       storedInD1,
       deferred,
       matches: totals.matches,
+      demotedKeywords: matcher.demotedKeywords(),
       itemsNew,
       itemsDuplicate,
       itemsError,
@@ -436,27 +473,18 @@ async function cancelBody(res: Response): Promise<void> {
   try { await res.body?.cancel(); } catch { /* already closed */ }
 }
 
-async function loadBrandKeywords(db: D1Database): Promise<BrandKeyword[]> {
+async function loadBrandKeywords(db: D1Database): Promise<BrandMatchEntry[]> {
   const brands = await db.prepare(
     `SELECT b.id, b.name, b.canonical_domain
      FROM brands b
      INNER JOIN monitored_brands mb ON mb.brand_id = b.id
-     WHERE mb.status = 'active'`
+     WHERE mb.status = 'active'
+     ORDER BY b.id`
   ).all<{ id: string; name: string; canonical_domain: string }>();
-
-  // Deduped by brand id (a brand monitored by several tenants appears once
-  // per monitored_brands row); homoglyph variants precomputed once per brand.
-  const seenBrandIds = new Set<string>();
-  const brandKeywords: BrandKeyword[] = [];
-  for (const b of brands.results) {
-    if (seenBrandIds.has(b.id)) continue;
-    seenBrandIds.add(b.id);
-    const needles = brandNeedles(b.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
-    // A keyword under 3 chars can never match.
-    if (needles.length === 0) continue;
-    brandKeywords.push({ id: b.id, domain: b.canonical_domain.toLowerCase(), needles });
-  }
-  return brandKeywords;
+  // Sorted + deduped by brand id (buildBrandKeywords sorts again, so the
+  // lowest-id tie-break never depends on D1 row order); keywords classified
+  // generic/distinctive once per run (lib/nrd-brand-match.ts).
+  return buildBrandKeywords(brands.results);
 }
 
 // ─── List header ─────────────────────────────────────────────────────
@@ -748,132 +776,4 @@ class SnapshotWriter {
 
 function isArrayBufferBacked(u: Uint8Array): u is Uint8Array<ArrayBuffer> {
   return u.buffer instanceof ArrayBuffer;
-}
-
-// ─── Brand matching ─────────────────────────────────────────────────
-
-/**
- * Needle-indexed brand matcher. Semantics are identical to the naive
- * domains × brands × needles `includes` scan (pinned by a property test):
- * for each domain the LOWEST-index brand (in `brandKeywords` order) with a
- * needle that is a substring of the domain wins, except that a brand never
- * matches its own canonical domain (which then falls through to the next
- * brand). Instead of scanning every brand, each domain's substrings of every
- * distinct needle length are looked up in a Map<needle, brandIndex[]>, so the
- * cost is ~O(domain length × distinct needle lengths), independent of the
- * brand count.
- */
-class BrandMatcher {
-  private readonly index = new Map<string, number[]>();
-  private readonly lengths: number[];
-  /** Brands holding an empty needle (`includes("")` is always true). */
-  private readonly always: number[] = [];
-
-  constructor(private readonly brands: BrandKeyword[]) {
-    const lengths = new Set<number>();
-    brands.forEach((b, bi) => {
-      for (const n of b.needles) {
-        if (n.length === 0) {
-          if (this.always[this.always.length - 1] !== bi) this.always.push(bi);
-          continue;
-        }
-        let list = this.index.get(n);
-        if (!list) { list = []; this.index.set(n, list); }
-        // Brands are visited in ascending order, so lists stay sorted.
-        if (list[list.length - 1] !== bi) list.push(bi);
-        lengths.add(n.length);
-      }
-    });
-    this.lengths = [...lengths].sort((a, b) => a - b);
-  }
-
-  get empty(): boolean {
-    return this.brands.length === 0;
-  }
-
-  /** Index of the winning brand for `domain`, or -1. */
-  private bestBrand(domain: string): number {
-    let best = Number.MAX_SAFE_INTEGER;
-    const consider = (list: number[]): void => {
-      for (const bi of list) {
-        if (bi >= best) return;
-        if (this.brands[bi]!.domain !== domain) { best = bi; return; }
-      }
-    };
-    consider(this.always);
-    for (const len of this.lengths) {
-      if (len > domain.length) break;
-      for (let i = 0; i + len <= domain.length; i++) {
-        const list = this.index.get(domain.substring(i, i + len));
-        if (list) consider(list);
-        if (best === 0) return 0;
-      }
-    }
-    return best === Number.MAX_SAFE_INTEGER ? -1 : best;
-  }
-
-  collect(domains: string[], matched: Set<string>): { rows: ThreatRow[]; inPayloadDuplicates: number } {
-    const rows: ThreatRow[] = [];
-    let inPayloadDuplicates = 0;
-    for (const domain of domains) {
-      const bi = this.bestBrand(domain);
-      if (bi < 0) continue;
-      if (matched.has(domain)) { inPayloadDuplicates++; continue; }
-      matched.add(domain);
-      rows.push({
-        id: threatId("nrd_hagezi", "domain", domain),
-        source_feed: "nrd_hagezi",
-        threat_type: "typosquatting",
-        malicious_url: null,
-        malicious_domain: domain,
-        target_brand_id: this.brands[bi]!.id,
-        ioc_value: domain,
-        severity: "medium",
-        confidence_score: 60,
-      });
-    }
-    return { rows, inPayloadDuplicates };
-  }
-}
-
-/**
- * Pure domain × brand match pass — no I/O. One row per distinct matched
- * domain: the FIRST brand (in `brandKeywords` order) whose needles hit wins,
- * a brand's own canonical domain never matches that brand, and a domain
- * repeated in the list counts as an in-payload duplicate. Pass `matched` to
- * carry the seen-set across chunks of one run (the feed does).
- *
- * Exported for unit tests.
- */
-export function collectBrandMatchRows(
-  domains: string[],
-  brandKeywords: Array<{ id: string; domain: string; needles: string[] }>,
-  matched: Set<string> = new Set<string>(),
-): { rows: ThreatRow[]; inPayloadDuplicates: number } {
-  return new BrandMatcher(brandKeywords).collect(domains, matched);
-}
-
-/**
- * Every substring that counts as a brand hit: the keyword itself followed by
- * its homoglyph variants. Empty for keywords under 3 chars (false-positive
- * guard). Computed once per brand per run.
- */
-function brandNeedles(keyword: string): string[] {
-  if (keyword.length < 3) return [];
-  return [keyword, ...generateHomoglyphVariants(keyword)];
-}
-
-/** Generate simple homoglyph variants of a keyword */
-function generateHomoglyphVariants(keyword: string): string[] {
-  const variants: string[] = [];
-  for (let i = 0; i < keyword.length; i++) {
-    const char = keyword[i]!;
-    const subs = HOMOGLYPHS[char];
-    if (subs) {
-      for (const sub of subs) {
-        variants.push(keyword.slice(0, i) + sub + keyword.slice(i + 1));
-      }
-    }
-  }
-  return variants;
 }
