@@ -6,8 +6,10 @@
  * Always visibly tagged so it cannot be read as a customer's real finding.
  *
  * Props: label (accessible name), rows (SampleRow[]), note, footer (a one-line
- * outcome under the rows, e.g. "Takedown drafted, waiting for your approval").
- * A default slot replaces the rows for custom fragments.
+ * outcome under the rows, e.g. "Takedown drafted, waiting for your approval or
+ * filed under your signed rules"). The body renders `rows` first and then the
+ * default slot, so a page can use either alone or both together (the rows, then a
+ * custom fragment underneath, as threat-detection and email-security do).
  */
 import SampleRows from "./SampleRows.astro";
 import type { SampleRow } from "./types";

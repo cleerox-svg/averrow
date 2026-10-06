@@ -20,6 +20,7 @@ import SampleFrame from "../../components/product/SampleFrame.astro";
 import ScopeTable from "../../components/product/ScopeTable.astro";
 import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
 import PageCTA from "../../components/product/PageCTA.astro";
+import MobileFold from "../../components/product/MobileFold.astro";
 import TakedownFlow from "../../components/TakedownFlow.astro";
 import type { SampleRow, ScopeRow } from "../../components/product/types";
 
@@ -141,7 +142,6 @@ const scope: ScopeRow[] = [
   <TakedownFlow
     title="From finding to takedown"
     showHowLink={false}
-    modeLabels={{ manual: "Off", approve: "Semi-auto", auto: "Auto" }}
   />
 
   <ProductSection
@@ -150,20 +150,22 @@ const scope: ScopeRow[] = [
     heading="Follow every takedown."
     lede="Each takedown in your console has one of these statuses, so you always know where it stands."
   >
-    <ol class="td-flow" role="list" aria-label="Takedown statuses, in order">
-      {statuses.map((s, i) => (
-        <li>
-          <span class="td-i" aria-hidden="true">{i + 1}</span>
-          <b>{s.name}</b>
-          <span>{s.text}</span>
-        </li>
-      ))}
-    </ol>
-    <ul class="td-end" role="list" aria-label="Other outcomes">
-      {endings.map((s) => (
-        <li><b>{s.name}</b><span>{s.text}</span></li>
-      ))}
-    </ul>
+    <MobileFold summary="The statuses a takedown moves through">
+      <ol class="td-flow" role="list" aria-label="Takedown statuses, in order">
+        {statuses.map((s, i) => (
+          <li>
+            <span class="num-dot" aria-hidden="true">{i + 1}</span>
+            <b>{s.name}</b>
+            <span>{s.text}</span>
+          </li>
+        ))}
+      </ol>
+      <ul class="td-end" role="list" aria-label="Other outcomes">
+        {endings.map((s) => (
+          <li><b>{s.name}</b><span>{s.text}</span></li>
+        ))}
+      </ul>
+    </MobileFold>
   </ProductSection>
 
   <ProductSection
@@ -217,19 +219,9 @@ const scope: ScopeRow[] = [
     padding: 14px;
     min-width: 0;
   }
-  .td-i {
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    font: 600 12px var(--font-mono);
-    color: var(--text-secondary);
-  }
   .td-flow b, .td-end b { font: 700 15px var(--font-display); color: var(--text-primary); }
   .td-flow li > span:last-child, .td-end span { font-size: 13.5px; line-height: 1.5; color: var(--text-secondary); }
-  .td-end { display: flex; flex-wrap: wrap; gap: 10px; }
+  .td-end { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
   .td-end li { display: grid; gap: 4px; flex: 1 1 200px; border: 1px dashed var(--border-strong); border-radius: 12px; padding: 12px 14px; min-width: 0; }
 
   @media (max-width: 1100px) {

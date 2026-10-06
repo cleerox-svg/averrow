@@ -20,6 +20,7 @@ import SampleFrame from "../components/product/SampleFrame.astro";
 import ProofStrip from "../components/product/ProofStrip.astro";
 import RelatedSurfaces from "../components/product/RelatedSurfaces.astro";
 import PageCTA from "../components/product/PageCTA.astro";
+import MobileFold from "../components/product/MobileFold.astro";
 import Coverage from "../components/Coverage.astro";
 import type { SampleRow } from "../components/product/types";
 
@@ -103,7 +104,7 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
   </ProductHero>
 
   <ProofStrip stats={["threats", "operations", "brands", "lookalikes"]} />
-  <p class="pv-status">Platform health is public. <a href={`${base}/status`}>View live status &rarr;</a></p>
+  <p class="pv-status">Platform health is public. <a class="link-u" href={`${base}/status`}>View live status &rarr;</a></p>
 
   <Coverage showProof={false} />
 
@@ -120,24 +121,29 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
     heading="Rule-based analysis you can check."
     lede="Detection and correlation run on deterministic rules, so every score traces back to evidence you can see. There is no black box between a signal and the decision."
   >
-    <ol class="pv-stages" role="list">
-      {stages.map((s, i) => (
-        <li class="pv-stage">
-          <span class="pv-n" aria-hidden="true">{i + 1}</span>
-          <div>
-            <h3>{s.name}{s.plan && <span class="pv-plan">{s.plan}</span>}</h3>
-            <span class="pv-role">{s.role}</span>
-            <p>{s.text}</p>
-          </div>
-        </li>
-      ))}
-    </ol>
+    <MobileFold summary="The six stages, from detection to summary">
+      <ol class="pv-stages" role="list">
+        {stages.map((s, i) => (
+          <li class="pv-stage">
+            <span class="num-dot" aria-hidden="true">{i + 1}</span>
+            <div>
+              <div class="pv-hd">
+                <h3>{s.name}</h3>
+                {s.plan && <span class="pv-plan">{s.plan}</span>}
+              </div>
+              <span class="pv-role">{s.role}</span>
+              <p>{s.text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </MobileFold>
 
     <div class="pv-rate">
       <div class="pv-rate-copy">
         <h3>One situation, rated as one.</h3>
         <p>
-          Averrow looks at look-alikes, impersonation accounts, app listings, leak-site mentions,
+          Averrow looks at lookalikes, impersonation accounts, app listings, leak-site mentions,
           certificates and your email posture together and rates the situation as one, not as a
           list of unrelated rows.
         </p>
@@ -156,15 +162,17 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
     heading="Works with your existing stack."
     lede="Alerts appear in your Averrow console. On Business and Enterprise they can also go to your webhook or SIEM, set up with our team."
   >
-    <ul class="pv-int" role="list">
-      {integrations.map((i) => (
-        <li>
-          <b>{i.name}</b>
-          <span>{i.desc}</span>
-          <em class={i.status}>{STATUS_LABEL[i.status]}</em>
-        </li>
-      ))}
-    </ul>
+    <MobileFold summary="Integrations and their availability">
+      <ul class="pv-int" role="list">
+        {integrations.map((i) => (
+          <li>
+            <b>{i.name}</b>
+            <span>{i.desc}</span>
+            <em class={i.status}>{STATUS_LABEL[i.status]}</em>
+          </li>
+        ))}
+      </ul>
+    </MobileFold>
   </ProductSection>
 
   <PageCTA />
@@ -172,8 +180,6 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
 
 <style>
   .pv-status { max-width: 1280px; margin: 0 auto; padding: 4px 24px 0; font: 500 13px var(--font-mono); color: var(--text-secondary); }
-  .pv-status a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .pv-status a:hover { border-bottom-color: var(--accent); }
 
   .pv-stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
   .pv-stage {
@@ -186,19 +192,9 @@ const integrations: Array<{ name: string; desc: string; status: Status }> = [
     padding: 16px;
     min-width: 0;
   }
-  .pv-n {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    font: 600 12px var(--font-mono);
-    color: var(--text-secondary);
-  }
   .pv-stage > div { display: grid; gap: 4px; min-width: 0; }
-  .pv-stage h3 { margin: 0; font: 700 16px var(--font-display); color: var(--text-primary); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .pv-hd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+  .pv-stage h3 { margin: 0; font: 700 16px var(--font-display); color: var(--text-primary); }
   .pv-plan {
     font: 600 12px var(--font-mono);
     color: var(--btn-primary-ink);

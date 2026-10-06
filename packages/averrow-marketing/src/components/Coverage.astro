@@ -163,8 +163,8 @@ const surfaces = COVERAGE.map((s) => ({
 
   /* Plan tag: text always present; hue only reinforces. */
   .cv-pl {
-    font: 600 10px var(--font-mono);
-    letter-spacing: 0.06em;
+    font: 600 12px var(--font-mono);
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     white-space: nowrap;
     border: 1px solid var(--border-strong);
@@ -175,7 +175,7 @@ const surfaces = COVERAGE.map((s) => ({
   .cv-pl.business { color: var(--sev-low-text); border-color: var(--sev-low-text); }
   [data-theme="light"] .cv-pl.business { color: var(--blue-text); border-color: var(--blue-text); }
   .cv-pl.enterprise { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-  [data-theme="light"] .cv-pl.enterprise { color: #fff; }
+  [data-theme="light"] .cv-pl.enterprise { color: var(--bg-primary); }
   .cv-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
   .cv-ui {
@@ -190,32 +190,32 @@ const surfaces = COVERAGE.map((s) => ({
     min-width: 0;
   }
   .cv-r { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; min-width: 0; }
-  .cv-mono { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
+  .cv-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); overflow-wrap: anywhere; min-width: 0; }
   .cv-r > span:first-child { color: var(--text-primary); min-width: 0; }
-  .cv-st { color: var(--text-secondary); font-size: 11px; margin-left: auto; text-align: right; }
-  .cv-note { font: 500 10.5px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+  .cv-st { color: var(--text-secondary); font-size: 12px; margin-left: auto; text-align: right; }
+  .cv-note { font: 500 12px var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
   .cv-pill {
-    font: 600 10.5px var(--font-mono);
+    font: 600 12px var(--font-mono);
     border: 1px solid currentColor;
     border-radius: 999px;
     padding: 1px 8px;
     white-space: nowrap;
   }
-  .cv-pill.high { color: var(--sev-high-text); background: rgba(251, 146, 60, 0.10); }
-  .cv-pill.med { color: var(--sev-medium-text); background: rgba(251, 191, 36, 0.10); }
-  .cv-pill.low { color: var(--sev-low-text); background: rgba(96, 165, 250, 0.10); }
+  .cv-pill.high { color: var(--sev-high-text); background: color-mix(in srgb, var(--sev-high) 12%, transparent); }
+  .cv-pill.med { color: var(--sev-medium-text); background: color-mix(in srgb, var(--sev-medium) 12%, transparent); }
+  .cv-pill.low { color: var(--sev-low-text); background: color-mix(in srgb, var(--sev-low) 12%, transparent); }
   .cv-pill.new { color: var(--amber-text); background: var(--accent-bg); }
   .cv-grade { grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 14px; }
   .cv-g { display: grid; gap: 2px; text-align: center; }
-  .cv-g i, .cv-checks i { font: 600 9.5px var(--font-mono); font-style: normal; color: var(--text-secondary); text-transform: uppercase; }
+  .cv-g i, .cv-checks i { font: 600 12px var(--font-mono); font-style: normal; color: var(--text-secondary); text-transform: uppercase; }
   .cv-g b { font: 800 26px var(--font-display); color: var(--text-primary); }
   .cv-checks { display: grid; gap: 3px; }
-  .cv-checks li { display: flex; justify-content: space-between; gap: 8px; font: 500 11px var(--font-mono); }
+  .cv-checks li { display: flex; justify-content: space-between; gap: 8px; font: 500 12px var(--font-mono); }
   .cv-checks .good { color: var(--green-text); }
   .cv-checks .bad { color: var(--red-text); }
 
   .cv-nets { display: flex; flex-wrap: wrap; gap: 6px; }
-  .cv-nets li { font-size: 11.5px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
+  .cv-nets li { font-size: 12px; font-weight: 600; color: var(--text-secondary); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 8px; }
   .cv .cv-t p.cv-proof, .cv .cv-db p.cv-proof { margin-top: auto; font-size: 12.5px; }
   .cv-proof b { color: var(--text-primary); font: 800 18px var(--font-display); margin-right: 4px; font-variant-numeric: tabular-nums; }
   .cv-foot {

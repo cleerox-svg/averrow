@@ -4,7 +4,7 @@
  * kit in src/components/product/.
  *
  * Disclosure (docs/DISCLOSURE_REGISTER.md rows L24-L34, §3.1, §3.9): coverage
- * is "character swaps, extra or missing letters, brand plus common words",
+ * is "character swaps and your brand plus common words",
  * with no further permutation names, no keyword list, no registry or
  * newly-registered-domain source name, no counts of variants, no cadence beyond
  * the approved "hourly certificate checks" and "usually within a day". It never
@@ -27,20 +27,19 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const heroRows: SampleRow[] = [
   { text: "acme-secure-login.example", mono: true, status: "Registered yesterday, serving a login page", pill: "High", tone: "high" },
-  { text: "acrne.example", mono: true, status: "Mail server added", pill: "Medium", tone: "med" },
+  { text: "acmw.example", mono: true, status: "Mail server added", pill: "Medium", tone: "med" },
   { text: "acme-pay.example", mono: true, status: "Parked", pill: "Low", tone: "low" },
 ];
 
 const steps: Step[] = [
   {
     title: "Generate",
-    text: "For every domain you protect, we generate the lookalikes an attacker would register: character swaps, extra or missing letters, and your brand plus common words.",
+    text: "For every domain you protect, we generate the lookalikes an attacker would register: character swaps and your brand plus common words.",
     output: {
       label: "Sample generated lookalikes of acme.example",
       rows: [
-        { text: "acrne.example", mono: true, status: "Character swap", pill: "Generated", tone: "low" },
-        { text: "acmee.example", mono: true, status: "Extra letter", pill: "Generated", tone: "low" },
-        { text: "acme-pay.example", mono: true, status: "Brand plus a common word", pill: "Generated", tone: "low" },
+        { text: "acmw.example", mono: true, status: "Character swap", pill: "Generated", tone: "low" },
+                { text: "acme-pay.example", mono: true, status: "Brand plus a common word", pill: "Generated", tone: "low" },
       ],
       note: "and more, for every domain on your account",
     },
@@ -52,14 +51,14 @@ const steps: Step[] = [
       label: "Sample watch events",
       rows: [
         { text: "acme-secure-login.example", mono: true, status: "Registered yesterday", pill: "New", tone: "new" },
-        { text: "acrne.example", mono: true, status: "Mail server added", pill: "Changed", tone: "med" },
+        { text: "acmw.example", mono: true, status: "Mail server added", pill: "Changed", tone: "med" },
         { text: "acme-pay.example", mono: true, status: "Still parked, re-checked", pill: "Watching", tone: "low" },
       ],
     },
   },
   {
     title: "Act",
-    text: "We look at what the domain actually serves, so a parked page and a live login page are not treated the same. You get an alert, and a takedown is drafted with its evidence. Nothing is filed without your approval or your signed rules.",
+    text: "We look at what the domain actually serves, so a parked page and a live login page are not treated the same. You get an alert, and a takedown is drafted with its evidence, waiting for your approval or filed under your signed rules. Nothing is filed outside your approval or your signed rules.",
     output: {
       label: "Sample alert and takedown draft",
       rows: [
@@ -78,7 +77,7 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Kinds of lookalike",
-    covered: "Character swaps, extra or missing letters, and your brand plus common words.",
+    covered: "Character swaps and your brand plus common words.",
     notCovered: "Every possible variation of your name.",
   },
   {
@@ -111,15 +110,15 @@ const scope: ScopeRow[] = [
 
 <ProductPage
   title="Lookalike Domain Monitoring — Averrow"
-  description="Know when someone registers your name. Averrow generates the lookalikes of every domain you protect, flags new registrations, checks what they serve and drafts the takedown for your approval."
+  description="Know when someone registers your name. Averrow generates the lookalikes of every domain you protect, flags new registrations, checks what they serve and drafts the takedown, for your approval or your signed rules."
   crumb="Lookalike domains"
 >
   <ProductHero
     surface="lookalike"
     title="Know when someone registers your name."
-    sub="We generate the lookalikes of every domain you protect, flag the ones that get registered, and look at what they serve. You decide what gets taken down."
+    sub="We generate the lookalikes of every domain you protect, flag the ones that get registered, and look at what they serve. You decide what gets taken down, by approval or by your signed rules."
   >
-    <SampleFrame slot="sample" label="Sample lookalike findings" rows={heroRows} footer="Takedown drafted, waiting for your approval" />
+    <SampleFrame slot="sample" label="Sample lookalike findings" rows={heroRows} footer="Takedown drafted, waiting for your approval or filed under your signed rules" />
   </ProductHero>
 
   <ProofStrip stats={["lookalikes", "brands"]} />
@@ -130,7 +129,7 @@ const scope: ScopeRow[] = [
     heading="Generate, watch, act."
     lede="Three steps run for every domain on your account. Each one produces something you can see in your console."
   >
-    <StepList steps={steps} where="lookalike" />
+    <StepList steps={steps} />
   </ProductSection>
 
   <ProductSection
@@ -154,7 +153,7 @@ const scope: ScopeRow[] = [
   >
     <ScopeTable rows={scope} caption="Lookalike domain monitoring: covered and not covered" />
     <p class="ld-more">
-      Takedowns for lookalike domains follow your rules: <a href={`${base}/platform/takedowns`}>see how takedowns work</a>.
+      Takedowns for lookalike domains follow your rules: <a class="link-u" href={`${base}/platform/takedowns`}>see how takedowns work</a>.
     </p>
   </ProductSection>
 
@@ -170,6 +169,4 @@ const scope: ScopeRow[] = [
 <style>
   .ld-cert { max-width: 520px; }
   .ld-more { margin: 0; font-size: 14px; color: var(--text-secondary); }
-  .ld-more a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .ld-more a:hover { border-bottom-color: var(--accent); }
 </style>

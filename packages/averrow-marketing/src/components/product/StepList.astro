@@ -6,24 +6,23 @@
  * Both layouts are rendered and one is hidden by CSS, the same pattern as the
  * homepage Coverage section (display:none also removes it from the a11y tree).
  *
- * Props: steps (Step[]: title, text, output {label, rows, note}), `where` for
- * unique ids when a page has more than one list.
+ * Props: steps (Step[]: title, text, output {label, rows, note}). No ids are
+ * generated, so a page can hold more than one list.
  */
 import SampleRows from "./SampleRows.astro";
 import type { Step } from "./types";
 
 interface Props {
   steps: Step[];
-  where?: string;
 }
-const { steps, where = "steps" } = Astro.props;
+const { steps } = Astro.props;
 ---
 
-<div class="sl" data-step-list={where}>
+<div class="sl">
   <ol class="sl-grid" role="list">
     {steps.map((s, i) => (
       <li class="sl-st">
-        <div class="sl-n"><span aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></div>
+        <div class="sl-n"><span class="num-dot" aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></div>
         <p>{s.text}</p>
         <div class="sl-out" role="group" aria-label={s.output.label}>
           <SampleRows rows={s.output.rows} note={s.output.note} />
@@ -35,7 +34,7 @@ const { steps, where = "steps" } = Astro.props;
   <div class="sl-list">
     {steps.map((s, i) => (
       <details class="sl-d" open={i === 0}>
-        <summary><span class="sl-sn" aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></summary>
+        <summary><span class="num-dot" aria-hidden="true">{i + 1}</span><h3>{s.title}</h3></summary>
         <div class="sl-db">
           <p>{s.text}</p>
           <div class="sl-out" role="group" aria-label={s.output.label}>
@@ -60,17 +59,6 @@ const { steps, where = "steps" } = Astro.props;
     padding: 16px;
   }
   .sl-n { display: flex; align-items: center; gap: 10px; }
-  .sl-n span, .sl-sn {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 24px;
-    height: 24px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    font: 600 12px var(--font-mono);
-    color: var(--text-secondary);
-  }
   .sl-n h3, .sl-d h3 { margin: 0; font: 700 17px var(--font-display); color: var(--text-primary); }
   .sl-st p, .sl-db p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .sl-out {

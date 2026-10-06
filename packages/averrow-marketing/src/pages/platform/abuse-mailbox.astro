@@ -29,7 +29,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const steps: Step[] = [
   {
     title: "Forward",
-    text: "Customers and staff forward suspicious email to your address. Each reporter gets an instant acknowledgement.",
+    text: "Customers and staff forward suspicious email to your address. Reporters whose mail passes authentication get an instant acknowledgement.",
     output: {
       label: "Sample report received",
       rows: [{ text: "Report received", status: "Forwarded to verify-acme@averrow.com", pill: "Acknowledged", tone: "ok" }],
@@ -48,7 +48,7 @@ const steps: Step[] = [
   },
   {
     title: "Resolve",
-    text: "The reporter gets a verdict in about two minutes. Phishing that our rules confirm becomes a threat, and a takedown is drafted for your approval.",
+    text: "A reporter whose mail passes authentication gets a verdict in about two minutes. Phishing that our rules confirm becomes a threat, and a takedown is drafted, waiting for your approval or filed under your signed rules.",
     output: {
       label: "Sample outcome",
       rows: [
@@ -70,7 +70,7 @@ const setup = [
   },
   {
     title: "Forward suspicious mail.",
-    text: "Each report is acknowledged at once. Verdicts and escalations appear in your console.",
+    text: "Reports are classified on arrival. Verdicts and escalations appear in your console.",
   },
 ];
 
@@ -82,7 +82,7 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Reporters",
-    covered: "An instant acknowledgement, then a verdict in about two minutes.",
+    covered: "For reporters whose mail passes authentication, an instant acknowledgement, then a verdict in about two minutes.",
     notCovered: "A reply to a sender whose own mail fails authentication. We never write back to forged addresses.",
   },
   {
@@ -92,7 +92,7 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Threats and takedowns",
-    covered: "Phishing that our rules confirm is promoted to a threat, matched to the brands you monitor, with a takedown drafted and waiting for your approval.",
+    covered: "Phishing that our rules confirm is promoted to a threat, matched to the brands you monitor, with a takedown drafted, waiting for your approval or filed under your signed rules.",
     notCovered: "Filing anything without your approval or your signed rules.",
   },
   {
@@ -110,15 +110,15 @@ const scope: ScopeRow[] = [
 
 <ProductPage
   title="Abuse Mailbox — Averrow"
-  description="One address for customers and staff to report suspicious email. Each report is acknowledged at once, classified, and answered with a verdict. Confirmed phishing becomes a threat with a takedown drafted for your approval."
+  description="One address for customers and staff to report suspicious email. Each report is classified and answered with a verdict. Confirmed phishing becomes a threat with a takedown drafted, waiting for your approval or filed under your signed rules."
   crumb="Abuse mailbox"
 >
   <ProductHero
     surface="abuse"
     title="One address to report suspicious email."
-    sub="Customers and staff forward it. Each report is acknowledged at once, and the reporter gets a verdict back in about two minutes. Confirmed phishing becomes a threat with a takedown drafted for your approval."
+    sub="Customers and staff forward it. Reporters whose mail passes authentication get an instant acknowledgement and a verdict in about two minutes. Confirmed phishing becomes a threat with a takedown drafted, waiting for your approval or filed under your signed rules."
   >
-    <SampleFrame slot="sample" label="Sample determination email" footer="Takedown drafted, waiting for your approval">
+    <SampleFrame slot="sample" label="Sample determination email" footer="Takedown drafted, waiting for your approval or filed under your signed rules">
       <div class="ae">
         <dl class="ae-meta">
           <div><dt>From</dt><dd>Averrow Abuse Triage</dd></div>
@@ -127,16 +127,16 @@ const scope: ScopeRow[] = [
         <div class="ae-body">
           <span class="ae-verdict">Phishing confirmed</span>
           <p class="ae-lead">The message you reported is a credential-phishing attempt impersonating your brand. Here's what we found.</p>
-          <h3 class="ae-h">What we found</h3>
+          <p class="ae-h">What we found</p>
           <ul class="ae-list" role="list">
             <li>Sender authentication failed (SPF and DKIM)</li>
             <li>A link to <span class="ae-mono">acme-secure-login.example</span>, a lookalike of your domain</li>
             <li>Matches a brand you monitor</li>
           </ul>
-          <h3 class="ae-h">Next steps</h3>
+          <p class="ae-h">Next steps</p>
           <ul class="ae-list" role="list">
             <li>Don't open the link, and warn anyone who may have.</li>
-            <li>We've added it to your threat feed and drafted a takedown for your approval.</li>
+            <li>We've added it to your threat feed and drafted a takedown, waiting for your approval or filed under your signed rules.</li>
           </ul>
         </div>
       </div>
@@ -149,7 +149,7 @@ const scope: ScopeRow[] = [
     heading="Forward, triage, resolve."
     lede="Every forwarded message is checked, not just stored."
   >
-    <StepList steps={steps} where="abuse" />
+    <StepList steps={steps} />
   </ProductSection>
 
   <ProductSection
@@ -161,14 +161,14 @@ const scope: ScopeRow[] = [
     <ol class="am-setup" role="list">
       {setup.map((s, i) => (
         <li>
-          <span class="am-n" aria-hidden="true">{i + 1}</span>
+          <span class="num-dot" aria-hidden="true">{i + 1}</span>
           <div><b>{s.title}</b><span>{s.text}</span></div>
         </li>
       ))}
     </ol>
     <p class="am-cust">
       Already a customer? Your address and forwarding instructions are in the Abuse Mailbox module in your console.
-      <a href={`${base}${LOGIN_HREF}`}>Log in</a>
+      <a class="link-u" href={`${base}${LOGIN_HREF}`}>Log in</a>
     </p>
   </ProductSection>
 
@@ -227,21 +227,9 @@ const scope: ScopeRow[] = [
     padding: 16px;
   }
   .am-setup li > div { display: grid; gap: 6px; min-width: 0; }
-  .am-n {
-    display: grid;
-    place-items: center;
-    width: 24px;
-    height: 24px;
-    border-radius: 999px;
-    border: 1px solid var(--border-strong);
-    font: 600 12px var(--font-mono);
-    color: var(--text-secondary);
-  }
   .am-setup b { font: 700 16px var(--font-display); color: var(--text-primary); }
-  .am-setup span:not(.am-n) { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
+  .am-setup span:not(.num-dot) { font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .am-cust { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
-  .am-cust a { margin-left: 4px; color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .am-cust a:hover { border-bottom-color: var(--accent); }
 
   @media (max-width: 900px) {
     .am-setup { grid-template-columns: minmax(0, 1fr); }

@@ -22,6 +22,7 @@ import ProductHero from "../../components/product/ProductHero.astro";
 import ProductSection from "../../components/product/ProductSection.astro";
 import SampleFrame from "../../components/product/SampleFrame.astro";
 import StepList from "../../components/product/StepList.astro";
+import FactList from "../../components/product/FactList.astro";
 import ScopeTable from "../../components/product/ScopeTable.astro";
 import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
 import PageCTA from "../../components/product/PageCTA.astro";
@@ -69,6 +70,23 @@ const steps: Step[] = [
       rows: [{ text: "@acme_support", mono: true, status: "Profile link, found today, reason attached", pill: "Ready to report", tone: "new" }],
     },
   },
+];
+
+const execFacts = [
+  { lead: "Five networks.", text: "X, Instagram, TikTok, GitHub and YouTube." },
+  { lead: "Official handles excluded.", text: "Anything an executive actually owns is set aside." },
+  { lead: "Fully deterministic.", text: "No photo or biometric data is collected or compared." },
+  { lead: "You make the call.", text: "A flag means an account exists at a name-based handle. It could be a namesake, so we show it to you rather than calling it fake." },
+];
+const appFacts = [
+  { lead: "Apple App Store only.", text: "Google Play and other stores are not covered." },
+  { lead: "Your apps are set aside.", text: "Official apps and your developer account aren't flagged." },
+  { lead: "No icon matching.", text: "We don't compare icons or images today." },
+];
+const tmFacts = [
+  { lead: "Built from the monitors you already have.", text: "Lookalike domains, social accounts and apps, side by side." },
+  { lead: "Your marks on file.", text: "Register the names and marks you want read against." },
+  { lead: "Not a separate scan.", text: "No image matching, marketplaces or trademark-office watches." },
 ];
 
 const execRows: SampleRow[] = [
@@ -153,7 +171,7 @@ const scope: ScopeRow[] = [
     <ul class="imp-nets" role="list" aria-label="Networks checked">
       {SOCIAL_NETWORKS.map((n) => <li>{n}</li>)}
     </ul>
-    <StepList steps={steps} where="social" />
+    <StepList steps={steps} />
     <p class="imp-note">
       We check handles only. There is no photo, bio or follower analysis, so a flag is a likelihood and you decide what to act on.
     </p>
@@ -166,12 +184,7 @@ const scope: ScopeRow[] = [
     lede="Register an executive once, with their official handles. We check for accounts at handles built from their name."
   >
     <div class="imp-split">
-      <ul class="imp-facts" role="list">
-        <li><b>Five networks.</b> X, Instagram, TikTok, GitHub and YouTube.</li>
-        <li><b>Official handles excluded.</b> Anything an executive actually owns is set aside.</li>
-        <li><b>Fully deterministic.</b> No photo or biometric data is collected or compared.</li>
-        <li><b>You make the call.</b> A flag means an account exists at a name-based handle. It could be a namesake, so we show it to you rather than calling it fake.</li>
-      </ul>
+      <FactList items={execFacts} />
       <SampleFrame label="Sample executive findings" rows={execRows} />
     </div>
   </ProductSection>
@@ -183,11 +196,7 @@ const scope: ScopeRow[] = [
     lede="We look for apps using your name on the Apple App Store. Your own apps and developer account are recognised and set aside."
   >
     <div class="imp-split">
-      <ul class="imp-facts" role="list">
-        <li><b>Apple App Store only.</b> Google Play and other stores are not covered.</li>
-        <li><b>Your apps are set aside.</b> Official apps and your developer account aren't flagged.</li>
-        <li><b>No icon matching.</b> We don't compare icons or images today.</li>
-      </ul>
+      <FactList items={appFacts} />
       <SampleFrame label="Sample app findings" rows={appRows} />
     </div>
   </ProductSection>
@@ -199,11 +208,7 @@ const scope: ScopeRow[] = [
     lede="The trademark view gathers what the other monitors find into one place, and you can register your marks. It adds no new detection source."
   >
     <div class="imp-split">
-      <ul class="imp-facts" role="list">
-        <li><b>Built from the monitors you already have.</b> Lookalike domains, social accounts and apps, side by side.</li>
-        <li><b>Your marks on file.</b> Register the names and marks you want read against.</li>
-        <li><b>Not a separate scan.</b> No image matching, marketplaces or trademark-office watches.</li>
-      </ul>
+      <FactList items={tmFacts} />
       <SampleFrame label="Sample trademark view" rows={tmRows} />
     </div>
   </ProductSection>
@@ -216,7 +221,7 @@ const scope: ScopeRow[] = [
   >
     <ScopeTable rows={scope} caption="Impersonation monitoring: covered and not covered" />
     <p class="imp-more">
-      Removal requests follow your rules: <a href={`${base}/platform/takedowns`}>see how takedowns work</a>.
+      Removal requests follow your rules: <a class="link-u" href={`${base}/platform/takedowns`}>see how takedowns work</a>.
     </p>
   </ProductSection>
 
@@ -241,18 +246,7 @@ const scope: ScopeRow[] = [
   }
   .imp-note { margin: 0; max-width: 62ch; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
   .imp-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-  .imp-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
-  .imp-facts li {
-    font-size: 14.5px;
-    line-height: 1.55;
-    color: var(--text-secondary);
-    padding-left: 14px;
-    border-left: 2px solid var(--accent);
-  }
-  .imp-facts b { color: var(--text-primary); font-weight: 700; }
   .imp-more { margin: 0; font-size: 14px; color: var(--text-secondary); }
-  .imp-more a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .imp-more a:hover { border-bottom-color: var(--accent); }
   @media (max-width: 800px) {
     .imp-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   }

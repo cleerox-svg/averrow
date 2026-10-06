@@ -23,6 +23,7 @@ import ProductSection from "../../components/product/ProductSection.astro";
 import SampleFrame from "../../components/product/SampleFrame.astro";
 import StepList from "../../components/product/StepList.astro";
 import ScopeTable from "../../components/product/ScopeTable.astro";
+import FactList from "../../components/product/FactList.astro";
 import ProofStrip from "../../components/product/ProofStrip.astro";
 import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
 import PageCTA from "../../components/product/PageCTA.astro";
@@ -30,18 +31,18 @@ import type { SampleRow, ScopeRow, Step } from "../../components/product/types";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-/** Illustrative graph: four look-alike domains, two shared things, one operation. */
+/** Illustrative graph: four lookalike domains, two shared things, one operation. */
 const domains = [
   { label: "acme-login.example", y: 30 },
   { label: "acme-pay.example", y: 100 },
-  { label: "acrne.example", y: 170 },
+  { label: "acmw.example", y: 170 },
   { label: "acme-help.example", y: 240 },
 ];
-const BOX_W = 138;
+const BOX_W = 150;
 const BOX_H = 32;
-const cert = { x: 168, y: 58, w: 86, h: 58 };
-const host = { x: 168, y: 154, w: 86, h: 58 };
-const op = { x: 276, y: 105, w: 64, h: 70 };
+const cert = { x: 174, y: 58, w: 88, h: 62 };
+const host = { x: 174, y: 154, w: 88, h: 62 };
+const op = { x: 282, y: 105, w: 78, h: 70 };
 // Which domains share which hub.
 const certLinks = [0, 1, 2];
 const hostLinks = [2, 3];
@@ -49,12 +50,12 @@ const hostLinks = [2, 3];
 const steps: Step[] = [
   {
     title: "Record",
-    text: "Every new threat is recorded with the certificates and hosting behind it.",
+    text: "Every new threat is recorded with the hosting and certificate details we can observe.",
     output: {
       label: "Sample recorded threats",
       rows: [
-        { text: "acme-login.example", mono: true, status: "Certificate and hosting recorded", pill: "Recorded", tone: "low" },
-        { text: "acme-pay.example", mono: true, status: "Certificate and hosting recorded", pill: "Recorded", tone: "low" },
+        { text: "acme-login.example", mono: true, status: "Hosting and certificate details recorded", pill: "Recorded", tone: "low" },
+        { text: "acme-pay.example", mono: true, status: "Hosting and certificate details recorded", pill: "Recorded", tone: "low" },
       ],
     },
   },
@@ -65,7 +66,7 @@ const steps: Step[] = [
       label: "Sample linked threats",
       rows: [
         { text: "acme-login.example", mono: true, status: "Shares a certificate with acme-pay.example", pill: "Linked", tone: "new" },
-        { text: "acrne.example", mono: true, status: "Shares hosting with acme-help.example", pill: "Linked", tone: "new" },
+        { text: "acmw.example", mono: true, status: "Shares hosting with acme-help.example", pill: "Linked", tone: "new" },
       ],
       note: "four domains, one operation",
     },
@@ -80,6 +81,12 @@ const steps: Step[] = [
   },
 ];
 
+const facts = [
+  { lead: "Alerts that matter.", text: "You're alerted when a significant campaign or a known threat actor targets your brand." },
+  { lead: "The campaign on each threat.", text: "Every linked threat shows the campaign it belongs to." },
+  { lead: "Actors from public reporting.", text: "Where reporting names the actor, we show it. We don't guess." },
+];
+
 const youGetRows: SampleRow[] = [
   { text: "A significant campaign is targeting Acme", status: "Alert, with the campaign it belongs to", pill: "Campaign alert", tone: "high" },
   { text: "A known threat actor is targeting Acme", status: "Alert, with the actor from public reporting", pill: "Actor alert", tone: "high" },
@@ -89,7 +96,7 @@ const youGetRows: SampleRow[] = [
 const scope: ScopeRow[] = [
   {
     area: "Which threats",
-    covered: "Look-alike domains and other domain and IP threats against your brand.",
+    covered: "Lookalike domains and other domain and IP threats against your brand.",
     notCovered: "Social accounts, apps, leak-site mentions and executive findings are not linked into operations.",
   },
   {
@@ -114,7 +121,7 @@ const scope: ScopeRow[] = [
   },
   {
     area: "Removal",
-    covered: "Takedowns for look-alike domains and phishing URLs, under an authorization you sign.",
+    covered: "Takedowns for lookalike domains and phishing URLs, under an authorization you sign.",
     notCovered: "Filing anything without your approval or your signed rules.",
   },
 ];
@@ -122,26 +129,26 @@ const scope: ScopeRow[] = [
 
 <ProductPage
   title="Campaign Intelligence — Averrow"
-  description="Averrow links look-alike domains that share certificates and hosting into one operation, so you see the campaign behind each alert."
+  description="Averrow links lookalike domains that share certificates and hosting into one operation, so you see the campaign behind each alert."
   crumb="Campaign intelligence"
 >
   <ProductHero
     eyebrow="Campaign intelligence"
     plan="enterprise"
     title="See the operation, not just the symptom."
-    sub="Attackers reuse certificates and hosting. We link the look-alike domains that share them into one operation, so you see the campaign behind each alert."
+    sub="Attackers reuse certificates and hosting. We link the lookalike domains that share them into one operation, so you see the campaign behind each alert."
   >
     <SampleFrame slot="sample" label="Sample operation graph">
       <figure class="cmp-fig">
         <svg
           class="cmp-svg"
-          viewBox="-2 -2 344 284"
+          viewBox="-2 -2 364 284"
           role="img"
           aria-labelledby="cmp-g-title cmp-g-desc"
         >
-          <title id="cmp-g-title">Four look-alike domains linked into one operation</title>
+          <title id="cmp-g-title">Four lookalike domains linked into one operation</title>
           <desc id="cmp-g-desc">
-            Illustrative graph. Acme-login, acme-pay and acrne share one certificate. Acrne and acme-help share hosting. Because the two shared items overlap on acrne, all four domains are linked into one operation.
+            Illustrative graph. Acme-login, acme-pay and acmw share one certificate. Acmw and acme-help share hosting. Because the two shared items overlap on acmw, all four domains are linked into one operation.
           </desc>
 
           <g class="cmp-edges" aria-hidden="true">
@@ -158,19 +165,19 @@ const scope: ScopeRow[] = [
           {domains.map((d) => (
             <g class="cmp-dom">
               <rect x="0" y={d.y} width={BOX_W} height={BOX_H} rx="8" />
-              <text x={BOX_W / 2} y={d.y + BOX_H / 2 + 4} text-anchor="middle">{d.label}</text>
+              <text x={BOX_W / 2} y={d.y + BOX_H / 2 + 5} text-anchor="middle">{d.label}</text>
             </g>
           ))}
 
           <g class="cmp-hub">
             <rect x={cert.x} y={cert.y} width={cert.w} height={cert.h} rx="10" />
-            <text x={cert.x + cert.w / 2} y={cert.y + 25} text-anchor="middle">Shared</text>
-            <text x={cert.x + cert.w / 2} y={cert.y + 43} text-anchor="middle">certificate</text>
+            <text x={cert.x + cert.w / 2} y={cert.y + 27} text-anchor="middle">Shared</text>
+            <text x={cert.x + cert.w / 2} y={cert.y + 47} text-anchor="middle">certificate</text>
           </g>
           <g class="cmp-hub">
             <rect x={host.x} y={host.y} width={host.w} height={host.h} rx="10" />
-            <text x={host.x + host.w / 2} y={host.y + 25} text-anchor="middle">Shared</text>
-            <text x={host.x + host.w / 2} y={host.y + 43} text-anchor="middle">hosting</text>
+            <text x={host.x + host.w / 2} y={host.y + 27} text-anchor="middle">Shared</text>
+            <text x={host.x + host.w / 2} y={host.y + 47} text-anchor="middle">hosting</text>
           </g>
 
           <g class="cmp-op">
@@ -180,7 +187,7 @@ const scope: ScopeRow[] = [
           </g>
         </svg>
         <figcaption>
-          Four look-alike domains, linked through a shared certificate and shared hosting, resolve to one operation.
+          Four lookalike domains, linked through a shared certificate and shared hosting, resolve to one operation.
         </figcaption>
       </figure>
     </SampleFrame>
@@ -194,7 +201,7 @@ const scope: ScopeRow[] = [
     heading="Record, link, name."
     lede="Domains get taken down and new ones appear. The certificates and hosting behind them are slower to change, and that reuse is the signal."
   >
-    <StepList steps={steps} where="campaign" />
+    <StepList steps={steps} />
   </ProductSection>
 
   <ProductSection
@@ -205,11 +212,7 @@ const scope: ScopeRow[] = [
   >
     <div class="cmp-get">
       <SampleFrame label="Sample campaign alerts and threat" rows={youGetRows} />
-      <ul class="cmp-facts" role="list">
-        <li><b>Alerts that matter.</b> You're alerted when a significant campaign or a known threat actor targets your brand.</li>
-        <li><b>The campaign on each threat.</b> Every linked threat shows the campaign it belongs to.</li>
-        <li><b>Actors from public reporting.</b> Where reporting names the actor, we show it. We don't guess.</li>
-      </ul>
+      <FactList items={facts} />
     </div>
   </ProductSection>
 
@@ -219,8 +222,8 @@ const scope: ScopeRow[] = [
     heading="Takedowns, under your authorization."
   >
     <p class="cmp-consent">
-      Takedowns for look-alike domains and phishing URLs run under an authorization you sign and control, within limits you set, at the automation level you choose: manual, semi-automatic with your approval, or automatic. Nothing is filed without your approval or your signed rules, and you can revoke the authorization at any time.
-      <a href={`${base}/platform/takedowns`}>See how takedowns work</a>.
+      Takedowns for lookalike domains and phishing URLs run under an authorization you sign and control, within limits you set, at the automation level you choose: Off, Semi-auto or Auto. Nothing is filed without your approval or your signed rules, and you can revoke the authorization at any time.
+      <a class="link-u" href={`${base}/platform/takedowns`}>See how takedowns work</a>.
     </p>
   </ProductSection>
 
@@ -250,20 +253,15 @@ const scope: ScopeRow[] = [
   .cmp-edges line { stroke: var(--text-tertiary); stroke-width: 1.5; }
   .cmp-edges line.out { stroke: var(--accent); stroke-width: 2; }
   .cmp-dom rect { fill: var(--bg-primary); stroke: var(--border-strong); stroke-width: 1; }
-  .cmp-dom text { font: 500 12px var(--font-mono); fill: var(--text-primary); }
+  .cmp-dom text { font: 500 13.5px var(--font-display); fill: var(--text-primary); }
   .cmp-hub rect { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
-  .cmp-hub text { font: 600 12px var(--font-display); fill: var(--text-primary); }
+  .cmp-hub text { font: 600 13.5px var(--font-display); fill: var(--text-primary); }
   .cmp-op rect { fill: var(--accent-bg-strong); stroke: var(--accent); stroke-width: 2; }
-  .cmp-op text { font: 700 12px var(--font-display); fill: var(--text-primary); }
+  .cmp-op text { font: 700 13.5px var(--font-display); fill: var(--text-primary); }
 
   .cmp-get { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
-  .cmp-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; min-width: 0; }
-  .cmp-facts li { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); padding-left: 14px; border-left: 2px solid var(--accent); }
-  .cmp-facts b { color: var(--text-primary); font-weight: 700; }
 
   .cmp-consent { margin: 0; max-width: 70ch; font-size: 15px; line-height: 1.65; color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .cmp-consent a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .cmp-consent a:hover { border-bottom-color: var(--accent); }
 
   @media (max-width: 800px) { .cmp-get { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 </style>

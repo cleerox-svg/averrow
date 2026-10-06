@@ -81,12 +81,36 @@ function ProfilesSection({ rows }: { rows: SocialProfileRow[] }) {
   );
 }
 
+// Older rows were scored with two reasons that are not true statements about
+// the account ("not verified" is assumed, not observed; the keyword line fires on
+// every handle match). Never show them to a customer.
+const FALSE_SIGNALS = new Set([
+  'account is not verified',
+  'account name or bio contains brand keywords',
+]);
+
+function parseSignals(raw: string | null): string[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.trim())
+    .filter((x) => x !== '' && !FALSE_SIGNALS.has(x.replace(/\.$/, '').toLowerCase()));
+}
+
 function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
   const accent =
     p.classification === 'impersonation' ? 'border-l-sev-critical/70' :
     p.classification === 'suspicious'    ? 'border-l-amber/70'        :
                                            'border-l-white/15';
-  const secondary = p.classification_reason || p.bio;
+  const signals = parseSignals(p.impersonation_signals);
+  const secondary = p.classification_reason || (signals.length > 0 ? signals.join(' · ') : null) || p.bio;
   return (
     <article className={`rounded-lg border border-white/[0.07] border-l-2 ${accent} bg-bg-card px-3.5 py-2.5 flex items-center gap-3 hover:border-white/[0.18] transition-colors`}>
       <Avatar src={p.avatar_url} fallback={p.handle?.[0] ?? '?'} verified={p.verified === 1} />
@@ -100,7 +124,7 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
           <Badge classification={p.classification} size="md" />
         </div>
         {secondary && (
-          <p className="text-[11px] text-white/45 mt-0.5 truncate">{secondary}</p>
+          <p className="text-[11px] text-white/45 mt-0.5 truncate" title={secondary}>{secondary}</p>
         )}
       </div>
 

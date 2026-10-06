@@ -1,7 +1,7 @@
 ---
 /*
  * Row renderer shared by SampleFrame and StepList's output fragments, so the
- * pill look is defined once. Tokens only: pill backgrounds are a token mixed
+ * pill look is defined once (scoped to this component). Tokens only: pill backgrounds are a token mixed
  * with transparent, text uses the theme-aware *-text tokens (AA in both themes).
  * Fictional brand Acme / `.example` domains only (docs/DISCLOSURE_REGISTER.md).
  */
@@ -25,7 +25,7 @@ const { rows, note } = Astro.props;
   {note && <div class="sr-note">{note}</div>}
 </div>
 
-<style is:global>
+<style>
   .sr-rows { display: grid; gap: 10px; min-width: 0; }
   .sr-r {
     display: grid;

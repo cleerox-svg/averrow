@@ -127,20 +127,21 @@ test.describe("kit pages render with the CTA pair", () => {
   test("/platform#how-it-works carries the six stages and the situation rating", async ({ page }) => {
     await open(page, "/platform");
     const how = page.locator("#how-it-works");
-    await expect(how.locator(".pv-stage")).toHaveCount(6);
+    // The fold renders the list twice (desktop copy + mobile <details>); count the desktop copy.
+    await expect(how.locator(".mf-full .pv-stage")).toHaveCount(6);
     await expect(how).toContainText(/rated .* as one/i);
     await expect(how).toContainText(/rule-based|deterministic rules/i);
     // Operations are labelled as an Enterprise capability.
-    await expect(how.locator(".pv-stage", { hasText: "Infrastructure correlation" }).locator(".pv-plan")).toHaveText("Enterprise");
+    await expect(how.locator(".mf-full .pv-stage", { hasText: "Infrastructure correlation" }).locator(".pv-plan")).toHaveText("Enterprise");
   });
 
   test("/platform integrations: one status vocabulary, no customer email delivery claim", async ({ page }) => {
     await open(page, "/platform");
     const int = page.locator("#integrations");
-    const statuses = await int.locator("li em").allTextContents();
+    const statuses = await int.locator(".mf-full li em").allTextContents();
     expect(statuses.length).toBeGreaterThanOrEqual(6);
     for (const s of statuses) expect(["Business and Enterprise", "On request", "Roadmap"]).toContain(s.trim());
-    await expect(int.locator("li", { hasText: "STIX 2.1" }).locator("em")).toHaveText("On request");
+    await expect(int.locator(".mf-full li", { hasText: "STIX 2.1" }).locator("em")).toHaveText("On request");
     await expect(int).not.toContainText(/\blive\b/i);
     await expect(int).not.toContainText(/email/i);
     await expect(int).not.toContainText(/real-time|self-serve|streamed/i);
@@ -151,7 +152,7 @@ test.describe("kit pages render with the CTA pair", () => {
     await expect(page.locator("#automation .td-mode")).toHaveCount(3);
     await expect(page.locator("#automation")).toContainText("Takedowns outside your rules wait until someone on your team approves them.");
     await expect(page.locator("#authorization")).toContainText(/can't file without it/i);
-    const names = await page.locator("#statuses .td-flow li b, #statuses .td-end li b").allTextContents();
+    const names = await page.locator("#statuses .mf-full .td-flow li b, #statuses .mf-full .td-end li b").allTextContents();
     expect(names.map((n) => n.trim())).toEqual(["Draft", "Requested", "Submitted", "Pending response", "Taken down", "Failed", "Expired", "Withdrawn"]);
     // TakedownFlow reused, with this page's mode names and no self-link.
     await expect(page.locator("#takedown-flow")).toHaveCount(1);
@@ -165,9 +166,9 @@ test.describe("kit pages render with the CTA pair", () => {
     await expect(sample.locator(".sf-tag")).toHaveText("Illustrative");
     const rows = await sample.locator(".sr-r").allInnerTexts();
     expect(rows.join("\n")).toMatch(/acme-secure-login\.example[\s\S]*High[\s\S]*Registered yesterday, serving a login page/);
-    expect(rows.join("\n")).toMatch(/acrne\.example[\s\S]*Medium[\s\S]*Mail server added/);
+    expect(rows.join("\n")).toMatch(/acmw\.example[\s\S]*Medium[\s\S]*Mail server added/);
     expect(rows.join("\n")).toMatch(/acme-pay\.example[\s\S]*Low[\s\S]*Parked/);
-    await expect(sample.locator(".sf-f")).toHaveText("Takedown drafted, waiting for your approval");
+    await expect(sample.locator(".sf-f")).toHaveText("Takedown drafted, waiting for your approval or filed under your signed rules");
     await expect(page.locator(".sl-grid > li")).toHaveCount(3);
     await expect(page.locator(".sl-grid h3")).toHaveText(["Generate", "Watch", "Act"]);
     await expect(page.locator("#certificates")).toContainText("every hour");
@@ -320,12 +321,12 @@ test.describe("redirects", () => {
     await expect(page.locator("#setup")).toHaveCount(1);
   });
 
-  test("the stubs are noindex, canonical to the destination, and not in the sitemap", async ({ request }) => {
+  test("the stubs are noindex, point at the destination, carry no canonical, and are not in the sitemap", async ({ request }) => {
     for (const [from, to] of REDIRECTS) {
       const html = await (await request.get(from)).text();
       expect(html).toContain('name="robots" content="noindex"');
       expect(html).toContain(`url=${to}`);
-      expect(html).toMatch(new RegExp(`rel="canonical" href="https://averrow\\.com${to.split("#")[0]}"`));
+      expect(html).not.toContain('rel="canonical"');
     }
     const map = await (await request.get("/sitemap.xml")).text();
     expect(map).not.toContain("/platform/ai-agents<");
@@ -586,7 +587,7 @@ test.describe("type size and contrast", () => {
               seen.add(el);
               const r = el.getBoundingClientRect();
               const cs = getComputedStyle(el);
-              if (r.width === 0 || r.height === 0 || cs.visibility === "hidden" || el.closest(".st-sr, .cv, .tf, [hidden]")) continue;
+              if (r.width === 0 || r.height === 0 || cs.visibility === "hidden" || el.closest(".st-sr, [hidden]")) continue;
               const label = `${el.tagName.toLowerCase()}.${(el.className || "").toString().split(" ")[0]} "${t.textContent.trim().slice(0, 28)}"`;
               const size = parseFloat(cs.fontSize);
               if (size < 11.99) small.push(`${label} ${size}px`);

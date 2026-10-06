@@ -10,7 +10,7 @@
  *    self-serve safe domains (staff add them), no executives on paste or leak
  *    sites, no keyword list, no permutation names, no scoring signals, no
  *    "open phishing-feed community" (say "phishing intelligence sources").
- *  - Look-alike content lives on /platform/lookalike-domains; linked, not repeated.
+ *  - Lookalike content lives on /platform/lookalike-domains; linked, not repeated.
  *  - Certificates: checked hourly, for customer brands. Never "we watch the stream".
  *  - Dark web = paste sites and ransomware victim lists only. No credential
  *    leaks, forums or markets, no source names.
@@ -129,12 +129,12 @@ const scope: ScopeRow[] = [
     id="certificates"
     eyebrow="Certificates"
     heading="Certificates, checked every hour."
-    lede="Every hour we check certificate-transparency logs for certificates issued to names that look like your brands. A new certificate often appears before the site does. Look-alike domains themselves are covered on their own page."
+    lede="Every hour we check certificate-transparency logs for certificates issued to names that look like your brands. A new certificate often appears before the site does. Lookalike domains themselves are covered on their own page."
   >
     <div class="thd-cert">
       <SampleFrame label="Sample certificate finding" rows={certRows} />
       <p class="thd-more">
-        Registrations, character swaps and brand-plus-word domains: <a href={`${base}/platform/lookalike-domains`}>see lookalike domain monitoring</a>.
+        Registrations, character swaps and brand-plus-word domains: <a class="link-u" href={`${base}/platform/lookalike-domains`}>see lookalike domain monitoring</a>.
       </p>
     </div>
   </ProductSection>
@@ -170,7 +170,7 @@ const scope: ScopeRow[] = [
       </li>
       <li>
         <h3>You decide what happens next</h3>
-        <p>Takedowns are drafted for your approval or your signed rules, never filed without them.</p>
+        <p>Takedowns are drafted and wait for your approval, or are filed under your signed rules. Nothing goes out outside them.</p>
       </li>
     </ul>
   </ProductSection>
@@ -209,8 +209,6 @@ const scope: ScopeRow[] = [
 
   .thd-cert { max-width: 520px; display: grid; gap: 14px; }
   .thd-more { margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-secondary); }
-  .thd-more a { color: var(--text-primary); border-bottom: 1px solid var(--border-strong); text-decoration: none; }
-  .thd-more a:hover { border-bottom-color: var(--accent); }
 
   @media (max-width: 900px) { .thd-cards { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 420px) { .thd-facts div { grid-template-columns: minmax(0, 1fr); gap: 2px; } }
