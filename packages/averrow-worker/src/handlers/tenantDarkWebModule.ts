@@ -13,6 +13,7 @@
 //
 // Phase B sprint 5.
 
+import { maskedClassifiedBySql } from "./tenantUserMasking";
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { verifyOrgAccess } from "../middleware/auth";
@@ -246,7 +247,7 @@ export async function handleGetOrgDarkWebMentions(
       SELECT dwm.id, dwm.brand_id, dwm.source, dwm.source_url, dwm.source_channel,
              dwm.source_author, dwm.posted_at, dwm.content_snippet,
              dwm.matched_terms, dwm.match_type, dwm.classification,
-             dwm.classified_by, dwm.classification_confidence,
+             ${maskedClassifiedBySql("dwm.classified_by")}, dwm.classification_confidence,
              dwm.classification_reason, dwm.ai_action,
              dwm.severity, dwm.status, dwm.first_seen, dwm.last_seen,
              b.name AS brand_name, b.canonical_domain AS brand_domain
@@ -397,7 +398,7 @@ export async function handleGetBrandDarkWebFindings(
   const mentions = await env.DB.prepare(
     `SELECT id, brand_id, source, source_url, source_channel, source_author,
             posted_at, content_snippet, matched_terms, match_type,
-            classification, classified_by, classification_confidence,
+            classification, ${maskedClassifiedBySql("classified_by")}, classification_confidence,
             classification_reason, ai_assessment, ai_action,
             severity, status, first_seen, last_seen
      FROM dark_web_mentions
