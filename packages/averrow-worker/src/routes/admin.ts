@@ -750,6 +750,23 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     return handleRefreshLeadFirmographics(request, env, request.params["id"] ?? "");
   });
 
+  // ─── Contact / demo form submissions (G33) ────────────────────────
+  // Same guard as the sales-leads lifecycle above: these are inbound
+  // prospect messages (demo, enterprise, press, partnership, security
+  // reports) and no permission flag covers prospect data.
+  router.get("/api/admin/contact-submissions", async (request: Request, env: Env) => {
+    const ctx = await requireSales(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleListContactSubmissions } = await import("../handlers/contactSubmissions");
+    return handleListContactSubmissions(request, env);
+  });
+  router.patch("/api/admin/contact-submissions/:id", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireSales(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleUpdateContactSubmission } = await import("../handlers/contactSubmissions");
+    return handleUpdateContactSubmission(request, env, ctx, request.params["id"] ?? "");
+  });
+
   // ─── Pathfinder AI Enrichment ─────────────────────────────────────
   router.post("/api/admin/pathfinder-enrich", async (request: Request, env: Env) => {
     const ctx = await requireSuperAdmin(request, env);

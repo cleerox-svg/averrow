@@ -3,7 +3,8 @@
  * and Footer.astro so the link list lives in one place.
  *
  * Five hub items. Platform, Solutions and Company carry a dropdown of
- * their child pages; Plans and Research are plain links. To add a page,
+ * their child pages; Plans and Research are plain links. The Solutions
+ * dropdown is also the list RelatedSurfaces reads with source="solutions". To add a page,
  * add it to the right hub's `children` and (if it lives outside the hub's
  * URL prefix) to that hub's `also` list so the hub lights up when active.
  */
@@ -42,31 +43,32 @@ export const NAV_LINKS: NavLink[] = [
     href: "/solutions",
     label: "Solutions",
     children: [
-      { href: "/solutions", label: "All solutions" },
-      { href: "/solutions/startups", label: "Startups" },
-      { href: "/solutions/mid-market", label: "Mid-market" },
-      { href: "/solutions/mssp", label: "MSSPs and partners" },
+      { href: "/solutions", label: "All solutions", desc: "Start from your role" },
+      { href: "/solutions/security-teams", label: "Security teams", desc: "Phishing, lookalikes and certificates, into your SIEM" },
+      { href: "/solutions/brand-and-legal", label: "Brand and legal", desc: "Fake profiles, copycat apps, executives, trademark" },
+      { href: "/solutions/fraud-and-customer-trust", label: "Fraud and customer trust", desc: "Reported phishing and phishing-site takedowns" },
+      { href: "/solutions/teams-without-a-soc", label: "Teams without a SOC", desc: "Automated triage, plus our analysts on your alerts" },
+      { href: "/solutions/mssp", label: "MSSPs and partners", desc: "One organisation per client, events into your SIEM" },
     ],
   },
   { href: "/pricing", label: "Plans" },
   {
     href: "/resources",
     label: "Research",
-    also: ["/blog", "/docs", "/changelog"],
+    also: ["/blog", "/docs", "/changelog", "/security"],
   },
   {
     href: "/company",
     label: "Company",
-    also: ["/about", "/why-averrow", "/careers", "/press", "/partners", "/contact", "/security"],
+    // Press and Careers are anchors on /company (#press, #careers); /press and
+    // /careers redirect there. Security is listed under Research in the footer,
+    // so it lights up Research (not this hub).
+    also: ["/about", "/why-averrow", "/contact"],
     children: [
-      { href: "/company", label: "Company overview" },
-      { href: "/why-averrow", label: "Why Averrow" },
-      { href: "/about", label: "About" },
-      { href: "/security", label: "Security and trust" },
-      { href: "/partners", label: "Partners" },
-      { href: "/careers", label: "Careers" },
-      { href: "/press", label: "Press" },
-      { href: "/contact", label: "Contact" },
+      { href: "/company", label: "Company", desc: "The company behind Averrow" },
+      { href: "/about", label: "About", desc: "Why Averrow exists" },
+      { href: "/why-averrow", label: "Why Averrow", desc: "How we differ, in plain terms" },
+      { href: "/contact", label: "Contact", desc: "Sales, support and general questions" },
     ],
   },
 ];

@@ -216,7 +216,13 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
       // Honeypot pages — extended in Wave 2 to all four production
       // domains and two new bait surfaces.
       //
-      //   /team, /careers           → public-looking "team" pages
+      //   /team                     → neutral mailbox-directory trap page
+      //                               (src/honeypot.ts; trap addresses use a
+      //                               Worker-routed mail domain, not averrow.com)
+      //   /careers                  → same handler, but on averrow.com the
+      //                               marketing site's static /careers
+      //                               redirect asset answers first, so this
+      //                               branch is effectively unreachable there
       //   /admin-portal             → original Disallow-in-robots bait
       //   /internal-staff           → original Disallow-in-robots bait
       //   /team-directory   (PR-AC) → new bait surface, distinct content shape

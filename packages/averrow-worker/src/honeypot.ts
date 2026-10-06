@@ -1,58 +1,113 @@
 /**
- * Honeypot Pages — Serves realistic-looking pages with trap addresses.
+ * Honeypot Pages — Serves pages that publish spam-trap addresses.
  *
  * These pages contain visible email addresses and hidden spider traps.
- * Served from averrow.com with styling matching the main site.
+ *
+ * Where they are reachable: src/index.ts sends /team and /careers here on
+ * the platform hostnames, and routes/public.ts has a /team fallback. In
+ * practice only averrow.com/team gets this page: averrow.ca and
+ * trustradar.ca 301 to averrow.com first, lrxradar.com serves its own
+ * honeypot site, and averrow.com/careers is answered by the marketing
+ * site's static /careers redirect (Worker assets match before the Worker's
+ * fetch handler runs), so the /careers branch below is effectively unused.
+ * Visits are logged to honeypot_visits.
+ *
+ * How the trap works: an email harvester scrapes the addresses below. Mail
+ * later sent to any of them must reach the Worker's email() handler, which
+ * hands it to src/spam-trap.ts: that records it in spam_trap_captures with
+ * a channel parsed from the local part (`hr-hp01` → honeypot, `info-cp01` →
+ * contact_page, `spider-…` → spider) and bumps seed_addresses.total_catches.
+ * The date-stamped `spider-honey-<page>-<yyyymmdd>` addresses tell us WHEN
+ * an address was harvested.
+ *
+ * Mail domain: the addresses are built on a domain whose MX is Cloudflare
+ * Email Routing with a catch-all to the Worker — averrow.ca, trustradar.ca
+ * or lrxradar.com (docs/EMAIL_ROUTING_RUNBOOK.md,
+ * docs/SPAM_TRAP_ASSESSMENT_2026-09.md). NEVER averrow.com: its MX is Google
+ * Workspace, which rejects unknown users (550), so a trap there never
+ * reaches the Worker. A page served on averrow.com therefore publishes
+ * averrow.ca addresses (trapMailDomain).
+ *
+ * /team (DISCLOSURE_REGISTER G37, owner decision 2026-10-06): the page used
+ * to present invented people as the Averrow team. It now names no people,
+ * titles or bios and does not claim to be a team page: it is a neutral
+ * mailbox listing whose visible text tells a human to use /contact. Every
+ * page served here carries `<meta name="robots" content="noindex,nofollow">`
+ * plus an `X-Robots-Tag` header, is not in the sitemap, and is deliberately
+ * NOT in robots.txt (that would advertise it). The old page published
+ * @averrow.com addresses (ceo@, cto@, sarah.chen@, james.wilson@, …); those
+ * never reached the trap, for the Workspace reason above.
  */
 
 import { generateSpiderTraps } from "./seeders/spider-injector";
 
+/** Header value for every honeypot page: keep it out of search and AI indexes. */
+export const HONEYPOT_X_ROBOTS_TAG = "noindex, nofollow";
+
+/** Domains whose MX is Cloudflare Email Routing with a catch-all to the Worker. */
+export const WORKER_ROUTED_MAIL_DOMAINS: ReadonlySet<string> = new Set([
+  "averrow.ca",
+  "trustradar.ca",
+  "lrxradar.com",
+]);
+/** Default trap mail domain (EMAIL_ROUTING_RUNBOOK.md: averrow.ca). */
+export const DEFAULT_TRAP_MAIL_DOMAIN = "averrow.ca";
+
+/**
+ * The mail domain for trap addresses on a page served at `webDomain`: the
+ * same domain when its mail reaches the Worker, otherwise averrow.ca.
+ */
+export function trapMailDomain(webDomain: string): string {
+  const d = webDomain.toLowerCase().replace(/^www\./, "");
+  return WORKER_ROUTED_MAIL_DOMAINS.has(d) ? d : DEFAULT_TRAP_MAIL_DOMAIN;
+}
+
 export function serveHoneypotPage(page: string, domain = "averrow.com"): Response {
   const date = (new Date().toISOString().split("T")[0] ?? "").replace(/-/g, "");
+  const mail = trapMailDomain(domain);
 
   // Seed trap addresses (static — harvesters parse raw HTML)
   const seeds: Record<string, string> = {
-    contact: "info-cp01@averrow.com",
-    team: "hr-hp01@averrow.com",
-    careers: "hr-hp01@averrow.com",
-    about: "admin-wh01@averrow.com",
+    contact: `info-cp01@${mail}`,
+    team: `hr-hp01@${mail}`,
+    careers: `hr-hp01@${mail}`,
+    about: `admin-wh01@${mail}`,
   };
 
   const primaryEmail = seeds[page] ?? seeds["contact"]!;
 
-  const teamMembers = [
-    { name: "Claude Leroux", title: "CEO & Founder", email: "ceo@averrow.com" },
-    { name: "Sarah Chen", title: "CTO", email: "sarah.chen@averrow.com" },
-    { name: "James Wilson", title: "VP Engineering", email: "james.wilson@averrow.com" },
-    { name: "Jennifer Smith", title: "Head of Threat Research", email: "cto@averrow.com" },
-    { name: "Michael Patel", title: "Lead Data Engineer", email: "info-cp01@averrow.com" },
-    { name: "Lisa Rodriguez", title: "Director of Operations", email: "admin-wh01@averrow.com" },
+  // /team mailbox listing: seed-format trap addresses only. No personal
+  // names (not even in the local part) and no role mailboxes (ceo@, cto@)
+  // that a real visitor could mistake for a way to reach a person.
+  const directoryAddresses = [
+    { label: "Routing", email: `hr-hp01@${mail}` },
+    { label: "Inbound", email: `info-cp01@${mail}` },
+    { label: "Registrar records", email: `admin-wh01@${mail}` },
   ];
 
   const jobListings = [
-    { title: "Senior Threat Intelligence Analyst", dept: "Security Research", email: "hr-hp01@averrow.com" },
-    { title: "Full-Stack Engineer (Cloudflare Workers)", dept: "Engineering", email: "dev-gp01@averrow.com" },
-    { title: "Product Manager — AI Agents", dept: "Product", email: "hr-hp01@averrow.com" },
+    { title: "Senior Threat Intelligence Analyst", dept: "Security Research", email: `hr-hp01@${mail}` },
+    { title: "Full-Stack Engineer (Cloudflare Workers)", dept: "Engineering", email: `dev-gp01@${mail}` },
+    { title: "Product Manager — AI Agents", dept: "Product", email: `hr-hp01@${mail}` },
   ];
 
   let content: string;
 
   if (page === "team") {
-    const memberCards = teamMembers.map(m => `
+    const rows = directoryAddresses.map(d => `
       <div class="hp-card">
-        <div class="hp-card-name">${m.name}</div>
-        <div class="hp-card-title">${m.title}</div>
-        <a href="mailto:${m.email}">${m.email}</a>
+        <div class="hp-card-title">${d.label}</div>
+        <a href="mailto:${d.email}">${d.email}</a>
       </div>`).join("");
 
     content = `
     <div class="hp-hero">
-      <h1>Our Team</h1>
-      <p>The people behind Averrow — building AI-powered brand threat intelligence.</p>
+      <h1>Mailbox directory</h1>
+      <p>Automated routing addresses. These mailboxes are not read by people.</p>
     </div>
     <div class="hp-section">
-      <div class="hp-grid">${memberCards}</div>
-      <p class="hp-cta">General inquiries: <a href="mailto:${primaryEmail}">${primaryEmail}</a></p>
+      <div class="hp-grid">${rows}</div>
+      <p class="hp-cta">To reach Averrow, use the <a href="/contact">contact form</a>.</p>
     </div>`;
   } else if (page === "careers") {
     const jobCards = jobListings.map(j => `
@@ -71,7 +126,7 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
     <div class="hp-section">
       <div class="hp-grid">${jobCards}</div>
       <p class="hp-cta">HR inquiries: <a href="mailto:${primaryEmail}">${primaryEmail}</a></p>
-      <p class="hp-cta">Engineering roles: <a href="mailto:dev-gp01@averrow.com">dev-gp01@averrow.com</a></p>
+      <p class="hp-cta">Engineering roles: <a href="mailto:dev-gp01@${mail}">dev-gp01@${mail}</a></p>
     </div>`;
   } else {
     content = `
@@ -85,7 +140,7 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
   }
 
   const schemaEmails = page === "team"
-    ? teamMembers.map(m => m.email)
+    ? directoryAddresses.map(d => d.email)
     : [primaryEmail];
 
   const html = `<!DOCTYPE html>
@@ -93,8 +148,9 @@ export function serveHoneypotPage(page: string, domain = "averrow.com"): Respons
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${page === "team" ? "Our Team" : page === "careers" ? "Careers" : page.charAt(0).toUpperCase() + page.slice(1)} — Averrow</title>
-<meta name="description" content="Averrow — AI-powered brand threat intelligence by LRX Enterprises Inc.">
+<meta name="robots" content="noindex,nofollow">
+<title>${page === "team" ? "Mailbox directory" : page === "careers" ? "Careers" : page.charAt(0).toUpperCase() + page.slice(1)} — Averrow</title>
+<meta name="description" content="${page === "team" ? "Automated mailbox directory." : "Averrow — AI-powered brand threat intelligence by LRX Enterprises Inc."}">
 <meta name="reply-to" content="${primaryEmail}">
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script type="application/ld+json">${JSON.stringify({
@@ -144,17 +200,21 @@ ${content}
   <p><a href="https://averrow.com">Averrow</a> &middot; <a href="mailto:${primaryEmail}">${primaryEmail}</a></p>
 </footer>
 <!-- ${primaryEmail} -->
-<!-- Support: support-fp01@averrow.com -->
+<!-- Support: support-fp01@${mail} -->
 <div style="position:absolute;left:-9999px;height:0;overflow:hidden" aria-hidden="true">
-  <a href="mailto:spider-honey-${page}-${date}@${domain}">support</a>
-  <a href="mailto:spider-honey-${page}b-${date}@${domain}">info</a>
-  <a href="mailto:dev-gp01@averrow.com">dev</a>
+  <a href="mailto:spider-honey-${page}-${date}@${mail}">support</a>
+  <a href="mailto:spider-honey-${page}b-${date}@${mail}">info</a>
+  <a href="mailto:dev-gp01@${mail}">dev</a>
 </div>
-${generateSpiderTraps(domain, "honey-" + page)}
+${generateSpiderTraps(mail, "honey-" + page)}
 </body>
 </html>`;
 
   return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "public, max-age=86400",
+      "X-Robots-Tag": HONEYPOT_X_ROBOTS_TAG,
+    },
   });
 }

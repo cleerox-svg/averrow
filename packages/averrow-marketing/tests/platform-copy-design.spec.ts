@@ -176,20 +176,21 @@ test.describe("design", () => {
     await expect(page.locator(".pv-stages:visible")).toHaveCount(1);
   });
 
-  test("footer grid has no empty cell: 5 columns at 1000, two at 390", async ({ page }) => {
+  test("footer grid has no empty cell: 6 columns at 1000, two at 390", async ({ page }) => {
     await open(page, "/");
-    for (const [w, expected] of [[1000, 5], [1200, 6], [390, 2], [700, 2]] as const) {
+    for (const [w, expected] of [[1000, 6], [1200, 7], [390, 2], [700, 2]] as const) {
       await page.setViewportSize({ width: w, height: 800 });
       const cols = await page.locator(".footer-grid").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
       expect(cols, `${w}px columns`).toBe(expected);
     }
-    // 1000px: brand on its own row, the five link columns fill the next one.
+    // 1000px: brand on its own row, the six link columns fill the next one.
     await page.setViewportSize({ width: 1000, height: 800 });
     const tops = await page.locator(".footer-col").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
     expect(new Set(tops).size).toBe(1);
-    // Phone: the odd fifth column spans the row.
+    // Phone: six link columns pair up into three full rows, so no cell is empty.
     await page.setViewportSize(PHONE);
-    const last = await page.locator(".footer-col").last().evaluate((el) => ({ w: el.getBoundingClientRect().width, g: el.parentElement!.getBoundingClientRect().width }));
-    expect(last.w).toBeGreaterThan(last.g * 0.9);
+    const lefts = await page.locator(".footer-col").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)));
+    expect(lefts.length % 2).toBe(0);
+    expect(new Set(lefts).size).toBe(2);
   });
 });

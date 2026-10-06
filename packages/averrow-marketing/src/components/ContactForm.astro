@@ -1,0 +1,409 @@
+---
+/*
+ * The one contact form, used by /contact (variant "contact") and /demo
+ * (variant "demo"). POSTs JSON to /api/contact, handled by the Averrow Worker;
+ * the Astro build never touches the API. Body fields are unchanged:
+ *   { name, email, company, companySize, interest, message, company_website }
+ * and the demo variant also sends `domain` (a new optional field the worker
+ * accepts) and has no interest select; it always sends `interest: "demo"`. The
+ * contact variant's interest select also offers "partnership", and a
+ * `?interest=partnership` query pre-selects it (the MSSP page links there).
+ * `message` is required because the server
+ * requires it. There is no Turnstile on this form (the endpoint relies on the
+ * honeypot field and a per-IP rate limit), so none is wired here.
+ *
+ * Accessibility contract (checked in tests/company-pages.spec.ts):
+ *  - every control has a visible <label>; required ones add sr-only text;
+ *  - per-field errors set aria-invalid and aria-describedby;
+ *  - a role="alert" summary lists the problems, and focus moves to the first
+ *    invalid field;
+ *  - 3:1 field borders, a 2px :focus-visible outline, 16px inputs,
+ *    autocomplete tokens, and one error style for everything.
+ *
+ * Copy rule (docs/DISCLOSURE_REGISTER.md L35): no response-time promise. The
+ * success message says "We'll reply by email."
+ */
+interface Props {
+  variant?: "contact" | "demo";
+}
+const { variant = "contact" } = Astro.props;
+const demo = variant === "demo";
+
+interface Field {
+  id: string;
+  label: string;
+  kind: "input" | "select" | "textarea";
+  type?: "text" | "email";
+  autocomplete?: string;
+  inputmode?: "email" | "url";
+  required?: boolean;
+  hint?: string;
+  error?: string;
+  options?: Array<[string, string]>;
+  wide?: boolean;
+}
+
+const sizes: Array<[string, string]> = [
+  ["", "Select a size"],
+  ["1-50", "1-50 employees"],
+  ["51-200", "51-200 employees"],
+  ["201-500", "201-500 employees"],
+  ["501-1000", "501-1000 employees"],
+  ["1000+", "1000+ employees"],
+];
+const interests: Array<[string, string]> = [
+  ["general", "General question"],
+  ["demo", "Product demo"],
+  ["enterprise", "Plans and enterprise"],
+  ["partnership", "Partnership"],
+];
+
+const fields: Field[] = [
+  { id: "name", label: "Name", kind: "input", type: "text", autocomplete: "name", required: true, error: "Enter your name." },
+  { id: "email", label: "Work email", kind: "input", type: "email", autocomplete: "email", inputmode: "email", required: true, error: "Enter your email address, for example name@company.com." },
+  { id: "company", label: "Company", kind: "input", type: "text", autocomplete: "organization" },
+  ...(demo
+    ? [
+        {
+          id: "domain",
+          label: "Domain",
+          kind: "input",
+          type: "text",
+          autocomplete: "off",
+          inputmode: "url",
+          required: true,
+          hint: "The domain you want us to look at, for example yourcompany.com.",
+          error: "Enter a domain, for example yourcompany.com.",
+        } satisfies Field,
+      ]
+    : []),
+  { id: "companySize", label: "Company size", kind: "select", autocomplete: "off", options: sizes },
+  ...(demo ? [] : [{ id: "interest", label: "What is this about?", kind: "select", autocomplete: "off", options: interests, wide: true } satisfies Field]),
+  {
+    id: "message",
+    label: demo ? "What would you like to see?" : "Message",
+    kind: "textarea",
+    autocomplete: "off",
+    required: true,
+    wide: true,
+    error: demo ? "Tell us what you would like to see." : "Tell us how we can help.",
+  },
+];
+const submitLabel = demo ? "Request a demo" : "Send message";
+const success = demo ? "Thanks. We'll reply by email to arrange your demo." : "Thanks. We'll reply by email.";
+---
+
+<div class="cf" data-contact-form data-variant={variant} data-submit-label={submitLabel} data-success={success}>
+  <div class="cf-alert" data-cf-alert role="alert" tabindex="-1"></div>
+  <div class="cf-success" data-cf-success role="status" tabindex="-1" hidden></div>
+
+  <form id="contactForm" novalidate aria-label={demo ? "Request a demo" : "Contact Averrow"}>
+    <p class="cf-note"><span aria-hidden="true">*</span> Required field</p>
+    <div class="cf-grid">
+      {fields.map((f) => (
+        <div class:list={["cf-f", { wide: f.wide || f.kind === "textarea" }]}>
+          <label for={`cf-${f.id}`}>
+            {f.label}
+            {f.required && (
+              <>
+                <span class="cf-req" aria-hidden="true"> *</span>
+                <span class="cf-sr"> (required)</span>
+              </>
+            )}
+          </label>
+          {f.hint && <p class="cf-hint" id={`cf-${f.id}-hint`}>{f.hint}</p>}
+          {f.kind === "input" && (
+            <input
+              id={`cf-${f.id}`}
+              name={f.id}
+              type={f.type}
+              autocomplete={f.autocomplete}
+              inputmode={f.inputmode}
+              required={f.required}
+              data-error={f.error}
+              aria-describedby={f.hint ? `cf-${f.id}-hint` : undefined}
+              data-hint={f.hint ? `cf-${f.id}-hint` : undefined}
+              autocapitalize={f.id === "email" || f.id === "domain" ? "none" : undefined}
+              spellcheck={f.id === "email" || f.id === "domain" ? "false" : undefined}
+            />
+          )}
+          {f.kind === "select" && (
+            <div class="cf-sel">
+              <select id={`cf-${f.id}`} name={f.id} autocomplete={f.autocomplete}>
+                {f.options?.map(([v, l]) => <option value={v}>{l}</option>)}
+              </select>
+            </div>
+          )}
+          {f.kind === "textarea" && (
+            <textarea id={`cf-${f.id}`} name={f.id} rows="5" autocomplete={f.autocomplete} required={f.required} data-error={f.error}></textarea>
+          )}
+          <p class="cf-err" id={`cf-${f.id}-err`} data-cf-err hidden></p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Honeypot: off-screen and inert for people; bots fill it and the server drops the message silently. -->
+    <div class="cf-hp" aria-hidden="true" inert>
+      <label for="company_website">Company website</label>
+      <input type="text" id="company_website" name="company_website" tabindex="-1" autocomplete="off" />
+    </div>
+
+    <button type="submit" class="btn btn-primary cf-submit" data-cf-submit data-cta={demo ? "demo-submit" : "contact-submit"}>{submitLabel}</button>
+  </form>
+</div>
+
+<style>
+  .cf {
+    position: relative;
+    --field-border: var(--text-secondary);
+    --field-error: var(--red-text);
+    min-width: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    padding: 28px;
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: 16px;
+  }
+  .cf-note { margin: 0 0 4px; font-size: 13px; color: var(--text-secondary); }
+  .cf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; }
+  .cf-f { display: grid; gap: 6px; align-content: start; min-width: 0; }
+  .cf-f.wide { grid-column: 1 / -1; }
+  .cf-f label { font: 600 15px/1.3 var(--font-body); color: var(--text-primary); }
+  .cf-req { color: var(--text-primary); }
+  .cf-hint { margin: 0; font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
+  .cf-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+  .cf input,
+  .cf select,
+  .cf textarea {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 12px;
+    font: 400 16px/1.4 var(--font-body);
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+    border: 1.5px solid var(--field-border);
+    border-radius: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .cf select {
+    padding-right: 38px;
+    cursor: pointer;
+  }
+  /* The chevron is a currentColor mask, so it follows the theme's text colour. */
+  .cf-sel { position: relative; min-width: 0; color: var(--text-secondary); }
+  .cf-sel::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    margin-top: -6px;
+    pointer-events: none;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='black' stroke-width='1.6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='black' stroke-width='1.6' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  .cf textarea { min-height: 128px; resize: vertical; }
+  /* Keep a focused control and the error summary clear of the sticky nav (64px tall). */
+  .cf input,
+  .cf select,
+  .cf textarea,
+  .cf-alert,
+  .cf-success { scroll-margin-top: 96px; }
+  .cf input:focus-visible,
+  .cf select:focus-visible,
+  .cf textarea:focus-visible,
+  .cf-alert:focus-visible,
+  .cf-success:focus-visible {
+    outline: 2px solid var(--amber-text);
+    outline-offset: 2px;
+  }
+  .cf [aria-invalid="true"] { border-color: var(--field-error); border-width: 2px; }
+
+  /* One error style: the field messages and the summary share it. */
+  .cf-err,
+  .cf-alert:not(:empty) {
+    color: var(--field-error);
+    font: 600 14px/1.45 var(--font-body);
+    border-left: 3px solid var(--field-error);
+    padding: 2px 0 2px 10px;
+    margin: 0;
+  }
+  .cf-err::before { content: "Error: "; font-weight: 700; }
+  /* Stay in the DOM (live region) but out of flow while empty, so it takes no grid row and leaves no gap. */
+  .cf-alert:empty { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; }
+  .cf-alert :global(p) { margin: 0 0 6px; }
+  .cf-alert :global(ul) { margin: 0; padding-left: 18px; }
+  .cf-alert :global(a) { color: inherit; text-decoration: underline; }
+
+  .cf-success {
+    padding: 14px 16px;
+    border: 1px solid var(--green-text);
+    border-radius: 10px;
+    background: var(--green-bg);
+    color: var(--text-primary);
+    font: 600 16px/1.5 var(--font-body);
+  }
+  .cf-success[hidden] { display: none; }
+
+  .cf-hp { position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  .cf-submit { width: 100%; justify-content: center; min-height: 48px; margin-top: 18px; font-size: 16px; }
+  .cf-submit:disabled { opacity: 0.65; cursor: progress; }
+
+  @media (max-width: 640px) {
+    .cf { padding: 20px 16px; }
+    .cf-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+
+<script>
+  const root = document.querySelector<HTMLElement>("[data-contact-form]");
+  if (root) {
+    const form = root.querySelector<HTMLFormElement>("form")!;
+    const alertBox = root.querySelector<HTMLElement>("[data-cf-alert]")!;
+    const successBox = root.querySelector<HTMLElement>("[data-cf-success]")!;
+    const submit = root.querySelector<HTMLButtonElement>("[data-cf-submit]")!;
+    const demo = root.dataset.variant === "demo";
+    const submitLabel = root.dataset.submitLabel ?? "Send";
+
+    type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    const controls = (): Control[] =>
+      Array.from(form.querySelectorAll<Control>("input[name], select[name], textarea[name]")).filter((c) => c.name !== "company_website");
+
+    // ?interest=partnership pre-selects the matching option (contact variant only).
+    const wanted = new URLSearchParams(location.search).get("interest");
+    const interestSel = form.elements.namedItem("interest");
+    if (wanted && interestSel instanceof HTMLSelectElement && Array.from(interestSel.options).some((o) => o.value === wanted)) {
+      interestSel.value = wanted;
+    }
+
+    const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const DOMAIN = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}$/;
+
+    /** Accept a pasted URL: drop the scheme, path, query and trailing dot, and lowercase. Subdomains are kept as typed. */
+    const normaliseDomain = (v: string): string =>
+      v.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").split(/[/?#]/)[0]!.replace(/\.$/, "");
+
+    const valueOf = (c: Control): string => (c.name === "domain" ? normaliseDomain(c.value) : c.value.trim());
+
+    const errorFor = (c: Control): string | null => {
+      const v = valueOf(c);
+      if (c.required && !v) return c.dataset.error ?? "This field is required.";
+      if (c.name === "email" && v && !EMAIL.test(v)) return c.dataset.error ?? "Enter a valid email address.";
+      if (c.name === "domain" && v && !DOMAIN.test(v)) return c.dataset.error ?? "Enter a valid domain.";
+      return null;
+    };
+
+    const errEl = (c: Control) => document.getElementById(`${c.id}-err`)!;
+
+    const setError = (c: Control, msg: string) => {
+      const el = errEl(c);
+      el.textContent = msg;
+      el.hidden = false;
+      c.setAttribute("aria-invalid", "true");
+      c.setAttribute("aria-describedby", [c.dataset.hint, el.id].filter(Boolean).join(" "));
+    };
+    const clearError = (c: Control) => {
+      const el = errEl(c);
+      el.textContent = "";
+      el.hidden = true;
+      c.removeAttribute("aria-invalid");
+      if (c.dataset.hint) c.setAttribute("aria-describedby", c.dataset.hint);
+      else c.removeAttribute("aria-describedby");
+    };
+
+    const labelOf = (c: Control): string => {
+      const l = form.querySelector<HTMLLabelElement>(`label[for="${c.id}"]`);
+      return (l?.firstChild?.textContent ?? c.name).trim();
+    };
+
+    const clearAlert = () => { alertBox.replaceChildren(); };
+    const showAlertText = (text: string) => {
+      const p = document.createElement("p");
+      p.textContent = text;
+      alertBox.replaceChildren(p);
+    };
+
+    for (const c of controls()) {
+      const onEdit = () => { if (c.getAttribute("aria-invalid") === "true" && !errorFor(c)) clearError(c); };
+      c.addEventListener("input", onEdit);
+      c.addEventListener("change", onEdit);
+    }
+
+    form.addEventListener("submit", async (e: Event) => {
+      e.preventDefault();
+      clearAlert();
+
+      const invalid: Array<{ c: Control; msg: string }> = [];
+      for (const c of controls()) {
+        const msg = errorFor(c);
+        if (msg) { setError(c, msg); invalid.push({ c, msg }); } else clearError(c);
+      }
+
+      if (invalid.length > 0) {
+        const p = document.createElement("p");
+        p.textContent = invalid.length === 1 ? "One field needs attention:" : `${invalid.length} fields need attention:`;
+        const ul = document.createElement("ul");
+        for (const { c, msg } of invalid) {
+          const li = document.createElement("li");
+          const a = document.createElement("a");
+          a.href = `#${c.id}`;
+          a.textContent = `${labelOf(c)}: ${msg}`;
+          a.addEventListener("click", (ev) => { ev.preventDefault(); c.focus(); });
+          li.append(a);
+          ul.append(li);
+        }
+        alertBox.replaceChildren(p, ul);
+        // Show the summary first (clear of the sticky nav via scroll-margin), then focus the
+        // first invalid field without letting the browser scroll it back under the nav.
+        alertBox.scrollIntoView({ block: "start", behavior: "instant" });
+        const first = invalid[0]!.c;
+        first.focus({ preventScroll: true });
+        const r = first.getBoundingClientRect();
+        if (r.bottom > window.innerHeight) first.scrollIntoView({ block: "nearest", behavior: "instant" });
+        return;
+      }
+
+      const data: Record<string, string> = {};
+      for (const c of controls()) data[c.name] = valueOf(c);
+      data.company_website = (form.elements.namedItem("company_website") as HTMLInputElement | null)?.value ?? "";
+      // The demo variant has no interest select, so it sends a fixed one; the worker labels it.
+      if (demo) data.interest = "demo";
+
+      submit.disabled = true;
+      submit.textContent = "Sending...";
+      form.setAttribute("aria-busy", "true");
+      try {
+        const res = await fetch("/api/contact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+        });
+        if (res.ok) {
+          form.reset();
+          form.hidden = true;
+          successBox.textContent = root.dataset.success ?? "Thanks. We'll reply by email.";
+          successBox.hidden = false;
+          successBox.focus();
+        } else {
+          const body = (await res.json().catch(() => ({}))) as { error?: unknown };
+          showAlertText(typeof body.error === "string" && body.error ? body.error : "Something went wrong. Please try again.");
+          alertBox.focus();
+        }
+      } catch {
+        showAlertText("Network error. Check your connection and try again.");
+        alertBox.focus();
+      } finally {
+        submit.disabled = false;
+        submit.textContent = submitLabel;
+        form.removeAttribute("aria-busy");
+      }
+    });
+  }
+</script>

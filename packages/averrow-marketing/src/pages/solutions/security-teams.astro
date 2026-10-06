@@ -1,0 +1,185 @@
+---
+/*
+ * /solutions/security-teams (Section 9A). Built on the product-page kit in
+ * src/components/product/. Role page for the people who investigate: phishing
+ * and lookalike detection, certificate checks, rule-based triage, routing into
+ * a SIEM or ticketing tool, STIX on request, and takedowns.
+ *
+ * Disclosure (docs/DISCLOSURE_REGISTER.md L14, L15, L24-L34, §3.1, §3.6,
+ * §3.7): certificate checks are "hourly" and for brand-like names; triage is
+ * "low-value noise dismissed automatically, with the reason recorded", never a
+ * rule, threshold or condition; webhooks and the Splunk, Microsoft Sentinel,
+ * QRadar, Jira and ServiceNow connectors carry alert and takedown events, are
+ * set up with our team and belong to Business and Enterprise; STIX 2.1 is "on
+ * request". No "real-time", no self-serve connectors, no email or push for
+ * customers, no AI, no prices, no times. The source count comes from
+ * lib/proof.ts sourcesLabel (never a typed "40+"). Samples: fictional brand
+ * Acme, `.example` domains only.
+ */
+import ProductPage from "../../components/product/ProductPage.astro";
+import ProductHero from "../../components/product/ProductHero.astro";
+import ProductSection from "../../components/product/ProductSection.astro";
+import SampleFrame from "../../components/product/SampleFrame.astro";
+import StepList from "../../components/product/StepList.astro";
+import ScopeTable from "../../components/product/ScopeTable.astro";
+import ProofStrip from "../../components/product/ProofStrip.astro";
+import FactList from "../../components/product/FactList.astro";
+import IntegrationList from "../../components/product/IntegrationList.astro";
+import RelatedSurfaces from "../../components/product/RelatedSurfaces.astro";
+import PageCTA from "../../components/product/PageCTA.astro";
+import liveStats from "../../data/stats.json";
+import { sourcesLabel } from "../../lib/proof";
+import type { SampleRow, ScopeRow, Step } from "../../components/product/types";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const sources = typeof liveStats.active_feeds === "number" ? sourcesLabel(liveStats.active_feeds) : null;
+
+const heroRows: SampleRow[] = [
+  { text: "acme-secure-login.example", mono: true, status: "Registered yesterday, serving a login page", pill: "High", tone: "high" },
+  { text: "acme-login.example", mono: true, status: "Certificate issued 2 hours ago", pill: "New cert", tone: "new" },
+  { text: "acme.example", mono: true, status: "Your own domain, set aside with the reason recorded", pill: "Set aside", tone: "ok" },
+];
+
+const steps: Step[] = [
+  {
+    title: "Find",
+    text: `We generate the lookalikes of every domain you protect and flag the ones that get registered. Certificate-transparency logs are checked every hour for certificates issued to names that look like your brands.${sources ? ` Findings also draw on ${sources} threat and intelligence sources.` : ""}`,
+    output: {
+      label: "Sample findings",
+      rows: [
+        { text: "acme-secure-login.example", mono: true, status: "Serving a login page", pill: "High", tone: "high" },
+        { text: "acme-login.example", mono: true, status: "Certificate issued 2 hours ago", pill: "New cert", tone: "new" },
+      ],
+    },
+  },
+  {
+    title: "Triage",
+    text: "Low-value noise is dismissed automatically, with the reason recorded, so your queue holds what needs a decision. Your own official domains are recognised and set aside.",
+    output: {
+      label: "Sample triage outcome",
+      rows: [
+        { text: "acme.example", mono: true, status: "Your official domain. Reason recorded.", pill: "Set aside", tone: "ok" },
+        { text: "acme-pay.example", mono: true, status: "Parked, re-checked", pill: "Low", tone: "low" },
+      ],
+    },
+  },
+  {
+    title: "Route",
+    text: "Alerts appear in your Averrow console. On Business and Enterprise, alert and takedown events also go to your webhook, SIEM or ticketing tool, set up with our team.",
+    output: {
+      label: "Sample routed events",
+      rows: [
+        { text: "Alert raised", status: "Sent to your SIEM", pill: "Routed", tone: "ok" },
+        { text: "Takedown status changed", status: "Sent to your ticketing tool", pill: "Routed", tone: "ok" },
+      ],
+    },
+  },
+];
+
+const takedownFacts = [
+  { lead: "Domains and phishing URLs.", text: "Abuse reports go to registrars and hosting providers, with an evidence summary attached to each draft." },
+  { lead: "Three levels.", text: "Off (you approve each one), Semi-auto (approval for anything outside your rules) and Auto (within your signed scope)." },
+  { lead: "Nothing without your say.", text: "A takedown is filed only with your approval or under rules you've signed. Removal is the provider's decision, and removed domains are re-checked." },
+];
+
+const scope: ScopeRow[] = [
+  {
+    area: "Detection",
+    covered: "Lookalikes of the domains and brands on your account, flagged when registered and re-checked after, with hourly certificate-transparency checks for brand-like names.",
+    notCovered: "Every possible variation of your name, and brands you haven't added.",
+  },
+  {
+    area: "Triage",
+    covered: "Rule-based. Low-value noise is dismissed automatically with the reason recorded. Tell us your official domains, CDNs and partners and we set them aside for you.",
+    notCovered: "Rules you write yourself, and a published list of the rules.",
+  },
+  {
+    area: "Into your tools",
+    covered: "Alert and takedown events to webhooks and to Splunk, Microsoft Sentinel, QRadar, Jira and ServiceNow, on Business and Enterprise, set up with our team.",
+    notCovered: "Connectors you configure yourself in the console, and event types beyond alerts and takedowns.",
+  },
+  {
+    area: "Export",
+    covered: "STIX 2.1 export of your own findings, on request, delivered by our team.",
+    notCovered: "An API or feed you query yourself.",
+  },
+  {
+    area: "Takedowns",
+    covered: "Drafted for lookalike domains and phishing URLs, and filed with your approval or under your signed rules.",
+    notCovered: "Filing without your approval, and a promise that a provider will remove a domain.",
+  },
+];
+---
+
+<ProductPage
+  title="Solutions for Security Teams — Averrow"
+  description="Find phishing and lookalike domains aimed at your brand, check certificates issued to brand-like names, triage by rule, and send alert and takedown events to your SIEM or ticketing tool."
+  crumb="Security teams"
+  parent={{ href: "/solutions", label: "Solutions" }}
+>
+  <ProductHero
+    eyebrow="For security teams"
+    plan={null}
+    title="Brand phishing in the queue you already work."
+    sub="Averrow finds lookalike domains and certificates aimed at your brand, triages the noise by rule, and sends alert and takedown events to your SIEM or ticketing tool."
+  >
+    <SampleFrame slot="sample" label="Sample findings for a security team" rows={heroRows} footer="In your console. On Business and Enterprise, also sent to your SIEM" />
+  </ProductHero>
+
+  <ProofStrip stats={["lookalikes", "threats", "providers"]} />
+
+  <ProductSection
+    id="how-it-works"
+    eyebrow="How it works"
+    heading="Find, triage, route."
+    lede="Each step produces something you can see in your console, and the last one lands where your team already works."
+  >
+    <StepList steps={steps} />
+  </ProductSection>
+
+  <ProductSection
+    id="integrations"
+    eyebrow="Your tools"
+    heading="Into the stack you already run."
+    lede="Our team sets up each connection with you. Webhooks and the connectors belong to Business and Enterprise."
+  >
+    <IntegrationList only={["Webhooks", "Splunk", "Microsoft Sentinel", "QRadar", "Jira and ServiceNow", "STIX 2.1 export"]} />
+  </ProductSection>
+
+  <ProductSection
+    id="takedowns"
+    eyebrow="Takedowns"
+    heading="Filed under your rules."
+    lede="Your team decides how much runs on its own."
+  >
+    <FactList items={takedownFacts} label="How takedowns work" />
+    <p class="sol-more">
+      See <a class="link-u" href={`${base}/platform/takedowns`}>how takedowns work</a> in full.
+    </p>
+  </ProductSection>
+
+  <ProductSection
+    id="scope"
+    eyebrow="Scope"
+    heading="What's covered, and what isn't."
+    lede="Every claim on this page has a limit. These are the limits."
+  >
+    <ScopeTable rows={scope} caption="Security teams: covered and not covered" />
+  </ProductSection>
+
+  <RelatedSurfaces
+    current="/solutions/security-teams"
+    include={["/platform/lookalike-domains", "/platform/threat-detection", "/platform/takedowns", "/platform/campaign-intelligence"]}
+    heading="The platform behind this role"
+  />
+  <RelatedSurfaces
+    current="/solutions/security-teams"
+    source="solutions"
+    include={["/solutions/teams-without-a-soc", "/solutions/mssp"]}
+    eyebrow="Other roles"
+    heading="Where the work gets shared"
+  />
+
+  <PageCTA heading="See what's already aimed at your brand." body="Run a free domain scan, no signup. Or book a demo and we'll set up monitoring and your SIEM routing with you." />
+</ProductPage>
+

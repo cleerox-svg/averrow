@@ -33,9 +33,10 @@ interface ResendResponse {
   message?: string;
 }
 
-type SendResult = { ok: boolean; id?: string; error?: string };
+export type SendResult = { ok: boolean; id?: string; error?: string };
 
-async function sendEmail(
+/** Resend send. Also used by lib/contact-notify.ts. Never throws on HTTP errors. */
+export async function sendEmail(
   env: Env,
   logEvent: string,
   logRef: Record<string, unknown>,

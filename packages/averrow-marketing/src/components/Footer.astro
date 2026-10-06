@@ -1,6 +1,6 @@
 ---
 /*
- * Footer — 5-column layout (brand + Product / Resources / Company / Legal).
+ * Footer — brand + six link columns (Platform / Solutions / Get started / Research / Company / Legal).
  * Mirrors the back-end footer pattern. Internal links pick up the
  * Astro base prefix so they work whether we're under /marketing/*
  * (pre-cutover) or / (post-cutover). Hosts the site's theme toggle.
@@ -13,6 +13,9 @@ const withBase = (href: string) => `${base}${href}`;
 const year = new Date().getFullYear();
 // The Platform dropdown is the single list of the eight platform pages.
 const platformPages = NAV_LINKS.find((l) => l.href === "/platform")?.children ?? [];
+// Likewise the Solutions and Company dropdowns are the single lists for those columns.
+const solutionPages = NAV_LINKS.find((l) => l.href === "/solutions")?.children ?? [];
+const companyPages = NAV_LINKS.find((l) => l.href === "/company")?.children ?? [];
 ---
 
 <footer class="footer">
@@ -46,9 +49,15 @@ const platformPages = NAV_LINKS.find((l) => l.href === "/platform")?.children ??
       </div>
 
       <div class="footer-col">
-        <div class="footer-col-title">Product</div>
+        <div class="footer-col-title">Solutions</div>
         <ul>
-          <li><a href={withBase("/solutions")}>Solutions</a></li>
+          {solutionPages.map((p) => <li><a href={withBase(p.href)}>{p.label}</a></li>)}
+        </ul>
+      </div>
+
+      <div class="footer-col">
+        <div class="footer-col-title">Get started</div>
+        <ul>
           <li><a href={withBase("/pricing")}>Plans</a></li>
           <li><a href={withBase("/scan")}>Scan your domain</a></li>
           <li><a href={withBase("/demo")}>Book a demo</a></li>
@@ -72,13 +81,7 @@ const platformPages = NAV_LINKS.find((l) => l.href === "/platform")?.children ??
       <div class="footer-col">
         <div class="footer-col-title">Company</div>
         <ul>
-          <li><a href={withBase("/company")}>Company</a></li>
-          <li><a href={withBase("/why-averrow")}>Why Averrow</a></li>
-          <li><a href={withBase("/about")}>About</a></li>
-          <li><a href={withBase("/careers")}>Careers</a></li>
-          <li><a href={withBase("/press")}>Press</a></li>
-          <li><a href={withBase("/partners")}>Partners</a></li>
-          <li><a href={withBase("/contact")}>Contact</a></li>
+          {companyPages.map((p) => <li><a href={withBase(p.href)}>{p.label}</a></li>)}
         </ul>
       </div>
 
