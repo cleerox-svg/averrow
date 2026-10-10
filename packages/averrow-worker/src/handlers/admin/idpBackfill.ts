@@ -1,5 +1,7 @@
 // Averrow — Admin backfill: IdP-impersonation tagging
-// POST /api/admin/backfills/idp-impersonation?limit=500
+// POST /api/admin/backfills/idp-impersonation?limit=500 (requireAdmin) and its
+// AVERROW_INTERNAL_SECRET mirror POST /api/internal/backfills/idp-impersonation
+// — both call runIdpImpersonationBackfill with their own BackfillActor.
 // (docs/IDP_IMPERSONATION_PLAN_2026-10.md, task T2)
 //
 // Bounded, resumable, idempotent. Walks `threats` (technique NULL or already
@@ -144,7 +146,29 @@ function isReset(url: URL): boolean {
 }
 
 /**
- * Shared admin-backfill envelope: optional cursor reset, then AUDIT FIRST
+ * Who triggered a backfill. `userId` goes to `audit_log.user_id` (NULL for a
+ * service caller); `label` goes to `details.actor` so admin- and
+ * internal-triggered runs are distinguishable — same convention as the
+ * brand-link cleanup (`"user:<id>"` vs `"internal"`, lib/brand-link-cleanup.ts).
+ */
+export interface BackfillActor {
+  userId: string | null;
+  label: string;
+}
+
+/**
+ * The AVERROW_INTERNAL_SECRET caller (POST /api/internal/backfills/*). The
+ * secret is shared by every internal tool (MCP server, scripts, Claude Code),
+ * so the label names the grant, not a specific client it cannot prove.
+ */
+export const INTERNAL_BACKFILL_ACTOR: BackfillActor = { userId: null, label: "internal" };
+
+export function adminBackfillActor(ctx: AuthContext): BackfillActor {
+  return { userId: ctx.userId, label: `user:${ctx.userId}` };
+}
+
+/**
+ * Shared backfill envelope: optional cursor reset, then AUDIT FIRST
  * (an attempt row exists before any data write), run, then a completion row
  * (success / failure). `audit()` never throws, so an audit-store outage can
  * never turn a pass whose rows already changed into a 500.
@@ -152,38 +176,39 @@ function isReset(url: URL): boolean {
 async function runAuditedBackfill<T>(
   request: Request,
   env: Env,
-  ctx: AuthContext,
+  actor: BackfillActor,
   opts: { action: string; resourceType: string; cursorKeys: string[]; params: Record<string, unknown> },
   run: () => Promise<T>,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   const url = new URL(request.url);
+  const base = { userId: actor.userId, resourceType: opts.resourceType, request };
   try {
     if (isReset(url)) {
       await audit(env, {
-        action: `${opts.action}_reset`, userId: ctx.userId, resourceType: opts.resourceType,
-        details: { cursor_keys: opts.cursorKeys }, request,
+        ...base, action: `${opts.action}_reset`,
+        details: { actor: actor.label, cursor_keys: opts.cursorKeys },
       });
       await Promise.all(opts.cursorKeys.map((k) => env.CACHE.delete(k)));
       return json({ success: true, data: { reset: true, cursors_cleared: opts.cursorKeys } }, 200, origin);
     }
     await audit(env, {
-      action: `${opts.action}_started`, userId: ctx.userId, resourceType: opts.resourceType,
-      details: opts.params, request,
+      ...base, action: `${opts.action}_started`,
+      details: { actor: actor.label, ...opts.params },
     });
     let data: T;
     try {
       data = await run();
     } catch (err) {
       await audit(env, {
-        action: opts.action, userId: ctx.userId, resourceType: opts.resourceType, outcome: "failure",
-        details: { ...opts.params, error: err instanceof Error ? err.message : String(err) }, request,
+        ...base, action: opts.action, outcome: "failure",
+        details: { actor: actor.label, ...opts.params, error: err instanceof Error ? err.message : String(err) },
       });
       throw err;
     }
     await audit(env, {
-      action: opts.action, userId: ctx.userId, resourceType: opts.resourceType,
-      details: { ...opts.params, result: data }, request,
+      ...base, action: opts.action,
+      details: { actor: actor.label, ...opts.params, result: data },
     });
     return json({ success: true, data }, 200, origin);
   } catch {
@@ -191,13 +216,27 @@ async function runAuditedBackfill<T>(
   }
 }
 
+/** POST /api/admin/backfills/idp-impersonation (requireAdmin). */
 export async function handleBackfillIdpImpersonation(
   request: Request,
   env: Env,
   ctx: AuthContext,
 ): Promise<Response> {
+  return runIdpImpersonationBackfill(request, env, adminBackfillActor(ctx));
+}
+
+/**
+ * Core of the IdP-impersonation backfill, shared by the admin route and
+ * POST /api/internal/backfills/idp-impersonation (AVERROW_INTERNAL_SECRET).
+ * `?limit=` (default 500, cap 1000), `?reset=1` clears both cursors.
+ */
+export async function runIdpImpersonationBackfill(
+  request: Request,
+  env: Env,
+  actor: BackfillActor,
+): Promise<Response> {
   const limit = parseIdpBackfillLimit(new URL(request.url).searchParams.get("limit"));
-  return runAuditedBackfill<IdpBackfillResult>(request, env, ctx, {
+  return runAuditedBackfill<IdpBackfillResult>(request, env, actor, {
     action: "backfill_idp_impersonation",
     resourceType: "threats",
     cursorKeys: [IDP_BACKFILL_THREAT_CURSOR_KEY, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY],
@@ -266,13 +305,27 @@ export async function topUpIdpLures(env: Env, brandLimit: number): Promise<IdpLu
   return { brands_scanned: rows.length, inserted, cursor: next, done: rows.length < brandLimit };
 }
 
+/** POST /api/admin/backfills/idp-lure-topup (requireAdmin). */
 export async function handleIdpLureTopup(
   request: Request,
   env: Env,
   ctx: AuthContext,
 ): Promise<Response> {
+  return runIdpLureTopupBackfill(request, env, adminBackfillActor(ctx));
+}
+
+/**
+ * Core of the IdP lure top-up, shared by the admin route and
+ * POST /api/internal/backfills/idp-lure-topup (AVERROW_INTERNAL_SECRET).
+ * `?brands=` (default 50, cap 200), `?reset=1` clears the brand cursor.
+ */
+export async function runIdpLureTopupBackfill(
+  request: Request,
+  env: Env,
+  actor: BackfillActor,
+): Promise<Response> {
   const brands = parseIdpLureTopupBrands(new URL(request.url).searchParams.get("brands"));
-  return runAuditedBackfill<IdpLureTopupResult>(request, env, ctx, {
+  return runAuditedBackfill<IdpLureTopupResult>(request, env, actor, {
     action: "backfill_idp_lure_topup",
     resourceType: "lookalike_domains",
     cursorKeys: [IDP_LURE_TOPUP_CURSOR_KEY],
