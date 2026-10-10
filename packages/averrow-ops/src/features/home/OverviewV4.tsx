@@ -18,6 +18,7 @@ import { NeedsYouNow } from '@/features/home/NeedsYouNow';
 import { TempoBand } from '@/features/home/TempoBand';
 import { PlatformPulse } from '@/features/home/PlatformPulse';
 import { Digest } from '@/features/home/Digest';
+import { IdentityThreatsTile } from '@/features/identity-threats/IdentityThreatsTile';
 import type { HomeQueue } from '@/lib/home-queue';
 import '@/features/console/console.css';
 import '@/features/home/home.css';
@@ -87,6 +88,7 @@ export function OverviewV4() {
         <Briefing source="intelligence" />
         <PlatformPulse />
       </div>
+      <IdentityThreatsTile />
       <section className="home-section"><Digest /></section>
     </div>
   );
