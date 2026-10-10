@@ -38,7 +38,7 @@ describe('IdentityThreatsPage', () => {
     expect(screen.getByText('Brands targeted')).toBeInTheDocument();
     expect(screen.getByText('Okta', { selector: 'span' })).toBeInTheDocument();
     expect(screen.getByText('acme-login.okta-evil.com')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'T1556.006' })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1556/006/');
+    expect(screen.getByRole('link', { name: /^T1556\.006/ })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1556/006/');
     expect(get).toHaveBeenCalledWith('/api/intel/identity-threats?window=7d');
   });
 
