@@ -19,6 +19,9 @@ ALTER TABLE lookalike_domains ADD COLUMN idp_lure TEXT;
 CREATE INDEX IF NOT EXISTS idx_threats_technique_created
   ON threats(technique, created_at);
 
--- lookalikes_flagged KPI: COUNT over the (small) IdP-lure subset only.
-CREATE INDEX IF NOT EXISTS idx_lookalike_idp_lure_created
-  ON lookalike_domains(created_at) WHERE idp_lure IS NOT NULL;
+-- lookalikes_flagged KPI: real detections only — IdP-lure rows that are
+-- registered and not benign, dated by first_seen (when registration was
+-- observed). Seeded-but-unregistered candidates are never indexed.
+CREATE INDEX IF NOT EXISTS idx_lookalike_idp_lure_live
+  ON lookalike_domains(first_seen)
+  WHERE idp_lure IS NOT NULL AND registered = 1 AND status != 'benign';

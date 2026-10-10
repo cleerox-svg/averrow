@@ -10,7 +10,7 @@
 // (technique, idp, brand, day, status) for the current window is rolled up
 // in JS into KPIs / trend / by_vector / by_idp / top_brands; one GROUP BY
 // (technique, idp) for the previous window gives the deltas. lookalikes_flagged
-// reads the partial index idx_lookalike_idp_lure_created. cachedValue 300s.
+// reads the partial index idx_lookalike_idp_lure_live (registered, non-benign). cachedValue 300s.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, type DbContext } from "../lib/db";
@@ -134,9 +134,15 @@ export async function computeIdentityThreats(
   // trend has exactly `days` points; the previous window is the same length.
   const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const sinceMs = todayStart - (days - 1) * 86_400_000;
-  const prevSinceMs = sinceMs - days * 86_400_000;
+  // Previous window covers the SAME elapsed span, shifted back `days` days:
+  // [since - days, now - days). Ending it at `since` instead would compare a
+  // partial today against a full day and bias every delta downward.
+  const shiftMs = days * 86_400_000;
+  const prevSinceMs = sinceMs - shiftMs;
+  const prevUntilMs = now.getTime() - shiftMs;
   const since = d1Time(new Date(sinceMs));
   const prevSince = d1Time(new Date(prevSinceMs));
+  const prevUntil = d1Time(new Date(prevUntilMs));
 
   const fam = IDP_FAMILY_TECHNIQUES;
   const ph = fam.map(() => "?").join(", ");
@@ -155,7 +161,7 @@ export async function computeIdentityThreats(
          FROM threats
         WHERE technique IN (${ph}) AND created_at >= ? AND created_at < ?
         GROUP BY technique, impersonated_idp`,
-    ).bind(...fam, prevSince, since).all<PrevRow>(),
+    ).bind(...fam, prevSince, prevUntil).all<PrevRow>(),
     db.prepare(
       `SELECT t.id, t.malicious_domain, t.malicious_url, t.target_brand_id, b.name AS brand_name,
               t.impersonated_idp, t.technique, t.status, t.created_at
@@ -166,8 +172,14 @@ export async function computeIdentityThreats(
         LIMIT ?`,
     ).bind(...fam, since, RECENT_LIMIT).all<RecentRow>(),
     db.prepare(
-      `SELECT COUNT(*) AS n FROM lookalike_domains WHERE idp_lure IS NOT NULL AND created_at >= ?`,
-    ).bind(since).first<{ n: number }>(),
+      // Real detections only: registered and not benign, dated by when the
+      // registration was observed (first_seen), never seeded candidates.
+      // Predicate mirrors the partial index idx_lookalike_idp_lure_live (0288).
+      `SELECT COUNT(*) AS n FROM lookalike_domains
+        WHERE idp_lure IS NOT NULL AND registered = 1 AND status != 'benign' AND first_seen >= ?`,
+      // Bound as the bare date (window start is midnight) so a first_seen
+      // stored as either 'YYYY-MM-DD' or a datetime compares correctly.
+    ).bind(since.slice(0, 10)).first<{ n: number }>(),
   ]);
 
   const cur = curRes.results ?? [];

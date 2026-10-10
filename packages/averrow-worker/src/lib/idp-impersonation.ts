@@ -279,13 +279,24 @@ function withinOneEdit(a: string, b: string): boolean {
 
 interface LureHit { lure: string; provider: IdpProvider; strong: boolean; matched: string; order: number }
 
+// Strong lures that are also ordinary words / other brands' product names
+// ("entra" — bbva-entra.com, entra.es): never fire as a bare token, only
+// glued to an auth word (entraid, entra-login, entra-sso). The Entra URL-path
+// signal is unaffected.
+const COMPOUND_ONLY_LURES = new Set<string>(['entra']);
+const COMPOUND_ONLY_WORDS = new Set<string>([...AUTH_WORDS, 'sso']);
+
 function strongWholeToken(tok: string): { lure: string; provider: IdpProvider } | null {
   const direct = STRONG_LURES[tok];
-  if (direct) return { lure: tok, provider: direct };
-  if (/[0-9]/.test(tok)) {
+  if (direct) return COMPOUND_ONLY_LURES.has(tok) ? null : { lure: tok, provider: direct };
+  // De-leet only a token that has a letter: a pure number (550 → "sso",
+  // 0174 → "olta") is never a lure.
+  if (/[0-9]/.test(tok) && /[a-z]/.test(tok)) {
     const d = deleet(tok);
     // auth0 legitimately contains a digit; deleeting it would make "autho".
-    if (d !== 'autho' && STRONG_LURES[d]) return { lure: d, provider: STRONG_LURES[d] };
+    if (d !== 'autho' && STRONG_LURES[d] && !COMPOUND_ONLY_LURES.has(d)) {
+      return { lure: d, provider: STRONG_LURES[d] };
+    }
   }
   if (tok.length >= 10) {
     const d = deleet(tok);
@@ -308,32 +319,46 @@ function findLures(host: string, brands: string[]): LureHit[] {
   const hits: LureHit[] = [];
   let order = 0;
   const labels = scannableLabels(host);
-  const segments: string[] = [];
+  // Raw hyphen-split segments, plus adjacent pairs re-joined (one-login,
+  // azure-ad, auth-0). `covers` = the raw-segment indices each one spans.
+  const raw: string[] = [];
+  const segments: Array<{ seg: string; covers: number[] }> = [];
   for (const label of labels) {
     const segs = label.split(/[-_]/).filter(Boolean);
-    segments.push(...segs);
-    // Adjacent hyphen-split pairs re-joined: one-login, azure-ad, auth-0.
-    for (let i = 0; i + 1 < segs.length; i++) segments.push(`${segs[i]}${segs[i + 1]}`);
+    const base = raw.length;
+    raw.push(...segs);
+    segs.forEach((seg, i) => segments.push({ seg, covers: [base + i] }));
+    for (let i = 0; i + 1 < segs.length; i++) {
+      segments.push({ seg: `${segs[i]}${segs[i + 1]}`, covers: [base + i, base + i + 1] });
+    }
   }
 
-  const brandPresent = brands.length > 0 && segments.some((s) =>
-    brands.some((b) => s === b || s.startsWith(b) || s.endsWith(b)));
+  // A weak lure needs the brand in a DIFFERENT raw segment that does not
+  // itself carry the lure: servicedesk.com with brand "service" is not
+  // brand-present, nor is service-desk.com (both segments belong to the lure).
+  const brandPresentBeside = (lure: string, covers: number[]): boolean =>
+    brands.length > 0 && raw.some((s, i) =>
+      !covers.includes(i) && !s.includes(lure) &&
+      brands.some((b) => s === b || s.startsWith(b) || s.endsWith(b)));
 
-  for (const seg of segments) {
+  for (const { seg, covers } of segments) {
     const pieces = new Set<string>([seg, ...seg.split(/(?<=[a-z])(?=[0-9])|(?<=[0-9])(?=[a-z])/)]);
     for (const tok of pieces) {
       if (!tok) continue;
       const strong = strongWholeToken(tok);
       if (strong) hits.push({ ...strong, strong: true, matched: tok, order: order++ });
       const weak = WEAK_LURES[tok];
-      if (weak && brandPresent) hits.push({ lure: tok, provider: weak, strong: false, matched: tok, order: order++ });
+      if (weak && brandPresentBeside(tok, covers)) hits.push({ lure: tok, provider: weak, strong: false, matched: tok, order: order++ });
     }
     // Compounds within a single segment.
     for (const [lure, provider] of Object.entries(STRONG_LURES)) {
       if (seg === lure || !seg.includes(lure)) continue;
       const rest = seg.startsWith(lure) ? seg.slice(lure.length) : seg.endsWith(lure) ? seg.slice(0, -lure.length) : null;
       if (rest === null) continue;
-      if (AUTH_WORDS.has(rest) || brands.includes(rest)) {
+      const ok = COMPOUND_ONLY_LURES.has(lure)
+        ? COMPOUND_ONLY_WORDS.has(rest)
+        : AUTH_WORDS.has(rest) || brands.includes(rest);
+      if (ok) {
         hits.push({ lure, provider, strong: true, matched: seg, order: order++ });
       }
     }

@@ -20,6 +20,7 @@
 
 import { registrableDomain } from "./domain-utils";
 import { IDP_TENANT_HOSTS, idpTenantLabel } from "./idp-impersonation";
+import { tagThreat, brandTokensFrom, idpTagUpdateStmt } from "./idp-tagging";
 
 export interface BrandRow {
   id: string;
@@ -265,7 +266,25 @@ export function isSharedHostingHost(raw: string): boolean {
   const host = hostOf(raw);
   if (!host) return false;
   if (SHARED_HOSTS.has(host)) return true;
-  return PLATFORM_SUFFIXES.includes(host);
+  // An IdP apex (okta.com) is the vendor's own site, not shared hosting.
+  return PLATFORM_SUFFIXES.includes(host) && !IDP_SUFFIXES.has(host);
+}
+
+const IDP_SUFFIXES: ReadonlySet<string> = new Set(Object.keys(IDP_TENANT_HOSTS));
+
+/**
+ * The PLATFORM_SUFFIXES entry `host` is a tenant of, or null. A
+ * vendor-owned subdomain of an IdP suffix (login.okta.com, eu.auth0.com,
+ * status.okta.com — the classifier's corp-label exclusion via
+ * idpTenantLabel) is NOT a tenant: it belongs to the vendor.
+ */
+function platformSuffixFor(host: string): string | null {
+  for (const p of PLATFORM_SUFFIXES) {
+    if (!host.endsWith(`.${p}`)) continue;
+    if (IDP_SUFFIXES.has(p) && idpTenantLabel(host) === null) continue;
+    return p;
+  }
+  return null;
 }
 
 /** True when `raw` is a single tenant's subdomain of a PLATFORM_SUFFIXES
@@ -273,7 +292,14 @@ export function isSharedHostingHost(raw: string): boolean {
 export function isPlatformTenantHost(raw: string): boolean {
   const host = hostOf(raw);
   if (!host) return false;
-  return PLATFORM_SUFFIXES.some((p) => host.endsWith(`.${p}`));
+  return platformSuffixFor(host) !== null;
+}
+
+/** True when `raw` is a customer tenant of an identity provider
+ *  (acme.okta.com, acme.eu.auth0.com) — never a vendor-owned subdomain. */
+export function isIdpTenantHost(raw: string): boolean {
+  const host = hostOf(raw);
+  return !!host && idpTenantLabel(host) !== null;
 }
 
 /**
@@ -293,9 +319,8 @@ export function isMultiTenantHost(raw: string): boolean {
 }
 
 function suffixLabelCount(host: string): number {
-  for (const p of PLATFORM_SUFFIXES) {
-    if (host.endsWith(`.${p}`)) return p.split(".").length;
-  }
+  const p = platformSuffixFor(host);
+  if (p) return p.split(".").length;
   const reg = registrableDomain(host);
   // Registrable labels minus its one owner label.
   return reg ? reg.split(".").length - 1 : 0;
@@ -523,6 +548,26 @@ export function isMatchableInput(raw: string): boolean {
 }
 
 /**
+ * IdP tagging for a threat that just gained its target brand (lib/idp-tagging.ts).
+ * No-op unless it classifies (rare — one extra statement per IdP hit). Best-effort:
+ * a failure never undoes the brand match.
+ */
+export async function tagIdpAfterBrandMatch(
+  db: D1Database,
+  row: { id: string; malicious_domain: string | null; malicious_url: string | null; technique: string | null },
+  brand: Pick<BrandRow, "name" | "canonical_domain"> | undefined,
+): Promise<void> {
+  if (!brand) return;
+  const tag = tagThreat(row, brandTokensFrom(brand.name, brand.canonical_domain));
+  if (!tag.impersonated_idp) return;
+  try {
+    await idpTagUpdateStmt(db, row.id, tag).run();
+  } catch {
+    // Best-effort — the IdP backfill re-covers it.
+  }
+}
+
+/**
  * Load all brands from DB.
  */
 export async function loadBrands(db: D1Database): Promise<BrandRow[]> {
@@ -540,10 +585,11 @@ export async function enrichBrands(db: D1Database): Promise<{ matched: number; t
 
   // Get threats missing brand assignment
   const rows = await db.prepare(
-    `SELECT id, malicious_domain FROM threats
+    `SELECT id, malicious_domain, malicious_url, technique FROM threats
      WHERE malicious_domain IS NOT NULL AND target_brand_id IS NULL
      LIMIT 500`,
-  ).all<{ id: string; malicious_domain: string }>();
+  ).all<{ id: string; malicious_domain: string; malicious_url: string | null; technique: string | null }>();
+  const brandById = new Map(brands.map((b) => [b.id, b]));
 
   const total = rows.results.length;
   if (total === 0) return { matched: 0, total: 0 };
@@ -559,6 +605,11 @@ export async function enrichBrands(db: D1Database): Promise<{ matched: number; t
       await db.prepare(
         "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id IS NULL",
       ).bind(brandId, match.method, row.id).run();
+
+      // Now that the brand is known, a weak IdP lure (acme-helpdesk.com) can
+      // classify. Only rows matched here; the UPDATE keeps the
+      // never-overwrite-a-non-family-technique guard.
+      await tagIdpAfterBrandMatch(db, row, brandById.get(brandId));
 
       // Increment brand threat count
       await db.prepare(

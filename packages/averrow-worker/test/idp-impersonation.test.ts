@@ -105,7 +105,8 @@ describe('idp_lookalike — strong lures', () => {
     ['acme-onelogin.com', 'onelogin', 'onelogin'],
     ['one-login-acme.com', 'onelogin', 'onelogin'],
     ['acme-auth0.com', 'auth0', 'auth0'],
-    ['acme-entra.com', 'entra', 'entra'],
+    ['entraid-acme.com', 'entra', 'entraid'],
+    ['acme-entra-login.com', 'entra', 'entralogin'],
     ['azure-ad-acme.com', 'entra', 'azuread'],
     ['login.microsoftonIine.com.evil.ru', 'entra', 'microsoftoniine'],
     ['micros0ftonline-verify.com', 'entra', 'micros0ftonline'],
@@ -145,6 +146,12 @@ describe('idp_lookalike — weak lures need a brand', () => {
     expect(classify({ host })).toBeNull();
   });
 
+  it('weak lure needs the brand in a separate segment, not inside the lure', () => {
+    expect(classify({ host: 'servicedesk.com', brandTokens: ['service'] })).toBeNull();
+    expect(classify({ host: 'service-desk.com', brandTokens: ['service'] })).toBeNull();
+    expect(classify({ host: 'acme-service-desk.com', brandTokens: acme })?.idp).toBe('generic_sso');
+  });
+
   it('weak lure with an unrelated brand → null', () => {
     expect(classify({ host: 'cheap-vpn.com', brandTokens: acme })).toBeNull();
     expect(classify({ host: 'servicedesk-pro.com', brandTokens: acme })).toBeNull();
@@ -156,6 +163,8 @@ describe('false-positive guards', () => {
     'kotaku.com', 'pseudossomething.com', 'ssolutions.com', 'lasso.io', 'espresso-bar.com',
     'picasso-art.net', 'duolingo.com', 'dakota-news.com', 'oktoberfest.de', 'idpeducation.com',
     'microsoft-support-acme.com', 'office365-login.com', 'google-docs-share.com', 'example.com',
+    // Review regressions: bare "entra" is a word / other product; pure numbers never de-leet.
+    'bbva-entra.com', 'acme-entra.com', 'entra.es', '3ntra-news.com', 'mail550.com', 'host-550.net', '0174.org',
   ])('%s → null', (host) => {
     expect(classify({ host })).toBeNull();
   });

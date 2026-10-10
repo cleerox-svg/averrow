@@ -8,8 +8,7 @@
  */
 
 import { generatePermutations } from '../lib/dnstwist';
-import { classifyIdpImpersonation } from '../lib/idp-impersonation';
-import { brandTokensFrom } from '../lib/idp-tagging';
+import { lookalikeIdpLure } from '../lib/idp-tagging';
 import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
@@ -1152,12 +1151,9 @@ export async function storeLookalikePermutations(
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  // IdP lure tag (lib/idp-impersonation.ts): acme-okta.com → okta,
-  // acme-helpdesk.com → generic_sso. The brand's own domain label is the
-  // brand token that admits weak lures.
-  const lureTokens = brandTokensFrom(null, domain);
-  const idpLure = (d: string): string | null =>
-    classifyIdpImpersonation({ host: d, brandTokens: lureTokens })?.idp ?? null;
+  // IdP lure tag — the one shared rule (lib/idp-tagging.ts lookalikeIdpLure):
+  // acme-okta.com → okta, acme-helpdesk.com → generic_sso.
+  const idpLure = (d: string): string | null => lookalikeIdpLure(d, domain);
 
   let inserted = 0;
 

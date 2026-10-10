@@ -1114,7 +1114,11 @@ the new alert's source/type:
    enrichment snapshot. Dismisses when VT was consulted with zero
    malicious detections, GSB consulted with no flag, GreyNoise
    either benign or not consulted, and SecLookup risk score either
-   null or below 30.
+   null or below 30. A threat whose `technique` is in
+   `IDP_FAMILY_TECHNIQUES` (`lib/idp-impersonation.ts`) is never
+   dismissed (`idp_impersonation_reputation_not_applicable`): an abused
+   IdP tenant rides the vendor's clean reputation, so clean enrichment
+   is not evidence of safety.
 
 2. **Social impersonation** (`alert_type='social_impersonation'`,
    Tier 1.5) — `decideSocialImpersonationTriage` checks two

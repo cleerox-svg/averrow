@@ -12,8 +12,8 @@ import { json } from "../../lib/cors";
 import { audit } from "../../lib/audit";
 import type { Env } from "../../types";
 import type { AuthContext } from "../../middleware/auth";
-import { classifyIdpImpersonation, IDP_FAMILY_TECHNIQUES } from "../../lib/idp-impersonation";
-import { tagThreat, loadBrandTokens } from "../../lib/idp-tagging";
+import { IDP_FAMILY_TECHNIQUES } from "../../lib/idp-impersonation";
+import { tagThreat, loadBrandTokens, idpTagUpdateStmt, lookalikeIdpLure } from "../../lib/idp-tagging";
 import { generateIdpLurePermutations } from "../../lib/dnstwist";
 import { MONITORED_BRAND_PREDICATE_SQL } from "../../lib/monitored-brands";
 import { storeLookalikePermutations } from "../../scanners/lookalike-domains";
@@ -91,12 +91,9 @@ export async function backfillThreatIdpTags(env: Env, limit: number): Promise<Id
     const tag = tagThreat(r, r.target_brand_id ? tokens.get(r.target_brand_id) : undefined);
     if (!tag.impersonated_idp) continue;
     if (tag.technique === r.technique && tag.impersonated_idp === r.impersonated_idp) continue;
-    // Re-check the technique guard in the UPDATE so a concurrent writer that
+    // The UPDATE re-checks the technique guard so a concurrent writer that
     // set a non-family technique is never overwritten.
-    stmts.push(env.DB.prepare(
-      `UPDATE threats SET technique = ?, impersonated_idp = ?
-        WHERE id = ? AND (technique IS NULL OR technique IN (${FAMILY_PLACEHOLDERS}))`,
-    ).bind(tag.technique, tag.impersonated_idp, r.id, ...IDP_FAMILY_TECHNIQUES));
+    stmts.push(idpTagUpdateStmt(env.DB, r.id, tag));
   }
   await runBatches(env, stmts);
 
@@ -109,26 +106,27 @@ interface LookalikeScanRow {
   rid: number;
   id: string;
   domain: string;
-  brand_id: string;
   idp_lure: string | null;
+  canonical_domain: string | null;
 }
 
 export async function backfillLookalikeIdpLures(env: Env, limit: number): Promise<IdpBackfillPassResult> {
   const cursor = await readCursor(env, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY);
   const res = await env.DB.prepare(
-    `SELECT rowid AS rid, id, domain, brand_id, idp_lure
-       FROM lookalike_domains
-      WHERE rowid > ?
-      ORDER BY rowid
+    `SELECT ld.rowid AS rid, ld.id, ld.domain, ld.idp_lure, b.canonical_domain
+       FROM lookalike_domains ld
+       LEFT JOIN brands b ON b.id = ld.brand_id
+      WHERE ld.rowid > ?
+      ORDER BY ld.rowid
       LIMIT ?`,
   ).bind(cursor, limit).all<LookalikeScanRow>();
   const rows = res.results ?? [];
   if (rows.length === 0) return { scanned: 0, tagged: 0, cursor, done: true };
 
-  const tokens = await loadBrandTokens(env.DB, rows.map((r) => r.brand_id));
+  // Same rule as the seeder and the top-up (lib/idp-tagging.ts lookalikeIdpLure).
   const stmts: D1PreparedStatement[] = [];
   for (const r of rows) {
-    const lure = classifyIdpImpersonation({ host: r.domain, brandTokens: tokens.get(r.brand_id) })?.idp ?? null;
+    const lure = lookalikeIdpLure(r.domain, r.canonical_domain);
     if (!lure || lure === r.idp_lure) continue;
     stmts.push(env.DB.prepare("UPDATE lookalike_domains SET idp_lure = ? WHERE id = ?").bind(lure, r.id));
   }
@@ -139,29 +137,76 @@ export async function backfillLookalikeIdpLures(env: Env, limit: number): Promis
   return { scanned: rows.length, tagged: stmts.length, cursor: next, done: rows.length < limit };
 }
 
-export async function handleBackfillIdpImpersonation(
+/** `?reset=1` — clear cursors instead of running a pass. */
+function isReset(url: URL): boolean {
+  const v = url.searchParams.get("reset");
+  return v === "1" || v === "true";
+}
+
+/**
+ * Shared admin-backfill envelope: optional cursor reset, then AUDIT FIRST
+ * (an attempt row exists before any data write), run, then a completion row
+ * (success / failure). `audit()` never throws, so an audit-store outage can
+ * never turn a pass whose rows already changed into a 500.
+ */
+async function runAuditedBackfill<T>(
   request: Request,
   env: Env,
   ctx: AuthContext,
+  opts: { action: string; resourceType: string; cursorKeys: string[]; params: Record<string, unknown> },
+  run: () => Promise<T>,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
+  const url = new URL(request.url);
   try {
-    const limit = parseIdpBackfillLimit(new URL(request.url).searchParams.get("limit"));
-    const threats = await backfillThreatIdpTags(env, limit);
-    const lookalikes = await backfillLookalikeIdpLures(env, limit);
-    const data: IdpBackfillResult = { ...threats, done: threats.done && lookalikes.done, lookalikes };
-
+    if (isReset(url)) {
+      await audit(env, {
+        action: `${opts.action}_reset`, userId: ctx.userId, resourceType: opts.resourceType,
+        details: { cursor_keys: opts.cursorKeys }, request,
+      });
+      await Promise.all(opts.cursorKeys.map((k) => env.CACHE.delete(k)));
+      return json({ success: true, data: { reset: true, cursors_cleared: opts.cursorKeys } }, 200, origin);
+    }
     await audit(env, {
-      action: "backfill_idp_impersonation",
-      userId: ctx.userId,
-      resourceType: "threats",
-      details: { limit, threats, lookalikes },
-      request,
+      action: `${opts.action}_started`, userId: ctx.userId, resourceType: opts.resourceType,
+      details: opts.params, request,
+    });
+    let data: T;
+    try {
+      data = await run();
+    } catch (err) {
+      await audit(env, {
+        action: opts.action, userId: ctx.userId, resourceType: opts.resourceType, outcome: "failure",
+        details: { ...opts.params, error: err instanceof Error ? err.message : String(err) }, request,
+      });
+      throw err;
+    }
+    await audit(env, {
+      action: opts.action, userId: ctx.userId, resourceType: opts.resourceType,
+      details: { ...opts.params, result: data }, request,
     });
     return json({ success: true, data }, 200, origin);
   } catch {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
+
+export async function handleBackfillIdpImpersonation(
+  request: Request,
+  env: Env,
+  ctx: AuthContext,
+): Promise<Response> {
+  const limit = parseIdpBackfillLimit(new URL(request.url).searchParams.get("limit"));
+  return runAuditedBackfill<IdpBackfillResult>(request, env, ctx, {
+    action: "backfill_idp_impersonation",
+    resourceType: "threats",
+    cursorKeys: [IDP_BACKFILL_THREAT_CURSOR_KEY, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY],
+    params: { limit },
+  }, async () => {
+    const threats = await backfillThreatIdpTags(env, limit);
+    const lookalikes = await backfillLookalikeIdpLures(env, limit);
+    return { ...threats, done: threats.done && lookalikes.done, lookalikes };
+  });
 }
 
 // ─── Lure top-up for already-seeded brands ──────────────────────────
@@ -226,19 +271,11 @@ export async function handleIdpLureTopup(
   env: Env,
   ctx: AuthContext,
 ): Promise<Response> {
-  const origin = request.headers.get("Origin");
-  try {
-    const brands = parseIdpLureTopupBrands(new URL(request.url).searchParams.get("brands"));
-    const data = await topUpIdpLures(env, brands);
-    await audit(env, {
-      action: "backfill_idp_lure_topup",
-      userId: ctx.userId,
-      resourceType: "lookalike_domains",
-      details: { brands, ...data },
-      request,
-    });
-    return json({ success: true, data }, 200, origin);
-  } catch {
-    return json({ success: false, error: "An internal error occurred" }, 500, origin);
-  }
+  const brands = parseIdpLureTopupBrands(new URL(request.url).searchParams.get("brands"));
+  return runAuditedBackfill<IdpLureTopupResult>(request, env, ctx, {
+    action: "backfill_idp_lure_topup",
+    resourceType: "lookalike_domains",
+    cursorKeys: [IDP_LURE_TOPUP_CURSOR_KEY],
+    params: { brands },
+  }, () => topUpIdpLures(env, brands));
 }

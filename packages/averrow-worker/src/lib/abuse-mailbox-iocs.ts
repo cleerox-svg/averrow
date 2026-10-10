@@ -23,6 +23,7 @@
 //   - parsers (parseAuthResults, parseSenderIp): pure, zero D1.
 
 import type { Env } from "../types";
+import { IDP_FAMILY_TECHNIQUES } from "./idp-impersonation";
 import type { ExtractedUrl } from "../handlers/abuseMailboxEmail";
 import { extractDomain, threatId, type ThreatRow } from "../feeds/types";
 import { insertThreat } from "./feedRunner";
@@ -339,12 +340,28 @@ export async function promoteToThreats(
       // URL won't overwrite. Backfill the technique / named-threat label
       // onto an existing row so naming sticks even on dedup.
       if (opts.technique || opts.namedThreatId) {
-        await env.DB.prepare(
-          `UPDATE threats
-           SET technique = COALESCE(technique, ?),
-               named_threat_id = COALESCE(named_threat_id, ?)
-           WHERE id = ?`,
-        ).bind(opts.technique ?? null, opts.namedThreatId ?? null, id).run();
+        // A specific (non-IdP-family) technique from the mailbox outranks an
+        // IdP-family label — the family is the weaker, host-derived one — and
+        // clears the now-stale impersonated_idp. Never the reverse: an
+        // existing non-family technique is kept (COALESCE path).
+        const fam = IDP_FAMILY_TECHNIQUES;
+        const famPh = fam.map(() => "?").join(", ");
+        if (opts.technique && !IDP_FAMILY_TECHNIQUES.includes(opts.technique)) {
+          await env.DB.prepare(
+            `UPDATE threats
+             SET technique = CASE WHEN technique IS NULL OR technique IN (${famPh}) THEN ? ELSE technique END,
+                 impersonated_idp = CASE WHEN technique IN (${famPh}) THEN NULL ELSE impersonated_idp END,
+                 named_threat_id = COALESCE(named_threat_id, ?)
+             WHERE id = ?`,
+          ).bind(...fam, opts.technique, ...fam, opts.namedThreatId ?? null, id).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE threats
+             SET technique = COALESCE(technique, ?),
+                 named_threat_id = COALESCE(named_threat_id, ?)
+             WHERE id = ?`,
+          ).bind(opts.technique ?? null, opts.namedThreatId ?? null, id).run();
+        }
       }
       ids.push(id);
     } catch (err) {

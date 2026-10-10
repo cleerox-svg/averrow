@@ -6,7 +6,7 @@
 // input from a threat row, and resolves brand tokens for the weak-lure path
 // (acme-helpdesk.com is IdP-family only when "acme" is the targeted brand).
 
-import { classifyIdpImpersonation } from "./idp-impersonation";
+import { classifyIdpImpersonation, IDP_FAMILY_TECHNIQUES } from "./idp-impersonation";
 
 export interface IdpTag {
   /** Value for threats.technique — the caller's existing value when not IdP-family. */
@@ -66,21 +66,47 @@ function techniqueIsSet(row: IdpTaggable): boolean {
   return row.technique !== null && row.technique !== undefined && row.technique !== "";
 }
 
-/** Brand tokens from a brand row: the full name, its words, and the
- *  canonical domain's owner label ("Acme Bank" / acmebank.com →
- *  ["Acme Bank", "acme", "bank", "acmebank"]). The classifier normalizes
- *  and drops tokens < 3 chars and lure words. */
+/** Brand tokens from a brand row: the full name and the canonical domain's
+ *  owner label ("American Express" / americanexpress.com →
+ *  ["American Express", "americanexpress"]). Individual name WORDS are
+ *  deliberately not tokens: "express" would make expressvpn.com an
+ *  American Express VPN lure. The classifier normalizes and drops tokens
+ *  < 3 chars and lure words. */
 export function brandTokensFrom(name: string | null, canonicalDomain: string | null): string[] {
   const out = new Set<string>();
-  if (name) {
-    out.add(name);
-    for (const w of name.split(/[^A-Za-z0-9]+/)) if (w) out.add(w);
-  }
+  if (name) out.add(name);
   if (canonicalDomain) {
     const owner = canonicalDomain.toLowerCase().replace(/^www\./, "").split(".")[0];
     if (owner) out.add(owner);
   }
   return [...out];
+}
+
+/**
+ * THE idp_lure rule for lookalike_domains rows — shared by the seeder, the
+ * lure top-up and the lookalike backfill so they cannot disagree. A
+ * permutation is generated from the brand's canonical domain, so that
+ * domain's owner label is the brand token (acme.com → acme-helpdesk.com).
+ */
+export function lookalikeIdpLure(permutationDomain: string, canonicalDomain: string | null): string | null {
+  return classifyIdpImpersonation({
+    host: permutationDomain,
+    brandTokens: brandTokensFrom(null, canonicalDomain),
+  })?.idp ?? null;
+}
+
+const FAMILY_PH = IDP_FAMILY_TECHNIQUES.map(() => "?").join(", ");
+
+/**
+ * UPDATE stamping technique + impersonated_idp on one threat, guarded in SQL
+ * so a non-family technique written concurrently is never overwritten.
+ * 7 binds.
+ */
+export function idpTagUpdateStmt(db: D1Database, threatId: string, tag: IdpTag): D1PreparedStatement {
+  return db.prepare(
+    `UPDATE threats SET technique = ?, impersonated_idp = ?
+      WHERE id = ? AND (technique IS NULL OR technique IN (${FAMILY_PH}))`,
+  ).bind(tag.technique, tag.impersonated_idp, threatId, ...IDP_FAMILY_TECHNIQUES);
 }
 
 // Isolate-level cache: brand names / canonical domains are slow-changing,

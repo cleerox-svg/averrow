@@ -2,15 +2,22 @@
 // tagging glue, brand attribution on IdP tenant hosts, lookalike triage
 // non-dismissal, dnstwist lure reservation, and the summary roll-up.
 import { describe, it, expect } from "vitest";
-import { tagThreat, needsBrandTokens, brandTokensFrom } from "../src/lib/idp-tagging";
-import { fuzzyMatchBrandDetailed, type BrandRow } from "../src/lib/brandDetect";
+import { tagThreat, needsBrandTokens, brandTokensFrom, lookalikeIdpLure } from "../src/lib/idp-tagging";
+import { fuzzyMatchBrandDetailed, isPlatformTenantHost, isIdpTenantHost, isSharedHostingHost, tagIdpAfterBrandMatch, type BrandRow } from "../src/lib/brandDetect";
+import { scoreAbuseHeuristics, type HeuristicInput } from "../src/lib/abuse-mailbox-heuristics";
 import { decideLookalikeRegistrationTriage } from "../src/lib/alert-triage";
 import { isUnderSharedHosting, resolveOfficialDomain, type OfficialDomainRow } from "../src/lib/safeDomains";
 import { generatePermutations, generateIdpLurePermutations, IDP_LURE_PREFIXES, IDP_LURE_SUFFIXES } from "../src/lib/dnstwist";
 import { STRONG_WORDS } from "../src/lib/nrd-brand-match";
 import { IDP_TENANT_HOSTS, IDP_MITRE } from "../src/lib/idp-impersonation";
 import { computeIdentityThreats, parseIdentityWindow } from "../src/handlers/identityThreats";
-import { parseIdpBackfillLimit, parseIdpLureTopupBrands, topUpIdpLures, IDP_LURE_TOPUP_CURSOR_KEY } from "../src/handlers/admin/idpBackfill";
+import {
+  parseIdpBackfillLimit, parseIdpLureTopupBrands, topUpIdpLures, IDP_LURE_TOPUP_CURSOR_KEY,
+  handleBackfillIdpImpersonation, handleIdpLureTopup,
+  IDP_BACKFILL_THREAT_CURSOR_KEY, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY,
+} from "../src/handlers/admin/idpBackfill";
+import type { AuthContext } from "../src/middleware/auth";
+import { classifyIdpImpersonation } from "../src/lib/idp-impersonation";
 import type { Env } from "../src/types";
 
 describe("tagThreat", () => {
@@ -151,6 +158,7 @@ describe("computeIdentityThreats roll-up (T4)", () => {
       created_at: "2026-10-10 09:00:00" },
   ];
   const binds: unknown[][] = [];
+  let lureSql = "";
   const stmt = (sql: string) => ({
     bind: (...args: unknown[]) => {
       binds.push(args);
@@ -162,7 +170,7 @@ describe("computeIdentityThreats roll-up (T4)", () => {
             : sql.includes("created_at < ?") ? prev
             : current,
         }),
-        first: async () => ({ n: 9 }),
+        first: async () => { lureSql = sql; return { n: 9 }; },
       };
     },
   });
@@ -193,7 +201,14 @@ describe("computeIdentityThreats roll-up (T4)", () => {
     expect(data.mitre.find((m) => m.id === "T1566.002")?.count).toBe(10);
     // Window starts at the UTC day 6 days before today; previous window is 7 days earlier.
     expect(binds[0]).toContain("2026-10-04 00:00:00");
-    expect(binds[1]).toEqual(expect.arrayContaining(["2026-09-27 00:00:00", "2026-10-04 00:00:00"]));
+    // Previous window = same elapsed span shifted back 7 days: [09-27 00:00, 10-03 12:00).
+    expect(binds[1]).toEqual(expect.arrayContaining(["2026-09-27 00:00:00", "2026-10-03 12:00:00"]));
+    expect(binds[1]).not.toContain("2026-10-04 00:00:00");
+    // Lookalike KPI counts registered, non-benign detections by first_seen.
+    expect(lureSql).toMatch(/registered = 1/);
+    expect(lureSql).toMatch(/status != 'benign'/);
+    expect(lureSql).toMatch(/first_seen >= \?/);
+    expect(binds[3]).toEqual(["2026-10-04"]);
   });
 });
 
@@ -260,5 +275,170 @@ describe("IdP lure top-up for already-seeded brands", () => {
     h.kv.set(IDP_LURE_TOPUP_CURSOR_KEY, "42");
     expect(await topUpIdpLures(h.env, 50)).toEqual({ brands_scanned: 0, inserted: 0, cursor: 42, done: true });
     expect(h.brandBinds[0]).toEqual([42, 50]);
+  });
+});
+
+describe("review fixes", () => {
+  it("brand tokens are the full name + canonical label, never single words (expressvpn)", () => {
+    expect(brandTokensFrom("American Express", "americanexpress.com")).toEqual(["American Express", "americanexpress"]);
+    expect(tagThreat({ malicious_domain: "expressvpn.com" }, brandTokensFrom("American Express", "americanexpress.com")).impersonated_idp)
+      .toBeNull();
+  });
+
+  it("one lure rule for seeder / top-up / lookalike backfill", () => {
+    expect(lookalikeIdpLure("acme-helpdesk.com", "acme.com")).toBe("generic_sso");
+    expect(lookalikeIdpLure("acme-okta.com", "acme.com")).toBe("okta");
+    expect(lookalikeIdpLure("acmee.com", "acme.com")).toBeNull();
+    expect(lookalikeIdpLure("acme-helpdesk.com", null)).toBeNull();
+  });
+
+  it("bbva-entra / mail550 never classify (brand or not)", () => {
+    expect(classifyIdpImpersonation({ host: "bbva-entra.com", brandTokens: ["bbva"] })).toBeNull();
+    expect(classifyIdpImpersonation({ host: "mail550.com" })).toBeNull();
+  });
+
+  it("IdP vendor-owned subdomains are not platform tenants; tenants are", () => {
+    for (const h of ["login.okta.com", "status.okta.com", "eu.auth0.com", "support.onelogin.com"]) {
+      expect(isPlatformTenantHost(h), h).toBe(false);
+      expect(isIdpTenantHost(h), h).toBe(false);
+    }
+    expect(isPlatformTenantHost("acme.okta.com")).toBe(true);
+    expect(isIdpTenantHost("acme.eu.auth0.com")).toBe(true);
+    expect(isSharedHostingHost("okta.com")).toBe(false);
+    expect(isSharedHostingHost("pages.dev")).toBe(true);
+  });
+
+  it("abuse-mailbox does not flag a legitimate IdP tenant link as free hosting", () => {
+    const base: HeuristicInput = {
+      senderEmail: "it@acme.example", subject: "Sign in", bodyText: "Please sign in",
+      urls: [], attachments: [], brand: null, safeDomains: null, authResults: null, isAttachmentForward: false,
+    };
+    const codes = (u: string, h: string) =>
+      scoreAbuseHeuristics({ ...base, urls: [{ url: u, host: h }] }).signals.map((x) => x.code);
+    expect(codes("https://acme.okta.com/app", "acme.okta.com")).not.toContain("link_free_hosting");
+    expect(codes("https://x.pages.dev/", "x.pages.dev")).toContain("link_free_hosting");
+  });
+
+  it("brand-match step tags a weak lure once the brand is known, with the family guard", async () => {
+    const calls: Array<{ sql: string; args: unknown[] }> = [];
+    const db = {
+      prepare: (sql: string) => ({ bind: (...args: unknown[]) => ({ run: async () => { calls.push({ sql, args }); } }) }),
+    } as unknown as D1Database;
+    const row = { id: "t1", malicious_domain: "acme-helpdesk.com", malicious_url: null, technique: null };
+    await tagIdpAfterBrandMatch(db, row, { name: "Acme", canonical_domain: "acme.com" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.sql).toMatch(/technique IS NULL OR technique IN/);
+    expect(calls[0]!.args.slice(0, 3)).toEqual(["idp_lookalike", "generic_sso", "t1"]);
+    // Non-family technique: never touched. Unrelated host: no statement.
+    await tagIdpAfterBrandMatch(db, { ...row, technique: "clickfix" }, { name: "Acme", canonical_domain: "acme.com" });
+    await tagIdpAfterBrandMatch(db, { ...row, malicious_domain: "acme-shop.com" }, { name: "Acme", canonical_domain: "acme.com" });
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("backfill audit-first + reset", () => {
+  const ctx = { userId: "u_admin" } as AuthContext;
+  function env(opts: { failDb?: boolean } = {}) {
+    const kv = new Map<string, string>([[IDP_BACKFILL_THREAT_CURSOR_KEY, "10"], [IDP_BACKFILL_LOOKALIKE_CURSOR_KEY, "20"],
+      [IDP_LURE_TOPUP_CURSOR_KEY, "30"]]);
+    const audits: Array<{ action: unknown; outcome: unknown; at: number }> = [];
+    let seq = 0;
+    const dbWrites: number[] = [];
+    const e = {
+      CACHE: {
+        get: async (k: string) => kv.get(k) ?? null,
+        put: async (k: string, v: string) => { kv.set(k, v); },
+        delete: async (k: string) => { kv.delete(k); },
+      },
+      AUDIT_DB: { prepare: () => ({ bind: (...a: unknown[]) => ({ run: async () => { audits.push({ action: a[2], outcome: a[8], at: seq++ }); } }) }) },
+      DB: {
+        prepare: () => ({ bind: () => ({ all: async () => {
+          if (opts.failDb) throw new Error("boom");
+          return { results: [] };
+        } }) }),
+        batch: async () => { dbWrites.push(seq++); return []; },
+      },
+    } as unknown as Env;
+    return { e, kv, audits };
+  }
+  const req = (q: string) => new Request(`https://x/api/admin/backfills/idp-impersonation${q}`, { method: "POST" });
+
+  it("audits before running and after completing", async () => {
+    const h = env();
+    const res = await handleBackfillIdpImpersonation(req("?limit=5"), h.e, ctx);
+    expect(res.status).toBe(200);
+    expect(h.audits.map((a) => a.action)).toEqual(["backfill_idp_impersonation_started", "backfill_idp_impersonation"]);
+  });
+
+  it("records a failure audit when the pass throws", async () => {
+    const h = env({ failDb: true });
+    const res = await handleBackfillIdpImpersonation(req(""), h.e, ctx);
+    expect(res.status).toBe(500);
+    expect(h.audits.map((a) => [a.action, a.outcome])).toEqual([
+      ["backfill_idp_impersonation_started", "success"], ["backfill_idp_impersonation", "failure"],
+    ]);
+  });
+
+  it("?reset=1 clears the cursors, audits, and runs nothing", async () => {
+    const h = env();
+    const res = await handleBackfillIdpImpersonation(req("?reset=1"), h.e, ctx);
+    const body = await res.json() as { data: { reset: boolean } };
+    expect(body.data.reset).toBe(true);
+    expect(h.kv.has(IDP_BACKFILL_THREAT_CURSOR_KEY)).toBe(false);
+    expect(h.kv.has(IDP_BACKFILL_LOOKALIKE_CURSOR_KEY)).toBe(false);
+    expect(h.kv.get(IDP_LURE_TOPUP_CURSOR_KEY)).toBe("30");
+    expect(h.audits.map((a) => a.action)).toEqual(["backfill_idp_impersonation_reset"]);
+
+    const h2 = env();
+    await handleIdpLureTopup(new Request("https://x/api/admin/backfills/idp-lure-topup?reset=1", { method: "POST" }), h2.e, ctx);
+    expect(h2.kv.has(IDP_LURE_TOPUP_CURSOR_KEY)).toBe(false);
+    expect(h2.kv.get(IDP_BACKFILL_THREAT_CURSOR_KEY)).toBe("10");
+    expect(h2.audits.map((a) => a.action)).toEqual(["backfill_idp_lure_topup_reset"]);
+  });
+});
+
+describe("abuse-mailbox technique precedence (real SQLite)", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { promoteToThreats } = await import("../src/lib/abuse-mailbox-iocs");
+  const { threatId } = await import("../src/feeds/types");
+
+  function harness() {
+    const sql = new DatabaseSync(":memory:");
+    sql.exec(`CREATE TABLE threats (id TEXT PRIMARY KEY, source_feed TEXT, threat_type TEXT, malicious_url TEXT,
+      malicious_domain TEXT, target_brand_id TEXT, hosting_provider_id TEXT, ip_address TEXT, asn TEXT,
+      country_code TEXT, registrar TEXT, status TEXT, confidence_score INTEGER, campaign_id TEXT, ioc_value TEXT,
+      severity TEXT, is_private_ip INTEGER, technique TEXT, impersonated_idp TEXT, named_threat_id TEXT,
+      ssl_cert_serial TEXT, ssl_cert_issuer TEXT, ssl_san_hash TEXT, first_seen TEXT, last_seen TEXT, created_at TEXT)`);
+    const DB = {
+      prepare: (q: string) => ({
+        bind: (...a: unknown[]) => ({
+          run: async () => ({ meta: { changes: Number(sql.prepare(q).run(...(a as never[])).changes) } }),
+        }),
+      }),
+    };
+    return { sql, env: { DB } as unknown as Env };
+  }
+  const url = "https://acme-sso.okta.com/login";
+  const id = threatId("abuse_mailbox", "url", url);
+  const promote = (env: Env, technique: string | null) => promoteToThreats(env, {
+    urls: [{ url, domain: "acme-sso.okta.com" } as never], classification: "phishing", confidence: 90,
+    brandId: null, senderIp: null, messageId: "m1", technique,
+  });
+  const read = (s: InstanceType<typeof DatabaseSync>) =>
+    s.prepare("SELECT technique, impersonated_idp FROM threats WHERE id = ?").get(id);
+
+  it("a non-family mailbox technique replaces an IdP-family label and clears the idp", async () => {
+    const h = harness();
+    await promote(h.env, null);
+    expect(read(h.sql)).toEqual({ technique: "idp_tenant_abuse", impersonated_idp: "okta" });
+    await promote(h.env, "clickfix");
+    expect(read(h.sql)).toEqual({ technique: "clickfix", impersonated_idp: null });
+  });
+
+  it("a family technique never replaces a non-family one", async () => {
+    const h = harness();
+    await promote(h.env, "clickfix");
+    await promote(h.env, "device_code_phishing");
+    expect(read(h.sql)).toEqual({ technique: "clickfix", impersonated_idp: null });
   });
 });

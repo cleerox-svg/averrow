@@ -6,6 +6,7 @@ import {
   decideExecutiveImpersonationTriage,
   decideLookalikeRegistrationTriage,
   lookalikeAlertDomain,
+  loadThreatSnapshotForAlert,
   normalizeCompanyName,
   type ThreatTriageSnapshot,
   type BrandAllowlist,
@@ -64,6 +65,38 @@ describe("decideAutoTriage — clean cases dismiss", () => {
   it("dismisses when GreyNoise is null on an IP-bearing threat (not consulted yet)", () => {
     const d = decideAutoTriage({ ...cleanIpSnapshot, greynoise_classification: null });
     expect(d.action).toBe('dismiss');
+  });
+});
+
+describe("decideThreatAutoTriage — IdP-impersonation family is never reputation-dismissed", () => {
+  it.each(["idp_tenant_abuse", "idp_lookalike", "device_code_phishing", "oauth_consent_phishing"])(
+    "keeps a fully clean %s threat",
+    (technique) => {
+      const d = decideAutoTriage({ ...cleanDomainSnapshot, technique });
+      expect(d).toEqual({ action: 'keep', reason: 'idp_impersonation_reputation_not_applicable' });
+    },
+  );
+
+  it("a non-family technique still dismisses on clean enrichment", () => {
+    expect(decideAutoTriage({ ...cleanDomainSnapshot, technique: "clickfix" }).action).toBe('dismiss');
+    expect(decideAutoTriage({ ...cleanDomainSnapshot, technique: null }).action).toBe('dismiss');
+  });
+
+  it("loadThreatSnapshotForAlert selects technique (one bind, the threat id)", async () => {
+    let sql = "";
+    let binds: unknown[] = [];
+    const db = {
+      prepare: (q: string) => ({
+        bind: (...a: unknown[]) => {
+          sql = q; binds = a;
+          return { first: async () => ({ ...cleanDomainSnapshot, technique: "idp_tenant_abuse" }) };
+        },
+      }),
+    } as unknown as Parameters<typeof loadThreatSnapshotForAlert>[0];
+    const snap = await loadThreatSnapshotForAlert(db, "thr-1");
+    expect(sql).toMatch(/\btechnique\b/);
+    expect(binds).toEqual(["thr-1"]);
+    expect(decideAutoTriage(snap!).reason).toBe('idp_impersonation_reputation_not_applicable');
   });
 });
 
