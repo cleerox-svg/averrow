@@ -321,6 +321,21 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     const { handleIdentityThreats } = await import("../handlers/identityThreats");
     return handleIdentityThreats(request, env);
   });
+  // Drill-down list (keyset-paginated) + per-detection detail. Distinct
+  // paths from the summary above (itty matches the full path), so order
+  // does not matter; kept adjacent for readability.
+  router.get("/api/intel/identity-threats/detections", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleIdentityDetections } = await import("../handlers/identityDetections");
+    return handleIdentityDetections(request, env);
+  });
+  router.get("/api/intel/identity-threats/detections/:threatId", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleIdentityDetectionDetail } = await import("../handlers/identityDetections");
+    return handleIdentityDetectionDetail(request, env, request.params["threatId"] ?? "");
+  });
 
   // ─── Intel: Critical banner (post-audit signal-alignment) ─────────
   // Powers the red "Critical Intelligence" banner on Home — replaces
