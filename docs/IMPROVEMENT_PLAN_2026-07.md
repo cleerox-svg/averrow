@@ -295,6 +295,74 @@ flagging for a follow-up doc-accuracy pass.
 
 ---
 
+## Wave 4 — Supply-chain hardening & IdP-phishing coverage (backlog) ⬜
+
+Raised 2026-10-10 by a review of the PoeLLM botnet (Lumen Black Lotus Labs, reported
+2026-10-07). PoeLLM exploits internet-exposed, self-hosted LiteLLM / Ollama / Gotenberg /
+Gitea / Ivanti Sentry servers, then hides its C2 IP as words in a GitHub-hosted "poem"
+(a dead-drop resolver). **Averrow is not exposed:** none of that software is in the
+repo, the backend is Cloudflare Workers (no filesystem/shell/ELF execution), CI uses
+GitHub-hosted runners only, no workflow uses `pull_request_target` / `workflow_run` /
+`issue_comment`, and the worker has no `eval` / `new Function`. The items below are
+adjacent hardening, not incident response — none is urgent.
+
+- **S4.1 — Pin GitHub Actions to commit SHAs.** Every `uses:` in `.github/workflows/*.yml`
+  is tag-pinned (`actions/checkout@v4`, `pnpm/action-setup@v4`, `actions/setup-node@v4`).
+  Pin each to its full commit SHA (keep the tag in a trailing comment) so a hijacked
+  upstream tag can't run in CI with deploy secrets. Touches `.github/workflows/**` →
+  owner OK required before merge (CLAUDE.md §9a).
+- **S4.2 — Least-privilege `GITHUB_TOKEN`.** `ci.yml`, `deploy-radar.yml` and
+  `set-abuse-unsubscribe-secret.yml` declare no `permissions:` block and inherit the
+  repo default. Add a top-level `permissions: contents: read` and widen per-job only
+  where needed (`secret-scan.yml` and `tag-release.yml` already declare theirs). Same
+  §9a owner gate as S4.1.
+- **S4.3 — Feed-integrity guard for GitHub-hosted feeds.** Several feeds pull
+  third-party GitHub raw files at runtime: `feeds/c2intelfeeds.ts`,
+  `feeds/cisa_iran_iocs.ts` (single-maintainer repo), `feeds/cryptoscamdb.ts`,
+  `feeds/nrd_hagezi.ts`, `feeds/disposableEmail.ts`,
+  `lib/dark-web-ransomware-ingest.ts`. They are parsed as data, never executed, so a
+  hijacked upstream is a **data-poisoning** risk (false flags on legitimate domains,
+  pipeline floods, skewed attribution), not code execution. Add a per-feed volume
+  sanity check (skip + mark the pull `partial` when record count deviates sharply from
+  the trailing baseline) and refuse to ingest entries matching the trusted
+  official-domain set (`lib/safeDomains.ts`). Owner: `backend-engineer`, with
+  `threat-intel-analyst` for thresholds.
+- **S4.4 — (product) Dead-drop-resolver / exposed-AI-infra intel.** If Black Lotus Labs
+  or another source publishes PoeLLM IOCs, route them through the existing C2/IOC feed
+  path. Longer term, evaluate tracking actor infrastructure staged on GitHub
+  (dead-drop resolvers) as a §13 actor-pattern signal. Research item — no build until
+  a data source is chosen.
+- **S4.5 — Identity-provider (IdP) / Okta-themed phishing coverage + cross-brand metric.**
+  Raised 2026-10-10 with the "Oktajacking" review (Push Security, 2023). Oktajacking
+  runs phishing on a *legitimate* IdP tenant the attacker controls (`acme-sso.okta.com`),
+  so no domain is registered and no per-tenant cert hits CT (Okta uses a wildcard).
+  Classic Scattered Spider / 0ktapus lookalikes (`acme-okta.com`, `acme-sso.com`,
+  `acme-servicedesk.com`, `acme-vpn.com`) are the visible half. Gaps found in code:
+  - `lib/dnstwist.ts` keyword affixes lack `sso`, `okta`, `helpdesk`, `servicedesk`, `vpn`.
+  - `lib/nrd-brand-match.ts` treats `sso`/`helpdesk` as strong lures but `okta`/`vpn` as
+    nothing, so for ≤4-char brands `acme-okta.com` / `acme-vpn.com` are missed.
+  - `lib/brandDetect.ts`: no IdP host (okta.com, oktapreview.com, okta-emea.com,
+    onelogin.com, auth0.com, microsoftonline.com) is in `PLATFORM_SUFFIXES` /
+    `MULTI_TENANT_HOSTS`, so a feed URL `acme-sso.okta.com` is attributed to **Okta**,
+    not Acme. Not in `SHARED_HOSTING_DOMAINS` either — check whether Okta's safe-domain
+    rows would make tenant subdomains look "official" to triage.
+  - No technique tag: `threats.technique` / `saas_technique_id` exist but nothing tags
+    IdP-themed lures (only a generic `/sso\./` → `aitm_phishing` pattern in
+    `lib/saas-techniques-seed.ts`); `threat_cube_brand` has no technique dimension.
+  - Page analysis has no IdP sign-in-widget / kit fingerprint, and runs only on
+    lookalike rows.
+  Proposed build (ROI order): (1) add IdP hosts as multi-tenant hosts so the tenant
+  label drives brand attribution; (2) extend affix/lure lists; (3) tag
+  `threats.technique='idp_impersonation'` (+ `impersonated_idp`) at ingest and expose a
+  SQL GROUP BY metric (per brand, per IdP, per week) — cube column only if read volume
+  warrants; (4) IdP-widget DOM signal in the page scorer; (5) research a tenant-subdomain
+  source (urlscan query on IdP hosts / passive DNS). Owners: `threat-intel-analyst`
+  (rules), `backend-engineer` (ingest + metric), `test-engineer`. Oktajacking proper
+  (rogue AD agent inside a customer's own Okta) is only visible in the customer's Okta
+  System Log — out of scope unless an Okta log integration is added.
+
+---
+
 ## Sequencing notes
 
 - **Wave 0 is independent and parallelizable** — five disjoint-file sessions, fan out.
