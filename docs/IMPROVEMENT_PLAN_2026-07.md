@@ -295,6 +295,46 @@ flagging for a follow-up doc-accuracy pass.
 
 ---
 
+## Wave 4 — Supply-chain & feed-integrity hardening (backlog) ⬜
+
+Raised 2026-10-10 by a review of the PoeLLM botnet (Lumen Black Lotus Labs, reported
+2026-10-07). PoeLLM exploits internet-exposed, self-hosted LiteLLM / Ollama / Gotenberg /
+Gitea / Ivanti Sentry servers, then hides its C2 IP as words in a GitHub-hosted "poem"
+(a dead-drop resolver). **Averrow is not exposed:** none of that software is in the
+repo, the backend is Cloudflare Workers (no filesystem/shell/ELF execution), CI uses
+GitHub-hosted runners only, no workflow uses `pull_request_target` / `workflow_run` /
+`issue_comment`, and the worker has no `eval` / `new Function`. The items below are
+adjacent hardening, not incident response — none is urgent.
+
+- **S4.1 — Pin GitHub Actions to commit SHAs.** Every `uses:` in `.github/workflows/*.yml`
+  is tag-pinned (`actions/checkout@v4`, `pnpm/action-setup@v4`, `actions/setup-node@v4`).
+  Pin each to its full commit SHA (keep the tag in a trailing comment) so a hijacked
+  upstream tag can't run in CI with deploy secrets. Touches `.github/workflows/**` →
+  owner OK required before merge (CLAUDE.md §9a).
+- **S4.2 — Least-privilege `GITHUB_TOKEN`.** `ci.yml`, `deploy-radar.yml` and
+  `set-abuse-unsubscribe-secret.yml` declare no `permissions:` block and inherit the
+  repo default. Add a top-level `permissions: contents: read` and widen per-job only
+  where needed (`secret-scan.yml` and `tag-release.yml` already declare theirs). Same
+  §9a owner gate as S4.1.
+- **S4.3 — Feed-integrity guard for GitHub-hosted feeds.** Several feeds pull
+  third-party GitHub raw files at runtime: `feeds/c2intelfeeds.ts`,
+  `feeds/cisa_iran_iocs.ts` (single-maintainer repo), `feeds/cryptoscamdb.ts`,
+  `feeds/nrd_hagezi.ts`, `feeds/disposableEmail.ts`,
+  `lib/dark-web-ransomware-ingest.ts`. They are parsed as data, never executed, so a
+  hijacked upstream is a **data-poisoning** risk (false flags on legitimate domains,
+  pipeline floods, skewed attribution), not code execution. Add a per-feed volume
+  sanity check (skip + mark the pull `partial` when record count deviates sharply from
+  the trailing baseline) and refuse to ingest entries matching the trusted
+  official-domain set (`lib/safeDomains.ts`). Owner: `backend-engineer`, with
+  `threat-intel-analyst` for thresholds.
+- **S4.4 — (product) Dead-drop-resolver / exposed-AI-infra intel.** If Black Lotus Labs
+  or another source publishes PoeLLM IOCs, route them through the existing C2/IOC feed
+  path. Longer term, evaluate tracking actor infrastructure staged on GitHub
+  (dead-drop resolvers) as a §13 actor-pattern signal. Research item — no build until
+  a data source is chosen.
+
+---
+
 ## Sequencing notes
 
 - **Wave 0 is independent and parallelizable** — five disjoint-file sessions, fan out.
