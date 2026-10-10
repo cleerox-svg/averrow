@@ -360,6 +360,7 @@ adjacent hardening, not incident response — none is urgent.
   (rules), `backend-engineer` (ingest + metric), `test-engineer`. Oktajacking proper
   (rogue AD agent inside a customer's own Okta) is only visible in the customer's Okta
   System Log — out of scope unless an Okta log integration is added.
+  **Build plan + owner decisions (2026-10-10): `docs/IDP_IMPERSONATION_PLAN_2026-10.md`.**
 
 ---
 
