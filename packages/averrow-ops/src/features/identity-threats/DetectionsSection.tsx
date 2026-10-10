@@ -1,4 +1,5 @@
-import { forwardRef, useId, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useState, type ReactNode } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { CopyField } from '@averrow/shared/ui';
 import { Badge, Button, Card, PageState, pageStateKind } from '@/design-system/components';
 import { formatDateTime, relativeTime } from '@/lib/time';
@@ -7,7 +8,7 @@ import type {
   IdentityDetectionDetail, IdentityDetectionListItem, IdentityFilters, IdentityWindow,
 } from './types';
 
-const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.14em]';
+const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.18em]';
 const DASH = '—';
 
 function titleCase(s: string): string {
@@ -27,7 +28,7 @@ export function statusBadge(status: string): ReactNode {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[110px_1fr] gap-2 py-1 text-[13px] sm:grid-cols-[140px_1fr]">
+    <div className="grid grid-cols-1 gap-0 py-1 text-[13px] sm:grid-cols-[140px_1fr] sm:gap-2">
       <dt style={{ color: 'var(--text-secondary)' }}>{label}</dt>
       <dd className="m-0 min-w-0 break-words font-mono" style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>
         {children}
@@ -51,7 +52,7 @@ function val(v: string | number | null | undefined): ReactNode {
 
 function ts(v: string | null): ReactNode {
   if (!v) return DASH;
-  return <span title={formatDateTime(v)}>{relativeTime(v)} <span style={{ color: 'var(--text-secondary)' }}>({formatDateTime(v)})</span></span>;
+  return <span title={formatDateTime(v)}>{relativeTime(v)}</span>;
 }
 
 function yesNo(v: boolean | null): string {
@@ -179,7 +180,7 @@ function DetectionItem({ item, open, onToggle }: { item: IdentityDetectionListIt
         <span className="min-w-0 flex-1">
           <span className="block font-mono text-sm" style={{ color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{item.domain}</span>
           <span className="block text-xs" style={{ color: 'var(--text-secondary)' }}>
-            {item.brand_name ?? 'Unattributed'} · {item.idp_label ?? 'Unknown provider'} · {item.vector_label}
+            {item.brand_name ?? 'No brand match'} · {item.idp_label ?? 'Unknown provider'} · {item.vector_label}
           </span>
         </span>
         <span className="flex items-center gap-2">
@@ -187,10 +188,14 @@ function DetectionItem({ item, open, onToggle }: { item: IdentityDetectionListIt
           <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }} title={formatDateTime(item.created_at)}>
             {relativeTime(item.created_at)}
           </span>
-          <span aria-hidden="true" style={{ color: 'var(--text-secondary)' }}>{open ? '▾' : '▸'}</span>
+          <ChevronRight
+            aria-hidden="true"
+            size={16}
+            style={{ color: 'var(--text-secondary)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}
+          />
         </span>
       </button>
-      <div id={panelId} role="region" aria-label={`Details for ${item.domain}`} hidden={!open} className="px-3 pb-3">
+      <div id={panelId} hidden={!open} className="px-3 pb-3">
         {open && <DetailPanel id={item.threat_id} open={open} />}
       </div>
     </li>
@@ -202,10 +207,11 @@ export interface DetectionsSectionProps {
   filters: IdentityFilters;
   /** Human labels for the active filters, joined into the header ("12 detections · Okta"). */
   filterLabels: string[];
+  onClearFilters: () => void;
 }
 
 export const DetectionsSection = forwardRef<HTMLElement, DetectionsSectionProps>(function DetectionsSection(
-  { window: win, filters, filterLabels }, ref,
+  { window: win, filters, filterLabels, onClearFilters }, ref,
 ) {
   const headingId = useId();
   const q = useIdentityDetections(win, filters);
@@ -214,15 +220,17 @@ export const DetectionsSection = forwardRef<HTMLElement, DetectionsSectionProps>
   const total = q.data?.pages[q.data.pages.length - 1]?.total ?? 0;
   const kind = pageStateKind({ isLoading: q.isLoading, isError: q.isError && items.length === 0, isEmpty: !!q.data && items.length === 0 });
 
+  const filterKey = `${win}|${filters.idp ?? ''}|${filters.vector ?? ''}|${filters.brand_id ?? ''}|${filters.mitre ?? ''}`;
+  useEffect(() => { setOpenIds(new Set()); }, [filterKey]);
+
   const toggle = (id: string) => setOpenIds((prev) => {
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  const header = q.data
-    ? `${total.toLocaleString('en-US')} ${total === 1 ? 'detection' : 'detections'}${filterLabels.length ? ` · ${filterLabels.join(' · ')}` : ''}`
-    : 'Detections';
+  // `total` comes from a backend-cached count (~120s) and can briefly lag the list.
+  const countText = `${total.toLocaleString('en-US')} ${total === 1 ? 'detection' : 'detections'}`;
 
   return (
     <section ref={ref} aria-labelledby={headingId} className="mb-4">
@@ -234,7 +242,12 @@ export const DetectionsSection = forwardRef<HTMLElement, DetectionsSectionProps>
       >
         Detections
       </h2>
-      <p role="status" className="mb-2 mt-0 text-[13px]" style={{ color: 'var(--text-primary)' }}>{header}</p>
+      {q.data && (
+        <p className="mb-2 mt-0 text-[13px]" style={{ color: 'var(--text-primary)' }}>
+          <span aria-live="polite" aria-atomic="true">{countText}</span>
+          {filterLabels.length > 0 && <> · {filterLabels.join(' · ')}</>}
+        </p>
+      )}
       <Card padding="sm">
         {kind ? (
           <PageState
@@ -242,6 +255,7 @@ export const DetectionsSection = forwardRef<HTMLElement, DetectionsSectionProps>
             layout="inline"
             title={kind === 'error' ? "Couldn't load detections" : kind === 'empty' ? 'No detections match these filters' : undefined}
             onRetry={kind === 'error' ? () => { void q.refetch(); } : undefined}
+            action={kind === 'empty' && filterLabels.length > 0 ? { label: 'Clear filters', onClick: onClearFilters } : undefined}
           />
         ) : (
           <>

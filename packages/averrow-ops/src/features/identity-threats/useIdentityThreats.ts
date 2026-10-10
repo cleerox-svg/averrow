@@ -26,7 +26,7 @@ export function useIdentityThreats(window: IdentityWindow, opts: { enabled?: boo
 // ── Drill-down: filtered detections list (infinite) + lazy detail ──────────
 export const DETECTIONS_PAGE_SIZE = 25;
 
-export function useIdentityDetections(window: IdentityWindow, filters: IdentityFilters) {
+export function useIdentityDetections(window: IdentityWindow, filters: IdentityFilters, opts: { enabled?: boolean } = {}) {
   return useInfiniteQuery({
     queryKey: ['intel-identity-detections', window, filters.idp ?? '', filters.vector ?? '', filters.brand_id ?? '', filters.mitre ?? ''],
     initialPageParam: null as string | null,
@@ -42,6 +42,7 @@ export function useIdentityDetections(window: IdentityWindow, filters: IdentityF
       return res.data;
     },
     getNextPageParam: (last) => last.next_cursor ?? undefined,
+    enabled: opts.enabled !== false,
     staleTime: 60_000,
     retry: false,
   });

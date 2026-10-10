@@ -73,7 +73,7 @@ describe('IdentityThreatsPage', () => {
     expect((await screen.findAllByText('Detections'))[0]).toBeInTheDocument();
     expect(screen.getByText('Brands targeted')).toBeInTheDocument();
     expect(await screen.findByText('acme-login.okta-evil.com')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /^T1556\.006/ })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1556/006/');
+    for (const l of screen.getAllByRole('link', { name: /T1556\.006/ })) expect(l).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1556/006/');
     expect(get).toHaveBeenCalledWith('/api/intel/identity-threats?window=7d');
   });
 
@@ -110,7 +110,9 @@ describe('IdentityThreatsPage drill-down', () => {
     await waitFor(() => expect(listCalls().some((u) => u.includes('idp=okta') && u.includes('limit=25') && u.includes('window=7d'))).toBe(true));
     expect(window.location.search).toContain('idp=okta');
     expect(screen.getByRole('button', { name: /^Okta/ })).toHaveAttribute('aria-pressed', 'true');
-    expect(await screen.findByText('1 detection · Okta')).toBeInTheDocument();
+    expect(await screen.findByText('1 detection')).toBeInTheDocument();
+    expect(screen.getByText('1 detection').closest('p')).toHaveTextContent('1 detection · Okta');
+    expect(screen.queryByRole('button', { name: 'Clear all' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Remove filter: Okta' }));
     await waitFor(() => expect(window.location.search).not.toContain('idp'));
@@ -190,6 +192,29 @@ describe('IdentityThreatsPage drill-down', () => {
     await user.click(await screen.findByRole('button', { name: /acme-login\.okta-evil\.com/ }));
     expect(await screen.findByText("Couldn't load detection")).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+});
+
+describe('IdentityThreatsPage hardening', () => {
+  it('drops unknown enum values from the URL so the API is never sent a 400', async () => {
+    window.history.replaceState({}, '', '/?idp=bogus&vector=nope&mitre=T9999&brand_id=zz');
+    renderWithProviders(<IdentityThreatsPage />);
+    await waitFor(() => expect(listCalls().length).toBeGreaterThan(0));
+    for (const u of listCalls()) {
+      expect(u).not.toContain('idp=');
+      expect(u).not.toContain('vector=');
+      expect(u).not.toContain('mitre=');
+      expect(u).toContain('brand_id=zz');
+    }
+  });
+
+  it('empty filtered list offers Clear filters', async () => {
+    window.history.replaceState({}, '', '/?idp=okta');
+    route(() => ({ items: [], next_cursor: null, total: 0 }));
+    const user = userEvent.setup();
+    renderWithProviders(<IdentityThreatsPage />);
+    await user.click(await screen.findByRole('button', { name: 'Clear filters' }));
+    await waitFor(() => expect(window.location.search).not.toContain('idp'));
   });
 });
 
