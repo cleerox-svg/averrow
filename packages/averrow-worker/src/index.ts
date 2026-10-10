@@ -460,6 +460,50 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: result });
       }
 
+      // POST /api/internal/backfills/idp-impersonation?limit=N[&reset=1]
+      // Internal-secret mirror of POST /api/admin/backfills/idp-impersonation
+      // (requireAdmin). Same core (runIdpImpersonationBackfill), same KV
+      // cursors and audit rows — actor recorded as user_id NULL +
+      // details.actor='internal'. Bounded (limit cap 1000); re-run until
+      // data.done.
+      if (url.pathname === '/api/internal/backfills/idp-impersonation' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { runIdpImpersonationBackfill, INTERNAL_BACKFILL_ACTOR } = await import('./handlers/admin/idpBackfill');
+        return runIdpImpersonationBackfill(request, env, INTERNAL_BACKFILL_ACTOR);
+      }
+
+      // POST /api/internal/backfills/idp-lure-topup?brands=N[&reset=1]
+      // Internal-secret mirror of POST /api/admin/backfills/idp-lure-topup.
+      // Same core (runIdpLureTopupBackfill); brands cap 200; re-run until
+      // data.done.
+      if (url.pathname === '/api/internal/backfills/idp-lure-topup' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { runIdpLureTopupBackfill, INTERNAL_BACKFILL_ACTOR } = await import('./handlers/admin/idpBackfill');
+        return runIdpLureTopupBackfill(request, env, INTERNAL_BACKFILL_ACTOR);
+      }
+
+      // POST /api/internal/db/analyze?table=lookalike_domains|threats
+      // Refreshes planner stats for ONE hard-coded index per allowlisted
+      // table (index-scoped ANALYZE — a table ANALYZE on threats walks every
+      // index; see handlers/admin/dbAnalyze.ts). Anything else → 400.
+      if (url.pathname === '/api/internal/db/analyze' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { handleInternalDbAnalyze } = await import('./handlers/admin/dbAnalyze');
+        return handleInternalDbAnalyze(request, env);
+      }
+
       // POST /api/internal/nrd-retention/run
       // On-demand trigger for the nrd_domains retention purge (normally
       // Navigator-dispatched daily at UTC hour 0). Deletes unmatched
