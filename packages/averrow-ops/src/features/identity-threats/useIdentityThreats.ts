@@ -1,5 +1,5 @@
 // GET /api/intel/identity-threats?window=7d|30d — backend caches; we poll lazily.
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { IdentityThreatsData, IdentityWindow } from './types';
 
@@ -15,6 +15,7 @@ export function useIdentityThreats(window: IdentityWindow, opts: { enabled?: boo
       return res.data;
     },
     enabled: opts.enabled !== false,
+    placeholderData: keepPreviousData,
     staleTime: 5 * 60_000,
     retry: false,
   });
