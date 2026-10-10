@@ -70,30 +70,38 @@ export function parseIdentityWindow(raw: string | null): IdentityWindow | null {
  *  (schema CHECK: active | down | remediated). Same "addressed" definition
  *  as lib/threat-aggregates.ts. */
 const TAKEN_DOWN_STATUSES = new Set(["down", "remediated"]);
-const VECTORS: readonly IdpVector[] = ["idp_tenant", "idp_lookalike", "device_code"];
+export const VECTORS: readonly IdpVector[] = ["idp_tenant", "idp_lookalike", "device_code"];
 
-function isProvider(v: string | null): v is IdpProvider {
+export function isProvider(v: string | null): v is IdpProvider {
   return v !== null && Object.hasOwn(IDP_PROVIDER_LABEL, v);
 }
 
 /** Stored idp, or the classifier's device-code default (entra) when a
  *  device-code row predates tagging. Unknown / null → null. */
-function resolveIdp(stored: string | null, vector: IdpVector): IdpProvider | null {
+export function resolveIdp(stored: string | null, vector: IdpVector): IdpProvider | null {
   if (isProvider(stored)) return stored;
   return vector === "device_code" ? "entra" : null;
 }
 
+/** Window start (epoch ms): the last `days` UTC calendar days including
+ *  today, so the summary trend has exactly `days` points. Shared with the
+ *  detections drill-down (handlers/identityDetections.ts). */
+export function identityWindowSinceMs(window: IdentityWindow, now: Date): number {
+  const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return todayStart - (IDENTITY_WINDOW_DAYS[window] - 1) * 86_400_000;
+}
+
 /** D1 `datetime('now')` text for a Date. */
-function d1Time(d: Date): string {
+export function d1Time(d: Date): string {
   return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 /** D1 "YYYY-MM-DD HH:MM:SS" → ISO-8601 UTC; other shapes pass through. */
-function toIso(v: string): string {
+export function toIso(v: string): string {
   return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v) ? `${v.replace(" ", "T")}Z` : v;
 }
 
-function hostOfUrl(url: string | null): string | null {
+export function hostOfUrl(url: string | null): string | null {
   if (!url) return null;
   try {
     return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `http://${url}`).hostname || null;
@@ -132,8 +140,7 @@ export async function computeIdentityThreats(
   const days = IDENTITY_WINDOW_DAYS[window];
   // Window = the last `days` UTC calendar days including today, so the
   // trend has exactly `days` points; the previous window is the same length.
-  const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const sinceMs = todayStart - (days - 1) * 86_400_000;
+  const sinceMs = identityWindowSinceMs(window, now);
   // Previous window covers the SAME elapsed span, shifted back `days` days:
   // [since - days, now - days). Ending it at `since` instead would compare a
   // partial today against a full day and bias every delta downward.
