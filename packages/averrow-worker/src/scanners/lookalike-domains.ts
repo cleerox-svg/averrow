@@ -8,6 +8,8 @@
  */
 
 import { generatePermutations } from '../lib/dnstwist';
+import { classifyIdpImpersonation } from '../lib/idp-impersonation';
+import { brandTokensFrom } from '../lib/idp-tagging';
 import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
@@ -1121,6 +1123,13 @@ export async function generateAndStoreLookalikes(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+  // IdP lure tag (lib/idp-impersonation.ts): acme-okta.com → okta,
+  // acme-helpdesk.com → generic_sso. The brand's own domain label is the
+  // brand token that admits weak lures.
+  const lureTokens = brandTokensFrom(null, domain);
+  const idpLure = (d: string): string | null =>
+    classifyIdpImpersonation({ host: d, brandTokens: lureTokens })?.idp ?? null;
+
   let inserted = 0;
 
   // Batch insert in groups of 10 to stay within D1 limits
@@ -1133,15 +1142,15 @@ export async function generateAndStoreLookalikes(
       if (reason) {
         return env.DB.prepare(
           `INSERT OR IGNORE INTO lookalike_domains
-             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at)
-           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL)`,
-        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason);
+             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at, idp_lure)
+           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL, ?)`,
+        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason, idpLure(perm.domain));
       }
       return env.DB.prepare(
         `INSERT OR IGNORE INTO lookalike_domains
-           (id, brand_id, domain, permutation_type, unicode_domain, check_due_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-      ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null);
+           (id, brand_id, domain, permutation_type, unicode_domain, check_due_at, idp_lure)
+         VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`,
+      ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, idpLure(perm.domain));
     });
 
     const results = await env.DB.batch(stmts);

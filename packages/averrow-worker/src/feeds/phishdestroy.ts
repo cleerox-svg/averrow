@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "../lib/threatScoring";
+import { tagThreat } from "../lib/idp-tagging";
 
 /**
  * PhishDestroy (destroylist) — Curated phishing & scam domain blocklist.
@@ -96,13 +97,16 @@ export const phishdestroy: FeedModule = {
 
     // Build statements once, flush in chunks. Each chunk is a single
     // D1 transaction; failures roll back that chunk only.
-    const stmts = valid.map((domain) =>
-      ctx.env.DB.prepare(
+    // IdP-impersonation tagging (lib/idp-tagging.ts): domain-only, no
+    // brand context here, so strong lures + IdP tenant hosts only.
+    const stmts = valid.map((domain) => {
+      const idp = tagThreat({ malicious_domain: domain, malicious_url: `https://${domain}` });
+      return ctx.env.DB.prepare(
         `INSERT OR IGNORE INTO threats
            (id, source_feed, threat_type, malicious_url, malicious_domain,
-            ioc_value, severity, confidence_score, status,
+            ioc_value, severity, confidence_score, status, technique, impersonated_idp,
             first_seen, last_seen, created_at)
-         VALUES (?, 'phishdestroy', ?, ?, ?, ?, ?, ?, 'active',
+         VALUES (?, 'phishdestroy', ?, ?, ?, ?, ?, ?, 'active', ?, ?,
                  datetime('now'), datetime('now'), datetime('now'))`,
       ).bind(
         threatId("phishdestroy", "domain", domain),
@@ -112,8 +116,10 @@ export const phishdestroy: FeedModule = {
         domain,
         finalSeverity,
         finalConfidence,
-      ),
-    );
+        idp.technique,
+        idp.impersonated_idp,
+      );
+    });
 
     let itemsNew = 0;
     let itemsError = 0;

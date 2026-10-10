@@ -17,6 +17,7 @@ import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./
 import { isPrivateIP } from "./geoip";
 import { withD1Retry } from "./d1-retry";
 import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
+import { tagThreat, needsBrandTokens, loadBrandTokens } from "./idp-tagging";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -47,7 +48,11 @@ export async function markSeen(env: Env, iocType: string, iocValue: string): Pro
  * threats column list so the single-row (`insertThreat`) and bulk
  * (`bulkInsertThreats`) paths can never diverge.
  */
-function buildThreatInsertStmt(db: D1Database, threat: ThreatRow): D1PreparedStatement {
+function buildThreatInsertStmt(
+  db: D1Database,
+  threat: ThreatRow,
+  brandTokens?: string[],
+): D1PreparedStatement {
   // Apply heuristic reclassification (first-pass before AI Analyst)
   const reclassified = reclassifyThreatType(
     threat.threat_type,
@@ -71,15 +76,20 @@ function buildThreatInsertStmt(db: D1Database, threat: ThreatRow): D1PreparedSta
   // for those rows).
   const isPrivateIp = threat.ip_address ? (isPrivateIP(threat.ip_address) ? 1 : 0) : 0;
 
+  // IdP-impersonation tagging (lib/idp-impersonation.ts). Stamps the
+  // family technique + abused IdP; a non-family technique passes through
+  // untouched (never overwritten).
+  const idp = tagThreat(threat, brandTokens);
+
   return db.prepare(
     `INSERT OR IGNORE INTO threats
        (id, source_feed, threat_type, malicious_url, malicious_domain,
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
         registrar, status, confidence_score, campaign_id, ioc_value, severity,
-        is_private_ip, technique, named_threat_id,
+        is_private_ip, technique, impersonated_idp, named_threat_id,
         ssl_cert_serial, ssl_cert_issuer, ssl_san_hash,
         first_seen, last_seen, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              datetime('now'), datetime('now'), datetime('now'))`
   ).bind(
     threat.id,
@@ -99,7 +109,8 @@ function buildThreatInsertStmt(db: D1Database, threat: ThreatRow): D1PreparedSta
     threat.ioc_value ?? null,
     severity,
     isPrivateIp,
-    threat.technique ?? null,
+    idp.technique,
+    idp.impersonated_idp,
     threat.named_threat_id ?? null,
     threat.ssl_cert_serial ?? null,
     threat.ssl_cert_issuer ?? null,
@@ -113,7 +124,13 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
   // distinguish new-vs-dup (e.g. the TAXII multi-page drain) can
   // skip a separate pre-dedup SELECT — D1 reports it via
   // meta.changes on INSERT OR IGNORE.
-  const result = await buildThreatInsertStmt(db, threat).run();
+  // Brand tokens only for a host carrying a weak IdP lure (rare) — one
+  // isolate-cached PK lookup, never on the common path.
+  let brandTokens: string[] | undefined;
+  if (threat.target_brand_id && needsBrandTokens(threat)) {
+    brandTokens = (await loadBrandTokens(db, [threat.target_brand_id])).get(threat.target_brand_id);
+  }
+  const result = await buildThreatInsertStmt(db, threat, brandTokens).run();
   const inserted = (result.meta?.changes ?? 0) > 0;
 
   // Keep brands.threat_count moving WITH the link at the write site so the
@@ -171,7 +188,15 @@ export async function bulkInsertThreats(
 ): Promise<{ itemsNew: number; itemsDuplicate: number; itemsError: number }> {
   if (rows.length === 0) return { itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
 
-  const stmts = rows.map((r) => buildThreatInsertStmt(db, r));
+  // One chunked brand lookup for the (rare) rows whose host carries a weak
+  // IdP lure — see insertThreat.
+  const tokenBrandIds = rows
+    .filter((r) => r.target_brand_id && needsBrandTokens(r))
+    .map((r) => r.target_brand_id as string);
+  const brandTokens = tokenBrandIds.length > 0 ? await loadBrandTokens(db, tokenBrandIds) : null;
+  const stmts = rows.map((r) =>
+    buildThreatInsertStmt(db, r, r.target_brand_id ? brandTokens?.get(r.target_brand_id) : undefined),
+  );
   let itemsNew = 0;
   let itemsError = 0;
   // Accumulate per-brand counts for rows that were ACTUALLY inserted this

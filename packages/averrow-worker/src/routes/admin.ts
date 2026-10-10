@@ -812,6 +812,14 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     return handleBackfillDomainGeo(request, env);
   });
+  // IdP-impersonation tagging backfill (docs/IDP_IMPERSONATION_PLAN_2026-10.md
+  // T2): bounded, KV rowid cursor, idempotent. Re-run until data.done.
+  router.post("/api/admin/backfills/idp-impersonation", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleBackfillIdpImpersonation } = await import("../handlers/admin/idpBackfill");
+    return handleBackfillIdpImpersonation(request, env, ctx);
+  });
   // Triggers the geoip_refresh agent on demand. Same auth +
   // permission contour as the other backfill endpoints; reuses
   // the agentRunner lifecycle so a manual refresh writes its own

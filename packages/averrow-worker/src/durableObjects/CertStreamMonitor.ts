@@ -9,6 +9,7 @@
 
 import type { Env } from '../types';
 import { computeSanHash } from '../lib/ssl-cert-identity';
+import { tagThreat } from '../lib/idp-tagging';
 import { cachedValue, seedValue } from '../lib/cached-value';
 
 /** KV key (cachedValue namespace) for the CertStream brand match sets. */
@@ -345,8 +346,13 @@ export class CertStreamMonitor {
     const phishKeywords = ['login', 'signin', 'verify', 'update', 'secure',
       'account', 'banking', 'confirm', 'password', 'credential', 'wallet',
       'authenticate', 'authorize', 'validation', 'recovery', 'suspend',
-      'invoice', 'payment', 'billing', 'refund', 'claim'];
+      'invoice', 'payment', 'billing', 'refund', 'claim',
+      // IdP-impersonation lures (docs/IDP_IMPERSONATION_PLAN_2026-10.md T5).
+      'okta', 'helpdesk', 'servicedesk'];
     const matchedKeywords = phishKeywords.filter(kw => domain.includes(kw));
+    // 'sso' is matched as a whole hyphen/dot-delimited token only: as a
+    // substring it fires on ordinary words (association, lesson, classof).
+    if (/(^|[.-])sso([.-]|$)/.test(domain)) matchedKeywords.push('sso');
     score += matchedKeywords.length * 15;
 
     // Multiple hyphens (common in phishing: secure-login-verify-account.com)
@@ -437,13 +443,20 @@ export class CertStreamMonitor {
       const sanHashes = await Promise.all(
         matches.map((m) => computeSanHash(m.sanDomains)),
       );
+      // IdP-impersonation tagging (lib/idp-tagging.ts). The matched brand
+      // keyword doubles as the brand token for weak lures (acme-helpdesk).
+      const idpTags = matches.map((m) => tagThreat(
+        { malicious_domain: m.domain, malicious_url: `https://${m.domain}` },
+        m.brandMatch ? [m.brandMatch] : undefined,
+      ));
       const stmts = matches.map((m, i) =>
         db.prepare(`
           INSERT OR IGNORE INTO threats (
             id, malicious_domain, malicious_url, threat_type, severity,
             confidence_score, source_feed, first_seen, title, tags,
-            ssl_cert_serial, ssl_cert_issuer, ssl_san_hash
-          ) VALUES (?, ?, ?, ?, ?, ?, 'certstream', datetime('now'), ?, ?, ?, ?, ?)
+            ssl_cert_serial, ssl_cert_issuer, ssl_san_hash,
+            technique, impersonated_idp
+          ) VALUES (?, ?, ?, ?, ?, ?, 'certstream', datetime('now'), ?, ?, ?, ?, ?, ?, ?)
         `).bind(
           `cs_${crypto.randomUUID().slice(0, 12)}`,
           m.domain,
@@ -466,6 +479,8 @@ export class CertStreamMonitor {
           m.serialNumber || null,
           m.issuer || null,
           sanHashes[i] ?? null,
+          idpTags[i]?.technique ?? null,
+          idpTags[i]?.impersonated_idp ?? null,
         )
       );
 

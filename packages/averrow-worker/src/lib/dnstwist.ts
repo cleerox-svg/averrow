@@ -120,6 +120,15 @@ const ALT_TLDS = ['com', 'net', 'org', 'co', 'io', 'app', 'xyz', 'info', 'biz', 
 const PREFIXES = ['secure-', 'login-', 'my', 'account-', 'www-', 'mail-', 'update-', 'verify-'];
 const SUFFIXES = ['-login', '-secure', '-verify', '-support', '-online', '-auth', '-portal'];
 
+// Identity-provider lures (Scattered Spider / 0ktapus: acme-okta.com,
+// acme-sso.com, acme-servicedesk.com — docs/IDP_IMPERSONATION_PLAN_2026-10.md
+// T5). Generated as 'keyword' permutations but RESERVED inside the 30-cap
+// below: keyword sorts after typosquat/homoglyph/tld_swap, so without a
+// reservation the cap drops every keyword permutation for any name longer
+// than ~3 characters and these would never be seeded.
+export const IDP_LURE_PREFIXES: readonly string[] = ['okta-', 'sso-'];
+export const IDP_LURE_SUFFIXES: readonly string[] = ['-sso', '-okta', '-helpdesk', '-servicedesk', '-vpn'];
+
 // ─── Generator ──────────────────────────────────────────────────
 
 export function generatePermutations(domain: string): DomainPermutation[] {
@@ -249,6 +258,14 @@ export function generatePermutations(domain: string): DomainPermutation[] {
   for (const s of SUFFIXES) {
     add(`${name}${s}.${tld}`, 'keyword');
   }
+  // 8b. IdP lures — tracked so they can be reserved inside the cap.
+  const idpLure = new Set<string>();
+  for (const p of IDP_LURE_PREFIXES) {
+    if (add(`${p}${name}.${tld}`, 'keyword')) idpLure.add(`${p}${name}.${tld}`.toLowerCase());
+  }
+  for (const s of IDP_LURE_SUFFIXES) {
+    if (add(`${name}${s}.${tld}`, 'keyword')) idpLure.add(`${name}${s}.${tld}`.toLowerCase());
+  }
 
   // Return top 30 most likely permutations (prioritize by type relevance).
   // idn_homoglyph slots between homoglyph and tld_swap; the ASCII types keep
@@ -273,13 +290,18 @@ export function generatePermutations(domain: string): DomainPermutation[] {
   // the lowest-priority ASCII *survivors* (down to the homoglyph tier for very
   // dense names) — the intended anti-starvation tradeoff, since idn_homoglyph
   // is ~equivalent in value to homoglyph. Short names see no displacement.
+  //
+  // IdP lures (8b) are reserved the same way, so the total stays at 30: they
+  // displace the lowest-priority ASCII survivors (the tail of typosquat for
+  // a typical name), never IDN slots.
   const CAP = 30;
   const idnPicks = results.filter((r) => r.type === 'idn_homoglyph');
+  const idpPicks = results.filter((r) => idpLure.has(r.domain));
   const asciiPicks = results
-    .filter((r) => r.type !== 'idn_homoglyph')
+    .filter((r) => r.type !== 'idn_homoglyph' && !idpLure.has(r.domain))
     .sort(byType)
-    .slice(0, CAP - idnPicks.length);
-  return [...asciiPicks, ...idnPicks].sort(byType);
+    .slice(0, Math.max(0, CAP - idnPicks.length - idpPicks.length));
+  return [...asciiPicks, ...idpPicks, ...idnPicks].sort(byType);
 }
 
 // ─── DNS resolution check via Cloudflare DoH ────────────────────

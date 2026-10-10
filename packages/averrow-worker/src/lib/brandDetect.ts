@@ -19,6 +19,7 @@
  */
 
 import { registrableDomain } from "./domain-utils";
+import { IDP_TENANT_HOSTS, idpTenantLabel } from "./idp-impersonation";
 
 export interface BrandRow {
   id: string;
@@ -206,6 +207,13 @@ const PLATFORM_SUFFIXES = [
   // are in SHARED_HOSTS below).
   "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
   "mypinata.cloud", "ipfs.cf-ipfs.com",
+  // Identity-provider tenant hosts (acme-sso.okta.com, acme.eu.auth0.com):
+  // the tenant label names the TARGETED brand, never the IdP vendor
+  // (docs/IDP_IMPERSONATION_PLAN_2026-10.md owner decision 4 — the abused
+  // IdP is recorded separately in threats.impersonated_idp). Derived from
+  // the classifier's table; longest first so a regional suffix
+  // (eu.auth0.com) wins over its parent in suffixLabelCount.
+  ...Object.keys(IDP_TENANT_HOSTS).sort((a, b) => b.length - a.length),
 ];
 
 /**
@@ -313,6 +321,12 @@ function hostParts(raw: string): HostParts | null {
   // ("Login", "Ashs", "List", "1x1x5") — they carry no brand signal.
   const host = hostOf(raw);
   if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host) || SHARED_HOSTS.has(host)) return null;
+  // IdP tenant: attribute on the normalized tenant label only
+  // (acme-admin.okta.com → "acme", openam-acme.forgeblocks.com → "acme").
+  const idpLabel = idpTenantLabel(host);
+  if (idpLabel) {
+    return buildParts(host, [idpLabel], idpLabel.split(/[-_]/).filter((t) => t.length > 0));
+  }
   const all = host.split(".").filter((l) => l.length > 0);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
   const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);

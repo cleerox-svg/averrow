@@ -140,6 +140,12 @@ export const LOOKALIKE_LIST_COLUMNS = [
   // content. Staff-visible because it explains a benign row nobody marked
   // by hand. OFF the tenant SELECT.
   "status_reason",
+  // ── 0288 IdP lure ──
+  // The identity provider a permutation lures with (acme-okta.com → okta).
+  // Closed vocabulary from lib/idp-impersonation.ts, no attacker-controlled
+  // content. Staff-visible: it is what puts a row in the Identity Threats
+  // view's lookalike count. OFF the tenant SELECT (tenant slice is v1.1).
+  "idp_lure",
 ] as const;
 
 // Identifiers only — no user input reaches this string. Every value is
