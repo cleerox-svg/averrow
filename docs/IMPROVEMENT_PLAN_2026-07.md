@@ -295,7 +295,7 @@ flagging for a follow-up doc-accuracy pass.
 
 ---
 
-## Wave 4 — Supply-chain & feed-integrity hardening (backlog) ⬜
+## Wave 4 — Supply-chain hardening & IdP-phishing coverage (backlog) ⬜
 
 Raised 2026-10-10 by a review of the PoeLLM botnet (Lumen Black Lotus Labs, reported
 2026-10-07). PoeLLM exploits internet-exposed, self-hosted LiteLLM / Ollama / Gotenberg /
@@ -332,6 +332,34 @@ adjacent hardening, not incident response — none is urgent.
   path. Longer term, evaluate tracking actor infrastructure staged on GitHub
   (dead-drop resolvers) as a §13 actor-pattern signal. Research item — no build until
   a data source is chosen.
+- **S4.5 — Identity-provider (IdP) / Okta-themed phishing coverage + cross-brand metric.**
+  Raised 2026-10-10 with the "Oktajacking" review (Push Security, 2023). Oktajacking
+  runs phishing on a *legitimate* IdP tenant the attacker controls (`acme-sso.okta.com`),
+  so no domain is registered and no per-tenant cert hits CT (Okta uses a wildcard).
+  Classic Scattered Spider / 0ktapus lookalikes (`acme-okta.com`, `acme-sso.com`,
+  `acme-servicedesk.com`, `acme-vpn.com`) are the visible half. Gaps found in code:
+  - `lib/dnstwist.ts` keyword affixes lack `sso`, `okta`, `helpdesk`, `servicedesk`, `vpn`.
+  - `lib/nrd-brand-match.ts` treats `sso`/`helpdesk` as strong lures but `okta`/`vpn` as
+    nothing, so for ≤4-char brands `acme-okta.com` / `acme-vpn.com` are missed.
+  - `lib/brandDetect.ts`: no IdP host (okta.com, oktapreview.com, okta-emea.com,
+    onelogin.com, auth0.com, microsoftonline.com) is in `PLATFORM_SUFFIXES` /
+    `MULTI_TENANT_HOSTS`, so a feed URL `acme-sso.okta.com` is attributed to **Okta**,
+    not Acme. Not in `SHARED_HOSTING_DOMAINS` either — check whether Okta's safe-domain
+    rows would make tenant subdomains look "official" to triage.
+  - No technique tag: `threats.technique` / `saas_technique_id` exist but nothing tags
+    IdP-themed lures (only a generic `/sso\./` → `aitm_phishing` pattern in
+    `lib/saas-techniques-seed.ts`); `threat_cube_brand` has no technique dimension.
+  - Page analysis has no IdP sign-in-widget / kit fingerprint, and runs only on
+    lookalike rows.
+  Proposed build (ROI order): (1) add IdP hosts as multi-tenant hosts so the tenant
+  label drives brand attribution; (2) extend affix/lure lists; (3) tag
+  `threats.technique='idp_impersonation'` (+ `impersonated_idp`) at ingest and expose a
+  SQL GROUP BY metric (per brand, per IdP, per week) — cube column only if read volume
+  warrants; (4) IdP-widget DOM signal in the page scorer; (5) research a tenant-subdomain
+  source (urlscan query on IdP hosts / passive DNS). Owners: `threat-intel-analyst`
+  (rules), `backend-engineer` (ingest + metric), `test-engineer`. Oktajacking proper
+  (rogue AD agent inside a customer's own Okta) is only visible in the customer's Okta
+  System Log — out of scope unless an Okta log integration is added.
 
 ---
 
