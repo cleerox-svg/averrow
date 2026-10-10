@@ -800,7 +800,9 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
       // parked — which is what makes "parked for longer than the window"
       // a true statement with no cursor and no counter column.
       // Mutation-checked: deleting the age term makes this 1.
-      const id = parkedAt("2026-09-30 23:00:00");
+      // Relative to now: a fixed calendar date ages past the 7-day window.
+      const oneHourAgo = new Date(Date.now() - 3_600_000).toISOString().slice(0, 19).replace("T", " ");
+      const id = parkedAt(oneHourAgo);
       expect(sweep().changes).toBe(0);
       expect(fetch(id).check_due_at).toBeNull();
     });
