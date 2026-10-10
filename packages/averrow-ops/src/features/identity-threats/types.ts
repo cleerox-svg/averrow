@@ -70,3 +70,66 @@ export interface IdentityThreatsData {
   recent: IdentityRecentRow[];
   mitre: IdentityMitreRow[];
 }
+
+// ── Drill-down contract (IdP detections list + detail) ─────────────────────
+// GET /api/intel/identity-threats/detections
+// GET /api/intel/identity-threats/detections/:threatId
+
+export interface IdentityDetectionListItem {
+  threat_id: string;
+  domain: string;
+  url: string | null;
+  brand_id: string | null;
+  brand_name: string | null;
+  idp: string | null;          // provider id
+  idp_label: string | null;    // e.g. "Okta"
+  vector: 'idp_tenant' | 'idp_lookalike' | 'device_code';
+  vector_label: string;
+  status: string;
+  severity: string | null;
+  source_feed: string | null;
+  created_at: string;          // ISO UTC
+}
+
+export interface IdentityDetectionList {
+  items: IdentityDetectionListItem[];
+  next_cursor: string | null;
+  total: number;               // count matching filters in window
+}
+
+export interface IdentityDetectionDetail extends IdentityDetectionListItem {
+  technique: string;                   // threats.technique
+  matched_lure: string | null;         // classifier `matched` recomputed at read time
+  ttps: { id: string; name: string; tactic: string; url: string }[];
+  infrastructure: {
+    ip_address: string | null;
+    country_code: string | null;
+    asn: string | null;
+    hosting_provider: { id: string; name: string } | null;
+    ssl_cert_issuer: string | null;
+  };
+  registration: {
+    domain_created_at: string | null;
+    domain_age_days: number | null;
+    weaponization_hours: number | null;
+    weaponization_flag: string | null;
+  };
+  reputation: {
+    vt_checked: boolean; vt_malicious: number | null;
+    gsb_checked: boolean; gsb_flagged: boolean | null; gsb_threat_type: string | null;
+    greynoise_checked: boolean; greynoise_classification: string | null;
+    seclookup_checked: boolean; seclookup_risk_score: number | null;
+    surbl_listed: boolean | null; dbl_listed: boolean | null;
+  };
+  timeline: { first_seen: string | null; last_seen: string | null; created_at: string; enriched_at: string | null };
+  takedown: { id: string; status: string; updated_at: string | null } | null;
+  cluster: { id: string; name: string | null } | null;
+}
+
+/** Active drill-down filters (mirrored in the URL search params). */
+export interface IdentityFilters {
+  idp?: string;
+  vector?: string;
+  brand_id?: string;
+  mitre?: string;
+}
