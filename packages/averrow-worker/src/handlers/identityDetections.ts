@@ -53,6 +53,8 @@ export const DETECTIONS_DEFAULT_LIMIT = 25;
 export const DETECTIONS_MAX_LIMIT = 100;
 export const DETECTIONS_TOTAL_TTL_SECONDS = 120;
 const MAX_BRAND_ID_LENGTH = 128;
+/** Brand and threat ids are opaque tokens — no whitespace or quoting. */
+const ID_PATTERN = /^[A-Za-z0-9_.:-]+$/;
 
 // ─── Contract types ──────────────────────────────────────────────────
 
@@ -189,6 +191,9 @@ export function parseDetectionQuery(
   const brandId = params.get("brand_id") || null;
   if (brandId !== null && brandId.length > MAX_BRAND_ID_LENGTH) {
     return { ok: false, error: "brand_id is too long" };
+  }
+  if (brandId !== null && !ID_PATTERN.test(brandId)) {
+    return { ok: false, error: "brand_id is malformed" };
   }
 
   let limit = DETECTIONS_DEFAULT_LIMIT;
@@ -516,7 +521,9 @@ export async function handleIdentityDetectionDetail(
   threatId: string,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
-  if (!threatId) return json({ success: false, error: "Detection not found" }, 404, origin);
+  if (!threatId || threatId.length > MAX_BRAND_ID_LENGTH || !ID_PATTERN.test(threatId)) {
+    return json({ success: false, error: "Detection not found" }, 404, origin);
+  }
   try {
     const data = await getIdentityDetection(env, request, threatId);
     if (!data) return json({ success: false, error: "Detection not found" }, 404, origin);

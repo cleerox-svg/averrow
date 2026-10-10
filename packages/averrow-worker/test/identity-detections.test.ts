@@ -177,7 +177,8 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
 
   it("invalid enum / limit / cursor → 400 without querying", async () => {
     for (const qs of ["window=1d", "idp=foo", "vector=bogus", "mitre=T9999", "mitre=T1621",
-      "limit=0", "limit=101", "limit=abc", "limit=2.5", "cursor=%21%21", `brand_id=${"x".repeat(129)}`]) {
+      "limit=0", "limit=101", "limit=abc", "limit=2.5", "cursor=%21%21", `brand_id=${"x".repeat(129)}`,
+      "brand_id=a%20b", "brand_id=%27x%27"]) {
       const res = await handleIdentityDetections(req(`/api/intel/identity-threats/detections?${qs}`), env);
       expect(res.status, qs).toBe(400);
       expect(await res.json()).toMatchObject({ success: false });
@@ -274,7 +275,7 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
   });
 
   it("detail: 404 for non-family and missing threats", async () => {
-    for (const id of ["t07", "nope"]) {
+    for (const id of ["t07", "nope", "a b", "x".repeat(129)]) {
       const res = await handleIdentityDetectionDetail(req(`/api/intel/identity-threats/detections/${id}`), env, id);
       expect(res.status).toBe(404);
     }
