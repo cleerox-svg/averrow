@@ -820,6 +820,14 @@ export function registerAdminRoutes(router: RouterType<IRequest>): void {
     const { handleBackfillIdpImpersonation } = await import("../handlers/admin/idpBackfill");
     return handleBackfillIdpImpersonation(request, env, ctx);
   });
+  // IdP lure top-up for brands seeded before the lures existed (owner
+  // decision 2026-10-10). Bounded per call; KV brand cursor; idempotent.
+  router.post("/api/admin/backfills/idp-lure-topup", async (request: Request, env: Env) => {
+    const ctx = await requireAdmin(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleIdpLureTopup } = await import("../handlers/admin/idpBackfill");
+    return handleIdpLureTopup(request, env, ctx);
+  });
   // Triggers the geoip_refresh agent on demand. Same auth +
   // permission contour as the other backfill endpoints; reuses
   // the agentRunner lifecycle so a manual refresh writes its own

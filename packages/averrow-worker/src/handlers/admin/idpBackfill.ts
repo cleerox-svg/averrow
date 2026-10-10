@@ -14,6 +14,9 @@ import type { Env } from "../../types";
 import type { AuthContext } from "../../middleware/auth";
 import { classifyIdpImpersonation, IDP_FAMILY_TECHNIQUES } from "../../lib/idp-impersonation";
 import { tagThreat, loadBrandTokens } from "../../lib/idp-tagging";
+import { generateIdpLurePermutations } from "../../lib/dnstwist";
+import { MONITORED_BRAND_PREDICATE_SQL } from "../../lib/monitored-brands";
+import { storeLookalikePermutations } from "../../scanners/lookalike-domains";
 
 export const IDP_BACKFILL_THREAT_CURSOR_KEY = "backfill:idp:cursor";
 export const IDP_BACKFILL_LOOKALIKE_CURSOR_KEY = "backfill:idp:lookalike_cursor";
@@ -153,6 +156,85 @@ export async function handleBackfillIdpImpersonation(
       userId: ctx.userId,
       resourceType: "threats",
       details: { limit, threats, lookalikes },
+      request,
+    });
+    return json({ success: true, data }, 200, origin);
+  } catch {
+    return json({ success: false, error: "An internal error occurred" }, 500, origin);
+  }
+}
+
+// ─── Lure top-up for already-seeded brands ──────────────────────────
+// POST /api/admin/backfills/idp-lure-topup?brands=50
+//
+// The seeder (seedLookalikesForOrgBrands) is one-shot per brand, so brands
+// seeded before the IdP lures existed never get them. This walks monitored
+// brands (MONITORED_BRAND_PREDICATE_SQL) that ALREADY have lookalike rows —
+// un-seeded brands are left to the seeder, whose NOT EXISTS gate would skip
+// them forever if we planted lures first — by brands.rowid from a KV cursor,
+// and stores only the ≤7 IdP lure permutations through the seeder's own
+// insert path (storeLookalikePermutations: trusted official domains benign +
+// parked, idp_lure stamped, INSERT OR IGNORE on (brand_id, domain)).
+// Idempotent: re-running inserts nothing for brands already topped up.
+
+export const IDP_LURE_TOPUP_CURSOR_KEY = "backfill:idp:lure_topup_cursor";
+export const IDP_LURE_TOPUP_DEFAULT_BRANDS = 50;
+export const IDP_LURE_TOPUP_MAX_BRANDS = 200;
+
+export interface IdpLureTopupResult {
+  brands_scanned: number;
+  inserted: number;
+  cursor: number;
+  done: boolean;
+}
+
+export function parseIdpLureTopupBrands(raw: string | null): number {
+  const n = Number.parseInt(raw ?? "", 10);
+  if (!Number.isFinite(n) || n <= 0) return IDP_LURE_TOPUP_DEFAULT_BRANDS;
+  return Math.min(n, IDP_LURE_TOPUP_MAX_BRANDS);
+}
+
+export async function topUpIdpLures(env: Env, brandLimit: number): Promise<IdpLureTopupResult> {
+  const cursor = await readCursor(env, IDP_LURE_TOPUP_CURSOR_KEY);
+  const res = await env.DB.prepare(
+    `SELECT b.rowid AS rid, b.id AS brand_id, b.canonical_domain AS domain
+       FROM brands b
+      WHERE b.rowid > ?
+        AND b.canonical_domain IS NOT NULL
+        AND ${MONITORED_BRAND_PREDICATE_SQL}
+        AND EXISTS (SELECT 1 FROM lookalike_domains ld WHERE ld.brand_id = b.id)
+      ORDER BY b.rowid
+      LIMIT ?`,
+  ).bind(cursor, brandLimit).all<{ rid: number; brand_id: string; domain: string }>();
+  const rows = res.results ?? [];
+  if (rows.length === 0) return { brands_scanned: 0, inserted: 0, cursor, done: true };
+
+  let inserted = 0;
+  for (const b of rows) {
+    const lures = generateIdpLurePermutations(b.domain);
+    if (lures.length === 0) continue;
+    inserted += (await storeLookalikePermutations(env, b.brand_id, b.domain, lures)).inserted;
+  }
+
+  const next = rows[rows.length - 1]!.rid;
+  await env.CACHE.put(IDP_LURE_TOPUP_CURSOR_KEY, String(next));
+  return { brands_scanned: rows.length, inserted, cursor: next, done: rows.length < brandLimit };
+}
+
+export async function handleIdpLureTopup(
+  request: Request,
+  env: Env,
+  ctx: AuthContext,
+): Promise<Response> {
+  const origin = request.headers.get("Origin");
+  try {
+    const brands = parseIdpLureTopupBrands(new URL(request.url).searchParams.get("brands"));
+    const data = await topUpIdpLures(env, brands);
+    await audit(env, {
+      action: "backfill_idp_lure_topup",
+      userId: ctx.userId,
+      resourceType: "lookalike_domains",
+      details: { brands, ...data },
       request,
     });
     return json({ success: true, data }, 200, origin);

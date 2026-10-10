@@ -1095,6 +1095,35 @@ export async function generateAndStoreLookalikes(
 ): Promise<number> {
   const permutations = generatePermutations(domain);
   if (permutations.length === 0) return 0;
+  const { inserted, benign } = await storeLookalikePermutations(env, brandId, domain, permutations, insertedDomains);
+
+  logger.info('lookalike_generate', {
+    brand_id: brandId,
+    domain,
+    total_permutations: permutations.length,
+    official_domains_benign: benign,
+    new_stored: inserted,
+  });
+
+  return inserted;
+}
+
+/**
+ * The seeder's insert path, shared with the IdP lure top-up
+ * (handlers/admin/idpBackfill.ts) so the two cannot drift: trusted-official
+ * matches stored benign + parked, everything else due immediately, idp_lure
+ * stamped, INSERT OR IGNORE on the (brand_id, domain) unique index, 10
+ * statements per batch (≤ 8 binds each). Returns rows actually inserted and
+ * how many permutations resolved to a trusted official domain.
+ */
+export async function storeLookalikePermutations(
+  env: Env,
+  brandId: string,
+  domain: string,
+  permutations: ReadonlyArray<{ domain: string; type: string; display?: string }>,
+  insertedDomains?: string[],
+): Promise<{ inserted: number; benign: number }> {
+  if (permutations.length === 0) return { inserted: 0, benign: 0 };
 
   // A permutation that is another brand's TRUSTED official domain
   // (lib/safeDomains.ts — staff safe domains, or the canonical domain of a
@@ -1162,15 +1191,7 @@ export async function generateAndStoreLookalikes(
     });
   }
 
-  logger.info('lookalike_generate', {
-    brand_id: brandId,
-    domain,
-    total_permutations: permutations.length,
-    official_domains_benign: benignReason.size,
-    new_stored: inserted,
-  });
-
-  return inserted;
+  return { inserted, benign: benignReason.size };
 }
 
 /**

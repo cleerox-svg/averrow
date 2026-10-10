@@ -6,11 +6,11 @@ import { tagThreat, needsBrandTokens, brandTokensFrom } from "../src/lib/idp-tag
 import { fuzzyMatchBrandDetailed, type BrandRow } from "../src/lib/brandDetect";
 import { decideLookalikeRegistrationTriage } from "../src/lib/alert-triage";
 import { isUnderSharedHosting, resolveOfficialDomain, type OfficialDomainRow } from "../src/lib/safeDomains";
-import { generatePermutations, IDP_LURE_PREFIXES, IDP_LURE_SUFFIXES } from "../src/lib/dnstwist";
+import { generatePermutations, generateIdpLurePermutations, IDP_LURE_PREFIXES, IDP_LURE_SUFFIXES } from "../src/lib/dnstwist";
 import { STRONG_WORDS } from "../src/lib/nrd-brand-match";
 import { IDP_TENANT_HOSTS, IDP_MITRE } from "../src/lib/idp-impersonation";
 import { computeIdentityThreats, parseIdentityWindow } from "../src/handlers/identityThreats";
-import { parseIdpBackfillLimit } from "../src/handlers/admin/idpBackfill";
+import { parseIdpBackfillLimit, parseIdpLureTopupBrands, topUpIdpLures, IDP_LURE_TOPUP_CURSOR_KEY } from "../src/handlers/admin/idpBackfill";
 import type { Env } from "../src/types";
 
 describe("tagThreat", () => {
@@ -94,17 +94,24 @@ describe("detection widening (T5)", () => {
     ...IDP_LURE_SUFFIXES.map((s) => `${name}${s}.${tld}`),
   ];
   it.each(["acme.com", "paypal.com", "bankofamerica.com", "microsoft.com"])(
-    "%s reserves every IdP lure inside the 30-cap",
+    "%s appends every IdP lure ON TOP of the 30-cap",
     (domain) => {
       const perms = generatePermutations(domain);
-      expect(perms.length).toBeLessThanOrEqual(30);
-      const got = new Set(perms.map((p) => p.domain));
       const name = domain.split(".")[0]!;
-      for (const l of lures(name)) expect(got.has(l), l).toBe(true);
-      // IDN slots are untouched by the reservation.
+      const lureSet = new Set(lures(name));
+      const core = perms.filter((p) => !lureSet.has(p.domain));
+      expect(core).toHaveLength(30);
+      expect(perms).toHaveLength(37);
+      expect(perms.slice(30).map((p) => p.domain)).toEqual(lures(name));
+      expect(perms.slice(30).every((p) => p.type === "keyword")).toBe(true);
+      expect(new Set(perms.map((p) => p.domain)).size).toBe(perms.length);
       expect(perms.some((p) => p.type === "idn_homoglyph")).toBe(true);
     },
   );
+  it("generateIdpLurePermutations yields only the 7 lures", () => {
+    expect(generateIdpLurePermutations("Acme.co.uk").map((p) => p.domain)).toEqual(lures("acme", "co.uk"));
+    expect(generateIdpLurePermutations("x.com")).toEqual([]);
+  });
   it("NRD matcher treats okta / vpn / servicedesk as strong lures", () => {
     for (const w of ["okta", "vpn", "servicedesk", "sso", "helpdesk"]) expect(STRONG_WORDS.has(w), w).toBe(true);
   });
@@ -187,5 +194,71 @@ describe("computeIdentityThreats roll-up (T4)", () => {
     // Window starts at the UTC day 6 days before today; previous window is 7 days earlier.
     expect(binds[0]).toContain("2026-10-04 00:00:00");
     expect(binds[1]).toEqual(expect.arrayContaining(["2026-09-27 00:00:00", "2026-10-04 00:00:00"]));
+  });
+});
+
+describe("IdP lure top-up for already-seeded brands", () => {
+  it("clamps brands", () => {
+    expect(parseIdpLureTopupBrands(null)).toBe(50);
+    expect(parseIdpLureTopupBrands("500")).toBe(200);
+    expect(parseIdpLureTopupBrands("0")).toBe(50);
+  });
+
+  function harness(brands: Array<{ rid: number; brand_id: string; domain: string }>, trusted: string[] = []) {
+    const kv = new Map<string, string>();
+    const inserts: Array<{ sql: string; args: unknown[] }> = [];
+    const brandBinds: unknown[][] = [];
+    const prepare = (sql: string) => ({
+      bind: (...args: unknown[]) => ({
+        sql, args,
+        all: async () => {
+          if (sql.includes("b.rowid AS rid")) { brandBinds.push(args); return { results: brands }; }
+          // loadOfficialDomainMatches: return a trusted canonical row per requested trusted domain.
+          return { results: trusted.filter((d) => args.includes(d)).map((d) => ({
+            domain: d, brand_id: "other", brand_name: "Other", source: "canonical_domain", trusted: 1 })) };
+        },
+      }),
+    });
+    const env = {
+      CACHE: { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => { kv.set(k, v); } },
+      DB: {
+        prepare,
+        batch: async (stmts: Array<{ sql: string; args: unknown[] }>) => {
+          inserts.push(...stmts);
+          return stmts.map(() => ({ meta: { changes: 1 } }));
+        },
+      },
+    } as unknown as Env;
+    return { env, kv, inserts, brandBinds };
+  }
+
+  it("inserts only lure permutations, scoped to seeded monitored brands, and advances the cursor", async () => {
+    const h = harness([{ rid: 11, brand_id: "b1", domain: "acme.com" }, { rid: 42, brand_id: "b2", domain: "globex.io" }],
+      ["acme-vpn.com"]);
+    const r = await topUpIdpLures(h.env, 2);
+    expect(r).toEqual({ brands_scanned: 2, inserted: 14, cursor: 42, done: false });
+    expect(h.kv.get(IDP_LURE_TOPUP_CURSOR_KEY)).toBe("42");
+    expect(h.brandBinds[0]).toEqual([0, 2]);
+    expect(h.inserts).toHaveLength(14);
+    for (const ins of h.inserts) {
+      expect(ins.sql).toMatch(/INSERT OR IGNORE INTO lookalike_domains/);
+      expect(ins.sql).toMatch(/idp_lure/);
+      expect(ins.args[3]).toBe("keyword");
+      // Every bind count stays far below D1's 100.
+      expect(ins.args.length).toBeLessThan(100);
+    }
+    const vpn = h.inserts.find((i) => i.args[2] === "acme-vpn.com")!;
+    expect(vpn.sql).toMatch(/'benign'/);
+    expect(vpn.args.at(-1)).toBe("generic_sso");
+    const okta = h.inserts.find((i) => i.args[2] === "globex-okta.io")!;
+    expect(okta.sql).not.toMatch(/'benign'/);
+    expect(okta.args.at(-1)).toBe("okta");
+  });
+
+  it("resumes from the cursor and reports done when the page is short", async () => {
+    const h = harness([]);
+    h.kv.set(IDP_LURE_TOPUP_CURSOR_KEY, "42");
+    expect(await topUpIdpLures(h.env, 50)).toEqual({ brands_scanned: 0, inserted: 0, cursor: 42, done: true });
+    expect(h.brandBinds[0]).toEqual([42, 50]);
   });
 });

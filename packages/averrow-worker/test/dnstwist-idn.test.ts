@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   generatePermutations,
+  generateIdpLurePermutations,
   encodeIdnHost,
   CONFUSABLES,
   IDN_GLOBAL_QUOTA,
@@ -112,7 +113,10 @@ describe("generatePermutations — dedup + cap reservation", () => {
 
   it("reserves IDN slots inside the 30-cap so typosquat does not starve them", () => {
     const perms = generatePermutations("microsoftonline.com");
-    expect(perms.length).toBeLessThanOrEqual(30);
+    // 30-cap + up to 7 IdP lures appended outside it (IDP_LURE_* in dnstwist).
+    expect(perms.length).toBeLessThanOrEqual(37);
+    const lures = new Set(generateIdpLurePermutations("microsoftonline.com").map((p) => p.domain));
+    expect(perms.filter((p) => !lures.has(p.domain)).length).toBeLessThanOrEqual(30);
     // A long, typosquat-heavy name would fill 30 slots with typosquats under
     // a naive sort+slice; the reservation guarantees idn variants survive.
     expect(idnOf(perms).length).toBeGreaterThan(0);
