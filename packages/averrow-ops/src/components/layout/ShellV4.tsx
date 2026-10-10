@@ -14,7 +14,7 @@ import {
   Search, Menu, X,
   Plug, Building2, DollarSign, ListChecks, Compass, Layers,
   ShieldAlert, Bug, Network, Megaphone, Server,
-  Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
+  KeyRound, Smartphone, EyeOff, Scale, TrendingUp, UserCog, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -103,6 +103,7 @@ function buildV4Nav(opts: { isSuperAdmin: boolean; role: string | null | undefin
         { label: 'Observatory', to: '/observatory',    icon: Globe },
         { label: 'Explorer',    to: '/explore',        icon: Compass },
         { label: 'Coverage',    to: '/coverage',       icon: Layers },
+        { label: 'Identity Threats', to: '/identity-threats', icon: KeyRound },
       ],
     },
     {

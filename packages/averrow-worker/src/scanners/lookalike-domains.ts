@@ -8,6 +8,7 @@
  */
 
 import { generatePermutations } from '../lib/dnstwist';
+import { lookalikeIdpLure } from '../lib/idp-tagging';
 import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
 import { checkDomain, type DomainCheckResult } from '../lib/domain-checker';
@@ -1093,6 +1094,35 @@ export async function generateAndStoreLookalikes(
 ): Promise<number> {
   const permutations = generatePermutations(domain);
   if (permutations.length === 0) return 0;
+  const { inserted, benign } = await storeLookalikePermutations(env, brandId, domain, permutations, insertedDomains);
+
+  logger.info('lookalike_generate', {
+    brand_id: brandId,
+    domain,
+    total_permutations: permutations.length,
+    official_domains_benign: benign,
+    new_stored: inserted,
+  });
+
+  return inserted;
+}
+
+/**
+ * The seeder's insert path, shared with the IdP lure top-up
+ * (handlers/admin/idpBackfill.ts) so the two cannot drift: trusted-official
+ * matches stored benign + parked, everything else due immediately, idp_lure
+ * stamped, INSERT OR IGNORE on the (brand_id, domain) unique index, 10
+ * statements per batch (≤ 8 binds each). Returns rows actually inserted and
+ * how many permutations resolved to a trusted official domain.
+ */
+export async function storeLookalikePermutations(
+  env: Env,
+  brandId: string,
+  domain: string,
+  permutations: ReadonlyArray<{ domain: string; type: string; display?: string }>,
+  insertedDomains?: string[],
+): Promise<{ inserted: number; benign: number }> {
+  if (permutations.length === 0) return { inserted: 0, benign: 0 };
 
   // A permutation that is another brand's TRUSTED official domain
   // (lib/safeDomains.ts — staff safe domains, or the canonical domain of a
@@ -1121,6 +1151,10 @@ export async function generateAndStoreLookalikes(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+  // IdP lure tag — the one shared rule (lib/idp-tagging.ts lookalikeIdpLure):
+  // acme-okta.com → okta, acme-helpdesk.com → generic_sso.
+  const idpLure = (d: string): string | null => lookalikeIdpLure(d, domain);
+
   let inserted = 0;
 
   // Batch insert in groups of 10 to stay within D1 limits
@@ -1133,15 +1167,15 @@ export async function generateAndStoreLookalikes(
       if (reason) {
         return env.DB.prepare(
           `INSERT OR IGNORE INTO lookalike_domains
-             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at)
-           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL)`,
-        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason);
+             (id, brand_id, domain, permutation_type, unicode_domain, status, status_reason, check_due_at, idp_lure)
+           VALUES (?, ?, ?, ?, ?, 'benign', ?, NULL, ?)`,
+        ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, reason, idpLure(perm.domain));
       }
       return env.DB.prepare(
         `INSERT OR IGNORE INTO lookalike_domains
-           (id, brand_id, domain, permutation_type, unicode_domain, check_due_at)
-         VALUES (?, ?, ?, ?, ?, datetime('now'))`,
-      ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null);
+           (id, brand_id, domain, permutation_type, unicode_domain, check_due_at, idp_lure)
+         VALUES (?, ?, ?, ?, ?, datetime('now'), ?)`,
+      ).bind(id, brandId, perm.domain, perm.type, perm.display ?? null, idpLure(perm.domain));
     });
 
     const results = await env.DB.batch(stmts);
@@ -1153,15 +1187,7 @@ export async function generateAndStoreLookalikes(
     });
   }
 
-  logger.info('lookalike_generate', {
-    brand_id: brandId,
-    domain,
-    total_permutations: permutations.length,
-    official_domains_benign: benignReason.size,
-    new_stored: inserted,
-  });
-
-  return inserted;
+  return { inserted, benign: benignReason.size };
 }
 
 /**

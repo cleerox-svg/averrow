@@ -121,6 +121,9 @@ export const STRONG_WORDS: ReadonlySet<string> = new Set([
   "account", "accounts", "acct", "auth", "authenticate", "authentication", "password", "passwd",
   "unlock", "unlocked", "recovery", "recover", "reset", "confirm", "confirmation", "validate",
   "validation", "suspended", "suspend", "locked", "kyc", "sso", "mfa", "2fa", "otp",
+  // Identity-provider lures (docs/IDP_IMPERSONATION_PLAN_2026-10.md T5):
+  // Scattered Spider / 0ktapus register <brand>-okta / -vpn / -servicedesk.
+  "okta", "vpn", "servicedesk",
   "wallet", "refund", "refunds", "billing", "invoice", "payment", "payments", "helpdesk", "support",
   "customerservice", "airdrop", "claim", "update", "updates", "alert", "alerts", "notice",
   "notification", "restore",

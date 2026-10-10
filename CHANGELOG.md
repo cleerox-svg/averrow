@@ -4,6 +4,38 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.4.0] — 2026-10-10
+
+Identity-provider (IdP) impersonation release. Plan:
+`docs/IDP_IMPERSONATION_PLAN_2026-10.md`. Tag `v4.4.0` is created by
+`tag-release.yml` on merge.
+
+### Staff console
+- New page **Identity Provider Impersonation** (nav label "Identity Threats"):
+  phishing that abuses or imitates sign-in providers (Okta, Microsoft Entra,
+  OneLogin, Auth0, etc.) across every monitored brand. KPIs, breakdown by
+  attack method and by identity provider, most targeted brands, MITRE ATT&CK
+  mapping, latest detections.
+- New endpoint `GET /api/intel/identity-threats` (see `docs/API_REFERENCE.md`).
+
+### Detection
+- Wider lookalike / new-domain / certificate detection for sign-in lures
+  (`sso`, `okta`, `helpdesk`, `servicedesk`, `vpn`).
+- Attribution credits the **targeted brand**; the abused IdP is recorded
+  separately (`threats.impersonated_idp`) and drives the per-provider view.
+- **Triage guard:** IdP-impersonation threats are no longer auto-dismissed by
+  alert triage on clean reputation signals alone.
+
+### Data / backfills
+- Migration `0288` (additive) adds the IdP-impersonation columns/indexes.
+- `POST /api/admin/backfills/idp-impersonation` classifies existing threats;
+  `POST /api/admin/backfills/idp-lure-topup` tops up lure-keyword lookalike
+  coverage for monitored brands. Both are idempotent and batch-bounded.
+- Deploy: `deploy-radar.yml` applies `0288` before the worker; run the
+  backfills once after deploy.
+
+---
+
 ## [v4.3.0] — 2026-10-05
 
 Account-experience release (PR #1788 merged, PR #1789 on

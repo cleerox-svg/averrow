@@ -2,6 +2,7 @@
 
 import type { D1Database } from "@cloudflare/workers-types";
 import { registrableDomain } from "./domain-utils";
+import { IDP_TENANT_HOSTS } from "./idp-impersonation";
 
 /** Load all safe domains into a Set for O(1) lookup during a cron cycle */
 export async function loadSafeDomainSet(db: D1Database): Promise<Set<string>> {
@@ -138,6 +139,10 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   // name under these in minutes.
   "ddns.net", "hopto.org", "zapto.org", "no-ip.com", "no-ip.org", "no-ip.biz",
   "mooo.com", "dynu.net", "freedns.afraid.org", "ngrok.app", "localtunnel.me",
+  // Identity-provider tenant hosts: acme-sso.okta.com is an attacker's
+  // tenant, never an "official subdomain" of Okta / OneLogin / Auth0
+  // (docs/IDP_IMPERSONATION_PLAN_2026-10.md). Same table the classifier uses.
+  ...Object.keys(IDP_TENANT_HOSTS),
 ]);
 
 /** Is `domain` a shared-hosting domain or under one? */

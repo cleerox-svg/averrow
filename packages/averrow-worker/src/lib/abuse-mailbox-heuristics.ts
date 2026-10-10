@@ -22,7 +22,7 @@
 //
 // Pure: no I/O, no clock. Inputs are what intake already stored.
 
-import { isMultiTenantHost, isPlatformTenantHost } from "./brandDetect";
+import { isIdpTenantHost, isMultiTenantHost, isPlatformTenantHost } from "./brandDetect";
 import { registrableDomain } from "./domain-utils";
 import { isTyposquatOf, sldLabel } from "./abuse-mailbox-brand-match";
 import { isSafeDomain } from "./safeDomains";
@@ -228,7 +228,10 @@ export function scoreAbuseHeuristics(input: HeuristicInput): HeuristicResult {
     if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":")) linkAdd("link_raw_ip", 3);
     if (host.split(".").some((l) => l.startsWith("xn--"))) linkAdd("link_punycode", 2);
     if (/^https?:\/\/[^/?#]*@/i.test(u.url)) linkAdd("link_userinfo_trick", 3);
-    const sharedHost = isPlatformTenantHost(host) || isMultiTenantHost(host);
+    // An IdP tenant (acme.okta.com) is a company's real SSO portal, not free
+    // hosting — flagging it would mark every legitimate SSO link suspicious.
+    // IdP-tenant phishing is caught by the IdP classifier, not this signal.
+    const sharedHost = !isIdpTenantHost(host) && (isPlatformTenantHost(host) || isMultiTenantHost(host));
     // The genuine brand linking its own same-name sibling domain (mega.nz →
     // blog.mega.io, apple.com → apple.news) is not impersonation. Only when
     // the SENDER is the brand's real domain: a spoofer on another domain

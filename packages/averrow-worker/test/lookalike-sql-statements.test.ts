@@ -292,10 +292,14 @@ describe.skipIf(!hasSqlite())("lookalike scanner SQL — real SQLite", () => {
     // Plus 0286's `idx_lookalike_brand_exposure` — partial
     // (brand_id, status) WHERE registered = 1, the Brand Exposure Score's
     // look-alike count (G25). Plan-pinned in test/lookalike-exposure.test.ts.
+    //
+    // Plus 0288's `idx_lookalike_idp_lure_live` — partial (first_seen)
+    // WHERE idp_lure IS NOT NULL AND registered = 1 AND status != 'benign',
+    // the Identity Threats lookalike KPI.
     expect(
       lookalikeSchema().indexes.length,
       "expected index DDL to be extracted from the migrations",
-    ).toBe(12);
+    ).toBe(13);
     db.prepare(`INSERT INTO brands (id, name, canonical_domain, tier) VALUES ('b1','Acme','acme.example','monitored')`).run();
   });
 

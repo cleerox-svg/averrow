@@ -69,6 +69,9 @@ const EXPECTED_COLUMNS = [
   // hand (another brand's trusted official domain). Fixed text + a brand
   // name. Added by hand.
   "status_reason",
+  // 0288 IdP lure — closed-vocabulary provider id (okta, generic_sso, …)
+  // a permutation lures with. Added by hand.
+  "idp_lure",
 ];
 
 /** Drop // line comments and block comments so assertions test CODE. */

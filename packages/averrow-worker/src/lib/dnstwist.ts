@@ -120,6 +120,41 @@ const ALT_TLDS = ['com', 'net', 'org', 'co', 'io', 'app', 'xyz', 'info', 'biz', 
 const PREFIXES = ['secure-', 'login-', 'my', 'account-', 'www-', 'mail-', 'update-', 'verify-'];
 const SUFFIXES = ['-login', '-secure', '-verify', '-support', '-online', '-auth', '-portal'];
 
+// Identity-provider lures (Scattered Spider / 0ktapus: acme-okta.com,
+// acme-sso.com, acme-servicedesk.com — docs/IDP_IMPERSONATION_PLAN_2026-10.md
+// T5). Generated as 'keyword' permutations but ADDED ON TOP of the 30-cap
+// (owner decision 2026-10-10): keyword sorts after typosquat/homoglyph/
+// tld_swap, so inside the cap these would never survive for any name longer
+// than ~3 characters, and the owner chose not to displace typosquats.
+export const IDP_LURE_PREFIXES: readonly string[] = ['okta-', 'sso-'];
+export const IDP_LURE_SUFFIXES: readonly string[] = ['-sso', '-okta', '-helpdesk', '-servicedesk', '-vpn'];
+
+/**
+ * Only the IdP lure permutations of `domain` (up to 7), type 'keyword'.
+ * Used by generatePermutations (on top of the cap) and by the lure top-up
+ * for already-seeded brands (handlers/admin/idpBackfill.ts).
+ */
+export function generateIdpLurePermutations(domain: string): DomainPermutation[] {
+  const lower = domain.toLowerCase();
+  const parts = lower.split('.');
+  if (parts.length < 2) return [];
+  const name = parts[0]!;
+  const tld = parts.slice(1).join('.');
+  if (name.length < 2) return [];
+  const out: DomainPermutation[] = [];
+  const seen = new Set<string>([lower]);
+  const candidates = [
+    ...IDP_LURE_PREFIXES.map((p) => `${p}${name}.${tld}`),
+    ...IDP_LURE_SUFFIXES.map((s) => `${name}${s}.${tld}`),
+  ];
+  for (const d of candidates) {
+    if (seen.has(d)) continue;
+    seen.add(d);
+    out.push({ domain: d, type: 'keyword' });
+  }
+  return out;
+}
+
 // ─── Generator ──────────────────────────────────────────────────
 
 export function generatePermutations(domain: string): DomainPermutation[] {
@@ -142,6 +177,12 @@ export function generatePermutations(domain: string): DomainPermutation[] {
     results.push(display ? { domain: lower, type, display } : { domain: lower, type });
     return true;
   }
+
+  // IdP lures are appended AFTER the cap (see the end). Marking them seen up
+  // front keeps the regular passes (e.g. hyphenation of "acmesso") from
+  // emitting the same domain inside the cap as well.
+  const idpLures = generateIdpLurePermutations(domain);
+  for (const p of idpLures) seen.add(p.domain);
 
   // 1. Character omission: remove each character
   for (let i = 0; i < name.length; i++) {
@@ -273,13 +314,15 @@ export function generatePermutations(domain: string): DomainPermutation[] {
   // the lowest-priority ASCII *survivors* (down to the homoglyph tier for very
   // dense names) — the intended anti-starvation tradeoff, since idn_homoglyph
   // is ~equivalent in value to homoglyph. Short names see no displacement.
+  //
+  // IdP lures (8b) sit OUTSIDE the cap: up to CAP + 7 permutations total.
   const CAP = 30;
   const idnPicks = results.filter((r) => r.type === 'idn_homoglyph');
   const asciiPicks = results
     .filter((r) => r.type !== 'idn_homoglyph')
     .sort(byType)
     .slice(0, CAP - idnPicks.length);
-  return [...asciiPicks, ...idnPicks].sort(byType);
+  return [...[...asciiPicks, ...idnPicks].sort(byType), ...idpLures];
 }
 
 // ─── DNS resolution check via Cloudflare DoH ────────────────────

@@ -52,6 +52,7 @@ import {
   resolveOfficialDomain,
   type OfficialDomainRow,
 } from './safeDomains';
+import { IDP_FAMILY_TECHNIQUES } from './idp-impersonation';
 
 export type AutoTriageDecision =
   | { action: 'dismiss'; reason: string }
@@ -82,6 +83,10 @@ export interface ThreatTriageSnapshot {
    * untouched this increment). Only lookalike-page analysis ever sets
    * it. See the guard in decideThreatAutoTriage. */
   page_credential_harvest?: number | null;
+  /** threats.technique. An IdP-family technique (IDP_FAMILY_TECHNIQUES)
+   *  makes reputation evidence inapplicable — see the guard in
+   *  decideThreatAutoTriage. Optional so non-threat snapshots omit it. */
+  technique?: string | null;
 }
 
 /**
@@ -98,6 +103,14 @@ export interface ThreatTriageSnapshot {
  *   - Domain is NOT newly registered (D4 / NRD guard, below)
  */
 export function decideThreatAutoTriage(snapshot: ThreatTriageSnapshot): AutoTriageDecision {
+  // IdP-impersonation guard. An abused IdP tenant (acme-sso.okta.com) rides
+  // the vendor's clean reputation, so VT/GSB/GreyNoise/SecLookup read clean
+  // by construction; IdP lookalikes and device-code/OAuth-consent lures are
+  // likewise fresh or ride Microsoft's own endpoints. Clean reputation is
+  // not evidence of safety for any of the family — keep for a human.
+  if (snapshot.technique && IDP_FAMILY_TECHNIQUES.includes(snapshot.technique)) {
+    return { action: 'keep', reason: 'idp_impersonation_reputation_not_applicable' };
+  }
   if (snapshot.vt_checked !== 1) return { action: 'keep', reason: 'vt_not_checked' };
   if ((snapshot.vt_malicious ?? 0) > 0) return { action: 'keep', reason: 'vt_flagged' };
   if (snapshot.gsb_checked !== 1) return { action: 'keep', reason: 'gsb_not_checked' };
@@ -162,7 +175,8 @@ export async function loadThreatSnapshotForAlert(
            greynoise_classification,
            seclookup_risk_score,
            ip_address,
-           domain_age_days
+           domain_age_days,
+           technique
     FROM threats
     WHERE id = ?
   `).bind(sourceId).first<ThreatTriageSnapshot>();

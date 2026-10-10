@@ -8,7 +8,7 @@ import type { Env, UserRole, UserStatus } from "../../types";
 import { runSyncAgent } from "../../lib/agentRunner";
 import { adminClassifyAgent, type AdminClassifyOutput } from "../../agents/admin-classify";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
-import { fuzzyMatchBrandDetailed } from "../../lib/brandDetect";
+import { fuzzyMatchBrandDetailed, tagIdpAfterBrandMatch } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
@@ -665,11 +665,15 @@ export async function runBrandMatchBackfill(env: Env): Promise<BrandMatchBackfil
   if (brands.length === 0) return { matched: 0, checked: 0, pending: 0, pending_capped: false };
 
   const rows = await env.DB.prepare(
-    `SELECT id, malicious_domain, malicious_url, ioc_value FROM threats
+    `SELECT id, malicious_domain, malicious_url, ioc_value, technique FROM threats
      WHERE target_brand_id IS NULL AND (malicious_domain IS NOT NULL OR malicious_url IS NOT NULL OR ioc_value IS NOT NULL)
      ORDER BY created_at DESC
      LIMIT ?`,
-  ).bind(BRAND_MATCH_BATCH).all<{ id: string; malicious_domain: string | null; malicious_url: string | null; ioc_value: string | null }>();
+  ).bind(BRAND_MATCH_BATCH).all<{
+    id: string; malicious_domain: string | null; malicious_url: string | null;
+    ioc_value: string | null; technique: string | null;
+  }>();
+  const brandById = new Map(brands.map((b) => [b.id, b]));
 
   let matched = 0;
 
@@ -687,6 +691,9 @@ export async function runBrandMatchBackfill(env: Env): Promise<BrandMatchBackfil
       await env.DB.prepare(
         "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id IS NULL",
       ).bind(brandId, match.method, row.id).run();
+
+      // Brand now known → weak IdP lures (acme-helpdesk.com) can classify.
+      await tagIdpAfterBrandMatch(env.DB, row, brandById.get(brandId));
 
       await env.DB.prepare(
         `UPDATE brands SET

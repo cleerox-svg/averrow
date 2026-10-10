@@ -312,6 +312,16 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     return handleMultiFeedConsensus(request, env);
   });
 
+  // ─── Intel: Identity Provider Impersonation summary ───────────────
+  // docs/IDP_IMPERSONATION_PLAN_2026-10.md T4. Indexed (technique,
+  // created_at) range over the IdP family only; cachedValue 300s.
+  router.get("/api/intel/identity-threats", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleIdentityThreats } = await import("../handlers/identityThreats");
+    return handleIdentityThreats(request, env);
+  });
+
   // ─── Intel: Critical banner (post-audit signal-alignment) ─────────
   // Powers the red "Critical Intelligence" banner on Home — replaces
   // the bare alertStats.critical count with a prioritized event list
