@@ -16,9 +16,14 @@
 // `ANALYZE <index-name>` refreshes the stat row for that one index only, so
 // the cost is a single walk of that index. The partial
 // idx_lookalike_idp_lure_live holds only registered, non-benign IdP-lure
-// rows (a handful); idx_threats_technique_created is one full-table index
-// walk — still a fraction of a table ANALYZE. The other indexes' stats are
-// untouched (they keep whatever the last table ANALYZE wrote).
+// rows (a handful); idx_threats_technique_created is a full (non-partial)
+// index, so its walk reads every threats row once — still far cheaper than
+// a table ANALYZE, which reads every row once PER index. The other indexes'
+// stats are untouched (they keep whatever the last table ANALYZE wrote).
+//
+// Cooldown: at most one successful ANALYZE per table per hour (KV
+// `analyze:cooldown:<table>`, set only on success). A call inside the window
+// returns 429 without touching D1.
 //
 // The SQL is a fixed string per allowlisted key — the `table` query value is
 // only ever used as a lookup key, never interpolated into SQL.
@@ -39,6 +44,12 @@ export function isAnalyzeTable(v: string | null): v is AnalyzeTable {
   return v !== null && Object.prototype.hasOwnProperty.call(ANALYZE_TARGETS, v);
 }
 
+export const ANALYZE_COOLDOWN_S = 3600;
+
+export function analyzeCooldownKey(table: AnalyzeTable): string {
+  return `analyze:cooldown:${table}`;
+}
+
 /** Recorded as `details.actor` (audit_log.user_id NULL) — same label as the internal backfills. */
 const INTERNAL_ACTOR = "internal";
 
@@ -51,10 +62,23 @@ export async function handleInternalDbAnalyze(request: Request, env: Env): Promi
     );
   }
   const target = ANALYZE_TARGETS[table];
+  const cooldownKey = analyzeCooldownKey(table);
+  const now = Date.now();
+  const until = Number.parseInt((await env.CACHE.get(cooldownKey)) ?? "", 10);
+  if (Number.isFinite(until) && until > now) {
+    return Response.json(
+      { success: false, error: "cooldown", retry_after_s: Math.ceil((until - now) / 1000) },
+      { status: 429 },
+    );
+  }
   const base = { action: "db_analyze", userId: null, resourceType: table, resourceId: target.index, request };
-  const started = Date.now();
+  const started = now;
   try {
     const res = await env.DB.prepare(target.sql).run();
+    // Best-effort: a KV write failure must not report a completed ANALYZE as failed.
+    await env.CACHE.put(cooldownKey, String(Date.now() + ANALYZE_COOLDOWN_S * 1000), {
+      expirationTtl: ANALYZE_COOLDOWN_S,
+    }).catch(() => undefined);
     const data = {
       table,
       index: target.index,
@@ -71,6 +95,6 @@ export async function handleInternalDbAnalyze(request: Request, env: Env): Promi
       ...base, outcome: "failure",
       details: { actor: INTERNAL_ACTOR, table, index: target.index, error: message },
     });
-    return Response.json({ success: false, error: message }, { status: 500 });
+    return Response.json({ success: false, error: "An internal error occurred" }, { status: 500 });
   }
 }

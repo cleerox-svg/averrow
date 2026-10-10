@@ -31,7 +31,7 @@ import {
   IDP_BACKFILL_LOOKALIKE_CURSOR_KEY,
   IDP_LURE_TOPUP_CURSOR_KEY,
 } from "../src/handlers/admin/idpBackfill";
-import { ANALYZE_TARGETS, isAnalyzeTable } from "../src/handlers/admin/dbAnalyze";
+import { ANALYZE_TARGETS, ANALYZE_COOLDOWN_S, analyzeCooldownKey, isAnalyzeTable } from "../src/handlers/admin/dbAnalyze";
 
 const SECRET = "test-internal-secret";
 const BASE = "https://averrow.com";
@@ -43,7 +43,7 @@ const PATHS = [
 
 interface AuditRow { userId: unknown; action: unknown; details: Record<string, unknown>; outcome: unknown }
 
-function makeEnv() {
+function makeEnv(opts: { failDb?: boolean } = {}) {
   const kv = new Map<string, string>([
     [IDP_BACKFILL_THREAT_CURSOR_KEY, "10"], [IDP_BACKFILL_LOOKALIKE_CURSOR_KEY, "20"], [IDP_LURE_TOPUP_CURSOR_KEY, "30"],
   ]);
@@ -70,8 +70,14 @@ function makeEnv() {
         sql.push(s);
         const stmt = {
           bind: () => stmt,
-          all: async () => ({ results: [] }),
-          run: async () => ({ success: true, meta: { rows_read: 3, rows_written: 1 } }),
+          all: async () => {
+            if (opts.failDb) throw new Error("D1_ERROR: secret detail");
+            return { results: [] };
+          },
+          run: async () => {
+            if (opts.failDb) throw new Error("D1_ERROR: secret detail");
+            return { success: true, meta: { rows_read: 3, rows_written: 1 } };
+          },
         };
         return stmt;
       },
@@ -162,6 +168,18 @@ describe("internal IdP backfills — happy path", () => {
     ]);
   }, 60_000);
 
+  it("a failing core on the internal route → generic 500 + failure audit with the detail", async () => {
+    const h = makeEnv({ failDb: true });
+    const res = await call("/api/internal/backfills/idp-impersonation", {}, h.env);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: "An internal error occurred" });
+    expect(h.audits.map((a) => [a.action, a.outcome, a.userId, a.details.actor])).toEqual([
+      ["backfill_idp_impersonation_started", "success", null, "internal"],
+      ["backfill_idp_impersonation", "failure", null, "internal"],
+    ]);
+    expect(h.audits[1]!.details.error).toBe("D1_ERROR: secret detail");
+  }, 60_000);
+
   it("the admin route is distinguishable: user_id + actor user:<id>", async () => {
     const h = makeEnv();
     const res = await handleBackfillIdpImpersonation(
@@ -198,6 +216,38 @@ describe("internal db/analyze", () => {
     const h2 = makeEnv();
     await call("/api/internal/db/analyze?table=threats", {}, h2.env);
     expect(h2.sql).toEqual(["ANALYZE idx_threats_technique_created"]);
+  }, 60_000);
+
+  it("failure → generic 500; the real message lives only in the audit row; no cooldown set", async () => {
+    const h = makeEnv({ failDb: true });
+    const res = await call("/api/internal/db/analyze?table=threats", {}, h.env);
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ success: false, error: "An internal error occurred" });
+    expect(h.audits).toHaveLength(1);
+    expect(h.audits[0]).toMatchObject({
+      userId: null, action: "db_analyze", outcome: "failure",
+      details: { actor: "internal", table: "threats", error: "D1_ERROR: secret detail" },
+    });
+    expect(h.kv.has(analyzeCooldownKey("threats"))).toBe(false);
+  }, 60_000);
+
+  it("one successful ANALYZE per table per hour: second call → 429 without touching D1", async () => {
+    const h = makeEnv();
+    expect((await call("/api/internal/db/analyze?table=threats", {}, h.env)).status).toBe(200);
+    expect(h.sql).toHaveLength(1);
+    const res = await call("/api/internal/db/analyze?table=threats", {}, h.env);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { success: boolean; error: string; retry_after_s: number };
+    expect(body).toMatchObject({ success: false, error: "cooldown" });
+    expect(body.retry_after_s).toBeGreaterThan(0);
+    expect(body.retry_after_s).toBeLessThanOrEqual(ANALYZE_COOLDOWN_S);
+    expect(h.sql).toHaveLength(1);
+    expect(h.audits).toHaveLength(1);
+    // Per table: the other table is not on cooldown.
+    expect((await call("/api/internal/db/analyze?table=lookalike_domains", {}, h.env)).status).toBe(200);
+    // An expired stamp no longer blocks.
+    h.kv.set(analyzeCooldownKey("threats"), String(Date.now() - 1));
+    expect((await call("/api/internal/db/analyze?table=threats", {}, h.env)).status).toBe(200);
   }, 60_000);
 
   it("isAnalyzeTable ignores inherited keys", () => {
