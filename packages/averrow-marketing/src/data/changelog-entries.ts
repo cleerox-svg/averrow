@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.4.0",
+    publishedAt: "2026-10-10",
+    kind: "Feature",
+    title: "Identity provider impersonation visibility",
+    description:
+      "A new Identity Threats view measures phishing that abuses or imitates sign-in providers such as Okta, Microsoft Entra, OneLogin, and Auth0 across every monitored brand. See key figures, a breakdown by attack method and by provider, the most targeted brands, a MITRE ATT&CK mapping, and the latest detections. Detection of sign-in lures is also broader, with wider coverage of lookalike domains, newly registered domains, and certificates using terms like sso, helpdesk, and vpn. Attacks are credited to the brand being targeted, and identity provider impersonation is no longer automatically dismissed when a domain has a clean reputation.",
+  },
+  {
     version: "v4.3.0",
     publishedAt: "2026-10-05",
     kind: "Feature",
