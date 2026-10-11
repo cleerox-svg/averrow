@@ -21,7 +21,7 @@ import { escapeHtml } from "./email-layout";
 import { logger } from "./logger";
 import { sendEmail } from "./scan-lead-notify";
 import { incrementContactRate, refundContactRate } from "./contact-rate";
-import { defangLink, findLinks, scanContactLinks, type LinkScanReport, type ScannedLink } from "./contact-link-scan";
+import { defangLink, defangLoose, scanContactLinks, stripFormatChars, type LinkScanReport, type ScannedLink } from "./contact-link-scan";
 
 const CONTACT_NOTIFY_TO = "claude.leroux@averrow.com";
 // Verified transactional sender (same as invites / scan prospect emails).
@@ -87,7 +87,7 @@ function headerText(s: string, max: number): string {
 }
 
 export function buildContactSubject(n: ContactSubmissionNotice): string {
-  const company = n.company ? headerText(n.company, SUBJECT_COMPANY_MAX) : "";
+  const company = n.company ? headerText(defangAll(n.company), SUBJECT_COMPANY_MAX) : "";
   return `${SUBJECT_PREFIX} ${interestLabel(n.interest, n.domain)}${company ? ` — ${company}` : ""}`;
 }
 
@@ -106,21 +106,23 @@ export function safeReplyTo(email: string): string | null {
 export const UNVERIFIED_LINE =
   "Unverified website submission: the sender's name, company, email and domain have not been checked.";
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}\n\n[truncated — full text in the admin list]` : s;
-}
+const TRUNCATED_NOTE = "\n\n[truncated — full text in the admin list]";
 
-function defangAll(s: string): string {
-  let out = "";
-  let at = 0;
-  for (const l of findLinks(s)) {
-    out += s.slice(at, l.start) + defangLink(l.raw);
-    at = l.end;
-  }
-  return out + s.slice(at);
-}
+/** Visitor text for a non-message field: no format chars, nothing linkable. */
+const defangAll = (s: string): string => defangLoose(stripFormatChars(s));
 
-const NO_LINKS: LinkScanReport = { links: [], checks: [] };
+/**
+ * The exact message text the scan sees and the email renders. A long message
+ * is cut back to whitespace, so a link straddling the limit is dropped
+ * whole rather than scanned (and linked) as a different, shorter domain.
+ */
+export function contactMessageForEmail(message: string): { text: string; truncated: boolean } {
+  const s = stripFormatChars(message);
+  if (s.length <= EMAIL_MESSAGE_MAX) return { text: s, truncated: false };
+  const cut = s.slice(0, EMAIL_MESSAGE_MAX);
+  const ws = cut.search(/\s\S*$/);
+  return { text: ws > 0 ? cut.slice(0, ws) : "", truncated: true };
+}
 
 const linkStatus = (l: ScannedLink): string =>
   l.verdict === "flagged" ? `flagged: ${l.reasons.join("; ")}`
@@ -136,12 +138,12 @@ function renderMessage(message: string, scan: LinkScanReport): { html: string; t
   let text = "";
   let at = 0;
   for (const l of scan.links) {
-    if (l.end > message.length) break; // scanned before truncation
-    const before = message.slice(at, l.start);
+    if (l.start < at || l.end > message.length) continue; // not from this text; left to defangLoose
+    const before = defangLoose(message.slice(at, l.start));
     html += escapeHtml(before);
     text += before;
     if (l.verdict === "clean" && l.href) {
-      html += `<a href="${escapeHtml(l.href)}" target="_blank" rel="noopener noreferrer" style="color:#0a66c2;">${escapeHtml(l.href)}</a>`;
+      html += `<a href="${escapeHtml(l.href)}" dir="ltr" target="_blank" rel="noopener noreferrer" style="color:#0a66c2;">${escapeHtml(l.href)}</a>`;
       text += l.href;
     } else {
       const shown = defangLink(l.raw);
@@ -150,8 +152,9 @@ function renderMessage(message: string, scan: LinkScanReport): { html: string; t
     }
     at = l.end;
   }
-  html += escapeHtml(message.slice(at));
-  text += message.slice(at);
+  const rest = defangLoose(message.slice(at));
+  html += escapeHtml(rest);
+  text += rest;
   return { html, text };
 }
 
@@ -189,11 +192,14 @@ function renderLinkSummary(scan: LinkScanReport): { html: string; text: string }
 
 export function buildContactEmail(
   n: ContactSubmissionNotice,
-  scan: LinkScanReport = NO_LINKS,
+  scan: LinkScanReport,
 ): { subject: string; html: string; text: string } {
   const label = interestLabel(n.interest, n.domain);
-  const message = truncate(n.message, EMAIL_MESSAGE_MAX);
-  const body = renderMessage(message, scan);
+  const message = contactMessageForEmail(n.message);
+  const rendered = renderMessage(message.text, scan);
+  const body = message.truncated
+    ? { html: rendered.html + escapeHtml(TRUNCATED_NOTE), text: rendered.text + TRUNCATED_NOTE }
+    : rendered;
   const links = renderLinkSummary(scan);
   // Only the message's links are scanned; links typed into the other fields
   // are always defanged so the mail client can't auto-link them.
@@ -344,7 +350,7 @@ export async function notifyContactSubmission(
   if (reserved.status !== "ok") return reserved.status;
   let ok = false;
   try {
-    const scan = await scanContactLinks(env, n.message.slice(0, EMAIL_MESSAGE_MAX), n.email);
+    const scan = await scanContactLinks(env, contactMessageForEmail(n.message).text, n.email);
     const { subject, html, text } = buildContactEmail(n, scan);
     const replyTo = safeReplyTo(n.email);
     const result = await sendEmail(env, "contact-notify", { submissionId: n.id }, {

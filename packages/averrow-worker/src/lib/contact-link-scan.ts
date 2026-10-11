@@ -7,16 +7,18 @@
 // (hxxps://example[.]com) so the mail client won't auto-link it either.
 //
 // Checks (no request is ever made to the link itself):
-//   - structure: http(s) only, no user:pass@ prefix, no IP-literal host,
-//     no punycode (homoglyph) host
-//   - internal intel: active `threats` row on the host / registrable domain
-//     or the exact URL; a registered, non-benign `lookalike_domains` row
-//   - Google Safe Browsing (when GOOGLE_SAFE_BROWSING_KEY is set)
-//   - domain age via RDAP: registered within NRD_MAX_AGE_DAYS → flagged;
-//     an unknown age is noted but does not block
+//   - structure: http(s) only, no user:pass@ prefix, no IP-literal,
+//     single-label, reserved-TLD or punycode (homoglyph) host
+//   - internal intel: active `threats` row on the host, any parent domain up
+//     to the registrable domain, or the exact URL; a registered, non-benign
+//     `lookalike_domains` row
+//   - Google Safe Browsing, uncached (a URL can turn bad after a clean answer)
+//   - domain age via RDAP: registered within NRD_MAX_AGE_DAYS → flagged
 //
-// Fails closed: a failed intel query, a Safe Browsing error, or the overall
-// time budget running out leaves the link "unchecked" (not clickable).
+// Fails closed: a failed intel query, Safe Browsing not configured or not
+// answering, an unknown domain age (no RDAP for the TLD, or a hosting-platform
+// subdomain such as *.pages.dev), or the time budget running out leaves the
+// link "unchecked" (not clickable).
 
 import type { Env } from "../types";
 import { checkGoogleSafeBrowsing } from "../feeds/googleSafeBrowsing";
@@ -57,16 +59,20 @@ export const LINK_SCAN_BUDGET_MS = 6000;
 
 // A scheme URL, or a bare host (optionally www., port, path). The lookbehind
 // and lookahead keep email addresses (first.last@example.com) out.
+// Letters of any script count as word characters, so a homoglyph prefix
+// ("pаypal.com", Cyrillic а) never yields a match on its ASCII tail; the
+// whole token is left to defangLoose instead.
 const LINK_RE =
-  /\bhttps?:\/\/[^\s<>"'`]+|(?<![@\w.\-/])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\w@-])(?::\d{2,5})?(?:\/[^\s<>"'`]*)?/gi;
+  /(?<![\p{L}\p{N}_])https?:\/\/[^\s<>"'`]+|(?<![@\p{L}\p{N}_.\-/])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}(?![\p{L}\p{N}_@-])(?::\d{2,5})?(?:\/[^\s<>"'`]*)?/giu;
 const TRAILING_JUNK_RE = /[)\].,;:!?'"]+$/;
 
-// File-name extensions that look like TLDs in prose ("Node.js", "report.pdf").
-// .zip / .mov are real (and abused) TLDs, so they stay links.
+// File-name extensions that look like TLDs in prose ("Node.js", "report.pdf")
+// are not scanned or linked; defangLoose still defangs them. Real TLDs
+// (.sh, .md, .py, .zip, .mov…) are not in this list.
 const FILE_EXTENSIONS = new Set([
-  "js", "ts", "jsx", "tsx", "py", "rb", "md", "txt", "json", "yaml", "yml", "xml",
+  "js", "ts", "jsx", "tsx", "rb", "txt", "json", "yaml", "yml", "xml",
   "html", "htm", "css", "csv", "pdf", "png", "jpg", "jpeg", "gif", "svg", "doc",
-  "docx", "xls", "xlsx", "ppt", "pptx", "exe", "dll", "sh", "php", "java", "log",
+  "docx", "xls", "xlsx", "ppt", "pptx", "exe", "dll", "php", "java", "log",
 ]);
 
 /** Find candidate links in a message, in order of appearance. */
@@ -86,7 +92,7 @@ export function findLinks(message: string): FoundLink[] {
     try {
       const u = new URL(hasScheme ? raw : `https://${raw}`);
       href = u.href;
-      host = u.hostname.toLowerCase();
+      host = u.hostname.toLowerCase().replace(/\.+$/, "");
     } catch {
       // keep it: an unparseable "link" is rendered defanged
     }
@@ -101,6 +107,37 @@ export function defangLink(raw: string): string {
   return raw.replace(/^http/i, "hxxp").replace(/\./g, "[.]");
 }
 
+/**
+ * Unicode format characters (bidi overrides/isolates, zero-width joiners…).
+ * A bidi override before a link can make its visible text read as another
+ * domain, so they are removed from all visitor text before it is scanned
+ * or rendered.
+ */
+export function stripFormatChars(s: string): string {
+  return s.replace(/\p{Cf}/gu, "");
+}
+
+// Deliberately broader than LINK_RE: anything a mail client might auto-link.
+const LOOSE_SCHEME_RE = /h(?:tt|xx)ps?:\/\//gi;
+const LOOSE_HOST_RE = /[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*\.(?=[\p{L}\p{N}-]*\p{L})[\p{L}\p{N}-]{2,}/gu;
+
+/**
+ * Defang anything link-like in text that is NOT a scanned link (the gaps
+ * between links, and the non-message fields). Errs on the side of
+ * defanging: "Node.js" becomes "Node[.]js".
+ */
+export function defangLoose(text: string): string {
+  return text
+    .replace(LOOSE_SCHEME_RE, (m) => `hxxp${m.slice(4)}`)
+    .replace(LOOSE_HOST_RE, (m) => m.replace(/\./g, "[.]"));
+}
+
+// Names that only resolve on a private network or are reserved (RFC 2606/6761).
+const RESERVED_TLDS = new Set([
+  "localhost", "local", "internal", "lan", "home", "corp", "intranet", "private",
+  "test", "invalid", "example", "arpa", "onion",
+]);
+
 /** Problems visible from the URL alone. */
 function structuralReasons(link: FoundLink): string[] {
   if (!link.href || !link.host) return ["could not be parsed as a URL"];
@@ -110,6 +147,11 @@ function structuralReasons(link: FoundLink): string[] {
   if (u.username || u.password) reasons.push("hides its real destination behind a user@ prefix");
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(link.host) || link.host.startsWith("[")) {
     reasons.push("points at a raw IP address");
+  } else {
+    const labels = link.host.split(".");
+    if (labels.length < 2 || RESERVED_TLDS.has(labels[labels.length - 1]!)) {
+      reasons.push("points at a local or reserved hostname");
+    }
   }
   if (link.host.split(".").some((l) => l.startsWith("xn--"))) {
     reasons.push("internationalised domain (possible look-alike characters)");
@@ -119,13 +161,40 @@ function structuralReasons(link: FoundLink): string[] {
 
 const keyOf = (host: string) => registrableDomain(host) ?? host;
 
+/** The host and each parent domain down to its registrable domain. */
+function domainChain(host: string): string[] {
+  const reg = keyOf(host);
+  const out = [host];
+  let h = host;
+  while (h !== reg && h.includes(".")) {
+    h = h.slice(h.indexOf(".") + 1);
+    out.push(h);
+  }
+  return out;
+}
+
 interface IntelHits {
   domains: Map<string, string>; // domain → reason
   urls: Map<string, string>;    // url → reason
 }
 
+/**
+ * Spellings a feed may have stored for this link: the normalised href, the
+ * text as written (bare hosts with https://), and each without a trailing
+ * slash. Feeds store URLs as received, so the href alone can miss.
+ */
+function urlVariants(l: FoundLink): string[] {
+  const asWritten = /^https?:\/\//i.test(l.raw) ? l.raw : `https://${l.raw}`;
+  const out = new Set<string>();
+  for (const u of [l.href!, asWritten]) {
+    out.add(u);
+    out.add(u.replace(/\/+$/, ""));
+  }
+  return [...out];
+}
+
 async function internalIntel(env: Env, hosts: string[], urls: string[]): Promise<IntelHits> {
-  const domains = [...new Set(hosts.flatMap((h) => [h, keyOf(h)]))];
+  const domains = [...new Set(hosts.flatMap(domainChain))];
   const ph = (n: number) => Array(n).fill("?").join(",");
   const [byDomain, byUrl, lookalikes] = await Promise.all([
     env.DB.prepare(
@@ -134,7 +203,7 @@ async function internalIntel(env: Env, hosts: string[], urls: string[]): Promise
     ).bind(...domains).all<{ d: string; t: string | null }>(),
     env.DB.prepare(
       `SELECT malicious_url AS u, threat_type AS t FROM threats
-        WHERE status = 'active' AND malicious_url IN (${ph(urls.length)}) LIMIT 50`,
+        WHERE +status = 'active' AND malicious_url IN (${ph(urls.length)}) LIMIT 50`,
     ).bind(...urls).all<{ u: string; t: string | null }>(),
     env.DB.prepare(
       `SELECT domain AS d FROM lookalike_domains
@@ -185,16 +254,19 @@ async function runScan(
 
   const hosts = [...new Set(toCheck.map((l) => l.host!))];
   const hrefs = [...new Set(toCheck.map((l) => l.href!))];
+  const urlKeys = [...new Set(toCheck.flatMap(urlVariants))];
   const regDomains = [...new Set(hosts.map(keyOf))];
   const gsbConfigured = Boolean(env.GOOGLE_SAFE_BROWSING_KEY);
+  // Per link: its domain chain (≤ ~5) and ≤ 4 URL spellings, so 10 links
+  // stay under D1's 100-bind limit.
 
   const [intel, gsb, ages] = await Promise.all([
-    internalIntel(env, hosts, hrefs).catch((err: unknown) => {
+    internalIntel(env, hosts, urlKeys).catch((err: unknown) => {
       logger.warn("contact-link-scan-intel-failed", { error: err instanceof Error ? err.message : String(err) });
       return null;
     }),
     gsbConfigured
-      ? checkGoogleSafeBrowsing(hrefs, env).catch((err: unknown) => {
+      ? checkGoogleSafeBrowsing(hrefs, env, { useCache: false }).catch((err: unknown) => {
           logger.warn("contact-link-scan-gsb-failed", { error: err instanceof Error ? err.message : String(err) });
           return null;
         })
@@ -210,16 +282,17 @@ async function runScan(
     const reg = keyOf(host);
     if (!intel) unchecked(l, "threat-intel lookup failed");
     else {
-      const hit = intel.urls.get(l.href!) ?? intel.domains.get(host) ?? intel.domains.get(reg);
+      const hit = urlVariants(l).map((u) => intel.urls.get(u)).find(Boolean) ?? domainChain(host).map((d) => intel.domains.get(d)).find(Boolean);
       if (hit) { l.verdict = "flagged"; l.reasons.push(hit); }
     }
-    if (gsbConfigured) {
+    if (!gsbConfigured) unchecked(l, "Google Safe Browsing is not configured");
+    else {
       const r = gsb?.[hrefs.indexOf(l.href!)];
       if (!r || r.checked === false) unchecked(l, "Google Safe Browsing did not answer");
       else if (r.flagged) { l.verdict = "flagged"; l.reasons.push(`Google Safe Browsing: ${r.threatType ?? "flagged"}`); }
     }
     const age = ageByDomain.get(reg) ?? null;
-    if (age === null) l.notes.push("domain age unknown");
+    if (age === null) unchecked(l, "domain age could not be confirmed");
     else if (age <= NRD_MAX_AGE_DAYS) { l.verdict = "flagged"; l.reasons.push(`domain registered ${age} day${age === 1 ? "" : "s"} ago`); }
     else l.notes.push(`domain registered ${age >= 730 ? `${Math.floor(age / 365)} years` : `${age} days`} ago`);
     if (senderKey && senderKey !== reg) l.notes.push(`different domain from the sender's email (${senderKey})`);

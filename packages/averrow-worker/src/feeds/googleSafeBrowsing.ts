@@ -52,7 +52,9 @@ const SEVERITY_RANK: Record<string, number> = {
 export async function checkGoogleSafeBrowsing(
   urls: string[],
   env: Env,
+  opts: { useCache?: boolean } = {},
 ): Promise<GSBResult[]> {
+  const useCache = opts.useCache ?? true;
   const gsbKey = (env as unknown as Record<string, string | undefined>).GOOGLE_SAFE_BROWSING_KEY;
   if (!gsbKey) {
     return urls.map(() => ({ flagged: false, threatType: null, checked: false }));
@@ -65,7 +67,7 @@ export async function checkGoogleSafeBrowsing(
 
   for (let i = 0; i < urls.length; i++) {
     const cacheKey = `gsb:${urls[i]}`;
-    const cached = await env.CACHE.get(cacheKey);
+    const cached = useCache ? await env.CACHE.get(cacheKey) : null;
     if (cached !== null) {
       results[i] = JSON.parse(cached) as GSBResult;
     } else {
