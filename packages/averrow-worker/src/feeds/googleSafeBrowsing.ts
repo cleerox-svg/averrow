@@ -20,6 +20,9 @@ import { logger } from "../lib/logger";
 export interface GSBResult {
   flagged: boolean;
   threatType: string | null;
+  /** false when no answer came from Google (no key, API error). Results
+   *  cached before this field existed are real answers, so absent ≠ false. */
+  checked?: boolean;
 }
 
 interface GSBMatch {
@@ -52,7 +55,7 @@ export async function checkGoogleSafeBrowsing(
 ): Promise<GSBResult[]> {
   const gsbKey = (env as unknown as Record<string, string | undefined>).GOOGLE_SAFE_BROWSING_KEY;
   if (!gsbKey) {
-    return urls.map(() => ({ flagged: false, threatType: null }));
+    return urls.map(() => ({ flagged: false, threatType: null, checked: false }));
   }
 
   // Check KV cache for each URL; collect uncached ones
@@ -100,7 +103,7 @@ export async function checkGoogleSafeBrowsing(
     logger.error("gsb_api_error", { status: res.status, statusText: res.statusText });
     // Mark all uncached as clean (graceful degradation)
     for (const idx of uncachedIndices) {
-      results[idx] = { flagged: false, threatType: null };
+      results[idx] = { flagged: false, threatType: null, checked: false };
     }
     return results;
   }
@@ -121,6 +124,7 @@ export async function checkGoogleSafeBrowsing(
     const result: GSBResult = {
       flagged: threatType !== null,
       threatType,
+      checked: true,
     };
     results[idx] = result;
     await env.CACHE.put(`gsb:${url}`, JSON.stringify(result), { expirationTtl: 86400 });
