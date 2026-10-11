@@ -21,6 +21,7 @@ import { escapeHtml } from "./email-layout";
 import { logger } from "./logger";
 import { sendEmail } from "./scan-lead-notify";
 import { incrementContactRate, refundContactRate } from "./contact-rate";
+import { defangLink, defangLoose, scanContactLinks, stripFormatChars, type LinkScanReport, type ScannedLink } from "./contact-link-scan";
 
 const CONTACT_NOTIFY_TO = "claude.leroux@averrow.com";
 // Verified transactional sender (same as invites / scan prospect emails).
@@ -86,7 +87,7 @@ function headerText(s: string, max: number): string {
 }
 
 export function buildContactSubject(n: ContactSubmissionNotice): string {
-  const company = n.company ? headerText(n.company, SUBJECT_COMPANY_MAX) : "";
+  const company = n.company ? headerText(defangAll(n.company), SUBJECT_COMPANY_MAX) : "";
   return `${SUBJECT_PREFIX} ${interestLabel(n.interest, n.domain)}${company ? ` — ${company}` : ""}`;
 }
 
@@ -105,21 +106,111 @@ export function safeReplyTo(email: string): string | null {
 export const UNVERIFIED_LINE =
   "Unverified website submission: the sender's name, company, email and domain have not been checked.";
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}\n\n[truncated — full text in the admin list]` : s;
+const TRUNCATED_NOTE = "\n\n[truncated — full text in the admin list]";
+
+/** Visitor text for a non-message field: no format chars, nothing linkable. */
+const defangAll = (s: string): string => defangLoose(stripFormatChars(s));
+
+/**
+ * The exact message text the scan sees and the email renders. A long message
+ * is cut back to whitespace, so a link straddling the limit is dropped
+ * whole rather than scanned (and linked) as a different, shorter domain.
+ */
+export function contactMessageForEmail(message: string): { text: string; truncated: boolean } {
+  const s = stripFormatChars(message);
+  if (s.length <= EMAIL_MESSAGE_MAX) return { text: s, truncated: false };
+  const cut = s.slice(0, EMAIL_MESSAGE_MAX);
+  const ws = cut.search(/\s\S*$/);
+  return { text: ws > 0 ? cut.slice(0, ws) : "", truncated: true };
 }
 
-export function buildContactEmail(n: ContactSubmissionNotice): { subject: string; html: string; text: string } {
+const linkStatus = (l: ScannedLink): string =>
+  l.verdict === "flagged" ? `flagged: ${l.reasons.join("; ")}`
+    : l.verdict === "unchecked" ? `link disabled, ${l.reasons.join("; ")}`
+      : "checked, no threats found";
+
+/**
+ * The message with its links rendered by verdict: clean → clickable (the
+ * visible text is the real destination), anything else → defanged.
+ */
+function renderMessage(message: string, scan: LinkScanReport): { html: string; text: string } {
+  let html = "";
+  let text = "";
+  let at = 0;
+  for (const l of scan.links) {
+    if (l.start < at || l.end > message.length) continue; // not from this text; left to defangLoose
+    const before = defangLoose(message.slice(at, l.start));
+    html += escapeHtml(before);
+    text += before;
+    if (l.verdict === "clean" && l.href) {
+      html += `<a href="${escapeHtml(l.href)}" dir="ltr" target="_blank" rel="noopener noreferrer" style="color:#0a66c2;">${escapeHtml(l.href)}</a>`;
+      text += l.href;
+    } else {
+      const shown = defangLink(l.raw);
+      html += `<span style="color:#b00020;">${escapeHtml(shown)}</span> <span style="color:#b00020;font-size:12px;">[${escapeHtml(linkStatus(l))}]</span>`;
+      text += `${shown} [${linkStatus(l)}]`;
+    }
+    at = l.end;
+  }
+  const rest = defangLoose(message.slice(at));
+  html += escapeHtml(rest);
+  text += rest;
+  return { html, text };
+}
+
+const VERDICT_STYLE: Record<ScannedLink["verdict"], string> = {
+  clean: "color:#1a7f37;",
+  flagged: "color:#b00020;font-weight:600;",
+  unchecked: "color:#7a4b00;",
+};
+
+/** One line per link: verdict, reasons, notes (domain age, sender mismatch). */
+function renderLinkSummary(scan: LinkScanReport): { html: string; text: string } {
+  if (scan.links.length === 0) return { html: "", text: "" };
+  const line = (l: ScannedLink) => {
+    const shown = l.verdict === "clean" && l.href ? l.href : defangLink(l.raw);
+    const extra = [...(l.verdict === "clean" ? [] : l.reasons), ...l.notes];
+    return { shown, label: l.verdict.toUpperCase(), extra: extra.join("; ") };
+  };
+  const items = scan.links.map((l) => {
+    const x = line(l);
+    return `<li style="margin:0 0 6px;"><span style="${VERDICT_STYLE[l.verdict]}">${x.label}</span> ${escapeHtml(x.shown)}${x.extra ? `<br><span style="color:#666;font-size:12px;">${escapeHtml(x.extra)}</span>` : ""}</li>`;
+  });
+  const checks = scan.checks.length ? `Checked: ${scan.checks.join(", ")}.` : "";
+  const html = `
+    <div style="margin:16px 0 0;color:#666;font-size:13px;">Links in this message</div>
+    <ul style="margin:4px 0 0;padding-left:18px;font-size:13px;word-break:break-all;">${items.join("")}</ul>
+    <div style="margin:4px 0 0;color:#888;font-size:11px;">Only links that passed every check are clickable. ${escapeHtml(checks)} A clean result means no known threat, not that the sender is trustworthy.</div>`;
+  const text = [
+    "",
+    "Links in this message:",
+    ...scan.links.map((l) => { const x = line(l); return `- ${x.label} ${x.shown}${x.extra ? ` (${x.extra})` : ""}`; }),
+    `Only links that passed every check are clickable. ${checks}`.trim(),
+  ].join("\n");
+  return { html, text };
+}
+
+export function buildContactEmail(
+  n: ContactSubmissionNotice,
+  scan: LinkScanReport,
+): { subject: string; html: string; text: string } {
   const label = interestLabel(n.interest, n.domain);
-  const message = truncate(n.message, EMAIL_MESSAGE_MAX);
+  const message = contactMessageForEmail(n.message);
+  const rendered = renderMessage(message.text, scan);
+  const body = message.truncated
+    ? { html: rendered.html + escapeHtml(TRUNCATED_NOTE), text: rendered.text + TRUNCATED_NOTE }
+    : rendered;
+  const links = renderLinkSummary(scan);
+  // Only the message's links are scanned; links typed into the other fields
+  // are always defanged so the mail client can't auto-link them.
   const rows: Array<[string, string]> = [
-    ["Name", n.name],
+    ["Name", defangAll(n.name)],
     ["Email", n.email],
-    ["Company", n.company ?? "—"],
-    ["Company size", n.companySize ?? "—"],
-    ["Interest", n.interest ? `${label} (${n.interest})` : label],
+    ["Company", n.company ? defangAll(n.company) : "—"],
+    ["Company size", n.companySize ? defangAll(n.companySize) : "—"],
+    ["Interest", n.interest ? `${label} (${defangAll(n.interest)})` : label],
   ];
-  if (n.domain) rows.push(["Domain", n.domain]);
+  if (n.domain) rows.push(["Domain", defangAll(n.domain)]);
 
   const rowHtml = rows
     .map(([k, v]) =>
@@ -137,7 +228,7 @@ export function buildContactEmail(n: ContactSubmissionNotice): { subject: string
       ${rowHtml}
     </table>
     <div style="margin:16px 0 0;color:#666;font-size:13px;">Message</div>
-    <div style="margin:4px 0 0;padding:12px;background:#fafafa;border:1px solid #eee;border-radius:4px;font-size:14px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(message)}</div>
+    <div style="margin:4px 0 0;padding:12px;background:#fafafa;border:1px solid #eee;border-radius:4px;font-size:14px;white-space:pre-wrap;word-break:break-word;">${body.html}</div>${links.html}
     <p style="margin:16px 0 0;color:#666;font-size:13px;">Reply to this email to answer the sender directly.</p>
     <hr style="border:none;border-top:1px solid #eee;margin:24px 0 12px;">
     <div style="color:#888;font-size:11px;text-align:center;">Submission id: <code>${escapeHtml(n.id)}</code></div>
@@ -153,7 +244,8 @@ export function buildContactEmail(n: ContactSubmissionNotice): { subject: string
     ...rows.map(([k, v]) => `${pad(k)}${v}`),
     "",
     "Message:",
-    message,
+    body.text,
+    ...(links.text ? [links.text] : []),
     "",
     "Reply to this email to answer the sender directly.",
     "",
@@ -258,7 +350,8 @@ export async function notifyContactSubmission(
   if (reserved.status !== "ok") return reserved.status;
   let ok = false;
   try {
-    const { subject, html, text } = buildContactEmail(n);
+    const scan = await scanContactLinks(env, contactMessageForEmail(n.message).text, n.email);
+    const { subject, html, text } = buildContactEmail(n, scan);
     const replyTo = safeReplyTo(n.email);
     const result = await sendEmail(env, "contact-notify", { submissionId: n.id }, {
       from: CONTACT_FROM_ADDRESS,
