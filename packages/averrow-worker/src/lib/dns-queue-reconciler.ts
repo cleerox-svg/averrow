@@ -23,22 +23,61 @@
 //
 // ── Mechanics ──
 //
-//   Cursor:
-//     KV key `reconciler:dns_queue:cursor` (ISO timestamp).
-//     Each tick reads `threats WHERE status='active' AND
-//     created_at >= cursor AND ip_address IS NULL ORDER BY
-//     created_at LIMIT 500` and advances cursor to MAX(created_at)
-//     observed. Uses idx_threats_status_created — EXPLAIN
-//     verified: `SEARCH USING INDEX (status=? AND created_at>?)`,
-//     no TEMP B-TREE for ORDER BY.
+//   Cursor (keyset on (created_at, rowid) — 2026-10-12 fix):
+//     KV key `reconciler:dns_queue:cursor`, JSON
+//     `{"created_at":"YYYY-MM-DD HH:MM:SS","rowid":N}`. The legacy
+//     value (a bare timestamp, written before this fix) still parses —
+//     as `{created_at: <ts>, rowid: 0}`, i.e. "every row of that
+//     second", exactly the old `>= cursor` semantics.
 //
-//     `>= cursor` (not `>`) ensures rows with identical
-//     created_at values aren't skipped between ticks. INSERT OR
-//     IGNORE absorbs the overlap-dedup cost.
+//     WHY: the old cursor read `created_at >= cursor ORDER BY
+//     created_at LIMIT 500` and only advanced when MAX(created_at) of
+//     the page was strictly greater than the cursor. Feeds insert via
+//     db.batch() with `datetime('now')`, so a whole bulk chunk shares
+//     ONE created_at second. Once ≥500 candidate rows shared the
+//     cursor's second, every tick re-read the same 500 rows (all
+//     already queued → enqueued≈0), MAX(created_at) == cursor, and the
+//     cursor froze forever (2026-10-06 incident: lag grew 1:1 with
+//     wall clock for 6 days while ~51K candidates piled up behind it).
+//
+//     Each tick now reads, in key order:
+//       Q1  the rest of the cursor's own second:
+//             created_at = c AND rowid > r ORDER BY rowid
+//           → SEARCH idx_threats_status_created (status=? AND
+//             created_at=? AND rowid>?) — an exact seek, no re-read.
+//       Q2  (only if Q1 didn't fill the page) later seconds:
+//             created_at > c ORDER BY created_at, rowid
+//           → SEARCH idx_threats_status_created (status=? AND
+//             created_at>?) + "TEMP B-TREE FOR LAST TERM OF ORDER BY"
+//             (a per-second rowid sort; LIMIT still stops after the
+//             second containing the 500th row).
+//     The row-value form `(created_at, rowid) > (?, ?)` is NOT used:
+//     SQLite only range-seeks its first column and then walks the
+//     cursor's whole second again on every page. EXPLAIN pinned in
+//     test/dns-queue-reconciler.test.ts. No new index needed —
+//     rowid is the implicit trailing key of idx_threats_status_created.
+//
+//     The cursor advances to the (created_at, rowid) of the last row
+//     processed. Every row returned is strictly past the cursor, so a
+//     non-empty page ALWAYS makes progress. Rows inserted later in the
+//     cursor's own second get a higher rowid and are picked up by Q1
+//     (what the old `>=` was for). Concurrent runs (Navigator + the
+//     internal step route) can at worst regress the cursor to an
+//     earlier page end → a re-read absorbed by INSERT OR IGNORE, never
+//     a skip.
+//
+//     Defensive self-heal: if a FULL page somehow makes no progress
+//     (cannot happen with keyset unless D1 hands back rows out of
+//     order / without rowid), the run logs it, flags `cursorStuck`
+//     (→ agent_outputs `cursor_stuck`, read by Flight Control's
+//     `platform_dns_queue_stalled` check) and skips the rest of that
+//     second rather than pinning forever.
 //
 //     Bootstrap: missing cursor defaults to `now - 30 minutes`.
-//     We trust earlier reconciler runs filled the queue with
-//     pre-existing candidates — no re-scan of history needed.
+//     The KV TTL is 30 days (was 7): a pinned cursor's key expiring
+//     would silently re-bootstrap to "now" and abandon the backlog.
+//     `seedDnsQueueCursor` (POST /api/internal/dns-queue/reconcile
+//     ?from=) re-seeds it explicitly.
 //
 //   Stale removal:
 //     Out of scope for this module. See lib/dns-queue-reaper.ts.
@@ -61,8 +100,43 @@ import type { Env } from '../types';
 import { cachedCount } from './cached-count';
 
 const CURSOR_KEY = 'reconciler:dns_queue:cursor';
+const CURSOR_TTL_S = 86_400 * 30;
 const CHUNK_SIZE = 50;
-const READ_LIMIT = 500;
+export const RECONCILER_READ_LIMIT = 500;
+const READ_LIMIT = RECONCILER_READ_LIMIT;
+
+/** Upper bound on pages one internal step call may run (route cap). */
+export const RECONCILER_MAX_STEP_PAGES = 20;
+
+/** Candidate predicate shared by both keyset reads. Must match
+ *  lib/dns-queue-reaper.ts and lib/dns-drainable.ts. Static SQL — no
+ *  caller data is ever spliced in. */
+const CANDIDATE_FILTER_SQL = `
+        AND ip_address IS NULL
+        AND dns_exhausted_at IS NULL
+        AND malicious_domain IS NOT NULL
+        AND malicious_domain != ''
+        AND malicious_domain NOT LIKE '*%'
+        AND malicious_domain LIKE '%.%'`;
+
+/** Q1 — remainder of the cursor's own second. Binds: created_at, rowid, limit. */
+export const RECONCILER_TIE_SQL = `
+      SELECT rowid AS rid, malicious_domain, source_feed, created_at
+      FROM threats INDEXED BY idx_threats_status_created
+      WHERE status = 'active'
+        AND created_at = ?
+        AND rowid > ?${CANDIDATE_FILTER_SQL}
+      ORDER BY rowid
+      LIMIT ?`;
+
+/** Q2 — every later second. Binds: created_at, limit. */
+export const RECONCILER_AFTER_SQL = `
+      SELECT rowid AS rid, malicious_domain, source_feed, created_at
+      FROM threats INDEXED BY idx_threats_status_created
+      WHERE status = 'active'
+        AND created_at > ?${CANDIDATE_FILTER_SQL}
+      ORDER BY created_at, rowid
+      LIMIT ?`;
 
 // ── Historical backfill (one-time drain of the pre-cursor tail) ──
 // The forward reconciler only walks created_at >= cursor, so threats
@@ -90,6 +164,90 @@ const BACKFILL_LIMIT = 500;
 // already in dns_queue.
 const BOOTSTRAP_MINUTES_AGO = 30;
 
+// ── Cursor encoding ─────────────────────────────────────────────
+
+export interface DnsQueueCursor {
+  /** threats.created_at of the last row processed (SQLite datetime text). */
+  created_at: string;
+  /** threats.rowid of the last row processed; 0 = "before every row of that second". */
+  rowid: number;
+}
+
+/**
+ * Parse the KV cursor. Accepts the current JSON shape and the legacy
+ * bare-timestamp value (→ rowid 0, i.e. the old `>= cursor` semantics,
+ * so a frozen legacy cursor re-reads its second once from the start and
+ * then walks forward). Returns null for empty / malformed values.
+ */
+export function parseDnsQueueCursor(raw: string | null | undefined): DnsQueueCursor | null {
+  if (raw == null) return null;
+  const s = raw.trim();
+  if (s === '') return null;
+  if (s.startsWith('{')) {
+    try {
+      const parsed: unknown = JSON.parse(s);
+      if (parsed !== null && typeof parsed === 'object') {
+        const rec = parsed as Record<string, unknown>;
+        const createdAt = rec.created_at;
+        const rowid = rec.rowid;
+        if (
+          typeof createdAt === 'string' && createdAt !== ''
+          && typeof rowid === 'number' && Number.isSafeInteger(rowid) && rowid >= 0
+        ) {
+          return { created_at: createdAt, rowid };
+        }
+      }
+    } catch {
+      // fall through — malformed JSON
+    }
+    return null;
+  }
+  return { created_at: s, rowid: 0 };
+}
+
+export function serializeDnsQueueCursor(c: DnsQueueCursor): string {
+  return JSON.stringify({ created_at: c.created_at, rowid: c.rowid });
+}
+
+/** Total order on cursor keys: created_at (text) then rowid. */
+export function compareDnsQueueCursor(a: DnsQueueCursor, b: DnsQueueCursor): number {
+  if (a.created_at < b.created_at) return -1;
+  if (a.created_at > b.created_at) return 1;
+  return a.rowid === b.rowid ? 0 : a.rowid < b.rowid ? -1 : 1;
+}
+
+function toSqliteDatetime(d: Date): string {
+  // SQLite datetime() format: 'YYYY-MM-DD HH:MM:SS' (no T, no ms, no TZ).
+  return d.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+}
+
+/** Read + parse the forward cursor; null when missing, malformed or KV fails. */
+async function readCursor(env: Env): Promise<DnsQueueCursor | null> {
+  try {
+    return parseDnsQueueCursor(await env.CACHE.get(CURSOR_KEY));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-seed the forward cursor to the start of `createdAt` (rowid 0).
+ * Used by the internal catch-up route when the KV cursor was lost or
+ * must be rewound. Caller validates the timestamp shape.
+ */
+export async function seedDnsQueueCursor(env: Env, createdAt: string): Promise<DnsQueueCursor> {
+  const cursor: DnsQueueCursor = { created_at: createdAt, rowid: 0 };
+  await env.CACHE.put(CURSOR_KEY, serializeDnsQueueCursor(cursor), { expirationTtl: CURSOR_TTL_S });
+  return cursor;
+}
+
+interface CandidateRow {
+  rid: number;
+  malicious_domain: string;
+  source_feed: string | null;
+  created_at: string;
+}
+
 export interface ReconcileResult {
   skipped: boolean;
   reason?: string;
@@ -97,14 +255,18 @@ export interface ReconcileResult {
   enqueued: number;
   /** Number of new candidates pulled from threats since cursor. */
   scanned: number;
-  /** Cursor position read at start of tick (ISO timestamp). */
+  /** Cursor position read at start of tick (serialized KV value). */
   cursorBefore: string | null;
-  /** Cursor position after advance (ISO timestamp). */
+  /** Cursor position after advance (serialized KV value). */
   cursorAfter: string | null;
   /** Minutes between cursor and now-at-tick-start. Surfaced for
    *  staleness monitoring — if this grows, threats are being
    *  ingested faster than the reconciler is enqueuing. */
   cursorLagMinutes: number;
+  /** True when a FULL page made no cursor progress and the defensive
+   *  self-heal had to skip ahead. Surfaced as `cursor_stuck` in the
+   *  Navigator diagnostic; Flight Control's stalled check reads it. */
+  cursorStuck: boolean;
   /** Current dns_queue size — read once per tick for observability. */
   queueSize: number;
   durationMs: number;
@@ -125,6 +287,7 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     cursorBefore: null,
     cursorAfter: null,
     cursorLagMinutes: 0,
+    cursorStuck: false,
     queueSize: 0,
     durationMs: 0,
     batchesAttempted: 0,
@@ -138,71 +301,65 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
   try {
     // ── 1. Read cursor from KV ──
     // Default to "30 min ago" if not yet set (first deploy of the
-    // cursor-based reconciler). The set-diff reconciler kept the
-    // queue continuously up-to-date, so we don't need a full re-
-    // scan of history at bootstrap.
-    let cursor: string | null = null;
-    try {
-      cursor = await env.CACHE.get(CURSOR_KEY);
-    } catch {
-      // KV transient — treat as bootstrap. Cursor defaults below.
-    }
-    if (!cursor) {
-      const bootstrapAt = new Date(Date.now() - BOOTSTRAP_MINUTES_AGO * 60_000);
-      // SQLite datetime() format: 'YYYY-MM-DD HH:MM:SS' (no T, no
-      // ms, no TZ). Match the schema we use in feed_pull_history,
-      // agent_runs, etc.
-      cursor = bootstrapAt.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
-    }
-    const cursorBefore = cursor;
-    const cursorAgeMs = Date.now() - Date.parse(cursor.replace(' ', 'T') + 'Z');
-    const cursorLagMinutes = Math.max(0, Math.floor(cursorAgeMs / 60_000));
+    // cursor-based reconciler, or KV wiped).
+    const before: DnsQueueCursor = (await readCursor(env)) ?? {
+      created_at: toSqliteDatetime(new Date(Date.now() - BOOTSTRAP_MINUTES_AGO * 60_000)),
+      rowid: 0,
+    };
+    const cursorBefore = serializeDnsQueueCursor(before);
+    const cursorAgeMs = Date.now() - Date.parse(before.created_at.replace(' ', 'T') + 'Z');
+    const cursorLagMinutes = Number.isFinite(cursorAgeMs)
+      ? Math.max(0, Math.floor(cursorAgeMs / 60_000))
+      : 0;
 
-    // ── 2. Read new candidates since cursor ──
-    // INDEXED BY pins the right plan even if the planner gets
-    // confused by stats refresh. EXPLAIN verified on prod
-    // (2026-05-19): SEARCH threats USING INDEX
-    // idx_threats_status_created (status=? AND created_at>?).
-    //
-    // `>= cursor` (not `>`) — rows with identical created_at don't
-    // get skipped between ticks. INSERT OR IGNORE handles the dedup.
-    const candidatesRes = await env.DB.prepare(`
-      SELECT malicious_domain, source_feed, created_at
-      FROM threats INDEXED BY idx_threats_status_created
-      WHERE status = 'active'
-        AND created_at >= ?
-        AND ip_address IS NULL
-        AND dns_exhausted_at IS NULL
-        AND malicious_domain IS NOT NULL
-        AND malicious_domain != ''
-        AND malicious_domain NOT LIKE '*%'
-        AND malicious_domain LIKE '%.%'
-      ORDER BY created_at
-      LIMIT ?
-    `).bind(cursor, READ_LIMIT).all<{
-      malicious_domain: string;
-      source_feed: string | null;
-      created_at: string;
-    }>();
-
-    const candidates = candidatesRes.results;
+    // ── 2. Read the next keyset page ──
+    // Q1: rest of the cursor's own second (exact seek on rowid).
+    const tieRes = await env.DB.prepare(RECONCILER_TIE_SQL)
+      .bind(before.created_at, before.rowid, READ_LIMIT)
+      .all<CandidateRow>();
+    const candidates: CandidateRow[] = [...tieRes.results];
+    // Q2: later seconds, only for the room Q1 left on the page.
+    const remaining = READ_LIMIT - candidates.length;
+    if (remaining > 0) {
+      const afterRes = await env.DB.prepare(RECONCILER_AFTER_SQL)
+        .bind(before.created_at, remaining)
+        .all<CandidateRow>();
+      candidates.push(...afterRes.results);
+    }
     const scanned = candidates.length;
 
-    // ── 3. Dedupe by malicious_domain ──
+    // ── 3. Dedupe by malicious_domain + find the page's last key ──
     // Within one tick, the SELECT may return multiple rows with the
-    // same malicious_domain (e.g., feed reposts). INSERT OR IGNORE
-    // would handle it row-by-row, but batching via db.batch() with
-    // duplicate PKs in one batch is risky on D1 (the 2026-05-17
-    // bug). Dedupe up-front.
+    // same malicious_domain (e.g., feed reposts). Batching via
+    // db.batch() with duplicate PKs in one batch is risky on D1 (the
+    // 2026-05-17 bug). Dedupe up-front.
     const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
-    let maxCreatedAt = cursor;
+    let next: DnsQueueCursor = before;
     for (const c of candidates) {
       if (!uniqueByDomain.has(c.malicious_domain)) {
         uniqueByDomain.set(c.malicious_domain, c);
       }
-      if (c.created_at > maxCreatedAt) maxCreatedAt = c.created_at;
+      if (typeof c.rid === 'number' && Number.isSafeInteger(c.rid)) {
+        const key: DnsQueueCursor = { created_at: c.created_at, rowid: c.rid };
+        if (compareDnsQueueCursor(key, next) > 0) next = key;
+      }
     }
     const toInsert = [...uniqueByDomain.values()];
+
+    // Defensive self-heal: a full page that doesn't move the cursor
+    // would pin it forever (the 2026-10-06 failure mode). Keyset makes
+    // this unreachable unless D1 returns rows without/out of key order;
+    // if it ever happens, skip the rest of the cursor's second
+    // (rowid → MAX_SAFE_INTEGER, so the next Q1 is empty and Q2 moves
+    // on) and flag it for Flight Control.
+    let cursorStuck = false;
+    if (scanned >= READ_LIMIT && compareDnsQueueCursor(next, before) <= 0) {
+      cursorStuck = true;
+      next = { created_at: before.created_at, rowid: Number.MAX_SAFE_INTEGER };
+      const msg = `cursor_stuck: full page (${scanned}) made no progress at ${cursorBefore}; skipping rest of second`;
+      console.error(`[dns-queue-reconciler] ${msg}`);
+      if (!lastError) lastError = msg;
+    }
 
     // ── 4. Read current queue size — cheap, observability only ──
     // Cached on the shared `count.dns_queue.size` key (also read by
@@ -257,9 +414,9 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     }
 
     // ── 6. Advance cursor ──
-    // Only persist if we observed at least one candidate. If the
-    // window was empty (no new threats in last 5 min — common at
-    // night), keep the cursor — next tick reads from same point.
+    // Only persist on progress. An empty window (no new threats in the
+    // last 5 min — common at night) keeps the cursor; next tick reads
+    // from the same point.
     //
     // CRITICAL: persist even if some INSERT batches failed. The
     // failed rows would be retried next tick via INSERT OR IGNORE,
@@ -267,12 +424,11 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     // cursor on a permanent-failure row and blocks all subsequent
     // candidates. The dedup gives us idempotency.
     let cursorAfter: string | null = cursorBefore;
-    if (maxCreatedAt > cursor) {
+    if (compareDnsQueueCursor(next, before) > 0) {
+      const serialized = serializeDnsQueueCursor(next);
       try {
-        await env.CACHE.put(CURSOR_KEY, maxCreatedAt, {
-          expirationTtl: 86_400 * 7, // 7 days — refreshed every tick that finds candidates
-        });
-        cursorAfter = maxCreatedAt;
+        await env.CACHE.put(CURSOR_KEY, serialized, { expirationTtl: CURSOR_TTL_S });
+        cursorAfter = serialized;
       } catch (err) {
         // KV write failure — log + continue. Next tick reads stale
         // cursor and re-processes. Idempotent via INSERT OR IGNORE.
@@ -290,6 +446,7 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
       cursorBefore,
       cursorAfter,
       cursorLagMinutes,
+      cursorStuck,
       queueSize,
       durationMs: Date.now() - start,
       batchesAttempted,
@@ -308,6 +465,62 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
       lastError: lastError ?? (err instanceof Error ? `${err.name}: ${err.message}` : String(err)),
     };
   }
+}
+
+export interface ReconcileStepResult {
+  /** Pages actually run (≤ requested). */
+  pages: number;
+  scanned: number;
+  enqueued: number;
+  cursorBefore: string | null;
+  cursorAfter: string | null;
+  /** Cursor lag (minutes) reported by the last page run. */
+  cursorLagMinutes: number;
+  /** True once a page came back short — the cursor reached the head. */
+  caughtUp: boolean;
+  cursorStuck: boolean;
+  batchesFailed: number;
+  skipped: boolean;
+  reason?: string;
+  lastError?: string;
+}
+
+/**
+ * Run up to `pages` reconciler pages back-to-back (internal catch-up
+ * route). Stops early once a page is short (caught up) or a page is
+ * skipped. Same per-page code path as the Navigator tick, so the same
+ * keyset/idempotency guarantees hold; each page is ≤500 threats rows +
+ * ≤500 queue INSERT OR IGNOREs.
+ */
+export async function stepDnsQueueReconciler(env: Env, pages: number): Promise<ReconcileStepResult> {
+  const n = Math.max(1, Math.min(RECONCILER_MAX_STEP_PAGES, Math.floor(pages)));
+  const out: ReconcileStepResult = {
+    pages: 0, scanned: 0, enqueued: 0, cursorBefore: null, cursorAfter: null,
+    cursorLagMinutes: 0, caughtUp: false, cursorStuck: false, batchesFailed: 0, skipped: false,
+  };
+  for (let i = 0; i < n; i++) {
+    const r = await reconcileDnsQueue(env);
+    if (r.skipped) {
+      out.skipped = out.pages === 0;
+      out.reason = r.reason;
+      out.lastError = r.lastError;
+      break;
+    }
+    out.pages++;
+    if (out.cursorBefore === null) out.cursorBefore = r.cursorBefore;
+    out.cursorAfter = r.cursorAfter;
+    out.cursorLagMinutes = r.cursorLagMinutes;
+    out.scanned += r.scanned;
+    out.enqueued += r.enqueued;
+    out.batchesFailed += r.batchesFailed;
+    out.cursorStuck = out.cursorStuck || r.cursorStuck;
+    if (r.lastError && !out.lastError) out.lastError = r.lastError;
+    if (r.scanned < READ_LIMIT) {
+      out.caughtUp = true;
+      break;
+    }
+  }
+  return out;
 }
 
 export interface BackfillResult {
@@ -359,9 +572,10 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
     let boundary: string | null = null;
     try { boundary = await env.CACHE.get(BACKFILL_CURSOR_KEY); } catch { /* init below */ }
     if (!boundary) {
-      let forward: string | null = null;
-      try { forward = await env.CACHE.get(CURSOR_KEY); } catch { /* fall through */ }
-      boundary = forward ?? new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+      // The forward cursor is JSON (keyset) or a legacy bare timestamp;
+      // the backfill only needs its created_at.
+      const forward = await readCursor(env);
+      boundary = forward?.created_at ?? toSqliteDatetime(new Date());
     }
 
     // Same candidate predicate as the forward reconciler, walking DOWN.
@@ -444,4 +658,40 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
     console.error('[dns-queue-backfill] fatal:', err);
     return { ...base, skipped: true, reason: err instanceof Error ? err.message : 'fatal_error', durationMs: Date.now() - start };
   }
+}
+
+const SEED_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+export type ReconcileStepParams =
+  | { ok: true; pages: number; from: string | null }
+  | { ok: false; error: string };
+
+/**
+ * Validate the internal catch-up route's query string:
+ *   pages  1..RECONCILER_MAX_STEP_PAGES (default 1)
+ *   from   optional 'YYYY-MM-DD HH:MM:SS' (UTC) — re-seeds the cursor to
+ *          the start of that second before stepping.
+ */
+export function parseReconcileStepParams(params: URLSearchParams): ReconcileStepParams {
+  const pagesRaw = params.get('pages');
+  let pages = 1;
+  if (pagesRaw !== null) {
+    if (!/^\d+$/.test(pagesRaw)) return { ok: false, error: 'pages must be an integer' };
+    pages = Number(pagesRaw);
+    if (pages < 1 || pages > RECONCILER_MAX_STEP_PAGES) {
+      return { ok: false, error: `pages must be 1..${RECONCILER_MAX_STEP_PAGES}` };
+    }
+  }
+  const fromRaw = params.get('from');
+  let from: string | null = null;
+  if (fromRaw !== null) {
+    if (!SEED_TS_RE.test(fromRaw) || !Number.isFinite(Date.parse(fromRaw.replace(' ', 'T') + 'Z'))) {
+      return { ok: false, error: "from must be 'YYYY-MM-DD HH:MM:SS' (UTC)" };
+    }
+    if (Date.parse(fromRaw.replace(' ', 'T') + 'Z') > Date.now()) {
+      return { ok: false, error: 'from must not be in the future' };
+    }
+    from = fromRaw;
+  }
+  return { ok: true, pages, from };
 }

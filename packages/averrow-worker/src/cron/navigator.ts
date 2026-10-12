@@ -216,7 +216,7 @@ async function runNavigatorImpl(
   let reconcileResult: ReconcileResult = {
     skipped: true, reason: 'not_run', enqueued: 0, scanned: 0,
     cursorBefore: null, cursorAfter: null, cursorLagMinutes: 0,
-    queueSize: 0, durationMs: 0,
+    cursorStuck: false, queueSize: 0, durationMs: 0,
     batchesAttempted: 0, batchesFailed: 0,
   };
   let reaperResult: ReaperResult | null = null;
@@ -300,7 +300,7 @@ async function runNavigatorImpl(
       reconcileResult = await reconcileDnsQueue(env);
       if (!reconcileResult.skipped) {
         console.log(
-          `[navigator] dns-queue-reconcile: scanned=${reconcileResult.scanned} enqueued=${reconcileResult.enqueued} queue=${reconcileResult.queueSize} cursor=${reconcileResult.cursorBefore ?? 'null'}→${reconcileResult.cursorAfter ?? 'unchanged'} lag=${reconcileResult.cursorLagMinutes}m duration=${reconcileResult.durationMs}ms`,
+          `[navigator] dns-queue-reconcile: scanned=${reconcileResult.scanned} enqueued=${reconcileResult.enqueued} queue=${reconcileResult.queueSize} cursor=${reconcileResult.cursorBefore ?? 'null'}→${reconcileResult.cursorAfter ?? 'unchanged'} lag=${reconcileResult.cursorLagMinutes}m${reconcileResult.cursorStuck ? ' STUCK' : ''} duration=${reconcileResult.durationMs}ms`,
         );
       }
     } catch (err) {
@@ -899,7 +899,7 @@ export const navigatorAgent: AgentModule = {
         summary: rr.skipped
           ? `dns-queue-reconcile: SKIPPED (${rr.reason ?? 'unknown'})`
           : `dns-queue-reconcile: scanned=${rr.scanned} enqueued=${rr.enqueued} queue=${rr.queueSize} lag=${rr.cursorLagMinutes}m ${rr.durationMs}ms${errSuffix}`,
-        severity: rr.skipped || rr.batchesFailed > 0 ? 'medium'
+        severity: rr.skipped || rr.batchesFailed > 0 || rr.cursorStuck ? 'medium'
           : rr.cursorLagMinutes > 30 ? 'medium'
           : 'info',
         details: {
@@ -910,6 +910,10 @@ export const navigatorAgent: AgentModule = {
           cursor_before: rr.cursorBefore,
           cursor_after: rr.cursorAfter,
           cursor_lag_minutes: rr.cursorLagMinutes,
+          // True when a full page made no keyset progress and the
+          // reconciler self-healed by skipping ahead — read by Flight
+          // Control's platform_dns_queue_stalled check.
+          cursor_stuck: rr.cursorStuck,
           queue_size: rr.queueSize,
           duration_ms: rr.durationMs,
           batches_attempted: rr.batchesAttempted,
