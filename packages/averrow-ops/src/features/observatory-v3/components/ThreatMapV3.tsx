@@ -289,6 +289,11 @@ interface ThreatMapV3Props {
   botDensity?: BotDensityPoint[];
   /** Global bot share % (for the above-average marker + tooltip). */
   botGlobalAvg?: number | null;
+  /**
+   * Desktop zoom control right inset (px) — the width of whatever overlays
+   * the map's right edge (the open SidePanel), so the control stays visible.
+   */
+  controlRightInset?: number;
   onArcClick?: (arc: ArcData, x: number, y: number) => void;
 }
 
@@ -357,12 +362,23 @@ export function ThreatMapV3(props: ThreatMapV3Props) {
 function ThreatMapV3Inner({
   threats, arcs, showBeams, showParticles, showNodes, colorBy,
   mapMode, period, heatmapData = [],
-  botDensity, botGlobalAvg = null,
+  botDensity, botGlobalAvg = null, controlRightInset = 0,
   onArcClick, onContextLost,
 }: ThreatMapV3Props & { onContextLost: () => void }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const deckRef = useRef<any>(null);
+
+  // Keep the zoom control clear of the SidePanel overlaying the map's right
+  // edge. Also applied right after the control is added (map init), since
+  // the map is created after this effect's first run.
+  const controlRightInsetRef = useRef(controlRightInset);
+  controlRightInsetRef.current = controlRightInset;
+  const applyControlInset = useCallback(() => {
+    const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
+    if (ctrl) ctrl.style.right = `${controlRightInsetRef.current}px`;
+  }, []);
+  useEffect(applyControlInset, [controlRightInset, applyControlInset]);
   const animFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef(0);
   const [tooltip, setTooltip] = useState<TooltipInfo | null>(null);
@@ -402,8 +418,12 @@ function ThreatMapV3Inner({
 
       map.on('error', (e) => setMapError(e.error?.message || 'Map rendering error'));
 
+      // Bottom-right, not top-right: the page's LIVE/refresh cluster owns the
+      // top-right corner whenever the SidePanel is closed, and the two
+      // overlapped. Its right inset tracks the SidePanel (effect below).
       if (!isMobile) {
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+        applyControlInset();
       }
       mapRef.current = map;
 

@@ -164,6 +164,7 @@ export function ObservatoryV3() {
           heatmapData={heatmapData}
           botDensity={botPoints}
           botGlobalAvg={botGlobalAvg}
+          controlRightInset={!isMobile && showPanel && hasSidePanel ? 320 : 0}
           onArcClick={handleArcClick}
         />
         {!isBotMode && threats.length === 0 && (
