@@ -33,6 +33,23 @@ export interface BotTrafficAsn {
   rank: number;
 }
 
+/** Layer-7 attack share for a country (origin or target), last 7 days. */
+export interface BotTrafficAttackCountry {
+  code: string;
+  name: string;
+  pct: number;
+  rank: number;
+}
+
+/** A country's own automated-traffic share, plus its share of global HTTP traffic. */
+export interface BotTrafficDensity {
+  code: string;
+  name: string;
+  bot_pct: number;
+  traffic_pct: number;
+  rank: number;
+}
+
 export interface BotTrafficCategory {
   category: string;
   pct: number;
@@ -51,6 +68,10 @@ export interface BotTrafficAsOf {
   top_locations: string | null;
   top_asns: string | null;
   categories: string | null;
+  /** Optional: absent on payloads cached before these sections shipped. */
+  attack_origins?: string | null;
+  attack_targets?: string | null;
+  bot_density?: string | null;
 }
 
 export interface BotTrafficData {
@@ -60,6 +81,10 @@ export interface BotTrafficData {
   top_locations: BotTrafficLocation[];
   top_asns: BotTrafficAsn[];
   categories: BotTrafficCategory[];
+  /** Optional: absent on payloads cached before the field shipped. */
+  attack_origins?: BotTrafficAttackCountry[] | null;
+  attack_targets?: BotTrafficAttackCountry[] | null;
+  bot_density?: BotTrafficDensity[] | null;
   last_fetch: BotTrafficFetchStatus;
   /** Optional: absent on payloads cached before the field shipped. */
   as_of?: Partial<BotTrafficAsOf> | null;
