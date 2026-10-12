@@ -460,6 +460,30 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: result });
       }
 
+      // POST /api/internal/dns-queue/reconcile?pages=N[&from=YYYY-MM-DD HH:MM:SS]
+      // On-demand catch-up for the DNS-queue reconciler (normally one
+      // page per Navigator tick). Runs up to `pages` (1..20, default 1)
+      // keyset pages of ≤500 threats rows each through the same code path
+      // as the tick; stops early once caught up. Optional `from` re-seeds
+      // the KV cursor to the start of that second first (recovery when
+      // the cursor was lost/expired). Idempotent (INSERT OR IGNORE).
+      if (url.pathname === '/api/internal/dns-queue/reconcile' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { parseReconcileStepParams, seedDnsQueueCursor, stepDnsQueueReconciler } =
+          await import('./lib/dns-queue-reconciler');
+        const params = parseReconcileStepParams(url.searchParams);
+        if (!params.ok) {
+          return Response.json({ success: false, error: params.error }, { status: 400 });
+        }
+        const seeded = params.from !== null ? await seedDnsQueueCursor(env, params.from) : null;
+        const result = await stepDnsQueueReconciler(env, params.pages);
+        return Response.json({ success: true, data: { ...result, seeded } });
+      }
+
       // POST /api/internal/backfills/idp-impersonation?limit=N[&reset=1]
       // Internal-secret mirror of POST /api/admin/backfills/idp-impersonation
       // (requireAdmin). Same core (runIdpImpersonationBackfill), same KV

@@ -648,12 +648,17 @@ runs write `agent_id='navigator'`. Not an AI agent — pure SQL. Responsibilitie
    a focused ~17K-row working set vs the 380K-row threats table.
 2. **DNS-queue reconcile** — `lib/dns-queue-reconciler.ts` enqueues NEW threat
    candidates into `dns_queue` using cursor-paginated reads from the main DB.
-   KV cursor at `reconciler:dns_queue:cursor` tracks position by `created_at`;
-   each tick reads only the rows added since the last cursor (typically ~37
-   per 5-min tick), advances cursor to MAX(created_at) observed, and persists.
-   `INSERT OR IGNORE` absorbs the deliberate cursor overlap (`>=` not `>`)
-   that prevents skipping rows with identical timestamps. Bounded at 500
-   candidates read per tick. PR-BI (2026-05-19) replaced the pre-PR-BI
+   KV cursor at `reconciler:dns_queue:cursor` is a keyset on
+   `(created_at, rowid)` (JSON; a legacy bare-timestamp value still parses as
+   rowid 0). Each tick reads the rest of the cursor's own second
+   (`created_at = ? AND rowid > ?`, exact index seek) then later seconds
+   (`created_at > ?`), up to 500 candidates, and advances the cursor to the
+   last row read — a non-empty page always makes progress. (The old
+   `created_at >= cursor` / advance-on-MAX(created_at) cursor froze when ≥500
+   candidates shared one second — 2026-10-06 incident.) A full page that
+   somehow makes no progress self-heals and sets `cursor_stuck` in the
+   Navigator diagnostic, which FC's `platform_dns_queue_stalled` check reads.
+   Catch-up: `POST /api/internal/dns-queue/reconcile?pages=N[&from=]`. PR-BI (2026-05-19) replaced the pre-PR-BI
    set-diff reconciler that scanned ~83K rows on both sides every tick —
    total reconciler reads dropped from ~15M/day to ~10.7K/day (99.4%
    reduction). Skips cleanly when `DNS_QUEUE_DB` is unbound. Drift between

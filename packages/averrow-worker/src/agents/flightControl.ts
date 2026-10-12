@@ -974,13 +974,19 @@ export const flightControlAgent: AgentModule = {
             const parsed = JSON.parse(lastReconciler.details) as {
               cursor_lag_minutes?: number;
               skipped?: boolean;
+              cursor_stuck?: boolean;
             };
             const lag = parsed.cursor_lag_minutes ?? 0;
             const STALL_THRESHOLD_MIN = 30;
+            // `cursor_stuck` = the reconciler saw a full page make no
+            // keyset progress and had to self-heal (skip ahead). That is
+            // a reconciler fault on its own, independent of lag/drift.
             if (
               !parsed.skipped
-              && lag > STALL_THRESHOLD_MIN
-              && drainable > queueSize + DRIFT_THRESHOLD
+              && (
+                parsed.cursor_stuck === true
+                || (lag > STALL_THRESHOLD_MIN && drainable > queueSize + DRIFT_THRESHOLD)
+              )
             ) {
               await emitPlatformNotification(env, 'platform_dns_queue_stalled',
                 renderPlatformDnsQueueStalled({
