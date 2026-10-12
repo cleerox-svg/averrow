@@ -21,6 +21,8 @@ import puppeteer from "@cloudflare/puppeteer";
 import type { Browser, HTTPRequest, Page } from "@cloudflare/puppeteer";
 import {
   CAPTURE_HTML_MAX_BYTES,
+  makePageHostBudget,
+  type PageHostBudget,
   DESKTOP_UA,
   DESKTOP_VIEWPORT,
   MOBILE_UA,
@@ -86,11 +88,22 @@ async function decide(req: HTTPRequest, page: Page, ctx: {
   chain: string[];
   recording: { on: boolean };
   blocked: { reason: string | null; retryable: boolean };
+  budget: PageHostBudget;
 }): Promise<void> {
   if (req.isInterceptResolutionHandled()) return;
   const url = req.url();
   const scheme = schemeOf(url);
   try {
+    // Per-page unique-host cap (fail closed): a request to a NEW host past
+    // CAPTURE_MAX_HOSTS_PER_PAGE is aborted before any DoH lookup.
+    if (scheme === "http:" || scheme === "https:") {
+      let host = "";
+      try { host = new URL(url).hostname; } catch { host = ""; }
+      if (!host || !ctx.budget.admit(host)) {
+        await req.abort("blockedbyclient");
+        return;
+      }
+    }
     if (req.isNavigationRequest()) {
       const mainFrame = req.frame() === page.mainFrame();
       if (mainFrame && ctx.recording.on && ctx.chain[ctx.chain.length - 1] !== url) ctx.chain.push(url);
@@ -139,6 +152,7 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
   const chain: string[] = [];
   const recording = { on: true };
   const blocked: { reason: string | null; retryable: boolean } = { reason: null, retryable: false };
+  const budget = makePageHostBudget();
   // Hard timeout from the caller → close the page NOW so in-flight work
   // dies with it instead of running into the next capture.
   const onAbort = (): void => { page.close().catch(() => undefined); };
@@ -152,7 +166,7 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
       await cdp.send("Page.setDownloadBehavior", { behavior: "deny" });
     } catch { /* best-effort: interception below still never saves a file */ }
     await page.setRequestInterception(true);
-    page.on("request", (r) => { void decide(r, page, { guard: req.guard, chain, recording, blocked }); });
+    page.on("request", (r) => { void decide(r, page, { guard: req.guard, chain, recording, blocked, budget }); });
 
     await page.setViewport({ ...DESKTOP_VIEWPORT });
     await page.setUserAgent(DESKTOP_UA);
@@ -206,6 +220,7 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
       mobilePng,
       blockedNavigation: blocked.reason,
       blockedRetryable: blocked.retryable,
+      hostCapHit: budget.capped,
     };
   } finally {
     req.signal.removeEventListener("abort", onAbort);

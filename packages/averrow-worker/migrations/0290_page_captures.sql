@@ -79,6 +79,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_page_captures_one_open
 CREATE INDEX IF NOT EXISTS idx_page_captures_status_expiry
   ON page_captures(status, expires_at);
 
+-- page_capture_targets — every threat auto-enqueued for a target_key, incl.
+-- the ones the 7-day target dedup SKIPPED. On capture success the evidence
+-- linker attaches the screenshot to the takedowns of ALL threats sharing the
+-- capture's target_key (not just the capturing threat). PK serves the
+-- `target_key = ?` lookup; rows older than 14 days are purged by the daily
+-- capture sweep (idx on created_at).
+CREATE TABLE IF NOT EXISTS page_capture_targets (
+  target_key TEXT NOT NULL,
+  threat_id  TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (target_key, threat_id)
+);
+CREATE INDEX IF NOT EXISTS idx_page_capture_targets_created
+  ON page_capture_targets(created_at);
+
 -- Grandfather the new AgentModule (same guarded upsert as 0246 — a bare
 -- INSERT OR IGNORE would leave a 'pending' row created by an early cron
 -- tick in place and the agent blocked; see migration 0238).

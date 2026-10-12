@@ -41,7 +41,10 @@ import {
 import { registerThreatRoutes } from "../src/routes/threats";
 import { toTenantTakedownView } from "../src/handlers/tenantTakedowns";
 import { isSandboxPolicy } from "../src/middleware/security";
-import { CAPTURE_TARGET_DEDUP_DAYS, captureTargetKey, makeNavigationGuard, storeCapture } from "../src/lib/page-capture";
+import {
+  CAPTURE_MAX_HOSTS_PER_PAGE, CAPTURE_TARGET_DEDUP_DAYS, HOST_CAP_NOTE,
+  captureTargetKey, makeNavigationGuard, makePageHostBudget, storeCapture,
+} from "../src/lib/page-capture";
 import { applySecurityHeaders } from "../src/middleware/security";
 import { signJWT } from "../src/lib/jwt";
 import { pageCaptureAgent } from "../src/agents/pageCapture";
@@ -59,7 +62,7 @@ vi.mock("../src/lib/page-capture-browser", () => ({
   },
 }));
 
-const TABLES = ["page_captures", "threats", "takedown_requests", "takedown_evidence", "brands"];
+const TABLES = ["page_captures", "page_capture_targets", "threats", "takedown_requests", "takedown_evidence", "brands"];
 const MIGRATION = resolve(__dirname, "..", "migrations", "0290_page_captures.sql");
 const NOW = new Date("2026-10-12T00:05:00Z");
 const PNG_D = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
@@ -566,14 +569,19 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       expect(String(rows(`SELECT error FROM page_captures WHERE threat_id = 't1'`)[0]!["error"])).toMatch(/unresolvable/);
     });
 
-    it("M1: the guard never caches an empty DNS answer within a run", async () => {
+    it("guard memoizes per host within a run — negative (unresolvable) too; a new run re-resolves", async () => {
       let calls = 0;
       const flaky = async (): Promise<string[]> => (++calls === 1 ? [] : [PUBLIC_IP]);
       const guard = makeNavigationGuard(flaky);
       expect(await guard("https://flaky.example-phish.com/")).toMatchObject({ ok: false, retryable: true });
-      expect(await guard("https://flaky.example-phish.com/a")).toEqual({ ok: true });
-      expect(await guard("https://flaky.example-phish.com/b")).toEqual({ ok: true });
-      expect(calls).toBe(2); // the positive answer IS cached
+      // Same run: the miss is cached — no DoH lookup per request.
+      expect(await guard("https://flaky.example-phish.com/a")).toMatchObject({ ok: false, retryable: true });
+      expect(calls).toBe(1);
+      // Next run (fresh guard): still retryable, re-resolved.
+      const next = makeNavigationGuard(flaky);
+      expect(await next("https://flaky.example-phish.com/b")).toEqual({ ok: true });
+      expect(await next("https://flaky.example-phish.com/c")).toEqual({ ok: true });
+      expect(calls).toBe(2);
       expect(await guard("http://127.0.0.1/")).toMatchObject({ ok: false, retryable: false });
       expect(await guard("file:///etc/passwd")).toMatchObject({ ok: false, retryable: false });
     });
@@ -648,6 +656,69 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       expect(plan).toMatch(/idx_page_captures_target_created/);
       expect(plan).toMatch(/idx_page_captures_threat_created|idx_page_captures_one_open/);
       expect(plan).not.toMatch(/SCAN page_captures/);
+    });
+
+    it("re-review 1: a capture's evidence reaches takedowns of threats the target dedup skipped", async () => {
+      // Two threats, same page: only cs_a is enqueued, cs_b is recorded as an alias.
+      expect(await enqueueAutoCaptures(db, [
+        { threatId: "cs_a", maliciousUrl: "https://acme-sso-login.com/" },
+      ], NOW)).toBe(1);
+      expect(await enqueueAutoCaptures(db, [
+        { threatId: "cs_b", maliciousUrl: "https://acme-sso-login.com/?u=victim" },
+      ], NOW)).toBe(0);
+      expect(rows(`SELECT threat_id FROM page_capture_targets ORDER BY threat_id`)).toEqual([{ threat_id: "cs_a" }, { threat_id: "cs_b" }]);
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status)
+        VALUES ('td_a', 'b1', 'domain', 'x', 'x', 'threat', 'cs_a', 'draft'),
+               ('td_b', 'b1', 'domain', 'x', 'x', 'threat', 'cs_b', 'draft'),
+               ('td_z', 'b1', 'domain', 'x', 'x', 'threat', 'unrelated', 'draft')`);
+      const stats = await runPageCapture(env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats.evidence_linked).toBe(2);
+      expect(rows(`SELECT takedown_id FROM takedown_evidence ORDER BY takedown_id`)).toEqual([{ takedown_id: "td_a" }, { takedown_id: "td_b" }]);
+      const urls = rows(`SELECT id, screenshot_url FROM takedown_requests ORDER BY id`);
+      expect(urls[0]!["screenshot_url"]).toMatch(/^\/api\/intel\/captures\//);
+      expect(urls[1]!["screenshot_url"]).toBe(urls[0]!["screenshot_url"]);
+      expect(urls[2]!["screenshot_url"]).toBeNull();
+      // The alias lookup is a PK range, not a scan.
+      const plan = rawDb.prepare(`EXPLAIN QUERY PLAN SELECT threat_id FROM page_capture_targets WHERE target_key = ? LIMIT 200`).all("k")
+        .map((x) => String((x as { detail: string }).detail)).join(" | ");
+      expect(plan).toMatch(/SEARCH page_capture_targets USING (COVERING )?INDEX sqlite_autoindex_page_capture_targets_1 \(target_key=\?\)/);
+    });
+
+    it("re-review 2: expiry tombstones the capture's takedown_evidence rows and purges old aliases", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status)
+        VALUES ('td1', 'b1', 'domain', 'x', 'x', 'threat', 't1', 'draft')`);
+      rawDb.exec(`INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, storage_url, metadata_json)
+        VALUES ('tde_pc_other_td1', 'td1', 'screenshot', 'other', '/keep', '{"final_url":"https://keep"}')`);
+      await runPageCapture(env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      const id = String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+      expect(String(rows(`SELECT metadata_json FROM takedown_evidence WHERE id = ?`, `tde_${id}_td1`)[0]!["metadata_json"])).toMatch(/final_url/);
+
+      await sweepExpiredCaptures(db, r2.bucket, new Date(NOW.getTime() + 181 * 86_400_000));
+      expect(rows(`SELECT storage_key, storage_url, metadata_json FROM takedown_evidence WHERE id = ?`, `tde_${id}_td1`)[0]).toEqual({
+        storage_key: null, storage_url: null, metadata_json: '{"expired":true}',
+      });
+      // Another capture's evidence row is untouched.
+      expect(rows(`SELECT storage_url FROM takedown_evidence WHERE id = 'tde_pc_other_td1'`)[0]!["storage_url"]).toBe("/keep");
+      expect(rows(`SELECT COUNT(*) AS n FROM page_capture_targets`)[0]!["n"]).toBe(0);
+    });
+
+    it("re-review 3: per-page unique-host cap fails closed and is noted on the capture row", async () => {
+      const budget = makePageHostBudget(3);
+      expect(["a.com", "b.com", "c.com"].map((h) => budget.admit(h))).toEqual([true, true, true]);
+      expect(budget.admit("B.com")).toBe(true); // already admitted
+      expect(budget.admit("d.com")).toBe(false);
+      expect(budget.capped).toBe(true);
+      expect(budget.hosts).toBe(3);
+      expect(makePageHostBudget().admit("x.com")).toBe(true);
+      expect(CAPTURE_MAX_HOSTS_PER_PAGE).toBe(40);
+
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      await runPageCapture(env, { driver: fakeDriver({ "https://acme-sso-login.com/": raw({ hostCapHit: true }) }).driver, now: () => NOW, resolve: resolveHost });
+      expect(rows(`SELECT status, error FROM page_captures`)[0]).toEqual({ status: "captured", error: HOST_CAP_NOTE });
+
+      const src = readFileSync(resolve(__dirname, "..", "src", "lib", "page-capture-browser.ts"), "utf8");
+      expect(src).toMatch(/ctx\.budget\.admit\(host\)/);
     });
 
     it("A1: only an exact `sandbox` CSP is kept", () => {

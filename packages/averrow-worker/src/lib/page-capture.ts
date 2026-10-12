@@ -56,6 +56,15 @@ export const CAPTURE_TARGET_DEDUP_DAYS = 7;
  *  Flight Control recovery) — those run inside ctx.waitUntil, so they must
  *  finish well within its budget. The cron path uses CAPTURE_BATCH. */
 export const CAPTURE_NON_CRON_LIMIT = 1;
+/** Unique hosts a single page may contact (navigations + sub-resources).
+ *  Beyond this every request to a NEW host is aborted (fail closed) so one
+ *  page can't burn the Worker's subrequest budget on DoH lookups. */
+export const CAPTURE_MAX_HOSTS_PER_PAGE = 40;
+/** page_capture_targets aliases older than this are purged by the sweep
+ *  (> the 7-day dedup window + the 7-day stale-queue window). */
+const TARGET_ALIAS_RETENTION_DAYS = 14;
+/** Max alias threats whose takedowns one capture is linked to. */
+const MAX_LINKED_THREATS = 200;
 /** Detail endpoint: newest N captures per threat. */
 export const CAPTURE_DETAIL_LIMIT = 5;
 /** Sweep: rows per round / rounds per run. */
@@ -68,6 +77,10 @@ const MAX_TITLE = 512;
 const MAX_ERROR = 500;
 /** D1 caps a statement at 100 bound parameters. */
 const ENQUEUE_CHUNK = 50;
+
+/** Note stored in page_captures.error on a successful capture that hit the
+ *  per-page host cap (status stays captured/blocked). */
+export const HOST_CAP_NOTE = `host cap reached: page contacted more than ${CAPTURE_MAX_HOSTS_PER_PAGE} hosts; further new-host requests were blocked`;
 
 export const CAPTURE_PIPELINE_VERSION = "page-capture/1";
 export const SWEEP_STAMP_PREFIX = "page_capture:sweep:";
@@ -179,6 +192,14 @@ export function enqueueAutoCaptureStmt(
   ).bind(newCaptureId(), threatId, targetUrl, key, ts, ts, threatId, key, dedupSince);
 }
 
+/** Record that `threatId` was reported for `targetKey` — whether or not the
+ *  dedup let it enqueue — so the capture's evidence reaches its takedowns. */
+export function targetAliasStmt(db: D1Database, targetKey: string, threatId: string, now: Date = new Date()): D1PreparedStatement {
+  return db.prepare(
+    `INSERT OR IGNORE INTO page_capture_targets (target_key, threat_id, created_at) VALUES (?, ?, ?)`,
+  ).bind(targetKey, threatId, d1Ts(now));
+}
+
 /**
  * Best-effort batch enqueue from the IdP tagging call sites. One INSERT per
  * tagged threat (rare — IdP-family hits only), chunked into `db.batch`.
@@ -191,7 +212,9 @@ export async function enqueueAutoCaptures(
   items: AutoCaptureItem[],
   now: Date = new Date(),
 ): Promise<number> {
+  // Pairs of [alias, enqueue|null] so the queued count reads only enqueues.
   const stmts: D1PreparedStatement[] = [];
+  const isEnqueue: boolean[] = [];
   const seen = new Set<string>();
   const seenKeys = new Set<string>();
   for (const it of items) {
@@ -199,17 +222,21 @@ export async function enqueueAutoCaptures(
     const url = captureTargetUrl(it.maliciousUrl, it.maliciousDomain);
     if (!url) continue;
     const key = captureTargetKey(url) ?? url;
-    // In-call dedup mirrors the SQL guards (and spares the statements).
-    if (seenKeys.has(key)) continue;
     seen.add(it.threatId);
+    // Alias always (PK insert) — a deduped threat still gets the evidence.
+    stmts.push(targetAliasStmt(db, key, it.threatId, now));
+    isEnqueue.push(false);
+    // In-call dedup mirrors the SQL guards (and spares the statement).
+    if (seenKeys.has(key)) continue;
     seenKeys.add(key);
     stmts.push(enqueueAutoCaptureStmt(db, it.threatId, url, now));
+    isEnqueue.push(true);
   }
   let queued = 0;
   for (let i = 0; i < stmts.length; i += ENQUEUE_CHUNK) {
     try {
       const res = await db.batch(stmts.slice(i, i + ENQUEUE_CHUNK));
-      for (const r of res) queued += r.meta?.changes ?? 0;
+      res.forEach((r, k) => { if (isEnqueue[i + k]) queued += r.meta?.changes ?? 0; });
     } catch (err) {
       console.warn(`[page-capture] auto-enqueue chunk failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -249,6 +276,7 @@ export interface ClaimedCapture {
   attempts: number;
   requested_by: string | null;
   queued_at: string;
+  target_key: string | null;
 }
 
 /**
@@ -264,7 +292,7 @@ export async function claimCaptures(db: D1Database, limit: number, now: Date = n
                     WHERE status = 'queued'
                     ORDER BY (requested_by IS NULL), queued_at DESC
                     LIMIT ?)
-      RETURNING id, threat_id, target_url, attempts, requested_by, queued_at`,
+      RETURNING id, threat_id, target_url, attempts, requested_by, queued_at, target_key`,
   ).bind(d1Ts(now), limit).all<ClaimedCapture>();
   return res.results ?? [];
 }
@@ -372,6 +400,9 @@ export interface RawCapture {
   blockedNavigation: string | null;
   /** The refusal above was transient (DNS miss), not a policy hit. */
   blockedRetryable?: boolean;
+  /** The page hit CAPTURE_MAX_HOSTS_PER_PAGE; later new-host requests were
+   *  aborted (recorded as a note in page_captures.error). */
+  hostCapHit?: boolean;
 }
 
 export interface CaptureSession {
@@ -403,9 +434,12 @@ export class CaptureRefusedError extends Error {
  *  with the page-fetch SSRF contract (lib/page-fetch.ts). */
 export function makeNavigationGuard(resolve: FetchDeps["resolve"] = defaultResolve): NavigationGuard {
   const deps: FetchDeps = { resolve, fetchImpl: (url, init) => globalThis.fetch(url, init) };
-  // Per-run DoH cache (one guard per run). Only NON-empty answers are kept:
-  // a transient DNS miss must not poison the rest of the run.
+  // Per-run caches (one guard per run). `verdicts` memoizes the outcome per
+  // host — positive AND negative — so a page hammering an unresolvable or
+  // blocked host costs one DoH lookup per run, not one per request. A DNS
+  // miss is still retryable ACROSS runs (each run builds a fresh guard).
   const cache = new Map<string, string[]>();
+  const verdicts = new Map<string, GuardVerdict>();
   return async (raw: string): Promise<GuardVerdict> => {
     let u: URL;
     try {
@@ -416,12 +450,42 @@ export function makeNavigationGuard(resolve: FetchDeps["resolve"] = defaultResol
     if (u.protocol !== "http:" && u.protocol !== "https:") {
       return { ok: false, reason: `disallowed scheme ${u.protocol}`, retryable: false };
     }
-    const check = await assertResolvedHostSafe(u.hostname, deps, cache);
-    if ((cache.get(u.hostname)?.length ?? 0) === 0) cache.delete(u.hostname);
-    if (check.ok) return { ok: true };
+    const host = u.hostname;
+    const memo = verdicts.get(host);
+    if (memo) return memo;
+    const check = await assertResolvedHostSafe(host, deps, cache);
     // assertResolvedHostSafe: blocked=true is a real policy hit (static
     // block-list / private / loopback resolved IP); blocked=false is a miss.
-    return { ok: false, reason: check.reason, retryable: !check.blocked };
+    const verdict: GuardVerdict = check.ok ? { ok: true } : { ok: false, reason: check.reason, retryable: !check.blocked };
+    verdicts.set(host, verdict);
+    return verdict;
+  };
+}
+
+/** Per-page unique-host budget (fail closed past the cap). */
+export interface PageHostBudget {
+  /** True when `host` may be contacted (already seen, or under the cap). */
+  admit(host: string): boolean;
+  readonly capped: boolean;
+  readonly hosts: number;
+}
+
+export function makePageHostBudget(max: number = CAPTURE_MAX_HOSTS_PER_PAGE): PageHostBudget {
+  const seen = new Set<string>();
+  let capped = false;
+  return {
+    admit(host: string): boolean {
+      const h = host.toLowerCase();
+      if (seen.has(h)) return true;
+      if (seen.size >= max) {
+        capped = true;
+        return false;
+      }
+      seen.add(h);
+      return true;
+    },
+    get capped() { return capped; },
+    get hosts() { return seen.size; },
   };
 }
 
@@ -656,7 +720,7 @@ export async function storeCapture(
             redirect_chain_json = ?, form_action_hosts_json = ?,
             desktop_key = ?, mobile_key = ?, html_key = ?,
             desktop_sha256 = ?, mobile_sha256 = ?, html_sha256 = ?, meta_sha256 = ?,
-            html_bytes = ?, anti_bot_wall = ?, error = NULL, claimed_at = NULL,
+            html_bytes = ?, anti_bot_wall = ?, error = ?, claimed_at = NULL,
             captured_at = ?, expires_at = ?
       WHERE id = ? AND status = 'capturing'`,
   ).bind(
@@ -665,6 +729,7 @@ export async function storeCapture(
     stored.desktopKey, stored.mobileKey, stored.htmlKey,
     stored.desktopSha, stored.mobileSha, stored.htmlSha, metaSha,
     stored.htmlBytes, stored.antiBotWall,
+    raw.hostCapHit ? HOST_CAP_NOTE : null,
     d1Ts(now), d1Ts(expiresAt), row.id,
   ).run();
   if ((upd.meta?.changes ?? 0) === 0) {
@@ -679,8 +744,11 @@ export async function storeCapture(
 // ─── Evidence linking ────────────────────────────────────────────────
 
 /**
- * Attach a stored capture to every takedown drafted from its threat
- * (`source_type='threat'`, partial index idx_takedown_requests_threat_source):
+ * Attach a stored capture to every takedown drafted from its threat — AND
+ * from every other threat recorded for the same `target_key` in
+ * page_capture_targets (threats the 7-day target dedup skipped; capped at
+ * MAX_LINKED_THREATS) — `source_type='threat'`, partial index
+ * idx_takedown_requests_threat_source:
  * one `takedown_evidence` row each (deterministic id → re-runs are no-ops)
  * and `takedown_requests.screenshot_url` when still NULL. The URL is the
  * staff API path, never a public URL. Returns evidence rows inserted.
@@ -696,8 +764,9 @@ export async function linkCaptureEvidence(
   threatId: string | null,
   stored: Pick<StoredCapture, "status" | "desktopKey" | "mobileKey" | "desktopSha" | "mobileSha" | "finalUrl" | "antiBotWall" | "htmlSha">,
   now: Date = new Date(),
+  targetKey: string | null = null,
 ): Promise<number> {
-  if (!threatId) return 0;
+  if (!threatId && !targetKey) return 0;
   const variant: "desktop" | "mobile" | null = stored.desktopKey ? "desktop" : stored.mobileKey ? "mobile" : null;
   if (!variant) return 0;
   const apiPath = screenshotApiPath(captureId, variant);
@@ -713,18 +782,23 @@ export async function linkCaptureEvidence(
   const title = stored.status === "blocked"
     ? "Page capture (anti-bot wall shown)"
     : "Page capture (rendered screenshot)";
+  // The capturing threat + every alias threat for the target (PK range).
+  const threatSet =
+    `SELECT ? AS threat_id
+      UNION
+     SELECT threat_id FROM (SELECT threat_id FROM page_capture_targets WHERE target_key = ? LIMIT ?)`;
   const [ins] = await db.batch([
     db.prepare(
       `INSERT OR IGNORE INTO takedown_evidence
          (id, takedown_id, evidence_type, title, storage_key, storage_url, metadata_json, created_at)
        SELECT 'tde_' || ? || '_' || tr.id, tr.id, 'screenshot', ?, ?, ?, ?, ?
          FROM takedown_requests tr
-        WHERE tr.source_type = 'threat' AND tr.source_id = ?`,
-    ).bind(captureId, title, storageKey, apiPath, metaJson, d1Ts(now), threatId),
+        WHERE tr.source_type = 'threat' AND tr.source_id IN (${threatSet})`,
+    ).bind(captureId, title, storageKey, apiPath, metaJson, d1Ts(now), threatId, targetKey, MAX_LINKED_THREATS),
     db.prepare(
       `UPDATE takedown_requests SET screenshot_url = ?
-        WHERE source_type = 'threat' AND source_id = ? AND screenshot_url IS NULL`,
-    ).bind(apiPath, threatId),
+        WHERE source_type = 'threat' AND source_id IN (${threatSet}) AND screenshot_url IS NULL`,
+    ).bind(apiPath, threatId, targetKey, MAX_LINKED_THREATS),
   ]);
   return ins?.meta?.changes ?? 0;
 }
@@ -798,6 +872,15 @@ export async function sweepExpiredCaptures(
     ).bind(...ids).run();
     expired += upd.meta?.changes ?? 0;
 
+    // takedown_evidence rows for these captures (deterministic ids
+    // 'tde_<capture_id>_<takedown_id>' → PK range per capture): tombstone the
+    // metadata (it carried final_url / API paths) and null the links.
+    await db.batch(ids.map((cid) => db.prepare(
+      `UPDATE takedown_evidence
+          SET storage_key = NULL, storage_url = NULL, metadata_json = '{"expired":true}'
+        WHERE id > ? AND id < ?`,
+    ).bind(`tde_${cid}_`, `tde_${cid}\``)));
+
     // Takedowns pointing at an expired capture's screenshot lose the link
     // (indexed on (source_type, source_id) — idx_takedown_requests_threat_source).
     const threatIds = [...new Set(rows.map((r) => r.threat_id).filter((t): t is string => !!t))];
@@ -815,6 +898,13 @@ export async function sweepExpiredCaptures(
       }
     }
     if (rows.length < SWEEP_PAGE) break;
+  }
+  // Dedup aliases are only needed while their capture can still run.
+  try {
+    await db.prepare(`DELETE FROM page_capture_targets WHERE created_at < ?`)
+      .bind(d1Ts(addDays(now, -TARGET_ALIAS_RETENTION_DAYS))).run();
+  } catch (err) {
+    console.warn(`[page-capture] alias purge failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return { expired, objectsDeleted, ran: true };
 }
@@ -947,7 +1037,7 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
         if (stored.status === "blocked") stats.blocked++;
         else stats.captured++;
         try {
-          stats.evidence_linked += await linkCaptureEvidence(env.DB, row.id, row.threat_id, stored, clock());
+          stats.evidence_linked += await linkCaptureEvidence(env.DB, row.id, row.threat_id, stored, clock(), row.target_key);
         } catch (err) {
           console.warn(`[page-capture] evidence link failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
