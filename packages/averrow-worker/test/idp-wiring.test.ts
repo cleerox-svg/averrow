@@ -219,7 +219,7 @@ describe("IdP lure top-up for already-seeded brands", () => {
     expect(parseIdpLureTopupBrands("0")).toBe(50);
   });
 
-  function harness(brands: Array<{ rid: number; brand_id: string; domain: string }>, trusted: string[] = []) {
+  function harness(brands: Array<{ rid: number; brand_id: string; domain: string; name?: string }>, trusted: string[] = []) {
     const kv = new Map<string, string>();
     const inserts: Array<{ sql: string; args: unknown[] }> = [];
     const brandBinds: unknown[][] = [];
@@ -268,6 +268,16 @@ describe("IdP lure top-up for already-seeded brands", () => {
     const okta = h.inserts.find((i) => i.args[2] === "globex-okta.io")!;
     expect(okta.sql).not.toMatch(/'benign'/);
     expect(okta.args.at(-1)).toBe("okta");
+  });
+
+  it("skips generic-word brands (no <word>-okta lures for Mail / mail.ru)", async () => {
+    const h = harness([{ rid: 5, brand_id: "b_mail", domain: "mail.ru", name: "Mail" },
+      { rid: 6, brand_id: "b1", domain: "acme.com", name: "Acme" }]);
+    const r = await topUpIdpLures(h.env, 2);
+    expect(r.brands_scanned).toBe(2);
+    expect(h.inserts.length).toBeGreaterThan(0);
+    expect(h.inserts.some((i) => String(i.args[2]).startsWith("acme"))).toBe(true);
+    expect(h.inserts.filter((i) => String(i.args[2]).includes("mail"))).toEqual([]);
   });
 
   it("resumes from the cursor and reports done when the page is short", async () => {

@@ -34,6 +34,7 @@
 // (e.g., URL-typosquat is much stronger evidence than body keyword).
 
 import type { Env } from "../types";
+import { isGenericBrandName, matchGenericBrand } from "./brandDetect";
 
 const HOMOGLYPHS: Record<string, string[]> = {
   l: ["1", "i"],
@@ -138,13 +139,32 @@ export function matchAbuseMailboxBrand(
 ): BrandMatch | null {
   if (brands.length === 0) return null;
 
-  // Pre-normalize once.
+  // Pre-normalize once. Generic-word brands ("Mail" mail.ru, "Site",
+  // "Login" — lib/brandDetect isGenericBrandName) take NO part in the
+  // name-based signals (typosquat containment, subject/body keyword):
+  // "zs-mail.com" or a subject saying "mail" is not Mail.ru. They match only
+  // by canonical/subdomain (signals 1/3) or a full-domain lookalike
+  // (genericBrandHostMatch, signals 2/3).
   const brandIndex = brands.map((b) => ({
     id:                b.id,
     name:              b.name,
     canonical_domain:  b.canonical_domain.toLowerCase(),
     keyword:           normalize(b.name),
+    generic:           isGenericBrandName(b.name),
   })).filter((b) => b.keyword.length >= MIN_KEYWORD_LEN && b.canonical_domain.includes("."));
+  // ^ short names stay excluded for generic brands too: "Bit" (bit.ly),
+  //   "App", "Web", "One" would otherwise win url_domain_exact (95) on every
+  //   short-link / app-host report.
+  // Exact / subdomain; for a generic brand never a tenant / multi-tenant
+  // subdomain (cloud.mail.ru, x.my.site.com — genericBrandHostMatch).
+  const isOwnDomain = (dom: string, b: (typeof brandIndex)[number]): boolean =>
+    b.generic
+      ? matchGenericBrand(dom, b, { subdomains: true }) === "canonical"
+      : dom === b.canonical_domain || dom.endsWith("." + b.canonical_domain);
+  const isLookalikeOf = (dom: string, b: (typeof brandIndex)[number]): boolean =>
+    b.generic
+      ? matchGenericBrand(dom, b, { subdomains: false }) !== null
+      : isTyposquatOf(sldLabel(dom), b.canonical_domain);
 
   // ── 1 & 2: URL-domain signals ────────────────────────────────
   for (const rawDomain of input.url_domains) {
@@ -152,7 +172,7 @@ export function matchAbuseMailboxBrand(
     const dom = rawDomain.toLowerCase();
     for (const b of brandIndex) {
       // Exact / subdomain of the canonical → high confidence.
-      if (dom === b.canonical_domain || dom.endsWith("." + b.canonical_domain)) {
+      if (isOwnDomain(dom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -166,9 +186,8 @@ export function matchAbuseMailboxBrand(
   for (const rawDomain of input.url_domains) {
     if (!rawDomain) continue;
     const dom = rawDomain.toLowerCase();
-    const sld = sldLabel(dom);
     for (const b of brandIndex) {
-      if (isTyposquatOf(sld, b.canonical_domain)) {
+      if (isLookalikeOf(dom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -184,7 +203,7 @@ export function matchAbuseMailboxBrand(
   const fromDom = input.from_domain?.toLowerCase() ?? null;
   if (fromDom) {
     for (const b of brandIndex) {
-      if (fromDom === b.canonical_domain || fromDom.endsWith("." + b.canonical_domain)) {
+      if (isOwnDomain(fromDom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -194,9 +213,8 @@ export function matchAbuseMailboxBrand(
         };
       }
     }
-    const fromSld = sldLabel(fromDom);
     for (const b of brandIndex) {
-      if (isTyposquatOf(fromSld, b.canonical_domain)) {
+      if (isLookalikeOf(fromDom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -212,7 +230,7 @@ export function matchAbuseMailboxBrand(
   const subjectNorm = input.subject ? normalize(input.subject) : "";
   if (subjectNorm.length >= MIN_KEYWORD_LEN) {
     for (const b of brandIndex) {
-      if (subjectNorm.includes(b.keyword)) {
+      if (!b.generic && subjectNorm.includes(b.keyword)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -229,7 +247,7 @@ export function matchAbuseMailboxBrand(
     const bodyNorm = normalize(input.body_snippet.slice(0, BODY_SCAN_MAX));
     if (bodyNorm.length >= MIN_KEYWORD_LEN) {
       for (const b of brandIndex) {
-        if (bodyNorm.includes(b.keyword)) {
+        if (!b.generic && bodyNorm.includes(b.keyword)) {
           return {
             brand_id:   b.id,
             brand_name: b.name,

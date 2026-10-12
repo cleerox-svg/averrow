@@ -47,8 +47,12 @@
 import type { Env } from "../types";
 import {
   fuzzyMatchBrandDetailed,
+  genericBrandOwnerCredit,
+  genericBrandWords,
   isGenericBrand,
+  isGenericBrandName,
   isMatchableInput,
+  matchGenericBrand,
   loadBrands,
   matchBrandToHost,
   normalizeBrand,
@@ -59,6 +63,23 @@ import {
 } from "./brandDetect";
 
 export type CleanupMode = "dry_run" | "apply" | "undo" | "reconcile";
+/**
+ * Which links dry_run/apply re-validate.
+ *   all            — every linked threat, under the scope rules above.
+ *   generic_brands — ONLY links to generic-word brands ("Mail" mail.ru,
+ *                    "Site" site.com, "Login" login.gov —
+ *                    brandDetect.isGenericBrandName), re-validated against
+ *                    genericBrandHostMatch EVEN WHEN the source feed is
+ *                    authoritative or the link was not a legacy-matcher
+ *                    link: a generic brand is credited only for its
+ *                    canonical domain, a (non-platform-tenant) subdomain of
+ *                    it, or a full-domain lookalike. Everything else is
+ *                    relinked to the brand the current matcher finds, or
+ *                    cleared. Opt-in (2026-10-12): numbered_variant_scan,
+ *                    nrd_hagezi, ct_logs, spam_trap and abuse_mailbox all
+ *                    credited generic brands by the bare word.
+ */
+export type CleanupScope = "all" | "generic_brands";
 export type CleanupAction = "keep" | "relink" | "clear";
 export type CleanupReason =
   | "non_hostname" | "generic_brand" | "tracked_brand" | "missing_brand" | "no_rule_match";
@@ -96,7 +117,7 @@ export interface LinkRow {
  *     this link, so something else did (the Analyst's Haiku inference,
  *     which also reads URL paths / page context). Not ours to undo.
  */
-export type ProtectedReason = "authoritative_source" | "not_legacy_match";
+export type ProtectedReason = "authoritative_source" | "not_legacy_match" | "not_generic_brand";
 
 /** source_feed values whose brand link is set at insert by a brand-scoped
  *  detector. Single definition — also guards the IdP re-attribution's
@@ -206,8 +227,50 @@ export function decideLink(
   return { action: "clear", method: null, newBrandId: null, reason };
 }
 
+/**
+ * generic_brands scope: decide one link to a generic-word brand. Kept only
+ * when some input is the brand's canonical domain, a non-platform-tenant
+ * subdomain of it, or a full-domain lookalike (genericBrandHostMatch) — no
+ * source-feed or legacy-match protection. Otherwise relinked to what the
+ * catalog matcher finds; else, for a vendor-product generic brand
+ * (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft) whose host
+ * passes the writers' owner-credit rule (genericBrandOwnerCredit: product word + a real vendor token), relinked to the parent brand
+ * (method "token") when `brandExists` confirms it; else cleared. A link whose
+ * brand turns out not to be generic (SQL prefilter vs isGenericBrandName) is
+ * left alone.
+ */
+export function decideGenericLink(
+  row: LinkRow,
+  rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod } | null,
+  brandExists: (brandId: string) => boolean = () => true,
+): LinkDecision {
+  if (row.brand_name === null || !isGenericBrandName(row.brand_name)) {
+    return { action: "keep", method: null, newBrandId: null, reason: null, protectedBy: "not_generic_brand" };
+  }
+  const haystacks = haystacksOf(row);
+  for (const h of haystacks) {
+    const method = matchGenericBrand(h, { name: row.brand_name, canonical_domain: row.brand_canonical }, { subdomains: true });
+    if (method) return { action: "keep", method, newBrandId: null, reason: null };
+  }
+  const reason: CleanupReason = haystacks.some(isMatchableInput) ? "generic_brand" : "non_hostname";
+  const hit = reason === "non_hostname" ? null : rematch(haystacks);
+  if (hit && hit.brandId !== row.target_brand_id) {
+    return { action: "relink", method: hit.method, newBrandId: hit.brandId, reason };
+  }
+  if (reason === "generic_brand") {
+    for (const h of haystacks) {
+      const owner = genericBrandOwnerCredit(h, row.brand_canonical);
+      if (owner && owner.parentBrandId !== row.target_brand_id && brandExists(owner.parentBrandId)) {
+        return { action: "relink", method: "token", newBrandId: owner.parentBrandId, reason };
+      }
+    }
+  }
+  return { action: "clear", method: null, newBrandId: null, reason };
+}
+
 export interface CleanupBatchResult {
   mode: CleanupMode;
+  scope: CleanupScope;
   run_id: string;
   scanned: number;
   keep: number;
@@ -221,6 +284,8 @@ export interface CleanupBatchResult {
   removed_by_brand: Record<string, number>;
   /** Links gained per brand via relink. */
   added_by_brand: Record<string, number>;
+  /** Links removed (relinked away or cleared) per threats.source_feed. */
+  removed_by_source: Record<string, number>;
   /** 'threat'-sourced alerts whose threat would lose/change its brand. */
   alerts_affected: number;
   /** Threat rows actually changed (apply: relinked/cleared; undo: restored). */
@@ -240,7 +305,14 @@ export interface CleanupOptions {
   runId: string;
   /** Who ran it: "internal" or "user:<id>". */
   actor: string;
+  /** dry_run / apply only. Default "all". */
+  scope?: CleanupScope;
+  /** generic_brands only: restrict to these brand ids (<= MAX_BRAND_FILTER). */
+  brandIds?: string[];
 }
+
+/** Max brand ids in the generic_brands `brand=` filter (one JSON bind). */
+export const MAX_BRAND_FILTER = 20;
 
 function bump(map: Record<string, number>, key: string): void {
   map[key] = (map[key] ?? 0) + 1;
@@ -259,10 +331,20 @@ export function clampCursor(raw: number): number {
 /** Pairs per D1 batch — each pair is (log, update); 100 statements. */
 const PAIRS_PER_BATCH = 50;
 
+/** generic_brands scope: rowids examined per call (bounds D1 rows read). */
+export const GENERIC_SCAN_WINDOW = 50_000;
+
+/** brands.name normalized like normalizeBrand() for the usual punctuation
+ *  (constant SQL text, no user input). Only narrows the scan — the TS check
+ *  (isGenericBrandName in decideGenericLink) decides. */
+const SQL_NORM_NAME = "lower(replace(replace(replace(replace(replace(replace(replace(replace(replace("
+  + "b.name, ' ', ''), '.', ''), '-', ''), '_', ''), char(39), ''), '&', ''), '!', ''), ',', ''), '+', ''))";
+
 function emptyResult(opts: CleanupOptions): CleanupBatchResult {
   return {
-    mode: opts.mode, run_id: opts.runId, scanned: 0, keep: 0, relink: 0, clear: 0,
+    mode: opts.mode, scope: opts.scope ?? "all", run_id: opts.runId, scanned: 0, keep: 0, relink: 0, clear: 0,
     keep_by_method: {}, kept_protected: {}, by_reason: {}, removed_by_brand: {}, added_by_brand: {},
+    removed_by_source: {},
     alerts_affected: 0, changed: 0, skipped: 0, next_cursor: opts.cursor, done: true,
   };
 }
@@ -286,40 +368,85 @@ export async function runBrandLinkCleanup(env: Env, opts: CleanupOptions): Promi
   return runValidate(env, opts);
 }
 
-async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
-  const { mode, cursor, limit } = opts;
-
-  const rows = await env.DB.prepare(
-    `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
+const LINK_COLUMNS = `t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, b.tranco_rank AS brand_rank, t.source_feed
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, b.tranco_rank AS brand_rank, t.source_feed`;
+
+/**
+ * One page of links to re-validate. `all`: plain rowid keyset.
+ * `generic_brands`: a bounded rowid WINDOW (GENERIC_SCAN_WINDOW) filtered to
+ * generic-name brands, so one call never scans the whole table hunting for
+ * `limit` matches; next_cursor is the last match when the page filled, else
+ * the window end. `brandIds` (optional) narrows it to those brands. 6 binds.
+ */
+async function loadLinkPage(
+  env: Env, opts: CleanupOptions,
+): Promise<{ rows: LinkRow[]; next_cursor: number; done: boolean }> {
+  const { cursor, limit } = opts;
+  if (opts.scope !== "generic_brands") {
+    const r = await env.DB.prepare(
+      `SELECT ${LINK_COLUMNS}
+         FROM threats t
+         LEFT JOIN brands b ON b.id = t.target_brand_id
+        WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL
+        ORDER BY t.rowid
+        LIMIT ?`,
+    ).bind(cursor, limit).all<LinkRow>();
+    return { rows: r.results, next_cursor: r.results.at(-1)?.rid ?? cursor, done: r.results.length < limit };
+  }
+  const brandFilter = opts.brandIds && opts.brandIds.length > 0 ? JSON.stringify(opts.brandIds) : null;
+  const max = (await env.DB.prepare("SELECT MAX(rowid) AS m FROM threats").first<{ m: number | null }>())?.m ?? 0;
+  const upper = Math.min(cursor + GENERIC_SCAN_WINDOW, max);
+  if (upper <= cursor) return { rows: [], next_cursor: cursor, done: true };
+  const r = await env.DB.prepare(
+    `SELECT ${LINK_COLUMNS}
        FROM threats t
-       LEFT JOIN brands b ON b.id = t.target_brand_id
-      WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL
+       JOIN brands b ON b.id = t.target_brand_id
+      WHERE t.rowid > ? AND t.rowid <= ?
+        AND (${SQL_NORM_NAME} IN (SELECT value FROM json_each(?))
+             OR (${SQL_NORM_NAME} GLOB '[0-9]*' AND ${SQL_NORM_NAME} NOT GLOB '*[^0-9]*'))
+        AND (? IS NULL OR t.target_brand_id IN (SELECT value FROM json_each(?)))
       ORDER BY t.rowid
       LIMIT ?`,
-  ).bind(cursor, limit).all<LinkRow>();
+  ).bind(cursor, upper, JSON.stringify(genericBrandWords()), brandFilter, brandFilter, limit).all<LinkRow>();
+  if (r.results.length >= limit) {
+    return { rows: r.results, next_cursor: r.results.at(-1)?.rid ?? cursor, done: false };
+  }
+  return { rows: r.results, next_cursor: upper, done: upper >= max };
+}
+
+async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
+  const { mode } = opts;
+  const generic = opts.scope === "generic_brands";
+
+  const page = await loadLinkPage(env, opts);
+  const rows = { results: page.rows };
 
   const result: CleanupBatchResult = {
     ...emptyResult(opts),
     scanned: rows.results.length,
-    next_cursor: rows.results.at(-1)?.rid ?? cursor,
-    done: rows.results.length < limit,
+    next_cursor: page.next_cursor,
+    done: page.done,
   };
 
   // The catalog (100K+ rows) is loaded only if some link needs a re-match.
   let catalog: BrandRow[] | null = null;
+  let catalogIds: Set<string> | null = null;
   const rematchCatalog = (haystacks: string[]) => {
     if (!catalog) throw new Error("catalog not loaded");
     return fuzzyMatchBrandDetailed(haystacks, catalog);
   };
+  // The owner relink (decideGenericLink) only targets a brand that exists.
+  const inCatalog = (id: string) => (catalogIds ??= new Set((catalog ?? []).map((b) => b.id))).has(id);
+  const decide = (row: LinkRow, rematch: Parameters<typeof decideLink>[1], loaded: boolean) =>
+    generic ? decideGenericLink(row, rematch, loaded ? inCatalog : () => false) : decideLink(row, rematch);
 
   const decisions: Array<{ row: LinkRow; d: LinkDecision }> = [];
   for (const row of rows.results) {
-    let d = decideLink(row, () => null);
+    let d = decide(row, () => null, false);
     if (d.action === "clear" && d.reason !== "non_hostname") {
       catalog ??= await loadBrands(env.DB);
-      d = decideLink(row, rematchCatalog);
+      d = decide(row, rematchCatalog, true);
     }
     decisions.push({ row, d });
 
@@ -332,6 +459,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
     result[d.action]++;
     if (d.reason) bump(result.by_reason, d.reason);
     bump(result.removed_by_brand, row.target_brand_id);
+    bump(result.removed_by_source, row.source_feed ?? "(none)");
     if (d.newBrandId) bump(result.added_by_brand, d.newBrandId);
   }
 
@@ -445,7 +573,7 @@ async function auditBatch(env: Env, opts: CleanupOptions, r: CleanupBatchResult)
     resourceType: "brand_link_cleanup",
     resourceId: opts.runId,
     details: {
-      actor: opts.actor, cursor: opts.cursor, next_cursor: r.next_cursor,
+      actor: opts.actor, scope: r.scope, brand_ids: opts.brandIds ?? null, cursor: opts.cursor, next_cursor: r.next_cursor,
       scanned: r.scanned, relink: r.relink, clear: r.clear, changed: r.changed, skipped: r.skipped,
     },
   });

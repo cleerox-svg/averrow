@@ -38,6 +38,7 @@ import {
   NRD_SNAPSHOT_KEY,
 } from "../src/feeds/nrd_hagezi";
 import { threatId } from "../src/feeds/types";
+import { matchGenericBrand } from "../src/lib/brandDetect";
 import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb } from "./sqlite-d1-harness";
 import { liveIndexDdl } from "./migration-indexes";
 import { fakeR2Bucket, gzipText, gunzipText, type FakeR2Bucket } from "./fake-r2-bucket";
@@ -560,8 +561,49 @@ describe("brand keywords + classification", () => {
       "hydro-quebec",
     ]);
     expect(brandKeywords("HP", "hp.com")).toEqual([]);
-    expect(brandKeywords("Mail", "mail.ru")).toEqual([]);
     expect(brandKeywords("Www", "www.gov.uk")).toEqual([]);
+  });
+
+  it("generic-word brands have no keywords; the shared predicate decides (2026-10-12)", () => {
+    expect(brandKeywords("Mail", "mail.ru")).toEqual([]);
+    expect(brandKeywords("Line", "line.me")).toEqual([]);
+    const brands = buildBrandKeywords([
+      { id: "b_free", name: "Free", canonical_domain: "free.fr" },
+      { id: "b_line", name: "Line", canonical_domain: "line.me" },
+      { id: "b_live", name: "Live", canonical_domain: "live.com" },
+      { id: "b_login", name: "Login", canonical_domain: "login.gov" },
+      { id: "b_mail", name: "Mail", canonical_domain: "mail.ru" },
+      { id: "brand_microsoft_com", name: "Microsoft", canonical_domain: "microsoft.com" },
+      { id: "b_site", name: "Site", canonical_domain: "site.com" },
+    ]);
+    const domains = [
+      // never by the bare word
+      "1lookupmails.com", "zs-mail.com", "secure-login.com", "verify-login.net", "site-login.com",
+      "membersecurelogin.com", "emailrules.com", "mywebsitecompany.com", "olivecompany.com",
+      "carefreefrance.com", "mail.ru", "e.mail.ru", "line-shop-login.com", "onlineline.hair",
+      // full-canonical lookalikes (incl. homoglyphs / glued lures / digits)
+      "mail-ru.com", "mailru-login.net", "mai1ru-login.com", "mailru24.com", "mailruwallet.com", "maiiru.com",
+      "login-gov.us", "secure-login-gov.com",
+      // lure-gated LINE / Free
+      "line-login.com", "linelogin.xyz", "free-facture-login.com",
+      // vendor-product generic brand → its parent (Live → Microsoft)
+      "outlook-live-verify.com",
+    ];
+    const { rows } = collectBrandMatchRows(domains, brands);
+    expect(Object.fromEntries(rows.map((r) => [r.malicious_domain, r.target_brand_id]))).toEqual({
+      "mail-ru.com": "b_mail", "mailru-login.net": "b_mail", "mai1ru-login.com": "b_mail",
+      "mailru24.com": "b_mail", "mailruwallet.com": "b_mail", "maiiru.com": "b_mail",
+      "login-gov.us": "b_login", "secure-login-gov.com": "b_login",
+      "line-login.com": "b_line", "linelogin.xyz": "b_line", "free-facture-login.com": "b_free",
+      "outlook-live-verify.com": "brand_microsoft_com",
+    });
+    // Every NRD credit is accepted by the cleanup's validator (one predicate).
+    for (const r of rows) {
+      const b = brands.find((x) => x.id === r.target_brand_id)!;
+      if (b.genericName === undefined) continue;
+      expect(matchGenericBrand(r.malicious_domain!, { name: b.genericName, canonical_domain: b.domain }, { subdomains: true }),
+        r.malicious_domain!).not.toBeNull();
+    }
   });
 
   it("generic = ≤4 chars, a curated dictionary word, or itself lure vocabulary (hyphens ignored); else distinctive", () => {

@@ -5,6 +5,7 @@ import { computeSanHash } from "../lib/ssl-cert-identity";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { createNotification } from "../lib/notifications";
 import { isKnownBrandDomain, calculateSuspicionScore } from "../lib/threatScoring";
+import { GenericBrandSet, genericBrandDomainKeywords, isGenericBrandName } from "../lib/brandDetect";
 
 /** Common homoglyph substitutions for brand matching */
 const HOMOGLYPHS: Record<string, string[]> = {
@@ -35,11 +36,20 @@ export const certstream: FeedModule = {
        WHERE mb.status = 'active'`
     ).all<{ id: string; name: string; canonical_domain: string }>();
 
-    const brandKeywords = brands.results.map((b) => ({
-      id: b.id,
-      keyword: b.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
-      domain: b.canonical_domain.toLowerCase(),
-    }));
+    // Generic-word brands ("Mail" mail.ru, "Site" site.com — lib/brandDetect
+    // isGenericBrandName) are SEARCHED by their full canonical domain token
+    // ("mailru") and MATCHED only by the shared predicate
+    // (brandDetect.creditGenericBrand): the bare word, plus the homoglyph swap
+    // below, credited mail.ru with every "*mail*" / "*mall*" cert.
+    const brandKeywords = brands.results.flatMap((b) => {
+      const domain = (b.canonical_domain ?? "").toLowerCase();
+      if (isGenericBrandName(b.name)) {
+        return genericBrandDomainKeywords(domain).filter((k) => !k.includes("-"))
+          .map((keyword) => ({ id: b.id, keyword, domain, genericName: b.name as string | null }));
+      }
+      return [{ id: b.id, keyword: b.name.toLowerCase().replace(/[^a-z0-9]/g, ""), domain, genericName: null }];
+    });
+    const genericSet = buildGenericSet(brandKeywords);
     // Load safe domains to skip owned domains
     const safeSet = await loadSafeDomainSet(ctx.env.DB);
 
@@ -146,7 +156,7 @@ export const certstream: FeedModule = {
         if (isKnownBrandDomain(domain.toLowerCase())) continue;
 
         // ─── Check against monitored brands (typosquatting) ───
-        const matchedBrand = matchMonitoredBrand(domain.toLowerCase(), brandKeywords);
+        const matchedBrand = matchMonitoredBrand(domain.toLowerCase(), brandKeywords, genericSet);
         if (matchedBrand) {
           // Calculate suspicion score — only flag if >= 30
           const suspicionScore = calculateSuspicionScore(
@@ -241,12 +251,22 @@ export const certstream: FeedModule = {
   },
 };
 
-/** Check if a domain matches any monitored brand (substring + homoglyph variants) */
-function matchMonitoredBrand(
+/**
+ * Match a CT domain against the monitored brands. Ordinary brands first
+ * (substring + homoglyph variants), in list order; generic-word brands
+ * ONLY when no ordinary brand matched (review N2 — "paypal-live-login.com"
+ * is PayPal, never Live → Microsoft) and only via the shared predicate
+ * (brandDetect GenericBrandSet: full-canonical lookalikes, or a
+ * vendor-product brand's parent). A generic hit carries the generic brand's
+ * own word as `keyword` so the caller's suspicion gate still applies.
+ */
+export function matchMonitoredBrand(
   domain: string,
-  brands: Array<{ id: string; keyword: string; domain: string }>,
+  brands: Array<{ id: string; keyword: string; domain: string; genericName?: string | null }>,
+  genericSet?: GenericBrandSet,
 ): { id: string; keyword: string; isHomoglyph: boolean } | null {
   for (const brand of brands) {
+    if (brand.genericName != null) continue;
     // Skip if this IS the brand's canonical domain
     if (domain === brand.domain) continue;
     // Skip subdomains of the brand's canonical domain
@@ -268,5 +288,24 @@ function matchMonitoredBrand(
       }
     }
   }
-  return null;
+  const set = genericSet ?? buildGenericSet(brands);
+  const hit = set.credit(domain);
+  if (!hit) return null;
+  const via = brands.find((b) => b.id === hit.via);
+  // Score on the generic word itself ("mail" for mail.ru): it is in the
+  // domain for every rule but a pure homoglyph spelling, which scores as one.
+  const word = (via?.domain ?? "").split(".")[0] ?? "";
+  return { id: hit.brandId, keyword: word, isHomoglyph: hit.method === "levenshtein" };
+}
+
+/** The CT feed's generic-brand set: never a brand's own domain; a parent
+ *  brand is credited only if it is among the loaded brands. */
+export function buildGenericSet(
+  brands: Array<{ id: string; domain: string; genericName?: string | null }>,
+): GenericBrandSet {
+  const ids = new Set(brands.map((b) => b.id));
+  const seen = new Set<string>();
+  const generic = brands.filter((b) => b.genericName != null && !seen.has(b.id) && seen.add(b.id))
+    .map((b) => ({ id: b.id, name: b.genericName ?? null, canonical_domain: b.domain }));
+  return new GenericBrandSet(generic, (id) => ids.has(id), { excludeOwnDomain: true });
 }

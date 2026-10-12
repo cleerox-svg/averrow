@@ -1,5 +1,6 @@
 import type { ThreatRow } from "../feeds/types";
 import { threatId } from "../feeds/types";
+import { GenericBrandSet, isGenericBrandName } from "./brandDetect";
 
 /**
  * NRD brand-keyword matcher (nrd_hagezi feed): finds COMBOSQUATS, i.e. new
@@ -262,6 +263,8 @@ export interface BrandMatchEntry {
   /** Lowercased canonical domain — never matched for this brand. */
   domain: string;
   keywords: BrandKeywordSpec[];
+  /** Set for a generic-word brand: matched only via creditGenericBrand. */
+  genericName?: string;
 }
 
 export function isGenericKeyword(keyword: string): boolean {
@@ -291,6 +294,13 @@ function foldName(name: string): string {
  * Keywords for one brand (see module header). Exported for tests.
  */
 export function brandKeywords(name: string, canonicalDomain: string): BrandKeywordSpec[] {
+  // Generic-word brand ("Mail" mail.ru, "Login" login.gov, "Line" line.me
+  // — lib/brandDetect.ts isGenericBrandName): NO keywords. It is matched by
+  // the shared predicate instead (BrandMatcher's generic pass →
+  // brandDetect.creditGenericBrand), the same one the brand-link cleanup
+  // re-validates with. 2026-10-12: the generic needle "login"/"site"
+  // credited login.gov / site.com with every <lure>-login / <x>-site NRD.
+  if (isGenericBrandName(name)) return [];
   const folded = foldName(name);
   const candidates: Array<{ keyword: string; fromName: boolean }> = [];
   candidates.push({ keyword: folded.replace(/[^a-z0-9]/g, ""), fromName: true });
@@ -337,9 +347,14 @@ export function buildBrandKeywords(
   for (const r of sorted) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
+    const domain = (r.canonical_domain ?? "").toLowerCase();
+    if (isGenericBrandName(r.name)) {
+      if (domain.includes(".")) out.push({ id: r.id, domain, keywords: [], genericName: r.name });
+      continue;
+    }
     const keywords = brandKeywords(r.name ?? "", r.canonical_domain ?? "");
     if (keywords.length === 0) continue;
-    out.push({ id: r.id, domain: (r.canonical_domain ?? "").toLowerCase(), keywords });
+    out.push({ id: r.id, domain, keywords });
   }
   return out;
 }
@@ -558,9 +573,16 @@ export class BrandMatcher {
   private readonly rowsByBrand = new Map<number, number>();
   private readonly demotedTexts = new Set<string>();
   private readonly demoted: string[] = [];
+  private readonly generic: GenericBrandSet;
 
   constructor(private readonly brands: BrandMatchEntry[], opts: BrandMatcherOptions = {}) {
     this.demoteAfter = opts.demoteAfter ?? NRD_KEYWORD_DEMOTE_AFTER;
+    const ids = new Set(brands.map((b) => b.id));
+    // Generic brands in id order (brands are sorted); never their own domain.
+    this.generic = new GenericBrandSet(
+      brands.filter((b) => b.genericName !== undefined)
+        .map((b) => ({ id: b.id, name: b.genericName ?? null, canonical_domain: b.domain })),
+      (id) => ids.has(id), { excludeOwnDomain: true });
     const lengths = new Set<number>();
     brands.forEach((b, bi) => {
       for (const k of b.keywords) {
@@ -592,7 +614,18 @@ export class BrandMatcher {
   }
 
   get empty(): boolean {
-    return this.index.size === 0;
+    return this.index.size === 0 && this.generic.size === 0;
+  }
+
+  /**
+   * Generic-word brands (lowest id first): the shared predicate
+   * brandDetect.creditGenericBrand — the brand itself for a full-canonical
+   * lookalike (or, lure-gated LINE / Free, the bare word beside a credential
+   * lure), else a vendor-product brand's parent (Live → Microsoft) when the
+   * parent is among the loaded brands. Tried only when no keyword matched.
+   */
+  private genericHit(domain: string): string | null {
+    return this.generic.credit(domain)?.brandId ?? null;
   }
 
   /** Keyword texts demoted to generic this run, in demotion order. */
@@ -680,17 +713,18 @@ export class BrandMatcher {
     let inPayloadDuplicates = 0;
     for (const domain of domains) {
       const hit = this.best(domain);
-      if (!hit) continue;
+      const brandId = hit ? this.brands[hit.bi]!.id : this.genericHit(domain);
+      if (!brandId) continue;
       if (matched.has(domain)) { inPayloadDuplicates++; continue; }
       matched.add(domain);
-      if (!this.kwGeneric[hit.kw]) this.countDistinctiveRow(hit.bi);
+      if (hit && !this.kwGeneric[hit.kw]) this.countDistinctiveRow(hit.bi);
       rows.push({
         id: threatId("nrd_hagezi", "domain", domain),
         source_feed: "nrd_hagezi",
         threat_type: "typosquatting",
         malicious_url: null,
         malicious_domain: domain,
-        target_brand_id: this.brands[hit.bi]!.id,
+        target_brand_id: brandId,
         ioc_value: domain,
         severity: "medium",
         confidence_score: 60,
