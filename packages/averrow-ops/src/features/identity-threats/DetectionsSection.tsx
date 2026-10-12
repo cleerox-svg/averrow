@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { CopyField } from '@averrow/shared/ui';
 import { Badge, Button, Card, PageState, pageStateKind } from '@/design-system/components';
 import { formatDateTime, relativeTime } from '@/lib/time';
+import { PageCaptureGroup } from './PageCapture';
 import { useIdentityDetection, useIdentityDetections } from './useIdentityThreats';
 import type {
   IdentityDetectionDetail, IdentityDetectionListItem, IdentityFilters, IdentityWindow,
@@ -92,6 +93,8 @@ function DetailBody({ d }: { d: IdentityDetectionDetail }) {
           </ul>
         )}
       </div>
+
+      <PageCaptureGroup d={d} />
 
       <Group title="Target">
         <Field label="Brand">{val(d.brand_name)}</Field>

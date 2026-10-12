@@ -22,6 +22,8 @@ interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
   total?: number;
+  /** HTTP status, set only on non-2xx envelopes so callers can branch (e.g. 409/403). */
+  status?: number;
 }
 
 /**
@@ -140,7 +142,28 @@ class ApiClient {
       throw new ApiError(message, response.status);
     }
 
-    return response.json() as Promise<ApiResponse<T>>;
+    const body = await response.json() as ApiResponse<T>;
+    if (!response.ok && body && typeof body === 'object') body.status = response.status;
+    return body;
+  }
+
+  /** Authenticated binary fetch (images / evidence downloads). Same-origin API paths only. */
+  async getBlob(path: string): Promise<Blob> {
+    const send = () => fetch(`${API_BASE}${path}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    let response = await send();
+    if (response.status === 401) {
+      if (await this.tryRefresh()) {
+        response = await send();
+      }
+      if (response.status === 401) {
+        this.onUnauthorized?.();
+        throw new ApiError('Unauthorized', 401);
+      }
+    }
+    if (!response.ok) throw new ApiError(`Request failed: ${response.status}`, response.status);
+    return response.blob();
   }
 
   async get<T>(path: string): Promise<ApiResponse<T>> {

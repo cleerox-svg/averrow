@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/test/utils';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
-vi.mock('@/lib/api', () => ({ api: { get: vi.fn() } }));
+vi.mock('@/lib/api', () => ({ api: { get: vi.fn(), post: vi.fn(), getBlob: vi.fn() } }));
+vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: { role: 'analyst' } }) }));
 
 import { api } from '@/lib/api';
 import { IdentityThreatsPage } from './IdentityThreatsPage';
@@ -47,6 +48,7 @@ const DETAIL: IdentityDetectionDetail = {
   timeline: { first_seen: null, last_seen: null, created_at: '2026-10-09T10:00:00Z', enriched_at: null },
   takedown: null,
   cluster: null,
+  captures: [],
 };
 
 function route(list: (qs: URLSearchParams) => IdentityDetectionList = () => LIST) {

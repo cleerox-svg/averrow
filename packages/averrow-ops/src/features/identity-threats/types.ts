@@ -97,6 +97,28 @@ export interface IdentityDetectionList {
   total: number;               // count matching filters in window
 }
 
+export type PageCaptureStatus = 'queued' | 'capturing' | 'captured' | 'failed' | 'blocked' | 'expired';
+
+/** One headless page capture (docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md). URLs are staff-API paths. */
+export interface PageCapture {
+  id: string;
+  status: PageCaptureStatus;
+  queued_at: string;
+  captured_at: string | null;
+  expires_at: string | null;
+  final_url: string | null;
+  http_status: number | null;
+  page_title: string | null;
+  redirect_chain: string[];
+  form_action_hosts: string[];
+  anti_bot_wall: string | null;
+  error: string | null;
+  screenshot_desktop_url: string | null;
+  screenshot_mobile_url: string | null;
+  html_download_url: string | null;
+  sha256: { desktop: string | null; mobile: string | null; html: string | null };
+}
+
 export interface IdentityDetectionDetail extends IdentityDetectionListItem {
   technique: string;                   // threats.technique
   matched_lure: string | null;         // classifier `matched` recomputed at read time
@@ -124,6 +146,7 @@ export interface IdentityDetectionDetail extends IdentityDetectionListItem {
   timeline: { first_seen: string | null; last_seen: string | null; created_at: string; enriched_at: string | null };
   takedown: { id: string; status: string; updated_at: string | null } | null;
   cluster: { id: string; name: string | null } | null;
+  captures: PageCapture[];   // newest first, max 5
 }
 
 /** Active drill-down filters (mirrored in the URL search params). */
