@@ -6,6 +6,9 @@ describe('humanizeCategory', () => {
   it('humanizes verified-bot categories', () => {
     expect(humanizeCategory('AI_CRAWLER')).toBe('AI crawler');
     expect(humanizeCategory('SEARCH_ENGINE_CRAWLER')).toBe('Search engine crawler');
+    expect(humanizeCategory('SEO_TOOL')).toBe('SEO tool');
+    expect(humanizeCategory('CDN_RSS_API')).toBe('CDN RSS API');
+    expect(humanizeCategory('')).toBe('');
   });
 });
 
