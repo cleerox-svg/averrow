@@ -18,15 +18,21 @@ import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { TripsLayer } from '@/lib/trips-layer';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
+import {
+  botColor, botRadius, botDensityDomain, botDensityTooltip, isAboveAverage,
+  resolveScaleStops, resolveRingColor,
+  type BotDensityPoint,
+} from '../lib/bot-density';
 
 // ─── Types ──────────────────────────────────────────────────
-export type MapMode = 'global' | 'heatmap';
+export type MapMode = 'global' | 'heatmap' | 'bot_density';
 
 interface TooltipInfo {
   x: number;
   y: number;
   threat?: ThreatPoint;
   arc?: ArcData;
+  bot?: BotDensityPoint;
 }
 
 // ─── Color helpers ──────────────────────────────────────────
@@ -278,6 +284,10 @@ interface ThreatMapV3Props {
   mapMode: MapMode;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
   heatmapData?: HeatmapPoint[];
+  /** Bot-density mode only: countries joined to centroids. */
+  botDensity?: BotDensityPoint[];
+  /** Global bot share % (for the above-average marker + tooltip). */
+  botGlobalAvg?: number | null;
   onArcClick?: (arc: ArcData, x: number, y: number) => void;
 }
 
@@ -346,6 +356,7 @@ export function ThreatMapV3(props: ThreatMapV3Props) {
 function ThreatMapV3Inner({
   threats, arcs, showBeams, showParticles, showNodes, colorBy,
   mapMode, period, heatmapData = [],
+  botDensity, botGlobalAvg = null,
   onArcClick, onContextLost,
 }: ThreatMapV3Props & { onContextLost: () => void }) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -540,8 +551,35 @@ function ThreatMapV3Inner({
       }));
     }
 
+    // Bot density mode: countries only — no nodes/arcs/particles/heatmap.
+    if (mapMode === 'bot_density' && botDensity && botDensity.length > 0) {
+      const domain = botDensityDomain(botDensity);
+      const stops = resolveScaleStops();
+      const ring = resolveRingColor();
+      const minPx = isMobile ? 4 : 5;
+      const maxPx = isMobile ? 20 : 30;
+      layers.push(new ScatterplotLayer({
+        id: 'bot-density',
+        data: botDensity,
+        getPosition: (d: BotDensityPoint) => d.position,
+        getRadius: (d: BotDensityPoint) => botRadius(d.traffic_pct, domain.maxTraffic, minPx, maxPx),
+        radiusUnits: 'pixels',
+        getFillColor: (d: BotDensityPoint) => botColor(d.bot_pct, domain.minBot, domain.maxBot, stops),
+        stroked: true,
+        lineWidthUnits: 'pixels',
+        getLineWidth: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg) ? 2 : 0.5),
+        getLineColor: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg) ? ring : [255, 255, 255, 40]),
+        updateTriggers: { getLineWidth: botGlobalAvg, getLineColor: [botGlobalAvg, ring] },
+        pickable: true,
+        onHover: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => setTooltip(object ? { x, y, bot: object } : null),
+      }));
+    }
+
     return layers;
-  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, onArcClick, isMobile]);
+  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, botDensity, botGlobalAvg, onArcClick, isMobile]);
+
+  // Drop any stale hover tooltip when the mode changes (the hovered layer is gone).
+  useEffect(() => { setTooltip(null); }, [mapMode]);
 
   // ─── Update overlay + start particle animation ────────────
   useEffect(() => {
@@ -673,6 +711,11 @@ function ThreatMapV3Inner({
                 C:{tooltip.threat.critical} H:{tooltip.threat.high} M:{tooltip.threat.medium} L:{tooltip.threat.low}
               </div>
             </>
+          )}
+          {tooltip.bot && (
+            <div className="font-mono" style={{ color: 'var(--text-primary)' }}>
+              {botDensityTooltip(tooltip.bot, botGlobalAvg)}
+            </div>
           )}
           {tooltip.arc && (
             <>

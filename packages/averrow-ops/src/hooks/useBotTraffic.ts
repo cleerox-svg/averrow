@@ -91,7 +91,7 @@ export interface BotTrafficData {
 }
 
 /** Daily Cloudflare Radar snapshot — data changes once a day, so cache 10 min. */
-export function useBotTraffic(days: BotTrafficDays = 30) {
+export function useBotTraffic(days: BotTrafficDays = 30, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['bot-traffic', days],
     queryFn: async () => {
@@ -101,6 +101,7 @@ export function useBotTraffic(days: BotTrafficDays = 30) {
       }
       return res.data;
     },
+    enabled: options.enabled ?? true,
     staleTime: 10 * 60 * 1000,
     placeholderData: keepPreviousData,
   });
