@@ -97,6 +97,36 @@ describe("production dry run 2026-10-12 — the 11 proposed changes", () => {
     expect(decideReattribution(r, prodRematch)).toMatchObject({ action: "keep", keptBecause: reason });
   });
 
+  it.each([
+    "ms365-copilot.onmicrosoft.aviasg.co",
+    "login-microsoftonnline.jimdofree.com",
+  ])("second prod dry run: Microsoft-credited %s → keep", (host) => {
+    const cat: BrandRow[] = [
+      ...PROD,
+      { id: "brand_copilot_com", name: "Copilot", canonical_domain: "copilot.com", tier: "monitored" },
+      { id: "brand_jimdofree_com", name: "Jimdofree", canonical_domain: "jimdofree.com", tier: "monitored" },
+      { id: "brand_aviasg_co", name: "Aviasg", canonical_domain: "aviasg.co", tier: "tracked", tranco_rank: 900000 },
+    ];
+    expect(decideReattribution(row(host, ms), (h) => fuzzyMatchBrandDetailed(h, cat)))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+  });
+
+  it.each([
+    ["asana-okta.com", "b_asana"], ["databricks-okta.com", "b_databricks"], ["dialpad.okta-sso.com", "b_dialpad"],
+    ["smartbear-okta.com", "b_smartbear"], ["smartbear.okta-login.com", "b_smartbear"],
+    ["medallia-okta.com", "b_medallia"], ["withpersona.okta-linksso.com", "b_persona"],
+    ["withpersona-okta.com", "b_persona"], ["appsflyer-okta.com", "b_appsflyer"],
+    ["appsflyer.okta-verify.com", "b_appsflyer"], ["zendesk-okta.com", "b_zendesk"],
+  ])("Okta → targeted brand: %s → %s", (host, brand) => {
+    const cat: BrandRow[] = [
+      ...PROD,
+      ...["Databricks", "Dialpad", "SmartBear", "Medallia", "AppsFlyer", "Zendesk"].map((n) =>
+        ({ id: `b_${n.toLowerCase()}`, name: n, canonical_domain: `${n.toLowerCase()}.com`, tier: "monitored" })),
+    ];
+    expect(decideReattribution(row(host), (h) => fuzzyMatchBrandDetailed(h, cat)))
+      .toMatchObject({ action: "relink", newBrandId: brand });
+  });
+
   it("asana-okta.com Okta → Asana (whole-token leftover)", () => {
     expect(decideReattribution(row("asana-okta.com"), prodRematch))
       .toEqual({ action: "relink", newBrandId: "b_asana", method: "token" });

@@ -306,5 +306,11 @@ describe('vendor-official hosts and vendor product family', () => {
     expect(isIdpVendorFamilyToken('window', 'entra')).toBe(false);
     expect(isIdpVendorFamilyToken('dynamic', 'entra')).toBe(false);
     expect(isIdpVendorFamilyToken('sharepont', 'entra')).toBe(true);
+    for (const w of ['copilot', 'ms365', 'intune', 'clipchamp', 'powerbi', 'viva', 'bing', 'xbox']) {
+      expect(isIdpVendorFamilyToken(w, 'entra'), w).toBe(true);
+    }
+    expect(isIdpVendorFamilyToken('auth0', 'okta')).toBe(true);
+    expect(isIdpVendorFamilyToken('gmail', 'google')).toBe(true);
+    expect(isIdpVendorFamilyToken('copilot', 'okta')).toBe(false);
   });
 });

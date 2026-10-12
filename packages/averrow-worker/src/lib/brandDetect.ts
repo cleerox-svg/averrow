@@ -19,6 +19,7 @@
  */
 
 import { registrableDomain } from "./domain-utils";
+import { SHARED_HOSTING_DOMAINS } from "./safeDomains";
 import {
   IDP_TENANT_HOSTS,
   IDP_VENDOR_BRAND_TOKEN,
@@ -405,7 +406,7 @@ function hostParts(raw: string): HostParts | null {
   }
   const all = host.split(".").filter((l) => l.length > 0);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
-  const lure = idpLureParts(host, labels);
+  const lure = idpLureParts(host, labels, sharedHostingStart(all));
   if (lure) return lure;
   const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
   return buildParts(host, labels, tokens);
@@ -515,15 +516,31 @@ function isIdpLeftoverEligible(b: BrandRow): boolean {
  *     canonical name + the lure names, matched whole-token.
  * Returns null when the host is not an idp_lookalike or no lure was stripped.
  */
-function idpLureParts(host: string, labels: string[]): HostParts | null {
+/** Index of the first label of the shared-hosting / free-builder domain
+ *  (lib/safeDomains SHARED_HOSTING_DOMAINS) `all` sits under, else
+ *  all.length. login-microsoftonnline.jimdofree.com → 1. */
+function sharedHostingStart(all: string[]): number {
+  for (let i = 1; i < all.length - 1; i++) {
+    if (SHARED_HOSTING_DOMAINS.has(all.slice(i).join("."))) return i;
+  }
+  return all.length;
+}
+
+function idpLureParts(host: string, labels: string[], leftoverEnd = labels.length): HostParts | null {
   if (labels.length === 0) return null;
   if (classifyIdpImpersonation({ host })?.vector !== "idp_lookalike") return null;
   const lures: string[] = [];
   const providers = new Set<IdpProvider>();
   const glued: string[] = [];
   const perLabel: string[][] = [];
-  for (const label of labels) {
+  for (const [li, label] of labels.entries()) {
     const rest: string[] = [];
+    // Labels of the shared-hosting / free-builder domain the host sits under
+    // (jimdofree in login-microsoftonnline.jimdofree.com) name the platform,
+    // never the target: lures there still count, leftovers don't. Host-
+    // relative on purpose — slack.com / zendesk.com / okta.com are in
+    // SHARED_HOSTING_DOMAINS too, yet zendesk-okta.com targets Zendesk.
+    const leftoverAllowed = li < leftoverEnd;
     for (const t of label.split(/[-_]/)) {
       if (t.length === 0) continue;
       const s = splitIdpLureToken(t);
@@ -534,6 +551,7 @@ function idpLureParts(host: string, labels: string[]): HostParts | null {
       }
       // Lure glued to a non-filler word (acmesso): keep the token, and its
       // remainder is one more exact-name candidate.
+      if (!leftoverAllowed) continue;
       if (s) glued.push(s.rest);
       rest.push(t);
     }
@@ -582,9 +600,10 @@ interface PreparedBrand {
 
 function prepareOne(b: BrandRow): PreparedBrand {
   const norm = normalizeBrand(b.name);
+  const canonical = (b.canonical_domain ?? "").toLowerCase().replace(/^www\./, "");
   return {
     id: b.id,
-    canonical: (b.canonical_domain ?? "").toLowerCase().replace(/^www\./, ""),
+    canonical,
     norm,
     matchable: norm.length >= 4 && !isGenericBrand(norm) && b.tier !== "tracked",
     leftoverMatchable: norm.length >= 4 && !isGenericBrand(norm) && isIdpLeftoverEligible(b),
