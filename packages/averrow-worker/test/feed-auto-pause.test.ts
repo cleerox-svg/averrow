@@ -207,6 +207,28 @@ describe("runFeed auto-pause", () => {
     expect(updateCall!.sql).toMatch(/consecutive_failures\s*=\s*0/i);
   });
 
+  it.each([
+    ["with a warning", "partial pull (1 endpoint(s) failed): x: boom", "partial pull (1 endpoint(s) failed): x: boom"],
+    ["without a warning", undefined, null],
+  ])("success %s: pull row stays 'success', error_message = warning ?? NULL, feed_status.last_error still cleared", async (_n, warning, expected) => {
+    const state: MockState = {
+      feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },
+      feed_status: { test_feed: { health_status: "healthy", consecutive_failures: 0 } },
+      system_config: { feed_consecutive_failure_threshold: "5" },
+    };
+    const { db, calls } = makeMockDb(state);
+    const mod = makeSuccessFeedModule({ itemsFetched: 3, itemsError: 1, ...(warning ? { warning } : {}) });
+
+    await runFeed(makeEnv(db), makeConfig(), mod);
+
+    const pullUpdate = calls.find((c) => /UPDATE feed_pull_history SET[\s\S]*status = 'success'/i.test(c.sql));
+    expect(pullUpdate).toBeDefined();
+    expect(pullUpdate!.sql).toMatch(/error_message = \?, duration_ms = \?/);
+    expect(pullUpdate!.bindArgs[2]).toBe(expected);
+    const statusUpdate = calls.find((c) => /UPDATE feed_status SET[\s\S]*last_successful_pull/i.test(c.sql));
+    expect(statusUpdate!.sql).toMatch(/last_error = NULL/);
+  });
+
   it("increments consecutive_failures and does NOT auto-pause below threshold", async () => {
     const state: MockState = {
       feed_configs: { test_feed: { enabled: 1, paused_reason: null, consecutive_failure_threshold: null } },

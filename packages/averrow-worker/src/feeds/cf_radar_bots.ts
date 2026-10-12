@@ -13,11 +13,15 @@ import type { FeedModule, FeedContext, FeedResult } from "./types";
  *   5. /radar/bots/summary/BOT_CATEGORY         → bot_category              optional
  *
  * Failure contract:
- *   - Missing CF_API_TOKEN, or HTTP 401/403 from ANY endpoint → throw, so
- *     runFeed records a failed pull (never a quiet success).
- *   - #1 failing for any reason → throw.
- *   - #2–#5 failing → the rest is still written; each failed endpoint
- *     counts as one itemsError (surfaces as records_rejected).
+ *   - Missing CF_API_TOKEN → throw, so runFeed records a failed pull
+ *     (never a quiet success).
+ *   - #1 failing for any reason (incl. HTTP 401/403, which carries the
+ *     "lacks Radar Read permission" message) → throw.
+ *   - #2–#5 failing for any reason (incl. 401/403), or returning HTTP 200
+ *     with zero usable rows → the rest is still written; each such
+ *     endpoint counts as one itemsError (surfaces as records_rejected) and
+ *     its message is returned in FeedResult.warning, which runFeed
+ *     persists to feed_pull_history.error_message on the success row.
  *
  * Never writes `threats`, and always returns itemsNew = 0 so the
  * orchestrator's Sentinel trigger (runAllFeeds totalNew > 0) is untouched.
@@ -33,7 +37,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Cache keys the read handler populates — dropped after a successful write. */
 export const BOT_TRAFFIC_CACHE_DAYS = [7, 30, 90] as const;
 export function botTrafficCacheKey(days: number): string {
-  return `bot_traffic:v1:${days}`;
+  return `bot_traffic:v2:${days}`;
 }
 
 // ─── Parsed shapes ───────────────────────────────────────────────
@@ -245,7 +249,7 @@ export function parseCategorySummary(payload: unknown): RankedDim[] {
 
 // ─── HTTP ────────────────────────────────────────────────────────
 
-/** Auth failures abort the whole pull — they never degrade to "partial". */
+/** 401/403 from Radar. Fatal only on the required summary endpoint (#1). */
 export class RadarAuthError extends Error {
   constructor(status: number) {
     super(`CF Radar: CF_API_TOKEN lacks Radar Read permission (HTTP ${status})`);
@@ -305,13 +309,10 @@ export const cf_radar_bots: FeedModule = {
       radarGet(token, PATHS.categories),
     ]);
 
-    // Auth failures on ANY endpoint fail the pull outright.
-    for (const r of [summaryR, seriesR, locationsR, asesR, categoriesR]) {
-      if (r.status === "rejected" && r.reason instanceof RadarAuthError) throw r.reason;
-    }
-
-    // #1 is required.
+    // #1 is required. A 401/403 here surfaces as-is (the token message);
+    // auth failures on #2–#5 are ordinary optional failures below.
     if (summaryR.status === "rejected") {
+      if (summaryR.reason instanceof RadarAuthError) throw summaryR.reason;
       const msg = summaryR.reason instanceof Error ? summaryR.reason.message : String(summaryR.reason);
       throw new Error(`CF Radar bot-class summary failed: ${msg}`);
     }
@@ -350,7 +351,9 @@ export const cf_radar_bots: FeedModule = {
     // overwrites the series' (possibly partial) bucket for snapshotDate.
     const seriesPayload = optional(seriesR, "timeseries");
     if (seriesPayload !== null) {
-      const days = parseBotClassSeries(seriesPayload).filter((d) => d.date !== snapshotDate);
+      const parsed = parseBotClassSeries(seriesPayload);
+      if (parsed.length === 0) failures.push("timeseries: empty result");
+      const days = parsed.filter((d) => d.date !== snapshotDate);
       for (const d of days) {
         stmts.push(upsert.bind(d.date, "bot_share", "bot", null, null, d.bot_pct));
         stmts.push(upsert.bind(d.date, "bot_share", "human", null, null, d.human_pct));
@@ -395,15 +398,14 @@ export const cf_radar_bots: FeedModule = {
       BOT_TRAFFIC_CACHE_DAYS.map((d) => ctx.env.CACHE.delete(botTrafficCacheKey(d)).catch(() => undefined)),
     );
 
-    if (failures.length > 0) {
-      console.warn(`[cf_radar_bots] partial pull (${failures.length} endpoint(s) failed): ${failures.join(" | ").slice(0, 800)}`);
-    }
-
     return {
       itemsFetched: rowsWritten,
       itemsNew: 0, // never trigger Sentinel — no threats are created
       itemsDuplicate: 0,
       itemsError: failures.length,
+      ...(failures.length > 0
+        ? { warning: `partial pull (${failures.length} endpoint(s) failed): ${failures.join(" | ")}`.slice(0, 1000) }
+        : {}),
     };
   },
 };

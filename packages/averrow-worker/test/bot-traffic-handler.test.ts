@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
-import { handleBotTraffic, parseBotTrafficDays, pivotBotShare } from "../src/handlers/botTraffic";
+import { handleBotTraffic, parseBotTrafficDays, pivotBotShare, toIsoUtc } from "../src/handlers/botTraffic";
 import { registerDashboardRoutes } from "../src/routes/dashboard";
 import { botTrafficCacheKey } from "../src/feeds/cf_radar_bots";
 import { signJWT } from "../src/lib/jwt";
@@ -122,6 +122,24 @@ describe("pivotBotShare", () => {
   });
 });
 
+describe("toIsoUtc", () => {
+  it.each([
+    ["2026-10-11 06:00:05", "2026-10-11T06:00:05Z"],
+    ["2026-10-11T06:00:05Z", "2026-10-11T06:00:05Z"],
+    ["2026-10-11T06:00:05.123Z", "2026-10-11T06:00:05Z"],
+    ["2026-10-11T06:00:05+00:00", "2026-10-11T06:00:05Z"],
+    [" 2026-10-11 06:00:05 ", "2026-10-11T06:00:05Z"],
+  ])("%j -> %j", (raw, expected) => {
+    expect(toIsoUtc(raw)).toBe(expected);
+  });
+  it("passes null and unrecognised values through unchanged", () => {
+    expect(toIsoUtc(null)).toBeNull();
+    expect(toIsoUtc("x")).toBe("x");
+    expect(toIsoUtc("2026-10-11")).toBe("2026-10-11");
+    expect(toIsoUtc("2026-10-11T06:00:05+02:00")).toBe("2026-10-11T06:00:05+02:00");
+  });
+});
+
 describe("handleBotTraffic", () => {
   it.each(["0", "14", "abc", "-1", "7.5"])("days=%s -> 400 and no cache or D1 access", async (d) => {
     const h = makeHarness();
@@ -159,6 +177,7 @@ describe("handleBotTraffic", () => {
       top_asns: [],
       categories: [],
       last_fetch: { status: null, last_success_at: null, last_error: null },
+      as_of: { bot_share: null, top_locations: null, top_asns: null, categories: null },
     });
   });
 
@@ -174,18 +193,20 @@ describe("handleBotTraffic", () => {
         { snapshot_date: "2026-10-11", dim_key: "bot", value_pct: 30, fetched_at: "2026-10-11 06:00:00" },
         { snapshot_date: "2026-10-11", dim_key: "human", value_pct: 70, fetched_at: "2026-10-11 06:00:00" },
       ],
+      // Ranked metrics each read their own latest date: after a partial
+      // pull top_asn can lag behind bot_share.
       top_location: [
-        { dim_key: "US", label: "United States", rank: 1, value_pct: 40 },
-        { dim_key: "DE", label: null, rank: null, value_pct: 10 },
+        { snapshot_date: "2026-10-11", dim_key: "US", label: "United States", rank: 1, value_pct: 40 },
+        { snapshot_date: "2026-10-11", dim_key: "DE", label: null, rank: null, value_pct: 10 },
       ],
       top_asn: [
-        { dim_key: "16509", label: "AMAZON-02", rank: 1, value_pct: 12 },
-        { dim_key: "8075", label: null, rank: 2, value_pct: 8 },
-        { dim_key: "not-a-number", label: "bad", rank: 3, value_pct: 1 },
+        { snapshot_date: "2026-10-09", dim_key: "16509", label: "AMAZON-02", rank: 1, value_pct: 12 },
+        { snapshot_date: "2026-10-09", dim_key: "8075", label: null, rank: 2, value_pct: 8 },
+        { snapshot_date: "2026-10-09", dim_key: "not-a-number", label: "bad", rank: 3, value_pct: 1 },
       ],
       bot_category: [
-        { dim_key: "OTHER", label: null, rank: 2, value_pct: 10 },
-        { dim_key: "AI_CRAWLER", label: null, rank: 1, value_pct: 60 },
+        { snapshot_date: "2026-10-11", dim_key: "OTHER", label: null, rank: 2, value_pct: 10 },
+        { snapshot_date: "2026-10-11", dim_key: "AI_CRAWLER", label: null, rank: 1, value_pct: 60 },
       ],
       feedStatus: { last_successful_pull: "2026-10-11 06:00:05", last_error: null },
       pull: { status: "success" },
@@ -195,7 +216,7 @@ describe("handleBotTraffic", () => {
     const { data } = (await res.json()) as { data: Record<string, unknown> };
     expect(data).toEqual({
       source: "cloudflare_radar",
-      latest: { snapshot_date: "2026-10-11", bot_pct: 30, human_pct: 70, fetched_at: "2026-10-11 06:00:00" },
+      latest: { snapshot_date: "2026-10-11", bot_pct: 30, human_pct: 70, fetched_at: "2026-10-11T06:00:00Z" },
       series: [
         { date: "2026-10-10", bot_pct: 28, human_pct: 72 },
         { date: "2026-10-11", bot_pct: 30, human_pct: 70 },
@@ -212,7 +233,8 @@ describe("handleBotTraffic", () => {
         { category: "AI_CRAWLER", pct: 60 },
         { category: "OTHER", pct: 10 },
       ], // sorted by pct desc
-      last_fetch: { status: "success", last_success_at: "2026-10-11 06:00:05", last_error: null },
+      last_fetch: { status: "success", last_success_at: "2026-10-11T06:00:05Z", last_error: null },
+      as_of: { bot_share: "2026-10-11", top_locations: "2026-10-11", top_asns: "2026-10-09", categories: "2026-10-11" },
     });
     expect(h.cachePuts).toHaveLength(1);
     expect(h.cachePuts[0]!.opts).toEqual({ expirationTtl: 3600 });
@@ -227,6 +249,15 @@ describe("handleBotTraffic", () => {
     const { data } = (await (await call(h.env, "?days=7")).json()) as { data: { latest: unknown; series: unknown[] } };
     expect(data.series).toEqual([]);
     expect(data.latest).toEqual({ snapshot_date: "2026-01-01", bot_pct: 25, human_pct: 75, fetched_at: "x" });
+  });
+
+  it("as_of: a section with no rows reads null while the others carry their dates", async () => {
+    const h = makeHarness({
+      latest: [{ snapshot_date: "2026-10-11", dim_key: "bot", value_pct: 30, fetched_at: "2026-10-11 06:00:00" }],
+      top_location: [{ snapshot_date: "2026-10-10", dim_key: "US", label: "United States", rank: 1, value_pct: 40 }],
+    });
+    const { data } = (await (await call(h.env)).json()) as { data: { as_of: unknown } };
+    expect(data.as_of).toEqual({ bot_share: "2026-10-11", top_locations: "2026-10-10", top_asns: null, categories: null });
   });
 
   it("cache hit returns the cached payload without touching D1 or writing the cache", async () => {

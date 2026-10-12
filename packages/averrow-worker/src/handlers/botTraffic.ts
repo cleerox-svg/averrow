@@ -26,6 +26,30 @@ export interface BotTrafficData {
   top_asns: Array<{ asn: number; name: string; pct: number; rank: number }>;
   categories: Array<{ category: string; pct: number }>;
   last_fetch: { status: string | null; last_success_at: string | null; last_error: string | null };
+  /**
+   * The snapshot_date (YYYY-MM-DD) each section was read from. Each ranked
+   * section reads its own metric's latest date, so after a partial pull
+   * they can differ from bot_share (= latest.snapshot_date). null = no rows.
+   */
+  as_of: {
+    bot_share: string | null;
+    top_locations: string | null;
+    top_asns: string | null;
+    categories: string | null;
+  };
+}
+
+const SQLITE_TS_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+-]00:?00)?$/;
+
+/**
+ * Normalise a SQLite `datetime('now')` value (`YYYY-MM-DD HH:MM:SS`, UTC)
+ * — or an ISO-8601 UTC string — to `YYYY-MM-DDTHH:MM:SSZ`. Anything else
+ * (null, unexpected format) is returned unchanged.
+ */
+export function toIsoUtc(ts: string | null): string | null {
+  if (ts === null) return null;
+  const m = SQLITE_TS_RE.exec(ts.trim());
+  return m ? `${m[1]}T${m[2]}Z` : ts;
 }
 
 /** `null` → invalid (400). Absent → default 30. */
@@ -37,7 +61,7 @@ export function parseBotTrafficDays(raw: string | null): number | null {
 }
 
 interface ShareRow { snapshot_date: string; dim_key: string; value_pct: number; fetched_at: string }
-interface RankedRow { dim_key: string; label: string | null; rank: number | null; value_pct: number }
+interface RankedRow { snapshot_date: string; dim_key: string; label: string | null; rank: number | null; value_pct: number }
 
 /** Pivot bot/human rows into one entry per date (ascending). Missing side = complement. */
 export function pivotBotShare(rows: ShareRow[]): Array<{ date: string; bot_pct: number; human_pct: number; fetched_at: string }> {
@@ -60,7 +84,7 @@ export function pivotBotShare(rows: ShareRow[]): Array<{ date: string; bot_pct: 
 }
 
 const RANKED_SQL = `
-  SELECT dim_key, label, rank, value_pct
+  SELECT snapshot_date, dim_key, label, rank, value_pct
     FROM bot_traffic_snapshots
    WHERE metric = ?1
      AND snapshot_date = (SELECT MAX(snapshot_date) FROM bot_traffic_snapshots WHERE metric = ?1)
@@ -107,7 +131,7 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
           snapshot_date: latestPivot.date,
           bot_pct: latestPivot.bot_pct,
           human_pct: latestPivot.human_pct,
-          fetched_at: latestPivot.fetched_at,
+          fetched_at: toIsoUtc(latestPivot.fetched_at) ?? latestPivot.fetched_at,
         }
       : null,
     series: pivotBotShare(seriesRes.results).map(({ date, bot_pct, human_pct }) => ({ date, bot_pct, human_pct })),
@@ -130,8 +154,14 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
       .sort((a, b) => b.pct - a.pct),
     last_fetch: {
       status: pullRow?.status ?? null,
-      last_success_at: statusRow?.last_successful_pull ?? null,
+      last_success_at: toIsoUtc(statusRow?.last_successful_pull ?? null),
       last_error: statusRow?.last_error ?? null,
+    },
+    as_of: {
+      bot_share: latestPivot?.date ?? null,
+      top_locations: locRes.results[0]?.snapshot_date ?? null,
+      top_asns: asnRes.results[0]?.snapshot_date ?? null,
+      categories: catRes.results[0]?.snapshot_date ?? null,
     },
   };
 }

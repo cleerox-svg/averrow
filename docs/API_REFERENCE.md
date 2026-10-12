@@ -855,7 +855,7 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/bot-traffic` | Staff | Internet bot-vs-human HTTP traffic from Cloudflare Radar (feed `cf_radar_bots`, table `bot_traffic_snapshots`, migration 0290). `?days=7\|30\|90` (default 30; any other value → 400). KV-cached 1h under `bot_traffic:v1:<days>` (the feed drops the keys after each write). Empty table → `latest: null` + empty arrays (200) |
+| GET | `/api/bot-traffic` | Staff | Internet bot-vs-human HTTP traffic from Cloudflare Radar (feed `cf_radar_bots`, table `bot_traffic_snapshots`, migration 0290). `?days=7\|30\|90` (default 30; any other value → 400). KV-cached 1h under `bot_traffic:v2:<days>` (the feed drops the keys after each write). Empty table → `latest: null`, empty arrays, all `as_of` fields `null` (200) |
 
 Response `data` (handler `handlers/botTraffic.ts`):
 
@@ -867,11 +867,14 @@ Response `data` (handler `handlers/botTraffic.ts`):
   top_locations: [{ code, name, pct, rank }],                        // newest snapshot_date with top_location rows
   top_asns: [{ asn, name, pct, rank }],                              // asn is a number
   categories: [{ category, pct }],                                   // verified-bot categories, pct desc
-  last_fetch: { status, last_success_at, last_error }                // status = newest finished feed_pull_history row; others from feed_status
+  last_fetch: { status, last_success_at, last_error },               // status = newest finished feed_pull_history row; others from feed_status
+  as_of: {                                                           // snapshot_date (YYYY-MM-DD) each section was read from; null = no rows
+    bot_share, top_locations, top_asns, categories                   // bot_share = latest.snapshot_date
+  }
 }
 ```
 
-`top_locations` / `top_asns` are shares of **likely-automated** traffic; `categories` are shares of **verified-bot** traffic. Timestamps (`fetched_at`, `last_success_at`) are SQLite `datetime('now')` strings (`YYYY-MM-DD HH:MM:SS`, UTC, no `Z`).
+`top_locations` / `top_asns` are shares of **likely-automated** traffic; `categories` are shares of **verified-bot** traffic. Each ranked section is read from its own metric's newest `snapshot_date`, so after a partial pull (an optional Radar endpoint failed, its previous rows kept) a section can be older than `bot_share` — compare `as_of.*` against `as_of.bot_share` to flag stale sections. Timestamps (`latest.fetched_at`, `last_fetch.last_success_at`) are ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SSZ`; date fields (`snapshot_date`, `series[].date`, `as_of.*`) are `YYYY-MM-DD`. `last_fetch.last_error` is cleared by any successful pull; partial-pull detail is in that pull's `feed_pull_history.error_message` (status stays `success`).
 
 ## Signals
 

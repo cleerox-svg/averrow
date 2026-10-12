@@ -379,7 +379,7 @@ const clears = (h: Harness) => stmts(h).filter((s) => /^DELETE FROM bot_traffic_
 describe("cf_radar_bots.ingest", () => {
   const origFetch = globalThis.fetch;
   beforeEach(() => {
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn");
   });
   afterEach(() => {
     globalThis.fetch = origFetch;
@@ -399,11 +399,31 @@ describe("cf_radar_bots.ingest", () => {
     expect(h.batches).toEqual([]);
   });
 
-  it("an auth failure on an OPTIONAL endpoint still fails the whole pull with no writes", async () => {
-    const h = makeHarness({ ...allOk(), "/http/top/ases": () => respond(403, "denied") });
-    await expect(cf_radar_bots.ingest(ctxOf(h.env))).rejects.toThrow(/lacks Radar Read/);
-    expect(h.batches).toEqual([]);
-    expect(h.cacheDeletes).toEqual([]);
+  it.each([401, 403])("HTTP %i on an OPTIONAL endpoint is a partial failure: the rest is written and the message recorded", async (status) => {
+    const h = makeHarness({ ...allOk(), "/http/top/ases": () => respond(status, "denied") });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.itemsNew).toBe(0);
+    expect(res.warning).toMatch(/^partial pull \(1 endpoint\(s\) failed\): top_ases: CF Radar: CF_API_TOKEN lacks Radar Read permission \(HTTP \d+\)$/);
+    expect(upserts(h, "top_asn")).toEqual([]);
+    expect(clears(h).some((s) => s.args[1] === "top_asn")).toBe(false);
+    expect(upserts(h, "top_location")).toHaveLength(1);
+    expect(upserts(h, "bot_share")).toHaveLength(6);
+    expect(h.cacheDeletes).toHaveLength(BOT_TRAFFIC_CACHE_DAYS.length);
+  });
+
+  it("auth failures on every optional endpoint still write the summary (only #1's auth failure is fatal)", async () => {
+    const denied = () => respond(403, "denied");
+    const h = makeHarness({
+      "/http/summary/BOT_CLASS": () => respond(200, SUMMARY),
+      "/http/timeseries_groups/BOT_CLASS": denied,
+      "/http/top/locations": denied,
+      "/http/top/ases": denied,
+      "/bots/summary/BOT_CATEGORY": denied,
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(4);
+    expect(res.itemsFetched).toBe(2);
   });
 
   it.each([
@@ -425,6 +445,8 @@ describe("cf_radar_bots.ingest", () => {
     expect(res.itemsNew).toBe(0);
     expect(res.itemsDuplicate).toBe(0);
     expect(res.itemsError).toBe(0);
+    expect(res.warning).toBeUndefined();
+    expect(console.warn).not.toHaveBeenCalled();
 
     // Authorization header + all 5 endpoints requested.
     expect(h.fetchedPaths).toHaveLength(5);
@@ -498,6 +520,12 @@ describe("cf_radar_bots.ingest", () => {
 
     expect(res.itemsError).toBe(2);
     expect(res.itemsNew).toBe(0);
+    // Failure detail travels in FeedResult.warning (persisted by runFeed to
+    // feed_pull_history.error_message), never console.
+    expect(res.warning).toContain("partial pull (2 endpoint(s) failed)");
+    expect(res.warning).toContain("timeseries: CF Radar /http/timeseries_groups/BOT_CLASS: HTTP 502");
+    expect(res.warning).toContain("top_ases: CF Radar /http/top/ases: HTTP 500");
+    expect(console.warn).not.toHaveBeenCalled();
 
     // No clear and no upsert for the failed metric -> old rows survive.
     expect(upserts(h, "top_asn")).toEqual([]);
@@ -522,8 +550,31 @@ describe("cf_radar_bots.ingest", () => {
     });
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
     expect(res.itemsError).toBe(1);
+    expect(res.warning).toContain("top_locations: empty result");
     expect(upserts(h, "top_location")).toEqual([]);
     expect(clears(h).some((s) => s.args[1] === "top_location")).toBe(false);
+  });
+
+  it.each([
+    ["no serie_0", { success: true, result: {} }],
+    ["no usable values", { success: true, result: { serie_0: { timestamps: ["2026-10-09T00:00:00Z"], bot: ["NaN"] } } }],
+  ])("a 200 series with zero usable rows (%s) counts as an error, like the ranked endpoints", async (_n, body) => {
+    const h = makeHarness({ ...allOk(), "/http/timeseries_groups/BOT_CLASS": () => respond(200, body) });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toContain("timeseries: empty result");
+    expect(upserts(h, "bot_share")).toHaveLength(2);
+  });
+
+  it("a series whose only usable day is the snapshot date is NOT an error (that bucket is superseded by #1)", async () => {
+    const h = makeHarness({
+      ...allOk(),
+      "/http/timeseries_groups/BOT_CLASS": () =>
+        respond(200, { success: true, result: { serie_0: { timestamps: ["2026-10-11T00:00:00Z"], bot: ["31"] } } }),
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(0);
+    expect(res.warning).toBeUndefined();
   });
 
   it("all optional endpoints failing still writes the summary and reports 4 errors", async () => {
@@ -540,7 +591,7 @@ describe("cf_radar_bots.ingest", () => {
   it("invalidates exactly the 7/30/90 bot_traffic cache keys after a successful write", async () => {
     const h = makeHarness(allOk());
     await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v1:30", "bot_traffic:v1:7", "bot_traffic:v1:90"]);
+    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v2:30", "bot_traffic:v2:7", "bot_traffic:v2:90"]);
     // Invalidation happens after the batch write.
     expect(h.batches).toHaveLength(1);
   });
