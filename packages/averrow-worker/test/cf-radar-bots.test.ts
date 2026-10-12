@@ -18,6 +18,7 @@ import {
   parseCategorySummary,
   botTrafficCacheKey,
   BOT_TRAFFIC_CACHE_DAYS,
+  resolveRadarToken,
 } from "../src/feeds/cf_radar_bots";
 import type { Env } from "../src/types";
 
@@ -317,18 +318,20 @@ interface Harness {
   allSql: string[];
   cacheDeletes: string[];
   fetchedPaths: string[];
+  authHeaders: Array<string | null>;
 }
 
 /** `routes` maps a path fragment to the response; first matching key wins. */
 function makeHarness(
   routes: Record<string, () => Response>,
-  opts: { token?: string | undefined; cacheDeleteThrows?: boolean } = { token: "tok" },
+  opts: { token?: string | undefined; radarToken?: string; cacheDeleteThrows?: boolean } = { token: "tok" },
 ): Harness {
-  const h: Harness = { env: {} as Env, batches: [], allSql: [], cacheDeletes: [], fetchedPaths: [] };
+  const h: Harness = { env: {} as Env, batches: [], allSql: [], cacheDeletes: [], fetchedPaths: [], authHeaders: [] };
 
-  globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
     h.fetchedPaths.push(u);
+    h.authHeaders.push(new Headers(init?.headers).get("Authorization"));
     for (const [frag, make] of Object.entries(routes)) {
       if (u.includes(frag)) return make();
     }
@@ -357,7 +360,7 @@ function makeHarness(
     },
   };
 
-  h.env = { CF_API_TOKEN: opts.token, DB: db, CACHE: cache } as unknown as Env;
+  h.env = { CF_API_TOKEN: opts.token, CF_RADAR_API_TOKEN: opts.radarToken, DB: db, CACHE: cache } as unknown as Env;
   return h;
 }
 
@@ -376,6 +379,17 @@ const upserts = (h: Harness, metric: string) =>
   stmts(h).filter((s) => /INSERT INTO bot_traffic_snapshots/.test(s.sql) && s.args[1] === metric);
 const clears = (h: Harness) => stmts(h).filter((s) => /^DELETE FROM bot_traffic_snapshots/.test(s.sql));
 
+describe("resolveRadarToken", () => {
+  it("prefers CF_RADAR_API_TOKEN, falls back to CF_API_TOKEN", () => {
+    expect(resolveRadarToken({ CF_RADAR_API_TOKEN: "r", CF_API_TOKEN: "s" })).toEqual({ token: "r", tokenName: "CF_RADAR_API_TOKEN" });
+    expect(resolveRadarToken({ CF_API_TOKEN: "s" })).toEqual({ token: "s", tokenName: "CF_API_TOKEN" });
+    expect(resolveRadarToken({ CF_RADAR_API_TOKEN: "", CF_API_TOKEN: "s" })).toEqual({ token: "s", tokenName: "CF_API_TOKEN" });
+    expect(resolveRadarToken({})).toEqual({ token: undefined, tokenName: "CF_API_TOKEN" });
+    expect(resolveRadarToken({ CF_RADAR_API_TOKEN: "  \n", CF_API_TOKEN: "s" })).toEqual({ token: "s", tokenName: "CF_API_TOKEN" });
+    expect(resolveRadarToken({ CF_RADAR_API_TOKEN: " r\n" })).toEqual({ token: "r", tokenName: "CF_RADAR_API_TOKEN" });
+  });
+});
+
 describe("cf_radar_bots.ingest", () => {
   const origFetch = globalThis.fetch;
   beforeEach(() => {
@@ -386,11 +400,36 @@ describe("cf_radar_bots.ingest", () => {
     vi.restoreAllMocks();
   });
 
-  it("throws when CF_API_TOKEN is missing and makes no request or write", async () => {
+  it("throws when no Radar token is configured and makes no request or write", async () => {
     const h = makeHarness(allOk(), { token: undefined });
-    await expect(cf_radar_bots.ingest(ctxOf(h.env))).rejects.toThrow(/CF_API_TOKEN is not configured/);
+    await expect(cf_radar_bots.ingest(ctxOf(h.env))).rejects.toThrow(
+      /neither CF_RADAR_API_TOKEN nor CF_API_TOKEN is configured/,
+    );
     expect(h.fetchedPaths).toEqual([]);
     expect(h.batches).toEqual([]);
+  });
+
+  it("prefers the dedicated CF_RADAR_API_TOKEN over CF_API_TOKEN", async () => {
+    const h = makeHarness(allOk(), { token: "shared", radarToken: "radar-only" });
+    await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(h.authHeaders).toHaveLength(5);
+    expect(new Set(h.authHeaders)).toEqual(new Set(["Bearer radar-only"]));
+  });
+
+  it("uses CF_RADAR_API_TOKEN alone when CF_API_TOKEN is unset", async () => {
+    const h = makeHarness(allOk(), { token: undefined, radarToken: "radar-only" });
+    await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(new Set(h.authHeaders)).toEqual(new Set(["Bearer radar-only"]));
+  });
+
+  it("names the dedicated token in the auth error when it is the one in use", async () => {
+    const h = makeHarness(
+      { ...allOk(), "/http/summary/BOT_CLASS": () => respond(403, "denied") },
+      { token: "shared", radarToken: "radar-only" },
+    );
+    await expect(cf_radar_bots.ingest(ctxOf(h.env))).rejects.toThrow(
+      /CF_RADAR_API_TOKEN lacks Radar Read permission \(HTTP 403\)/,
+    );
   });
 
   it.each([401, 403])("HTTP %i on the summary throws the Radar Read message", async (status) => {

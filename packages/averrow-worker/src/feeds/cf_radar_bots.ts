@@ -1,4 +1,5 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
+import type { Env } from "../types";
 
 /**
  * Cloudflare Radar — Internet bot traffic (feed key `cf_radar_bots`).
@@ -13,7 +14,8 @@ import type { FeedModule, FeedContext, FeedResult } from "./types";
  *   5. /radar/bots/summary/BOT_CATEGORY         → bot_category              optional
  *
  * Failure contract:
- *   - Missing CF_API_TOKEN → throw, so runFeed records a failed pull
+ *   - Token: CF_RADAR_API_TOKEN (dedicated, read-only) if set, else the
+ *     shared CF_API_TOKEN. Neither set → throw, so runFeed records a failed pull
  *     (never a quiet success).
  *   - #1 failing for any reason (incl. HTTP 401/403, which carries the
  *     "lacks Radar Read permission" message) → throw.
@@ -249,20 +251,36 @@ export function parseCategorySummary(payload: unknown): RankedDim[] {
 
 // ─── HTTP ────────────────────────────────────────────────────────
 
+export type RadarTokenName = "CF_RADAR_API_TOKEN" | "CF_API_TOKEN";
+
+/**
+ * Prefer the dedicated read-only Radar token; fall back to the shared
+ * worker-wide CF_API_TOKEN so existing deployments keep working.
+ */
+export function resolveRadarToken(
+  env: Pick<Env, "CF_RADAR_API_TOKEN" | "CF_API_TOKEN">,
+): { token: string | undefined; tokenName: RadarTokenName } {
+  // Trim: a whitespace-only secret (easy to paste via `wrangler secret put`)
+  // must not shadow a working shared token.
+  const radar = env.CF_RADAR_API_TOKEN?.trim();
+  if (radar) return { token: radar, tokenName: "CF_RADAR_API_TOKEN" };
+  return { token: env.CF_API_TOKEN?.trim() || undefined, tokenName: "CF_API_TOKEN" };
+}
+
 /** 401/403 from Radar. Fatal only on the required summary endpoint (#1). */
 export class RadarAuthError extends Error {
-  constructor(status: number) {
-    super(`CF Radar: CF_API_TOKEN lacks Radar Read permission (HTTP ${status})`);
+  constructor(status: number, tokenName: RadarTokenName) {
+    super(`CF Radar: ${tokenName} lacks Radar Read permission (HTTP ${status})`);
     this.name = "RadarAuthError";
   }
 }
 
-async function radarGet(token: string, path: string): Promise<unknown> {
+async function radarGet(token: string, tokenName: RadarTokenName, path: string): Promise<unknown> {
   const res = await fetch(`${RADAR_BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
-  if (res.status === 401 || res.status === 403) throw new RadarAuthError(res.status);
+  if (res.status === 401 || res.status === 403) throw new RadarAuthError(res.status, tokenName);
   const raw = await res.text();
   if (!res.ok) {
     throw new Error(`CF Radar ${path.split("?")[0]}: HTTP ${res.status} — ${raw.slice(0, 200)}`);
@@ -296,17 +314,19 @@ function utcToday(): string {
 
 export const cf_radar_bots: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    const token = ctx.env.CF_API_TOKEN;
+    const { token, tokenName } = resolveRadarToken(ctx.env);
     if (!token) {
-      throw new Error("CF Radar: CF_API_TOKEN is not configured (requires Radar Read permission)");
+      throw new Error(
+        "CF Radar: neither CF_RADAR_API_TOKEN nor CF_API_TOKEN is configured (requires Radar Read permission)",
+      );
     }
 
     const [summaryR, seriesR, locationsR, asesR, categoriesR] = await Promise.allSettled([
-      radarGet(token, PATHS.summary),
-      radarGet(token, PATHS.series),
-      radarGet(token, PATHS.locations),
-      radarGet(token, PATHS.ases),
-      radarGet(token, PATHS.categories),
+      radarGet(token, tokenName, PATHS.summary),
+      radarGet(token, tokenName, PATHS.series),
+      radarGet(token, tokenName, PATHS.locations),
+      radarGet(token, tokenName, PATHS.ases),
+      radarGet(token, tokenName, PATHS.categories),
     ]);
 
     // #1 is required. A 401/403 here surfaces as-is (the token message);

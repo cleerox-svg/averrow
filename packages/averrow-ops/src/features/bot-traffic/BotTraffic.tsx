@@ -140,7 +140,7 @@ function EmptyState({ err }: { err: string | null }) {
           <p className="text-sm break-words" style={{ color: 'var(--text-primary)' }}>{err}</p>
           {isPermissionError(err) ? (
             <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>
-              The Cloudflare API token (CF_API_TOKEN) likely needs the Radar Read permission.
+              The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.
             </p>
           ) : null}
         </Card>
