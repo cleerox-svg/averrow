@@ -396,19 +396,30 @@ export function isIdpVendorOfficialHost(raw: string): boolean {
  * brand instead of fragmenting across Microsoft / Outlook / OneDrive / Teams.
  */
 const IDP_VENDOR_FAMILY: Readonly<Partial<Record<IdpProvider, ReadonlySet<string>>>> = {
+  // Exact-match only unless also in FUZZY_FAMILY_WORDS. Dictionary-like
+  // names (edge, loop, stream, forms) are safe here: the set is consulted
+  // ONLY for a leftover beside this vendor's own lure, where the vendor is
+  // the better attribution than an unrelated "Stream" / "Loop" brand.
   entra: new Set([
-    'microsoft', 'microsoftonline', 'onmicrosoft', 'msft', 'office', 'office365', 'o365', 'm365',
-    'microsoft365', 'outlook', 'onedrive', 'teams', 'sharepoint', 'azure', 'azuread', 'entra',
-    'live', 'hotmail', 'msn', 'windows', 'exchange', 'owa', 'skype', 'onenote', 'excel',
-    'powerpoint', 'yammer', 'intune', 'defender', 'dynamics',
+    'microsoft', 'microsoftonline', 'onmicrosoft', 'msft', 'msonline', 'msaccount', 'office',
+    'office365', 'officehome', 'o365', 'm365', 'ms365', 'msoffice', 'microsoft365', 'outlook',
+    'outlook365', 'onedrive', 'teams', 'msteams', 'microsoftteams', 'sharepoint', 'azure', 'azuread',
+    'aad', 'entra', 'entraid', 'live', 'windowslive', 'hotmail', 'msn', 'windows', 'exchange',
+    'owa', 'skype', 'onenote', 'excel', 'powerpoint', 'visio', 'yammer', 'intune', 'defender',
+    'dynamics', 'copilot', 'bing', 'edge', 'xbox', 'clipchamp', 'viva', 'loop', 'planner',
+    'powerbi', 'bookings', 'forms', 'sway', 'whiteboard', 'stream', 'authenticator',
   ]),
   google: new Set(['google', 'gmail', 'gsuite', 'googleworkspace', 'workspace', 'gdrive',
-    'googledrive', 'googledocs']),
-  okta: new Set(['okta']),
-  onelogin: new Set(['onelogin']),
-  auth0: new Set(['auth0']),
-  duo: new Set(['duo', 'duosecurity', 'duomobile']),
-  ping: new Set(['ping', 'pingone', 'pingid', 'pingfederate', 'pingidentity', 'forgerock']),
+    'googledrive', 'googledocs', 'drive', 'docs', 'sheets', 'slides', 'meet', 'googlemeet',
+    'calendar', 'gcal', 'youtube', 'gcp', 'googlecloud', 'chrome', 'android', 'gemini',
+    'googleplay', 'accounts']),
+  // Okta owns Auth0 (Customer Identity Cloud); One Identity owns OneLogin.
+  okta: new Set(['okta', 'oktaverify', 'oktapreview', 'auth0', 'workforce', 'customeridentity']),
+  onelogin: new Set(['onelogin', 'oneidentity']),
+  auth0: new Set(['auth0', 'okta']),
+  duo: new Set(['duo', 'duosecurity', 'duomobile', 'duopush']),
+  ping: new Set(['ping', 'pingone', 'pingid', 'pingfederate', 'pingfed', 'pingidentity',
+    'forgerock', 'pingaccess']),
 };
 
 // Product names typo-squatted often enough to tolerate one edit (ondrive,
@@ -416,7 +427,7 @@ const IDP_VENDOR_FAMILY: Readonly<Partial<Record<IdpProvider, ReadonlySet<string
 // dynamics) are exact-only: hammer, window, dynamic are other words.
 const FUZZY_FAMILY_WORDS = new Set<string>([
   'outlook', 'onedrive', 'sharepoint', 'office365', 'microsoft', 'microsoftonline',
-  'microsoft365', 'onmicrosoft', 'googleworkspace',
+  'microsoft365', 'onmicrosoft', 'googleworkspace', 'copilot', 'clipchamp', 'whiteboard',
 ]);
 
 /** True when `token` names one of `provider`'s own products — exact, or a

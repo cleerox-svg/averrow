@@ -139,6 +139,11 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   // name under these in minutes.
   "ddns.net", "hopto.org", "zapto.org", "no-ip.com", "no-ip.org", "no-ip.biz",
   "mooo.com", "dynu.net", "freedns.afraid.org", "ngrok.app", "localtunnel.me",
+  // Free site builders: the registrable domain belongs to the builder, the
+  // subdomain to any sign-up (login-microsoftonnline.jimdofree.com).
+  "jimdofree.com", "jimdo.com", "jimdosite.com", "square.site", "sites.google.com",
+  "mystrikingly.com", "yolasite.com", "webnode.page", "site123.me", "tilda.ws",
+  "wixstudio.com", "editorx.io", "framer.website",
   // Identity-provider tenant hosts: acme-sso.okta.com is an attacker's
   // tenant, never an "official subdomain" of Okta / OneLogin / Auth0
   // (docs/IDP_IMPERSONATION_PLAN_2026-10.md). Same table the classifier uses.
