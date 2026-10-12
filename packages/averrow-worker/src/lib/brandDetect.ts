@@ -181,6 +181,13 @@ interface HostParts {
    * ("withpersona" ↔ withpersona.com).
    */
   idpLure?: boolean;
+  /**
+   * idp_lookalike only: the full-host parts (plus bare lure names) to match
+   * when the remainder matches NO brand — a leftover that names no known
+   * brand (www2, a8f3kd, a random tenant id) is not evidence of a different
+   * target, so the IdP vendor itself is credited.
+   */
+  vendorFallback?: HostParts;
 }
 
 const HOSTNAME_RE = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/;
@@ -402,10 +409,14 @@ function isSubstantiveToken(t: string): boolean {
  * Lure tokens (strong lure whole, or glued to filler: oktalogin, linksso)
  * are dropped; a lure glued to a non-filler word (acmesso) is kept whole,
  * so a long brand still substring-matches inside it. Returns null when
- * the host is not an idp_lookalike, nothing was stripped, or nothing
- * substantive remains — the vendor-only case. A remainder that is
- * substantive but matches no brand leaves the threat UNATTRIBUTED (the
- * targeted brand is unknown), never credited to the IdP vendor.
+ * the host is not an idp_lookalike or nothing was stripped.
+ *
+ * A leftover token is brand evidence only if it actually MATCHES a brand
+ * (token / canonical owner label / substring / fuzzy). The remainder parts
+ * carry `vendorFallback` = the full-host parts, which the matcher uses when
+ * the remainder matches nothing: www2.okta-login.com, a8f3kd.okta-signin.com
+ * → Okta. When nothing substantive remains at all, the vendor parts are
+ * returned directly (cheap path, same outcome).
  */
 function idpLureParts(host: string, labels: string[]): HostParts | null {
   if (labels.length === 0) return null;
@@ -427,15 +438,14 @@ function idpLureParts(host: string, labels: string[]): HostParts | null {
     if (rest.length > 0) kept.push(rest.join("-"));
   }
   if (!stripped) return null;
+  // Vendor parts (okta-login-secure.com, oktalogin.com): the IdP IS the
+  // impersonated brand. Full-host parts plus the bare lure names, so a
+  // glued lure ("oktalogin") still token-matches the vendor's brand.
+  const fullTokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
+  const vendor = buildParts(host, labels, [...fullTokens, ...lures]);
   const tokens = kept.flatMap((l) => l.split("-"));
-  if (!tokens.some(isSubstantiveToken)) {
-    // Vendor-only (okta-login-secure.com, oktalogin.com): the IdP IS the
-    // impersonated brand. Full-host parts plus the bare lure names, so a
-    // glued lure ("oktalogin") still token-matches the vendor's brand.
-    const fullTokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
-    return buildParts(host, labels, [...fullTokens, ...lures]);
-  }
-  return { ...buildParts(host, kept, tokens), idpLure: true };
+  if (!tokens.some(isSubstantiveToken)) return vendor;
+  return { ...buildParts(host, kept, tokens), idpLure: true, vendorFallback: vendor };
 }
 
 interface PreparedBrand {
@@ -481,7 +491,9 @@ function ownerLabelOf(canonical: string): string | null {
   const owner = all[all.length - 1 - suffixLabelCount(canonical)];
   if (!owner) return null;
   const flat = owner.replace(/[-_]/g, "");
-  return flat.length >= 5 && !isGenericBrand(flat) ? flat : null;
+  // Filler owner labels (remote.com, identity.com) are never brand evidence
+  // beside an IdP lure: okta-acme-remote.com is Acme.
+  return flat.length >= 5 && !isGenericBrand(flat) && !IDP_LURE_FILLER.has(flat) ? flat : null;
 }
 
 // Built once per brands array — callers load the catalog once per run and
@@ -574,6 +586,12 @@ function fuzzyMatch(candidate: string, norm: string): boolean {
  * Decide whether a single (host, brand) pair is a valid match under the
  * current rules, and by which method. Pure — used for the matcher itself
  * and to re-validate existing threat→brand links.
+ *
+ * IdP-lure hosts: without the catalog this cannot tell whether the
+ * remainder names SOME other brand, so the vendor fallback is accepted
+ * (permissive validation — an existing Okta link on
+ * withpersona.okta-linksso.com is kept here). Catalog-aware re-attribution
+ * goes through fuzzyMatchBrandDetailed (handlers/admin/idpReattribution.ts).
  */
 export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod | null {
   const parts = hostParts(raw);
@@ -581,6 +599,12 @@ export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod
   const p = prepareOne(brand);
   if (p.canonical && parts.host === p.canonical) return "canonical";
   if (!p.matchable) return null;
+  const m = matchPreparedToParts(parts, p);
+  if (m || !parts.vendorFallback) return m;
+  return matchPreparedToParts(parts.vendorFallback, p);
+}
+
+function matchPreparedToParts(parts: HostParts, p: PreparedBrand): BrandMatchMethod | null {
   if (parts.idpLure) {
     const owner = ownerLabelOf(p.canonical);
     if (owner && parts.candidates.includes(owner)) return "token";
@@ -620,32 +644,40 @@ export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[])
     const canonicalId = idx.canonical.get(parts.host);
     if (canonicalId) return { brandId: canonicalId, method: "canonical" };
 
-    // IdP-lure remainder: a label equal to a brand's canonical owner label
-    // ("withpersona") is the strongest evidence left. Reported as "token"
-    // (a whole-label match; brand_match_method has no finer value).
-    if (parts.idpLure) {
-      for (const c of parts.candidates) {
-        const id = idx.ownerLabel.get(c);
-        if (id) return { brandId: id, method: "token" };
-      }
-    }
+    const hit = matchPartsInIndex(parts, idx)
+      ?? (parts.vendorFallback ? matchPartsInIndex(parts.vendorFallback, idx) : null);
+    if (hit) return hit;
+  }
+  return null;
+}
 
+/** Strategies 2–4 (plus the IdP-remainder owner-label pass) over the catalog. */
+function matchPartsInIndex(parts: HostParts, idx: BrandIndex): BrandMatch | null {
+  // IdP-lure remainder: a label equal to a brand's canonical owner label
+  // ("withpersona") is the strongest evidence left. Reported as "token"
+  // (a whole-label match; brand_match_method has no finer value).
+  if (parts.idpLure) {
     for (const c of parts.candidates) {
-      const id = idx.token.get(c);
+      const id = idx.ownerLabel.get(c);
       if (id) return { brandId: id, method: "token" };
     }
+  }
 
-    const stripped = parts.flat.map(stripObfuscation);
-    for (const b of idx.long) {
-      if (parts.flat.some((l, i) => l.includes(b.norm) || (stripped[i] ?? "").includes(b.norm))) {
-        return { brandId: b.id, method: "substring" };
-      }
+  for (const c of parts.candidates) {
+    const id = idx.token.get(c);
+    if (id) return { brandId: id, method: "token" };
+  }
+
+  const stripped = parts.flat.map(stripObfuscation);
+  for (const b of idx.long) {
+    if (parts.flat.some((l, i) => l.includes(b.norm) || (stripped[i] ?? "").includes(b.norm))) {
+      return { brandId: b.id, method: "substring" };
     }
+  }
 
-    for (const c of parts.candidates) {
-      for (const b of idx.longByFirst.get(c[0] ?? "") ?? []) {
-        if (fuzzyMatch(c, b.norm)) return { brandId: b.id, method: "levenshtein" };
-      }
+  for (const c of parts.candidates) {
+    for (const b of idx.longByFirst.get(c[0] ?? "") ?? []) {
+      if (fuzzyMatch(c, b.norm)) return { brandId: b.id, method: "levenshtein" };
     }
   }
   return null;

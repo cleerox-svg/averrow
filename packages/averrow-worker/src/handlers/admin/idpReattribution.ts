@@ -32,7 +32,6 @@ import type { Env } from "../../types";
 import {
   fuzzyMatchBrandDetailed,
   loadBrands,
-  matchBrandToHost,
   normalizeBrand,
   type BrandMatchMethod,
   type BrandRow,
@@ -61,6 +60,8 @@ export interface ReattributionRow {
   brand_name: string;
   brand_canonical: string | null;
   brand_tier: string | null;
+  /** 1 when the threat already has a live brand_link_cleanup_log row. */
+  logged?: number;
 }
 
 export type ReattributionAction = "keep" | "relink" | "clear";
@@ -78,20 +79,16 @@ function haystacksOf(r: ReattributionRow): string[] {
   );
 }
 
-/** Pure per-row decision. `rematch` runs the full catalog matcher. */
+/**
+ * Pure per-row decision. `rematch` runs the full catalog matcher — it must
+ * be catalog-aware: on an IdP-lure host the vendor is credited only when
+ * the remainder matches NO brand (matchBrandToHost alone cannot know that).
+ */
 export function decideReattribution(
   row: ReattributionRow,
   rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod } | null,
 ): ReattributionDecision {
   const haystacks = haystacksOf(row);
-  const current: BrandRow = {
-    id: row.target_brand_id, name: row.brand_name,
-    canonical_domain: row.brand_canonical ?? "", tier: row.brand_tier,
-  };
-  for (const h of haystacks) {
-    const m = matchBrandToHost(h, current);
-    if (m) return { action: "keep", newBrandId: null, method: m, keptBecause: "still_matches" };
-  }
   if (row.source_feed && PROTECTED_FEEDS.has(row.source_feed)) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "protected_feed" };
   }
@@ -100,7 +97,10 @@ export function decideReattribution(
     return { action: "keep", newBrandId: null, method: null, keptBecause: "not_lure_credit" };
   }
   const hit = rematch(haystacks);
-  if (hit && hit.brandId !== row.target_brand_id) {
+  if (hit && hit.brandId === row.target_brand_id) {
+    return { action: "keep", newBrandId: null, method: hit.method, keptBecause: "still_matches" };
+  }
+  if (hit) {
     return { action: "relink", newBrandId: hit.brandId, method: hit.method };
   }
   return { action: "clear", newBrandId: null, method: null };
@@ -119,6 +119,10 @@ export interface ReattributionResult {
   /** dry_run: up to 25 sample decisions for operator review. */
   samples: Array<{ id: string; host: string | null; from: string; to: string | null; action: ReattributionAction }>;
   changed: number;
+  /** Would change, but the threat already has a live brand_link_cleanup_log
+   *  row (an earlier cleanup/run) — left untouched so every applied change
+   *  stays undoable. */
+  skipped_logged: number;
   next_cursor: number;
   done: boolean;
 }
@@ -135,7 +139,9 @@ export async function runIdpReattribution(
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value, t.source_feed,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier,
+            EXISTS (SELECT 1 FROM brand_link_cleanup_log l
+                     WHERE l.threat_id = t.id AND l.undone_at IS NULL) AS logged
        FROM threats t
        JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ?
@@ -153,7 +159,7 @@ export async function runIdpReattribution(
     mode: opts.apply ? "apply" : "dry_run", run_id: opts.runId,
     scanned: list.length, keep: 0, relink: 0, clear: 0,
     kept_by_reason: {}, removed_by_brand: {}, added_by_brand: {}, samples: [],
-    changed: 0, next_cursor: list.at(-1)?.rid ?? opts.cursor, done: list.length < opts.limit,
+    changed: 0, skipped_logged: 0, next_cursor: list.at(-1)?.rid ?? opts.cursor, done: list.length < opts.limit,
   };
 
   let catalog: BrandRow[] | null = null;
@@ -164,6 +170,10 @@ export async function runIdpReattribution(
       catalog ??= await loadBrands(env.DB);
       const cat = catalog;
       d = decideReattribution(row, (h) => fuzzyMatchBrandDetailed(h, cat));
+    }
+    if (d.action !== "keep" && row.logged) {
+      result.skipped_logged++;
+      continue;
     }
     if (d.action === "keep") {
       result.keep++;
@@ -204,13 +214,22 @@ export async function runIdpReattribution(
         row.id, row.target_brand_id, row.brand_match_method, d.newBrandId, d.method, d.action,
         opts.runId, row.id, row.target_brand_id,
       ));
+      // Applies only if the log row just written is OURS: a concurrent or
+      // earlier live entry (other run/reason) is never overwritten by the
+      // INSERT above, so this UPDATE then matches 0 rows — no unlogged change.
       stmts.push(env.DB.prepare(
-        "UPDATE threats SET target_brand_id = ?, brand_match_method = ? WHERE id = ? AND target_brand_id = ?",
-      ).bind(d.newBrandId, d.method, row.id, row.target_brand_id));
+        `UPDATE threats SET target_brand_id = ?, brand_match_method = ?
+          WHERE id = ? AND target_brand_id = ?
+            AND EXISTS (SELECT 1 FROM brand_link_cleanup_log
+                         WHERE threat_id = ? AND undone_at IS NULL AND run_id = ?
+                           AND reason = 'idp_lure_credit' AND old_brand_id = ?)`,
+      ).bind(d.newBrandId, d.method, row.id, row.target_brand_id, row.id, opts.runId, row.target_brand_id));
     }
     const res = await env.DB.batch(stmts);
     for (let j = 1; j < res.length; j += 2) result.changed += res[j]?.meta?.changes ?? 0;
   }
+  // Raced with a concurrent log writer between scan and apply.
+  result.skipped_logged += changes.length - result.changed;
 
   const { audit } = await import("../../lib/audit");
   await audit(env, {
@@ -221,6 +240,7 @@ export async function runIdpReattribution(
     details: {
       actor: "internal", cursor: opts.cursor, next_cursor: result.next_cursor,
       scanned: result.scanned, relink: result.relink, clear: result.clear, changed: result.changed,
+      skipped_logged: result.skipped_logged,
     },
   });
   return result;

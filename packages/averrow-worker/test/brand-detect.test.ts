@@ -293,9 +293,18 @@ describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", ()
     expect(brandOf("0kta-verify.com")).toBe("b_okta");
   });
 
-  it("substantive but unknown remainder → unattributed, never the IdP vendor", () => {
-    expect(brandOf("contosoltd.okta-linksso.com")).toBeNull();
-    expect(brandOf("okta-contosoltd.com")).toBeNull();
+  it("a leftover that matches no brand does not block the vendor fallback", () => {
+    for (const h of [
+      "www2.okta-login.com", "a8f3kd.okta-signin.com", "okta-auth-7hj2k.duckdns.org",
+      "cdn.okta-sso.com", "mail-okta-verify.com", "contosoltd.okta-linksso.com", "okta-contosoltd.com",
+    ]) expect(brandOf(h), h).toBe("b_okta");
+    // …but a leftover that DOES match a brand still wins.
+    expect(brandOf("withpersona.okta-linksso.com")).toBe("b_persona");
+  });
+
+  it("filler owner labels are never brand evidence beside a lure", () => {
+    const withRemote: BrandRow[] = [...IDP_BRANDS, m("Remote Inc", "remote.com", "b_remote")];
+    expect(fuzzyMatchBrandDetailed(["okta-acme-remote.com"], withRemote)?.brandId).toBe("b_acme");
   });
 
   it.each([
@@ -305,10 +314,14 @@ describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", ()
     expect(brandOf(host)).toBe("b_okta");
   });
 
-  it("matchBrandToHost agrees (drives link re-validation)", () => {
+  it("matchBrandToHost (catalog-free) validates the remainder and the vendor fallback", () => {
     const okta = IDP_BRANDS[0]!;
     const persona = IDP_BRANDS[2]!;
-    expect(matchBrandToHost("withpersona.okta-linksso.com", okta)).toBeNull();
+    // Permissive by design: without the catalog it cannot know the leftover
+    // names Persona, so the vendor fallback validates. Catalog-aware
+    // re-attribution uses fuzzyMatchBrandDetailed (idp-reattribution).
+    expect(matchBrandToHost("withpersona.okta-linksso.com", okta)).toBe("token");
+    expect(matchBrandToHost("okta-acme.com", IDP_BRANDS[3]!)).toBe("token");
     expect(matchBrandToHost("withpersona.okta-linksso.com", persona)).toBe("token"); // canonical owner label
     expect(matchBrandToHost("okta-login-secure.com", okta)).toBe("token");
     expect(matchBrandToHost("personaid.okta-verify.com", IDP_BRANDS[4]!)).toBe("token");
