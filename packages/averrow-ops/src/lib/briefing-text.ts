@@ -74,7 +74,8 @@ function formatRecord(rec: Record<string, unknown>): string {
   const labelKey = LABEL_KEYS.find((k) => typeof rec[k] === 'string' && rec[k] !== '');
   const label = labelKey ? String(rec[labelKey]) : '';
   if (typeof rec.previous_grade === 'string' && typeof rec.current_grade === 'string') {
-    return `${label}: ${rec.previous_grade} → ${rec.current_grade}`;
+    const change = `${rec.previous_grade} → ${rec.current_grade}`;
+    return label ? `${label}: ${change}` : change;
   }
   const rest = Object.entries(rec)
     .filter(([k, v]) => k !== labelKey && v !== null && v !== undefined && typeof v !== 'object')
@@ -97,9 +98,10 @@ export function formatSignalValue(v: unknown): string {
       .map((item) =>
         item !== null && typeof item === 'object' && !Array.isArray(item)
           ? formatRecord(item as Record<string, unknown>)
-          : formatScalar(item) || JSON.stringify(item),
+          : formatScalar(item) || (item === '' ? '' : JSON.stringify(item)),
       )
-      .join(', ');
+      .filter(Boolean)
+      .join(', ') || '—';
   }
   if (v !== null && typeof v === 'object') return formatRecord(v as Record<string, unknown>);
   return formatScalar(v) || '—';

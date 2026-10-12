@@ -77,5 +77,8 @@ describe('formatSignalValue', () => {
     expect(formatSignalValue([])).toBe('—');
     expect(formatSignalValue(null)).toBe('—');
     expect(formatSignalValue({ total: 3, new_24h: 1 })).toBe('3, 1');
+    expect(formatSignalValue([{ previous_grade: 'D', current_grade: 'F' }])).toBe('D → F');
+    expect(formatSignalValue(['', 'a'])).toBe('a');
+    expect(formatSignalValue([''])).toBe('—');
   });
 });
