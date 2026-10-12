@@ -305,6 +305,49 @@ function strongWholeToken(tok: string): { lure: string; provider: IdpProvider } 
   return null;
 }
 
+/**
+ * Split one host token (a hyphen/underscore segment) into a STRONG IdP lure
+ * and its remainder, or null when the token carries no strong lure:
+ *   okta → {lure: okta, rest: ""}, 0kta → {okta, ""}, oktalogin → {okta, "login"},
+ *   linksso → {sso, "link"}, entraid → {entra, "id"}, entra → null
+ *   (compound-only lure — bbva-entra.com is not an IdP lure).
+ * Used by brand attribution (lib/brandDetect.ts) to keep the abused IdP's
+ * name out of the brand match on an idp_lookalike host; the caller decides
+ * whether `rest` is filler (drop the token) or brand evidence (keep it).
+ * Same lure vocabulary as the classifier — never duplicated elsewhere.
+ */
+export function splitIdpLureToken(token: string): { lure: string; provider: IdpProvider; rest: string } | null {
+  const t = token.toLowerCase();
+  if (!t) return null;
+  const whole = strongWholeToken(t);
+  if (whole) {
+    // Canonical lure name ('0kta' → 'okta'), so the vendor-only path can
+    // token-match the vendor's brand; auth0 keeps its digit.
+    const d = deleet(whole.lure);
+    const lure = whole.lure !== 'auth0' && d !== whole.lure && STRONG_LURES[d] ? d : whole.lure;
+    return { lure, provider: whole.provider, rest: '' };
+  }
+  for (const [lure, provider] of Object.entries(STRONG_LURES)) {
+    if (t === lure || !t.includes(lure)) continue;
+    const rest = t.startsWith(lure) ? t.slice(lure.length) : t.endsWith(lure) ? t.slice(0, -lure.length) : null;
+    if (rest === null) continue;
+    if (COMPOUND_ONLY_LURES.has(lure) && !COMPOUND_ONLY_WORDS.has(rest)) continue;
+    return { lure, provider, rest };
+  }
+  return null;
+}
+
+/**
+ * Canonical domains of the IdP vendors' OWN brands — the brands an
+ * idp_lookalike/idp_tenant threat was wrongly credited to before the
+ * attribution fix (lib/brandDetect.ts idpLureParts). Scope list for the
+ * one-off re-attribution backfill (handlers/admin/idpReattribution.ts).
+ */
+export const IDP_VENDOR_CANONICAL_DOMAINS: readonly string[] = [
+  'okta.com', 'onelogin.com', 'auth0.com', 'microsoft.com', 'microsoftonline.com',
+  'duo.com', 'duosecurity.com', 'pingidentity.com', 'forgerock.com',
+];
+
 function normBrandTokens(tokens: string[] | undefined): string[] {
   if (!tokens) return [];
   const out = new Set<string>();

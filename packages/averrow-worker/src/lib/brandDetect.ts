@@ -19,7 +19,7 @@
  */
 
 import { registrableDomain } from "./domain-utils";
-import { IDP_TENANT_HOSTS, idpTenantLabel } from "./idp-impersonation";
+import { IDP_TENANT_HOSTS, classifyIdpImpersonation, idpTenantLabel, splitIdpLureToken } from "./idp-impersonation";
 import { tagThreat, brandTokensFrom, idpTagUpdateStmt, isIdpFamilyTag } from "./idp-tagging";
 import { enqueueAutoCaptures } from "./page-capture";
 
@@ -174,6 +174,13 @@ interface HostParts {
   tokens: string[];
   /** Unique flat labels + tokens — the candidates for exact and fuzzy matching. */
   candidates: string[];
+  /**
+   * Set when the host is an idp_lookalike and the IdP lure tokens were
+   * removed (idpLureParts) — the remaining labels name the TARGETED brand,
+   * and they may also match a brand's canonical-domain owner label
+   * ("withpersona" ↔ withpersona.com).
+   */
+  idpLure?: boolean;
 }
 
 const HOSTNAME_RE = /^[a-z0-9_-]+(\.[a-z0-9_-]+)+$/;
@@ -355,8 +362,80 @@ function hostParts(raw: string): HostParts | null {
   }
   const all = host.split(".").filter((l) => l.length > 0);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
+  const lure = idpLureParts(host, labels);
+  if (lure) return lure;
   const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
   return buildParts(host, labels, tokens);
+}
+
+/**
+ * Words that, glued to or beside an IdP lure, carry no brand evidence
+ * (okta-login-secure.com, oktaportal, linksso, my-sso). The existing
+ * filler + generic-brand lists, plus the classifier's auth glue words.
+ */
+const IDP_LURE_FILLER: ReadonlySet<string> = new Set([
+  ...OBFUSCATION_WORDS, ...GENERIC_BRAND_NAMES,
+  "my", "id", "mfa", "2fa", "otp", "connect", "verification", "session", "sessions",
+  "signon", "logins", "identity", "workforce", "employee", "employees", "staff", "corp",
+  "hr", "it", "vpn", "remote", "idp", "saml", "oauth", "token",
+]);
+
+/** A remaining token that could name a targeted brand — not filler, not a
+ *  number, and long enough that a leftover syllable ("gnu", "abc") does not
+ *  count. Mirrors the matcher's own 4-char matchable floor. */
+function isSubstantiveToken(t: string): boolean {
+  return t.length >= 4 && !/^\d+$/.test(t) && !IDP_LURE_FILLER.has(t);
+}
+
+/**
+ * Attribution for an IdP-lure lookalike (classifier vector idp_lookalike):
+ * the IdP name in the host is the LURE, not the target
+ * (docs/IDP_IMPERSONATION_PLAN_2026-10.md owner decision 4 — credit the
+ * targeted brand; the abused IdP is recorded in threats.impersonated_idp).
+ *
+ *   withpersona.okta-linksso.com → labels ["withpersona"]  → Persona
+ *   okta-acme.com                → labels ["acme"]         → Acme
+ *   okta-login-secure.com        → full host + "okta" (no brand evidence
+ *                                  besides the IdP) → the IdP vendor's own
+ *                                  brand: the vendor IS the target
+ *
+ * Lure tokens (strong lure whole, or glued to filler: oktalogin, linksso)
+ * are dropped; a lure glued to a non-filler word (acmesso) is kept whole,
+ * so a long brand still substring-matches inside it. Returns null when
+ * the host is not an idp_lookalike, nothing was stripped, or nothing
+ * substantive remains — the vendor-only case. A remainder that is
+ * substantive but matches no brand leaves the threat UNATTRIBUTED (the
+ * targeted brand is unknown), never credited to the IdP vendor.
+ */
+function idpLureParts(host: string, labels: string[]): HostParts | null {
+  if (labels.length === 0) return null;
+  if (classifyIdpImpersonation({ host })?.vector !== "idp_lookalike") return null;
+  let stripped = false;
+  const kept: string[] = [];
+  const lures: string[] = [];
+  for (const label of labels) {
+    const rest = label.split(/[-_]/).filter((t) => {
+      if (t.length === 0) return false;
+      const s = splitIdpLureToken(t);
+      if (s && (s.rest === "" || IDP_LURE_FILLER.has(s.rest))) {
+        stripped = true;
+        lures.push(s.lure);
+        return false;
+      }
+      return true;
+    });
+    if (rest.length > 0) kept.push(rest.join("-"));
+  }
+  if (!stripped) return null;
+  const tokens = kept.flatMap((l) => l.split("-"));
+  if (!tokens.some(isSubstantiveToken)) {
+    // Vendor-only (okta-login-secure.com, oktalogin.com): the IdP IS the
+    // impersonated brand. Full-host parts plus the bare lure names, so a
+    // glued lure ("oktalogin") still token-matches the vendor's brand.
+    const fullTokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
+    return buildParts(host, labels, [...fullTokens, ...lures]);
+  }
+  return { ...buildParts(host, kept, tokens), idpLure: true };
 }
 
 interface PreparedBrand {
@@ -381,10 +460,28 @@ function prepareOne(b: BrandRow): PreparedBrand {
 interface BrandIndex {
   canonical: Map<string, string>;
   token: Map<string, string>;
+  /**
+   * Canonical-domain owner label → brand ("withpersona" → Persona), for
+   * matchable brands only and labels that are themselves matchable. Used
+   * ONLY on idp_lookalike remainders (HostParts.idpLure).
+   */
+  ownerLabel: Map<string, string>;
   /** Matchable brands with names long enough for substring matching. */
   long: PreparedBrand[];
   /** Same, bucketed by first character for edit-distance matching. */
   longByFirst: Map<string, PreparedBrand[]>;
+}
+
+/** Owner label of a canonical domain when it is specific enough to be brand
+ *  evidence on its own: "withpersona.com" → "withpersona"; null for short or
+ *  generic labels ("one.com", "login.gov", "abc.xyz"). */
+function ownerLabelOf(canonical: string): string | null {
+  if (!canonical) return null;
+  const all = canonical.split(".").filter((l) => l.length > 0);
+  const owner = all[all.length - 1 - suffixLabelCount(canonical)];
+  if (!owner) return null;
+  const flat = owner.replace(/[-_]/g, "");
+  return flat.length >= 5 && !isGenericBrand(flat) ? flat : null;
 }
 
 // Built once per brands array — callers load the catalog once per run and
@@ -395,12 +492,14 @@ const indexCache = new WeakMap<BrandRow[], BrandIndex>();
 function indexBrands(brands: BrandRow[]): BrandIndex {
   const cached = indexCache.get(brands);
   if (cached) return cached;
-  const idx: BrandIndex = { canonical: new Map(), token: new Map(), long: [], longByFirst: new Map() };
+  const idx: BrandIndex = { canonical: new Map(), token: new Map(), ownerLabel: new Map(), long: [], longByFirst: new Map() };
   for (const b of brands) {
     const p = prepareOne(b);
     if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
     if (!p.matchable) continue;
     if (!idx.token.has(p.norm)) idx.token.set(p.norm, p.id);
+    const owner = ownerLabelOf(p.canonical);
+    if (owner && !idx.ownerLabel.has(owner)) idx.ownerLabel.set(owner, p.id);
     if (p.norm.length >= MIN_SUBSTRING_LEN) {
       idx.long.push(p);
       const first = p.norm[0] ?? "";
@@ -482,6 +581,10 @@ export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod
   const p = prepareOne(brand);
   if (p.canonical && parts.host === p.canonical) return "canonical";
   if (!p.matchable) return null;
+  if (parts.idpLure) {
+    const owner = ownerLabelOf(p.canonical);
+    if (owner && parts.candidates.includes(owner)) return "token";
+  }
   if (tokenMatch(parts, p.norm)) return "token";
   if (substringMatch(parts, p.norm)) return "substring";
   if (parts.candidates.some((c) => fuzzyMatch(c, p.norm))) return "levenshtein";
@@ -516,6 +619,16 @@ export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[])
 
     const canonicalId = idx.canonical.get(parts.host);
     if (canonicalId) return { brandId: canonicalId, method: "canonical" };
+
+    // IdP-lure remainder: a label equal to a brand's canonical owner label
+    // ("withpersona") is the strongest evidence left. Reported as "token"
+    // (a whole-label match; brand_match_method has no finer value).
+    if (parts.idpLure) {
+      for (const c of parts.candidates) {
+        const id = idx.ownerLabel.get(c);
+        if (id) return { brandId: id, method: "token" };
+      }
+    }
 
     for (const c of parts.candidates) {
       const id = idx.token.get(c);
