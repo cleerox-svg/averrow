@@ -12,7 +12,7 @@
 export type WorkspaceTabKey =
   | 'alerts' | 'threats' | 'incidents' | 'takedowns'
   | 'brands' | 'actors' | 'campaigns' | 'providers'
-  | 'apps' | 'dark-web' | 'trademarks' | 'trends'
+  | 'apps' | 'dark-web' | 'trademarks' | 'trends' | 'bot-traffic'
   | 'agents' | 'feeds' | 'takedown-integrations' | 'attribution'
   | 'audit' | 'users' | 'pricing' | 'notifications';
 
@@ -36,6 +36,7 @@ export const WORKSPACE_TABS: Readonly<Record<WorkspaceTabKey, WorkspaceTarget>> 
   'dark-web': { path: '/coverage', tab: 'dark-web' },
   trademarks: { path: '/coverage', tab: 'trademarks' },
   trends: { path: '/coverage', tab: 'trends' },
+  'bot-traffic': { path: '/coverage', tab: 'bot-traffic' },
   agents: { path: '/admin/operations', tab: 'agents' },
   feeds: { path: '/admin/operations', tab: 'feeds' },
   'takedown-integrations': { path: '/admin/operations', tab: 'takedown-integrations' },
