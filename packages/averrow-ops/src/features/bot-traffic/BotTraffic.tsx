@@ -11,6 +11,7 @@ import {
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { cn } from '@/lib/cn';
+import { isAboveAverage, formatBotShare, resolveGlobalAvg } from '@/features/observatory-v3/lib/bot-density';
 
 const DENSITY_TABLE_ROWS = 20;
 
@@ -123,11 +124,6 @@ export function absoluteBarWidth(pct: number): number {
   return Math.min(100, Math.max(2, pct));
 }
 
-/** True when a country's bot share is strictly above the global average. */
-export function isAboveAverage(botPct: number, globalPct: number): boolean {
-  return Number.isFinite(botPct) && Number.isFinite(globalPct) && botPct > globalPct;
-}
-
 function Caption({ children }: { children: ReactNode }) {
   return <p className="mb-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>{children}</p>;
 }
@@ -178,11 +174,17 @@ function AttackTable({ title, rows, staleDate }: { title: string; rows: AttackRo
 }
 
 /** Horizontal share bar: scaled against `max`, or on an absolute 0–100 scale with `absolute`. */
-function ShareBar({ pct, max = 0, absolute = false }: { pct: number; max?: number; absolute?: boolean }) {
+function ShareBar({ pct, max = 0, absolute = false, marker }: { pct: number; max?: number; absolute?: boolean; marker?: number }) {
   const width = absolute ? absoluteBarWidth(pct) : max > 0 ? Math.max(2, (pct / max) * 100) : 0;
   return (
-    <div aria-hidden="true" className="h-1.5 w-full rounded-full" style={{ background: 'var(--border-base)' }}>
+    <div aria-hidden="true" className="relative h-1.5 w-full rounded-full" style={{ background: 'var(--border-base)' }}>
       <div className="h-full rounded-full" style={{ width: `${width}%`, background: 'var(--amber)' }} />
+      {absolute && marker != null && Number.isFinite(marker) ? (
+        <div
+          className="absolute"
+          style={{ left: `${Math.min(100, Math.max(0, marker))}%`, top: -2, bottom: -2, width: 1, background: 'var(--text-primary)' }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -228,6 +230,7 @@ function BotTrafficContent() {
   if (!data) return <PageState kind="loading" />;
 
   const { latest, series, top_locations, top_asns, categories } = data;
+  const globalAvg = resolveGlobalAvg(data);
 
   const header = (
     <PageHeader
@@ -374,7 +377,7 @@ function BotTrafficContent() {
       <section>
         <SectionHeader title="Bot density by country" staleDate={densityStale} />
         <Caption>
-          Share of each country's own HTTP traffic that is automated. Top 20 shown; countries under 0.1% of global traffic are excluded. All countries are on the Observatory's Bot density view.
+          Share of each country's own HTTP traffic that is automated. Top 20 shown; countries under 0.1% of global traffic are excluded. ≥ / ≤ marks an estimate bound for a country outside one of Radar's top-100 lists. All countries are on the Observatory's Bot density view.
         </Caption>
         <Card>
           {density.length === 0 ? (
@@ -383,11 +386,12 @@ function BotTrafficContent() {
             <>
               <p className="mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
                 Global average:{' '}
-                <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(latest.bot_pct)}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}> · countries above it are highlighted</span>
+                <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(globalAvg ?? latest.bot_pct)}</span>
+                <span style={{ color: 'var(--text-tertiary)' }}> · the bar tick marks it; ▲ marks countries above it</span>
               </p>
               <div className="overflow-x-auto">
                 <Table className="w-full text-sm">
+                  <caption className="sr-only">Bot share and traffic share by country</caption>
                   <thead>
                     <tr>
                       <Th className="w-8">#</Th>
@@ -398,7 +402,7 @@ function BotTrafficContent() {
                   </thead>
                   <tbody>
                     {density.map((d) => {
-                      const above = isAboveAverage(d.bot_pct, latest.bot_pct);
+                      const above = isAboveAverage(d.bot_pct, globalAvg, d.bound);
                       return (
                         <tr key={d.code}>
                           <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.rank}</Td>
@@ -411,11 +415,14 @@ function BotTrafficContent() {
                                 className="font-mono"
                                 style={{ color: above ? 'var(--sev-medium-text)' : 'var(--text-primary)' }}
                               >
-                                {fmtPct(d.bot_pct)}
+                                {formatBotShare(d.bot_pct, d.bound)}
                               </span>
+                              {above ? (
+                                <span aria-hidden="true" title="Above global average" className="ml-1" style={{ color: 'var(--sev-medium-text)' }}>▲</span>
+                              ) : null}
                               {above ? <span className="sr-only"> (above global average)</span> : null}
                               <div className="mt-1">
-                                <ShareBar pct={d.bot_pct} absolute />
+                                <ShareBar pct={d.bot_pct} absolute marker={globalAvg ?? undefined} />
                               </div>
                             </div>
                           </Td>

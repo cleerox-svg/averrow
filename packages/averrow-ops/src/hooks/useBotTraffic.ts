@@ -48,6 +48,8 @@ export interface BotTrafficDensity {
   bot_pct: number;
   traffic_pct: number;
   rank: number;
+  /** Optional: `lower` = value is a floor (>=), `upper` = a ceiling (<=); absent/null = exact. */
+  bound?: 'lower' | 'upper' | null;
 }
 
 export interface BotTrafficCategory {
@@ -85,6 +87,8 @@ export interface BotTrafficData {
   attack_origins?: BotTrafficAttackCountry[] | null;
   attack_targets?: BotTrafficAttackCountry[] | null;
   bot_density?: BotTrafficDensity[] | null;
+  /** Optional: global bot share used as the density average; fall back to `latest.bot_pct`. */
+  bot_density_global_pct?: number | null;
   last_fetch: BotTrafficFetchStatus;
   /** Optional: absent on payloads cached before the field shipped. */
   as_of?: Partial<BotTrafficAsOf> | null;

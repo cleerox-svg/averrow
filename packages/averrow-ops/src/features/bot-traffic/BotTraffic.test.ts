@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { humanizeCategory, staleAsOf, absoluteBarWidth, isAboveAverage } from './BotTraffic';
+import { humanizeCategory, staleAsOf, absoluteBarWidth } from './BotTraffic';
+import { isAboveAverage } from '@/features/observatory-v3/lib/bot-density';
 import { tabUrl } from '@/lib/workspaceRoutes';
 
 describe('humanizeCategory', () => {

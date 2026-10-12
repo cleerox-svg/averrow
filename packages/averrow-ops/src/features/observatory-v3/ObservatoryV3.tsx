@@ -22,7 +22,7 @@ import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay'
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import { BotDensityLegend } from './components/BotDensityLegend';
-import { buildBotDensityPoints, botDensityDomain } from './lib/bot-density';
+import { buildBotDensityPoints, botDensityDomain, resolveGlobalAvg } from './lib/bot-density';
 
 const PERIODS = [
   { id: '24h', label: '24H' },
@@ -34,7 +34,7 @@ const PERIODS = [
 const MAP_MODES: { id: MapMode; label: string }[] = [
   { id: 'global', label: 'GLOBAL' },
   { id: 'heatmap', label: 'HEATMAP' },
-  { id: 'bot_density', label: 'Bot density' },
+  { id: 'bot_density', label: 'BOT DENSITY' },
 ];
 
 const SOURCES = [
@@ -115,7 +115,7 @@ export function ObservatoryV3() {
   const { data: botData, isLoading: botLoading, error: botError, refetch: refetchBot } = useBotTraffic(7, { enabled: isBotMode });
   const botPoints = useMemo(() => buildBotDensityPoints(botData?.bot_density), [botData?.bot_density]);
   const botDomain = useMemo(() => botDensityDomain(botPoints), [botPoints]);
-  const botGlobalAvg = botData?.latest?.bot_pct ?? null;
+  const botGlobalAvg = resolveGlobalAvg(botData);
   const botAsOf = botData?.as_of?.bot_density ?? null;
 
   // The SidePanel (and its toggle / Intel drawer) only exists in the global view.
@@ -180,18 +180,18 @@ export function ObservatoryV3() {
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: Z_CHROME }}>
           <Card variant="elevated" padding="16px 24px" className="text-center pointer-events-auto" style={{ maxWidth: 280 }}>
             {botLoading ? (
-              <div className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot density&hellip;</div>
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot density&hellip;</div>
             ) : botError ? (
-              <>
+              <div role="alert">
                 <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical)' }}>
                   <AlertTriangle size={13} /> Bot density failed to load
                 </div>
                 <div className="mt-2">
                   <Button variant="danger" size="sm" onClick={() => refetchBot()} icon={<RefreshCw size={11} />}>Retry</Button>
                 </div>
-              </>
+              </div>
             ) : (
-              <div className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-density data yet</div>
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-density data yet</div>
             )}
           </Card>
         </div>
@@ -284,7 +284,7 @@ export function ObservatoryV3() {
               </div>
 
               {isBotMode && (
-                <div className="text-[10px] font-mono" style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)', color: 'var(--text-muted)' }}>
+                <div className="text-[11px] font-mono" style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>
                   Period, source and colour filters don&apos;t apply to bot density (daily Cloudflare Radar data).
                 </div>
               )}
@@ -346,7 +346,7 @@ export function ObservatoryV3() {
             variant="bar"
           />
           {isBotMode && (
-            <div className="font-mono text-[9px] max-w-[220px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[10px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
               Period, source and colour filters don&apos;t apply &mdash; daily Cloudflare Radar data.
             </div>
           )}
@@ -501,7 +501,7 @@ export function ObservatoryV3() {
         <div className="flex items-center gap-4">
           {isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span style={{ color: 'var(--amber-text)' }}>7D</span>
+              <span style={{ color: 'var(--amber-text)' }}>24H</span>
               {' \u00b7 '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
               {botGlobalAvg != null && (

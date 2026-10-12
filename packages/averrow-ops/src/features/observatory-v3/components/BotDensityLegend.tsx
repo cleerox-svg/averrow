@@ -1,5 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
+import { useTheme } from '@/design-system/hooks';
+import { Link } from 'react-router-dom';
 import { Card } from '@/design-system/components';
+import { tabUrl } from '@/lib/workspaceRoutes';
 import { resolveScaleStops, formatPct, type BotDensityDomain } from '../lib/bot-density';
 
 interface BotDensityLegendProps {
@@ -13,16 +16,16 @@ interface BotDensityLegendProps {
 
 /** Compact legend: colour scale, size meaning, source/date and global average. */
 export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: BotDensityLegendProps) {
-  const gradient = useMemo(() => {
-    const [lo, mid, hi] = resolveScaleStops();
-    const css = (c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-    return `linear-gradient(90deg, ${css(lo)}, ${css(mid)}, ${css(hi)})`;
-  }, []);
+  const { resolvedTheme } = useTheme();
+  const [stops, setStops] = useState(resolveScaleStops);
+  useEffect(() => { setStops(resolveScaleStops()); }, [resolvedTheme]);
+  const css = (c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+  const gradient = `linear-gradient(90deg, ${css(stops[0])}, ${css(stops[1])}, ${css(stops[2])})`;
 
-  const label = 'font-mono text-[9px] uppercase tracking-wider';
+  const label = 'font-mono text-[10px] uppercase tracking-wider';
 
   return (
-    <Card variant="base" padding="10px 12px" style={{ position: 'absolute', width: 232, ...style }}>
+    <Card variant="base" padding="10px 12px" role="group" aria-label="Bot density legend" style={{ position: 'absolute', width: 232, ...style }}>
       <div className={label} style={{ color: 'var(--text-tertiary)' }}>
         Bot share of each country&apos;s traffic
       </div>
@@ -36,7 +39,10 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
         <span>{formatPct(domain.maxBot)}</span>
       </div>
 
-      <div className="flex items-center gap-2 mt-2 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="mt-2 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        Colour, circle size and ring each encode data:
+      </div>
+      <div className="flex items-center gap-2 mt-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
         <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text-muted)' }} />
           <span style={{ width: 12, height: 12, borderRadius: '50%', background: 'var(--text-muted)' }} />
@@ -44,10 +50,13 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
         <span>Size = share of global traffic</span>
       </div>
       <div className="flex items-center gap-2 mt-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        {/* Dark chip: the map basemap is always dark, so the white ring must sit on dark in both themes. */}
         <span
           aria-hidden
-          style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid var(--text-primary)', boxSizing: 'border-box' }}
-        />
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, borderRadius: 4, background: '#0b1220' }}
+        >
+          <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid rgb(255, 255, 255)', boxSizing: 'border-box' }} />
+        </span>
         <span>
           Ring = above global avg
           {globalAvg != null && <> ({formatPct(globalAvg)})</>}
@@ -55,10 +64,18 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
       </div>
 
       <div
-        className="mt-2 pt-2 font-mono text-[9px]"
-        style={{ borderTop: '1px solid var(--border-base)', color: 'var(--text-muted)' }}
+        className="mt-2 pt-2 font-mono text-[10px]"
+        style={{ borderTop: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}
       >
         Source: Cloudflare Radar{asOf ? <> &middot; as of {asOf}</> : null} &middot; {countries} countries
+        <div className="mt-1">
+          &ge; / &le; = estimate bound; country outside one of Radar&apos;s top-100 lists.
+        </div>
+        <div className="mt-1">
+          <Link to={tabUrl('bot-traffic')} className="underline" style={{ color: 'var(--amber-text)' }}>
+            View as table (Bot Traffic tab)
+          </Link>
+        </div>
       </div>
     </Card>
   );

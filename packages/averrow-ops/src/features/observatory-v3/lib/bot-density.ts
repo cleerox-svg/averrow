@@ -18,14 +18,27 @@ export interface BotDensityDomain {
   maxTraffic: number;
 }
 
-/** Fallbacks match the theme tokens (--sev-low, --amber, --red). */
+/**
+ * Fallbacks match the theme tokens (--sev-low, --amber, --sev-critical).
+ * The high stop is the lighter --sev-critical so lightness rises with value.
+ */
 const FALLBACK_STOPS: [Rgba, Rgba, Rgba] = [
   [96, 165, 250, 230],
   [229, 168, 50, 230],
-  [200, 60, 60, 240],
+  [248, 113, 113, 240],
 ];
 
-const STOP_VARS = ['--sev-low', '--amber', '--red'] as const;
+const STOP_VARS = ['--sev-low', '--amber', '--sev-critical'] as const;
+
+/**
+ * Ring stroke for above-average countries. Fixed light: the basemap is always
+ * dark-matter regardless of UI theme, so a theme text colour (near-black in
+ * light theme) would vanish against it.
+ */
+export const RING_COLOR: Rgba = [255, 255, 255, 235];
+
+/** Subtle outline for countries at or below the global average (basemap is always dark). */
+export const OUTLINE_COLOR: Rgba = [255, 255, 255, 40];
 
 /** Parse #rgb / #rrggbb / rgb()/rgba() into an RGB triple, or null. */
 export function parseCssColor(input: string): [number, number, number] | null {
@@ -40,7 +53,11 @@ export function parseCssColor(input: string): [number, number, number] | null {
   return null;
 }
 
-/** Resolve the sequential-scale stops from theme CSS vars at runtime. */
+/**
+ * Resolve the sequential-scale stops from CSS vars at runtime. The result is
+ * theme-invariant because the stop tokens (--sev-low, --amber, --sev-critical)
+ * have the same value in light and dark themes, so no theme dependency is needed.
+ */
 export function resolveScaleStops(): [Rgba, Rgba, Rgba] {
   if (typeof document === 'undefined') return FALLBACK_STOPS;
   const style = getComputedStyle(document.documentElement);
@@ -49,13 +66,6 @@ export function resolveScaleStops(): [Rgba, Rgba, Rgba] {
     const fb = FALLBACK_STOPS[i]!;
     return parsed ? [parsed[0], parsed[1], parsed[2], fb[3]] : fb;
   }) as [Rgba, Rgba, Rgba];
-}
-
-/** Stroke colour for above-average countries (theme text colour, light/dark safe). */
-export function resolveRingColor(): Rgba {
-  if (typeof document === 'undefined') return [255, 255, 255, 235];
-  const parsed = parseCssColor(getComputedStyle(document.documentElement).getPropertyValue('--text-primary'));
-  return parsed ? [parsed[0], parsed[1], parsed[2], 235] : [255, 255, 255, 235];
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -118,9 +128,25 @@ export function formatPct(n: number): string {
   return `${n.toFixed(1)}%`;
 }
 
+/** Formats a bot share, prefixing estimate bounds: `≥ 12.0%` (floor) / `≤ 12.0%` (ceiling). */
+export function formatBotShare(pct: number, bound?: BotTrafficDensity['bound']): string {
+  const prefix = bound === 'lower' ? '≥ ' : bound === 'upper' ? '≤ ' : '';
+  return `${prefix}${formatPct(pct)}`;
+}
+
+/** Average used for above-average marking: the density-specific global figure, else the latest snapshot. */
+export function resolveGlobalAvg(
+  data: { bot_density_global_pct?: number | null; latest?: { bot_pct: number } | null } | null | undefined,
+): number | null {
+  const v = data?.bot_density_global_pct;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  const l = data?.latest?.bot_pct;
+  return typeof l === 'number' && Number.isFinite(l) ? l : null;
+}
+
 export function botDensityTooltip(d: BotTrafficDensity, globalAvg: number | null | undefined): string {
   const parts = [
-    `${d.name} (${d.code}) — Bot share ${formatPct(d.bot_pct)} of its traffic`,
+    `${d.name} (${d.code}) — Bot share ${formatBotShare(d.bot_pct, d.bound)} of its traffic`,
     `${formatPct(d.traffic_pct)} of global traffic`,
   ];
   if (typeof globalAvg === 'number' && Number.isFinite(globalAvg)) {
@@ -129,6 +155,17 @@ export function botDensityTooltip(d: BotTrafficDensity, globalAvg: number | null
   return parts.join(' · ');
 }
 
-export function isAboveAverage(botPct: number, globalAvg: number | null | undefined): boolean {
+/**
+ * True when a country's bot share is strictly above the global average.
+ * Bounds use the bound value itself: a `lower` bound is a floor, so exceeding
+ * the average proves the true value does too; an `upper` bound only counts if
+ * the ceiling itself exceeds it (which then holds a fortiori for no one, so
+ * it is effectively never true). Both reduce to the same strict comparison.
+ */
+export function isAboveAverage(
+  botPct: number,
+  globalAvg: number | null | undefined,
+  _bound?: BotTrafficDensity['bound'],
+): boolean {
   return typeof globalAvg === 'number' && Number.isFinite(globalAvg) && botPct > globalAvg;
 }

@@ -13,6 +13,7 @@
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import maplibregl from 'maplibre-gl';
+import { useTheme } from '@/design-system/hooks';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { TripsLayer } from '@/lib/trips-layer';
@@ -20,7 +21,7 @@ import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import {
   botColor, botRadius, botDensityDomain, botDensityTooltip, isAboveAverage,
-  resolveScaleStops, resolveRingColor,
+  resolveScaleStops, RING_COLOR, OUTLINE_COLOR,
   type BotDensityPoint,
 } from '../lib/bot-density';
 
@@ -365,6 +366,14 @@ function ThreatMapV3Inner({
   const animFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef(0);
   const [tooltip, setTooltip] = useState<TooltipInfo | null>(null);
+  /** Country code of the pinned bot-density tooltip, if any. */
+  const pinnedRef = useRef<string | null>(null);
+  // Colour stops are re-resolved after the theme attribute lands in the DOM
+  // (effect order: useTheme's effect runs first), so layers repaint on dark<->light.
+  const { resolvedTheme } = useTheme();
+  const [botStops, setBotStops] = useState(resolveScaleStops);
+  useEffect(() => { setBotStops(resolveScaleStops()); }, [resolvedTheme]);
+  const botStopsKey = botStops.map(c => c.join(',')).join('|');
   const [mapLoaded, setMapLoaded] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
@@ -554,8 +563,7 @@ function ThreatMapV3Inner({
     // Bot density mode: countries only — no nodes/arcs/particles/heatmap.
     if (mapMode === 'bot_density' && botDensity && botDensity.length > 0) {
       const domain = botDensityDomain(botDensity);
-      const stops = resolveScaleStops();
-      const ring = resolveRingColor();
+      const stops = botStops;
       const minPx = isMobile ? 4 : 5;
       const maxPx = isMobile ? 20 : 30;
       layers.push(new ScatterplotLayer({
@@ -567,19 +575,47 @@ function ThreatMapV3Inner({
         getFillColor: (d: BotDensityPoint) => botColor(d.bot_pct, domain.minBot, domain.maxBot, stops),
         stroked: true,
         lineWidthUnits: 'pixels',
-        getLineWidth: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg) ? 2 : 0.5),
-        getLineColor: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg) ? ring : [255, 255, 255, 40]),
-        updateTriggers: { getLineWidth: botGlobalAvg, getLineColor: [botGlobalAvg, ring] },
+        getLineWidth: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? 2 : 0.5),
+        getLineColor: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? RING_COLOR : OUTLINE_COLOR),
+        updateTriggers: {
+          getFillColor: [botStopsKey, domain.minBot, domain.maxBot],
+          getRadius: [domain.maxTraffic, minPx, maxPx],
+          getLineWidth: [botGlobalAvg],
+          getLineColor: [botGlobalAvg],
+        },
         pickable: true,
-        onHover: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => setTooltip(object ? { x, y, bot: object } : null),
+        onHover: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => {
+          if (pinnedRef.current) return; // a pinned tooltip stays until dismissed
+          setTooltip(object ? { x, y, bot: object } : null);
+        },
+        // Tap/click pins the tooltip (touch has no hover); tap again to dismiss.
+        onClick: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => {
+          if (!object) return false;
+          if (pinnedRef.current && pinnedRef.current === object.code) {
+            pinnedRef.current = null;
+            setTooltip(null);
+          } else {
+            pinnedRef.current = object.code;
+            setTooltip({ x, y, bot: object });
+          }
+          return true; // handled — don't fall through to the map-level dismiss
+        },
       }));
     }
 
     return layers;
-  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, botDensity, botGlobalAvg, onArcClick, isMobile]);
+  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, botDensity, botGlobalAvg, botStops, botStopsKey, onArcClick, isMobile]);
 
   // Drop any stale hover tooltip when the mode changes (the hovered layer is gone).
-  useEffect(() => { setTooltip(null); }, [mapMode]);
+  useEffect(() => { pinnedRef.current = null; setTooltip(null); }, [mapMode]);
+
+  // Tap on empty map (or any non-density object) dismisses a pinned tooltip.
+  const dismissPinned = useCallback(() => {
+    if (pinnedRef.current) {
+      pinnedRef.current = null;
+      setTooltip(null);
+    }
+  }, []);
 
   // ─── Update overlay + start particle animation ────────────
   useEffect(() => {
@@ -614,9 +650,9 @@ function ThreatMapV3Inner({
       : staticLayers;
 
     if (deckRef.current) {
-      deckRef.current.setProps({ layers: allLayers });
+      deckRef.current.setProps({ layers: allLayers, onClick: dismissPinned });
     } else if (allLayers.length > 0) {
-      const overlay = new MapboxOverlay({ interleaved: false, layers: allLayers });
+      const overlay = new MapboxOverlay({ interleaved: false, layers: allLayers, onClick: dismissPinned });
       mapRef.current.addControl(overlay as any);
       deckRef.current = overlay;
     }
@@ -681,6 +717,7 @@ function ThreatMapV3Inner({
 
       {tooltip && (
         <div
+          aria-live="polite"
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
             left: tooltip.x + 10, top: tooltip.y + 10,
