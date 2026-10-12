@@ -101,7 +101,9 @@ export function decideReattribution(
   // The vendor's own infrastructure (*.partner.microsoftonline.cn — Azure
   // China; login.okta.com) is never re-attributed or cleared, whatever a
   // feed called it.
-  if (haystacks.some((h) => isIdpVendorOfficialHost(h))) {
+  // The threat's own host only — a URL / IOC carrying a vendor host (a
+  // redirect param, a login.microsoftonline.com link) is not the threat.
+  if (isIdpVendorOfficialHost(row.malicious_domain ?? haystacks[0] ?? "")) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "vendor_official_domain" };
   }
   const norm = normalizeBrand(row.brand_name);

@@ -6,6 +6,7 @@ import {
   type ReattributionRow,
 } from "../src/handlers/admin/idpReattribution";
 import { fuzzyMatchBrandDetailed, type BrandRow } from "../src/lib/brandDetect";
+import { decideLink, type LinkRow } from "../src/lib/brand-link-cleanup";
 import type { Env } from "../src/types";
 
 const CATALOG: BrandRow[] = [
@@ -114,6 +115,25 @@ describe("production dry run 2026-10-12 — the 11 proposed changes", () => {
     const dup: BrandRow[] = [{ id: "b_ms_dup", name: "Microsoft", canonical_domain: "microsoft.net", tier: "monitored" }, ...PROD];
     expect(decideReattribution(row("logmein-microsoftonline.com", ms), (h) => fuzzyMatchBrandDetailed(h, dup)))
       .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+  });
+
+  it("vendor_official_domain looks at the threat's own host, not every haystack", () => {
+    expect(decideReattribution(row("okta-acme.com", { ioc_value: "login.microsoftonline.com" }), prodRematch).newBrandId)
+      .toBe("b_acme");
+  });
+
+  it("the general brand-link cleanup keeps links the old rules accepted", () => {
+    const link = (domain: string, name: string, canonical: string, id: string): LinkRow => ({
+      rid: 1, id: `t_${domain}`, malicious_domain: domain, malicious_url: null, ioc_value: null,
+      target_brand_id: id, brand_match_method: "token", brand_name: name, brand_canonical: canonical,
+      brand_tier: "monitored", source_feed: "phishtank",
+    } as LinkRow);
+    const cleanupRematch = (h: string[]) => fuzzyMatchBrandDetailed(h, PROD);
+    expect(decideLink(link("paypa1-okta.com", "PayPal", "paypal.com", "b_pp"), cleanupRematch).action).toBe("keep");
+    expect(decideLink(link("microsoftonline-outlook.live", "Outlook", "outlook.com", "b_outlook"), cleanupRematch).action)
+      .toBe("keep");
+    expect(decideLink(link("logmein-microsoftonline.com", "Microsoft", "microsoft.com", "b_ms"), cleanupRematch).action)
+      .toBe("keep");
   });
 
   it("Okta's own corp hosts are never re-attributed", () => {

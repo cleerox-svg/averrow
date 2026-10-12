@@ -205,6 +205,19 @@ interface HostParts {
   /** Vendor-credit parts of an idp_lookalike: whole-token vendor names only. */
   idpVendor?: boolean;
   /**
+   * idpLure only: candidates derived by peeling a glued phishing word or a
+   * glued lure off a leftover (paypalsecure → paypal, acmesso → acme).
+   * Matched against brand NAMES exactly — never owner labels or fuzzy.
+   */
+  peeled?: string[];
+  /**
+   * idp_lookalike only: the full-host parts under the pre-2026-10-12 rules
+   * (all tokens + lure names, token/substring/fuzzy). Used ONLY by the
+   * catalog-free pair validator matchBrandToHost, so the general
+   * brand-link cleanup never invalidates a link the old rules accepted.
+   */
+  legacy?: HostParts;
+  /**
    * idp_lookalike only: the full-host parts (plus bare lure names) to match
    * when the remainder matches NO brand — a leftover that names no known
    * brand (www2, a8f3kd, a random tenant id) is not evidence of a different
@@ -419,6 +432,8 @@ const IDP_LURE_FILLER: ReadonlySet<string> = new Set([
   "callback", "redirect", "password", "passwd", "reset", "recover", "recovery", "unlock",
   "validate", "validation", "review", "notice", "notification", "approve", "approval",
   "webapp", "owa", "cdn", "static", "assets", "admin", "manage", "login2", "signin2",
+  // The classifier's weak IdP lures — part of the lure phrase, not a target.
+  "helpdesk", "servicedesk", "itsupport",
 ]);
 
 /** www, www2, w3 / v1, v2.0 fragments — host noise, never a brand. */
@@ -431,12 +446,14 @@ function isSubstantiveToken(t: string): boolean {
   return t.length >= 4 && !/^\d+$/.test(t) && !NOISE_TOKEN_RE.test(t) && !IDP_LURE_FILLER.has(t);
 }
 
-/** Auth words that phishers glue directly onto a brand (paypalsecure,
- *  loginacme). Peeling one off a leftover token yields another WHOLE-token
- *  candidate; nothing is ever matched as a substring of a longer word. */
+/** Phishing words that are glued directly onto a brand (paypalsecure,
+ *  loginacme). Peeling one off a leftover token yields a candidate that must
+ *  EQUAL a brand name — never an owner label, substring or fuzzy match.
+ *  Deliberately excludes everyday prefixes (help, mail, my, auth, service):
+ *  helpscout / helpdesk / mailchimp must not become Scout / Desk / Chimp. */
 const PEEL_WORDS = [
-  "login", "logon", "signin", "signon", "secure", "verify", "account", "accounts", "support",
-  "portal", "access", "online", "update", "service", "help", "mail", "auth", "sso", "my",
+  "login", "logon", "signin", "signon", "secure", "verify", "verification", "account",
+  "accounts", "update", "confirm",
 ];
 
 function peelGluedFiller(t: string): string[] {
@@ -454,6 +471,14 @@ function peelGluedFiller(t: string): string[] {
  *  field at all (legacy callers) are not gated. */
 export const IDP_LEFTOVER_MAX_RANK = 20000;
 
+/**
+ * Leftover name/owner-label eligibility: monitored / customer tier, or a
+ * `tracked` catalog brand that is well known (Tranco rank <= 20000 —
+ * asana.com, logmein.com), so a top site the platform does not yet monitor
+ * is still credited while long-tail catalog junk (author.today) is not.
+ * Rows without a tier field at all (legacy callers) are not gated.
+ * Typo (fuzzy) leftovers are stricter: monitored/customer only (`matchable`).
+ */
 function isIdpLeftoverEligible(b: BrandRow): boolean {
   if (b.tier === undefined) return true;
   if (b.tier === "monitored" || b.tier === "customer") return true;
@@ -477,11 +502,14 @@ function isIdpLeftoverEligible(b: BrandRow): boolean {
  *     common / oauth2), host noise (www2, v2) and the SAME VENDOR's products
  *     (outlook / onedrive / teams / o365 beside a Microsoft lure) are not
  *     brand evidence — the vendor keeps the credit.
- *   - What remains is brand evidence only as a WHOLE token (token == brand
- *     name or canonical owner label, also after peeling one glued auth word:
- *     paypalsecure → paypal). Never a substring/prefix/fuzzy match inside a
- *     longer word ("authorize" is not author.today), and only for brands in
- *     scope or well known (isIdpLeftoverEligible).
+ *   - What remains is brand evidence only as a WHOLE token: equal to a
+ *     brand name or canonical owner label (in-scope or well-known brands,
+ *     isIdpLeftoverEligible), equal to a brand name after peeling one glued
+ *     phishing word (paypalsecure → paypal), or a whole-token typo of a
+ *     monitored/customer brand (paypa1 → PayPal). Never a substring/prefix
+ *     of a longer word ("authorize" is not author.today).
+ *   - Applies only when a real vendor lure is present; a generic "sso"
+ *     alone keeps the ordinary matcher.
  *   - When the leftover matches no brand (www2, a8f3kd, contosoltd), the
  *     vendor is credited: `vendorFallback` holds only the vendor's
  *     canonical name + the lure names, matched whole-token.
@@ -505,30 +533,39 @@ function idpLureParts(host: string, labels: string[]): HostParts | null {
         continue;
       }
       // Lure glued to a non-filler word (acmesso): keep the token, and its
-      // remainder is one more whole-token candidate.
+      // remainder is one more exact-name candidate.
       if (s) glued.push(s.rest);
       rest.push(t);
     }
     perLabel.push(rest);
   }
   if (lures.length === 0) return null;
+  // Only a REAL vendor lure (Okta, Entra, Duo, …) triggers the strict
+  // leftover rule. A bare generic "sso" (paypa1-sso.com, amazonprime-sso.com)
+  // names no vendor that could be wrongly credited — keep the ordinary
+  // token / substring / fuzzy matcher over the whole host.
+  if (![...providers].some((p) => p !== "generic_sso")) return null;
 
   const provs = [...providers];
   const vendorTokens = [...new Set([
     ...provs.map((p) => IDP_VENDOR_BRAND_TOKEN[p]).filter((v): v is string => !!v),
     ...lures,
   ])];
-  const vendor: HostParts = { ...buildParts(host, vendorTokens, vendorTokens), idpVendor: true };
+  const fullTokens = labels.flatMap((l) => l.split(/[-_]/)).filter((t) => t.length > 0);
+  const legacy = buildParts(host, labels, [...fullTokens, ...lures]);
+  const vendor: HostParts = { ...buildParts(host, vendorTokens, vendorTokens), idpVendor: true, legacy };
 
   const evidence = (t: string) => isSubstantiveToken(t) && !provs.some((p) => isIdpVendorFamilyToken(t, p));
   const keptLabels = perLabel.map((ts) => ts.filter(evidence)).filter((ts) => ts.length > 0);
   const tokens = keptLabels.flat();
   if (tokens.length === 0) return vendor;
-  const extra = [...tokens.flatMap(peelGluedFiller), ...glued].filter(evidence);
+  const peeled = [...new Set([...tokens.flatMap(peelGluedFiller), ...glued])].filter(evidence);
   return {
-    ...buildParts(host, keptLabels.map((ts) => ts.join("-")), [...tokens, ...extra]),
+    ...buildParts(host, keptLabels.map((ts) => ts.join("-")), tokens),
     idpLure: true,
+    peeled,
     vendorFallback: vendor,
+    legacy,
   };
 }
 
@@ -538,8 +575,9 @@ interface PreparedBrand {
   norm: string;
   /** False for generic / too-short names — canonical-domain match only. */
   matchable: boolean;
-  /** May be credited from an IdP-lure leftover (isIdpLeftoverEligible). */
-  leftoverOk: boolean;
+  /** May be credited by name / owner label from an IdP-lure leftover
+   *  (isIdpLeftoverEligible + the generic/short-name floor). */
+  leftoverMatchable: boolean;
 }
 
 function prepareOne(b: BrandRow): PreparedBrand {
@@ -549,7 +587,7 @@ function prepareOne(b: BrandRow): PreparedBrand {
     canonical: (b.canonical_domain ?? "").toLowerCase().replace(/^www\./, ""),
     norm,
     matchable: norm.length >= 4 && !isGenericBrand(norm) && b.tier !== "tracked",
-    leftoverOk: isIdpLeftoverEligible(b),
+    leftoverMatchable: norm.length >= 4 && !isGenericBrand(norm) && isIdpLeftoverEligible(b),
   };
 }
 
@@ -599,13 +637,13 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
   for (const b of brands) {
     const p = prepareOne(b);
     if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
-    if (!p.matchable) continue;
-    if (!idx.token.has(p.norm)) idx.token.set(p.norm, p.id);
-    if (p.leftoverOk) {
+    if (p.leftoverMatchable) {
       if (!idx.leftoverToken.has(p.norm)) idx.leftoverToken.set(p.norm, p.id);
       const owner = ownerLabelOf(p.canonical);
       if (owner && !idx.ownerLabel.has(owner)) idx.ownerLabel.set(owner, p.id);
     }
+    if (!p.matchable) continue;
+    if (!idx.token.has(p.norm)) idx.token.set(p.norm, p.id);
     if (p.norm.length >= MIN_SUBSTRING_LEN) {
       idx.long.push(p);
       const first = p.norm[0] ?? "";
@@ -681,32 +719,44 @@ function fuzzyMatch(candidate: string, norm: string): boolean {
  * current rules, and by which method. Pure — used for the matcher itself
  * and to re-validate existing threat→brand links.
  *
- * IdP-lure hosts: without the catalog this cannot tell whether the
- * remainder names SOME other brand, so the vendor fallback is accepted
- * (permissive validation — an existing Okta link on
- * withpersona.okta-linksso.com is kept here). Catalog-aware re-attribution
- * goes through fuzzyMatchBrandDetailed (handlers/admin/idpReattribution.ts).
+ * IdP-lure hosts: permissive by design. Without the catalog this cannot
+ * tell whether the leftover names SOME other brand, so it accepts the strict
+ * leftover rule, the vendor credit, AND the pre-2026-10-12 full-host rules
+ * (`legacy`): the general brand-link cleanup (lib/brand-link-cleanup.ts)
+ * must never invalidate a link the old rules accepted (an Okta link on
+ * withpersona.okta-linksso.com, an Outlook link on
+ * microsoftonline-outlook.live, PayPal on paypa1-okta.com). Catalog-aware
+ * re-attribution goes through fuzzyMatchBrandDetailed
+ * (handlers/admin/idpReattribution.ts).
  */
 export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod | null {
   const parts = hostParts(raw);
   if (!parts) return null;
   const p = prepareOne(brand);
   if (p.canonical && parts.host === p.canonical) return "canonical";
+  if (parts.idpLure || parts.idpVendor) {
+    const strict = matchIdpPartsToBrand(parts, p)
+      ?? (parts.vendorFallback ? matchIdpPartsToBrand(parts.vendorFallback, p) : null);
+    if (strict) return strict;
+    return p.matchable && parts.legacy ? matchPreparedToParts(parts.legacy, p) : null;
+  }
   if (!p.matchable) return null;
-  const m = matchPreparedToParts(parts, p);
-  if (m || !parts.vendorFallback) return m;
-  return matchPreparedToParts(parts.vendorFallback, p);
+  return matchPreparedToParts(parts, p);
+}
+
+/** The strict IdP-lure rule for one brand (mirrors matchPartsInIndex). */
+function matchIdpPartsToBrand(parts: HostParts, p: PreparedBrand): BrandMatchMethod | null {
+  if (parts.idpVendor) return p.matchable && tokenMatch(parts, p.norm) ? "token" : null;
+  if (p.leftoverMatchable) {
+    const owner = ownerLabelOf(p.canonical);
+    if (owner && parts.candidates.includes(owner)) return "token";
+    if (tokenMatch(parts, p.norm) || (parts.peeled ?? []).includes(p.norm)) return "token";
+  }
+  if (p.matchable && parts.candidates.some((c) => fuzzyMatch(c, p.norm))) return "levenshtein";
+  return null;
 }
 
 function matchPreparedToParts(parts: HostParts, p: PreparedBrand): BrandMatchMethod | null {
-  // IdP-lure leftovers / vendor credit: whole-token only.
-  if (parts.idpLure) {
-    if (!p.leftoverOk) return null;
-    const owner = ownerLabelOf(p.canonical);
-    if (owner && parts.candidates.includes(owner)) return "token";
-    return tokenMatch(parts, p.norm) ? "token" : null;
-  }
-  if (parts.idpVendor) return tokenMatch(parts, p.norm) ? "token" : null;
   if (tokenMatch(parts, p.norm)) return "token";
   if (substringMatch(parts, p.norm)) return "substring";
   if (parts.candidates.some((c) => fuzzyMatch(c, p.norm))) return "levenshtein";
@@ -753,16 +803,22 @@ export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[])
 function matchPartsInIndex(parts: HostParts, idx: BrandIndex): BrandMatch | null {
   // IdP-lure leftover: WHOLE-token evidence only. A label equal to a
   // brand's canonical owner label ("withpersona") is the strongest evidence
-  // left; then a token equal to an eligible brand name. Reported as "token"
-  // (brand_match_method has no finer value). No substring / fuzzy pass.
+  // left; then a token (or peeled token) equal to an eligible brand name;
+  // then a whole-token typo of a monitored/customer brand (paypa1). Never a
+  // substring of a longer word.
   if (parts.idpLure) {
     for (const c of parts.candidates) {
       const id = idx.ownerLabel.get(c);
       if (id) return { brandId: id, method: "token" };
     }
-    for (const c of parts.candidates) {
+    for (const c of [...parts.candidates, ...(parts.peeled ?? [])]) {
       const id = idx.leftoverToken.get(c);
       if (id) return { brandId: id, method: "token" };
+    }
+    for (const c of parts.candidates) {
+      for (const b of idx.longByFirst.get(c[0] ?? "") ?? []) {
+        if (fuzzyMatch(c, b.norm)) return { brandId: b.id, method: "levenshtein" };
+      }
     }
     return null;
   }

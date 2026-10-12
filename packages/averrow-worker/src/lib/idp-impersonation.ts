@@ -237,10 +237,11 @@ const MICROSOFT_HOSTS = [
   'aka.ms', 'msft.net', 'azureedge.net', 'b2clogin.com', 'ciamlogin.com',
   // Sovereign / national clouds: Azure China (21Vianet — login.partner.
   // microsoftonline.cn), Azure Government (login.microsoftonline.us), the
-  // retired Azure Germany cloud, and Microsoft's own -p.net login CDN.
-  'microsoftonline.cn', 'chinacloudapi.cn', 'azure.cn', 'windowsazure.cn', 'onmschina.cn',
-  'microsoftonline.us', 'azure.us', 'usgovcloudapi.net', 'microsoft.us',
-  'microsoftonline.de', 'microsoftonline-p.net',
+  // retired Azure Germany cloud. chinacloudapi.cn / usgovcloudapi.net hold
+  // customer storage, so only their login hosts are listed.
+  'microsoftonline.cn', 'azure.cn', 'windowsazure.cn', 'onmschina.cn',
+  'microsoftonline.us', 'azure.us', 'microsoft.us', 'microsoftonline.de',
+  'login.chinacloudapi.cn', 'login.usgovcloudapi.net',
 ];
 
 function isMicrosoftHost(host: string): boolean {
@@ -368,10 +369,21 @@ const OTHER_VENDOR_DOMAINS = [
  * exclusion), or another vendor domain (duosecurity.com, pingone.com).
  * A customer TENANT (acme.okta.com) is NOT vendor-official.
  */
+// Microsoft's sign-in / identity plane only. Deliberately narrower than
+// MICROSOFT_HOSTS: windows.net, sharepoint.com, azureedge.net, b2clogin.com,
+// office.com (forms) etc. carry CUSTOMER content, which a feed may rightly
+// attribute to someone else.
+const MICROSOFT_OFFICIAL_HOSTS = [
+  'microsoft.com', 'microsoft.us', 'microsoftonline.com', 'microsoftonline-p.com',
+  'microsoftonline.cn', 'microsoftonline.us', 'microsoftonline.de', 'msauth.net', 'msftauth.net',
+  'msidentity.com', 'login.live.com', 'login.windows.net', 'login.chinacloudapi.cn',
+  'login.usgovcloudapi.net',
+];
+
 export function isIdpVendorOfficialHost(raw: string): boolean {
   const host = normalizeHost(raw ?? '').replace(/^(?:\*\.)+/, '').replace(/^www\./, '');
   if (!host || !host.includes('.')) return false;
-  if (isMicrosoftHost(host)) return true;
+  if (MICROSOFT_OFFICIAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`))) return true;
   if (matchTenantSuffix(host)) return rawTenantLabel(host) === null;
   return OTHER_VENDOR_DOMAINS.some((s) => host === s || host.endsWith(`.${s}`));
 }
@@ -399,15 +411,23 @@ const IDP_VENDOR_FAMILY: Readonly<Partial<Record<IdpProvider, ReadonlySet<string
   ping: new Set(['ping', 'pingone', 'pingid', 'pingfederate', 'pingidentity', 'forgerock']),
 };
 
+// Product names typo-squatted often enough to tolerate one edit (ondrive,
+// outlok, sharepont). Short / dictionary-like family words (yammer, windows,
+// dynamics) are exact-only: hammer, window, dynamic are other words.
+const FUZZY_FAMILY_WORDS = new Set<string>([
+  'outlook', 'onedrive', 'sharepoint', 'office365', 'microsoft', 'microsoftonline',
+  'microsoft365', 'onmicrosoft', 'googleworkspace',
+]);
+
 /** True when `token` names one of `provider`'s own products — exact, or a
- *  one-edit typo for words of 6+ chars (ondrive, outlok, sharepont). */
+ *  one-edit typo of a high-value product name (FUZZY_FAMILY_WORDS). */
 export function isIdpVendorFamilyToken(token: string, provider: IdpProvider): boolean {
   const fam = IDP_VENDOR_FAMILY[provider];
   if (!fam || !token) return false;
   const t = token.toLowerCase();
   if (fam.has(t)) return true;
   if (t.length < 6) return false;
-  for (const w of fam) if (w.length >= 6 && withinOneEdit(t, w)) return true;
+  for (const w of fam) if (FUZZY_FAMILY_WORDS.has(w) && withinOneEdit(t, w)) return true;
   return false;
 }
 
