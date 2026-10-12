@@ -196,21 +196,27 @@ describe("decideGenericLink — generic_brands scope", () => {
     expect(d).toMatchObject({ action: "clear", reason: "non_hostname" });
   });
 
-  it("relinks a Microsoft-product generic brand to Microsoft on a Microsoft lure instead of clearing", () => {
+  it("relinks a Microsoft-product generic brand to Microsoft under the writers' rule, else clears", () => {
     const live = (host: string) => row({
       malicious_domain: host, target_brand_id: "brand_live_com", brand_name: "Live", brand_canonical: "live.com",
       source_feed: "ct_logs",
     });
-    expect(decideGenericLink(live("outlook-verify-account.com"), () => null))
+    const cloud = (host: string) => row({
+      malicious_domain: host, target_brand_id: "brand_cloud", brand_name: "Cloud", brand_canonical: "cloud.microsoft",
+    });
+    expect(decideGenericLink(live("outlook-live-login.com"), () => null))
       .toEqual({ action: "relink", method: "token", newBrandId: "brand_microsoft_com", reason: "generic_brand" });
-    expect(decideGenericLink(live("live-login.net"), () => null)).toMatchObject({ action: "relink", newBrandId: "brand_microsoft_com" });
+    expect(decideGenericLink(row({ malicious_domain: "office365-login.com", brand_name: "Office", brand_canonical: "office.com" }), () => null))
+      .toMatchObject({ action: "relink", newBrandId: "brand_microsoft_com" });
+    // Same rule as the writers: the generic word alone, or a Microsoft token alone, is not enough.
+    expect(decideGenericLink(live("live-login.com"), () => null)).toMatchObject({ action: "clear" });
+    expect(decideGenericLink(cloud("cloud-login.com"), () => null)).toMatchObject({ action: "clear" });
+    expect(decideGenericLink(live("outlook-verify-account.com"), () => null)).toMatchObject({ action: "clear" });
     // A more specific brand the matcher finds still wins.
-    expect(decideGenericLink(live("paypal-outlook.com"), () => ({ brandId: "brand_paypal", method: "token" })))
+    expect(decideGenericLink(live("paypal-outlook-live.com"), () => ({ brandId: "brand_paypal", method: "token" })))
       .toMatchObject({ action: "relink", newBrandId: "brand_paypal" });
-    // No vendor context, or the parent brand is absent from the catalog → clear.
-    expect(decideGenericLink(live("live-stream.tv"), () => null)).toMatchObject({ action: "clear" });
-    expect(decideGenericLink(live("outlook-verify-account.com"), () => null, () => false)).toMatchObject({ action: "clear" });
-    // Kept links are unaffected.
+    // Parent absent from the catalog → clear; kept links are unaffected.
+    expect(decideGenericLink(live("outlook-live-login.com"), () => null, () => false)).toMatchObject({ action: "clear" });
     expect(decideGenericLink(live("login.live.com"), never)).toMatchObject({ action: "keep", method: "canonical" });
   });
 

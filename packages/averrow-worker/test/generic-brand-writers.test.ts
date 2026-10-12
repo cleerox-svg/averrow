@@ -172,8 +172,10 @@ describe("writers never credit Microsoft from the generic word alone (review N3)
   it.each(["office365-login.com", "outlook-live.com", "onedrive-cloud-share.net", "hotmail-live-verify.com"])("%s → Microsoft", (host) => {
     expect(set.credit(host)?.brandId).toBe("brand_microsoft_com");
   });
-  it("the cleanup's broader rule still moves an existing Live link on live-login.com", () => {
-    expect(genericBrandOwnerCredit("live-login.com", "live.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+  it("the cleanup uses the same rule (no broader cleanup-only context)", () => {
+    expect(genericBrandOwnerCredit("live-login.com", "live.com")).toBeNull();
+    expect(genericBrandOwnerCredit("cloud-login.com", "cloud.microsoft")).toBeNull();
+    expect(genericBrandOwnerCredit("outlook-live-login.com", "live.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
     expect(genericBrandOwnerCredit("outlook.office365.com", "office.com")).toBeNull(); // Microsoft's own host
   });
 });

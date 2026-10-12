@@ -379,13 +379,13 @@ function spells(cand: string, canon: string): boolean {
  * credential lures they appear in (owner decision 2026-10-12): a link that
  * the generic rule would clear is moved to the parent brand instead when the
  * host carries that vendor's lure context. Keyed by the generic brand's
- * canonical domain; `family` is the vendor's product family in
- * lib/idp-impersonation.ts (isIdpVendorFamilyToken).
+ * canonical domain; the vendor's real tokens and own domains are in
+ * OWNER_VENDORS (keyed by parent brand).
  */
-export const GENERIC_BRAND_OWNERS: Readonly<Record<string, { parentBrandId: string; family: IdpProvider }>> = {
-  "live.com": { parentBrandId: "brand_microsoft_com", family: "entra" },
-  "office.com": { parentBrandId: "brand_microsoft_com", family: "entra" },
-  "cloud.microsoft": { parentBrandId: "brand_microsoft_com", family: "entra" },
+export const GENERIC_BRAND_OWNERS: Readonly<Record<string, { parentBrandId: string }>> = {
+  "live.com": { parentBrandId: "brand_microsoft_com" },
+  "office.com": { parentBrandId: "brand_microsoft_com" },
+  "cloud.microsoft": { parentBrandId: "brand_microsoft_com" },
 };
 
 /**
@@ -414,96 +414,53 @@ const OWNER_PRECHECK: ReadonlyMap<string, readonly string[]> = new Map(
   Object.entries(OWNER_VENDORS).map(([id, v]) => [id, [...new Set([...v.tokens, ...v.glued])]]),
 );
 
-/** Vendor-family words that are also everyday words ("live", "office",
- *  "teams", "edge") — never vendor context on their own. */
-const OWNER_WEAK_FAMILY_TOKENS: ReadonlySet<string> = new Set([
-  "live", "office", "windows", "teams", "edge", "loop", "stream", "forms", "viva", "planner",
-  "bookings", "sway", "whiteboard", "excel", "exchange", "dynamics", "defender", "intune",
-  "bing", "xbox", "visio", "yammer", "azure", "copilot", "drive", "docs", "meet", "accounts",
-  "workspace", "calendar", "chrome", "android", "slides", "sheets",
-]);
-
-/** Credential-lure words: in the CLEANUP, the generic word itself beside
- *  one ("live-login") is vendor context too. */
-const OWNER_LURE_WORDS: readonly string[] = [
-  "login", "logon", "signin", "signon", "verify", "verification", "account", "accounts",
-  "secure", "security", "auth", "password", "webmail", "mfa",
-];
-
 /**
  * Parent brand for a vendor-product generic brand (GENERIC_BRAND_OWNERS),
- * or null. Never on a shared / tenant host, the generic brand's own domain
- * or the vendor's own domains (OWNER_VENDORS.ownDomains).
- *   writer: true (matcher, NRD, CT, Analyst) — the host must name the
- *     generic product word ("office365-login", "outlook-live") AND carry a
- *     REAL vendor token (OWNER_VENDORS.tokens / glued); the generic word
- *     alone never suffices.
- *   writer: false (cleanup, a link already on Live / Office / Cloud) —
- *     any vendor-family context: a strong family token (incl. one-edit
- *     typos), a glued vendor word, or the generic word beside a credential
- *     lure ("live-login.com").
+ * or null — ONE rule for every writer (matcher, NRD, CT, Analyst) and the
+ * brand-link cleanup: the host must name the generic product word
+ * ("office365-login", "outlook-live-login") AND carry a REAL vendor token
+ * (OWNER_VENDORS.tokens as a hyphen token, or OWNER_VENDORS.glued inside
+ * one); the generic word alone never suffices ("cloud-login.com",
+ * "live-login.com", "box-office-login.com" → null). Never on a shared /
+ * tenant host, the generic brand's own domain or the vendor's own domains
+ * (OWNER_VENDORS.ownDomains: "outlook.office365.com").
  */
 export function genericBrandOwnerCredit(
   raw: string,
   canonical: string | null | undefined,
-  opts: { writer?: boolean } = {},
 ): { parentBrandId: string } | null {
   const spec = genericSpec(canonical ?? "", false);
   if (!spec) return null;
   const ctx = hostCtx(raw);
   if (!ctx) return null;
-  return ownerCreditSpec(ctx, spec, !!opts.writer);
+  return ownerCreditSpec(ctx, spec);
 }
 
-function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec, writer: boolean): { parentBrandId: string } | null {
+function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: string } | null {
   const owner = GENERIC_BRAND_OWNERS[spec.canonHost];
   if (!owner) return null;
-  const opts = { writer };
-  const canon = spec.canon;
   const vendor = OWNER_VENDORS[owner.parentBrandId];
+  if (!vendor) return null;
   const { host } = ctx;
-  // Writers: cheap substring precheck before any parsing (review N1).
-  if (opts.writer && !(OWNER_PRECHECK.get(owner.parentBrandId) ?? []).some((t) => host.includes(t))) return null;
+  // Cheap substring precheck before any parsing (review N1).
+  if (!(OWNER_PRECHECK.get(owner.parentBrandId) ?? []).some((t) => host.includes(t))) return null;
   // Shared / tenant hosts (safelinks wrappers, x.sharepoint.com,
   // onedrive.live.com) carry the vendor's name but not a lure.
   if (platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
   // The generic brand's own domain and the vendor's own domains are not lures.
   if (host === spec.canonHost || host.endsWith(spec.canonDot)) return null;
   const reg = registrableDomain(host);
-  if (vendor && reg && vendor.ownDomains.has(reg)) return null;
+  if (reg && vendor.ownDomains.has(reg)) return null;
   const labels = ctx.labels();
-  const word = canon[0]!.replace(/-/g, "");
-  const credit = { parentBrandId: owner.parentBrandId };
-  if (opts.writer) {
-    if (!vendor || !labels.some((l) => l.includes(word))) return null;
-    for (const label of labels) {
-      for (const t of label.split(/[-_]/).filter((x) => x.length > 0)) {
-        if (vendor.tokens.includes(t) || vendor.glued.some((g) => t !== g && t.includes(g))) return credit;
-      }
-    }
-    return null;
-  }
-  const strong = (t: string) => !OWNER_WEAK_FAMILY_TOKENS.has(t) && isIdpVendorFamilyToken(t, owner.family);
+  const word = spec.canon[0]!.replace(/-/g, "");
+  if (!labels.some((l) => l.includes(word))) return null;
   for (const label of labels) {
-    const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
-    for (const [i, t] of tokens.entries()) {
-      if (strong(t)) return credit;
-      if (t === word && (OWNER_LURE_WORDS.includes(tokens[i - 1] ?? "") || OWNER_LURE_WORDS.includes(tokens[i + 1] ?? ""))) {
-        return credit;
-      }
-      if (OWNER_LURE_WORDS.some((w) => t === word + w || t === w + word)) return credit;
-      if (OWNER_GLUED_FAMILY.some((w) => t.includes(w))) return credit;
+    for (const t of label.split(/[-_]/).filter((x) => x.length > 0)) {
+      if (vendor.tokens.includes(t) || vendor.glued.some((g) => t.includes(g))) return { parentBrandId: owner.parentBrandId };
     }
   }
   return null;
 }
-
-/** Strong family words (>= 6 chars) matched glued inside a token, exact
- *  spelling only ("hotmailsecure", "myoutlookverify"). */
-const OWNER_GLUED_FAMILY: readonly string[] = [
-  "microsoft", "microsoftonline", "onmicrosoft", "office365", "microsoft365", "outlook",
-  "outlook365", "onedrive", "sharepoint", "hotmail", "windowslive", "msaccount", "msonline",
-];
 
 /** What may be glued onto a generic brand's full-domain token or bare
  *  lure-gated word: credential lures, glue words and digits, exact words
@@ -798,7 +755,7 @@ export class GenericBrandSet {
     if (this.ownerPrecheck.length === 0 || !this.ownerPrecheck.some((t) => ctx.host.includes(t))) return null;
     for (const e of this.entries) {
       if (!e.owner) continue;
-      const owner = ownerCreditSpec(ctx, e.spec, true);
+      const owner = ownerCreditSpec(ctx, e.spec);
       if (owner && owner.parentBrandId !== e.id && this.brandExists(owner.parentBrandId)) {
         return { brandId: owner.parentBrandId, method: "token", via: e.id };
       }
@@ -833,7 +790,7 @@ export function creditGenericBrand(
 ): { brandId: string; method: BrandMatchMethod } | null {
   const own = matchGenericBrand(raw, brand, { subdomains: false });
   if (own) return { brandId: brand.id, method: own };
-  const owner = genericBrandOwnerCredit(raw, brand.canonical_domain, { writer: true });
+  const owner = genericBrandOwnerCredit(raw, brand.canonical_domain);
   if (owner && owner.parentBrandId !== brand.id && brandExists(owner.parentBrandId)) {
     return { brandId: owner.parentBrandId, method: "token" };
   }

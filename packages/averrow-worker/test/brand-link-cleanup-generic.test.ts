@@ -86,7 +86,7 @@ function harness() {
   threat(5, "t_paypal", "paypal-secure.com", "brand_paypal", "openphish", "token"); // not generic: untouched
   threat(6, "t_site", "0bmmubit.site-enfejar-ba-zarib-bala.com", "brand_site_com", "numbered_variant_scan", "keyword");
   threat(7, "t_login", "voiceloginqa4.fmr.com", "brand_login_gov", "ct_logs");
-  threat(8, "t_live_ms", "outlook-verify-account.com", "brand_live_com", "ct_logs");
+  threat(8, "t_live_ms", "outlook-live-verify.com", "brand_live_com", "ct_logs");
   threat(9, "t_live_noise", "live-stream.tv", "brand_live_com", "nrd_hagezi");
   threat(GENERIC_SCAN_WINDOW + 10, "t_far", "membersecurelogin.com", "brand_login_gov", "ct_logs");
   raw.prepare("INSERT INTO alerts VALUES ('a1', 'threat', 't_bare_nrd')").run();

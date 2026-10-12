@@ -234,7 +234,7 @@ export function decideLink(
  * source-feed or legacy-match protection. Otherwise relinked to what the
  * catalog matcher finds; else, for a vendor-product generic brand
  * (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft) whose host
- * carries that vendor's lure context, relinked to the parent brand
+ * passes the writers' owner-credit rule (genericBrandOwnerCredit: product word + a real vendor token), relinked to the parent brand
  * (method "token") when `brandExists` confirms it; else cleared. A link whose
  * brand turns out not to be generic (SQL prefilter vs isGenericBrandName) is
  * left alone.

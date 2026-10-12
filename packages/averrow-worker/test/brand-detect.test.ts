@@ -617,27 +617,33 @@ describe("glued-substring rule (4–5 char names inside one long token)", () => 
 });
 
 describe("genericBrandOwnerCredit — vendor-product generic brands (Live / Office / Cloud → Microsoft)", () => {
+  // ONE rule for writers and cleanup: the product word AND a real Microsoft token.
   it.each([
-    ["outlook-verify.com", "live.com"], ["login-live.com", "live.com"], ["live-login-secure.net", "live.com"],
-    ["livesignin.xyz", "live.com"], ["hotmailsecure.net", "live.com"], ["msn-account.top", "live.com"],
-    ["o365-portal.com", "office.com"], ["office365-verify.net", "office.com"], ["myoutlookverify.com", "office.com"],
-    ["sharepoint-docs-share.com", "office.com"], ["onedrive-file.cloud", "cloud.microsoft"],
-    ["microsoft-cloud-login.com", "cloud.microsoft"], ["outlok-mail.com", "live.com"], // one-edit typo
+    ["outlook-live-login.com", "live.com"], ["hotmail-live-verify.net", "live.com"], ["msn-live-account.top", "live.com"],
+    ["office365-login.com", "office.com"], ["o365-office-portal.com", "office.com"], ["myoutlookofficeverify.com", "office.com"],
+    ["sharepoint-office-docs.com", "office.com"], ["onedrive-cloud-file.net", "cloud.microsoft"],
+    ["microsoft-cloud-login.com", "cloud.microsoft"],
   ])("%s (%s) → Microsoft", (host, canonical) => {
     expect(genericBrandOwnerCredit(host, canonical)).toEqual({ parentBrandId: "brand_microsoft_com" });
   });
 
   it.each([
-    ["live-stream.tv", "live.com"], ["zs-live.com", "live.com"], ["office-chairs.com", "office.com"],
-    ["teams-office.com", "office.com"], ["cloud-storage.io", "cloud.microsoft"], ["excel-edge.net", "office.com"],
-  ])("%s (%s) → no vendor context", (host, canonical) => {
+    // the generic word without a Microsoft token
+    ["live-login.com", "live.com"], ["login-live.com", "live.com"], ["livesignin.xyz", "live.com"],
+    ["cloud-login.com", "cloud.microsoft"], ["secure-cloud-login.net", "cloud.microsoft"], ["box-office-login.com", "office.com"],
+    // a Microsoft token without the product word
+    ["outlook-verify.com", "live.com"], ["o365-portal.com", "office.com"],
+    // Microsoft's own hosts, the brand's own domain, shared hosts
+    ["outlook.office365.com", "office.com"], ["login.live.com", "live.com"], ["x.sharepoint.com", "office.com"],
+    // no vendor context at all
+    ["live-stream.tv", "live.com"], ["office-chairs.com", "office.com"],
+  ])("%s (%s) → nothing", (host, canonical) => {
     expect(genericBrandOwnerCredit(host, canonical)).toBeNull();
   });
 
   it("only the mapped vendor-product brands have an owner", () => {
-    expect(genericBrandOwnerCredit("outlook-verify.com", "mail.ru")).toBeNull();
-    expect(genericBrandOwnerCredit("outlook-verify.com", "site.com")).toBeNull();
-    expect(GENERIC_BRAND_OWNERS["live.com"]).toEqual({ parentBrandId: "brand_microsoft_com", family: "entra" });
+    expect(genericBrandOwnerCredit("outlook-mail-verify.com", "mail.ru")).toBeNull();
+    expect(GENERIC_BRAND_OWNERS["live.com"]).toEqual({ parentBrandId: "brand_microsoft_com" });
   });
 });
 
