@@ -12,6 +12,8 @@
 #   SCOPE=generic_brands RUN_ID=generic-2026-10 ./scripts/brand-link-cleanup.sh   # opt-in
 #     generic-word brand re-validation (Mail/Site/Login …); see the
 #     `scope` doc in docs/API_REFERENCE.md. Use its own RUN_ID.
+#   SCOPE=generic_brands BRANDS=brand_mail_ru RUN_ID=generic-mail ./scripts/brand-link-cleanup.sh
+#     same, one brand (or up to 20 comma-separated ids) at a time.
 #
 # apply/undo prompt for the confirm token, then run ONE brand-counter
 # reconcile at the end. After apply/undo, rebuild cube history older than
@@ -22,7 +24,8 @@
 #   AVERROW_API_URL          — (optional) defaults to https://averrow.com
 # Optional: BATCH (default 500), RUN_ID (apply/undo; default
 #   cleanup-<UTC date>), STATE_FILE (default ./brand-link-cleanup.state.json),
-#   SCOPE (all | generic_brands; default all — dry_run/apply only)
+#   SCOPE (all | generic_brands; default all — dry_run/apply only),
+#   BRANDS (generic_brands only: comma-separated brand ids, max 20)
 
 set -euo pipefail
 
@@ -53,9 +56,20 @@ QS="mode=${MODE}&limit=${BATCH}&run_id=${RUN_ID}"
 case "${SCOPE:-all}" in
   all) ;;
   generic_brands)
-    if [ "$MODE" != "undo" ]; then QS="${QS}&scope=generic_brands"; fi ;;
+    if [ "$MODE" != "undo" ]; then
+      QS="${QS}&scope=generic_brands"
+      if [ -n "${BRANDS:-}" ]; then
+        case "$BRANDS" in
+          *[!A-Za-z0-9_.:,-]*) echo "Error: BRANDS must be comma-separated brand ids." >&2; exit 1 ;;
+        esac
+        QS="${QS}&brand=${BRANDS}"
+      fi
+    fi ;;
   *) echo "Error: SCOPE must be all or generic_brands." >&2; exit 1 ;;
 esac
+if [ -n "${BRANDS:-}" ] && [ "${SCOPE:-all}" != "generic_brands" ]; then
+  echo "Error: BRANDS requires SCOPE=generic_brands." >&2; exit 1
+fi
 if [ -n "$TOKEN" ]; then
   echo "${MODE^^} mode rewrites threats.target_brand_id on production (run_id=${RUN_ID}; logged + reversible)." >&2
   read -r -p "Type '${TOKEN}' to continue: " answer
@@ -75,7 +89,7 @@ else
 fi
 
 resume_hint() {
-  echo "Resume with: START_CURSOR=${CURSOR} RUN_ID=${RUN_ID} SCOPE=${SCOPE:-all} $0 ${MODE}" >&2
+  echo "Resume with: START_CURSOR=${CURSOR} RUN_ID=${RUN_ID} SCOPE=${SCOPE:-all} BRANDS=${BRANDS:-} $0 ${MODE}" >&2
 }
 
 # The secret goes to curl on stdin (-K -), never on its command line.

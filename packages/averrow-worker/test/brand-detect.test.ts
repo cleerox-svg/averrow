@@ -11,6 +11,8 @@ import {
   isGenericBrandName,
   genericBrandDomainKeywords,
   genericBrandHostMatch,
+  genericBrandOwnerCredit,
+  GENERIC_BRAND_OWNERS,
   type BrandRow,
 } from "../src/lib/brandDetect";
 
@@ -609,5 +611,30 @@ describe("glued-substring rule (4–5 char names inside one long token)", () => 
     expect(fuzzyMatchBrand(["helpscout-okta.com"], idp)).toBe("b_okta");
     // A glued leftover beside an IdP lure is not evidence for the glued rule.
     expect(fuzzyMatchBrand(["invitationzoommeetings-okta.com"], idp)).toBe("b_okta");
+  });
+});
+
+describe("genericBrandOwnerCredit — vendor-product generic brands (Live / Office / Cloud → Microsoft)", () => {
+  it.each([
+    ["outlook-verify.com", "live.com"], ["login-live.com", "live.com"], ["live-login-secure.net", "live.com"],
+    ["livesignin.xyz", "live.com"], ["hotmailsecure.net", "live.com"], ["msn-account.top", "live.com"],
+    ["o365-portal.com", "office.com"], ["office365-verify.net", "office.com"], ["myoutlookverify.com", "office.com"],
+    ["sharepoint-docs-share.com", "office.com"], ["onedrive-file.cloud", "cloud.microsoft"],
+    ["microsoft-cloud-login.com", "cloud.microsoft"], ["outlok-mail.com", "live.com"], // one-edit typo
+  ])("%s (%s) → Microsoft", (host, canonical) => {
+    expect(genericBrandOwnerCredit(host, canonical)).toEqual({ parentBrandId: "brand_microsoft_com" });
+  });
+
+  it.each([
+    ["live-stream.tv", "live.com"], ["zs-live.com", "live.com"], ["office-chairs.com", "office.com"],
+    ["teams-office.com", "office.com"], ["cloud-storage.io", "cloud.microsoft"], ["excel-edge.net", "office.com"],
+  ])("%s (%s) → no vendor context", (host, canonical) => {
+    expect(genericBrandOwnerCredit(host, canonical)).toBeNull();
+  });
+
+  it("only the mapped vendor-product brands have an owner", () => {
+    expect(genericBrandOwnerCredit("outlook-verify.com", "mail.ru")).toBeNull();
+    expect(genericBrandOwnerCredit("outlook-verify.com", "site.com")).toBeNull();
+    expect(GENERIC_BRAND_OWNERS["live.com"]).toEqual({ parentBrandId: "brand_microsoft_com", family: "entra" });
   });
 });

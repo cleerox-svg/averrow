@@ -196,6 +196,29 @@ describe("decideGenericLink — generic_brands scope", () => {
     expect(d).toMatchObject({ action: "clear", reason: "non_hostname" });
   });
 
+  it("relinks a Microsoft-product generic brand to Microsoft on a Microsoft lure instead of clearing", () => {
+    const live = (host: string) => row({
+      malicious_domain: host, target_brand_id: "brand_live_com", brand_name: "Live", brand_canonical: "live.com",
+      source_feed: "ct_logs",
+    });
+    expect(decideGenericLink(live("outlook-verify-account.com"), () => null))
+      .toEqual({ action: "relink", method: "token", newBrandId: "brand_microsoft_com", reason: "generic_brand" });
+    expect(decideGenericLink(live("live-login.net"), () => null)).toMatchObject({ action: "relink", newBrandId: "brand_microsoft_com" });
+    // A more specific brand the matcher finds still wins.
+    expect(decideGenericLink(live("paypal-outlook.com"), () => ({ brandId: "brand_paypal", method: "token" })))
+      .toMatchObject({ action: "relink", newBrandId: "brand_paypal" });
+    // No vendor context, or the parent brand is absent from the catalog → clear.
+    expect(decideGenericLink(live("live-stream.tv"), () => null)).toMatchObject({ action: "clear" });
+    expect(decideGenericLink(live("outlook-verify-account.com"), () => null, () => false)).toMatchObject({ action: "clear" });
+    // Kept links are unaffected.
+    expect(decideGenericLink(live("login.live.com"), never)).toMatchObject({ action: "keep", method: "canonical" });
+  });
+
+  it("other generic brands never take the owner relink", () => {
+    expect(decideGenericLink(row({ malicious_domain: "outlook-verify.com", brand_name: "Mail", brand_canonical: "mail.ru" }), () => null))
+      .toMatchObject({ action: "clear" });
+  });
+
   it("leaves a non-generic brand alone", () => {
     expect(decideGenericLink(row({ malicious_domain: "evil.com", brand_name: "PayPal", brand_canonical: "paypal.com" }), never))
       .toMatchObject({ action: "keep", protectedBy: "not_generic_brand" });
@@ -363,6 +386,14 @@ describe("handleBrandLinkCleanup", () => {
   it("rejects unknown modes and bad run ids", async () => {
     expect((await call("mode=delete")).status).toBe(400);
     expect((await call("run_id=bad%20id")).status).toBe(400);
+  });
+  it("validates the brand filter", async () => {
+    expect((await call("brand=brand_mail_ru")).status).toBe(400); // needs scope=generic_brands
+    expect((await call("scope=generic_brands&brand=")).status).toBe(400);
+    expect((await call("scope=generic_brands&brand=bad%20id")).status).toBe(400);
+    const many = Array.from({ length: 21 }, (_, i) => `b${i}`).join(",");
+    expect((await call(`scope=generic_brands&brand=${many}`)).status).toBe(400);
+    expect((await call("scope=generic_brands&brand=brand_mail_ru,brand_site_com")).status).toBe(200);
   });
   it("validates scope and echoes it", async () => {
     expect((await call("scope=everything")).status).toBe(400);

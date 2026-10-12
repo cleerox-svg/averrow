@@ -8,6 +8,7 @@ import {
   UNDO_CONFIRM_TOKEN,
   clampCursor,
   clampLimit,
+  MAX_BRAND_FILTER,
   runBrandLinkCleanup,
   type CleanupMode,
   type CleanupScope,
@@ -16,6 +17,7 @@ import {
 const MODES: readonly CleanupMode[] = ["dry_run", "apply", "undo", "reconcile"];
 const SCOPES: readonly CleanupScope[] = ["all", "generic_brands"];
 const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+const BRAND_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 /**
  * @param actor "internal" for the internal-secret route, "user:<id>" for
@@ -38,6 +40,22 @@ export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string):
   if (!scope) {
     return Response.json({ success: false, error: `scope must be one of ${SCOPES.join(", ")}` }, { status: 400 });
   }
+  // `brand` (scope=generic_brands only): comma-separated brand ids, so the
+  // re-validation can run one generic brand at a time.
+  const brandParam = url.searchParams.get("brand");
+  let brandIds: string[] | undefined;
+  if (brandParam !== null) {
+    if (scope !== "generic_brands") {
+      return Response.json({ success: false, error: "brand requires scope=generic_brands" }, { status: 400 });
+    }
+    brandIds = [...new Set(brandParam.split(",").map((b) => b.trim()).filter((b) => b.length > 0))];
+    if (brandIds.length === 0 || brandIds.length > MAX_BRAND_FILTER || !brandIds.every((b) => BRAND_ID_RE.test(b))) {
+      return Response.json({
+        success: false,
+        error: `brand must be 1-${MAX_BRAND_FILTER} comma-separated ids matching [A-Za-z0-9_.:-]{1,128}`,
+      }, { status: 400 });
+    }
+  }
   const runId = url.searchParams.get("run_id") ?? "manual";
   if (!RUN_ID_RE.test(runId)) {
     return Response.json({ success: false, error: "run_id must match [A-Za-z0-9_.:-]{1,64}" }, { status: 400 });
@@ -51,6 +69,7 @@ export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string):
       runId,
       actor,
       scope,
+      brandIds,
     });
     return Response.json({ success: true, data });
   } catch (err) {

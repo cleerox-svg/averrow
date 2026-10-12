@@ -331,6 +331,79 @@ function homoglyphSpelling(cand: string, canon: string): boolean {
   return walk(0, 0);
 }
 
+/**
+ * Generic-word brands that are a PRODUCT of a larger vendor whose
+ * credential lures they appear in (owner decision 2026-10-12): a link that
+ * the generic rule would clear is moved to the parent brand instead when the
+ * host carries that vendor's lure context. Keyed by the generic brand's
+ * canonical domain; `family` is the vendor's product family in
+ * lib/idp-impersonation.ts (isIdpVendorFamilyToken).
+ */
+export const GENERIC_BRAND_OWNERS: Readonly<Record<string, { parentBrandId: string; family: IdpProvider }>> = {
+  "live.com": { parentBrandId: "brand_microsoft_com", family: "entra" },
+  "office.com": { parentBrandId: "brand_microsoft_com", family: "entra" },
+  "cloud.microsoft": { parentBrandId: "brand_microsoft_com", family: "entra" },
+};
+
+/** Vendor-family words that are also everyday words ("live", "office",
+ *  "teams", "edge") — never vendor context on their own. */
+const OWNER_WEAK_FAMILY_TOKENS: ReadonlySet<string> = new Set([
+  "live", "office", "windows", "teams", "edge", "loop", "stream", "forms", "viva", "planner",
+  "bookings", "sway", "whiteboard", "excel", "exchange", "dynamics", "defender", "intune",
+  "bing", "xbox", "visio", "yammer", "azure", "copilot", "drive", "docs", "meet", "accounts",
+  "workspace", "calendar", "chrome", "android", "slides", "sheets",
+]);
+
+/** Credential-lure words: the generic word itself beside one ("live-login",
+ *  "officesignin") is vendor context too. */
+const OWNER_LURE_WORDS: readonly string[] = [
+  "login", "logon", "signin", "signon", "verify", "verification", "account", "accounts",
+  "secure", "security", "auth", "password", "webmail", "mfa",
+];
+
+/**
+ * Parent brand to credit instead of clearing a generic-brand link
+ * (GENERIC_BRAND_OWNERS), or null. Vendor context = a strong vendor-family
+ * token (microsoft, outlook, o365, hotmail, msn, onedrive, sharepoint, …;
+ * one-edit typos of the high-value ones), a strong family word glued inside
+ * a label, or the generic word itself beside a credential lure word
+ * ("live-login.com", "office365" counts on its own; "live-stream.tv" and
+ * "zs-office.com" do not).
+ */
+export function genericBrandOwnerCredit(
+  raw: string,
+  canonical: string | null | undefined,
+): { parentBrandId: string } | null {
+  const canon = canonicalLabels(canonical ?? "");
+  const owner = GENERIC_BRAND_OWNERS[canon.join(".")];
+  if (!owner) return null;
+  const host = hostOf(raw);
+  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
+  const all = host.split(".").filter((l) => l.length > 0);
+  const labels = all.slice(0, all.length - suffixLabelCount(host));
+  const word = canon[0]!.replace(/-/g, "");
+  const strong = (t: string) => !OWNER_WEAK_FAMILY_TOKENS.has(t) && isIdpVendorFamilyToken(t, owner.family);
+  for (const label of labels) {
+    const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
+    for (const [i, t] of tokens.entries()) {
+      if (strong(t)) return { parentBrandId: owner.parentBrandId };
+      if (t === word && (OWNER_LURE_WORDS.includes(tokens[i - 1] ?? "") || OWNER_LURE_WORDS.includes(tokens[i + 1] ?? ""))) {
+        return { parentBrandId: owner.parentBrandId };
+      }
+      if (OWNER_LURE_WORDS.some((w) => t === word + w || t === w + word)) return { parentBrandId: owner.parentBrandId };
+      if (OWNER_GLUED_FAMILY.some((w) => t.includes(w))) return { parentBrandId: owner.parentBrandId };
+    }
+  }
+  return null;
+}
+
+/** Strong family words (>= 6 chars) matched glued inside a token, exact
+ *  spelling only ("hotmailsecure", "myoutlookverify"). */
+const OWNER_GLUED_FAMILY: readonly string[] = [
+  "microsoft", "microsoftonline", "onmicrosoft", "office365", "microsoft365", "outlook",
+  "outlook365", "onedrive", "sharepoint", "hotmail", "windowslive", "msaccount", "msonline",
+];
+
 /** Lure words that may be glued onto a generic brand's full-domain token
  *  ("mymailru", "mailru-login" is covered by the token run). */
 const GENERIC_DOMAIN_GLUE: ReadonlySet<string> = new Set([

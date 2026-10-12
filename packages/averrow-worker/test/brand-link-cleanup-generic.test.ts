@@ -74,6 +74,8 @@ function harness() {
   brand("brand_login_gov", "Login", "login.gov");
   brand("brand_xfinity", "Xfinity", "xfinity.com");
   brand("brand_paypal", "PayPal", "paypal.com");
+  brand("brand_live_com", "Live", "live.com");
+  brand("brand_microsoft_com", "Microsoft", "microsoft.com");
   const threat = (rowid: number, id: string, domain: string, brandId: string, feed: string, method: string | null = null) =>
     raw.prepare(`INSERT INTO threats (rowid, id, malicious_domain, target_brand_id, brand_match_method, source_feed)
                  VALUES (?, ?, ?, ?, ?, ?)`).run(rowid, id, domain, brandId, method, feed);
@@ -84,6 +86,8 @@ function harness() {
   threat(5, "t_paypal", "paypal-secure.com", "brand_paypal", "openphish", "token"); // not generic: untouched
   threat(6, "t_site", "0bmmubit.site-enfejar-ba-zarib-bala.com", "brand_site_com", "numbered_variant_scan", "keyword");
   threat(7, "t_login", "voiceloginqa4.fmr.com", "brand_login_gov", "ct_logs");
+  threat(8, "t_live_ms", "outlook-verify-account.com", "brand_live_com", "ct_logs");
+  threat(9, "t_live_noise", "live-stream.tv", "brand_live_com", "nrd_hagezi");
   threat(GENERIC_SCAN_WINDOW + 10, "t_far", "membersecurelogin.com", "brand_login_gov", "ct_logs");
   raw.prepare("INSERT INTO alerts VALUES ('a1', 'threat', 't_bare_nrd')").run();
   const env = { DB: d1(raw) } as unknown as Env;
@@ -113,12 +117,12 @@ describe.skipIf(DatabaseSync === null)("runBrandLinkCleanup — scope=generic_br
     expect(pages).toHaveLength(2); // [0, 50000] then (50000, max]
     expect(pages[0]).toMatchObject({ scope: "generic_brands", next_cursor: GENERIC_SCAN_WINDOW, done: false });
     const sum = (k: "scanned" | "keep" | "relink" | "clear") => pages.reduce((n, p) => n + p[k], 0);
-    expect(sum("scanned")).toBe(7); // the PayPal link is never read
+    expect(sum("scanned")).toBe(9); // the PayPal link is never read
     expect(sum("keep")).toBe(2); // mail.ru, mail-ru.com
-    expect(sum("relink")).toBe(1); // xfinitymail97.weebly.com → Xfinity
-    expect(sum("clear")).toBe(4);
-    expect(pages[0]!.removed_by_source).toEqual({ nrd_hagezi: 1, numbered_variant_scan: 2, ct_logs: 1 });
-    expect(pages[0]!.added_by_brand).toEqual({ brand_xfinity: 1 });
+    expect(sum("relink")).toBe(2); // → Xfinity; Live outlook lure → Microsoft
+    expect(sum("clear")).toBe(5);
+    expect(pages[0]!.removed_by_source).toEqual({ nrd_hagezi: 2, numbered_variant_scan: 2, ct_logs: 2 });
+    expect(pages[0]!.added_by_brand).toEqual({ brand_xfinity: 1, brand_microsoft_com: 1 });
     expect(pages[0]!.alerts_affected).toBe(1);
     expect(brandOf("t_bare_nrd").b).toBe("brand_mail_ru");
   });
@@ -132,7 +136,9 @@ describe.skipIf(DatabaseSync === null)("runBrandLinkCleanup — scope=generic_br
   it("apply logs and changes exactly the decided links; undo restores them", async () => {
     const { env, raw, brandOf } = harness();
     const applied = await drain(env, "apply");
-    expect(applied.reduce((n, p) => n + p.changed, 0)).toBe(5);
+    expect(applied.reduce((n, p) => n + p.changed, 0)).toBe(7);
+    expect(brandOf("t_live_ms")).toEqual({ b: "brand_microsoft_com", m: "token" });
+    expect(brandOf("t_live_noise").b).toBeNull();
 
     expect(brandOf("t_bare_nrd")).toEqual({ b: null, m: null });
     expect(brandOf("t_variant")).toEqual({ b: "brand_xfinity", m: "substring" });
@@ -147,23 +153,43 @@ describe.skipIf(DatabaseSync === null)("runBrandLinkCleanup — scope=generic_br
     expect(log).toEqual([
       { threat_id: "t_bare_nrd", old_brand_id: "brand_mail_ru", old_method: null, action: "clear", reason: "generic_brand" },
       { threat_id: "t_far", old_brand_id: "brand_login_gov", old_method: null, action: "clear", reason: "generic_brand" },
+      { threat_id: "t_live_ms", old_brand_id: "brand_live_com", old_method: null, action: "relink", reason: "generic_brand" },
+      { threat_id: "t_live_noise", old_brand_id: "brand_live_com", old_method: null, action: "clear", reason: "generic_brand" },
       { threat_id: "t_login", old_brand_id: "brand_login_gov", old_method: null, action: "clear", reason: "generic_brand" },
       { threat_id: "t_site", old_brand_id: "brand_site_com", old_method: "keyword", action: "clear", reason: "generic_brand" },
       { threat_id: "t_variant", old_brand_id: "brand_mail_ru", old_method: null, action: "relink", reason: "generic_brand" },
     ]);
 
     const undo = await runBrandLinkCleanup(env, { ...OPTS, mode: "undo", runId: "gen1" });
-    expect(undo).toMatchObject({ scanned: 5, changed: 5, skipped: 0 });
+    expect(undo).toMatchObject({ scanned: 7, changed: 7, skipped: 0 });
+    expect(brandOf("t_live_ms").b).toBe("brand_live_com");
     expect(brandOf("t_bare_nrd").b).toBe("brand_mail_ru");
     expect(brandOf("t_variant").b).toBe("brand_mail_ru");
     expect(brandOf("t_site")).toEqual({ b: "brand_site_com", m: "keyword" });
+  });
+
+  it("brand= restricts the run to the listed brands", async () => {
+    const { env, brandOf } = harness();
+    let cursor = 0;
+    const seen: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await runBrandLinkCleanup(env, { ...OPTS, mode: "apply", cursor, brandIds: ["brand_live_com", "brand_site_com"] });
+      seen.push(r.scanned);
+      if (r.done) break;
+      cursor = r.next_cursor;
+    }
+    expect(seen.reduce((a, b) => a + b, 0)).toBe(3); // t_site, t_live_ms, t_live_noise
+    expect(brandOf("t_site").b).toBeNull();
+    expect(brandOf("t_live_ms").b).toBe("brand_microsoft_com");
+    expect(brandOf("t_bare_nrd").b).toBe("brand_mail_ru"); // Mail not listed → untouched
+    expect(brandOf("t_far").b).toBe("brand_login_gov");
   });
 
   it("scope=all keeps the authoritative-feed generic links protected (unchanged default)", async () => {
     const { env } = harness();
     const r = await runBrandLinkCleanup(env, { ...OPTS, scope: "all", mode: "dry_run" });
     expect(r.scope).toBe("all");
-    expect(r.kept_protected.authoritative_source).toBe(5); // nrd, variant ×2, ct ×2
+    expect(r.kept_protected.authoritative_source).toBe(7); // nrd ×2, variant ×2, ct ×3
     expect(r.clear + r.relink).toBe(0);
   });
 });

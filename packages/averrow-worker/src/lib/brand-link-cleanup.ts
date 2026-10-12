@@ -48,6 +48,7 @@ import type { Env } from "../types";
 import {
   fuzzyMatchBrandDetailed,
   genericBrandHostMatch,
+  genericBrandOwnerCredit,
   genericBrandWords,
   isGenericBrand,
   isGenericBrandName,
@@ -231,12 +232,17 @@ export function decideLink(
  * when some input is the brand's canonical domain, a non-platform-tenant
  * subdomain of it, or a full-domain lookalike (genericBrandHostMatch) — no
  * source-feed or legacy-match protection. Otherwise relinked to what the
- * catalog matcher finds, else cleared. A link whose brand turns out not to
- * be generic (SQL prefilter vs isGenericBrandName) is left alone.
+ * catalog matcher finds; else, for a vendor-product generic brand
+ * (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft) whose host
+ * carries that vendor's lure context, relinked to the parent brand
+ * (method "token") when `brandExists` confirms it; else cleared. A link whose
+ * brand turns out not to be generic (SQL prefilter vs isGenericBrandName) is
+ * left alone.
  */
 export function decideGenericLink(
   row: LinkRow,
   rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod } | null,
+  brandExists: (brandId: string) => boolean = () => true,
 ): LinkDecision {
   if (row.brand_name === null || !isGenericBrandName(row.brand_name)) {
     return { action: "keep", method: null, newBrandId: null, reason: null, protectedBy: "not_generic_brand" };
@@ -250,6 +256,14 @@ export function decideGenericLink(
   const hit = reason === "non_hostname" ? null : rematch(haystacks);
   if (hit && hit.brandId !== row.target_brand_id) {
     return { action: "relink", method: hit.method, newBrandId: hit.brandId, reason };
+  }
+  if (reason === "generic_brand") {
+    for (const h of haystacks) {
+      const owner = genericBrandOwnerCredit(h, row.brand_canonical);
+      if (owner && owner.parentBrandId !== row.target_brand_id && brandExists(owner.parentBrandId)) {
+        return { action: "relink", method: "token", newBrandId: owner.parentBrandId, reason };
+      }
+    }
   }
   return { action: "clear", method: null, newBrandId: null, reason };
 }
@@ -293,7 +307,12 @@ export interface CleanupOptions {
   actor: string;
   /** dry_run / apply only. Default "all". */
   scope?: CleanupScope;
+  /** generic_brands only: restrict to these brand ids (<= MAX_BRAND_FILTER). */
+  brandIds?: string[];
 }
+
+/** Max brand ids in the generic_brands `brand=` filter (one JSON bind). */
+export const MAX_BRAND_FILTER = 20;
 
 function bump(map: Record<string, number>, key: string): void {
   map[key] = (map[key] ?? 0) + 1;
@@ -358,7 +377,7 @@ const LINK_COLUMNS = `t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url,
  * `generic_brands`: a bounded rowid WINDOW (GENERIC_SCAN_WINDOW) filtered to
  * generic-name brands, so one call never scans the whole table hunting for
  * `limit` matches; next_cursor is the last match when the page filled, else
- * the window end. 4 binds.
+ * the window end. `brandIds` (optional) narrows it to those brands. 6 binds.
  */
 async function loadLinkPage(
   env: Env, opts: CleanupOptions,
@@ -375,6 +394,7 @@ async function loadLinkPage(
     ).bind(cursor, limit).all<LinkRow>();
     return { rows: r.results, next_cursor: r.results.at(-1)?.rid ?? cursor, done: r.results.length < limit };
   }
+  const brandFilter = opts.brandIds && opts.brandIds.length > 0 ? JSON.stringify(opts.brandIds) : null;
   const max = (await env.DB.prepare("SELECT MAX(rowid) AS m FROM threats").first<{ m: number | null }>())?.m ?? 0;
   const upper = Math.min(cursor + GENERIC_SCAN_WINDOW, max);
   if (upper <= cursor) return { rows: [], next_cursor: cursor, done: true };
@@ -385,9 +405,10 @@ async function loadLinkPage(
       WHERE t.rowid > ? AND t.rowid <= ?
         AND (${SQL_NORM_NAME} IN (SELECT value FROM json_each(?))
              OR (${SQL_NORM_NAME} GLOB '[0-9]*' AND ${SQL_NORM_NAME} NOT GLOB '*[^0-9]*'))
+        AND (? IS NULL OR t.target_brand_id IN (SELECT value FROM json_each(?)))
       ORDER BY t.rowid
       LIMIT ?`,
-  ).bind(cursor, upper, JSON.stringify(genericBrandWords()), limit).all<LinkRow>();
+  ).bind(cursor, upper, JSON.stringify(genericBrandWords()), brandFilter, brandFilter, limit).all<LinkRow>();
   if (r.results.length >= limit) {
     return { rows: r.results, next_cursor: r.results.at(-1)?.rid ?? cursor, done: false };
   }
@@ -396,7 +417,7 @@ async function loadLinkPage(
 
 async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatchResult> {
   const { mode } = opts;
-  const decide = opts.scope === "generic_brands" ? decideGenericLink : decideLink;
+  const generic = opts.scope === "generic_brands";
 
   const page = await loadLinkPage(env, opts);
   const rows = { results: page.rows };
@@ -410,17 +431,22 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
 
   // The catalog (100K+ rows) is loaded only if some link needs a re-match.
   let catalog: BrandRow[] | null = null;
+  let catalogIds: Set<string> | null = null;
   const rematchCatalog = (haystacks: string[]) => {
     if (!catalog) throw new Error("catalog not loaded");
     return fuzzyMatchBrandDetailed(haystacks, catalog);
   };
+  // The owner relink (decideGenericLink) only targets a brand that exists.
+  const inCatalog = (id: string) => (catalogIds ??= new Set((catalog ?? []).map((b) => b.id))).has(id);
+  const decide = (row: LinkRow, rematch: Parameters<typeof decideLink>[1], loaded: boolean) =>
+    generic ? decideGenericLink(row, rematch, loaded ? inCatalog : () => false) : decideLink(row, rematch);
 
   const decisions: Array<{ row: LinkRow; d: LinkDecision }> = [];
   for (const row of rows.results) {
-    let d = decide(row, () => null);
+    let d = decide(row, () => null, false);
     if (d.action === "clear" && d.reason !== "non_hostname") {
       catalog ??= await loadBrands(env.DB);
-      d = decide(row, rematchCatalog);
+      d = decide(row, rematchCatalog, true);
     }
     decisions.push({ row, d });
 
@@ -547,7 +573,7 @@ async function auditBatch(env: Env, opts: CleanupOptions, r: CleanupBatchResult)
     resourceType: "brand_link_cleanup",
     resourceId: opts.runId,
     details: {
-      actor: opts.actor, scope: r.scope, cursor: opts.cursor, next_cursor: r.next_cursor,
+      actor: opts.actor, scope: r.scope, brand_ids: opts.brandIds ?? null, cursor: opts.cursor, next_cursor: r.next_cursor,
       scanned: r.scanned, relink: r.relink, clear: r.clear, changed: r.changed, skipped: r.skipped,
     },
   });
