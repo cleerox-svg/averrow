@@ -140,32 +140,33 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
         </p>
       )}
 
-      {/* Key metrics row */}
+      {/* Key metrics — 2×2 grid on phones (the single row overflowed the card
+          at 375px with long values like "Typosquatting"), wrapping row from sm. */}
       {metrics && (
-        <div className="flex gap-6 pt-4 border-t border-white/[0.06]">
-          <div>
-            <p className="font-mono font-bold text-lg" style={{ color: 'var(--text-primary)' }}>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:flex sm:flex-wrap pt-4 border-t border-white/[0.06]">
+          <div className="min-w-0">
+            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--text-primary)' }}>
               {metrics.totalThreats.toLocaleString()}
             </p>
             <p className="text-white/30 text-[10px]">Total Threats</p>
           </div>
-          <div>
-            <p className={`font-mono font-bold text-lg ${
+          <div className="min-w-0">
+            <p className={`font-mono font-bold text-base sm:text-lg break-words ${
               metrics.changePct > 0 ? 'text-red-400' : metrics.changePct < 0 ? 'text-emerald-400' : 'text-white/60'
             }`}>
               {metrics.changePct > 0 ? '\u2191' : metrics.changePct < 0 ? '\u2193' : '\u2014'}{Math.abs(metrics.changePct)}%
             </p>
             <p className="text-white/30 text-[10px]">Period Trend</p>
           </div>
-          <div>
-            <p className="font-mono font-bold text-lg" style={{ color: 'var(--amber)' }}>
+          <div className="min-w-0">
+            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--amber)' }}>
               {metrics.topType.label}
             </p>
             <p className="text-white/30 text-[10px]">Top Threat Type</p>
           </div>
           {topBrand && (
-            <div>
-              <p className="font-mono font-bold text-lg" style={{ color: 'var(--text-primary)' }}>
+            <div className="min-w-0">
+              <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--text-primary)' }}>
                 {topBrand.brand_name}
               </p>
               <p className="text-white/30 text-[10px]">Most Targeted Brand</p>
