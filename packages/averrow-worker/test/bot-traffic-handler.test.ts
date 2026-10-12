@@ -20,6 +20,9 @@ interface Rows {
   top_location?: unknown[];
   top_asn?: unknown[];
   bot_category?: unknown[];
+  attack_origin?: unknown[];
+  attack_target?: unknown[];
+  bot_density?: unknown[];
   feedStatus?: unknown;
   pull?: unknown;
 }
@@ -30,10 +33,12 @@ interface Harness {
   cachePuts: Array<{ key: string; value: string; opts: unknown }>;
   dbPrepares: number;
   seriesBinds: unknown[][];
+  /** metric bound to each radar_country_snapshots query. */
+  countryMetrics: unknown[];
 }
 
 function makeHarness(rows: Rows = {}, opts: { cached?: Record<string, string>; dbThrows?: boolean } = {}): Harness {
-  const h: Harness = { env: {} as Env, cacheGets: [], cachePuts: [], dbPrepares: 0, seriesBinds: [] };
+  const h: Harness = { env: {} as Env, cacheGets: [], cachePuts: [], dbPrepares: 0, seriesBinds: [], countryMetrics: [] };
 
   const stmt = (sql: string) => {
     h.dbPrepares++;
@@ -48,6 +53,7 @@ function makeHarness(rows: Rows = {}, opts: { cached?: Record<string, string>; d
         if (/MAX\(snapshot_date\)[\s\S]*metric = 'bot_share'\)/.test(sql)) {
           return { results: (rows.latest ?? []) as T[] };
         }
+        if (/FROM radar_country_snapshots/.test(sql)) h.countryMetrics.push(args[0]);
         if (/metric = \?1/.test(sql)) {
           const m = args[0] as keyof Rows;
           return { results: ((rows[m] as unknown[]) ?? []) as T[] };
@@ -176,9 +182,16 @@ describe("handleBotTraffic", () => {
       top_locations: [],
       top_asns: [],
       categories: [],
+      attack_origins: [],
+      attack_targets: [],
+      bot_density: [],
       last_fetch: { status: null, last_success_at: null, last_error: null },
-      as_of: { bot_share: null, top_locations: null, top_asns: null, categories: null },
+      as_of: {
+        bot_share: null, top_locations: null, top_asns: null, categories: null,
+        attack_origins: null, attack_targets: null, bot_density: null,
+      },
     });
+    expect(h.countryMetrics.sort()).toEqual(["attack_origin", "attack_target", "bot_density"]);
   });
 
   it("builds the full response shape from rows and caches it for 1h", async () => {
@@ -208,6 +221,21 @@ describe("handleBotTraffic", () => {
         { snapshot_date: "2026-10-11", dim_key: "OTHER", label: null, rank: 2, value_pct: 10 },
         { snapshot_date: "2026-10-11", dim_key: "AI_CRAWLER", label: null, rank: 1, value_pct: 60 },
       ],
+      attack_origin: [
+        { snapshot_date: "2026-10-11", country_code: "CN", label: "China", rank: 1, value_pct: 18.5, traffic_pct: null },
+        { snapshot_date: "2026-10-11", country_code: "XX", label: null, rank: null, value_pct: 2, traffic_pct: null },
+      ],
+      attack_target: [
+        { snapshot_date: "2026-10-10", country_code: "US", label: "United States", rank: 1, value_pct: 35, traffic_pct: null },
+      ],
+      // Returned in full, re-sorted by bot_pct desc and re-ranked; a row
+      // without traffic_pct is dropped.
+      bot_density: [
+        { snapshot_date: "2026-10-11", country_code: "DE", label: "Germany", rank: 2, value_pct: 20, traffic_pct: 4 },
+        { snapshot_date: "2026-10-11", country_code: "SG", label: "Singapore", rank: 1, value_pct: 70.5, traffic_pct: 0.8 },
+        { snapshot_date: "2026-10-11", country_code: "NL", label: null, rank: 3, value_pct: 20, traffic_pct: 2 },
+        { snapshot_date: "2026-10-11", country_code: "QQ", label: "Bad", rank: 4, value_pct: 5, traffic_pct: null },
+      ],
       feedStatus: { last_successful_pull: "2026-10-11 06:00:05", last_error: null },
       pull: { status: "success" },
     });
@@ -233,8 +261,21 @@ describe("handleBotTraffic", () => {
         { category: "AI_CRAWLER", pct: 60 },
         { category: "OTHER", pct: 10 },
       ], // sorted by pct desc
+      attack_origins: [
+        { code: "CN", name: "China", pct: 18.5, rank: 1 },
+        { code: "XX", name: "XX", pct: 2, rank: 2 }, // null label -> code, null rank -> index+1
+      ],
+      attack_targets: [{ code: "US", name: "United States", pct: 35, rank: 1 }],
+      bot_density: [
+        { code: "SG", name: "Singapore", bot_pct: 70.5, traffic_pct: 0.8, rank: 1 },
+        { code: "DE", name: "Germany", bot_pct: 20, traffic_pct: 4, rank: 2 }, // tie -> traffic desc
+        { code: "NL", name: "NL", bot_pct: 20, traffic_pct: 2, rank: 3 },
+      ],
       last_fetch: { status: "success", last_success_at: "2026-10-11T06:00:05Z", last_error: null },
-      as_of: { bot_share: "2026-10-11", top_locations: "2026-10-11", top_asns: "2026-10-09", categories: "2026-10-11" },
+      as_of: {
+        bot_share: "2026-10-11", top_locations: "2026-10-11", top_asns: "2026-10-09", categories: "2026-10-11",
+        attack_origins: "2026-10-11", attack_targets: "2026-10-10", bot_density: "2026-10-11",
+      },
     });
     expect(h.cachePuts).toHaveLength(1);
     expect(h.cachePuts[0]!.opts).toEqual({ expirationTtl: 3600 });
@@ -257,7 +298,27 @@ describe("handleBotTraffic", () => {
       top_location: [{ snapshot_date: "2026-10-10", dim_key: "US", label: "United States", rank: 1, value_pct: 40 }],
     });
     const { data } = (await (await call(h.env)).json()) as { data: { as_of: unknown } };
-    expect(data.as_of).toEqual({ bot_share: "2026-10-11", top_locations: "2026-10-10", top_asns: null, categories: null });
+    expect(data.as_of).toEqual({
+      bot_share: "2026-10-11", top_locations: "2026-10-10", top_asns: null, categories: null,
+      attack_origins: null, attack_targets: null, bot_density: null,
+    });
+  });
+
+  it("bot_density is returned in full (not a top-20 slice)", async () => {
+    const rows = Array.from({ length: 45 }, (_, i) => ({
+      snapshot_date: "2026-10-11", country_code: `C${i}`, label: `Country ${i}`, rank: i + 1,
+      value_pct: 90 - i, traffic_pct: 1,
+    }));
+    const h = makeHarness({ bot_density: rows });
+    const { data } = (await (await call(h.env)).json()) as { data: { bot_density: Array<{ rank: number; bot_pct: number }> } };
+    expect(data.bot_density).toHaveLength(45);
+    expect(data.bot_density.map((r) => r.rank)).toEqual(rows.map((r) => r.rank));
+  });
+
+  it("cache key is v3", () => {
+    expect(botTrafficCacheKey(7)).toBe("bot_traffic:v3:7");
+    expect(botTrafficCacheKey(30)).toBe("bot_traffic:v3:30");
+    expect(botTrafficCacheKey(90)).toBe("bot_traffic:v3:90");
   });
 
   it("cache hit returns the cached payload without touching D1 or writing the cache", async () => {

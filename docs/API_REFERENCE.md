@@ -855,7 +855,7 @@ free text. They remain on `lookalike_domains` for staff
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/api/bot-traffic` | Staff | Internet bot-vs-human HTTP traffic from Cloudflare Radar (feed `cf_radar_bots`, table `bot_traffic_snapshots`, migration 0290). `?days=7\|30\|90` (default 30; any other value → 400). KV-cached 1h under `bot_traffic:v2:<days>` (the feed drops the keys after each write). Empty table → `latest: null`, empty arrays, all `as_of` fields `null` (200) |
+| GET | `/api/bot-traffic` | Staff | Internet bot-vs-human HTTP traffic, layer-7 attack origin/target countries and per-country bot density from Cloudflare Radar (feed `cf_radar_bots`; tables `bot_traffic_snapshots`, migration 0290, and `radar_country_snapshots`, migration 0292). `?days=7\|30\|90` (default 30; any other value → 400). KV-cached 1h under `bot_traffic:v3:<days>` (the feed drops the keys after each write). Empty tables → `latest: null`, empty arrays, all `as_of` fields `null` (200) |
 
 Response `data` (handler `handlers/botTraffic.ts`):
 
@@ -867,14 +867,18 @@ Response `data` (handler `handlers/botTraffic.ts`):
   top_locations: [{ code, name, pct, rank }],                        // newest snapshot_date with top_location rows
   top_asns: [{ asn, name, pct, rank }],                              // asn is a number
   categories: [{ category, pct }],                                   // verified-bot categories, pct desc
+  attack_origins: [{ code, name, pct, rank }],                       // ≤10; pct = share of ALL layer-7 attacks, origin = client IP country (7d window)
+  attack_targets: [{ code, name, pct, rank }],                       // ≤10; pct = share of ALL layer-7 attacks, target = attacked zone's billing country (7d window)
+  bot_density: [{ code, name, bot_pct, traffic_pct, rank }],         // FULL ranked list (≤100), bot_pct desc; consumers slice their own top-N
   last_fetch: { status, last_success_at, last_error },               // status = newest finished feed_pull_history row; others from feed_status
   as_of: {                                                           // snapshot_date (YYYY-MM-DD) each section was read from; null = no rows
-    bot_share, top_locations, top_asns, categories                   // bot_share = latest.snapshot_date
+    bot_share, top_locations, top_asns, categories,                  // bot_share = latest.snapshot_date
+    attack_origins, attack_targets, bot_density
   }
 }
 ```
 
-`top_locations` / `top_asns` are shares of **likely-automated** traffic; `categories` are shares of **verified-bot** traffic. Each ranked section is read from its own metric's newest `snapshot_date`, so after a partial pull (an optional Radar endpoint failed, its previous rows kept) a section can be older than `bot_share` — compare `as_of.*` against `as_of.bot_share` to flag stale sections. Timestamps (`latest.fetched_at`, `last_fetch.last_success_at`) are ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SSZ`; date fields (`snapshot_date`, `series[].date`, `as_of.*`) are `YYYY-MM-DD`. `last_fetch.last_error` is cleared by any successful pull; partial-pull detail is in that pull's `feed_pull_history.error_message` (status stays `success`).
+`top_locations` / `top_asns` are shares of **likely-automated** traffic; `categories` are shares of **verified-bot** traffic. `bot_density[].bot_pct` is the % of that country's **own** HTTP traffic that is likely automated and `traffic_pct` is the country's share (%) of all HTTP traffic; derived daily from the 1d global bot share `b` and the top-100 bot (`B_c`) and human (`H_c`) location shares as `traffic_c = b·B_c + (1−b)·H_c`, `bot_pct_c = 100·b·B_c / traffic_c`, keeping only countries in both lists with `traffic_pct ≥ 0.1` (all qualifying countries, ≤100). `attack_*` cover a 7-day window, so their `as_of` is the window's end date. Each ranked section is read from its own metric's newest `snapshot_date`, so after a partial pull (an optional Radar endpoint failed, its previous rows kept) a section (including `attack_*` / `bot_density`) can be older than `bot_share` — compare `as_of.*` against `as_of.bot_share` to flag stale sections. Timestamps (`latest.fetched_at`, `last_fetch.last_success_at`) are ISO-8601 UTC, `YYYY-MM-DDTHH:MM:SSZ`; date fields (`snapshot_date`, `series[].date`, `as_of.*`) are `YYYY-MM-DD`. `last_fetch.last_error` is cleared by any successful pull; partial-pull detail is in that pull's `feed_pull_history.error_message` (status stays `success`).
 
 ## Signals
 

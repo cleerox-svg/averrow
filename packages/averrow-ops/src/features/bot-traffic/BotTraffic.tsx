@@ -12,6 +12,8 @@ import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { cn } from '@/lib/cn';
 
+const DENSITY_TABLE_ROWS = 20;
+
 const RANGES: ReadonlyArray<{ days: BotTrafficDays; label: string }> = [
   { days: 7, label: '7D' },
   { days: 30, label: '30D' },
@@ -281,7 +283,8 @@ function BotTrafficContent() {
   const asns = [...top_asns].sort((a, b) => a.rank - b.rank);
   const cats = [...categories].sort((a, b) => b.pct - a.pct);
   const catMax = cats[0]?.pct ?? 0;
-  const density = [...(data.bot_density ?? [])].sort((a, b) => a.rank - b.rank);
+  // API returns every qualifying country (≤100, for the Observatory map); the table shows the top 20.
+  const density = [...(data.bot_density ?? [])].sort((a, b) => a.rank - b.rank).slice(0, DENSITY_TABLE_ROWS);
   const originRows = [...(data.attack_origins ?? [])].sort((a, b) => a.rank - b.rank);
   const targetRows = [...(data.attack_targets ?? [])].sort((a, b) => a.rank - b.rank);
   const densityStale = staleAsOf(data.as_of, 'bot_density');
@@ -371,7 +374,7 @@ function BotTrafficContent() {
       <section>
         <SectionHeader title="Bot density by country" staleDate={densityStale} />
         <Caption>
-          Share of each country's own HTTP traffic that is automated. Countries under 0.1% of global traffic are excluded.
+          Share of each country's own HTTP traffic that is automated. Top 20 shown; countries under 0.1% of global traffic are excluded. All countries are on the Observatory's Bot density view.
         </Caption>
         <Card>
           {density.length === 0 ? (

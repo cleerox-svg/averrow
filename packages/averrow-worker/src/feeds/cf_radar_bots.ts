@@ -4,14 +4,26 @@ import type { Env } from "../types";
 /**
  * Cloudflare Radar — Internet bot traffic (feed key `cf_radar_bots`).
  *
- * Daily pull of five Radar endpoints into `bot_traffic_snapshots`
- * (migration 0290), served by GET /api/bot-traffic:
+ * Daily pull of eight Radar endpoints into `bot_traffic_snapshots`
+ * (migration 0290) and `radar_country_snapshots` (migration 0292), served
+ * by GET /api/bot-traffic:
  *
  *   1. /radar/http/summary/BOT_CLASS            → bot_share (latest 24h)   REQUIRED
  *   2. /radar/http/timeseries_groups/BOT_CLASS  → bot_share 28d backfill   optional
- *   3. /radar/http/top/locations?botClass=…     → top_location              optional
+ *   3. /radar/http/top/locations?botClass=LIKELY_AUTOMATED (limit=100)
+ *                                               → top_location (top 10)    optional
  *   4. /radar/http/top/ases?botClass=…          → top_asn                   optional
  *   5. /radar/bots/summary/BOT_CATEGORY         → bot_category              optional
+ *   6. /radar/http/top/locations?botClass=LIKELY_HUMAN (limit=100)
+ *                                               → bot_density (with #1+#3)  optional
+ *   7. /radar/attacks/layer7/top/locations/origin (7d) → attack_origin      optional
+ *   8. /radar/attacks/layer7/top/locations/target (7d) → attack_target      optional
+ *
+ * #1–#5 write bot_traffic_snapshots; #6–#8 write radar_country_snapshots.
+ * bot_density is derived, not fetched: computeBotDensity combines the
+ * global bot share (#1) with the bot (#3) and human (#6) location shares.
+ * It is skipped when #3 or #6 is unavailable (the failed endpoint is what
+ * gets counted), and an empty derivation counts as `bot_density: empty result`.
  *
  * Failure contract:
  *   - Token: CF_RADAR_API_TOKEN (dedicated, read-only) if set, else the
@@ -19,7 +31,7 @@ import type { Env } from "../types";
  *     (never a quiet success).
  *   - #1 failing for any reason (incl. HTTP 401/403, which carries the
  *     "lacks Radar Read permission" message) → throw.
- *   - #2–#5 failing for any reason (incl. 401/403), or returning HTTP 200
+ *   - #2–#8 failing for any reason (incl. 401/403), or returning HTTP 200
  *     with zero usable rows → the rest is still written; each such
  *     endpoint counts as one itemsError (surfaces as records_rejected) and
  *     its message is returned in FeedResult.warning, which runFeed
@@ -39,8 +51,19 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Cache keys the read handler populates — dropped after a successful write. */
 export const BOT_TRAFFIC_CACHE_DAYS = [7, 30, 90] as const;
 export function botTrafficCacheKey(days: number): string {
-  return `bot_traffic:v2:${days}`;
+  return `bot_traffic:v3:${days}`;
 }
+
+/** How many of the (limit=100) bot top-locations rows are stored as `top_location`. */
+export const TOP_LOCATIONS_STORED = 10;
+/** Countries below this share (%) of all HTTP traffic are excluded from bot_density (noise floor). */
+export const BOT_DENSITY_MIN_TRAFFIC_PCT = 0.1;
+/**
+ * Safety cap on bot_density rows per snapshot. Every qualifying country is
+ * stored (both inputs are top-100 lists, so the intersection can't exceed
+ * this); consumers slice their own top-N.
+ */
+export const BOT_DENSITY_MAX_ROWS = 100;
 
 // ─── Parsed shapes ───────────────────────────────────────────────
 
@@ -191,22 +214,98 @@ function rankRows(rows: Array<Omit<RankedDim, "rank">>): RankedDim[] {
   return rows.map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
-/** #3 — `result.top_0: [{ clientCountryAlpha2, clientCountryName, value }]`. */
+/**
+ * #3 / #6 — `result.top_0: [{ clientCountryAlpha2, clientCountryName, value }]`.
+ * Used for both the bot (#3) and human (#6) lists.
+ */
 export function parseTopLocations(payload: unknown): RankedDim[] {
+  return parseCountryRows(payload, "clientCountryAlpha2", "clientCountryName");
+}
+
+/** Shared country-list parser: upper-cased alpha-2 key, name fallback = code, dupes/NaN dropped. */
+function parseCountryRows(payload: unknown, codeField: string, nameField: string): RankedDim[] {
   const out: Array<Omit<RankedDim, "rank">> = [];
   const seen = new Set<string>();
   for (const row of topRows(payload)) {
     if (!isRecord(row)) continue;
-    const code = typeof row.clientCountryAlpha2 === "string" ? row.clientCountryAlpha2.trim().toUpperCase() : "";
+    const rawCode = row[codeField];
+    const code = typeof rawCode === "string" ? rawCode.trim().toUpperCase() : "";
     const pct = parsePct(row.value);
     if (!code || pct === null || seen.has(code)) continue;
     seen.add(code);
-    const name = typeof row.clientCountryName === "string" && row.clientCountryName.trim()
-      ? row.clientCountryName.trim()
-      : code;
+    const rawName = row[nameField];
+    const name = typeof rawName === "string" && rawName.trim() ? rawName.trim() : code;
     out.push({ dim_key: code, label: name, value_pct: round4(pct) });
   }
   return rankRows(out);
+}
+
+/** #7 — `result.top_0: [{ originCountryAlpha2, originCountryName, rank, value }]`. */
+export function parseAttackOrigins(payload: unknown): RankedDim[] {
+  return parseCountryRows(payload, "originCountryAlpha2", "originCountryName");
+}
+
+/** #8 — `result.top_0: [{ targetCountryAlpha2, targetCountryName, rank, value }]`. */
+export function parseAttackTargets(payload: unknown): RankedDim[] {
+  return parseCountryRows(payload, "targetCountryAlpha2", "targetCountryName");
+}
+
+export interface BotDensityRow {
+  code: string;
+  name: string;
+  /** % of the country's own HTTP traffic that is likely automated. */
+  bot_pct: number;
+  /** The country's share (%) of all HTTP traffic. */
+  traffic_pct: number;
+  rank: number;
+}
+
+/**
+ * Per-country bot density from two location shares and the global bot share.
+ *
+ *   b   = global bot share (fraction 0..1, from the BOT_CLASS summary)
+ *   B_c = country's share of bot traffic   (botList value_pct / 100)
+ *   H_c = country's share of human traffic (humanList value_pct / 100)
+ *   traffic_c = b·B_c + (1−b)·H_c          (country's share of all traffic)
+ *   bot_pct_c = 100·b·B_c / traffic_c
+ *
+ * Only countries present in BOTH lists with traffic_pct ≥
+ * BOT_DENSITY_MIN_TRAFFIC_PCT (compared after 4-dp rounding) are kept —
+ * a country missing from one top-100 list has an unknown share, not zero.
+ * Sorted by bot_pct desc (ties: traffic_pct desc, then code), capped
+ * at BOT_DENSITY_MAX_ROWS, ranked 1..N. A non-finite b → []; b is clamped to
+ * [0, 1], so b = 0 / 1 give 0 % / 100 % without NaN or Infinity.
+ */
+export function computeBotDensity(b: number, botList: RankedDim[], humanList: RankedDim[]): BotDensityRow[] {
+  if (!Number.isFinite(b)) return [];
+  const bf = Math.min(1, Math.max(0, b));
+  const human = new Map<string, number>();
+  for (const r of humanList) {
+    if (Number.isFinite(r.value_pct) && !human.has(r.dim_key)) human.set(r.dim_key, r.value_pct);
+  }
+
+  const out: Array<Omit<BotDensityRow, "rank">> = [];
+  const seen = new Set<string>();
+  for (const r of botList) {
+    if (seen.has(r.dim_key)) continue;
+    const hPct = human.get(r.dim_key);
+    if (hPct === undefined || !Number.isFinite(r.value_pct)) continue;
+    seen.add(r.dim_key);
+    const botTraffic = bf * Math.max(0, r.value_pct) / 100;
+    const traffic = botTraffic + (1 - bf) * Math.max(0, hPct) / 100;
+    const trafficPct = round4(100 * traffic);
+    if (!(traffic > 0) || trafficPct < BOT_DENSITY_MIN_TRAFFIC_PCT) continue;
+    out.push({
+      code: r.dim_key,
+      name: r.label ?? r.dim_key,
+      bot_pct: round4((100 * botTraffic) / traffic),
+      traffic_pct: trafficPct,
+    });
+  }
+
+  out.sort((x, y) =>
+    y.bot_pct - x.bot_pct || y.traffic_pct - x.traffic_pct || (x.code < y.code ? -1 : x.code > y.code ? 1 : 0));
+  return out.slice(0, BOT_DENSITY_MAX_ROWS).map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 /** #4 — `result.top_0: [{ clientASN, clientASName, value }]`. dim_key = ASN as text. */
@@ -301,9 +400,13 @@ async function radarGet(token: string, tokenName: RadarTokenName, path: string):
 const PATHS = {
   summary: "/http/summary/BOT_CLASS?dateRange=1d&format=JSON",
   series: "/http/timeseries_groups/BOT_CLASS?dateRange=28d&aggInterval=1d&format=JSON",
-  locations: "/http/top/locations?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=10&format=JSON",
+  // limit=100 feeds bot_density; only the top TOP_LOCATIONS_STORED are stored as top_location.
+  locations: "/http/top/locations?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=100&format=JSON",
   ases: "/http/top/ases?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=10&format=JSON",
   categories: "/bots/summary/BOT_CATEGORY?dateRange=1d&format=JSON",
+  humanLocations: "/http/top/locations?botClass=LIKELY_HUMAN&dateRange=1d&limit=100&format=JSON",
+  attackOrigins: "/attacks/layer7/top/locations/origin?dateRange=7d&limit=10&format=JSON",
+  attackTargets: "/attacks/layer7/top/locations/target?dateRange=7d&limit=10&format=JSON",
 } as const;
 
 function utcToday(): string {
@@ -321,16 +424,22 @@ export const cf_radar_bots: FeedModule = {
       );
     }
 
-    const [summaryR, seriesR, locationsR, asesR, categoriesR] = await Promise.allSettled([
+    const [
+      summaryR, seriesR, locationsR, asesR, categoriesR,
+      humanLocationsR, attackOriginsR, attackTargetsR,
+    ] = await Promise.allSettled([
       radarGet(token, tokenName, PATHS.summary),
       radarGet(token, tokenName, PATHS.series),
       radarGet(token, tokenName, PATHS.locations),
       radarGet(token, tokenName, PATHS.ases),
       radarGet(token, tokenName, PATHS.categories),
+      radarGet(token, tokenName, PATHS.humanLocations),
+      radarGet(token, tokenName, PATHS.attackOrigins),
+      radarGet(token, tokenName, PATHS.attackTargets),
     ]);
 
     // #1 is required. A 401/403 here surfaces as-is (the token message);
-    // auth failures on #2–#5 are ordinary optional failures below.
+    // auth failures on #2–#8 are ordinary optional failures below.
     if (summaryR.status === "rejected") {
       if (summaryR.reason instanceof RadarAuthError) throw summaryR.reason;
       const msg = summaryR.reason instanceof Error ? summaryR.reason.message : String(summaryR.reason);
@@ -354,6 +463,19 @@ export const cf_radar_bots: FeedModule = {
     );
     const clearMetric = db.prepare(
       "DELETE FROM bot_traffic_snapshots WHERE snapshot_date = ? AND metric = ?",
+    );
+    const upsertCountry = db.prepare(
+      `INSERT INTO radar_country_snapshots (snapshot_date, metric, country_code, label, rank, value_pct, traffic_pct, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(snapshot_date, metric, country_code) DO UPDATE SET
+         label = excluded.label,
+         rank = excluded.rank,
+         value_pct = excluded.value_pct,
+         traffic_pct = excluded.traffic_pct,
+         fetched_at = excluded.fetched_at`,
+    );
+    const clearCountryMetric = db.prepare(
+      "DELETE FROM radar_country_snapshots WHERE snapshot_date = ? AND metric = ?",
     );
 
     const stmts: D1PreparedStatement[] = [];
@@ -386,26 +508,75 @@ export const cf_radar_bots: FeedModule = {
     stmts.push(upsert.bind(snapshotDate, "bot_share", "human", null, null, share.human_pct));
     rowsWritten += 2;
 
-    // #3–#5 — replace that date's rows for the metric so a shrinking
+    // #3–#8 — replace that date's rows for the metric so a shrinking
     // top-N doesn't leave stale ranks behind. Only cleared when the
     // endpoint succeeded AND parsed to at least one row; a failed or
     // empty fetch leaves the previous rows intact.
-    const ranked: Array<[PromiseSettledResult<unknown>, string, string, (p: unknown) => RankedDim[]]> = [
-      [locationsR, "top_locations", "top_location", parseTopLocations],
-      [asesR, "top_ases", "top_asn", parseTopAses],
-      [categoriesR, "bot_categories", "bot_category", parseCategorySummary],
-    ];
-    for (const [r, name, metric, parse] of ranked) {
+    //
+    // Parse an optional ranked endpoint; null = failed or empty (already
+    // recorded in `failures`).
+    const parseOptional = (
+      r: PromiseSettledResult<unknown>,
+      name: string,
+      parse: (p: unknown) => RankedDim[],
+    ): { payload: unknown; rows: RankedDim[] } | null => {
       const payload = optional(r, name);
-      if (payload === null) continue;
+      if (payload === null) return null;
       const rows = parse(payload);
       if (rows.length === 0) {
         failures.push(`${name}: empty result`);
-        continue;
+        return null;
       }
+      return { payload, rows };
+    };
+
+    // #3 is fetched at limit=100 (bot_density input); only the top
+    // TOP_LOCATIONS_STORED are stored, re-ranked contiguously by the parser.
+    const botLocations = parseOptional(locationsR, "top_locations", parseTopLocations);
+    const ranked: Array<[{ rows: RankedDim[] } | null, string]> = [
+      [botLocations ? { rows: botLocations.rows.slice(0, TOP_LOCATIONS_STORED) } : null, "top_location"],
+      [parseOptional(asesR, "top_ases", parseTopAses), "top_asn"],
+      [parseOptional(categoriesR, "bot_categories", parseCategorySummary), "bot_category"],
+    ];
+    for (const [parsed, metric] of ranked) {
+      if (!parsed) continue;
       stmts.push(clearMetric.bind(snapshotDate, metric));
-      for (const row of rows) {
+      for (const row of parsed.rows) {
         stmts.push(upsert.bind(snapshotDate, metric, row.dim_key, row.label, row.rank, row.value_pct));
+        rowsWritten++;
+      }
+    }
+
+    // #6 + derived bot_density (radar_country_snapshots). Skipped when
+    // either location list is unavailable — that endpoint's failure is
+    // already counted, so density adds no second error for it.
+    const humanLocations = parseOptional(humanLocationsR, "human_locations", parseTopLocations);
+    if (botLocations && humanLocations) {
+      const density = computeBotDensity(share.bot_pct / 100, botLocations.rows, humanLocations.rows);
+      if (density.length === 0) {
+        failures.push("bot_density: empty result");
+      } else {
+        stmts.push(clearCountryMetric.bind(snapshotDate, "bot_density"));
+        for (const d of density) {
+          stmts.push(upsertCountry.bind(snapshotDate, "bot_density", d.code, d.name, d.rank, d.bot_pct, d.traffic_pct));
+          rowsWritten++;
+        }
+      }
+    }
+
+    // #7–#8 — 7-day attack windows; dated by their own meta.dateRange
+    // endTime, falling back to the summary's snapshot date.
+    const attacks: Array<[PromiseSettledResult<unknown>, string, string, (p: unknown) => RankedDim[]]> = [
+      [attackOriginsR, "attack_origins", "attack_origin", parseAttackOrigins],
+      [attackTargetsR, "attack_targets", "attack_target", parseAttackTargets],
+    ];
+    for (const [r, name, metric, parse] of attacks) {
+      const parsed = parseOptional(r, name, parse);
+      if (!parsed) continue;
+      const date = parseSnapshotDate(parsed.payload) ?? snapshotDate;
+      stmts.push(clearCountryMetric.bind(date, metric));
+      for (const row of parsed.rows) {
+        stmts.push(upsertCountry.bind(date, metric, row.dim_key, row.label, row.rank, row.value_pct, null));
         rowsWritten++;
       }
     }

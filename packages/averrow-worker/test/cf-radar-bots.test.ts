@@ -2,7 +2,9 @@
  * Tests for the Cloudflare Radar bot-traffic feed (feeds/cf_radar_bots.ts):
  * pure parsers (both Radar key spellings, NaN/missing values, series) and
  * the ingest failure contract (auth, required summary, partial endpoint
- * failure, no threats writes, itemsNew === 0, KV invalidation).
+ * failure, no threats writes, itemsNew === 0, KV invalidation), plus the
+ * radar_country_snapshots lane: attack origin/target parsers, the
+ * computeBotDensity derivation, and their partial-failure semantics.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -16,11 +18,18 @@ import {
   parseTopLocations,
   parseTopAses,
   parseCategorySummary,
+  parseAttackOrigins,
+  parseAttackTargets,
+  computeBotDensity,
+  BOT_DENSITY_MIN_TRAFFIC_PCT,
+  BOT_DENSITY_MAX_ROWS,
+  TOP_LOCATIONS_STORED,
   botTrafficCacheKey,
   BOT_TRAFFIC_CACHE_DAYS,
   resolveRadarToken,
 } from "../src/feeds/cf_radar_bots";
 import type { Env } from "../src/types";
+import type { RankedDim } from "../src/feeds/cf_radar_bots";
 
 // ─── Parsers ────────────────────────────────────────────────────
 
@@ -277,6 +286,131 @@ describe("parseCategorySummary", () => {
   });
 });
 
+describe("parseAttackOrigins / parseAttackTargets", () => {
+  it("parses origin rows (SDK shape), upper-cases, re-ranks in input order", () => {
+    const out = parseAttackOrigins({
+      success: true,
+      result: {
+        top_0: [
+          { originCountryAlpha2: "us", originCountryName: "United States", rank: 1, value: "21.5" },
+          { originCountryAlpha2: "CN", originCountryName: "China", rank: 2, value: "9.25" },
+        ],
+      },
+    });
+    expect(out).toEqual([
+      { dim_key: "US", label: "United States", rank: 1, value_pct: 21.5 },
+      { dim_key: "CN", label: "China", rank: 2, value_pct: 9.25 },
+    ]);
+  });
+  it("parses target rows and ignores client*/origin* fields on a target payload", () => {
+    const out = parseAttackTargets({
+      result: {
+        top_0: [
+          { targetCountryAlpha2: "DE", targetCountryName: "Germany", rank: 1, value: "30" },
+          { originCountryAlpha2: "FR", originCountryName: "France", rank: 2, value: "10" },
+          { targetCountryAlpha2: "DE", targetCountryName: "Dupe", rank: 3, value: "5" },
+          { targetCountryAlpha2: "JP", targetCountryName: "", rank: 4, value: 2 },
+          { targetCountryAlpha2: "BR", targetCountryName: "Brazil", rank: 5, value: "NaN" },
+        ],
+      },
+    });
+    expect(out).toEqual([
+      { dim_key: "DE", label: "Germany", rank: 1, value_pct: 30 },
+      { dim_key: "JP", label: "JP", rank: 2, value_pct: 2 },
+    ]);
+  });
+  it("returns [] for missing/malformed top_0", () => {
+    expect(parseAttackOrigins({ result: {} })).toEqual([]);
+    expect(parseAttackTargets({ result: { top_0: "x" } })).toEqual([]);
+    expect(parseAttackOrigins(undefined)).toEqual([]);
+  });
+});
+
+describe("computeBotDensity", () => {
+  const dim = (code: string, pct: number, label: string | null = `${code}-name`): RankedDim =>
+    ({ dim_key: code, label, rank: 0, value_pct: pct });
+
+  it("applies traffic_c = b·B_c + (1−b)·H_c and bot_pct_c = 100·b·B_c / traffic_c", () => {
+    // b = 0.3. US: B=40%, H=20% → traffic 0.26 → 26%, bot 0.12/0.26 = 46.1538%.
+    // DE: B=10%, H=30% → traffic 0.03+0.21 = 0.24 → 24%, bot 12.5%.
+    const out = computeBotDensity(0.3, [dim("US", 40), dim("DE", 10)], [dim("DE", 30), dim("US", 20)]);
+    expect(out).toEqual([
+      { code: "US", name: "US-name", bot_pct: 46.1538, traffic_pct: 26, rank: 1 },
+      { code: "DE", name: "DE-name", bot_pct: 12.5, traffic_pct: 24, rank: 2 },
+    ]);
+  });
+
+  it("keeps only countries present in BOTH lists", () => {
+    const out = computeBotDensity(0.5, [dim("US", 10), dim("BOTONLY", 50)], [dim("US", 10), dim("HUMANONLY", 50)]);
+    expect(out.map((r) => r.code)).toEqual(["US"]);
+  });
+
+  it("applies the traffic_pct noise floor (inclusive) and exports it as 0.1", () => {
+    expect(BOT_DENSITY_MIN_TRAFFIC_PCT).toBe(0.1);
+    // b=0.5: AT exactly 0.1% traffic (0.5·0.1 + 0.5·0.1) kept; BELOW = 0.09% dropped.
+    const out = computeBotDensity(
+      0.5,
+      [dim("AT", 0.1), dim("BELOW", 0.09), dim("US", 1)],
+      [dim("AT", 0.1), dim("BELOW", 0.09), dim("US", 1)],
+    );
+    expect(out.map((r) => [r.code, r.traffic_pct])).toEqual([["US", 1], ["AT", 0.1]]); // equal bot_pct → traffic desc
+  });
+
+  it("b = 0 → every bot_pct is 0 (no NaN/Infinity), countries with zero human share dropped", () => {
+    const out = computeBotDensity(0, [dim("US", 40), dim("ZZ", 50)], [dim("US", 20), dim("ZZ", 0)]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 0, traffic_pct: 20, rank: 1 }]);
+  });
+
+  it("b = 1 → every bot_pct is 100, traffic = bot share; zero bot share dropped", () => {
+    const out = computeBotDensity(1, [dim("US", 40), dim("ZZ", 0)], [dim("US", 20), dim("ZZ", 60)]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 100, traffic_pct: 40, rank: 1 }]);
+  });
+
+  it("all-zero shares never divide by zero", () => {
+    const out = computeBotDensity(0.4, [dim("US", 0)], [dim("US", 0)]);
+    expect(out).toEqual([]);
+  });
+
+  it.each([[NaN], [Infinity], [-Infinity]])("non-finite b (%j) → []", (b) => {
+    expect(computeBotDensity(b, [dim("US", 40)], [dim("US", 20)])).toEqual([]);
+  });
+
+  it("clamps b outside [0, 1] and every output is finite", () => {
+    const hi = computeBotDensity(1.7, [dim("US", 40)], [dim("US", 20)]);
+    expect(hi[0]).toMatchObject({ bot_pct: 100, traffic_pct: 40 });
+    const lo = computeBotDensity(-0.2, [dim("US", 40)], [dim("US", 20)]);
+    expect(lo[0]).toMatchObject({ bot_pct: 0, traffic_pct: 20 });
+    for (const r of [...hi, ...lo]) {
+      expect(Number.isFinite(r.bot_pct) && Number.isFinite(r.traffic_pct)).toBe(true);
+    }
+  });
+
+  it("ranks by bot_pct desc, ties by traffic_pct desc then code; name falls back to code", () => {
+    // b=0.5 and B=H → bot_pct 50 for all; traffic decides, then code.
+    const out = computeBotDensity(
+      0.5,
+      [dim("BB", 2, null), dim("AA", 2), dim("CC", 5), dim("HI", 9)],
+      [dim("BB", 2), dim("AA", 2), dim("CC", 5), dim("HI", 1)],
+    );
+    expect(out.map((r) => [r.code, r.rank])).toEqual([["HI", 1], ["CC", 2], ["AA", 3], ["BB", 4]]);
+    expect(out.find((r) => r.code === "BB")!.name).toBe("BB");
+  });
+
+  it("returns every qualifying country (not a top-20), capped at BOT_DENSITY_MAX_ROWS", () => {
+    expect(BOT_DENSITY_MAX_ROWS).toBe(100);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => dim(`C${String(i).padStart(3, "0")}`, 1 + i / 1000));
+    expect(computeBotDensity(0.3, many(60), many(60))).toHaveLength(60);
+    const capped = computeBotDensity(0.3, many(130), many(130));
+    expect(capped).toHaveLength(100);
+    expect(capped.map((r) => r.rank)).toEqual(Array.from({ length: 100 }, (_, i) => i + 1));
+  });
+
+  it("ignores duplicate codes after the first occurrence in either list", () => {
+    const out = computeBotDensity(0.5, [dim("US", 10), dim("US", 90)], [dim("US", 10), dim("US", 90)]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 50, traffic_pct: 10, rank: 1 }]);
+  });
+});
+
 // ─── Ingest ─────────────────────────────────────────────────────
 
 const SUMMARY = {
@@ -305,6 +439,28 @@ const ASES = {
   result: { top_0: [{ clientASN: 16509, clientASName: "AMAZON-02", value: "12" }] },
 };
 const CATEGORIES = { success: true, result: { summary_0: { AI_CRAWLER: "60", other: "40" } } };
+const HUMAN_LOCATIONS = {
+  success: true,
+  result: { top_0: [{ clientCountryAlpha2: "US", clientCountryName: "United States", value: "20" }] },
+};
+const attackMeta = { dateRange: [{ startTime: "2026-10-04T00:00:00Z", endTime: "2026-10-11T00:00:00Z" }] };
+const ATTACK_ORIGINS = {
+  success: true,
+  result: {
+    meta: attackMeta,
+    top_0: [
+      { originCountryAlpha2: "CN", originCountryName: "China", rank: 1, value: "18.5" },
+      { originCountryAlpha2: "US", originCountryName: "United States", rank: 2, value: "12" },
+    ],
+  },
+};
+const ATTACK_TARGETS = {
+  success: true,
+  result: {
+    meta: attackMeta,
+    top_0: [{ targetCountryAlpha2: "US", targetCountryName: "United States", rank: 1, value: "35" }],
+  },
+};
 
 type Responder = (status: number, body: unknown) => Response;
 const respond: Responder = (status, body) =>
@@ -366,18 +522,28 @@ function makeHarness(
 
 const ctxOf = (env: Env) => ({ env, feedName: "cf_radar_bots", feedUrl: "https://api.cloudflare.com/client/v4/radar" });
 
+// Route order matters (first match wins): the human-locations key must
+// precede the generic "/http/top/locations" (overrides via spread keep
+// their original position).
+const HUMAN_LOC = "/http/top/locations?botClass=LIKELY_HUMAN";
 const allOk = (): Record<string, () => Response> => ({
   "/http/summary/BOT_CLASS": () => respond(200, SUMMARY),
   "/http/timeseries_groups/BOT_CLASS": () => respond(200, SERIES),
+  [HUMAN_LOC]: () => respond(200, HUMAN_LOCATIONS),
   "/http/top/locations": () => respond(200, LOCATIONS),
   "/http/top/ases": () => respond(200, ASES),
   "/bots/summary/BOT_CATEGORY": () => respond(200, CATEGORIES),
+  "/attacks/layer7/top/locations/origin": () => respond(200, ATTACK_ORIGINS),
+  "/attacks/layer7/top/locations/target": () => respond(200, ATTACK_TARGETS),
 });
 
 const stmts = (h: Harness) => h.batches.flat();
 const upserts = (h: Harness, metric: string) =>
   stmts(h).filter((s) => /INSERT INTO bot_traffic_snapshots/.test(s.sql) && s.args[1] === metric);
 const clears = (h: Harness) => stmts(h).filter((s) => /^DELETE FROM bot_traffic_snapshots/.test(s.sql));
+const countryUpserts = (h: Harness, metric: string) =>
+  stmts(h).filter((s) => /INSERT INTO radar_country_snapshots/.test(s.sql) && s.args[1] === metric);
+const countryClears = (h: Harness) => stmts(h).filter((s) => /^DELETE FROM radar_country_snapshots/.test(s.sql));
 
 describe("resolveRadarToken", () => {
   it("prefers CF_RADAR_API_TOKEN, falls back to CF_API_TOKEN", () => {
@@ -412,7 +578,7 @@ describe("cf_radar_bots.ingest", () => {
   it("prefers the dedicated CF_RADAR_API_TOKEN over CF_API_TOKEN", async () => {
     const h = makeHarness(allOk(), { token: "shared", radarToken: "radar-only" });
     await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(h.authHeaders).toHaveLength(5);
+    expect(h.authHeaders).toHaveLength(8);
     expect(new Set(h.authHeaders)).toEqual(new Set(["Bearer radar-only"]));
   });
 
@@ -456,13 +622,18 @@ describe("cf_radar_bots.ingest", () => {
     const h = makeHarness({
       "/http/summary/BOT_CLASS": () => respond(200, SUMMARY),
       "/http/timeseries_groups/BOT_CLASS": denied,
+      [HUMAN_LOC]: denied,
       "/http/top/locations": denied,
       "/http/top/ases": denied,
       "/bots/summary/BOT_CATEGORY": denied,
+      "/attacks/layer7/top/locations/origin": denied,
+      "/attacks/layer7/top/locations/target": denied,
     });
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(res.itemsError).toBe(4);
+    expect(res.itemsError).toBe(7);
     expect(res.itemsFetched).toBe(2);
+    expect(countryUpserts(h, "bot_density")).toEqual([]);
+    expect(countryClears(h)).toEqual([]);
   });
 
   it.each([
@@ -477,7 +648,7 @@ describe("cf_radar_bots.ingest", () => {
     expect(h.cacheDeletes).toEqual([]);
   });
 
-  it("happy path: writes all five metrics, itemsNew 0, only touches bot_traffic_snapshots", async () => {
+  it("happy path: writes all eight metrics, itemsNew 0, only touches the two snapshot tables", async () => {
     const h = makeHarness(allOk());
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
 
@@ -487,8 +658,15 @@ describe("cf_radar_bots.ingest", () => {
     expect(res.warning).toBeUndefined();
     expect(console.warn).not.toHaveBeenCalled();
 
-    // Authorization header + all 5 endpoints requested.
-    expect(h.fetchedPaths).toHaveLength(5);
+    // Authorization header + all 8 endpoints requested, with the expected params.
+    expect(h.fetchedPaths).toHaveLength(8);
+    const base = "https://api.cloudflare.com/client/v4/radar";
+    expect(h.fetchedPaths).toEqual(expect.arrayContaining([
+      `${base}/http/top/locations?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=100&format=JSON`,
+      `${base}/http/top/locations?botClass=LIKELY_HUMAN&dateRange=1d&limit=100&format=JSON`,
+      `${base}/attacks/layer7/top/locations/origin?dateRange=7d&limit=10&format=JSON`,
+      `${base}/attacks/layer7/top/locations/target?dateRange=7d&limit=10&format=JSON`,
+    ]));
 
     // Snapshot date comes from meta.dateRange (2026-10-11), not "today".
     const botShare = upserts(h, "bot_share");
@@ -521,13 +699,36 @@ describe("cf_radar_bots.ingest", () => {
 
     // itemsFetched == rows written == upsert count.
     const upsertCount = stmts(h).filter((s) => /INSERT INTO bot_traffic_snapshots/.test(s.sql)).length;
-    expect(res.itemsFetched).toBe(upsertCount);
-    expect(res.itemsFetched).toBe(4 + 2 + 1 + 1 + 2);
+    const countryCount = stmts(h).filter((s) => /INSERT INTO radar_country_snapshots/.test(s.sql)).length;
+    expect(res.itemsFetched).toBe(upsertCount + countryCount);
+    expect(res.itemsFetched).toBe(4 + 2 + 1 + 1 + 2 + 1 + 2 + 1);
 
     // Ranked metrics are replaced per (date, metric); bot_share is never cleared.
     expect(clears(h).map((s) => s.args)).toEqual([
       ["2026-10-11", "top_location"], ["2026-10-11", "top_asn"], ["2026-10-11", "bot_category"],
     ]);
+    expect(countryClears(h).map((s) => s.args)).toEqual([
+      ["2026-10-11", "bot_density"], ["2026-10-11", "attack_origin"], ["2026-10-11", "attack_target"],
+    ]);
+
+    // Density: b=0.30, US B=40%, H=20% → traffic 26%, bot 46.1538%.
+    expect(countryUpserts(h, "bot_density").map((s) => s.args)).toEqual([
+      ["2026-10-11", "bot_density", "US", "United States", 1, 46.1538, 26],
+    ]);
+    // Attacks: value_pct = share of all L7 attacks; traffic_pct NULL.
+    expect(countryUpserts(h, "attack_origin").map((s) => s.args)).toEqual([
+      ["2026-10-11", "attack_origin", "CN", "China", 1, 18.5, null],
+      ["2026-10-11", "attack_origin", "US", "United States", 2, 12, null],
+    ]);
+    expect(countryUpserts(h, "attack_target").map((s) => s.args)).toEqual([
+      ["2026-10-11", "attack_target", "US", "United States", 1, 35, null],
+    ]);
+    // Each country metric's clear precedes its upserts.
+    const idx = (pred: (s: Stmt) => boolean) => stmts(h).findIndex(pred);
+    for (const m of ["bot_density", "attack_origin", "attack_target"]) {
+      expect(idx((s) => /^DELETE FROM radar_country_snapshots/.test(s.sql) && s.args[1] === m))
+        .toBeLessThan(idx((s) => /INSERT INTO radar_country_snapshots/.test(s.sql) && s.args[1] === m));
+    }
 
     // Never touches threats.
     expect(h.allSql.some((q) => /\bthreats\b/i.test(q))).toBe(false);
@@ -616,21 +817,135 @@ describe("cf_radar_bots.ingest", () => {
     expect(res.warning).toBeUndefined();
   });
 
-  it("all optional endpoints failing still writes the summary and reports 4 errors", async () => {
+  it("all optional endpoints failing still writes the summary and reports 7 errors", async () => {
     const h = makeHarness({
       "/http/summary/BOT_CLASS": () => respond(200, SUMMARY),
     });
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(res.itemsError).toBe(4);
+    expect(res.itemsError).toBe(7);
     expect(res.itemsFetched).toBe(2);
     expect(res.itemsNew).toBe(0);
     expect(clears(h)).toEqual([]);
+    expect(countryClears(h)).toEqual([]);
+    // Density is skipped, not double-counted: 7 endpoint failures, no bot_density entry.
+    expect(res.warning).not.toContain("bot_density");
+  });
+
+  // ─── radar_country_snapshots lane ─────────────────────────────
+
+  it("stores only the top 10 bot locations as top_location while density uses the full limit=100 list", async () => {
+    expect(TOP_LOCATIONS_STORED).toBe(10);
+    const codes = Array.from({ length: 12 }, (_, i) => `C${String.fromCharCode(65 + i)}`); // CA..CL
+    const botList = codes.map((c, i) => ({ clientCountryAlpha2: c, clientCountryName: c, value: String(20 - i) }));
+    const humanList = codes.map((c) => ({ clientCountryAlpha2: c, clientCountryName: c, value: "5" }));
+    const h = makeHarness({
+      ...allOk(),
+      [HUMAN_LOC]: () => respond(200, { success: true, result: { top_0: humanList } }),
+      "/http/top/locations": () => respond(200, { success: true, result: { top_0: botList } }),
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(0);
+    const loc = upserts(h, "top_location");
+    expect(loc.map((s) => s.args[2])).toEqual(codes.slice(0, 10));
+    expect(loc.map((s) => s.args[4])).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
+    // All 12 countries qualify for density (> 0.1% traffic), and are ALL stored.
+    const dens = countryUpserts(h, "bot_density");
+    expect(dens).toHaveLength(12);
+    expect(dens.map((s) => s.args[4])).toEqual(Array.from({ length: 12 }, (_, i) => i + 1));
+    const botPcts = dens.map((s) => s.args[5] as number);
+    expect([...botPcts].sort((a, b) => b - a)).toEqual(botPcts);
+  });
+
+  it.each([401, 403])("HTTP %i on the human locations is a partial failure: density skipped, its old rows kept", async (status) => {
+    const h = makeHarness({ ...allOk(), [HUMAN_LOC]: () => respond(status, "denied") });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toMatch(/^partial pull \(1 endpoint\(s\) failed\): human_locations: CF Radar: CF_API_TOKEN lacks Radar Read permission \(HTTP \d+\)$/);
+    expect(countryUpserts(h, "bot_density")).toEqual([]);
+    expect(countryClears(h).some((s) => s.args[1] === "bot_density")).toBe(false);
+    // Everything else still written.
+    expect(upserts(h, "top_location")).toHaveLength(1);
+    expect(countryUpserts(h, "attack_origin")).toHaveLength(2);
+    expect(countryUpserts(h, "attack_target")).toHaveLength(1);
+  });
+
+  it("an empty human list counts as one error and skips density", async () => {
+    const h = makeHarness({ ...allOk(), [HUMAN_LOC]: () => respond(200, { success: true, result: { top_0: [] } }) });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toContain("human_locations: empty result");
+    expect(countryUpserts(h, "bot_density")).toEqual([]);
+  });
+
+  it("a failed bot locations list skips density without a second error", async () => {
+    const h = makeHarness({ ...allOk(), "/http/top/locations": () => respond(500, "boom") });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toContain("top_locations: CF Radar /http/top/locations: HTTP 500");
+    expect(res.warning).not.toContain("bot_density");
+    expect(countryUpserts(h, "bot_density")).toEqual([]);
+    expect(countryClears(h).some((s) => s.args[1] === "bot_density")).toBe(false);
+  });
+
+  it("a density with no qualifying country (no overlap / below floor) is an error and keeps old rows", async () => {
+    const h = makeHarness({
+      ...allOk(),
+      [HUMAN_LOC]: () => respond(200, {
+        success: true,
+        result: { top_0: [{ clientCountryAlpha2: "ZZ", clientCountryName: "Elsewhere", value: "50" }] },
+      }),
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toContain("bot_density: empty result");
+    expect(countryClears(h).some((s) => s.args[1] === "bot_density")).toBe(false);
+  });
+
+  it.each([401, 403])("HTTP %i on an attack endpoint is a partial failure; the other attack side still written", async (status) => {
+    const h = makeHarness({ ...allOk(), "/attacks/layer7/top/locations/origin": () => respond(status, "denied") });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(1);
+    expect(res.warning).toMatch(/attack_origins: CF Radar: CF_API_TOKEN lacks Radar Read permission/);
+    expect(countryUpserts(h, "attack_origin")).toEqual([]);
+    expect(countryClears(h).some((s) => s.args[1] === "attack_origin")).toBe(false);
+    expect(countryUpserts(h, "attack_target")).toHaveLength(1);
+  });
+
+  it("attack failures (HTTP 500 / empty) are counted with their names", async () => {
+    const h = makeHarness({
+      ...allOk(),
+      "/attacks/layer7/top/locations/origin": () => respond(500, "boom"),
+      "/attacks/layer7/top/locations/target": () => respond(200, { success: true, result: { top_0: [] } }),
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(2);
+    expect(res.warning).toContain("attack_origins: CF Radar /attacks/layer7/top/locations/origin: HTTP 500");
+    expect(res.warning).toContain("attack_targets: empty result");
+    expect(countryClears(h).map((s) => s.args[1])).toEqual(["bot_density"]);
+  });
+
+  it("attack rows are dated by their own meta.dateRange endTime, falling back to the summary date", async () => {
+    const h = makeHarness({
+      ...allOk(),
+      "/attacks/layer7/top/locations/origin": () => respond(200, {
+        ...ATTACK_ORIGINS,
+        result: { ...ATTACK_ORIGINS.result, meta: { dateRange: [{ endTime: "2026-10-10T23:00:00Z" }] } },
+      }),
+      "/attacks/layer7/top/locations/target": () => respond(200, {
+        success: true,
+        result: { top_0: ATTACK_TARGETS.result.top_0 },
+      }),
+    });
+    await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(new Set(countryUpserts(h, "attack_origin").map((s) => s.args[0]))).toEqual(new Set(["2026-10-10"]));
+    expect(countryClears(h).find((s) => s.args[1] === "attack_origin")!.args[0]).toBe("2026-10-10");
+    expect(new Set(countryUpserts(h, "attack_target").map((s) => s.args[0]))).toEqual(new Set(["2026-10-11"]));
   });
 
   it("invalidates exactly the 7/30/90 bot_traffic cache keys after a successful write", async () => {
     const h = makeHarness(allOk());
     await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v2:30", "bot_traffic:v2:7", "bot_traffic:v2:90"]);
+    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v3:30", "bot_traffic:v3:7", "bot_traffic:v3:90"]);
     // Invalidation happens after the batch write.
     expect(h.batches).toHaveLength(1);
   });

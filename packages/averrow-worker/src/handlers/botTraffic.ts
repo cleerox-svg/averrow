@@ -2,11 +2,12 @@
 //
 // GET /api/bot-traffic?days=7|30|90  (staff; default 30)
 //
-// Reads bot_traffic_snapshots (migration 0290), written once a day by the
-// cf_radar_bots feed (feeds/cf_radar_bots.ts). Small table (≈2 rows/day
-// for bot_share + ≈35 rows/day for the ranked metrics), every query is
-// served by the (metric, snapshot_date) index or the PK. KV-cached 1h; the
-// feed drops these keys after each successful write.
+// Reads bot_traffic_snapshots (migration 0290) and radar_country_snapshots
+// (migration 0292), both written once a day by the cf_radar_bots feed
+// (feeds/cf_radar_bots.ts). Small tables (≈2 rows/day for bot_share,
+// ≈35 rows/day for the ranked bot metrics, ≤120 rows/day for the country
+// metrics); every query is served by the (metric, snapshot_date) index or
+// the PK. KV-cached 1h; the feed drops these keys after each successful write.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
@@ -25,6 +26,16 @@ export interface BotTrafficData {
   top_locations: Array<{ code: string; name: string; pct: number; rank: number }>;
   top_asns: Array<{ asn: number; name: string; pct: number; rank: number }>;
   categories: Array<{ category: string; pct: number }>;
+  /** Top countries by share (%) of all layer-7 attacks, origin = client IP country (7d window). */
+  attack_origins: Array<{ code: string; name: string; pct: number; rank: number }>;
+  /** Top countries by share (%) of all layer-7 attacks, target = attacked zone's billing country (7d window). */
+  attack_targets: Array<{ code: string; name: string; pct: number; rank: number }>;
+  /**
+   * Every stored country (≤100) ranked by bot_pct desc: bot_pct = % of the
+   * country's own HTTP traffic that is likely automated, traffic_pct = its
+   * share (%) of all HTTP traffic. Consumers slice their own top-N.
+   */
+  bot_density: Array<{ code: string; name: string; bot_pct: number; traffic_pct: number; rank: number }>;
   last_fetch: { status: string | null; last_success_at: string | null; last_error: string | null };
   /**
    * The snapshot_date (YYYY-MM-DD) each section was read from. Each ranked
@@ -36,6 +47,9 @@ export interface BotTrafficData {
     top_locations: string | null;
     top_asns: string | null;
     categories: string | null;
+    attack_origins: string | null;
+    attack_targets: string | null;
+    bot_density: string | null;
   };
 }
 
@@ -62,6 +76,14 @@ export function parseBotTrafficDays(raw: string | null): number | null {
 
 interface ShareRow { snapshot_date: string; dim_key: string; value_pct: number; fetched_at: string }
 interface RankedRow { snapshot_date: string; dim_key: string; label: string | null; rank: number | null; value_pct: number }
+interface CountryRow {
+  snapshot_date: string;
+  country_code: string;
+  label: string | null;
+  rank: number | null;
+  value_pct: number;
+  traffic_pct: number | null;
+}
 
 /** Pivot bot/human rows into one entry per date (ascending). Missing side = complement. */
 export function pivotBotShare(rows: ShareRow[]): Array<{ date: string; bot_pct: number; human_pct: number; fetched_at: string }> {
@@ -90,8 +112,27 @@ const RANKED_SQL = `
      AND snapshot_date = (SELECT MAX(snapshot_date) FROM bot_traffic_snapshots WHERE metric = ?1)
    ORDER BY rank ASC, value_pct DESC`;
 
+const COUNTRY_SQL = `
+  SELECT snapshot_date, country_code, label, rank, value_pct, traffic_pct
+    FROM radar_country_snapshots
+   WHERE metric = ?1
+     AND snapshot_date = (SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = ?1)
+   ORDER BY rank ASC, value_pct DESC`;
+
+function toCountryShare(rows: CountryRow[]): Array<{ code: string; name: string; pct: number; rank: number }> {
+  return rows.map((r, i) => ({
+    code: r.country_code,
+    name: r.label ?? r.country_code,
+    pct: r.value_pct,
+    rank: r.rank ?? i + 1,
+  }));
+}
+
 async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise<BotTrafficData> {
-  const [seriesRes, latestRes, locRes, asnRes, catRes, statusRow, pullRow] = await Promise.all([
+  const [
+    seriesRes, latestRes, locRes, asnRes, catRes, statusRow, pullRow,
+    originRes, targetRes, densityRes,
+  ] = await Promise.all([
     session.prepare(
       `SELECT snapshot_date, dim_key, value_pct, fetched_at
          FROM bot_traffic_snapshots
@@ -120,7 +161,23 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
         WHERE feed_name = ? AND completed_at IS NOT NULL
         ORDER BY started_at DESC LIMIT 1`,
     ).bind(FEED_NAME).first<{ status: string }>(),
+    session.prepare(COUNTRY_SQL).bind("attack_origin").all<CountryRow>(),
+    session.prepare(COUNTRY_SQL).bind("attack_target").all<CountryRow>(),
+    session.prepare(COUNTRY_SQL).bind("bot_density").all<CountryRow>(),
   ]);
+
+  // bot_density is stored ranked by bot_pct desc; re-sort defensively and
+  // drop any row without traffic_pct (every writer sets it for this metric).
+  const density = densityRes.results
+    .filter((r): r is CountryRow & { traffic_pct: number } => r.traffic_pct !== null)
+    .sort((a, b) => b.value_pct - a.value_pct || b.traffic_pct - a.traffic_pct)
+    .map((r, i) => ({
+      code: r.country_code,
+      name: r.label ?? r.country_code,
+      bot_pct: r.value_pct,
+      traffic_pct: r.traffic_pct,
+      rank: i + 1,
+    }));
 
   const latestPivot = pivotBotShare(latestRes.results)[0];
 
@@ -152,6 +209,9 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
     categories: catRes.results
       .map((r) => ({ category: r.dim_key, pct: r.value_pct }))
       .sort((a, b) => b.pct - a.pct),
+    attack_origins: toCountryShare(originRes.results),
+    attack_targets: toCountryShare(targetRes.results),
+    bot_density: density,
     last_fetch: {
       status: pullRow?.status ?? null,
       last_success_at: toIsoUtc(statusRow?.last_successful_pull ?? null),
@@ -162,6 +222,9 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
       top_locations: locRes.results[0]?.snapshot_date ?? null,
       top_asns: asnRes.results[0]?.snapshot_date ?? null,
       categories: catRes.results[0]?.snapshot_date ?? null,
+      attack_origins: originRes.results[0]?.snapshot_date ?? null,
+      attack_targets: targetRes.results[0]?.snapshot_date ?? null,
+      bot_density: densityRes.results[0]?.snapshot_date ?? null,
     },
   };
 }
