@@ -235,6 +235,13 @@ const MICROSOFT_HOSTS = [
   'live.com', 'office.com', 'office365.com', 'office.net', 'microsoft365.com', 'windows.net',
   'azure.com', 'azure.net', 'msauth.net', 'msftauth.net', 'msidentity.com', 'sharepoint.com',
   'aka.ms', 'msft.net', 'azureedge.net', 'b2clogin.com', 'ciamlogin.com',
+  // Sovereign / national clouds: Azure China (21Vianet — login.partner.
+  // microsoftonline.cn), Azure Government (login.microsoftonline.us), the
+  // retired Azure Germany cloud. chinacloudapi.cn / usgovcloudapi.net hold
+  // customer storage, so only their login hosts are listed.
+  'microsoftonline.cn', 'azure.cn', 'windowsazure.cn', 'onmschina.cn',
+  'microsoftonline.us', 'azure.us', 'microsoft.us', 'microsoftonline.de',
+  'login.chinacloudapi.cn', 'login.usgovcloudapi.net',
 ];
 
 function isMicrosoftHost(host: string): boolean {
@@ -347,6 +354,89 @@ export const IDP_VENDOR_CANONICAL_DOMAINS: readonly string[] = [
   'okta.com', 'onelogin.com', 'auth0.com', 'microsoft.com', 'microsoftonline.com',
   'duo.com', 'duosecurity.com', 'pingidentity.com', 'forgerock.com',
 ];
+
+/** Vendor-operated domains beyond the tenant suffixes / Microsoft plane. */
+const OTHER_VENDOR_DOMAINS = [
+  'duo.com', 'duosecurity.com', 'pingidentity.com', 'pingone.com', 'pingone.eu', 'pingone.ca',
+  'pingone.asia', 'forgerock.com', 'forgerock.io', 'oktacdn.com', 'auth0cdn.com',
+];
+
+/**
+ * True when `raw` (host, URL or `*.`-wildcard host) is the IdP vendor's OWN
+ * infrastructure: the Microsoft login plane incl. sovereign clouds
+ * (*.partner.microsoftonline.cn), an IdP apex or vendor corp subdomain
+ * (okta.com, login.okta.com, status.okta.com — the classifier's corp-label
+ * exclusion), or another vendor domain (duosecurity.com, pingone.com).
+ * A customer TENANT (acme.okta.com) is NOT vendor-official.
+ */
+// Microsoft's sign-in / identity plane only. Deliberately narrower than
+// MICROSOFT_HOSTS: windows.net, sharepoint.com, azureedge.net, b2clogin.com,
+// office.com (forms) etc. carry CUSTOMER content, which a feed may rightly
+// attribute to someone else.
+const MICROSOFT_OFFICIAL_HOSTS = [
+  'microsoft.com', 'microsoft.us', 'microsoftonline.com', 'microsoftonline-p.com',
+  'microsoftonline.cn', 'microsoftonline.us', 'microsoftonline.de', 'msauth.net', 'msftauth.net',
+  'msidentity.com', 'login.live.com', 'login.windows.net', 'login.chinacloudapi.cn',
+  'login.usgovcloudapi.net',
+];
+
+export function isIdpVendorOfficialHost(raw: string): boolean {
+  const host = normalizeHost(raw ?? '').replace(/^(?:\*\.)+/, '').replace(/^www\./, '');
+  if (!host || !host.includes('.')) return false;
+  if (MICROSOFT_OFFICIAL_HOSTS.some((s) => host === s || host.endsWith(`.${s}`))) return true;
+  if (matchTenantSuffix(host)) return rawTenantLabel(host) === null;
+  return OTHER_VENDOR_DOMAINS.some((s) => host === s || host.endsWith(`.${s}`));
+}
+
+/**
+ * The IdP vendor's own products / service names. On an idp_lookalike host a
+ * leftover naming one (microsoftonline-outlook, teams-microsoftonline,
+ * o365.…-microsoftonline) is the SAME vendor, not a different target, so the
+ * vendor keeps the credit — one Microsoft-credential campaign stays one
+ * brand instead of fragmenting across Microsoft / Outlook / OneDrive / Teams.
+ */
+const IDP_VENDOR_FAMILY: Readonly<Partial<Record<IdpProvider, ReadonlySet<string>>>> = {
+  entra: new Set([
+    'microsoft', 'microsoftonline', 'onmicrosoft', 'msft', 'office', 'office365', 'o365', 'm365',
+    'microsoft365', 'outlook', 'onedrive', 'teams', 'sharepoint', 'azure', 'azuread', 'entra',
+    'live', 'hotmail', 'msn', 'windows', 'exchange', 'owa', 'skype', 'onenote', 'excel',
+    'powerpoint', 'yammer', 'intune', 'defender', 'dynamics',
+  ]),
+  google: new Set(['google', 'gmail', 'gsuite', 'googleworkspace', 'workspace', 'gdrive',
+    'googledrive', 'googledocs']),
+  okta: new Set(['okta']),
+  onelogin: new Set(['onelogin']),
+  auth0: new Set(['auth0']),
+  duo: new Set(['duo', 'duosecurity', 'duomobile']),
+  ping: new Set(['ping', 'pingone', 'pingid', 'pingfederate', 'pingidentity', 'forgerock']),
+};
+
+// Product names typo-squatted often enough to tolerate one edit (ondrive,
+// outlok, sharepont). Short / dictionary-like family words (yammer, windows,
+// dynamics) are exact-only: hammer, window, dynamic are other words.
+const FUZZY_FAMILY_WORDS = new Set<string>([
+  'outlook', 'onedrive', 'sharepoint', 'office365', 'microsoft', 'microsoftonline',
+  'microsoft365', 'onmicrosoft', 'googleworkspace',
+]);
+
+/** True when `token` names one of `provider`'s own products — exact, or a
+ *  one-edit typo of a high-value product name (FUZZY_FAMILY_WORDS). */
+export function isIdpVendorFamilyToken(token: string, provider: IdpProvider): boolean {
+  const fam = IDP_VENDOR_FAMILY[provider];
+  if (!fam || !token) return false;
+  const t = token.toLowerCase();
+  if (fam.has(t)) return true;
+  if (t.length < 6) return false;
+  for (const w of fam) if (FUZZY_FAMILY_WORDS.has(w) && withinOneEdit(t, w)) return true;
+  return false;
+}
+
+/** Normalized name of the vendor's canonical brand row, for crediting the
+ *  vendor on a vendor-only lure (microsoftonline-… → "microsoft"). */
+export const IDP_VENDOR_BRAND_TOKEN: Readonly<Record<IdpProvider, string | null>> = {
+  okta: 'okta', entra: 'microsoft', onelogin: 'onelogin', auth0: 'auth0',
+  ping: 'pingidentity', duo: 'duosecurity', google: 'google', generic_sso: null,
+};
 
 function normBrandTokens(tokens: string[] | undefined): string[] {
   if (!tokens) return [];

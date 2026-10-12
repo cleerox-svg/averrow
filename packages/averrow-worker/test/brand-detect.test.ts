@@ -327,6 +327,89 @@ describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", ()
     expect(matchBrandToHost("personaid.okta-verify.com", IDP_BRANDS[4]!)).toBe("token");
   });
 
+  it("leftover evidence is whole-token only — never a prefix/substring of a longer word", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Author", "author.today", "b_author"), m("Pay", "pay.com", "b_pay")];
+    const of = (h: string) => fuzzyMatchBrandDetailed([h], cat);
+    expect(of("login.o365.teams-microsoftonline-com-common-oauth2-v2-0-authorize-login.com"))
+      .toEqual({ brandId: "b_ms", method: "token", vendorCredit: true });
+    // whole token still wins, also after peeling a glued auth word
+    expect(of("author-okta.com")?.brandId).toBe("b_author");
+    expect(of("acmesecure-okta.com")?.brandId).toBe("b_acme");
+    expect(of("payments-okta.com")?.brandId).toBe("b_okta");
+  });
+
+  it("login-phrase words that are also brands are lure filler", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Register", "register.com", "b_reg"), m("LogMeIn", "logmein.com", "b_lmi")];
+    for (const h of ["register.microsoftonline-p-int.com", "logmein-microsoftonline.com", "signup-okta.com"]) {
+      expect(fuzzyMatchBrandDetailed([h], cat)?.brandId, h).toMatch(/^b_(ms|okta)$/);
+    }
+  });
+
+  it("the same vendor's products keep the vendor credit", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Outlook", "outlook.com", "b_outlook"), m("OneDrive", "onedrive.com", "b_od")];
+    for (const h of ["microsoftonline-outlook.live", "com-microsoftonline-ondrive.ca", "teams-microsoftonline.com"]) {
+      expect(fuzzyMatchBrandDetailed([h], cat)?.brandId, h).toBe("b_ms");
+    }
+    // A different vendor's lure beside Outlook: Outlook IS the target.
+    expect(fuzzyMatchBrandDetailed(["outlook-okta.com"], cat)?.brandId).toBe("b_outlook");
+  });
+
+  it("leftovers credit only in-scope or well-known (tracked + Tranco <= 20000) brands", () => {
+    const tracked = (name: string, canonical_domain: string, id: string, rank: number | null): BrandRow =>
+      ({ id, name, canonical_domain, tier: "tracked", tranco_rank: rank });
+    expect(fuzzyMatchBrand(["zorblax-okta.com"], [...IDP_BRANDS, tracked("Zorblax", "zorblax.io", "b_z", 900000)])).toBe("b_okta");
+    expect(fuzzyMatchBrand(["zorblax-okta.com"], [...IDP_BRANDS, tracked("Zorblax", "zorblax.io", "b_z", null)])).toBe("b_okta");
+    expect(fuzzyMatchBrand(["zorblax-okta.com"], [...IDP_BRANDS, tracked("Zorblax", "zorblax.io", "b_z", 15000)])).toBe("b_z");
+    // the pair validator agrees when it is given the rank
+    expect(matchBrandToHost("zorblax-okta.com", tracked("Zorblax", "zorblax.io", "b_z", 15000))).toBe("token");
+    // …but the well-known tracked branch never widens non-IdP matching
+    expect(fuzzyMatchBrand(["zorblax-login.com"], [tracked("Zorblax", "zorblax.io", "b_z", 15000)])).toBeNull();
+    // typo leftovers stay monitored/customer only
+    expect(fuzzyMatchBrand(["zorbiax-okta.com"], [...IDP_BRANDS, tracked("Zorblax", "zorblax.io", "b_z", 15000)])).toBe("b_okta");
+  });
+
+  it("a generic 'sso' lure alone keeps the ordinary matcher (no vendor to mis-credit)", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("PayPal", "paypal.com", "b_paypal"), m("Amazon", "amazon.com", "b_amazon")];
+    expect(fuzzyMatchBrandDetailed(["paypa1-sso.com"], cat)).toEqual({ brandId: "b_paypal", method: "levenshtein" });
+    expect(fuzzyMatchBrandDetailed(["sso.paypa1-secure.com"], cat)).toEqual({ brandId: "b_paypal", method: "levenshtein" });
+    expect(fuzzyMatchBrandDetailed(["amazonprime-sso.com"], cat)).toEqual({ brandId: "b_amazon", method: "substring" });
+    expect(fuzzyMatchBrandDetailed(["paypal-sso.com"], cat)).toEqual({ brandId: "b_paypal", method: "token" });
+  });
+
+  it("typo'd monitored brand leftovers on a vendor lure still match (whole-token fuzzy)", () => {
+    const paypal = m("PayPal", "paypal.com", "b_paypal");
+    expect(fuzzyMatchBrandDetailed(["paypa1-okta.com"], [...IDP_BRANDS, paypal]))
+      .toEqual({ brandId: "b_paypal", method: "levenshtein" });
+    expect(matchBrandToHost("paypa1-okta.com", paypal)).toBe("levenshtein");
+  });
+
+  it("peeling only strips phishing words, and peeled tokens match names exactly", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Scout", "scout.com", "b_scout"), m("Desk", "desk.com", "b_desk"),
+      m("Chimp", "chimp.io", "b_chimp")];
+    for (const h of ["helpscout-okta.com", "helpdesk-okta.com", "mailchimp-okta.com"]) {
+      expect(fuzzyMatchBrand([h], cat), h).toBe("b_okta");
+    }
+    // "withpersona" is Persona's owner LABEL, not its name — no peeled match.
+    expect(fuzzyMatchBrand(["securewithpersona-okta.com"], IDP_BRANDS)).toBe("b_okta");
+    expect(fuzzyMatchBrand(["securepersona-okta.com"], IDP_BRANDS)).toBe("b_persona");
+  });
+
+  it("dictionary-like Microsoft products are exact-only family words", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Hammer", "hammer.com", "b_hammer"), m("Window", "window.com", "b_window"),
+      m("Dynamic", "dynamic.com", "b_dynamic")];
+    expect(fuzzyMatchBrand(["hammer-microsoftonline.com"], cat)).toBe("b_hammer");
+    expect(fuzzyMatchBrand(["window-microsoftonline.com"], cat)).toBe("b_window");
+    expect(fuzzyMatchBrand(["dynamic-microsoftonline.com"], cat)).toBe("b_dynamic");
+    expect(fuzzyMatchBrand(["yammer-microsoftonline.com"], cat)).toBe("b_ms");
+  });
+
+  it("pair validation never invalidates a link the pre-2026-10-12 rules accepted", () => {
+    expect(matchBrandToHost("microsoftonline-outlook.live", m("Outlook", "outlook.com", "b_outlook"))).toBe("token");
+    expect(matchBrandToHost("login.o365.teams-microsoftonline-com-common-oauth2-v2-0-authorize-login.com",
+      m("Author", "author.today", "b_author"))).toBe("substring");
+    expect(matchBrandToHost("logmein-microsoftonline.com", m("LogMeIn", "logmein.com", "b_lmi"))).toBe("token");
+  });
+
   it("non-IdP hosts are unaffected", () => {
     expect(brandOf("acme-login.com")).toBe("b_acme");
     expect(brandOf("bbva-entra.com")).toBeNull(); // compound-only lure, no stripping

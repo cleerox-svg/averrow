@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyIdpImpersonation as classify,
+  isIdpVendorFamilyToken,
+  isIdpVendorOfficialHost,
   idpTenantLabel,
   splitIdpLureToken,
   techniqueToVector,
@@ -268,5 +270,41 @@ describe('splitIdpLureToken (brand-attribution helper)', () => {
       return;
     }
     expect(splitIdpLureToken(tok)).toBeNull();
+  });
+});
+
+describe('vendor-official hosts and vendor product family', () => {
+  it.each([
+    '*.dns.partner.microsoftonline.cn', 'login.partner.microsoftonline.cn', 'login.microsoftonline.us',
+    'login.microsoftonline.com', 'okta.com', 'login.okta.com', 'status.okta.com', 'api-1a2b3c.duosecurity.com',
+    'auth.pingone.com', 'https://login.okta.com/signin', 'login.chinacloudapi.cn',
+  ])('%s is vendor-official', (h) => {
+    expect(isIdpVendorOfficialHost(h)).toBe(true);
+  });
+
+  it.each([
+    'acme.okta.com', 'acme-sso.okta.com', 'logmein-microsoftonline.com', 'microsoftonline-outlook.live',
+    'register.microsoftonline-p-int.com', 'okta-login.com', 'microsoftonline.cn.evil.com',
+    'acct.blob.core.chinacloudapi.cn', 'acct.blob.core.usgovcloudapi.net', 'x.blob.core.windows.net',
+    'acme.b2clogin.com', 'acme.sharepoint.com',
+  ])('%s is not vendor-official', (h) => {
+    expect(isIdpVendorOfficialHost(h)).toBe(false);
+  });
+
+  it('Azure China / Gov sign-in hosts are not lookalikes', () => {
+    expect(classify({ host: 'dns.partner.microsoftonline.cn' })).toBeNull();
+    expect(classify({ host: 'login.microsoftonline.us' })).toBeNull();
+  });
+
+  it('family tokens: exact or one-edit typo (6+ chars)', () => {
+    expect(isIdpVendorFamilyToken('outlook', 'entra')).toBe(true);
+    expect(isIdpVendorFamilyToken('ondrive', 'entra')).toBe(true);
+    expect(isIdpVendorFamilyToken('o365', 'entra')).toBe(true);
+    expect(isIdpVendorFamilyToken('outlook', 'okta')).toBe(false);
+    expect(isIdpVendorFamilyToken('asana', 'okta')).toBe(false);
+    expect(isIdpVendorFamilyToken('hammer', 'entra')).toBe(false); // not yammer
+    expect(isIdpVendorFamilyToken('window', 'entra')).toBe(false);
+    expect(isIdpVendorFamilyToken('dynamic', 'entra')).toBe(false);
+    expect(isIdpVendorFamilyToken('sharepont', 'entra')).toBe(true);
   });
 });

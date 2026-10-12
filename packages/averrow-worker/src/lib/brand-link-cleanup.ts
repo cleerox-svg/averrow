@@ -81,6 +81,9 @@ export interface LinkRow {
   brand_name: string | null;
   brand_canonical: string | null;
   brand_tier?: string | null;
+  /** brands.tranco_rank — lets a well-known tracked brand validate on an
+   *  IdP-lure leftover, matching what the ingest matcher credits. */
+  brand_rank?: number | null;
   source_feed: string | null;
 }
 
@@ -165,6 +168,7 @@ export function decideLink(
       name: row.brand_name,
       canonical_domain: row.brand_canonical ?? "",
       tier: row.brand_tier,
+      tranco_rank: row.brand_rank,
     };
     for (const h of haystacks) {
       const method = matchBrandToHost(h, current);
@@ -286,7 +290,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value,
             t.target_brand_id, t.brand_match_method,
-            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, t.source_feed
+            b.name AS brand_name, b.canonical_domain AS brand_canonical, b.tier AS brand_tier, b.tranco_rank AS brand_rank, t.source_feed
        FROM threats t
        LEFT JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ? AND t.target_brand_id IS NOT NULL
