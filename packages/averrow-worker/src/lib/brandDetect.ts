@@ -256,6 +256,13 @@ const PLATFORM_SUFFIXES = [
   "trycloudflare.com", "portmap.host", "edgeone.app", "gateway.dev", "wixstudio.com",
   "cloudapp.net", "webcindario.com", "temporary.site",
   "mytemp.website", "contaboserver.net",
+  // Free site builders addressed by SUBDOMAIN (<site>.jimdofree.com,
+  // <project>.tilda.ws): the builder's name is not brand evidence
+  // (chase-login.jimdofree.com is Chase, not Jimdo). square.site and
+  // wixstudio.com are listed above. Path-addressed builders
+  // (sites.google.com/<site>, editorx.io/<site>) are deliberately absent.
+  "jimdofree.com", "jimdosite.com", "jimdo.com", "tilda.ws", "mystrikingly.com",
+  "yolasite.com", "webnode.page", "site123.me", "framer.website",
   // Subdomain-style IPFS gateways: <cid>.ipfs.dweb.link (path-style hosts
   // are in SHARED_HOSTS below).
   "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
@@ -749,6 +756,21 @@ function fuzzyMatch(candidate: string, norm: string): boolean {
  * (handlers/admin/idpReattribution.ts).
  */
 export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod | null {
+  return pairMatch(raw, brand, true);
+}
+
+/**
+ * As matchBrandToHost, but WITHOUT the permissive pre-2026-10-12 full-host
+ * path on IdP-lure hosts: true only when the current rules accept the pair
+ * (a whole-token leftover, or the vendor credit). Used by the all_idp
+ * re-attribution to keep a link the current rules still accept when the
+ * host names two brands (contoso-withpersona.okta-sso.com).
+ */
+export function matchBrandToHostStrict(raw: string, brand: BrandRow): BrandMatchMethod | null {
+  return pairMatch(raw, brand, false);
+}
+
+function pairMatch(raw: string, brand: BrandRow, legacy: boolean): BrandMatchMethod | null {
   const parts = hostParts(raw);
   if (!parts) return null;
   const p = prepareOne(brand);
@@ -756,7 +778,7 @@ export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod
   if (parts.idpLure || parts.idpVendor) {
     const strict = matchIdpPartsToBrand(parts, p)
       ?? (parts.vendorFallback ? matchIdpPartsToBrand(parts.vendorFallback, p) : null);
-    if (strict) return strict;
+    if (strict || !legacy) return strict;
     return p.matchable && parts.legacy ? matchPreparedToParts(parts.legacy, p) : null;
   }
   if (!p.matchable) return null;

@@ -174,10 +174,108 @@ describe("production dry run 2026-10-12 — the 11 proposed changes", () => {
   });
 });
 
+describe("scope=all_idp — revisit links made under earlier leftover rules", () => {
+  const CAT: BrandRow[] = [
+    ...CATALOG,
+    { id: "brand_copilot_com", name: "Copilot", canonical_domain: "copilot.com", tier: "monitored" },
+    { id: "brand_jimdofree_com", name: "Jimdofree", canonical_domain: "jimdofree.com", tier: "monitored" },
+    { id: "b_edge", name: "Edge", canonical_domain: "edge.org", tier: "monitored" },
+    { id: "b_viva", name: "Viva Wallet", canonical_domain: "vivawallet.com", tier: "monitored" },
+    { id: "b_slack", name: "Slack", canonical_domain: "slack.com", tier: "monitored" },
+    { id: "b_cust", name: "Contoso", canonical_domain: "contoso.com", tier: "customer" },
+  ];
+  const rm = (h: string[]) => fuzzyMatchBrandDetailed(h, CAT);
+  const on = (domain: string, id: string, name: string, canonical: string, tier = "monitored") =>
+    row(domain, { target_brand_id: id, brand_name: name, brand_canonical: canonical, brand_tier: tier });
+  const all = (r: ReattributionRow) => decideReattribution(r, rm, "all_idp");
+
+  it("a Microsoft product word credit moves to Microsoft", () => {
+    expect(all(on("ms365-copilot.onmicrosoft.aviasg.co", "brand_copilot_com", "Copilot", "copilot.com")))
+      .toEqual({ action: "relink", newBrandId: "b_ms", method: "token" });
+    expect(all(on("edge-microsoftonline.com", "b_edge", "Edge", "edge.org")).newBrandId).toBe("b_ms");
+  });
+
+  it("a free-builder platform credit moves to the vendor", () => {
+    expect(all(on("login-microsoftonnline.jimdofree.com", "brand_jimdofree_com", "Jimdofree", "jimdofree.com")))
+      .toMatchObject({ action: "relink", newBrandId: "b_ms" });
+  });
+
+  it("a link the current matcher still produces is kept", () => {
+    expect(all(on("withpersona.okta-linksso.com", "b_persona", "Persona", "withpersona.com")))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    expect(all(on("slack-okta.com", "b_slack", "Slack", "slack.com")))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    // vendor-credited row already on the vendor brand
+    expect(all(row("okta-login-secure.com"))).toMatchObject({ action: "keep", keptBecause: "still_matches" });
+  });
+
+  it("customer-tier links never fall back to the vendor or get cleared while a rule accepts them", () => {
+    expect(all(on("contoso-okta.com", "b_cust", "Contoso", "contoso.com", "customer")))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    // Old rules accepted Contoso via substring inside a glued word; the new
+    // matcher falls back to Okta — customer link is kept.
+    expect(all(on("mycontosoportal-okta.com", "b_cust", "Contoso", "contoso.com", "customer")))
+      .toMatchObject({ action: "keep", keptBecause: "customer_tier" });
+    // A host naming two brands: the current rules still accept Contoso → keep.
+    expect(all(on("withpersona-contoso.okta-sso.com", "b_cust", "Contoso", "contoso.com", "customer")))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    // …but when only the OLD rules accepted Contoso (substring inside a glued
+    // word), a different specific brand wins.
+    expect(all(on("mycontosoportal.withpersona-okta.com", "b_cust", "Contoso", "contoso.com", "customer")))
+      .toMatchObject({ action: "relink", newBrandId: "b_persona" });
+  });
+
+  it("AI / page-context links and protected feeds are untouched", () => {
+    expect(all(on("okta-login-secure.com", "b_viva", "Viva Wallet", "vivawallet.com")))
+      .toMatchObject({ action: "keep", keptBecause: "not_lure_credit" });
+    expect(all(row("okta-acme.com", { source_feed: "typosquat_scanner", target_brand_id: "b_edge", brand_name: "Edge" })))
+      .toMatchObject({ action: "keep", keptBecause: "protected_feed" });
+    expect(all(on("dns.partner.microsoftonline.cn", "brand_copilot_com", "Copilot", "copilot.com")))
+      .toMatchObject({ action: "keep", keptBecause: "vendor_official_domain" });
+  });
+
+  it("vendor scope is unchanged by the new mode", () => {
+    expect(decideReattribution(on("ms365-copilot.onmicrosoft.aviasg.co", "brand_copilot_com", "Copilot", "copilot.com"), rm))
+      .toMatchObject({ action: "keep" });
+  });
+});
+
+describe("general brand-link cleanup on free-builder hosts", () => {
+  const CAT: BrandRow[] = [
+    ...CATALOG,
+    { id: "b_jimdofree", name: "Jimdofree", canonical_domain: "jimdofree.com", tier: "monitored" },
+    { id: "b_chase", name: "Chase", canonical_domain: "chase.com", tier: "monitored" },
+  ];
+  const link = (domain: string, id: string, name: string, canonical: string): LinkRow => ({
+    rid: 1, id: `t_${domain}`, malicious_domain: domain, malicious_url: null, ioc_value: null,
+    target_brand_id: id, brand_match_method: "token", brand_name: name, brand_canonical: canonical,
+    brand_tier: "monitored", source_feed: "phishtank",
+  });
+  const rm = (h: string[]) => fuzzyMatchBrandDetailed(h, CAT);
+
+  it("relinks a builder credit to the subdomain's brand, or clears it", () => {
+    expect(decideLink(link("chase-login.jimdofree.com", "b_jimdofree", "Jimdofree", "jimdofree.com"), rm))
+      .toMatchObject({ action: "relink", newBrandId: "b_chase" });
+    expect(decideLink(link("xk2-login.jimdofree.com", "b_jimdofree", "Jimdofree", "jimdofree.com"), rm))
+      .toMatchObject({ action: "clear" });
+    expect(decideLink(link("login-microsoftonnline.jimdofree.com", "b_jimdofree", "Jimdofree", "jimdofree.com"), rm))
+      .toMatchObject({ action: "relink", newBrandId: "b_ms" });
+  });
+
+  it("keeps correct links on builder hosts and the builder's own site", () => {
+    expect(decideLink(link("chase-login.jimdofree.com", "b_chase", "Chase", "chase.com"), rm).action).toBe("keep");
+    expect(decideLink(link("jimdofree.com", "b_jimdofree", "Jimdofree", "jimdofree.com"), rm).action).toBe("keep");
+  });
+});
+
 describe("handleIdpReattribution request guards", () => {
   const env = {} as Env;
   it("apply without the confirm token is a 400 (no DB access)", async () => {
     const res = await handleIdpReattribution(new URL("https://x/api/internal/backfills/idp-reattribution?apply=1"), env);
+    expect(res.status).toBe(400);
+  });
+  it("rejects an unknown scope", async () => {
+    const res = await handleIdpReattribution(new URL("https://x/?scope=everything"), env);
     expect(res.status).toBe(400);
   });
   it("rejects a malformed run_id", async () => {
@@ -225,6 +323,31 @@ describe("runIdpReattribution — live cleanup-log rows are never overwritten", 
     expect(written).toHaveLength(1);
     expect(written[0]!.args).toContain("t2");
     expect(written[0]!.sql).toMatch(/EXISTS \(SELECT 1 FROM brand_link_cleanup_log/);
+  });
+
+  it("scope=all_idp drops the vendor filter and stays far under the bind limit", async () => {
+    const seen: Array<{ sql: string; args: unknown[] }> = [];
+    const stmt = (sql: string) => {
+      const s = {
+        sql, args: [] as unknown[],
+        bind(...a: unknown[]) { s.args = a; seen.push(s); return s; },
+        async all() {
+          return { results: sql.includes("FROM brands") ? CATALOG : sql.includes("FROM threats t")
+            ? [row("ms365-copilot.onmicrosoft.aviasg.co", {
+                target_brand_id: "b_acme", brand_name: "Copilot", brand_canonical: "copilot.com" })]
+            : [] };
+        },
+      };
+      return s;
+    };
+    const env = { DB: { prepare: stmt } } as unknown as Env;
+    const r = await runIdpReattribution(env, { apply: false, cursor: 0, limit: 500, runId: "x", scope: "all_idp" });
+    const q = seen.find((x) => x.sql.includes("FROM threats t"))!;
+    expect(q.sql).not.toMatch(/canonical_domain IN/);
+    expect(q.args).toHaveLength(4);
+    expect(r.scope).toBe("all_idp");
+    expect(r.relink).toBe(1);
+    expect(r.samples[0]).toMatchObject({ to: "b_ms", action: "relink" });
   });
 
   it("dry run reports skipped_logged without writing", async () => {

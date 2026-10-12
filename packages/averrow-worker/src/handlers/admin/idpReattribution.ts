@@ -22,6 +22,16 @@
 // Rows from brand-scoped generators (typosquat_scanner,
 // numbered_variant_scan — permutations OF the vendor's own domain) are kept.
 //
+// `scope=all_idp` drops the vendor-brand filter: every IdP-family row linked
+// to ANY brand is recomputed with the current matcher, so links made under
+// earlier leftover rules (a Microsoft product word — Copilot, Edge, Loop,
+// Viva; a free-builder platform — Jimdofree) move to what the matcher now
+// produces. Same per-row safeguards, plus: the literal-credit scope also
+// accepts the pre-#1727 fuzzy match (legacyFuzzyMatched); a vendor-credit
+// result moves a non-vendor link to the vendor; a customer-tier link only
+// ever moves to a different SPECIFIC brand and is never cleared while any
+// rule still accepts it (keptBecause customer_tier).
+//
 // Writes reuse brand_link_cleanup_log (migration 0271) in the same atomic
 // (log, guarded UPDATE) pairs as lib/brand-link-cleanup.ts, under run_id
 // `idp-reattribution` by default — so `POST /api/internal/brand-links/cleanup
@@ -34,6 +44,8 @@ import type { Env } from "../../types";
 import {
   fuzzyMatchBrandDetailed,
   loadBrands,
+  matchBrandToHost,
+  matchBrandToHostStrict,
   normalizeBrand,
   type BrandMatchMethod,
   type BrandRow,
@@ -43,9 +55,18 @@ import {
   IDP_VENDOR_CANONICAL_DOMAINS,
   isIdpVendorOfficialHost,
 } from "../../lib/idp-impersonation";
-import { clampCursor } from "../../lib/brand-link-cleanup";
+import { clampCursor, legacyFuzzyMatched } from "../../lib/brand-link-cleanup";
 
 export const IDP_REATTRIBUTION_CONFIRM = "apply-idp-reattribution";
+
+/**
+ * `vendor` (default): rows credited to an IdP VENDOR brand (the original
+ * one-off). `all_idp`: every idp_lookalike / idp_tenant_abuse row linked to
+ * ANY brand — revisits links made under earlier leftover rules (a vendor
+ * product word: Copilot, Edge, Loop, Viva; a hosting platform: Jimdofree)
+ * by recomputing with the current matcher.
+ */
+export type ReattributionScope = "vendor" | "all_idp";
 export const IDP_REATTRIBUTION_DEFAULT_LIMIT = 500;
 export const IDP_REATTRIBUTION_MAX_LIMIT = 1000;
 const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
@@ -76,7 +97,9 @@ export interface ReattributionDecision {
   newBrandId: string | null;
   method: BrandMatchMethod | null;
   /** Why a row was kept without re-matching. */
-  keptBecause?: "still_matches" | "protected_feed" | "not_lure_credit" | "vendor_official_domain";
+  keptBecause?:
+    | "still_matches" | "protected_feed" | "not_lure_credit" | "vendor_official_domain"
+    | "customer_tier";
 }
 
 function haystacksOf(r: ReattributionRow): string[] {
@@ -93,6 +116,7 @@ function haystacksOf(r: ReattributionRow): string[] {
 export function decideReattribution(
   row: ReattributionRow,
   rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod; vendorCredit?: true } | null,
+  scope: ReattributionScope = "vendor",
 ): ReattributionDecision {
   const haystacks = haystacksOf(row);
   if (row.source_feed && PROTECTED_FEEDS.has(row.source_feed)) {
@@ -106,16 +130,44 @@ export function decideReattribution(
   if (isIdpVendorOfficialHost(row.malicious_domain ?? haystacks[0] ?? "")) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "vendor_official_domain" };
   }
+  // Only links the host-token matcher made (the brand's name is in the
+  // host, or the pre-#1727 fuzzy matcher would produce it). An AI / page-
+  // context link is left alone.
   const norm = normalizeBrand(row.brand_name);
-  if (!norm || !haystacks.some((h) => h.toLowerCase().replace(/[^a-z0-9]/g, "").includes(norm))) {
+  const literal = !!norm && haystacks.some((h) => h.toLowerCase().replace(/[^a-z0-9]/g, "").includes(norm));
+  if (!literal && (scope === "vendor" || !legacyFuzzyMatched(haystacks, row.brand_name))) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "not_lure_credit" };
   }
   const hit = rematch(haystacks);
-  // Matcher credits the IdP vendor (no other brand evidence, or only the
-  // vendor's own products: microsoftonline-outlook.live): keep the existing
-  // vendor link rather than hop between duplicate vendor brand rows.
-  if (hit && (hit.brandId === row.target_brand_id || hit.vendorCredit)) {
+  if (hit && hit.brandId === row.target_brand_id) {
     return { action: "keep", newBrandId: null, method: hit.method, keptBecause: "still_matches" };
+  }
+  const current: BrandRow = {
+    id: row.target_brand_id, name: row.brand_name,
+    canonical_domain: row.brand_canonical ?? "", tier: row.brand_tier,
+  };
+  // all_idp: a host naming two brands (contoso-withpersona.okta-sso.com) —
+  // if the CURRENT rules still accept the existing link, don't churn it.
+  if (scope === "all_idp" && hit && !hit.vendorCredit
+      && haystacks.some((h) => matchBrandToHostStrict(h, current))) {
+    return { action: "keep", newBrandId: null, method: null, keptBecause: "still_matches" };
+  }
+  // Matcher credits the IdP vendor (no other brand evidence, or only the
+  // vendor's own products: microsoftonline-outlook.live). A link already on
+  // a vendor brand is kept rather than hopping between duplicate vendor
+  // rows; in all_idp a non-vendor link (Copilot, Jimdofree) moves to it.
+  const onVendorBrand = scope === "vendor"
+    || IDP_VENDOR_CANONICAL_DOMAINS.includes((row.brand_canonical ?? "").toLowerCase());
+  if (hit?.vendorCredit && onVendorBrand) {
+    return { action: "keep", newBrandId: null, method: hit.method, keptBecause: "still_matches" };
+  }
+  // A customer-tier link moves only to a different SPECIFIC brand — never
+  // to the vendor fallback, and is never cleared while any rule (old or
+  // new, matchBrandToHost is permissive) still accepts it.
+  if (row.brand_tier === "customer" && (!hit || hit.vendorCredit)) {
+    if (hit || haystacks.some((h) => matchBrandToHost(h, current))) {
+      return { action: "keep", newBrandId: null, method: null, keptBecause: "customer_tier" };
+    }
   }
   if (hit) {
     return { action: "relink", newBrandId: hit.brandId, method: hit.method };
@@ -125,6 +177,7 @@ export function decideReattribution(
 
 export interface ReattributionResult {
   mode: "dry_run" | "apply";
+  scope: ReattributionScope;
   run_id: string;
   scanned: number;
   keep: number;
@@ -150,9 +203,13 @@ function bump(m: Record<string, number>, k: string): void {
 
 export async function runIdpReattribution(
   env: Env,
-  opts: { apply: boolean; cursor: number; limit: number; runId: string },
+  opts: { apply: boolean; cursor: number; limit: number; runId: string; scope?: ReattributionScope },
 ): Promise<ReattributionResult> {
+  const scope: ReattributionScope = opts.scope ?? "vendor";
+  // Binds: cursor + 2 techniques + (vendor scope) 9 vendor domains + limit
+  // = 13 at most — far under D1's 100.
   const vendorPh = IDP_VENDOR_CANONICAL_DOMAINS.map(() => "?").join(", ");
+  const vendorFilter = scope === "vendor" ? `AND b.canonical_domain IN (${vendorPh})` : "";
   const rows = await env.DB.prepare(
     `SELECT t.rowid AS rid, t.id, t.malicious_domain, t.malicious_url, t.ioc_value, t.source_feed,
             t.target_brand_id, t.brand_match_method,
@@ -163,17 +220,17 @@ export async function runIdpReattribution(
        JOIN brands b ON b.id = t.target_brand_id
       WHERE t.rowid > ?
         AND t.technique IN (?, ?)
-        AND b.canonical_domain IN (${vendorPh})
+        ${vendorFilter}
       ORDER BY t.rowid
       LIMIT ?`,
   ).bind(
     opts.cursor, IDP_TECHNIQUE.idp_lookalike, IDP_TECHNIQUE.idp_tenant,
-    ...IDP_VENDOR_CANONICAL_DOMAINS, opts.limit,
+    ...(scope === "vendor" ? IDP_VENDOR_CANONICAL_DOMAINS : []), opts.limit,
   ).all<ReattributionRow>();
   const list = rows.results ?? [];
 
   const result: ReattributionResult = {
-    mode: opts.apply ? "apply" : "dry_run", run_id: opts.runId,
+    mode: opts.apply ? "apply" : "dry_run", scope, run_id: opts.runId,
     scanned: list.length, keep: 0, relink: 0, clear: 0,
     kept_by_reason: {}, removed_by_brand: {}, added_by_brand: {}, samples: [],
     changed: 0, skipped_logged: 0, next_cursor: list.at(-1)?.rid ?? opts.cursor, done: list.length < opts.limit,
@@ -182,11 +239,13 @@ export async function runIdpReattribution(
   let catalog: BrandRow[] | null = null;
   const changes: Array<{ row: ReattributionRow; d: ReattributionDecision }> = [];
   for (const row of list) {
-    let d = decideReattribution(row, () => null);
-    if (d.action !== "keep") {
+    // Cheap pre-pass: the scope / official-host / literal checks need no
+    // catalog. A row that passes them always re-runs with the matcher.
+    let d = decideReattribution(row, () => null, scope);
+    if (d.action !== "keep" || d.keptBecause === "customer_tier") {
       catalog ??= await loadBrands(env.DB);
       const cat = catalog;
-      d = decideReattribution(row, (h) => fuzzyMatchBrandDetailed(h, cat));
+      d = decideReattribution(row, (h) => fuzzyMatchBrandDetailed(h, cat), scope);
     }
     if (d.action !== "keep" && row.logged) {
       result.skipped_logged++;
@@ -255,7 +314,7 @@ export async function runIdpReattribution(
     resourceType: "brand_link_cleanup",
     resourceId: opts.runId,
     details: {
-      actor: "internal", cursor: opts.cursor, next_cursor: result.next_cursor,
+      actor: "internal", scope, cursor: opts.cursor, next_cursor: result.next_cursor,
       scanned: result.scanned, relink: result.relink, clear: result.clear, changed: result.changed,
       skipped_logged: result.skipped_logged,
     },
@@ -265,7 +324,7 @@ export async function runIdpReattribution(
 
 /**
  * POST /api/internal/backfills/idp-reattribution
- *   ?cursor=0&limit=500[&apply=1&confirm=apply-idp-reattribution][&run_id=idp-reattribution]
+ *   ?cursor=0&limit=500[&scope=vendor|all_idp][&apply=1&confirm=apply-idp-reattribution][&run_id=idp-reattribution]
  * dry_run unless apply=1 + confirm. Loop on next_cursor until done.
  */
 export async function handleIdpReattribution(url: URL, env: Env): Promise<Response> {
@@ -277,13 +336,18 @@ export async function handleIdpReattribution(url: URL, env: Env): Promise<Respon
   if (!RUN_ID_RE.test(runId)) {
     return Response.json({ success: false, error: "run_id must match [A-Za-z0-9_.:-]{1,64}" }, { status: 400 });
   }
+  const rawScope = url.searchParams.get("scope") ?? "vendor";
+  if (rawScope !== "vendor" && rawScope !== "all_idp") {
+    return Response.json({ success: false, error: "scope must be vendor or all_idp" }, { status: 400 });
+  }
+  const scope: ReattributionScope = rawScope;
   const rawLimit = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
   const limit = Number.isFinite(rawLimit) && rawLimit > 0
     ? Math.min(rawLimit, IDP_REATTRIBUTION_MAX_LIMIT)
     : IDP_REATTRIBUTION_DEFAULT_LIMIT;
   try {
     const data = await runIdpReattribution(env, {
-      apply, limit, runId, cursor: clampCursor(Number(url.searchParams.get("cursor") ?? "0")),
+      apply, limit, runId, scope, cursor: clampCursor(Number(url.searchParams.get("cursor") ?? "0")),
     });
     return Response.json({ success: true, data });
   } catch (err) {
