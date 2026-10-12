@@ -6,17 +6,21 @@
 // a fake driver (no browser is ever launched in tests).
 //
 // Navigation ONLY: this driver never clicks, types, focuses inputs, submits
-// forms or follows `javascript:` / `data:` navigations. Every navigation
-// request (initial, redirects, frames) passes the SSRF guard before it may
-// continue; sub-resources with non-http(s) schemes (other than inline
-// data:/blob:), statically-blocked hosts, media and fonts are aborted;
-// downloads are denied at the CDP level; dialogs are dismissed and popups
-// closed.
+// forms or follows `javascript:` / `data:` navigations. EVERY intercepted
+// http(s) request — navigations (initial, redirects, frames) and
+// sub-resources alike — passes the SSRF guard (scheme + static block-list +
+// DoH-resolved IP check, per-run cache) before it may continue; non-http(s)
+// sub-resources (other than inline data:/blob:), media and fonts are
+// aborted; downloads are denied at the CDP level; dialogs are dismissed and
+// popups closed. Accepted gap: WebSocket connections bypass request
+// interception and are not guarded (the browser runs on Cloudflare's
+// network, not ours). On the hard per-page timeout the caller aborts
+// `req.signal` and the page is closed immediately.
 
 import puppeteer from "@cloudflare/puppeteer";
 import type { Browser, HTTPRequest, Page } from "@cloudflare/puppeteer";
-import { pageFetchHostStaticBlockReason } from "./url-guard";
 import {
+  CAPTURE_HTML_MAX_BYTES,
   DESKTOP_UA,
   DESKTOP_VIEWPORT,
   MOBILE_UA,
@@ -35,17 +39,28 @@ const MAX_BODY_TEXT = 8_192;
 const MAX_FORMS = 50;
 
 // Runs inside the page. A string (not a function) so the Worker's TS config
-// needs no DOM lib; the result is validated below as untrusted data.
+// needs no DOM lib; the result is validated below as untrusted data. The
+// HTML is serialized and CAPPED in the page (never page.content(), which
+// would ship an arbitrarily large DOM over CDP first); capHtml then caps the
+// UTF-8 bytes exactly.
 const EXTRACT_SCRIPT = `(() => {
   const forms = Array.from(document.forms).slice(0, ${MAX_FORMS}).map((f) => f.getAttribute('action') || '');
   const text = document.body ? String(document.body.innerText || '') : '';
-  return { title: String(document.title || ''), forms, text: text.slice(0, ${MAX_BODY_TEXT}) };
+  const root = document.documentElement;
+  const html = root ? String(root.outerHTML || '') : '';
+  return {
+    title: String(document.title || ''),
+    forms,
+    text: text.slice(0, ${MAX_BODY_TEXT}),
+    html: html.slice(0, ${CAPTURE_HTML_MAX_BYTES}),
+  };
 })()`;
 
 interface Extracted {
   title: string;
   forms: string[];
   text: string;
+  html: string;
 }
 
 function asExtracted(v: unknown): Extracted {
@@ -55,6 +70,7 @@ function asExtracted(v: unknown): Extracted {
     title: typeof o["title"] === "string" ? o["title"] : "",
     forms: forms.slice(0, MAX_FORMS),
     text: typeof o["text"] === "string" ? o["text"].slice(0, MAX_BODY_TEXT) : "",
+    html: typeof o["html"] === "string" ? o["html"].slice(0, CAPTURE_HTML_MAX_BYTES) : "",
   };
 }
 
@@ -65,19 +81,11 @@ function schemeOf(url: string): string {
   return i > 0 ? url.slice(0, i + 1).toLowerCase() : "";
 }
 
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
-
 async function decide(req: HTTPRequest, page: Page, ctx: {
   guard: CaptureRequest["guard"];
   chain: string[];
   recording: { on: boolean };
-  blocked: { reason: string | null };
+  blocked: { reason: string | null; retryable: boolean };
 }): Promise<void> {
   if (req.isInterceptResolutionHandled()) return;
   const url = req.url();
@@ -88,7 +96,10 @@ async function decide(req: HTTPRequest, page: Page, ctx: {
       if (mainFrame && ctx.recording.on && ctx.chain[ctx.chain.length - 1] !== url) ctx.chain.push(url);
       const verdict = await ctx.guard(url);
       if (!verdict.ok) {
-        if (mainFrame && ctx.blocked.reason === null) ctx.blocked.reason = `${url.slice(0, 200)} (${verdict.reason})`;
+        if (mainFrame && ctx.blocked.reason === null) {
+          ctx.blocked.reason = `${url.slice(0, 200)} (${verdict.reason})`;
+          ctx.blocked.retryable = verdict.retryable;
+        }
         await req.abort("blockedbyclient");
         return;
       }
@@ -108,8 +119,10 @@ async function decide(req: HTTPRequest, page: Page, ctx: {
       await req.abort("blockedbyclient");
       return;
     }
-    const host = hostOf(url);
-    if (!host || pageFetchHostStaticBlockReason(host)) {
+    // Sub-resources get the same DNS-resolved check as navigations (the
+    // guard's per-run cache keeps repeat hosts to one DoH lookup).
+    const verdict = await ctx.guard(url);
+    if (!verdict.ok) {
       await req.abort("blockedbyclient");
       return;
     }
@@ -125,7 +138,12 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
   const page = await browser.newPage();
   const chain: string[] = [];
   const recording = { on: true };
-  const blocked: { reason: string | null } = { reason: null };
+  const blocked: { reason: string | null; retryable: boolean } = { reason: null, retryable: false };
+  // Hard timeout from the caller → close the page NOW so in-flight work
+  // dies with it instead of running into the next capture.
+  const onAbort = (): void => { page.close().catch(() => undefined); };
+  if (req.signal.aborted) onAbort();
+  else req.signal.addEventListener("abort", onAbort, { once: true });
   try {
     page.on("dialog", (d) => { d.dismiss().catch(() => undefined); });
     page.on("popup", (p) => { if (p) p.close().catch(() => undefined); });
@@ -152,7 +170,7 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
     const committed = page.url() !== "about:blank" && page.url() !== "";
     if (!committed) {
       if (blocked.reason) {
-        return emptyCapture(chain, blocked.reason);
+        return emptyCapture(chain, blocked.reason, blocked.retryable);
       }
       throw new Error(`navigation failed: ${navError ?? "page did not load"}`);
     }
@@ -161,7 +179,6 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
 
     const finalUrl = page.url();
     const desktopPng = new Uint8Array(await page.screenshot({ type: "png", fullPage: false }));
-    const html = await page.content();
     const extracted = asExtracted(await page.evaluate(EXTRACT_SCRIPT));
 
     let mobilePng: Uint8Array | null = null;
@@ -184,20 +201,23 @@ async function captureOnPage(browser: Browser, req: CaptureRequest): Promise<Raw
       title: extracted.title,
       formActions: extracted.forms,
       bodyText: extracted.text,
-      html,
+      html: extracted.html,
       desktopPng,
       mobilePng,
       blockedNavigation: blocked.reason,
+      blockedRetryable: blocked.retryable,
     };
   } finally {
+    req.signal.removeEventListener("abort", onAbort);
     await page.close().catch(() => undefined);
   }
 }
 
-function emptyCapture(chain: string[], blockedReason: string): RawCapture {
+function emptyCapture(chain: string[], blockedReason: string, retryable: boolean): RawCapture {
   return {
     finalUrl: null, httpStatus: null, redirectChain: chain, title: "", formActions: [],
     bodyText: "", html: "", desktopPng: null, mobilePng: null, blockedNavigation: blockedReason,
+    blockedRetryable: retryable,
   };
 }
 
@@ -208,6 +228,7 @@ export function puppeteerCaptureDriver(binding: Fetcher): CaptureDriver {
       const browser = await puppeteer.launch(binding, { keep_alive: KEEP_ALIVE_MS });
       return {
         capture: (req) => captureOnPage(browser, req),
+        // Called from runPageCapture's finally on every path.
         close: async () => {
           await browser.close();
         },

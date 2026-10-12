@@ -192,6 +192,10 @@ export function toTenantTakedownView(row: Record<string, unknown>): Record<strin
   for (const [k, v] of Object.entries(row)) {
     if (!k.startsWith("staff_")) out[k] = v;
   }
+  // `screenshot_url` is written only by the page-capture pipeline
+  // (lib/page-capture.ts linkCaptureEvidence) and points at a STAFF-only
+  // API path (/api/intel/captures/…) a customer can't open — never expose it.
+  if ("screenshot_url" in out) out["screenshot_url"] = null;
   return out;
 }
 

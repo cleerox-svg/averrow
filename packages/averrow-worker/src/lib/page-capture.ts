@@ -50,6 +50,12 @@ export const CAPTURE_STALE_QUEUE_DAYS = 7;
 export const CAPTURE_RETENTION_DAYS = 180;
 /** Rendered-HTML cap. */
 export const CAPTURE_HTML_MAX_BYTES = 2 * 1024 * 1024;
+/** Auto-enqueue skips a target_key captured within this window. */
+export const CAPTURE_TARGET_DEDUP_DAYS = 7;
+/** Captures per run for any NON-cron dispatch (internal /run endpoint,
+ *  Flight Control recovery) — those run inside ctx.waitUntil, so they must
+ *  finish well within its budget. The cron path uses CAPTURE_BATCH. */
+export const CAPTURE_NON_CRON_LIMIT = 1;
 /** Detail endpoint: newest N captures per threat. */
 export const CAPTURE_DETAIL_LIMIT = 5;
 /** Sweep: rows per round / rounds per run. */
@@ -120,6 +126,21 @@ export function captureTargetUrl(maliciousUrl: string | null | undefined, malici
   }
 }
 
+/** Normalized dedup key for a target URL: lowercased host + path (no
+ *  scheme, port, query or fragment — per-victim tokens in the query string
+ *  don't make a different page). Null when unparseable. */
+export function captureTargetKey(targetUrl: string): string | null {
+  try {
+    const u = new URL(targetUrl);
+    if (!u.hostname) return null;
+    const host = u.hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return `${host}${path}`.slice(0, MAX_TARGET_URL_LENGTH);
+  } catch {
+    return null;
+  }
+}
+
 // ─── Enqueue ─────────────────────────────────────────────────────────
 
 export interface AutoCaptureItem {
@@ -129,13 +150,17 @@ export interface AutoCaptureItem {
 }
 
 /**
- * Automatic enqueue for one threat: inserts a `queued` row only when the
- * threat has NEVER had a capture row. The feed writers re-see the same
- * threats on every pull (INSERT OR IGNORE duplicates), so an "only if no
- * OPEN row" guard would re-capture every re-pulled threat once per pull;
- * re-capturing an already-captured page is a manual action. The partial
- * unique index (one open row per threat) still backstops races — hence
- * INSERT OR IGNORE. 5 binds.
+ * Automatic enqueue for one threat — ONE statement, two indexed probes:
+ *   - the threat has NEVER had a capture row (idx_page_captures_threat_created).
+ *     Feed writers re-see the same threats on every pull, so an "only if no
+ *     OPEN row" guard would re-capture every re-pulled threat; re-capturing
+ *     an already-captured page is a manual action;
+ *   - no row for the same normalized target (`target_key`) was created in
+ *     the last CAPTURE_TARGET_DEDUP_DAYS (idx_page_captures_target_created),
+ *     so one page reported under several threat ids (CertStream duplicates
+ *     across CT logs, multi-feed hits) is rendered once.
+ * The partial unique index (one open row per threat) still backstops races —
+ * hence INSERT OR IGNORE. 9 binds.
  */
 export function enqueueAutoCaptureStmt(
   db: D1Database,
@@ -144,11 +169,14 @@ export function enqueueAutoCaptureStmt(
   now: Date = new Date(),
 ): D1PreparedStatement {
   const ts = d1Ts(now);
+  const key = captureTargetKey(targetUrl) ?? targetUrl;
+  const dedupSince = d1Ts(addDays(now, -CAPTURE_TARGET_DEDUP_DAYS));
   return db.prepare(
-    `INSERT OR IGNORE INTO page_captures (id, threat_id, target_url, status, attempts, queued_at, created_at)
-     SELECT ?, ?, ?, 'queued', 0, ?, ?
-      WHERE NOT EXISTS (SELECT 1 FROM page_captures WHERE threat_id = ?)`,
-  ).bind(newCaptureId(), threatId, targetUrl, ts, ts, threatId);
+    `INSERT OR IGNORE INTO page_captures (id, threat_id, target_url, target_key, status, attempts, queued_at, created_at)
+     SELECT ?, ?, ?, ?, 'queued', 0, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM page_captures WHERE threat_id = ?)
+        AND NOT EXISTS (SELECT 1 FROM page_captures WHERE target_key = ? AND created_at >= ?)`,
+  ).bind(newCaptureId(), threatId, targetUrl, key, ts, ts, threatId, key, dedupSince);
 }
 
 /**
@@ -165,11 +193,16 @@ export async function enqueueAutoCaptures(
 ): Promise<number> {
   const stmts: D1PreparedStatement[] = [];
   const seen = new Set<string>();
+  const seenKeys = new Set<string>();
   for (const it of items) {
     if (!it.threatId || seen.has(it.threatId)) continue;
     const url = captureTargetUrl(it.maliciousUrl, it.maliciousDomain);
     if (!url) continue;
+    const key = captureTargetKey(url) ?? url;
+    // In-call dedup mirrors the SQL guards (and spares the statements).
+    if (seenKeys.has(key)) continue;
     seen.add(it.threatId);
+    seenKeys.add(key);
     stmts.push(enqueueAutoCaptureStmt(db, it.threatId, url, now));
   }
   let queued = 0;
@@ -199,11 +232,11 @@ export async function enqueueManualCapture(
   const id = newCaptureId();
   const ts = d1Ts(now);
   const res = await db.prepare(
-    `INSERT OR IGNORE INTO page_captures (id, threat_id, target_url, status, attempts, requested_by, queued_at, created_at)
-     SELECT ?, ?, ?, 'queued', 0, ?, ?, ?
+    `INSERT OR IGNORE INTO page_captures (id, threat_id, target_url, target_key, status, attempts, requested_by, queued_at, created_at)
+     SELECT ?, ?, ?, ?, 'queued', 0, ?, ?, ?
       WHERE NOT EXISTS (SELECT 1 FROM page_captures
                          WHERE threat_id = ? AND status IN ('queued', 'capturing'))`,
-  ).bind(id, threatId, targetUrl, requestedBy, ts, ts, threatId).run();
+  ).bind(id, threatId, targetUrl, captureTargetKey(targetUrl) ?? targetUrl, requestedBy, ts, ts, threatId).run();
   return (res.meta?.changes ?? 0) > 0 ? id : null;
 }
 
@@ -302,15 +335,24 @@ export async function failCapture(
 
 // ─── Capture driver (injectable — puppeteer in prod, fake in tests) ──
 
-export type GuardVerdict = { ok: true } | { ok: false; reason: string };
-/** Called by the driver for EVERY navigation request (initial + redirects +
- *  frames) before it is allowed to continue. */
+/** `retryable` = transient (unresolvable / DNS miss) — the row goes back to
+ *  the queue and spends an attempt; false = a real policy hit (private /
+ *  loopback / blocked host, disallowed scheme) — failed, never retried. */
+export type GuardVerdict = { ok: true } | { ok: false; reason: string; retryable: boolean };
+/** Called by the driver for EVERY intercepted http(s) request (navigations
+ *  incl. redirects + frames, and sub-resources) before it may continue.
+ *  Accepted gap: WebSocket connections are not visible to request
+ *  interception and are not guarded (the browser runs on Cloudflare's
+ *  network, not ours, so this is not an internal-SSRF path). */
 export type NavigationGuard = (url: string) => Promise<GuardVerdict>;
 
 export interface CaptureRequest {
   targetUrl: string;
   timeoutMs: number;
   guard: NavigationGuard;
+  /** Aborted when the hard per-page timeout fires — the driver must close
+   *  the page so nothing keeps running into the next capture. */
+  signal: AbortSignal;
 }
 
 export interface RawCapture {
@@ -326,8 +368,10 @@ export interface RawCapture {
   html: string;
   desktopPng: Uint8Array | null;
   mobilePng: Uint8Array | null;
-  /** Set when the guard refused a navigation hop. */
+  /** Set when the guard refused a main-frame navigation hop. */
   blockedNavigation: string | null;
+  /** The refusal above was transient (DNS miss), not a policy hit. */
+  blockedRetryable?: boolean;
 }
 
 export interface CaptureSession {
@@ -337,6 +381,14 @@ export interface CaptureSession {
 
 export interface CaptureDriver {
   open(): Promise<CaptureSession>;
+}
+
+/** The row left `capturing` while we worked (reaped) — nothing to update. */
+export class CaptureSupersededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CaptureSupersededError";
+  }
 }
 
 /** Thrown for policy refusals — never retried. */
@@ -351,19 +403,25 @@ export class CaptureRefusedError extends Error {
  *  with the page-fetch SSRF contract (lib/page-fetch.ts). */
 export function makeNavigationGuard(resolve: FetchDeps["resolve"] = defaultResolve): NavigationGuard {
   const deps: FetchDeps = { resolve, fetchImpl: (url, init) => globalThis.fetch(url, init) };
+  // Per-run DoH cache (one guard per run). Only NON-empty answers are kept:
+  // a transient DNS miss must not poison the rest of the run.
   const cache = new Map<string, string[]>();
   return async (raw: string): Promise<GuardVerdict> => {
     let u: URL;
     try {
       u = new URL(raw);
     } catch {
-      return { ok: false, reason: "unparseable url" };
+      return { ok: false, reason: "unparseable url", retryable: false };
     }
     if (u.protocol !== "http:" && u.protocol !== "https:") {
-      return { ok: false, reason: `disallowed scheme ${u.protocol}` };
+      return { ok: false, reason: `disallowed scheme ${u.protocol}`, retryable: false };
     }
     const check = await assertResolvedHostSafe(u.hostname, deps, cache);
-    return check.ok ? { ok: true } : { ok: false, reason: check.reason };
+    if ((cache.get(u.hostname)?.length ?? 0) === 0) cache.delete(u.hostname);
+    if (check.ok) return { ok: true };
+    // assertResolvedHostSafe: blocked=true is a real policy hit (static
+    // block-list / private / loopback resolved IP); blocked=false is a miss.
+    return { ok: false, reason: check.reason, retryable: !check.blocked };
   };
 }
 
@@ -428,6 +486,9 @@ export function htmlApiPath(captureId: string): string {
 
 // ─── Capture with hard timeout ───────────────────────────────────────
 
+/** After a timeout, how long to wait for the driver to close the page. */
+const CAPTURE_ABORT_GRACE_MS = 3_000;
+
 /** Run one capture under a hard wall-clock limit. The driver's own timeouts
  *  are best-effort; this one always fires. */
 export async function capturePage(
@@ -437,11 +498,17 @@ export async function capturePage(
   timeoutMs: number = CAPTURE_PAGE_TIMEOUT_MS,
 ): Promise<RawCapture> {
   const pre = await guard(targetUrl);
-  if (!pre.ok) throw new CaptureRefusedError(`refused target: ${pre.reason}`);
+  if (!pre.ok) {
+    // A DNS miss is transient (re-queued, spends an attempt); a policy hit
+    // is a refusal (failed, never retried).
+    if (pre.retryable) throw new Error(`target unresolvable: ${pre.reason}`);
+    throw new CaptureRefusedError(`refused target: ${pre.reason}`);
+  }
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const work = session.capture({ targetUrl, timeoutMs, guard });
+  const work = session.capture({ targetUrl, timeoutMs, guard, signal: controller.signal });
   // Swallow a late rejection after the timeout wins the race.
-  work.catch(() => undefined);
+  const settled = work.then(() => undefined, () => undefined);
   try {
     return await Promise.race([
       work,
@@ -449,6 +516,16 @@ export async function capturePage(
         timer = setTimeout(() => reject(new Error(`capture timed out after ${timeoutMs}ms`)), timeoutMs);
       }),
     ]);
+  } catch (err) {
+    if (!controller.signal.aborted) {
+      // Timeout (or failure): tell the driver to close the page, and give the
+      // close a bounded moment to land before the next capture starts.
+      controller.abort();
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([settled, new Promise<void>((r) => { grace = setTimeout(r, CAPTURE_ABORT_GRACE_MS); })]);
+      if (grace !== undefined) clearTimeout(grace);
+    }
+    throw err;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -468,6 +545,7 @@ export interface StoredCapture {
   mobileKey: string | null;
   htmlKey: string | null;
   metaKey: string;
+  metaSha: string;
   desktopSha: string | null;
   mobileSha: string | null;
   htmlSha: string | null;
@@ -544,9 +622,11 @@ export async function storeCapture(
     pipeline_version: CAPTURE_PIPELINE_VERSION,
   };
   const metaKey = `${prefix}/meta.json`;
-  await env.PHISH_CAPTURES.put(metaKey, JSON.stringify(meta, null, 2), {
+  const metaBytes = new TextEncoder().encode(JSON.stringify(meta, null, 2));
+  const metaSha = await sha256Hex(metaBytes);
+  await env.PHISH_CAPTURES.put(metaKey, metaBytes, {
     httpMetadata: { contentType: "application/json" },
-    customMetadata: custom,
+    customMetadata: { ...custom, sha256: metaSha },
   });
 
   const stored: StoredCapture = {
@@ -561,6 +641,7 @@ export async function storeCapture(
     mobileKey: key("mobile"),
     htmlKey: key("html"),
     metaKey,
+    metaSha,
     desktopSha: hashes["desktop"] ?? null,
     mobileSha: hashes["mobile"] ?? null,
     htmlSha: hashes["html"] ?? null,
@@ -569,23 +650,28 @@ export async function storeCapture(
     expiresAt,
   };
 
-  await env.DB.prepare(
+  const upd = await env.DB.prepare(
     `UPDATE page_captures
         SET status = ?, final_url = ?, http_status = ?, page_title = ?,
             redirect_chain_json = ?, form_action_hosts_json = ?,
             desktop_key = ?, mobile_key = ?, html_key = ?,
-            desktop_sha256 = ?, mobile_sha256 = ?, html_sha256 = ?,
+            desktop_sha256 = ?, mobile_sha256 = ?, html_sha256 = ?, meta_sha256 = ?,
             html_bytes = ?, anti_bot_wall = ?, error = NULL, claimed_at = NULL,
             captured_at = ?, expires_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND status = 'capturing'`,
   ).bind(
     stored.status, stored.finalUrl, stored.httpStatus, stored.title,
     JSON.stringify(stored.redirectChain), JSON.stringify(stored.formHosts),
     stored.desktopKey, stored.mobileKey, stored.htmlKey,
-    stored.desktopSha, stored.mobileSha, stored.htmlSha,
+    stored.desktopSha, stored.mobileSha, stored.htmlSha, metaSha,
     stored.htmlBytes, stored.antiBotWall,
     d1Ts(now), d1Ts(expiresAt), row.id,
   ).run();
+  if ((upd.meta?.changes ?? 0) === 0) {
+    // The reaper took the row back mid-capture (it will be re-captured);
+    // the objects written above are orphans the lifecycle rule deletes.
+    throw new CaptureSupersededError(`capture ${row.id} was reaped while capturing`);
+  }
 
   return stored;
 }
@@ -598,6 +684,11 @@ export async function storeCapture(
  * one `takedown_evidence` row each (deterministic id → re-runs are no-ops)
  * and `takedown_requests.screenshot_url` when still NULL. The URL is the
  * staff API path, never a public URL. Returns evidence rows inserted.
+ *
+ * FOLLOW-UP (documented gap): only takedowns that exist when the capture
+ * finishes are linked. A takedown drafted LATER for the same threat is not
+ * back-linked yet — Sparrow / the takedown create path would need to look up
+ * the latest stored capture for its source threat.
  */
 export async function linkCaptureEvidence(
   db: D1Database,
@@ -668,10 +759,10 @@ export async function sweepExpiredCaptures(
   let objectsDeleted = 0;
   for (let round = 0; round < SWEEP_MAX_ROUNDS; round++) {
     const res = await db.prepare(
-      `SELECT id, desktop_key, mobile_key, html_key FROM page_captures
+      `SELECT id, threat_id, desktop_key, mobile_key, html_key FROM page_captures
         WHERE status IN ('captured', 'blocked') AND expires_at < ?
         LIMIT ?`,
-    ).bind(cutoff, SWEEP_PAGE).all<{ id: string; desktop_key: string | null; mobile_key: string | null; html_key: string | null }>();
+    ).bind(cutoff, SWEEP_PAGE).all<{ id: string; threat_id: string | null; desktop_key: string | null; mobile_key: string | null; html_key: string | null }>();
     const rows = res.results ?? [];
     if (rows.length === 0) break;
 
@@ -695,12 +786,34 @@ export async function sweepExpiredCaptures(
     }
 
     const ids = rows.map((r) => r.id);
+    // Retention covers the captured page's content too: URL, chain, title
+    // and form hosts can carry victim identifiers. Hashes stay (evidence
+    // trail without content).
     const upd = await db.prepare(
       `UPDATE page_captures
-          SET status = 'expired', desktop_key = NULL, mobile_key = NULL, html_key = NULL
+          SET status = 'expired', desktop_key = NULL, mobile_key = NULL, html_key = NULL,
+              final_url = NULL, redirect_chain_json = NULL, page_title = NULL,
+              form_action_hosts_json = NULL
         WHERE status IN ('captured', 'blocked') AND id IN (${ids.map(() => "?").join(", ")})`,
     ).bind(...ids).run();
     expired += upd.meta?.changes ?? 0;
+
+    // Takedowns pointing at an expired capture's screenshot lose the link
+    // (indexed on (source_type, source_id) — idx_takedown_requests_threat_source).
+    const threatIds = [...new Set(rows.map((r) => r.threat_id).filter((t): t is string => !!t))];
+    const paths = ids.flatMap((id) => [screenshotApiPath(id, "desktop"), screenshotApiPath(id, "mobile")]);
+    if (threatIds.length > 0) {
+      // ≤ 90 threat ids + 180 paths per round would exceed D1's 100-bind cap,
+      // so match the path by prefix per capture-id chunk.
+      for (let i = 0; i < threatIds.length; i += 40) {
+        const tChunk = threatIds.slice(i, i + 40);
+        await db.prepare(
+          `UPDATE takedown_requests SET screenshot_url = NULL
+            WHERE source_type = 'threat' AND source_id IN (${tChunk.map(() => "?").join(", ")})
+              AND screenshot_url IN (SELECT value FROM json_each(?))`,
+        ).bind(...tChunk, JSON.stringify(paths)).run();
+      }
+    }
     if (rows.length < SWEEP_PAGE) break;
   }
   return { expired, objectsDeleted, ran: true };
@@ -742,6 +855,9 @@ export interface PageCaptureRunStats {
 }
 
 export interface PageCaptureRunOptions {
+  /** Max rows to claim (default CAPTURE_BATCH). Non-cron dispatches pass
+   *  CAPTURE_NON_CRON_LIMIT. */
+  limit?: number;
   /** Defaults to the puppeteer driver over env.BROWSER. */
   driver?: CaptureDriver;
   /** Cron fire time (hour-gate for the sweep). Defaults to now. */
@@ -774,10 +890,20 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
     return stats;
   }
 
-  stats.reaped = await reapStuckCaptures(env.DB, startedAt);
-  stats.sweep = await maybeDailySweep(env, opts.scheduledTime ?? startedAt);
+  // Housekeeping failures must never block claims.
+  try {
+    stats.reaped = await reapStuckCaptures(env.DB, startedAt);
+  } catch (err) {
+    stats.reap_error = err instanceof Error ? err.message : String(err);
+  }
+  try {
+    stats.sweep = await maybeDailySweep(env, opts.scheduledTime ?? startedAt);
+  } catch (err) {
+    stats.sweep_error = err instanceof Error ? err.message : String(err);
+  }
 
-  const claimed = await claimCaptures(env.DB, CAPTURE_BATCH, startedAt);
+  const limit = Math.max(1, Math.min(opts.limit ?? CAPTURE_BATCH, CAPTURE_BATCH));
+  const claimed = await claimCaptures(env.DB, limit, startedAt);
   stats.claimed = claimed.length;
   if (claimed.length === 0) return stats;
 
@@ -814,6 +940,7 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
         // retried). A page that rendered before a later hop was refused is
         // still evidence — stored, with the refused hop absent from the chain.
         if (raw.blockedNavigation && !raw.desktopPng && !raw.mobilePng) {
+          if (raw.blockedRetryable) throw new Error(`navigation unresolvable: ${raw.blockedNavigation}`);
           throw new CaptureRefusedError(`refused navigation: ${raw.blockedNavigation}`);
         }
         const stored = await storeCapture(store, row, raw, clock());
@@ -825,6 +952,10 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
           console.warn(`[page-capture] evidence link failed for ${row.id}: ${err instanceof Error ? err.message : String(err)}`);
         }
       } catch (err) {
+        if (err instanceof CaptureSupersededError) {
+          stats.requeued++;
+          continue;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         const next = await failCapture(env.DB, row, msg, !isRefusal(err));
         if (next === "queued") stats.requeued++;
@@ -840,26 +971,34 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
 }
 
 /** Telemetry-only completion event (target_agent NULL — no dispatch). */
-export async function emitPageCaptureEvent(env: Pick<Env, "DB">, runId: string, stats: PageCaptureRunStats): Promise<void> {
+export async function emitPageCaptureEvent(
+  env: Pick<Env, "DB">,
+  runId: string,
+  stats: PageCaptureRunStats | null,
+  error: string | null = null,
+): Promise<void> {
   try {
     await env.DB.prepare(
       `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
        VALUES (?, 'pages_captured', 'page_capture', NULL, ?, 3, 'pending')`,
     ).bind(
       crypto.randomUUID(),
-      JSON.stringify({
-        run_id: runId,
-        skipped: stats.skipped,
-        claimed: stats.claimed,
-        captured: stats.captured,
-        blocked: stats.blocked,
-        failed: stats.failed,
-        requeued: stats.requeued,
-        released: stats.released,
-        evidence_linked: stats.evidence_linked,
-        reaped: stats.reaped,
-        expired: stats.sweep.expired,
-      }),
+      JSON.stringify(stats
+        ? {
+            run_id: runId,
+            skipped: stats.skipped,
+            claimed: stats.claimed,
+            captured: stats.captured,
+            blocked: stats.blocked,
+            failed: stats.failed,
+            requeued: stats.requeued,
+            released: stats.released,
+            evidence_linked: stats.evidence_linked,
+            reaped: stats.reaped,
+            expired: stats.sweep.expired,
+            error,
+          }
+        : { run_id: runId, error }),
     ).run();
   } catch (err) {
     console.warn(`[page-capture] agent_events emit failed: ${err instanceof Error ? err.message : String(err)}`);

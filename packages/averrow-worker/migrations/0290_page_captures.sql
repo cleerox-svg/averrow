@@ -13,13 +13,21 @@
 -- `expires_at = captured_at + 180 days`; the daily sweep marks the row
 -- `expired` and nulls its keys (R2 lifecycle deletes the objects).
 --
--- `claimed_at` (not in the spec's column list) is when the row last moved
--- `queued` → `capturing`; the reaper keys on it (stuck > 15 min).
+-- Columns beyond the spec's list:
+--   `claimed_at`  — when the row last moved `queued` → `capturing`; the
+--                   reaper keys on it (stuck > 15 min).
+--   `target_key`  — normalized target (lowercased host + path, no query /
+--                   fragment); auto-enqueue skips a target captured in the
+--                   last 7 days, so the same page reported under several
+--                   threats (e.g. CertStream duplicates across CT logs) is
+--                   rendered once.
+--   `meta_sha256` — SHA-256 of the stored meta.json.
 
 CREATE TABLE IF NOT EXISTS page_captures (
   id                     TEXT PRIMARY KEY,
   threat_id              TEXT,
   target_url             TEXT NOT NULL,
+  target_key             TEXT,
   status                 TEXT NOT NULL DEFAULT 'queued'
                          CHECK (status IN ('queued','capturing','captured','failed','blocked','expired')),
   attempts               INTEGER NOT NULL DEFAULT 0,
@@ -35,6 +43,7 @@ CREATE TABLE IF NOT EXISTS page_captures (
   desktop_sha256         TEXT,
   mobile_sha256          TEXT,
   html_sha256            TEXT,
+  meta_sha256            TEXT,
   html_bytes             INTEGER,
   error                  TEXT,
   anti_bot_wall          TEXT,
@@ -53,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_page_captures_status_queued
 -- "never captured before" probe.
 CREATE INDEX IF NOT EXISTS idx_page_captures_threat_created
   ON page_captures(threat_id, created_at);
+
+-- Auto-enqueue target dedup: `target_key = ? AND created_at >= ?`.
+CREATE INDEX IF NOT EXISTS idx_page_captures_target_created
+  ON page_captures(target_key, created_at);
 
 -- At most ONE open (queued|capturing) capture per threat. Enqueue is
 -- INSERT OR IGNORE … WHERE NOT EXISTS, so a race on this index is a no-op.

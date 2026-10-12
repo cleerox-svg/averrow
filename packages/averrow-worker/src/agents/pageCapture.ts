@@ -15,7 +15,8 @@
  * Dispatched on its own dedicated cron `*\/10 * * * *` (exact event.cron
  * match in cron/orchestrator.ts) — own Worker budget, one agent_runs row per
  * tick, plus a telemetry agent_events row (`pages_captured`,
- * target_agent NULL). Manual trigger: POST /api/internal/agents/page_capture/run.
+ * target_agent NULL). Manual trigger: POST /api/internal/agents/page_capture/run
+ * (captures at most ONE page — it runs inside ctx.waitUntil).
  *
  * When BROWSER or PHISH_CAPTURES is unbound (staging / dev) the run is a
  * clean no-op: agent_runs records 0 processed and the event payload carries
@@ -52,12 +53,27 @@ export const pageCaptureAgent: AgentModule = {
 
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, input, runId } = ctx;
-    const { runPageCapture, emitPageCaptureEvent } = await import("../lib/page-capture");
+    const { runPageCapture, emitPageCaptureEvent, CAPTURE_BATCH, CAPTURE_NON_CRON_LIMIT } = await import("../lib/page-capture");
 
+    // Only the dedicated cron (which threads scheduledTime and owns its own
+    // invocation) runs a full batch. Every other dispatch — the internal
+    // /run endpoint and Flight Control recovery — runs inside ctx.waitUntil,
+    // so it captures at most CAPTURE_NON_CRON_LIMIT page(s) and leaves the
+    // rest queued for the cron.
     const scheduledRaw = typeof input["scheduledTime"] === "string" ? Date.parse(input["scheduledTime"]) : NaN;
-    const stats = await runPageCapture(env, {
-      scheduledTime: Number.isFinite(scheduledRaw) ? new Date(scheduledRaw) : undefined,
-    });
+    const fromCron = Number.isFinite(scheduledRaw);
+    let stats;
+    try {
+      stats = await runPageCapture(env, {
+        scheduledTime: fromCron ? new Date(scheduledRaw) : undefined,
+        limit: fromCron ? CAPTURE_BATCH : CAPTURE_NON_CRON_LIMIT,
+      });
+    } catch (err) {
+      // executeAgent records the failure in agent_runs.error_message; the
+      // telemetry event still goes out so the run is traceable there too.
+      await emitPageCaptureEvent(env, runId, null, err instanceof Error ? err.message : String(err));
+      throw err;
+    }
     await emitPageCaptureEvent(env, runId, stats);
 
     const outputs: AgentOutputEntry[] = [];

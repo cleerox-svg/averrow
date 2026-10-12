@@ -39,12 +39,25 @@ import {
   type RawCapture,
 } from "../src/lib/page-capture";
 import { registerThreatRoutes } from "../src/routes/threats";
+import { toTenantTakedownView } from "../src/handlers/tenantTakedowns";
+import { isSandboxPolicy } from "../src/middleware/security";
+import { CAPTURE_TARGET_DEDUP_DAYS, captureTargetKey, makeNavigationGuard, storeCapture } from "../src/lib/page-capture";
 import { applySecurityHeaders } from "../src/middleware/security";
 import { signJWT } from "../src/lib/jwt";
 import { pageCaptureAgent } from "../src/agents/pageCapture";
 import { bulkInsertThreats, insertThreat as feedInsertThreat } from "../src/lib/feedRunner";
 import type { ThreatRow } from "../src/feeds/types";
 import type { Env, JWTPayload, UserRole } from "../src/types";
+
+// The agent's default (no injected driver) path imports the puppeteer driver;
+// replace it so no browser is ever launched. Tests set `mockDriver`.
+let mockDriver: CaptureDriver | null = null;
+vi.mock("../src/lib/page-capture-browser", () => ({
+  puppeteerCaptureDriver: () => {
+    if (!mockDriver) throw new Error("no mock driver set");
+    return mockDriver;
+  },
+}));
 
 const TABLES = ["page_captures", "threats", "takedown_requests", "takedown_evidence", "brands"];
 const MIGRATION = resolve(__dirname, "..", "migrations", "0290_page_captures.sql");
@@ -115,6 +128,7 @@ type Outcome = RawCapture | Error | ((req: CaptureRequest) => Promise<RawCapture
 
 function fakeDriver(outcomes: Record<string, Outcome>, opts: { openFails?: boolean } = {}) {
   const calls: string[] = [];
+  const pagesClosedOnAbort: string[] = [];
   let opened = 0;
   let closed = 0;
   const driver: CaptureDriver = {
@@ -126,7 +140,16 @@ function fakeDriver(outcomes: Record<string, Outcome>, opts: { openFails?: boole
           calls.push(req.targetUrl);
           const o = outcomes[req.targetUrl] ?? raw();
           if (o instanceof Error) throw o;
-          if (typeof o === "function") return o(req);
+          if (typeof o === "function") {
+            // Mirror the real driver: an abort closes the page, killing the work.
+            return Promise.race([
+              o(req),
+              new Promise<never>((_, reject) => req.signal.addEventListener("abort", () => {
+                pagesClosedOnAbort.push(req.targetUrl);
+                reject(new Error("page closed"));
+              }, { once: true })),
+            ]);
+          }
           return o;
         },
         async close() {
@@ -135,7 +158,15 @@ function fakeDriver(outcomes: Record<string, Outcome>, opts: { openFails?: boole
       };
     },
   };
-  return { driver, calls, counts: () => ({ opened, closed }) };
+  return { driver, calls, pagesClosedOnAbort, counts: () => ({ opened, closed }) };
+}
+
+function withEventsSwallowed(inner: D1Database): D1Database {
+  return Object.assign(Object.create(inner) as D1Database, {
+    prepare: (sql: string) => (sql.includes("INSERT INTO agent_events")
+      ? { bind: () => ({ run: async () => ({ meta: {} }) }) } as unknown as D1PreparedStatement
+      : inner.prepare(sql)),
+  });
 }
 
 const resolveHost = async (host: string): Promise<string[]> => (host.startsWith("private-") ? ["10.0.0.7"] : [PUBLIC_IP]);
@@ -232,7 +263,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       await feedInsertThreat(db, idpRow);
       expect(log.filter((l) => l.sql.includes("INTO page_captures")).length).toBe(before);
       // Single-row path enqueues a new IdP row too.
-      await feedInsertThreat(db, { ...idpRow, id: "f_idp2" });
+      await feedInsertThreat(db, { ...idpRow, id: "f_idp2", malicious_url: "https://globex.okta-verify-login.com/signin", malicious_domain: "globex.okta-verify-login.com" });
       expect(rows(`SELECT COUNT(*) AS n FROM page_captures`)[0]!["n"]).toBe(2);
     });
 
@@ -441,13 +472,25 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     it("a capture that never returns is cut off by the hard per-page timeout", async () => {
       vi.useFakeTimers();
       try {
-        await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
-        const fd = fakeDriver({ "https://acme-sso-login.com/": () => new Promise<RawCapture>(() => undefined) });
+        await enqueueAutoCaptures(db, [
+          { threatId: "t1", maliciousUrl: "https://hang.example-phish.com/" },
+          { threatId: "t2", maliciousUrl: "https://next.example-phish.com/" },
+        ], new Date(NOW.getTime() - 60_000));
+        rawDb.exec(`UPDATE page_captures SET queued_at = '2026-10-12 00:03:00' WHERE threat_id = 't2'`);
+        const order: string[] = [];
+        const fd = fakeDriver({
+          "https://hang.example-phish.com/": () => new Promise<RawCapture>(() => undefined),
+          "https://next.example-phish.com/": async () => { order.push(`capture:next closed=${fd.pagesClosedOnAbort.length}`); return raw(); },
+        });
         const p = runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
-        await vi.advanceTimersByTimeAsync(20_001);
+        await vi.advanceTimersByTimeAsync(25_000);
         const stats = await p;
         expect(stats.requeued).toBe(1);
-        expect(String(rows(`SELECT error FROM page_captures`)[0]!["error"])).toMatch(/timed out after 20000ms/);
+        expect(stats.captured).toBe(1);
+        // The hung page was closed (abort) BEFORE the next capture started.
+        expect(fd.pagesClosedOnAbort).toEqual(["https://hang.example-phish.com/"]);
+        expect(order).toEqual(["capture:next closed=1"]);
+        expect(String(rows(`SELECT error FROM page_captures WHERE threat_id = 't1'`)[0]!["error"])).toMatch(/timed out after 20000ms/);
       } finally {
         vi.useRealTimers();
       }
@@ -501,6 +544,211 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       const [sql, , payload] = events[0] as [string, string, string];
       expect(sql).toMatch(/'pages_captured', 'page_capture', NULL/);
       expect(JSON.parse(payload)).toMatchObject({ run_id: "run-1", skipped: "bindings_absent:BROWSER,PHISH_CAPTURES" });
+    });
+  });
+
+
+  // ─── Review fixes (M1–M3, A1–A5, lows) ────────────────────────────
+  describe("review fixes", () => {
+    it("M1: an unresolvable target is transient (re-queued, attempt spent); a private one is refused", async () => {
+      await enqueueAutoCaptures(db, [
+        { threatId: "t1", maliciousUrl: "https://nxdomain.example-phish.com/" },
+        { threatId: "t2", maliciousUrl: "https://private-kit.example-phish.com/" },
+      ], NOW);
+      const resolveNx = async (h: string): Promise<string[]> => (h.startsWith("nxdomain") ? [] : resolveHost(h));
+      const fd = fakeDriver({});
+      const stats = await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveNx });
+      expect(stats).toMatchObject({ requeued: 1, failed: 1 });
+      expect(rows(`SELECT threat_id, status, attempts FROM page_captures ORDER BY threat_id`)).toEqual([
+        { threat_id: "t1", status: "queued", attempts: 1 },
+        { threat_id: "t2", status: "failed", attempts: 1 },
+      ]);
+      expect(String(rows(`SELECT error FROM page_captures WHERE threat_id = 't1'`)[0]!["error"])).toMatch(/unresolvable/);
+    });
+
+    it("M1: the guard never caches an empty DNS answer within a run", async () => {
+      let calls = 0;
+      const flaky = async (): Promise<string[]> => (++calls === 1 ? [] : [PUBLIC_IP]);
+      const guard = makeNavigationGuard(flaky);
+      expect(await guard("https://flaky.example-phish.com/")).toMatchObject({ ok: false, retryable: true });
+      expect(await guard("https://flaky.example-phish.com/a")).toEqual({ ok: true });
+      expect(await guard("https://flaky.example-phish.com/b")).toEqual({ ok: true });
+      expect(calls).toBe(2); // the positive answer IS cached
+      expect(await guard("http://127.0.0.1/")).toMatchObject({ ok: false, retryable: false });
+      expect(await guard("file:///etc/passwd")).toMatchObject({ ok: false, retryable: false });
+    });
+
+    it("M1: a main-frame hop refused for a DNS miss is retryable, not a refusal", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({ "https://acme-sso-login.com/": raw({ desktopPng: null, mobilePng: null, blockedNavigation: "hop", blockedRetryable: true }) });
+      await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      expect(rows(`SELECT status, attempts FROM page_captures`)[0]).toEqual({ status: "queued", attempts: 1 });
+    });
+
+    it("M2: non-cron dispatch (internal /run, FC recovery) captures ONE page; the cron runs a batch; session always closed", async () => {
+      await enqueueAutoCaptures(db, [1, 2, 3].map((i) => ({ threatId: `t${i}`, maliciousUrl: `https://kit${i}.example-phish.com/` })), NOW);
+      const fd = fakeDriver({});
+      mockDriver = fd.driver;
+      // The agent uses the real DoH resolver — answer it with a public A record.
+      vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(
+        String(url).includes("type=A&") || String(url).endsWith("type=A")
+          ? { Status: 0, Answer: [{ type: 1, data: PUBLIC_IP }] }
+          : { Status: 0, Answer: [] },
+      )));
+      try {
+        const ctxBase = { env, runId: "r", agentName: "page_capture", triggeredBy: "api" };
+        // agent_events isn't in the derived schema — swallow just that insert.
+        const res1 = await pageCaptureAgent.execute({ ...ctxBase, env: { ...env, DB: withEventsSwallowed(env.DB) } as Env, input: { trigger: "manual" } });
+        expect(res1.output["claimed"]).toBe(1);
+        expect(fd.calls).toHaveLength(1);
+        const res2 = await pageCaptureAgent.execute({ ...ctxBase, env: { ...env, DB: withEventsSwallowed(env.DB) } as Env, input: { scheduledTime: "2026-10-12T01:10:00.000Z" } });
+        expect(res2.output["claimed"]).toBe(2);
+        expect(fd.counts()).toEqual({ opened: 2, closed: 2 });
+      } finally {
+        mockDriver = null;
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("M2: the browser session is closed even when a capture path throws unexpectedly", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const fd = fakeDriver({});
+      const brokenDb = Object.assign(Object.create(db) as D1Database, {
+        prepare: (sql: string) => {
+          if (sql.includes("SET status = ?, error = ?")) throw new Error("D1 down");
+          return db.prepare(sql);
+        },
+      });
+      const fd2 = fakeDriver({ "https://acme-sso-login.com/": new Error("boom") });
+      await expect(runPageCapture({ ...env, DB: brokenDb } as Env, { driver: fd2.driver, now: () => NOW, resolve: resolveHost })).rejects.toThrow(/D1 down/);
+      expect(fd2.counts()).toEqual({ opened: 1, closed: 1 });
+      expect(fd.counts().opened).toBe(0);
+    });
+
+    it("M3: auto-enqueue dedups by normalized target — CertStream duplicates collapse, 7-day window", async () => {
+      expect(captureTargetKey("https://WWW.Acme-Okta.com:443/Login/?email=v@x.com#f")).toBe("acme-okta.com/Login");
+      expect(captureTargetKey("https://acme-okta.com/")).toBe("acme-okta.com/");
+      // Same page under three threat ids in one call (CT logs) → one row.
+      expect(await enqueueAutoCaptures(db, [
+        { threatId: "cs_a", maliciousUrl: "https://acme-okta.com" },
+        { threatId: "cs_b", maliciousUrl: "https://acme-okta.com/" },
+        { threatId: "cs_c", maliciousDomain: "ACME-OKTA.com" },
+      ], NOW)).toBe(1);
+      // Separate call (next flush), query-string variant → still deduped.
+      expect(await enqueueAutoCaptures(db, [{ threatId: "cs_d", maliciousUrl: "https://acme-okta.com/?u=victim" }], NOW)).toBe(0);
+      // Outside the window it is captured again.
+      const later = new Date(NOW.getTime() + (CAPTURE_TARGET_DEDUP_DAYS + 1) * 86_400_000);
+      expect(await enqueueAutoCaptures(db, [{ threatId: "cs_e", maliciousUrl: "https://acme-okta.com/" }], later)).toBe(1);
+      // Manual capture ignores the target window (explicit request).
+      expect(await enqueueManualCapture(db, "cs_f", "https://acme-okta.com/", "u1", later)).toMatch(/^pc_/);
+      // The ingest-path statement is index-served on both probes.
+      const sql = log.filter((l) => l.sql.includes("INSERT OR IGNORE INTO page_captures") && l.sql.includes("target_key = ?"))[0]!.sql;
+      const plan = rawDb.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("id", "t", "u", "k", "a", "b", "t", "k", "c")
+        .map((x) => String((x as { detail: string }).detail)).join(" | ");
+      expect(plan).toMatch(/idx_page_captures_target_created/);
+      expect(plan).toMatch(/idx_page_captures_threat_created|idx_page_captures_one_open/);
+      expect(plan).not.toMatch(/SCAN page_captures/);
+    });
+
+    it("A1: only an exact `sandbox` CSP is kept", () => {
+      expect(isSandboxPolicy("sandbox")).toBe(true);
+      expect(isSandboxPolicy("  SandBox ; ")).toBe(true);
+      expect(isSandboxPolicy("sandbox allow-scripts")).toBe(false);
+      expect(isSandboxPolicy("sandbox; default-src *")).toBe(false);
+      expect(isSandboxPolicy(null)).toBe(false);
+      const loose = applySecurityHeaders(new Response("x", { headers: { "Content-Security-Policy": "sandbox allow-scripts allow-same-origin" } }), "/api/x");
+      expect(loose.headers.get("Content-Security-Policy")).toMatch(/default-src 'self'/);
+    });
+
+    it("A2: the guard checks resolved IPs for any http(s) URL (sub-resources use the same guard)", async () => {
+      const guard = makeNavigationGuard(async (h) => (h === "cdn.example-phish.com" ? ["169.254.169.254"] : [PUBLIC_IP]));
+      expect(await guard("https://cdn.example-phish.com/logo.png")).toMatchObject({ ok: false, retryable: false });
+      expect(await guard("https://fonts.example.com/x.css")).toEqual({ ok: true });
+      const src = readFileSync(resolve(__dirname, "..", "src", "lib", "page-capture-browser.ts"), "utf8");
+      // No static-only check left for sub-resources: every path goes through ctx.guard.
+      expect(src).not.toMatch(/pageFetchHostStaticBlockReason/);
+      expect(src.match(/await ctx\.guard\(url\)/g)).toHaveLength(2);
+      expect(src).not.toMatch(/await page\.content\(/); // HTML is capped in-page (A3)
+    });
+
+    it("A4: the tenant takedown view never exposes screenshot_url (a staff capture path)", () => {
+      const v = toTenantTakedownView({ id: "td1", screenshot_url: "/api/intel/captures/pc_x/screenshot?variant=desktop", staff_notes: "x", notes: "n" });
+      expect(v).toEqual({ id: "td1", screenshot_url: null, notes: "n" });
+    });
+
+    it("A5 + lows: expiry nulls page metadata and clears takedown screenshot links to the expired capture", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status)
+        VALUES ('td1', 'b1', 'domain', 'x', 'x', 'threat', 't1', 'draft'),
+               ('td_other', 'b1', 'domain', 'x', 'x', 'threat', 't9', 'draft')`);
+      const fd = fakeDriver({});
+      await runPageCapture(env, { driver: fd.driver, now: () => NOW, resolve: resolveHost });
+      rawDb.exec(`UPDATE takedown_requests SET screenshot_url = '/manual.png' WHERE id = 'td_other'`);
+      const id = String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+      expect(rows(`SELECT screenshot_url FROM takedown_requests WHERE id = 'td1'`)[0]!["screenshot_url"]).toMatch(id);
+
+      const afterExpiry = new Date(NOW.getTime() + 181 * 86_400_000);
+      await sweepExpiredCaptures(db, r2.bucket, afterExpiry);
+      expect(capRow(id)).toMatchObject({
+        status: "expired", final_url: null, redirect_chain_json: null, page_title: null, form_action_hosts_json: null,
+        desktop_key: null, html_key: null,
+      });
+      expect(capRow(id)["desktop_sha256"]).toBeTruthy();
+      expect(rows(`SELECT id, screenshot_url FROM takedown_requests ORDER BY id`)).toEqual([
+        { id: "td1", screenshot_url: null },
+        { id: "td_other", screenshot_url: "/manual.png" },
+      ]);
+      expect(r2.store.size).toBe(0);
+    });
+
+    it("lows: meta.json SHA-256 is stored and matches the object", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      await runPageCapture(env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      const row = rows(`SELECT id, meta_sha256 FROM page_captures`)[0]!;
+      const meta = r2.store.get(`captures/2026/10/${String(row["id"])}/meta.json`)!;
+      expect(row["meta_sha256"]).toBe(await sha(meta.bytes));
+      expect(meta.custom?.["sha256"]).toBe(row["meta_sha256"]);
+    });
+
+    it("lows: storeCapture won't finalize a row the reaper took back (AND status='capturing')", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const [claimed] = await claimCaptures(db, 1, NOW);
+      rawDb.exec(`UPDATE page_captures SET status = 'queued'`); // reaped meanwhile
+      await expect(storeCapture({ DB: db, PHISH_CAPTURES: r2.bucket }, claimed!, raw(), NOW)).rejects.toThrow(/reaped/);
+      expect(rows(`SELECT status, desktop_key FROM page_captures`)[0]).toEqual({ status: "queued", desktop_key: null });
+    });
+
+    it("lows: a reaper / sweep failure doesn't block claims", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const flakyDb = Object.assign(Object.create(db) as D1Database, {
+        prepare: (sql: string) => db.prepare(sql),
+        batch: async (stmts: D1PreparedStatement[]) => {
+          if (stmts.length === 3) throw new Error("reaper batch failed");
+          return db.batch(stmts);
+        },
+      });
+      const stats = await runPageCapture({ ...env, DB: flakyDb } as Env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats.reap_error).toMatch(/reaper batch failed/);
+      expect(stats.captured).toBe(1);
+    });
+
+    it("lows: the agent still emits its agent_events row when the run throws", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      mockDriver = fakeDriver({}, { openFails: true }).driver;
+      const events: string[] = [];
+      try {
+        const dbEv = Object.assign(Object.create(db) as D1Database, {
+          prepare: (sql: string) => (sql.includes("INSERT INTO agent_events")
+            ? { bind: (...a: unknown[]) => ({ run: async () => { events.push(String(a[1])); return { meta: {} }; } }) } as unknown as D1PreparedStatement
+            : db.prepare(sql)),
+        });
+        await expect(pageCaptureAgent.execute({ env: { ...env, DB: dbEv } as Env, runId: "r9", agentName: "page_capture", input: {}, triggeredBy: "api" }))
+          .rejects.toThrow(/browser session unavailable/);
+        expect(events).toHaveLength(1);
+        expect(JSON.parse(events[0]!)).toMatchObject({ run_id: "r9", error: expect.stringMatching(/browser session unavailable/) });
+      } finally {
+        mockDriver = null;
+      }
     });
   });
 

@@ -38,10 +38,12 @@ export function buildContentSecurityPolicy(pathname?: string): string {
   ].join("; ");
 }
 
-/** True when a CSP value carries the `sandbox` directive. */
+/** True only when a CSP value is EXACTLY the bare `sandbox` directive
+ *  (whitespace / case / a trailing `;` normalized). Anything else — incl.
+ *  `sandbox allow-scripts` or `sandbox; default-src *` — is not kept. */
 export function isSandboxPolicy(csp: string | null): boolean {
   if (!csp) return false;
-  return csp.split(";").some((d) => d.trim().toLowerCase().split(/\s+/)[0] === "sandbox");
+  return csp.trim().replace(/;\s*$/, "").trim().toLowerCase() === "sandbox";
 }
 
 /** `pathname` scopes the Turnstile CSP sources; omitted → not allowed. */
@@ -63,9 +65,10 @@ export function applySecurityHeaders(response: Response, pathname?: string): Res
   // Permissions policy — disable features we don't use
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
 
-  // Content Security Policy. A handler that already set a `sandbox` policy
+  // Content Security Policy. A handler that set exactly `sandbox`
   // (attacker-controlled evidence downloads — handlers/pageCaptures.ts)
   // keeps it: replacing it with the site policy would DROP the sandbox.
+  // Any other handler-set policy is overwritten with the site policy.
   if (!isSandboxPolicy(headers.get("Content-Security-Policy"))) {
     headers.set("Content-Security-Policy", buildContentSecurityPolicy(pathname));
   }
