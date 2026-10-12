@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { ExecutiveSummary } from '@/components/trends/ExecutiveSummary';
 import { tabUrl } from '@/lib/workspaceRoutes';
-import { splitBriefing, parseIdList } from '@/lib/briefing-text';
+import { splitBriefing, parseIdList, formatSignalValue } from '@/lib/briefing-text';
 /* ── Constants ── */
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -223,11 +223,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
                   {k.replace(/_/g, ' ')}
                 </span>
                 <span className="font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
-                  {Array.isArray(v)
-                    ? v.length === 0 ? '—' : v.join(', ')
-                    : typeof v === 'number' || typeof v === 'string'
-                      ? String(v)
-                      : JSON.stringify(v)}
+                  {formatSignalValue(v)}
                 </span>
               </div>
             ))}

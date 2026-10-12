@@ -60,6 +60,51 @@ export function truncateText(input: string, max: number): string {
   return input.length > max ? `${input.slice(0, max).trimEnd()}…` : input;
 }
 
+const LABEL_KEYS = ['name', 'brand_name', 'brand', 'title', 'domain', 'grade', 'label'] as const;
+
+function formatScalar(v: unknown): string {
+  if (typeof v === 'number') return v.toLocaleString('en-US');
+  if (typeof v === 'string') return v;
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  return '';
+}
+
+/** One record from an Observer `details` array, e.g. `{ grade, count }` → "F: 50,931". */
+function formatRecord(rec: Record<string, unknown>): string {
+  const labelKey = LABEL_KEYS.find((k) => typeof rec[k] === 'string' && rec[k] !== '');
+  const label = labelKey ? String(rec[labelKey]) : '';
+  if (typeof rec.previous_grade === 'string' && typeof rec.current_grade === 'string') {
+    return `${label}: ${rec.previous_grade} → ${rec.current_grade}`;
+  }
+  const rest = Object.entries(rec)
+    .filter(([k, v]) => k !== labelKey && v !== null && v !== undefined && typeof v !== 'object')
+    .map(([k, v]) => (/threat/.test(k) && typeof v === 'number' ? `${formatScalar(v)} threats` : formatScalar(v)))
+    .filter(Boolean);
+  if (!label) return rest.join(', ');
+  if (rest.length === 0) return label;
+  // A bare count reads as "F: 50,931"; anything richer as "Line (D, 15,456 threats)".
+  return labelKey === 'grade' && rest.length === 1 ? `${label}: ${rest[0]}` : `${label} (${rest.join(', ')})`;
+}
+
+/**
+ * Render an Observer briefing `details` value for the Signals list. Arrays of
+ * records are summarised per record instead of printing "[object Object]".
+ */
+export function formatSignalValue(v: unknown): string {
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '—';
+    return v
+      .map((item) =>
+        item !== null && typeof item === 'object' && !Array.isArray(item)
+          ? formatRecord(item as Record<string, unknown>)
+          : formatScalar(item) || JSON.stringify(item),
+      )
+      .join(', ');
+  }
+  if (v !== null && typeof v === 'object') return formatRecord(v as Record<string, unknown>);
+  return formatScalar(v) || '—';
+}
+
 /**
  * Parse an id list as Observer writes it: a JSON array, a bare JSON string,
  * or a comma-separated fallback. Never throws.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseIdList, splitBriefing, stripMarkdown, truncateText } from './briefing-text';
+import { formatSignalValue, parseIdList, splitBriefing, stripMarkdown, truncateText } from './briefing-text';
 
 describe('stripMarkdown', () => {
   it('removes headings, bold and italics', () => {
@@ -60,5 +60,22 @@ describe('parseIdList', () => {
     expect(parseIdList('[1,"x"]')).toEqual(['x']);
     expect(parseIdList(null)).toEqual([]);
     expect(parseIdList('{"not":"a list"}')).toEqual([]);
+  });
+});
+
+describe('formatSignalValue', () => {
+  it('summarises Observer record arrays instead of printing [object Object]', () => {
+    expect(formatSignalValue([{ grade: 'F', count: 50931 }, { grade: 'A+', count: 13791 }])).toBe('F: 50,931, A+: 13,791');
+    expect(formatSignalValue([{ name: 'Line', email_security_grade: 'D', threat_count: 15456 }])).toBe('Line (D, 15,456 threats)');
+    expect(formatSignalValue([{ name: 'Notino', current_grade: 'C', previous_grade: 'A' }])).toBe('Notino: A → C');
+  });
+
+  it('keeps scalars, string lists and empties readable', () => {
+    expect(formatSignalValue(1234)).toBe('1,234');
+    expect(formatSignalValue('ok')).toBe('ok');
+    expect(formatSignalValue(['a', 'b'])).toBe('a, b');
+    expect(formatSignalValue([])).toBe('—');
+    expect(formatSignalValue(null)).toBe('—');
+    expect(formatSignalValue({ total: 3, new_24h: 1 })).toBe('3, 1');
   });
 });
