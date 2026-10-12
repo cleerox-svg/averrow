@@ -498,9 +498,18 @@ export async function runFeed(
         env.DB.prepare(
           `UPDATE feed_pull_history SET
              status = 'success', records_ingested = ?, records_rejected = ?,
-             duration_ms = ?, completed_at = datetime('now')
+             error_message = ?, duration_ms = ?, completed_at = datetime('now')
            WHERE id = ?`,
-        ).bind(result.itemsNew, result.itemsDuplicate + result.itemsError, durationMs, pullId).run(),
+        ).bind(
+          result.itemsNew,
+          result.itemsDuplicate + result.itemsError,
+          // Partial-pull note (FeedResult.warning); NULL for a clean pull —
+          // the row was inserted with error_message NULL, so other feeds
+          // are unchanged. Every error_message reader filters status='failed'.
+          result.warning ? result.warning.slice(0, 1000) : null,
+          durationMs,
+          pullId,
+        ).run(),
       { label: `${config.feed_name} pull-success finalize` },
     );
 

@@ -78,6 +78,12 @@ const ASSERTIONS: Assertion[] = [
     min: 1,
     source: "0250_pulsedive_enrichment.sql",
   },
+  {
+    label: "Cloudflare Radar bot-traffic feed seeded (cf_radar_bots)",
+    query: "SELECT COUNT(*) AS n FROM feed_configs WHERE feed_name = 'cf_radar_bots'",
+    min: 1,
+    source: "0290_bot_traffic_snapshots.sql",
+  },
 ];
 
 interface D1Row { n: number }

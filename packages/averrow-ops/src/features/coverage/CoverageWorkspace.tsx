@@ -4,13 +4,15 @@
 // here (LEGACY_TAB_PATHS).
 
 import { lazy } from 'react';
-import { Smartphone, EyeOff, Award, TrendingUp } from 'lucide-react';
+import { Smartphone, EyeOff, Award, TrendingUp, Bot } from 'lucide-react';
 import { TabbedWorkspace, type WorkspaceTab } from '@/components/v4/TabbedWorkspace';
 
 const Apps = lazy(() => import('@/features/apps/Apps').then(m => ({ default: m.Apps })));
 const DarkWeb = lazy(() => import('@/features/dark-web/DarkWeb').then(m => ({ default: m.DarkWeb })));
 const Trademarks = lazy(() => import('@/features/trademarks/Trademarks').then(m => ({ default: m.Trademarks })));
 const Trends = lazy(() => import('@/features/trends/Trends').then(m => ({ default: m.Trends })));
+
+const BotTraffic = lazy(() => import('@/features/bot-traffic/BotTraffic').then(m => ({ default: m.BotTraffic })));
 
 const TABS: WorkspaceTab[] = [
   { id: 'apps', label: 'Apps', icon: Smartphone, Component: Apps,
@@ -21,6 +23,8 @@ const TABS: WorkspaceTab[] = [
     def: 'Wordmark misuse unified across social, app-store, and domain signals — where your marks are being abused.' },
   { id: 'trends', label: 'Trends', icon: TrendingUp, Component: Trends,
     def: 'Threat trends over time — what is rising, falling, and shifting across the detection surfaces.' },
+  { id: 'bot-traffic', label: 'Bot Traffic', icon: Bot, Component: BotTraffic,
+    def: 'Share of internet HTTP traffic classified as automated, with top origin countries, networks, and verified-bot categories.' },
 ];
 
 export function CoverageWorkspace() {

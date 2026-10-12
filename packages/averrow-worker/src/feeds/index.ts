@@ -101,6 +101,12 @@ import { epss } from "./epss";
 // manifest→event walker. See feeds/circl_osint.ts + migration 0249.
 import { circl_osint } from "./circl_osint";
 
+// ─── Platform context (non-IOC) ─────────────────────────────────
+// Cloudflare Radar internet bot-traffic snapshots → bot_traffic_snapshots
+// (migration 0290), served by GET /api/bot-traffic. Writes no threats and
+// always reports itemsNew = 0 so it never triggers Sentinel.
+import { cf_radar_bots } from "./cf_radar_bots";
+
 /**
  * Registry mapping feed_name → FeedModule.
  * Keys match feed_configs.feed_name in the database.
@@ -160,6 +166,9 @@ export const feedModules: Record<string, FeedModule> = {
 
   // Feed-expansion Phase 2 — no-key MISP-format OSINT.
   circl_osint,
+
+  // Platform context — Cloudflare Radar bot traffic (no threats).
+  cf_radar_bots,
 };
 
 /**

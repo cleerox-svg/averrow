@@ -13,6 +13,13 @@ export interface FeedResult {
   itemsNew: number;
   itemsDuplicate: number;
   itemsError: number;
+  /**
+   * Optional note for a pull that SUCCEEDED but degraded (e.g. some optional
+   * upstream endpoints failed). runFeed writes it to the success row's
+   * feed_pull_history.error_message (status stays 'success'); it never
+   * touches feed_status.last_error. Omit on a clean pull.
+   */
+  warning?: string;
 }
 
 /** A feed module implements a single ingest function */

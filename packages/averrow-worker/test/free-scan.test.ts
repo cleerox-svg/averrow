@@ -156,7 +156,9 @@ describe("POST /api/brand-scan/public contract", () => {
     });
     expect(d.lookalikes).toEqual({ checked: 40, registered: 2 });
     // No threat signal, no selectors, no lookalike names.
-    const text = JSON.stringify(body);
+    // Scan everything except the random UUID (shape-checked above) — its hex
+    // can spell "feed", which made this assertion flaky.
+    const text = JSON.stringify({ ...body, data: { ...d, id: undefined } });
     expect(text).not.toMatch(/feed|threat|trust|score|phishtank|google|acme\.net|selector/i);
 
     // Names stored on the row; trust_score/feed_mentions are NULL on public rows.
