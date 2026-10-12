@@ -743,6 +743,29 @@ export async function storeCapture(
 
 // ─── Evidence linking ────────────────────────────────────────────────
 
+type EvidenceSource = Pick<StoredCapture, "status" | "desktopKey" | "mobileKey" | "desktopSha" | "mobileSha" | "finalUrl" | "antiBotWall" | "htmlSha">;
+
+/** The takedown_evidence payload for a stored capture (null when no
+ *  screenshot was stored). Shared by the success-time linker and catch-up. */
+function evidencePayload(captureId: string, stored: EvidenceSource):
+  { apiPath: string; storageKey: string | null; metaJson: string; title: string } | null {
+  const variant: "desktop" | "mobile" | null = stored.desktopKey ? "desktop" : stored.mobileKey ? "mobile" : null;
+  if (!variant) return null;
+  return {
+    apiPath: screenshotApiPath(captureId, variant),
+    storageKey: variant === "desktop" ? stored.desktopKey : stored.mobileKey,
+    metaJson: JSON.stringify({
+      capture_id: captureId,
+      status: stored.status,
+      final_url: stored.finalUrl,
+      anti_bot_wall: stored.antiBotWall,
+      sha256: { desktop: stored.desktopSha, mobile: stored.mobileSha, html: stored.htmlSha },
+      html_url: htmlApiPath(captureId),
+    }),
+    title: stored.status === "blocked" ? "Page capture (anti-bot wall shown)" : "Page capture (rendered screenshot)",
+  };
+}
+
 /**
  * Attach a stored capture to every takedown drafted from its threat — AND
  * from every other threat recorded for the same `target_key` in
@@ -753,35 +776,22 @@ export async function storeCapture(
  * and `takedown_requests.screenshot_url` when still NULL. The URL is the
  * staff API path, never a public URL. Returns evidence rows inserted.
  *
- * FOLLOW-UP (documented gap): only takedowns that exist when the capture
- * finishes are linked. A takedown drafted LATER for the same threat is not
- * back-linked yet — Sparrow / the takedown create path would need to look up
- * the latest stored capture for its source threat.
+ * Takedowns drafted LATER (Sparrow), and threats deduped onto the target
+ * after the capture finished, are linked by `catchUpCaptureEvidence`, which
+ * every page_capture run executes before claiming.
  */
 export async function linkCaptureEvidence(
   db: D1Database,
   captureId: string,
   threatId: string | null,
-  stored: Pick<StoredCapture, "status" | "desktopKey" | "mobileKey" | "desktopSha" | "mobileSha" | "finalUrl" | "antiBotWall" | "htmlSha">,
+  stored: EvidenceSource,
   now: Date = new Date(),
   targetKey: string | null = null,
 ): Promise<number> {
   if (!threatId && !targetKey) return 0;
-  const variant: "desktop" | "mobile" | null = stored.desktopKey ? "desktop" : stored.mobileKey ? "mobile" : null;
-  if (!variant) return 0;
-  const apiPath = screenshotApiPath(captureId, variant);
-  const storageKey = variant === "desktop" ? stored.desktopKey : stored.mobileKey;
-  const metaJson = JSON.stringify({
-    capture_id: captureId,
-    status: stored.status,
-    final_url: stored.finalUrl,
-    anti_bot_wall: stored.antiBotWall,
-    sha256: { desktop: stored.desktopSha, mobile: stored.mobileSha, html: stored.htmlSha },
-    html_url: htmlApiPath(captureId),
-  });
-  const title = stored.status === "blocked"
-    ? "Page capture (anti-bot wall shown)"
-    : "Page capture (rendered screenshot)";
+  const ev = evidencePayload(captureId, stored);
+  if (!ev) return 0;
+  const { apiPath, storageKey, metaJson, title } = ev;
   // The capturing threat + every alias threat for the target (PK range).
   const threatSet =
     `SELECT ? AS threat_id
@@ -801,6 +811,123 @@ export async function linkCaptureEvidence(
     ).bind(apiPath, threatId, targetKey, MAX_LINKED_THREATS),
   ]);
   return ins?.meta?.changes ?? 0;
+}
+
+// ─── Evidence catch-up ───────────────────────────────────────────────
+
+/** Takedowns examined per catch-up pass (bounds the D1 reads per run). */
+export const CATCHUP_SCAN = 200;
+/** Takedowns linked per catch-up pass. */
+export const CATCHUP_LINK = 50;
+/** Only takedowns drafted in this window are considered. */
+export const CATCHUP_WINDOW_DAYS = 14;
+export const CATCHUP_CURSOR_KEY = "page_capture:catchup:cursor";
+
+/**
+ * Candidate takedowns: threat-sourced, no screenshot yet, drafted in the
+ * window, keyset-walked newest → oldest from a KV cursor (wraps when the
+ * window is exhausted) so every candidate is revisited without rescanning
+ * the whole window each run. Range on the partial index
+ * idx_takedown_requests_catchup (migration 0290). Per candidate, the newest
+ * stored (captured|blocked — expired never) capture of its threat, directly
+ * (idx_page_captures_threat_created) or via a target alias
+ * (idx_page_capture_targets_threat → idx_page_captures_target_created).
+ * `CROSS JOIN` pins the alias → capture join order and `+pc.status` keeps
+ * the planner off the low-selectivity status indexes (which would walk every
+ * stored capture per candidate).
+ */
+export const CATCHUP_SQL =
+  `SELECT tr.id AS takedown_id, tr.created_at,
+          COALESCE(
+            (SELECT pc.id FROM page_captures pc
+              WHERE pc.threat_id = tr.source_id AND +pc.status IN ('captured', 'blocked')
+              ORDER BY pc.created_at DESC LIMIT 1),
+            (SELECT pc.id FROM page_capture_targets pt
+               CROSS JOIN page_captures pc ON pc.target_key = pt.target_key
+              WHERE pt.threat_id = tr.source_id AND +pc.status IN ('captured', 'blocked')
+              ORDER BY pc.created_at DESC LIMIT 1)
+          ) AS capture_id
+     FROM takedown_requests tr
+    WHERE tr.source_type = 'threat' AND tr.screenshot_url IS NULL
+      AND tr.created_at >= ?
+      AND (tr.created_at < ? OR (tr.created_at = ? AND tr.id < ?))
+    ORDER BY tr.created_at DESC, tr.id DESC
+    LIMIT ?`;
+
+export interface CatchUpResult {
+  scanned: number;
+  linked: number;
+  wrapped: boolean;
+}
+
+export async function catchUpCaptureEvidence(
+  env: Pick<Env, "DB" | "CACHE">,
+  now: Date = new Date(),
+): Promise<CatchUpResult> {
+  const db = env.DB;
+  const since = d1Ts(addDays(now, -CATCHUP_WINDOW_DAYS));
+  // Cursor = "<created_at>|<id>" of the last takedown examined; "~" sorts
+  // above every timestamp/id, i.e. "start from the newest".
+  let curTs = "~";
+  let curId = "~";
+  try {
+    const raw = await env.CACHE.get(CATCHUP_CURSOR_KEY);
+    const sep = raw ? raw.indexOf("|") : -1;
+    if (raw && sep > 0) { curTs = raw.slice(0, sep); curId = raw.slice(sep + 1); }
+  } catch { /* start from the newest */ }
+
+  const res = await db.prepare(CATCHUP_SQL)
+    .bind(since, curTs, curTs, curId, CATCHUP_SCAN)
+    .all<{ takedown_id: string; created_at: string; capture_id: string | null }>();
+  const rows = res.results ?? [];
+  const wrapped = rows.length < CATCHUP_SCAN;
+  const last = rows[rows.length - 1];
+  try {
+    if (wrapped) await env.CACHE.delete(CATCHUP_CURSOR_KEY);
+    else if (last) await env.CACHE.put(CATCHUP_CURSOR_KEY, `${last.created_at}|${last.takedown_id}`, { expirationTtl: CATCHUP_WINDOW_DAYS * 86_400 });
+  } catch { /* best-effort */ }
+
+  const matches = rows.filter((r): r is typeof r & { capture_id: string } => !!r.capture_id).slice(0, CATCHUP_LINK);
+  if (matches.length === 0) return { scanned: rows.length, linked: 0, wrapped };
+
+  const captureIds = [...new Set(matches.map((m) => m.capture_id))];
+  const caps = await db.prepare(
+    `SELECT id, status, desktop_key, mobile_key, desktop_sha256, mobile_sha256, html_sha256, final_url, anti_bot_wall
+       FROM page_captures WHERE id IN (${captureIds.map(() => "?").join(", ")})`,
+  ).bind(...captureIds).all<{
+    id: string; status: "captured" | "blocked"; desktop_key: string | null; mobile_key: string | null;
+    desktop_sha256: string | null; mobile_sha256: string | null; html_sha256: string | null;
+    final_url: string | null; anti_bot_wall: string | null;
+  }>();
+  const byId = new Map((caps.results ?? []).map((c) => [c.id, c]));
+
+  const ts = d1Ts(now);
+  const stmts: D1PreparedStatement[] = [];
+  for (const m of matches) {
+    const c = byId.get(m.capture_id);
+    const ev = c ? evidencePayload(c.id, {
+      status: c.status, desktopKey: c.desktop_key, mobileKey: c.mobile_key,
+      desktopSha: c.desktop_sha256, mobileSha: c.mobile_sha256, htmlSha: c.html_sha256,
+      finalUrl: c.final_url, antiBotWall: c.anti_bot_wall,
+    }) : null;
+    if (!c || !ev) continue;
+    stmts.push(
+      db.prepare(
+        `INSERT OR IGNORE INTO takedown_evidence
+           (id, takedown_id, evidence_type, title, storage_key, storage_url, metadata_json, created_at)
+         VALUES (?, ?, 'screenshot', ?, ?, ?, ?, ?)`,
+      ).bind(`tde_${c.id}_${m.takedown_id}`, m.takedown_id, ev.title, ev.storageKey, ev.apiPath, ev.metaJson, ts),
+      db.prepare(
+        `UPDATE takedown_requests SET screenshot_url = ? WHERE id = ? AND screenshot_url IS NULL`,
+      ).bind(ev.apiPath, m.takedown_id),
+    );
+  }
+  let linked = 0;
+  if (stmts.length > 0) {
+    const out = await db.batch(stmts);
+    for (let i = 1; i < out.length; i += 2) linked += out[i]?.meta?.changes ?? 0;
+  }
+  return { scanned: rows.length, linked, wrapped };
 }
 
 // ─── Retention sweep ─────────────────────────────────────────────────
@@ -833,10 +960,10 @@ export async function sweepExpiredCaptures(
   let objectsDeleted = 0;
   for (let round = 0; round < SWEEP_MAX_ROUNDS; round++) {
     const res = await db.prepare(
-      `SELECT id, threat_id, desktop_key, mobile_key, html_key FROM page_captures
+      `SELECT id, desktop_key, mobile_key, html_key FROM page_captures
         WHERE status IN ('captured', 'blocked') AND expires_at < ?
         LIMIT ?`,
-    ).bind(cutoff, SWEEP_PAGE).all<{ id: string; threat_id: string | null; desktop_key: string | null; mobile_key: string | null; html_key: string | null }>();
+    ).bind(cutoff, SWEEP_PAGE).all<{ id: string; desktop_key: string | null; mobile_key: string | null; html_key: string | null }>();
     const rows = res.results ?? [];
     if (rows.length === 0) break;
 
@@ -872,31 +999,25 @@ export async function sweepExpiredCaptures(
     ).bind(...ids).run();
     expired += upd.meta?.changes ?? 0;
 
-    // takedown_evidence rows for these captures (deterministic ids
-    // 'tde_<capture_id>_<takedown_id>' → PK range per capture): tombstone the
-    // metadata (it carried final_url / API paths) and null the links.
-    await db.batch(ids.map((cid) => db.prepare(
-      `UPDATE takedown_evidence
-          SET storage_key = NULL, storage_url = NULL, metadata_json = '{"expired":true}'
-        WHERE id > ? AND id < ?`,
-    ).bind(`tde_${cid}_`, `tde_${cid}\``)));
-
-    // Takedowns pointing at an expired capture's screenshot lose the link
-    // (indexed on (source_type, source_id) — idx_takedown_requests_threat_source).
-    const threatIds = [...new Set(rows.map((r) => r.threat_id).filter((t): t is string => !!t))];
-    const paths = ids.flatMap((id) => [screenshotApiPath(id, "desktop"), screenshotApiPath(id, "mobile")]);
-    if (threatIds.length > 0) {
-      // ≤ 90 threat ids + 180 paths per round would exceed D1's 100-bind cap,
-      // so match the path by prefix per capture-id chunk.
-      for (let i = 0; i < threatIds.length; i += 40) {
-        const tChunk = threatIds.slice(i, i + 40);
-        await db.prepare(
-          `UPDATE takedown_requests SET screenshot_url = NULL
-            WHERE source_type = 'threat' AND source_id IN (${tChunk.map(() => "?").join(", ")})
-              AND screenshot_url IN (SELECT value FROM json_each(?))`,
-        ).bind(...tChunk, JSON.stringify(paths)).run();
-      }
-    }
+    // Every takedown this capture was linked to — the capturing threat's,
+    // alias threats', catch-up links — has a takedown_evidence row with the
+    // deterministic id 'tde_<capture_id>_<takedown_id>' (PK range per
+    // capture). Per capture, in order: (1) clear screenshot_url on exactly
+    // those takedowns when it still points at THIS capture (PK lookups, 4
+    // binds); (2) tombstone the evidence rows (metadata carried final_url /
+    // API paths) and null their links.
+    await db.batch(ids.flatMap((cid) => [
+      db.prepare(
+        `UPDATE takedown_requests SET screenshot_url = NULL
+          WHERE id IN (SELECT takedown_id FROM takedown_evidence WHERE id > ? AND id < ?)
+            AND screenshot_url IN (?, ?)`,
+      ).bind(`tde_${cid}_`, `tde_${cid}\``, screenshotApiPath(cid, "desktop"), screenshotApiPath(cid, "mobile")),
+      db.prepare(
+        `UPDATE takedown_evidence
+            SET storage_key = NULL, storage_url = NULL, metadata_json = '{"expired":true}'
+          WHERE id > ? AND id < ?`,
+      ).bind(`tde_${cid}_`, `tde_${cid}\``),
+    ]));
     if (rows.length < SWEEP_PAGE) break;
   }
   // Dedup aliases are only needed while their capture can still run.
@@ -990,6 +1111,15 @@ export async function runPageCapture(env: Env, opts: PageCaptureRunOptions = {})
     stats.sweep = await maybeDailySweep(env, opts.scheduledTime ?? startedAt);
   } catch (err) {
     stats.sweep_error = err instanceof Error ? err.message : String(err);
+  }
+  // Late links: takedowns drafted after their capture, threats deduped onto
+  // an already-captured target. Bounded; never blocks claims.
+  try {
+    const cu = await catchUpCaptureEvidence(env, startedAt);
+    stats.evidence_linked += cu.linked;
+    stats.catchup_scanned = cu.scanned;
+  } catch (err) {
+    stats.catchup_error = err instanceof Error ? err.message : String(err);
   }
 
   const limit = Math.max(1, Math.min(opts.limit ?? CAPTURE_BATCH, CAPTURE_BATCH));

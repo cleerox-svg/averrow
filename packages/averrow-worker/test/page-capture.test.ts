@@ -43,6 +43,7 @@ import { toTenantTakedownView } from "../src/handlers/tenantTakedowns";
 import { isSandboxPolicy } from "../src/middleware/security";
 import {
   CAPTURE_MAX_HOSTS_PER_PAGE, CAPTURE_TARGET_DEDUP_DAYS, HOST_CAP_NOTE,
+  CATCHUP_CURSOR_KEY, CATCHUP_SCAN, CATCHUP_SQL, catchUpCaptureEvidence,
   captureTargetKey, makeNavigationGuard, makePageHostBudget, storeCapture,
 } from "../src/lib/page-capture";
 import { applySecurityHeaders } from "../src/middleware/security";
@@ -719,6 +720,97 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
 
       const src = readFileSync(resolve(__dirname, "..", "src", "lib", "page-capture-browser.ts"), "utf8");
       expect(src).toMatch(/ctx\.budget\.admit\(host\)/);
+    });
+
+    it("HIGH: expiry clears screenshot_url on ALIAS-linked takedowns too, but only when it points at that capture", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "cs_a", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      await enqueueAutoCaptures(db, [{ threatId: "cs_b", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status)
+        VALUES ('td_a', 'b1', 'domain', 'x', 'x', 'threat', 'cs_a', 'draft'),
+               ('td_b', 'b1', 'domain', 'x', 'x', 'threat', 'cs_b', 'draft')`);
+      await runPageCapture(env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      expect(rows(`SELECT COUNT(*) AS n FROM takedown_requests WHERE screenshot_url IS NOT NULL`)[0]!["n"]).toBe(2);
+      // An operator re-pointed td_b at another image afterwards — must survive.
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status)
+        VALUES ('td_c', 'b1', 'domain', 'x', 'x', 'threat', 'cs_b', 'draft')`);
+      const id = String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+      rawDb.prepare(`INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title) VALUES (?, 'td_c', 'screenshot', 't')`).run(`tde_${id}_td_c`);
+      rawDb.exec(`UPDATE takedown_requests SET screenshot_url = '/operator.png' WHERE id = 'td_c'`);
+      // Aliases purged first (14d) — the unlink must not depend on them.
+      rawDb.exec(`DELETE FROM page_capture_targets`);
+
+      await sweepExpiredCaptures(db, r2.bucket, new Date(NOW.getTime() + 181 * 86_400_000));
+      expect(rows(`SELECT id, screenshot_url FROM takedown_requests ORDER BY id`)).toEqual([
+        { id: "td_a", screenshot_url: null },
+        { id: "td_b", screenshot_url: null },
+        { id: "td_c", screenshot_url: "/operator.png" },
+      ]);
+      const plan = rawDb.prepare(`EXPLAIN QUERY PLAN SELECT id FROM takedown_requests WHERE id IN (SELECT takedown_id FROM takedown_evidence WHERE id > ? AND id < ?)`)
+        .all("a", "b").map((x) => String((x as { detail: string }).detail)).join(" | ");
+      expect(plan).not.toMatch(/SCAN (takedown_requests|takedown_evidence)\b/);
+    });
+
+    it("MEDIUM: catch-up links takedowns drafted AFTER the capture and threats deduped onto a captured target", async () => {
+      await enqueueAutoCaptures(db, [{ threatId: "cs_a", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      await runPageCapture(env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      const id = String(rows(`SELECT id FROM page_captures`)[0]!["id"]);
+      // Later: a new threat for the same page (deduped → alias only), and
+      // Sparrow drafts takedowns for both threats plus an unrelated one.
+      const later = new Date(NOW.getTime() + 3_600_000);
+      expect(await enqueueAutoCaptures(db, [{ threatId: "cs_late", maliciousUrl: "https://acme-sso-login.com/x/.." }], later)).toBe(0);
+      rawDb.exec(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status, created_at)
+        VALUES ('td_direct', 'b1', 'domain', 'x', 'x', 'threat', 'cs_a', 'draft', '2026-10-12 01:00:00'),
+               ('td_alias', 'b1', 'domain', 'x', 'x', 'threat', 'cs_late', 'draft', '2026-10-12 01:01:00'),
+               ('td_none', 'b1', 'domain', 'x', 'x', 'threat', 'no_capture', 'draft', '2026-10-12 01:02:00'),
+               ('td_old', 'b1', 'domain', 'x', 'x', 'threat', 'cs_a', 'draft', '2026-09-01 00:00:00')`);
+
+      const r = await catchUpCaptureEvidence(env, later);
+      expect(r).toMatchObject({ scanned: 3, linked: 2, wrapped: true });
+      const path = `/api/intel/captures/${id}/screenshot?variant=desktop`;
+      expect(rows(`SELECT id, screenshot_url FROM takedown_requests ORDER BY id`)).toEqual([
+        { id: "td_alias", screenshot_url: path },
+        { id: "td_direct", screenshot_url: path },
+        { id: "td_none", screenshot_url: null },
+        { id: "td_old", screenshot_url: null }, // outside the 14-day window
+      ]);
+      expect(rows(`SELECT id FROM takedown_evidence ORDER BY id`)).toEqual([{ id: `tde_${id}_td_alias` }, { id: `tde_${id}_td_direct` }]);
+      // Idempotent: a second pass links nothing new.
+      expect((await catchUpCaptureEvidence(env, later)).linked).toBe(0);
+      // Expired captures are never linked.
+      rawDb.exec(`UPDATE takedown_requests SET screenshot_url = NULL; UPDATE page_captures SET status = 'expired'`);
+      expect((await catchUpCaptureEvidence(env, later)).linked).toBe(0);
+    });
+
+    it("MEDIUM: catch-up keyset-walks with a KV cursor, wraps, and runs inside each run without blocking claims", async () => {
+      const ins = rawDb.prepare(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status, created_at)
+        VALUES (?, 'b1', 'domain', 'x', 'x', 'threat', 'nothing', 'draft', ?)`);
+      for (let i = 0; i < CATCHUP_SCAN + 5; i++) ins.run(`td_${String(i).padStart(4, "0")}`, d1Ts(new Date(NOW.getTime() - i * 60_000)));
+      const first = await catchUpCaptureEvidence(env, NOW);
+      expect(first).toMatchObject({ scanned: CATCHUP_SCAN, wrapped: false });
+      expect(await env.CACHE.get(CATCHUP_CURSOR_KEY)).toMatch(/\|td_0199$/);
+      const second = await catchUpCaptureEvidence(env, NOW);
+      expect(second).toMatchObject({ scanned: 5, wrapped: true });
+      expect(await env.CACHE.get(CATCHUP_CURSOR_KEY)).toBeNull();
+
+      // Indexed: the walk is a range on the partial catch-up index; both
+      // capture probes are index searches.
+      const plan = rawDb.prepare(`EXPLAIN QUERY PLAN ${CATCHUP_SQL}`).all("2026-09-28 00:00:00", "~", "~", "~", CATCHUP_SCAN)
+        .map((x) => String((x as { detail: string }).detail)).join(" | ");
+      expect(plan).toMatch(/SEARCH tr USING INDEX idx_takedown_requests_catchup \(created_at>\?\)/);
+      expect(plan).toMatch(/SEARCH pc USING INDEX idx_page_captures_threat_created \(threat_id=\?\)/);
+      expect(plan).toMatch(/SEARCH pt USING INDEX idx_page_capture_targets_threat \(threat_id=\?\)/);
+      expect(plan).toMatch(/SEARCH pc USING INDEX idx_page_captures_target_created \(target_key=\?\)/);
+      expect(plan).not.toMatch(/SCAN (tr|pc|pt)\b/);
+
+      // A failing catch-up never blocks claims.
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
+      const broken = Object.assign(Object.create(db) as D1Database, {
+        prepare: (sql: string) => { if (sql === CATCHUP_SQL) throw new Error("catch-up down"); return db.prepare(sql); },
+        batch: (st: D1PreparedStatement[]) => db.batch(st),
+      });
+      const stats = await runPageCapture({ ...env, DB: broken } as Env, { driver: fakeDriver({}).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats.catchup_error).toMatch(/catch-up down/);
+      expect(stats.captured).toBe(1);
     });
 
     it("A1: only an exact `sandbox` CSP is kept", () => {

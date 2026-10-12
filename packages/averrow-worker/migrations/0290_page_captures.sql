@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS page_capture_targets (
 );
 CREATE INDEX IF NOT EXISTS idx_page_capture_targets_created
   ON page_capture_targets(created_at);
+-- Evidence catch-up (lib/page-capture.ts catchUpCaptureEvidence): alias
+-- lookup by threat.
+CREATE INDEX IF NOT EXISTS idx_page_capture_targets_threat
+  ON page_capture_targets(threat_id);
+
+-- Evidence catch-up: keyset walk over threat-sourced takedowns that have no
+-- screenshot yet (additive index on an existing table; partial, so it only
+-- holds the small unlinked set).
+CREATE INDEX IF NOT EXISTS idx_takedown_requests_catchup
+  ON takedown_requests(created_at, id)
+  WHERE source_type = 'threat' AND screenshot_url IS NULL;
 
 -- Grandfather the new AgentModule (same guarded upsert as 0246 — a bare
 -- INSERT OR IGNORE would leave a 'pending' row created by an early cron
