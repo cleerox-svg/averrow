@@ -138,7 +138,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 |------|------|--------|-------------|
 | **PhishTank** | `phishtank.ts` | Community-sourced | Verified phishing URLs via CIRCL API |
 | **OpenPhish** | `openphish.ts` | Automated detection | Machine-detected phishing URLs |
-| **PhishDestroy** | `phishdestroy.ts` | Takedown service | Active phishing sites |
+| **PhishDestroy** | `phishdestroy.ts` | phishdestroy/destroylist (`raw.githubusercontent.com/.../main/list.json`) | Curated phishing/scam domain list, JSON array (~218K, sorted alphabetically). 5,000 domains/run via a KV rotation cursor (`feed:phishdestroy:cursor`) so runs cycle the whole list; a 404 on `feed_configs.source_url` falls back to the canonical URL. IdP-tagged at ingest |
 | **PhishStats** | `phishstats.ts` | Community-sourced | Public phishing URL feed, score 0-10 mapped to severity |
 | **urlscan.io** | `urlscanio.ts` | Public URL scanner | Recently-flagged-malicious public submissions (no auth, ~1/hr) |
 | **CryptoScamDB** | `cryptoscamdb.ts` | Community-maintained | Crypto/web3 phishing + fake-exchange scam URLs |
