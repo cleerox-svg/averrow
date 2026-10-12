@@ -327,6 +327,40 @@ describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", ()
     expect(matchBrandToHost("personaid.okta-verify.com", IDP_BRANDS[4]!)).toBe("token");
   });
 
+  it("leftover evidence is whole-token only — never a prefix/substring of a longer word", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Author", "author.today", "b_author"), m("Pay", "pay.com", "b_pay")];
+    const of = (h: string) => fuzzyMatchBrandDetailed([h], cat);
+    expect(of("login.o365.teams-microsoftonline-com-common-oauth2-v2-0-authorize-login.com"))
+      .toEqual({ brandId: "b_ms", method: "token", vendorCredit: true });
+    // whole token still wins, also after peeling a glued auth word
+    expect(of("author-okta.com")?.brandId).toBe("b_author");
+    expect(of("acmesecure-okta.com")?.brandId).toBe("b_acme");
+    expect(of("payments-okta.com")?.brandId).toBe("b_okta");
+  });
+
+  it("login-phrase words that are also brands are lure filler", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Register", "register.com", "b_reg"), m("LogMeIn", "logmein.com", "b_lmi")];
+    for (const h of ["register.microsoftonline-p-int.com", "logmein-microsoftonline.com", "signup-okta.com"]) {
+      expect(fuzzyMatchBrandDetailed([h], cat)?.brandId, h).toMatch(/^b_(ms|okta)$/);
+    }
+  });
+
+  it("the same vendor's products keep the vendor credit", () => {
+    const cat: BrandRow[] = [...IDP_BRANDS, m("Outlook", "outlook.com", "b_outlook"), m("OneDrive", "onedrive.com", "b_od")];
+    for (const h of ["microsoftonline-outlook.live", "com-microsoftonline-ondrive.ca", "teams-microsoftonline.com"]) {
+      expect(fuzzyMatchBrandDetailed([h], cat)?.brandId, h).toBe("b_ms");
+    }
+    // A different vendor's lure beside Outlook: Outlook IS the target.
+    expect(fuzzyMatchBrandDetailed(["outlook-okta.com"], cat)?.brandId).toBe("b_outlook");
+  });
+
+  it("leftovers credit only in-scope or well-known brands", () => {
+    const unk = (name: string, canonical_domain: string, id: string, rank: number | null): BrandRow =>
+      ({ id, name, canonical_domain, tier: null, tranco_rank: rank });
+    expect(fuzzyMatchBrand(["zorblax-okta.com"], [...IDP_BRANDS, unk("Zorblax", "zorblax.io", "b_z", 900000)])).toBe("b_okta");
+    expect(fuzzyMatchBrand(["zorblax-okta.com"], [...IDP_BRANDS, unk("Zorblax", "zorblax.io", "b_z", 15000)])).toBe("b_z");
+  });
+
   it("non-IdP hosts are unaffected", () => {
     expect(brandOf("acme-login.com")).toBe("b_acme");
     expect(brandOf("bbva-entra.com")).toBeNull(); // compound-only lure, no stripping

@@ -15,8 +15,10 @@
 // and whose host literally contains that brand's name (the lure-token credit
 // the old matcher made; an AI- or page-context link is left alone).
 // Per row: keep (current matcher still credits the vendor — e.g. the
-// vendor-only okta-login-secure.com), relink (matcher picks the targeted
-// brand), or clear (substantive non-vendor label, no known brand).
+// vendor-only okta-login-secure.com, or a leftover that is the same vendor's
+// product: microsoftonline-outlook.live; or the host is the vendor's OWN
+// infrastructure — reason vendor_official_domain), relink (matcher picks the
+// targeted brand by a whole-token leftover match), or clear (nothing matches).
 // Rows from brand-scoped generators (typosquat_scanner,
 // numbered_variant_scan — permutations OF the vendor's own domain) are kept.
 //
@@ -36,7 +38,11 @@ import {
   type BrandMatchMethod,
   type BrandRow,
 } from "../../lib/brandDetect";
-import { IDP_TECHNIQUE, IDP_VENDOR_CANONICAL_DOMAINS } from "../../lib/idp-impersonation";
+import {
+  IDP_TECHNIQUE,
+  IDP_VENDOR_CANONICAL_DOMAINS,
+  isIdpVendorOfficialHost,
+} from "../../lib/idp-impersonation";
 import { clampCursor } from "../../lib/brand-link-cleanup";
 
 export const IDP_REATTRIBUTION_CONFIRM = "apply-idp-reattribution";
@@ -70,7 +76,7 @@ export interface ReattributionDecision {
   newBrandId: string | null;
   method: BrandMatchMethod | null;
   /** Why a row was kept without re-matching. */
-  keptBecause?: "still_matches" | "protected_feed" | "not_lure_credit";
+  keptBecause?: "still_matches" | "protected_feed" | "not_lure_credit" | "vendor_official_domain";
 }
 
 function haystacksOf(r: ReattributionRow): string[] {
@@ -86,18 +92,27 @@ function haystacksOf(r: ReattributionRow): string[] {
  */
 export function decideReattribution(
   row: ReattributionRow,
-  rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod } | null,
+  rematch: (haystacks: string[]) => { brandId: string; method: BrandMatchMethod; vendorCredit?: true } | null,
 ): ReattributionDecision {
   const haystacks = haystacksOf(row);
   if (row.source_feed && PROTECTED_FEEDS.has(row.source_feed)) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "protected_feed" };
+  }
+  // The vendor's own infrastructure (*.partner.microsoftonline.cn — Azure
+  // China; login.okta.com) is never re-attributed or cleared, whatever a
+  // feed called it.
+  if (haystacks.some((h) => isIdpVendorOfficialHost(h))) {
+    return { action: "keep", newBrandId: null, method: null, keptBecause: "vendor_official_domain" };
   }
   const norm = normalizeBrand(row.brand_name);
   if (!norm || !haystacks.some((h) => h.toLowerCase().replace(/[^a-z0-9]/g, "").includes(norm))) {
     return { action: "keep", newBrandId: null, method: null, keptBecause: "not_lure_credit" };
   }
   const hit = rematch(haystacks);
-  if (hit && hit.brandId === row.target_brand_id) {
+  // Matcher credits the IdP vendor (no other brand evidence, or only the
+  // vendor's own products: microsoftonline-outlook.live): keep the existing
+  // vendor link rather than hop between duplicate vendor brand rows.
+  if (hit && (hit.brandId === row.target_brand_id || hit.vendorCredit)) {
     return { action: "keep", newBrandId: null, method: hit.method, keptBecause: "still_matches" };
   }
   if (hit) {

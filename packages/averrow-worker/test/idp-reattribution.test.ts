@@ -59,6 +59,71 @@ describe("decideReattribution", () => {
   });
 });
 
+describe("production dry run 2026-10-12 — the 11 proposed changes", () => {
+  // Catalog junk that won before: substring "author" in "authorize", the
+  // login words "register" / "logmein", and Microsoft's own products.
+  const PROD: BrandRow[] = [
+    ...CATALOG,
+    { id: "b_author", name: "Author", canonical_domain: "author.today", tier: "monitored" },
+    { id: "b_authortoday", name: "Author.Today", canonical_domain: "author.today", tier: "monitored" },
+    { id: "b_register", name: "Register", canonical_domain: "register.com", tier: "monitored", tranco_rank: 2500 },
+    { id: "b_logmein", name: "LogMeIn", canonical_domain: "logmein.com", tier: "monitored", tranco_rank: 1800 },
+    { id: "b_asana", name: "Asana", canonical_domain: "asana.com", tier: "monitored" },
+    { id: "b_outlook", name: "Outlook", canonical_domain: "outlook.com", tier: "monitored" },
+    { id: "b_onedrive", name: "OneDrive", canonical_domain: "onedrive.com", tier: "monitored" },
+    { id: "b_teams", name: "Teams Hub", canonical_domain: "teams.com", tier: "monitored" },
+  ];
+  const prodRematch = (h: string[]) => fuzzyMatchBrandDetailed(h, PROD);
+  const ms = { target_brand_id: "b_ms", brand_name: "Microsoft", brand_canonical: "microsoft.com" };
+  const AUTHZ = "teams-microsoftonline-com-common-oauth2-v2-0-authorize-login.com";
+
+  it.each([
+    [`login.login.o365.${AUTHZ}`, "still_matches"],
+    [`mail.${AUTHZ}`, "still_matches"],
+    [`o365.${AUTHZ}`, "still_matches"],
+    ["register.microsoftonline-p-int.com", "still_matches"],
+    ["logmein-microsoftonline.com", "still_matches"],
+    ["https://logmein-microsoftonline.com/common/oauth2/authorize", "still_matches"],
+    ["*.dns.partner.microsoftonline.cn", "vendor_official_domain"],
+    ["dns.partner.microsoftonline.cn", "vendor_official_domain"],
+    // Same-vendor product leftovers keep the Microsoft credit.
+    ["microsoftonline-outlook.live", "still_matches"],
+    ["com-microsoftonline-ondrive.ca", "still_matches"],
+  ])("Microsoft-credited %s → keep (%s)", (host, reason) => {
+    const r = host.startsWith("https://")
+      ? row("logmein-microsoftonline.com", { ...ms, malicious_url: host })
+      : row(host, ms);
+    expect(decideReattribution(r, prodRematch)).toMatchObject({ action: "keep", keptBecause: reason });
+  });
+
+  it("asana-okta.com Okta → Asana (whole-token leftover)", () => {
+    expect(decideReattribution(row("asana-okta.com"), prodRematch))
+      .toEqual({ action: "relink", newBrandId: "b_asana", method: "token" });
+  });
+
+  it("earlier cases are unchanged", () => {
+    expect(decideReattribution(row("withpersona.okta-linksso.com"), prodRematch).newBrandId).toBe("b_persona");
+    expect(decideReattribution(row("okta-acme.com"), prodRematch).newBrandId).toBe("b_acme");
+    expect(decideReattribution(row("www2.okta-login.com"), prodRematch))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    expect(decideReattribution(row("okta-login-secure.com"), prodRematch))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+  });
+
+  it("vendor credit keeps the existing vendor link even on a duplicate vendor row", () => {
+    const dup: BrandRow[] = [{ id: "b_ms_dup", name: "Microsoft", canonical_domain: "microsoft.net", tier: "monitored" }, ...PROD];
+    expect(decideReattribution(row("logmein-microsoftonline.com", ms), (h) => fuzzyMatchBrandDetailed(h, dup)))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+  });
+
+  it("Okta's own corp hosts are never re-attributed", () => {
+    expect(decideReattribution(row("login.okta.com"), () => null))
+      .toMatchObject({ action: "keep", keptBecause: "vendor_official_domain" });
+    // …but a customer tenant still is.
+    expect(decideReattribution(row("acme-sso.okta.com"), prodRematch).newBrandId).toBe("b_acme");
+  });
+});
+
 describe("handleIdpReattribution request guards", () => {
   const env = {} as Env;
   it("apply without the confirm token is a 400 (no DB access)", async () => {
