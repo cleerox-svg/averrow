@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -10,6 +11,9 @@ import {
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { cn } from '@/lib/cn';
+import { isAboveAverage, formatBotShare, resolveGlobalAvg } from '@/features/observatory-v3/lib/bot-density';
+
+const DENSITY_TABLE_ROWS = 20;
 
 const RANGES: ReadonlyArray<{ days: BotTrafficDays; label: string }> = [
   { days: 7, label: '7D' },
@@ -114,12 +118,73 @@ function ChartTooltip({ active, payload, label }: {
   );
 }
 
-/** Horizontal share bar scaled against the largest value in its list. */
-function ShareBar({ pct, max }: { pct: number; max: number }) {
-  const width = max > 0 ? Math.max(2, (pct / max) * 100) : 0;
+/** Bar width (%) for an absolute 0–100 share: clamped, with a 2% sliver for any non-zero value. */
+export function absoluteBarWidth(pct: number): number {
+  if (!Number.isFinite(pct) || pct <= 0) return 0;
+  return Math.min(100, Math.max(2, pct));
+}
+
+function Caption({ children }: { children: ReactNode }) {
+  return <p className="mb-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>{children}</p>;
+}
+
+function NoDataYet() {
+  return <p className="py-4 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>No data yet</p>;
+}
+
+interface AttackRow { code: string; name: string; pct: number; rank: number }
+
+function AttackTable({ title, rows, staleDate }: { title: string; rows: AttackRow[]; staleDate: string | null }) {
   return (
-    <div aria-hidden="true" className="h-1.5 w-full rounded-full" style={{ background: 'var(--border-base)' }}>
+    <div>
+      {staleDate ? (
+        <div className="mb-2 flex justify-end"><AsOfNote date={staleDate} /></div>
+      ) : null}
+      <Card>
+        {rows.length === 0 ? (
+          <NoDataYet />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table className="w-full text-sm">
+              <caption className="sr-only">Attack {title.toLowerCase()} countries</caption>
+              <thead>
+                <tr>
+                  <Th className="w-8">#</Th>
+                  <Th>{title}</Th>
+                  <Th className="text-right">Share</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.code}>
+                    <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{r.rank}</Td>
+                    <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
+                      {r.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{r.code}</span>
+                    </Td>
+                    <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(r.pct)}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+/** Horizontal share bar: scaled against `max`, or on an absolute 0–100 scale with `absolute`. */
+function ShareBar({ pct, max = 0, absolute = false, marker }: { pct: number; max?: number; absolute?: boolean; marker?: number }) {
+  const width = absolute ? absoluteBarWidth(pct) : max > 0 ? Math.max(2, (pct / max) * 100) : 0;
+  return (
+    <div aria-hidden="true" className="relative h-1.5 w-full rounded-full" style={{ background: 'var(--border-base)' }}>
       <div className="h-full rounded-full" style={{ width: `${width}%`, background: 'var(--amber)' }} />
+      {absolute && marker != null && Number.isFinite(marker) ? (
+        <div
+          className="absolute"
+          style={{ left: `${Math.min(100, Math.max(0, marker))}%`, top: -2, bottom: -2, width: 1, background: 'var(--text-primary)' }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -165,6 +230,7 @@ function BotTrafficContent() {
   if (!data) return <PageState kind="loading" />;
 
   const { latest, series, top_locations, top_asns, categories } = data;
+  const globalAvg = resolveGlobalAvg(data);
 
   const header = (
     <PageHeader
@@ -220,6 +286,13 @@ function BotTrafficContent() {
   const asns = [...top_asns].sort((a, b) => a.rank - b.rank);
   const cats = [...categories].sort((a, b) => b.pct - a.pct);
   const catMax = cats[0]?.pct ?? 0;
+  // API returns every qualifying country (≤100, for the Observatory map); the table shows the top 20.
+  const density = [...(data.bot_density ?? [])].sort((a, b) => a.rank - b.rank).slice(0, DENSITY_TABLE_ROWS);
+  const originRows = [...(data.attack_origins ?? [])].sort((a, b) => a.rank - b.rank);
+  const targetRows = [...(data.attack_targets ?? [])].sort((a, b) => a.rank - b.rank);
+  const densityStale = staleAsOf(data.as_of, 'bot_density');
+  const originsStale = staleAsOf(data.as_of, 'attack_origins');
+  const targetsStale = staleAsOf(data.as_of, 'attack_targets');
 
   const lastPoint = series[series.length - 1];
   const chartLabel = first && lastPoint
@@ -301,9 +374,88 @@ function BotTrafficContent() {
         </Card>
       </section>
 
+      <section>
+        <SectionHeader title="Bot density by country" staleDate={densityStale} />
+        <Caption>
+          Share of each country's own HTTP traffic that is automated. Top 20 shown; countries under 0.1% of global traffic are excluded. ≥ / ≤ marks an estimate bound for a country outside one of Radar's top-100 lists. All countries are on the Observatory's Bot density view.
+        </Caption>
+        <Card>
+          {density.length === 0 ? (
+            <NoDataYet />
+          ) : (
+            <>
+              <p className="mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                Global average:{' '}
+                <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(globalAvg ?? latest.bot_pct)}</span>
+                <span style={{ color: 'var(--text-tertiary)' }}> · the bar tick marks it; ▲ marks countries above it</span>
+              </p>
+              <div className="overflow-x-auto">
+                <Table className="w-full text-sm">
+                  <caption className="sr-only">Bot share and traffic share by country</caption>
+                  <thead>
+                    <tr>
+                      <Th className="w-8">#</Th>
+                      <Th>Country</Th>
+                      <Th className="text-right">Bot share</Th>
+                      <Th className="text-right">Traffic share</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {density.map((d) => {
+                      const above = isAboveAverage(d.bot_pct, globalAvg, d.bound);
+                      return (
+                        <tr key={d.code}>
+                          <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.rank}</Td>
+                          <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
+                            {d.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.code}</span>
+                          </Td>
+                          <Td className="py-1.5 text-right">
+                            <div className="ml-auto w-24 sm:w-40">
+                              <span
+                                className="font-mono"
+                                style={{ color: above ? 'var(--sev-medium-text)' : 'var(--text-primary)' }}
+                              >
+                                {formatBotShare(d.bot_pct, d.bound)}
+                              </span>
+                              {above ? (
+                                <span aria-hidden="true" title="Above global average" className="ml-1" style={{ color: 'var(--sev-medium-text)' }}>▲</span>
+                              ) : null}
+                              {above ? <span className="sr-only"> (above global average)</span> : null}
+                              <div className="mt-1">
+                                <ShareBar pct={d.bot_pct} absolute marker={globalAvg ?? undefined} />
+                              </div>
+                            </div>
+                          </Td>
+                          <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtPct(d.traffic_pct)}</Td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+              <p className="mt-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>Bars show absolute share, 0–100%</p>
+            </>
+          )}
+        </Card>
+      </section>
+
+      <section>
+        <SectionLabel className="mb-1">Attack origins vs targets</SectionLabel>
+        <Caption>
+          Layer-7 (HTTP) attacks seen by Cloudflare, last 7 days. Origin = attacking client's IP location; target = attacked site's country.
+        </Caption>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <AttackTable title="Origin" rows={originRows} staleDate={originsStale} />
+          <AttackTable title="Target" rows={targetRows} staleDate={targetsStale} />
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section>
           <SectionHeader title="Top bot-origin countries" staleDate={locsStale} />
+          <Caption>
+            Share of all automated traffic — reflects where bot infrastructure is hosted (cloud data centres), not who operates it.
+          </Caption>
           <Card>
             {locs.length === 0 ? (
               <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No country data</p>
@@ -336,6 +488,7 @@ function BotTrafficContent() {
 
         <section>
           <SectionHeader title="Top bot-origin networks" staleDate={asnsStale} />
+          <Caption>Share of all automated traffic, by network (ASN) — mostly cloud and hosting providers.</Caption>
           <Card>
             {asns.length === 0 ? (
               <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No network data</p>

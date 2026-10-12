@@ -6,7 +6,7 @@
  * panel widgets.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap } from '@/hooks/useObservatory';
 import type { ArcData } from '@/hooks/useObservatory';
 import { ThreatMapV3 } from './components/ThreatMapV3';
@@ -20,6 +20,9 @@ import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, ChevronDown } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
+import { useBotTraffic } from '@/hooks/useBotTraffic';
+import { BotDensityLegend } from './components/BotDensityLegend';
+import { buildBotDensityPoints, botDensityDomain, resolveGlobalAvg } from './lib/bot-density';
 
 const PERIODS = [
   { id: '24h', label: '24H' },
@@ -31,6 +34,7 @@ const PERIODS = [
 const MAP_MODES: { id: MapMode; label: string }[] = [
   { id: 'global', label: 'GLOBAL' },
   { id: 'heatmap', label: 'HEATMAP' },
+  { id: 'bot_density', label: 'BOT DENSITY' },
 ];
 
 const SOURCES = [
@@ -106,10 +110,21 @@ export function ObservatoryV3() {
   const { data: heatmapRaw, error: heatmapError, refetch: refetchHeatmap } = useObservatoryHeatmap({ period });
   const heatmapData = heatmapRaw ?? [];
 
+  // Bot density mode: fetched only while that mode is active (days=7).
+  const isBotMode = mapMode === 'bot_density';
+  const { data: botData, isLoading: botLoading, error: botError, refetch: refetchBot } = useBotTraffic(7, { enabled: isBotMode });
+  const botPoints = useMemo(() => buildBotDensityPoints(botData?.bot_density), [botData?.bot_density]);
+  const botDomain = useMemo(() => botDensityDomain(botPoints), [botPoints]);
+  const botGlobalAvg = resolveGlobalAvg(botData);
+  const botAsOf = botData?.as_of?.bot_density ?? null;
+
+  // The SidePanel (and its toggle / Intel drawer) only exists in the global view.
+  const hasSidePanel = mapMode === 'global';
+
   // Uniform across the four useObservatoryQuery-backed hooks above — same
   // { error, refetch } shape (useObservatoryQuery.ts), so one combined
   // retry-all affordance covers them without per-query bespoke handling.
-  const loadError = threatsError || statsError || arcsError || heatmapError;
+  const loadError = !isBotMode && (threatsError || statsError || arcsError || heatmapError);
   const retryFailed = useCallback(() => {
     if (threatsError) refetch();
     if (statsError) refetchStats();
@@ -147,9 +162,11 @@ export function ObservatoryV3() {
           mapMode={mapMode}
           period={period}
           heatmapData={heatmapData}
+          botDensity={botPoints}
+          botGlobalAvg={botGlobalAvg}
           onArcClick={handleArcClick}
         />
-        {threats.length === 0 && (
+        {!isBotMode && threats.length === 0 && (
           <ObservatoryOverlay
             historicalThreats={stats?.threats_mapped ?? 0}
             historicalCountries={stats?.countries ?? 0}
@@ -157,6 +174,28 @@ export function ObservatoryV3() {
           />
         )}
       </div>
+
+      {/* Bot density: loading / error / empty states over the map */}
+      {isBotMode && (botLoading || botError || (botData && botPoints.length === 0)) && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: Z_CHROME }}>
+          <Card variant="elevated" padding="16px 24px" className="text-center pointer-events-auto" style={{ maxWidth: 280 }}>
+            {botLoading ? (
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot density&hellip;</div>
+            ) : botError ? (
+              <div role="alert">
+                <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical)' }}>
+                  <AlertTriangle size={13} /> Bot density failed to load
+                </div>
+                <div className="mt-2">
+                  <Button variant="danger" size="sm" onClick={() => refetchBot()} icon={<RefreshCw size={11} />}>Retry</Button>
+                </div>
+              </div>
+            ) : (
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-density data yet</div>
+            )}
+          </Card>
+        </div>
+      )}
 
       {/* ─── Top controls ─────────────────────────────────────── */}
       {isMobile ? (
@@ -195,10 +234,14 @@ export function ObservatoryV3() {
             >
               <span className="text-xs font-mono truncate">
                 <span style={{ color: 'var(--amber-text)' }}>{MAP_MODES.find(m => m.id === mapMode)?.label}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                <span style={{ color: 'var(--amber-text)' }}>{SOURCES.find(s => s.id === source)?.label}</span>
+                {!isBotMode && (
+                  <>
+                    <span style={{ color: 'var(--text-tertiary)' }}> · </span>
+                    <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
+                    <span style={{ color: 'var(--text-tertiary)' }}> · </span>
+                    <span style={{ color: 'var(--amber-text)' }}>{SOURCES.find(s => s.id === source)?.label}</span>
+                  </>
+                )}
               </span>
               <ChevronDown
                 className={cn('w-3.5 h-3.5 transition-transform duration-300 shrink-0', filtersExpanded && 'rotate-180')}
@@ -240,6 +283,12 @@ export function ObservatoryV3() {
                 />
               </div>
 
+              {isBotMode && (
+                <div className="text-[11px] font-mono" style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>
+                  Period, source and colour filters don&apos;t apply to bot density (daily Cloudflare Radar data).
+                </div>
+              )}
+              {!isBotMode && (<>
               {/* TIME group */}
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
                 <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
@@ -278,6 +327,7 @@ export function ObservatoryV3() {
                   variant="bar"
                 />
               </div>
+              </>)}
             </Card>
           </div>
         </div>
@@ -295,8 +345,13 @@ export function ObservatoryV3() {
             onChange={(id) => setMapMode(id as MapMode)}
             variant="bar"
           />
+          {isBotMode && (
+            <div className="font-mono text-[10px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
+              Period, source and colour filters don&apos;t apply &mdash; daily Cloudflare Radar data.
+            </div>
+          )}
           {/* Period + color-by row */}
-          <div className="flex items-center gap-2">
+          {!isBotMode && <div className="flex items-center gap-2">
             <Tabs
               tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
               activeTab={period}
@@ -309,14 +364,16 @@ export function ObservatoryV3() {
               onChange={(id) => setColorBy(id as 'severity' | 'type')}
               variant="bar"
             />
-          </div>
+          </div>}
           {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
-          <Tabs
-            tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
-            activeTab={source}
-            onChange={setSource}
-            variant="bar"
-          />
+          {!isBotMode && (
+            <Tabs
+              tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
+              activeTab={source}
+              onChange={setSource}
+              variant="bar"
+            />
+          )}
         </Card>
       )}
 
@@ -330,7 +387,7 @@ export function ObservatoryV3() {
       {!isMobile && (
         <div
           className="absolute top-3 flex items-center gap-2"
-          style={{ right: showPanel && mapMode !== 'heatmap' ? 336 : 16, zIndex: Z_CHROME }}
+          style={{ right: showPanel && hasSidePanel ? 336 : 16, zIndex: Z_CHROME }}
         >
           {/* Live indicator */}
           <LiveIndicator />
@@ -366,7 +423,7 @@ export function ObservatoryV3() {
             // doesn't render in any of those cases — the panel toggle that
             // would otherwise flip `showPanel` back is hidden in heatmap
             // mode, so `showPanel` alone isn't a reliable signal there).
-            right: showPanel && !isMobile && mapMode !== 'heatmap' ? 336 : 16,
+            right: showPanel && !isMobile && hasSidePanel ? 336 : 16,
             zIndex: Z_TOGGLE,
             padding: '8px 12px',
             maxWidth: 260,
@@ -415,6 +472,17 @@ export function ObservatoryV3() {
         </div>
       )}
 
+      {/* ─── Bot density legend ──────────────────────────────── */}
+      {isBotMode && botPoints.length > 0 && (
+        <BotDensityLegend
+          domain={botDomain}
+          globalAvg={botGlobalAvg}
+          asOf={botAsOf}
+          countries={botPoints.length}
+          style={{ left: 16, bottom: isMobile ? 120 : 96, zIndex: Z_CHROME }}
+        />
+      )}
+
       {/* ─── Stats bar ─────────────────────────────────────────────
           `bottom` sits flush on top of the ticker wrapper directly below —
           keep this in sync with that wrapper's `height` (desktop 40,
@@ -431,6 +499,16 @@ export function ObservatoryV3() {
         }}
       >
         <div className="flex items-center gap-4">
+          {isBotMode ? (
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span style={{ color: 'var(--amber-text)' }}>24H</span>
+              {' \u00b7 '}
+              <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
+              {botGlobalAvg != null && (
+                <>{' \u00b7 '}global avg <span style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
+              )}
+            </div>
+          ) : (
           <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
             <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
             {' \u00b7 '}
@@ -440,6 +518,7 @@ export function ObservatoryV3() {
             {' \u00b7 '}
             <span style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
           </div>
+          )}
         </div>
         <div className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
@@ -469,7 +548,7 @@ export function ObservatoryV3() {
           // Mobile's 72 is unchanged (touch-target sizing), matching the
           // still-unchanged 72 on the stats bar + 108 on the map.
           height: isMobile ? 72 : 40,
-          right: !isMobile && showPanel && mapMode !== 'heatmap' ? 320 : 0,
+          right: !isMobile && showPanel && hasSidePanel ? 320 : 0,
           zIndex: Z_CHROME,
         }}
       >
@@ -478,11 +557,11 @@ export function ObservatoryV3() {
 
       {/* ─── Right panel (desktop) ────────────────────────────── */}
       {!isMobile && (
-        <SidePanel period={period} visible={showPanel && mapMode !== 'heatmap'} />
+        <SidePanel period={period} visible={showPanel && hasSidePanel} />
       )}
 
       {/* Panel toggle */}
-      {!isMobile && mapMode !== 'heatmap' && (
+      {!isMobile && hasSidePanel && (
         <button
           onClick={() => setShowPanel(!showPanel)}
           className="absolute top-1/2 transform -translate-y-1/2"
@@ -503,7 +582,7 @@ export function ObservatoryV3() {
       )}
 
       {/* ─── Intel FAB (mobile) — opens the bottom-sheet drawer ── */}
-      {isMobile && mapMode !== 'heatmap' && (
+      {isMobile && hasSidePanel && (
         <button
           onClick={() => setShowMobilePanel(true)}
           className="absolute flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
@@ -536,7 +615,7 @@ export function ObservatoryV3() {
           rather than adding a second scroll container. BottomSheet
           already renders its own grip handle, so ours is dropped; it has
           no title/close of its own, so both are kept here. */}
-      {isMobile && mapMode !== 'heatmap' && (
+      {isMobile && hasSidePanel && (
         <BottomSheet open={showMobilePanel} onClose={() => setShowMobilePanel(false)}>
           <div
             className="flex items-center justify-between px-4 pb-2"
