@@ -43,7 +43,8 @@ describe('tooltip + helpers', () => {
     expect(isAboveAverage(35, 29.5, 'lower')).toBe(true);
     expect(isAboveAverage(20, 29.5, 'lower')).toBe(false);
     expect(isAboveAverage(20, 29.5, 'upper')).toBe(false);
-    expect(isAboveAverage(35, 29.5, 'upper')).toBe(true);
+    // A ceiling above the average proves nothing.
+    expect(isAboveAverage(35, 29.5, 'upper')).toBe(false);
     expect(isAboveAverage(Number.NaN, 29.5)).toBe(false);
     expect(isAboveAverage(40, Number.NaN)).toBe(false);
   });

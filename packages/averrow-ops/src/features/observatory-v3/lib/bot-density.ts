@@ -156,16 +156,16 @@ export function botDensityTooltip(d: BotTrafficDensity, globalAvg: number | null
 }
 
 /**
- * True when a country's bot share is strictly above the global average.
- * Bounds use the bound value itself: a `lower` bound is a floor, so exceeding
- * the average proves the true value does too; an `upper` bound only counts if
- * the ceiling itself exceeds it (which then holds a fortiori for no one, so
- * it is effectively never true). Both reduce to the same strict comparison.
+ * True only when a country's bot share is provably strictly above the global
+ * average. A `lower` bound is a floor, so a floor above the average proves the
+ * true value is too. An `upper` bound is a ceiling: a ceiling above the
+ * average proves nothing, so upper-bounded rows are never marked.
  */
 export function isAboveAverage(
   botPct: number,
   globalAvg: number | null | undefined,
-  _bound?: BotTrafficDensity['bound'],
+  bound?: BotTrafficDensity['bound'],
 ): boolean {
+  if (bound === 'upper') return false;
   return typeof globalAvg === 'number' && Number.isFinite(globalAvg) && botPct > globalAvg;
 }
