@@ -261,7 +261,9 @@ const PLATFORM_SUFFIXES = [
   // (chase-login.jimdofree.com is Chase, not Jimdo). square.site and
   // wixstudio.com are listed above. Path-addressed builders
   // (sites.google.com/<site>, editorx.io/<site>) are deliberately absent.
-  "jimdofree.com", "jimdosite.com", "jimdo.com", "tilda.ws", "mystrikingly.com",
+  // jimdo.com is NOT listed: it is Jimdo's corporate domain (help.jimdo.com,
+  // accounts.jimdo.com), not a free-site host.
+  "jimdofree.com", "jimdosite.com", "tilda.ws", "mystrikingly.com",
   "yolasite.com", "webnode.page", "site123.me", "framer.website",
   // Subdomain-style IPFS gateways: <cid>.ipfs.dweb.link (path-style hosts
   // are in SHARED_HOSTS below).
@@ -756,29 +758,33 @@ function fuzzyMatch(candidate: string, norm: string): boolean {
  * (handlers/admin/idpReattribution.ts).
  */
 export function matchBrandToHost(raw: string, brand: BrandRow): BrandMatchMethod | null {
-  return pairMatch(raw, brand, true);
+  return pairMatch(raw, brand, "permissive");
 }
 
 /**
- * As matchBrandToHost, but WITHOUT the permissive pre-2026-10-12 full-host
- * path on IdP-lure hosts: true only when the current rules accept the pair
- * (a whole-token leftover, or the vendor credit). Used by the all_idp
- * re-attribution to keep a link the current rules still accept when the
- * host names two brands (contoso-withpersona.okta-sso.com).
+ * As matchBrandToHost, but on an IdP-lure host accepts the brand ONLY as the
+ * TARGET named by the leftover (whole-token / owner-label / peeled / typo
+ * rule) — never via the vendor fallback and never via the pre-2026-10-12
+ * full-host rules. Used by the all_idp re-attribution to keep a link the
+ * current rules still accept when the host names two brands
+ * (contoso-withpersona.okta-sso.com), without also "accepting" the IdP
+ * vendor on withpersona.okta-linksso.com. Non-IdP hosts: same as
+ * matchBrandToHost.
  */
-export function matchBrandToHostStrict(raw: string, brand: BrandRow): BrandMatchMethod | null {
-  return pairMatch(raw, brand, false);
+export function matchBrandAsLeftoverTarget(raw: string, brand: BrandRow): BrandMatchMethod | null {
+  return pairMatch(raw, brand, "leftover");
 }
 
-function pairMatch(raw: string, brand: BrandRow, legacy: boolean): BrandMatchMethod | null {
+function pairMatch(raw: string, brand: BrandRow, mode: "permissive" | "leftover"): BrandMatchMethod | null {
   const parts = hostParts(raw);
   if (!parts) return null;
   const p = prepareOne(brand);
   if (p.canonical && parts.host === p.canonical) return "canonical";
   if (parts.idpLure || parts.idpVendor) {
+    if (mode === "leftover") return parts.idpLure ? matchIdpPartsToBrand(parts, p) : null;
     const strict = matchIdpPartsToBrand(parts, p)
       ?? (parts.vendorFallback ? matchIdpPartsToBrand(parts.vendorFallback, p) : null);
-    if (strict || !legacy) return strict;
+    if (strict) return strict;
     return p.matchable && parts.legacy ? matchPreparedToParts(parts.legacy, p) : null;
   }
   if (!p.matchable) return null;

@@ -432,7 +432,7 @@ describe("free site builders are platform suffixes (chase-login.jimdofree.com is
 
   it.each([
     ["chase-login.jimdofree.com", "b_chase"], ["chase-secure.jimdosite.com", "b_chase"],
-    ["chase.jimdo.com", "b_chase"], ["microsoft-login.tilda.ws", "b_ms"],
+    ["microsoft-login.tilda.ws", "b_ms"],
     ["microsoft365.mystrikingly.com", "b_ms"], ["chase-verify.yolasite.com", "b_chase"],
     ["chase.webnode.page", "b_chase"], ["chase-online.site123.me", "b_chase"],
     ["chase-login.framer.website", "b_chase"], ["chase-login.square.site", "b_chase"],
@@ -449,6 +449,13 @@ describe("free site builders are platform suffixes (chase-login.jimdofree.com is
     expect(of("jimdofree.com")).toBe("b_jimdofree");
     expect(of("www.jimdo.com")).toBe("b_jimdo");
     expect(of("https://tilda.ws/")).toBe("b_tilda");
+  });
+
+  it("jimdo.com is Jimdo's corporate domain, not a free-site host", () => {
+    expect(of("help.jimdo.com")).toBe("b_jimdo");
+    expect(of("accounts.jimdo.com")).toBe("b_jimdo");
+    expect(isPlatformTenantHost("help.jimdo.com")).toBe(false);
+    expect(isMultiTenantHost("jimdo.com")).toBe(false);
   });
 
   it("tenant subdomains are single-tenant platform hosts; the apex is shared", () => {

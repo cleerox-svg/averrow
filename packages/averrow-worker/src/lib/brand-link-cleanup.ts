@@ -98,7 +98,9 @@ export interface LinkRow {
  */
 export type ProtectedReason = "authoritative_source" | "not_legacy_match";
 
-/** source_feed values whose brand link is set at insert by a brand-scoped detector. */
+/** source_feed values whose brand link is set at insert by a brand-scoped
+ *  detector. Single definition — also guards the IdP re-attribution's
+ *  all_idp scope (handlers/admin/idpReattribution.ts). */
 export const AUTHORITATIVE_FEEDS: ReadonlySet<string> = new Set([
   "typosquat_scanner",     // feeds/typosquat_scanner.ts
   "numbered_variant_scan", // agents/analyst.ts

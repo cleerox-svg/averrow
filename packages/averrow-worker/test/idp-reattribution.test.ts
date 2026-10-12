@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   decideReattribution,
   handleIdpReattribution,
+  IDP_REATTRIBUTION_DEFAULT_RUN_ID,
   runIdpReattribution,
   type ReattributionRow,
 } from "../src/handlers/admin/idpReattribution";
@@ -225,6 +226,35 @@ describe("scope=all_idp — revisit links made under earlier leftover rules", ()
       .toMatchObject({ action: "relink", newBrandId: "b_persona" });
   });
 
+  it("M1: a vendor-credited row gets the same answer as vendor scope", () => {
+    for (const h of ["withpersona.okta-linksso.com", "okta-acme.com", "asana-okta.com"]) {
+      const cat: BrandRow[] = [...CAT, { id: "b_asana", name: "Asana", canonical_domain: "asana.com", tier: "monitored" }];
+      const r = (x: string[]) => fuzzyMatchBrandDetailed(x, cat);
+      expect(decideReattribution(row(h), r, "all_idp"), h).toEqual(decideReattribution(row(h), r, "vendor"));
+      expect(decideReattribution(row(h), r, "all_idp").action, h).toBe("relink");
+    }
+  });
+
+  it("M2: a well-known tracked brand (rank) still counts as an accepted leftover target", () => {
+    const cat: BrandRow[] = [...CAT, { id: "b_asana", name: "Asana", canonical_domain: "asana.com", tier: "tracked", tranco_rank: 3000 }];
+    const r = (x: string[]) => fuzzyMatchBrandDetailed(x, cat);
+    const asanaLink = on("contoso-asana.okta-sso.com", "b_asana", "Asana", "asana.com", "tracked");
+    expect(decideReattribution({ ...asanaLink, brand_rank: 3000 }, r, "all_idp"))
+      .toMatchObject({ action: "keep", keptBecause: "still_matches" });
+    // without the rank the guard could not accept Asana (the M2 bug)
+    expect(decideReattribution({ ...asanaLink, brand_rank: null }, r, "all_idp").action).toBe("relink");
+  });
+
+  it("M3: all_idp protects every authoritative feed; vendor scope keeps its two", () => {
+    const cat: BrandRow[] = [...CAT, { id: "b_box", name: "Box", canonical_domain: "box.com", tier: "monitored" }];
+    const r = (x: string[]) => fuzzyMatchBrandDetailed(x, cat);
+    for (const feed of ["ct_logs", "nrd_hagezi", "spam_trap", "abuse_mailbox", "typosquat_scanner"]) {
+      expect(decideReattribution({ ...on("box-okta-sso.com", "b_box", "Box", "box.com"), source_feed: feed }, r, "all_idp"), feed)
+        .toMatchObject({ action: "keep", keptBecause: "protected_feed" });
+    }
+    expect(decideReattribution(row("okta-acme.com", { source_feed: "ct_logs" }), r, "vendor").action).toBe("relink");
+  });
+
   it("AI / page-context links and protected feeds are untouched", () => {
     expect(all(on("okta-login-secure.com", "b_viva", "Viva Wallet", "vivawallet.com")))
       .toMatchObject({ action: "keep", keptBecause: "not_lure_credit" });
@@ -273,6 +303,9 @@ describe("handleIdpReattribution request guards", () => {
   it("apply without the confirm token is a 400 (no DB access)", async () => {
     const res = await handleIdpReattribution(new URL("https://x/api/internal/backfills/idp-reattribution?apply=1"), env);
     expect(res.status).toBe(400);
+  });
+  it("default run_id differs per scope", () => {
+    expect(IDP_REATTRIBUTION_DEFAULT_RUN_ID).toEqual({ vendor: "idp-reattribution", all_idp: "idp-reattribution-all" });
   });
   it("rejects an unknown scope", async () => {
     const res = await handleIdpReattribution(new URL("https://x/?scope=everything"), env);
