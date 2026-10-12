@@ -9,6 +9,7 @@ export interface BotTrafficLatest {
   snapshot_date: string;
   bot_pct: number;
   human_pct: number;
+  /** ISO `YYYY-MM-DDTHH:MM:SSZ`. */
   fetched_at: string;
 }
 
@@ -39,8 +40,17 @@ export interface BotTrafficCategory {
 
 export interface BotTrafficFetchStatus {
   status: string | null;
+  /** ISO `YYYY-MM-DDTHH:MM:SSZ`. */
   last_success_at: string | null;
   last_error: string | null;
+}
+
+/** Per-section snapshot dates (YYYY-MM-DD). A ranked section lags bot_share when its feed last succeeded earlier. */
+export interface BotTrafficAsOf {
+  bot_share: string | null;
+  top_locations: string | null;
+  top_asns: string | null;
+  categories: string | null;
 }
 
 export interface BotTrafficData {
@@ -51,6 +61,8 @@ export interface BotTrafficData {
   top_asns: BotTrafficAsn[];
   categories: BotTrafficCategory[];
   last_fetch: BotTrafficFetchStatus;
+  /** Optional: absent on payloads cached before the field shipped. */
+  as_of?: Partial<BotTrafficAsOf> | null;
 }
 
 /** Daily Cloudflare Radar snapshot — data changes once a day, so cache 10 min. */

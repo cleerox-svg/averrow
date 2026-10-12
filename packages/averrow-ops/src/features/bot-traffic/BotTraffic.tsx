@@ -3,7 +3,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
-import type { BotTrafficDays } from '@/hooks/useBotTraffic';
+import type { BotTrafficAsOf, BotTrafficDays } from '@/hooks/useBotTraffic';
 import {
   Card, Button, PageHeader, PageState, StatTile, Table, Th, Td,
 } from '@/design-system/components';
@@ -46,6 +46,48 @@ function fmtShortDate(iso: string): string {
   const d = new Date(iso.length === 10 ? `${iso}T00:00:00Z` : iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * The section's as_of date when it differs from the bot_share date, else null.
+ * Tolerates a missing as_of (old cached payload) or missing per-section dates.
+ */
+export function staleAsOf(
+  asOf: Partial<BotTrafficAsOf> | null | undefined,
+  key: Exclude<keyof BotTrafficAsOf, 'bot_share'>,
+): string | null {
+  const base = asOf?.bot_share;
+  const section = asOf?.[key];
+  if (!base || !section || section === base) return null;
+  return section;
+}
+
+/** Muted "as of Oct 9" note with a subtle stale dot, shown beside a section label. */
+function AsOfNote({ date }: { date: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 font-mono text-[10px]"
+      style={{ color: 'var(--text-tertiary)' }}
+      title={`This section was last updated ${fmtDate(date)}, earlier than the bot share figure`}
+    >
+      <span
+        aria-hidden="true"
+        className="inline-block h-1.5 w-1.5 rounded-full"
+        style={{ background: 'var(--sev-medium-text)' }}
+      />
+      <span>as of {fmtShortDate(date)}</span>
+      <span className="sr-only"> (stale)</span>
+    </span>
+  );
+}
+
+function SectionHeader({ title, staleDate }: { title: string; staleDate: string | null }) {
+  return (
+    <div className="mb-4 flex items-baseline justify-between gap-3">
+      <SectionLabel>{title}</SectionLabel>
+      {staleDate ? <AsOfNote date={staleDate} /> : null}
+    </div>
+  );
 }
 
 function isPermissionError(msg: string): boolean {
@@ -172,6 +214,9 @@ function BotTrafficContent() {
     : `${delta > 0 ? '+' : ''}${delta.toFixed(1)} pp`;
   const locs = [...top_locations].sort((a, b) => a.rank - b.rank);
   const topCountry = locs[0];
+  const locsStale = staleAsOf(data.as_of, 'top_locations');
+  const asnsStale = staleAsOf(data.as_of, 'top_asns');
+  const catsStale = staleAsOf(data.as_of, 'categories');
   const asns = [...top_asns].sort((a, b) => a.rank - b.rank);
   const cats = [...categories].sort((a, b) => b.pct - a.pct);
   const catMax = cats[0]?.pct ?? 0;
@@ -206,7 +251,9 @@ function BotTrafficContent() {
           label="Top bot-origin country"
           value={topCountry ? topCountry.name : '—'}
           tone="red"
-          sub={topCountry ? `${fmtPct(topCountry.pct)} of automated traffic` : undefined}
+          sub={topCountry
+            ? `${fmtPct(topCountry.pct)} of automated traffic${locsStale ? ` · as of ${fmtShortDate(locsStale)}` : ''}`
+            : undefined}
         />
       </div>
 
@@ -256,7 +303,7 @@ function BotTrafficContent() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section>
-          <SectionLabel className="mb-4">Top bot-origin countries</SectionLabel>
+          <SectionHeader title="Top bot-origin countries" staleDate={locsStale} />
           <Card>
             {locs.length === 0 ? (
               <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No country data</p>
@@ -288,7 +335,7 @@ function BotTrafficContent() {
         </section>
 
         <section>
-          <SectionLabel className="mb-4">Top bot-origin networks</SectionLabel>
+          <SectionHeader title="Top bot-origin networks" staleDate={asnsStale} />
           <Card>
             {asns.length === 0 ? (
               <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No network data</p>
@@ -321,7 +368,7 @@ function BotTrafficContent() {
       </div>
 
       <section>
-        <SectionLabel className="mb-4">Verified-bot categories</SectionLabel>
+        <SectionHeader title="Verified-bot categories" staleDate={catsStale} />
         <Card>
           {cats.length === 0 ? (
             <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No category data</p>
