@@ -11,7 +11,7 @@
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
-import { botTrafficCacheKey } from "../feeds/cf_radar_bots";
+import { botTrafficCacheKey, type BotDensityBound } from "../feeds/cf_radar_bots";
 import type { Env } from "../types";
 
 const ALLOWED_DAYS = new Set([7, 30, 90]);
@@ -34,8 +34,25 @@ export interface BotTrafficData {
    * Every stored country (≤100) ranked by bot_pct desc: bot_pct = % of the
    * country's own HTTP traffic that is likely automated, traffic_pct = its
    * share (%) of all HTTP traffic. Consumers slice their own top-N.
+   * bound: null = exact (country in both Radar top-100 lists); 'lower' /
+   * 'upper' = bot_pct is a lower / upper bound (country in only the bot /
+   * human list) and traffic_pct is a midpoint estimate.
    */
-  bot_density: Array<{ code: string; name: string; bot_pct: number; traffic_pct: number; rank: number }>;
+  bot_density: Array<{
+    code: string;
+    name: string;
+    bot_pct: number;
+    traffic_pct: number;
+    bound: BotDensityBound | null;
+    rank: number;
+  }>;
+  /**
+   * Global bot share (%) on as_of.bot_density's snapshot_date — the same
+   * day the density rows were derived from — so countries compare against
+   * a matching baseline. null when no density rows or no bot_share row
+   * for that date.
+   */
+  bot_density_global_pct: number | null;
   last_fetch: { status: string | null; last_success_at: string | null; last_error: string | null };
   /**
    * The snapshot_date (YYYY-MM-DD) each section was read from. Each ranked
@@ -83,6 +100,11 @@ interface CountryRow {
   rank: number | null;
   value_pct: number;
   traffic_pct: number | null;
+  bound: string | null;
+}
+
+function toBound(v: string | null): BotDensityBound | null {
+  return v === "lower" || v === "upper" ? v : null;
 }
 
 /** Pivot bot/human rows into one entry per date (ascending). Missing side = complement. */
@@ -113,7 +135,7 @@ const RANKED_SQL = `
    ORDER BY rank ASC, value_pct DESC`;
 
 const COUNTRY_SQL = `
-  SELECT snapshot_date, country_code, label, rank, value_pct, traffic_pct
+  SELECT snapshot_date, country_code, label, rank, value_pct, traffic_pct, bound
     FROM radar_country_snapshots
    WHERE metric = ?1
      AND snapshot_date = (SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = ?1)
@@ -131,7 +153,7 @@ function toCountryShare(rows: CountryRow[]): Array<{ code: string; name: string;
 async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise<BotTrafficData> {
   const [
     seriesRes, latestRes, locRes, asnRes, catRes, statusRow, pullRow,
-    originRes, targetRes, densityRes,
+    originRes, targetRes, densityRes, densityShareRes,
   ] = await Promise.all([
     session.prepare(
       `SELECT snapshot_date, dim_key, value_pct, fetched_at
@@ -164,6 +186,14 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
     session.prepare(COUNTRY_SQL).bind("attack_origin").all<CountryRow>(),
     session.prepare(COUNTRY_SQL).bind("attack_target").all<CountryRow>(),
     session.prepare(COUNTRY_SQL).bind("bot_density").all<CountryRow>(),
+    // bot_share for the bot_density snapshot date (both dims, pivoted like
+    // `latest` so a lone human row still yields the complement).
+    session.prepare(
+      `SELECT snapshot_date, dim_key, value_pct, fetched_at
+         FROM bot_traffic_snapshots
+        WHERE metric = 'bot_share'
+          AND snapshot_date = (SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = 'bot_density')`,
+    ).all<ShareRow>(),
   ]);
 
   // bot_density is stored ranked by bot_pct desc; re-sort defensively and
@@ -176,8 +206,10 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
       name: r.label ?? r.country_code,
       bot_pct: r.value_pct,
       traffic_pct: r.traffic_pct,
+      bound: toBound(r.bound),
       rank: i + 1,
     }));
+  const densityShare = pivotBotShare(densityShareRes.results)[0];
 
   const latestPivot = pivotBotShare(latestRes.results)[0];
 
@@ -212,6 +244,7 @@ async function loadBotTraffic(session: D1DatabaseSession, days: number): Promise
     attack_origins: toCountryShare(originRes.results),
     attack_targets: toCountryShare(targetRes.results),
     bot_density: density,
+    bot_density_global_pct: densityShare?.bot_pct ?? null,
     last_fetch: {
       status: pullRow?.status ?? null,
       last_success_at: toIsoUtc(statusRow?.last_successful_pull ?? null),

@@ -17,11 +17,20 @@
 --                   summary + top-100 locations of LIKELY_AUTOMATED and
 --                   LIKELY_HUMAN traffic. value_pct = % of that country's
 --                   OWN HTTP traffic that is likely automated; traffic_pct =
---                   the country's share (%) of all HTTP traffic. Every
---                   country in both lists with traffic_pct >= 0.1, ranked
---                   by value_pct desc, capped at 100 rows.
+--                   the country's share (%) of all HTTP traffic. A country
+--                   is included when it appears in EITHER list. In both
+--                   lists → exact, bound NULL. In only one list (and the
+--                   other list was truncated at its 100-row limit) →
+--                   value_pct is a bound: bound='lower' when only in the
+--                   bot list (its human share is <= the human list's
+--                   smallest value), bound='upper' when only in the human
+--                   list (its bot share is <= the bot list's smallest
+--                   value); traffic_pct is then a midpoint estimate. A
+--                   missing country from a list SHORTER than its limit has
+--                   ~0 share and is exact. Kept when traffic_pct >= 0.1,
+--                   ranked by value_pct desc, capped at 100 rows.
 --
--- traffic_pct is NULL for the attack metrics.
+-- traffic_pct and bound are NULL for the attack metrics.
 --
 -- Additive only: new table + index. Nothing is written to `threats`.
 
@@ -33,6 +42,7 @@ CREATE TABLE IF NOT EXISTS radar_country_snapshots (
   rank          INTEGER,
   value_pct     REAL NOT NULL,
   traffic_pct   REAL,
+  bound         TEXT CHECK (bound IS NULL OR bound IN ('lower', 'upper')),
   fetched_at    TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (snapshot_date, metric, country_code)
 );

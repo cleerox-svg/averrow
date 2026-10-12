@@ -23,6 +23,7 @@ import {
   computeBotDensity,
   BOT_DENSITY_MIN_TRAFFIC_PCT,
   BOT_DENSITY_MAX_ROWS,
+  RADAR_LOCATIONS_LIMIT,
   TOP_LOCATIONS_STORED,
   botTrafficCacheKey,
   BOT_TRAFFIC_CACHE_DAYS,
@@ -330,19 +331,67 @@ describe("computeBotDensity", () => {
   const dim = (code: string, pct: number, label: string | null = `${code}-name`): RankedDim =>
     ({ dim_key: code, label, rank: 0, value_pct: pct });
 
-  it("applies traffic_c = b·B_c + (1−b)·H_c and bot_pct_c = 100·b·B_c / traffic_c", () => {
+  it("applies traffic_c = b·B_c + (1−b)·H_c and bot_pct_c = 100·b·B_c / traffic_c (exact, bound null)", () => {
     // b = 0.3. US: B=40%, H=20% → traffic 0.26 → 26%, bot 0.12/0.26 = 46.1538%.
     // DE: B=10%, H=30% → traffic 0.03+0.21 = 0.24 → 24%, bot 12.5%.
     const out = computeBotDensity(0.3, [dim("US", 40), dim("DE", 10)], [dim("DE", 30), dim("US", 20)]);
     expect(out).toEqual([
-      { code: "US", name: "US-name", bot_pct: 46.1538, traffic_pct: 26, rank: 1 },
-      { code: "DE", name: "DE-name", bot_pct: 12.5, traffic_pct: 24, rank: 2 },
+      { code: "US", name: "US-name", bot_pct: 46.1538, traffic_pct: 26, bound: null, rank: 1 },
+      { code: "DE", name: "DE-name", bot_pct: 12.5, traffic_pct: 24, bound: null, rank: 2 },
     ]);
   });
 
-  it("keeps only countries present in BOTH lists", () => {
+  it("exports RADAR_LOCATIONS_LIMIT = 100 as the default list limit", () => {
+    expect(RADAR_LOCATIONS_LIMIT).toBe(100);
+  });
+
+  it("short lists (< limit rows): a missing country has ~0 share — included, exact, no bound", () => {
+    // b=0.5, both lists far below 100 rows. BOTONLY: H=0 → 100% bot, traffic 25%.
+    // HUMANONLY: B=0 → 0% bot, traffic 25%. Both tails kept.
     const out = computeBotDensity(0.5, [dim("US", 10), dim("BOTONLY", 50)], [dim("US", 10), dim("HUMANONLY", 50)]);
-    expect(out.map((r) => r.code)).toEqual(["US"]);
+    expect(out).toEqual([
+      { code: "BOTONLY", name: "BOTONLY-name", bot_pct: 100, traffic_pct: 25, bound: null, rank: 1 },
+      { code: "US", name: "US-name", bot_pct: 50, traffic_pct: 10, bound: null, rank: 2 },
+      { code: "HUMANONLY", name: "HUMANONLY-name", bot_pct: 0, traffic_pct: 25, bound: null, rank: 3 },
+    ]);
+  });
+
+  it("full lists: bot-only → lower bound via Hmin, human-only → upper bound via Bmin, midpoint traffic", () => {
+    // listLimit=2 so both 2-row lists are "full". b=0.3; Bmin = 20% (BX), Hmin = 10% (HX).
+    // US exact: 0.12 / (0.12 + 0.7·0.3 = 0.21) → 36.3636%, traffic 33%.
+    // BX (bot only): 0.06 / (0.06 + 0.7·0.1) = 46.1538% LOWER; traffic 0.06 + 0.07/2 = 9.5%.
+    // HX (human only): 0.3·0.2 / (0.06 + 0.7·0.1) = 46.1538% UPPER; traffic 0.07 + 0.06/2 = 10%.
+    const out = computeBotDensity(0.3, [dim("US", 40), dim("BX", 20)], [dim("US", 30), dim("HX", 10)], 2);
+    expect(out).toEqual([
+      { code: "HX", name: "HX-name", bot_pct: 46.1538, traffic_pct: 10, bound: "upper", rank: 1 }, // tie → traffic desc
+      { code: "BX", name: "BX-name", bot_pct: 46.1538, traffic_pct: 9.5, bound: "lower", rank: 2 },
+      { code: "US", name: "US-name", bot_pct: 36.3636, traffic_pct: 33, bound: null, rank: 3 },
+    ]);
+  });
+
+  it("the bounds really bound the exact value for every share the missing country could have", () => {
+    const b = 0.3;
+    const [lower] = computeBotDensity(b, [dim("US", 40), dim("BX", 20)], [dim("US", 30), dim("HX", 10)], 2)
+      .filter((r) => r.bound === "lower");
+    const [upper] = computeBotDensity(b, [dim("US", 40), dim("BX", 20)], [dim("US", 30), dim("HX", 10)], 2)
+      .filter((r) => r.bound === "upper");
+    for (const frac of [0.01, 0.25, 0.5, 0.75, 1]) {
+      // BX's true human share is in (0, Hmin=10%]; HX's true bot share is in (0, Bmin=20%].
+      const bx = computeBotDensity(b, [dim("BX", 20)], [dim("BX", 10 * frac)])[0]!;
+      expect(bx.bot_pct).toBeGreaterThanOrEqual(lower!.bot_pct);
+      const hx = computeBotDensity(b, [dim("HX", 20 * frac)], [dim("HX", 10)])[0]!;
+      expect(hx.bot_pct).toBeLessThanOrEqual(upper!.bot_pct);
+    }
+  });
+
+  it("bounds apply per list: only the full list yields a bound, the short one means 0", () => {
+    // Bot list full (2 rows, limit 2), human list short (1 row).
+    // US / BX: missing from the SHORT human list → H=0 → exact 100%.
+    // HX: missing from the FULL bot list → upper bound 0.06/0.13 = 46.1538%, traffic 10%.
+    const out = computeBotDensity(0.3, [dim("US", 40), dim("BX", 20)], [dim("HX", 10)], 2);
+    expect(out.map((r) => [r.code, r.bot_pct, r.traffic_pct, r.bound])).toEqual([
+      ["US", 100, 12, null], ["BX", 100, 6, null], ["HX", 46.1538, 10, "upper"],
+    ]);
   });
 
   it("applies the traffic_pct noise floor (inclusive) and exports it as 0.1", () => {
@@ -356,14 +405,33 @@ describe("computeBotDensity", () => {
     expect(out.map((r) => [r.code, r.traffic_pct])).toEqual([["US", 1], ["AT", 0.1]]); // equal bot_pct → traffic desc
   });
 
-  it("b = 0 → every bot_pct is 0 (no NaN/Infinity), countries with zero human share dropped", () => {
+  it("the floor applies to bounded rows' midpoint traffic too", () => {
+    // listLimit=1, b=0.5: AA lower → traffic 0.0005 + 0.5·0.001/2 = 0.075%; BB upper → 0.075%. Both dropped.
+    expect(computeBotDensity(0.5, [dim("AA", 0.1)], [dim("BB", 0.1)], 1)).toEqual([]);
+  });
+
+  it("b = 0 → every bot_pct is 0 (no NaN/Infinity), countries with zero traffic dropped", () => {
     const out = computeBotDensity(0, [dim("US", 40), dim("ZZ", 50)], [dim("US", 20), dim("ZZ", 0)]);
-    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 0, traffic_pct: 20, rank: 1 }]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 0, traffic_pct: 20, bound: null, rank: 1 }]);
   });
 
   it("b = 1 → every bot_pct is 100, traffic = bot share; zero bot share dropped", () => {
     const out = computeBotDensity(1, [dim("US", 40), dim("ZZ", 0)], [dim("US", 20), dim("ZZ", 60)]);
-    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 100, traffic_pct: 40, rank: 1 }]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 100, traffic_pct: 40, bound: null, rank: 1 }]);
+  });
+
+  it("b = 0 / b = 1 with bounds stay finite", () => {
+    // listLimit=1 → both lists full. b=0: AA lower = 0/(0+0.2) = 0, traffic 0.2/2 = 10%; BB upper = 0, traffic 20%.
+    expect(computeBotDensity(0, [dim("AA", 40)], [dim("BB", 20)], 1).map((r) => [r.code, r.bot_pct, r.traffic_pct, r.bound]))
+      .toEqual([["BB", 0, 20, "upper"], ["AA", 0, 10, "lower"]]);
+    // b=1: AA lower = 0.4/0.4 = 100, traffic 40%; BB upper = 0.4/0.4 = 100, traffic 0.4/2 = 20%.
+    expect(computeBotDensity(1, [dim("AA", 40)], [dim("BB", 20)], 1).map((r) => [r.code, r.bot_pct, r.traffic_pct, r.bound]))
+      .toEqual([["AA", 100, 40, "lower"], ["BB", 100, 20, "upper"]]);
+  });
+
+  it("a zero bound denominator drops the row instead of producing NaN", () => {
+    // b=0, Hmin = 0: AA's lower-bound denominator is 0; BB has no traffic at all.
+    expect(computeBotDensity(0, [dim("AA", 40)], [dim("BB", 0)], 1)).toEqual([]);
   });
 
   it("all-zero shares never divide by zero", () => {
@@ -393,21 +461,29 @@ describe("computeBotDensity", () => {
       [dim("BB", 2), dim("AA", 2), dim("CC", 5), dim("HI", 1)],
     );
     expect(out.map((r) => [r.code, r.rank])).toEqual([["HI", 1], ["CC", 2], ["AA", 3], ["BB", 4]]);
-    expect(out.find((r) => r.code === "BB")!.name).toBe("BB");
+    // BB has no label in the bot list → falls back to the human list's label.
+    expect(out.find((r) => r.code === "BB")!.name).toBe("BB-name");
+    const bare = computeBotDensity(0.5, [dim("ZZ", 2, null)], [dim("ZZ", 2, null)]);
+    expect(bare[0]!.name).toBe("ZZ");
   });
 
   it("returns every qualifying country (not a top-20), capped at BOT_DENSITY_MAX_ROWS", () => {
     expect(BOT_DENSITY_MAX_ROWS).toBe(100);
-    const many = (n: number) => Array.from({ length: n }, (_, i) => dim(`C${String(i).padStart(3, "0")}`, 1 + i / 1000));
+    const many = (n: number, p = "C") => Array.from({ length: n }, (_, i) => dim(`${p}${String(i).padStart(3, "0")}`, 1 + i / 1000));
     expect(computeBotDensity(0.3, many(60), many(60))).toHaveLength(60);
     const capped = computeBotDensity(0.3, many(130), many(130));
     expect(capped).toHaveLength(100);
     expect(capped.map((r) => r.rank)).toEqual(Array.from({ length: 100 }, (_, i) => i + 1));
+    // The union of two disjoint 60-row lists (120 countries) is capped too,
+    // keeping the highest bot_pct (the bot-only side, 100%).
+    const union = computeBotDensity(0.3, many(60, "B"), many(60, "H"));
+    expect(union).toHaveLength(100);
+    expect(union.filter((r) => r.code.startsWith("B"))).toHaveLength(60);
   });
 
   it("ignores duplicate codes after the first occurrence in either list", () => {
     const out = computeBotDensity(0.5, [dim("US", 10), dim("US", 90)], [dim("US", 10), dim("US", 90)]);
-    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 50, traffic_pct: 10, rank: 1 }]);
+    expect(out).toEqual([{ code: "US", name: "US-name", bot_pct: 50, traffic_pct: 10, bound: null, rank: 1 }]);
   });
 });
 
@@ -713,15 +789,15 @@ describe("cf_radar_bots.ingest", () => {
 
     // Density: b=0.30, US B=40%, H=20% → traffic 26%, bot 46.1538%.
     expect(countryUpserts(h, "bot_density").map((s) => s.args)).toEqual([
-      ["2026-10-11", "bot_density", "US", "United States", 1, 46.1538, 26],
+      ["2026-10-11", "bot_density", "US", "United States", 1, 46.1538, 26, null],
     ]);
     // Attacks: value_pct = share of all L7 attacks; traffic_pct NULL.
     expect(countryUpserts(h, "attack_origin").map((s) => s.args)).toEqual([
-      ["2026-10-11", "attack_origin", "CN", "China", 1, 18.5, null],
-      ["2026-10-11", "attack_origin", "US", "United States", 2, 12, null],
+      ["2026-10-11", "attack_origin", "CN", "China", 1, 18.5, null, null],
+      ["2026-10-11", "attack_origin", "US", "United States", 2, 12, null, null],
     ]);
     expect(countryUpserts(h, "attack_target").map((s) => s.args)).toEqual([
-      ["2026-10-11", "attack_target", "US", "United States", 1, 35, null],
+      ["2026-10-11", "attack_target", "US", "United States", 1, 35, null, null],
     ]);
     // Each country metric's clear precedes its upserts.
     const idx = (pred: (s: Stmt) => boolean) => stmts(h).findIndex(pred);
@@ -856,6 +932,36 @@ describe("cf_radar_bots.ingest", () => {
     expect([...botPcts].sort((a, b) => b - a)).toEqual(botPcts);
   });
 
+  it("writes bound for one-list countries when both lists come back full (limit=100)", async () => {
+    // Both lists return exactly 100 rows (= the limit), so both are truncated.
+    //   bot:   B099=5%, B000..B097=1%, B098=0.05%   (Bmin = 0.05%)
+    //   human: B000..B097=1%, B098=0.05%, HX=1%     (Hmin = 0.05%)
+    // B099 is only in the bot list, HX only in the human list. B098 is in
+    // both but below the 0.1% traffic floor, so the 101-country union fits
+    // the 100-row cap.
+    const codes = Array.from({ length: 98 }, (_, i) => `B${String(i).padStart(3, "0")}`);
+    const row = (c: string, v: string) => ({ clientCountryAlpha2: c, clientCountryName: c, value: v });
+    const bot = [row("B099", "5"), ...codes.map((c) => row(c, "1")), row("B098", "0.05")];
+    const human = [...codes.map((c) => row(c, "1")), row("HX", "1"), row("B098", "0.05")];
+    const h = makeHarness({
+      ...allOk(),
+      [HUMAN_LOC]: () => respond(200, { success: true, result: { top_0: human } }),
+      "/http/top/locations": () => respond(200, { success: true, result: { top_0: bot } }),
+    });
+    const res = await cf_radar_bots.ingest(ctxOf(h.env));
+    expect(res.itemsError).toBe(0);
+    const dens = countryUpserts(h, "bot_density");
+    expect(dens).toHaveLength(99 + 1); // 98 exact + B099 + HX; B098 floored out
+    const byCode = new Map(dens.map((s) => [s.args[2], s.args]));
+    expect(byCode.has("B098")).toBe(false);
+    // b=0.3. B099 lower: 0.015 / (0.015 + 0.7·0.0005) = 97.7199%; traffic 0.015 + 0.7·0.0005/2 = 1.5175%.
+    expect(byCode.get("B099")!.slice(4)).toEqual([1, 97.7199, 1.5175, "lower"]);
+    // Exact: 0.003 / 0.01 = 30%, traffic 1%.
+    expect(byCode.get("B000")!.slice(5)).toEqual([30, 1, null]);
+    // HX upper: 0.3·0.0005 / (0.00015 + 0.007) = 2.0979%; traffic 0.007 + 0.00015/2 = 0.7075%.
+    expect(byCode.get("HX")!.slice(4)).toEqual([100, 2.0979, 0.7075, "upper"]);
+  });
+
   it.each([401, 403])("HTTP %i on the human locations is a partial failure: density skipped, its old rows kept", async (status) => {
     const h = makeHarness({ ...allOk(), [HUMAN_LOC]: () => respond(status, "denied") });
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
@@ -887,12 +993,17 @@ describe("cf_radar_bots.ingest", () => {
     expect(countryClears(h).some((s) => s.args[1] === "bot_density")).toBe(false);
   });
 
-  it("a density with no qualifying country (no overlap / below floor) is an error and keeps old rows", async () => {
+  it("a density with no qualifying country (all below the floor) is an error and keeps old rows", async () => {
+    // b=0.3, short lists: US bot-only → traffic 0.3·0.1% = 0.03%; ZZ human-only → 0.7·0.1% = 0.07%.
     const h = makeHarness({
       ...allOk(),
       [HUMAN_LOC]: () => respond(200, {
         success: true,
-        result: { top_0: [{ clientCountryAlpha2: "ZZ", clientCountryName: "Elsewhere", value: "50" }] },
+        result: { top_0: [{ clientCountryAlpha2: "ZZ", clientCountryName: "Elsewhere", value: "0.1" }] },
+      }),
+      "/http/top/locations": () => respond(200, {
+        success: true,
+        result: { top_0: [{ clientCountryAlpha2: "US", clientCountryName: "United States", value: "0.1" }] },
       }),
     });
     const res = await cf_radar_bots.ingest(ctxOf(h.env));
@@ -945,7 +1056,7 @@ describe("cf_radar_bots.ingest", () => {
   it("invalidates exactly the 7/30/90 bot_traffic cache keys after a successful write", async () => {
     const h = makeHarness(allOk());
     await cf_radar_bots.ingest(ctxOf(h.env));
-    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v3:30", "bot_traffic:v3:7", "bot_traffic:v3:90"]);
+    expect(h.cacheDeletes.sort()).toEqual(["bot_traffic:v4:30", "bot_traffic:v4:7", "bot_traffic:v4:90"]);
     // Invalidation happens after the batch write.
     expect(h.batches).toHaveLength(1);
   });

@@ -21,7 +21,9 @@ import type { Env } from "../types";
  *
  * #1–#5 write bot_traffic_snapshots; #6–#8 write radar_country_snapshots.
  * bot_density is derived, not fetched: computeBotDensity combines the
- * global bot share (#1) with the bot (#3) and human (#6) location shares.
+ * global bot share (#1) with the bot (#3) and human (#6) location shares,
+ * over the union of both lists (a country in only one list gets a
+ * lower/upper-bounded bot_pct, stored in `bound`).
  * It is skipped when #3 or #6 is unavailable (the failed endpoint is what
  * gets counted), and an empty derivation counts as `bot_density: empty result`.
  *
@@ -51,7 +53,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Cache keys the read handler populates — dropped after a successful write. */
 export const BOT_TRAFFIC_CACHE_DAYS = [7, 30, 90] as const;
 export function botTrafficCacheKey(days: number): string {
-  return `bot_traffic:v3:${days}`;
+  return `bot_traffic:v4:${days}`;
 }
 
 /** How many of the (limit=100) bot top-locations rows are stored as `top_location`. */
@@ -59,9 +61,15 @@ export const TOP_LOCATIONS_STORED = 10;
 /** Countries below this share (%) of all HTTP traffic are excluded from bot_density (noise floor). */
 export const BOT_DENSITY_MIN_TRAFFIC_PCT = 0.1;
 /**
+ * `limit` sent on both top-locations requests (#3 bot, #6 human). A list
+ * that comes back with this many rows was truncated, which is what makes
+ * the bot_density bounds apply (computeBotDensity).
+ */
+export const RADAR_LOCATIONS_LIMIT = 100;
+/**
  * Safety cap on bot_density rows per snapshot. Every qualifying country is
- * stored (both inputs are top-100 lists, so the intersection can't exceed
- * this); consumers slice their own top-N.
+ * stored up to this cap (the union of two top-100 lists can exceed it; the
+ * highest bot_pct rows win); consumers slice their own top-N.
  */
 export const BOT_DENSITY_MAX_ROWS = 100;
 
@@ -250,14 +258,32 @@ export function parseAttackTargets(payload: unknown): RankedDim[] {
   return parseCountryRows(payload, "targetCountryAlpha2", "targetCountryName");
 }
 
+/** Which side of the true value a bounded bot_density bot_pct sits on. */
+export type BotDensityBound = "lower" | "upper";
+
 export interface BotDensityRow {
   code: string;
   name: string;
-  /** % of the country's own HTTP traffic that is likely automated. */
+  /**
+   * % of the country's own HTTP traffic that is likely automated. Exact when
+   * `bound` is null; otherwise a lower / upper bound on the true value.
+   */
   bot_pct: number;
-  /** The country's share (%) of all HTTP traffic. */
+  /** The country's share (%) of all HTTP traffic (a midpoint estimate when `bound` is set). */
   traffic_pct: number;
+  /** null = exact (country in both lists); 'lower' / 'upper' = bot_pct is a bound. */
+  bound: BotDensityBound | null;
   rank: number;
+}
+
+/** First finite occurrence per code, negative values clamped to 0. */
+function shareMap(list: RankedDim[]): Map<string, { pct: number; label: string | null }> {
+  const m = new Map<string, { pct: number; label: string | null }>();
+  for (const r of list) {
+    if (m.has(r.dim_key) || !Number.isFinite(r.value_pct)) continue;
+    m.set(r.dim_key, { pct: Math.max(0, r.value_pct), label: r.label });
+  }
+  return m;
 }
 
 /**
@@ -269,37 +295,84 @@ export interface BotDensityRow {
  *   traffic_c = b·B_c + (1−b)·H_c          (country's share of all traffic)
  *   bot_pct_c = 100·b·B_c / traffic_c
  *
- * Only countries present in BOTH lists with traffic_pct ≥
- * BOT_DENSITY_MIN_TRAFFIC_PCT (compared after 4-dp rounding) are kept —
- * a country missing from one top-100 list has an unknown share, not zero.
- * Sorted by bot_pct desc (ties: traffic_pct desc, then code), capped
- * at BOT_DENSITY_MAX_ROWS, ranked 1..N. A non-finite b → []; b is clamped to
- * [0, 1], so b = 0 / 1 give 0 % / 100 % without NaN or Infinity.
+ * Countries are included from EITHER list (the union), so neither tail is
+ * dropped: a small bot-heavy country can miss the human top-N, and a
+ * near-0 %-bot country can miss the bot top-N.
+ *
+ *   - In both lists → exact, bound = null.
+ *   - Bot list only, human list FULL (returned `listLimit` rows): its human
+ *     share is at most the list's smallest value, H_c ≤ Hmin. bot_pct is
+ *     monotone decreasing in H_c, so
+ *       bot_pct ≥ 100·b·B_c / (b·B_c + (1−b)·Hmin)      → bound = 'lower'
+ *     traffic_pct = 100·(b·B_c + (1−b)·Hmin/2) — a midpoint estimate,
+ *     H_c taken as Hmin/2 (it lies somewhere in [0, Hmin]).
+ *   - Human list only, bot list FULL: B_c ≤ Bmin, so
+ *       bot_pct ≤ 100·b·Bmin / (b·Bmin + (1−b)·H_c)      → bound = 'upper'
+ *     traffic_pct = 100·((1−b)·H_c + b·Bmin/2) — midpoint, B_c ≈ Bmin/2.
+ *   - Missing from a SHORT list (fewer than `listLimit` rows): Radar listed
+ *     every country with a share, so the missing share is ~0 — it is
+ *     treated as 0 and the row is exact (bound = null).
+ *
+ * Rows with traffic_pct < BOT_DENSITY_MIN_TRAFFIC_PCT (compared after 4-dp
+ * rounding) or a zero denominator are dropped. Sorted by bot_pct desc (ties:
+ * traffic_pct desc, then code), capped at BOT_DENSITY_MAX_ROWS, ranked 1..N.
+ * A non-finite b → []; b is clamped to [0, 1], so b = 0 / 1 never produce
+ * NaN or Infinity.
  */
-export function computeBotDensity(b: number, botList: RankedDim[], humanList: RankedDim[]): BotDensityRow[] {
+export function computeBotDensity(
+  b: number,
+  botList: RankedDim[],
+  humanList: RankedDim[],
+  listLimit: number = RADAR_LOCATIONS_LIMIT,
+): BotDensityRow[] {
   if (!Number.isFinite(b)) return [];
   const bf = Math.min(1, Math.max(0, b));
-  const human = new Map<string, number>();
-  for (const r of humanList) {
-    if (Number.isFinite(r.value_pct) && !human.has(r.dim_key)) human.set(r.dim_key, r.value_pct);
-  }
+  const bot = shareMap(botList);
+  const human = shareMap(humanList);
+  // Bounds only exist when the list was truncated at its limit.
+  const minOf = (m: Map<string, { pct: number }>): number | null =>
+    m.size >= listLimit ? Math.min(...[...m.values()].map((v) => v.pct)) / 100 : null;
+  const bMin = minOf(bot);
+  const hMin = minOf(human);
 
+  const codes = [...bot.keys(), ...[...human.keys()].filter((c) => !bot.has(c))];
   const out: Array<Omit<BotDensityRow, "rank">> = [];
-  const seen = new Set<string>();
-  for (const r of botList) {
-    if (seen.has(r.dim_key)) continue;
-    const hPct = human.get(r.dim_key);
-    if (hPct === undefined || !Number.isFinite(r.value_pct)) continue;
-    seen.add(r.dim_key);
-    const botTraffic = bf * Math.max(0, r.value_pct) / 100;
-    const traffic = botTraffic + (1 - bf) * Math.max(0, hPct) / 100;
+  for (const code of codes) {
+    const bEntry = bot.get(code);
+    const hEntry = human.get(code);
+    const B = (bEntry?.pct ?? 0) / 100;
+    const H = (hEntry?.pct ?? 0) / 100;
+
+    let botPart: number;      // numerator: b·B (or b·Bmin)
+    let denom: number;        // b·B + (1−b)·H with the bound substituted
+    let traffic: number;      // share of all traffic (fraction)
+    let bound: BotDensityBound | null = null;
+    if (bEntry && !hEntry && hMin !== null) {
+      botPart = bf * B;
+      denom = botPart + (1 - bf) * hMin;
+      traffic = botPart + ((1 - bf) * hMin) / 2;
+      bound = "lower";
+    } else if (hEntry && !bEntry && bMin !== null) {
+      botPart = bf * bMin;
+      denom = botPart + (1 - bf) * H;
+      traffic = (1 - bf) * H + (bf * bMin) / 2;
+      bound = "upper";
+    } else {
+      botPart = bf * B;
+      denom = botPart + (1 - bf) * H;
+      traffic = denom;
+    }
+
     const trafficPct = round4(100 * traffic);
-    if (!(traffic > 0) || trafficPct < BOT_DENSITY_MIN_TRAFFIC_PCT) continue;
+    if (!(denom > 0) || !(traffic > 0) || trafficPct < BOT_DENSITY_MIN_TRAFFIC_PCT) continue;
+    const botPct = round4((100 * botPart) / denom);
+    if (!Number.isFinite(botPct) || !Number.isFinite(trafficPct)) continue;
     out.push({
-      code: r.dim_key,
-      name: r.label ?? r.dim_key,
-      bot_pct: round4((100 * botTraffic) / traffic),
+      code,
+      name: bEntry?.label ?? hEntry?.label ?? code,
+      bot_pct: botPct,
       traffic_pct: trafficPct,
+      bound,
     });
   }
 
@@ -401,10 +474,10 @@ const PATHS = {
   summary: "/http/summary/BOT_CLASS?dateRange=1d&format=JSON",
   series: "/http/timeseries_groups/BOT_CLASS?dateRange=28d&aggInterval=1d&format=JSON",
   // limit=100 feeds bot_density; only the top TOP_LOCATIONS_STORED are stored as top_location.
-  locations: "/http/top/locations?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=100&format=JSON",
+  locations: `/http/top/locations?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=${RADAR_LOCATIONS_LIMIT}&format=JSON`,
   ases: "/http/top/ases?botClass=LIKELY_AUTOMATED&dateRange=1d&limit=10&format=JSON",
   categories: "/bots/summary/BOT_CATEGORY?dateRange=1d&format=JSON",
-  humanLocations: "/http/top/locations?botClass=LIKELY_HUMAN&dateRange=1d&limit=100&format=JSON",
+  humanLocations: `/http/top/locations?botClass=LIKELY_HUMAN&dateRange=1d&limit=${RADAR_LOCATIONS_LIMIT}&format=JSON`,
   attackOrigins: "/attacks/layer7/top/locations/origin?dateRange=7d&limit=10&format=JSON",
   attackTargets: "/attacks/layer7/top/locations/target?dateRange=7d&limit=10&format=JSON",
 } as const;
@@ -465,13 +538,14 @@ export const cf_radar_bots: FeedModule = {
       "DELETE FROM bot_traffic_snapshots WHERE snapshot_date = ? AND metric = ?",
     );
     const upsertCountry = db.prepare(
-      `INSERT INTO radar_country_snapshots (snapshot_date, metric, country_code, label, rank, value_pct, traffic_pct, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `INSERT INTO radar_country_snapshots (snapshot_date, metric, country_code, label, rank, value_pct, traffic_pct, bound, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT(snapshot_date, metric, country_code) DO UPDATE SET
          label = excluded.label,
          rank = excluded.rank,
          value_pct = excluded.value_pct,
          traffic_pct = excluded.traffic_pct,
+         bound = excluded.bound,
          fetched_at = excluded.fetched_at`,
     );
     const clearCountryMetric = db.prepare(
@@ -558,7 +632,7 @@ export const cf_radar_bots: FeedModule = {
       } else {
         stmts.push(clearCountryMetric.bind(snapshotDate, "bot_density"));
         for (const d of density) {
-          stmts.push(upsertCountry.bind(snapshotDate, "bot_density", d.code, d.name, d.rank, d.bot_pct, d.traffic_pct));
+          stmts.push(upsertCountry.bind(snapshotDate, "bot_density", d.code, d.name, d.rank, d.bot_pct, d.traffic_pct, d.bound));
           rowsWritten++;
         }
       }
@@ -576,7 +650,7 @@ export const cf_radar_bots: FeedModule = {
       const date = parseSnapshotDate(parsed.payload) ?? snapshotDate;
       stmts.push(clearCountryMetric.bind(date, metric));
       for (const row of parsed.rows) {
-        stmts.push(upsertCountry.bind(date, metric, row.dim_key, row.label, row.rank, row.value_pct, null));
+        stmts.push(upsertCountry.bind(date, metric, row.dim_key, row.label, row.rank, row.value_pct, null, null));
         rowsWritten++;
       }
     }

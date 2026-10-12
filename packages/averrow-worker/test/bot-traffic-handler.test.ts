@@ -23,6 +23,8 @@ interface Rows {
   attack_origin?: unknown[];
   attack_target?: unknown[];
   bot_density?: unknown[];
+  /** bot_share rows for the bot_density snapshot date. */
+  densityShare?: unknown[];
   feedStatus?: unknown;
   pull?: unknown;
 }
@@ -35,10 +37,12 @@ interface Harness {
   seriesBinds: unknown[][];
   /** metric bound to each radar_country_snapshots query. */
   countryMetrics: unknown[];
+  /** SQL of the bot_share-on-density-date query (null until run). */
+  densityShareSql: string | null;
 }
 
 function makeHarness(rows: Rows = {}, opts: { cached?: Record<string, string>; dbThrows?: boolean } = {}): Harness {
-  const h: Harness = { env: {} as Env, cacheGets: [], cachePuts: [], dbPrepares: 0, seriesBinds: [], countryMetrics: [] };
+  const h: Harness = { env: {} as Env, cacheGets: [], cachePuts: [], dbPrepares: 0, seriesBinds: [], countryMetrics: [], densityShareSql: null };
 
   const stmt = (sql: string) => {
     h.dbPrepares++;
@@ -52,6 +56,10 @@ function makeHarness(rows: Rows = {}, opts: { cached?: Record<string, string>; d
         }
         if (/MAX\(snapshot_date\)[\s\S]*metric = 'bot_share'\)/.test(sql)) {
           return { results: (rows.latest ?? []) as T[] };
+        }
+        if (/FROM radar_country_snapshots WHERE metric = 'bot_density'\)/.test(sql)) {
+          h.densityShareSql = sql;
+          return { results: (rows.densityShare ?? []) as T[] };
         }
         if (/FROM radar_country_snapshots/.test(sql)) h.countryMetrics.push(args[0]);
         if (/metric = \?1/.test(sql)) {
@@ -185,6 +193,7 @@ describe("handleBotTraffic", () => {
       attack_origins: [],
       attack_targets: [],
       bot_density: [],
+      bot_density_global_pct: null,
       last_fetch: { status: null, last_success_at: null, last_error: null },
       as_of: {
         bot_share: null, top_locations: null, top_asns: null, categories: null,
@@ -230,11 +239,19 @@ describe("handleBotTraffic", () => {
       ],
       // Returned in full, re-sorted by bot_pct desc and re-ranked; a row
       // without traffic_pct is dropped.
+      // bound: 'lower'/'upper' pass through; anything else (null, junk) -> null.
       bot_density: [
-        { snapshot_date: "2026-10-11", country_code: "DE", label: "Germany", rank: 2, value_pct: 20, traffic_pct: 4 },
-        { snapshot_date: "2026-10-11", country_code: "SG", label: "Singapore", rank: 1, value_pct: 70.5, traffic_pct: 0.8 },
-        { snapshot_date: "2026-10-11", country_code: "NL", label: null, rank: 3, value_pct: 20, traffic_pct: 2 },
-        { snapshot_date: "2026-10-11", country_code: "QQ", label: "Bad", rank: 4, value_pct: 5, traffic_pct: null },
+        { snapshot_date: "2026-10-10", country_code: "DE", label: "Germany", rank: 2, value_pct: 20, traffic_pct: 4, bound: null },
+        { snapshot_date: "2026-10-10", country_code: "SG", label: "Singapore", rank: 1, value_pct: 70.5, traffic_pct: 0.8, bound: "lower" },
+        { snapshot_date: "2026-10-10", country_code: "NL", label: null, rank: 3, value_pct: 20, traffic_pct: 2, bound: "upper" },
+        { snapshot_date: "2026-10-10", country_code: "JP", label: "Japan", rank: 4, value_pct: 10, traffic_pct: 3, bound: "sideways" },
+        { snapshot_date: "2026-10-10", country_code: "QQ", label: "Bad", rank: 5, value_pct: 5, traffic_pct: null, bound: null },
+      ],
+      // Density lags bot_share by a day: the global baseline is that day's
+      // bot share (28), not latest (30).
+      densityShare: [
+        { snapshot_date: "2026-10-10", dim_key: "bot", value_pct: 28, fetched_at: "2026-10-11 06:00:00" },
+        { snapshot_date: "2026-10-10", dim_key: "human", value_pct: 72, fetched_at: "2026-10-11 06:00:00" },
       ],
       feedStatus: { last_successful_pull: "2026-10-11 06:00:05", last_error: null },
       pull: { status: "success" },
@@ -267,16 +284,20 @@ describe("handleBotTraffic", () => {
       ],
       attack_targets: [{ code: "US", name: "United States", pct: 35, rank: 1 }],
       bot_density: [
-        { code: "SG", name: "Singapore", bot_pct: 70.5, traffic_pct: 0.8, rank: 1 },
-        { code: "DE", name: "Germany", bot_pct: 20, traffic_pct: 4, rank: 2 }, // tie -> traffic desc
-        { code: "NL", name: "NL", bot_pct: 20, traffic_pct: 2, rank: 3 },
+        { code: "SG", name: "Singapore", bot_pct: 70.5, traffic_pct: 0.8, bound: "lower", rank: 1 },
+        { code: "DE", name: "Germany", bot_pct: 20, traffic_pct: 4, bound: null, rank: 2 }, // tie -> traffic desc
+        { code: "NL", name: "NL", bot_pct: 20, traffic_pct: 2, bound: "upper", rank: 3 },
+        { code: "JP", name: "Japan", bot_pct: 10, traffic_pct: 3, bound: null, rank: 4 },
       ],
+      bot_density_global_pct: 28,
       last_fetch: { status: "success", last_success_at: "2026-10-11T06:00:05Z", last_error: null },
       as_of: {
         bot_share: "2026-10-11", top_locations: "2026-10-11", top_asns: "2026-10-09", categories: "2026-10-11",
-        attack_origins: "2026-10-11", attack_targets: "2026-10-10", bot_density: "2026-10-11",
+        attack_origins: "2026-10-11", attack_targets: "2026-10-10", bot_density: "2026-10-10",
       },
     });
+    // The baseline query is pinned to bot_density's own latest date.
+    expect(h.densityShareSql).toMatch(/metric = 'bot_share'[\s\S]*SELECT MAX\(snapshot_date\) FROM radar_country_snapshots WHERE metric = 'bot_density'/);
     expect(h.cachePuts).toHaveLength(1);
     expect(h.cachePuts[0]!.opts).toEqual({ expirationTtl: 3600 });
     expect(JSON.parse(h.cachePuts[0]!.value)).toEqual(data);
@@ -315,10 +336,23 @@ describe("handleBotTraffic", () => {
     expect(data.bot_density.map((r) => r.rank)).toEqual(rows.map((r) => r.rank));
   });
 
-  it("cache key is v3", () => {
-    expect(botTrafficCacheKey(7)).toBe("bot_traffic:v3:7");
-    expect(botTrafficCacheKey(30)).toBe("bot_traffic:v3:30");
-    expect(botTrafficCacheKey(90)).toBe("bot_traffic:v3:90");
+  it("bot_density_global_pct complements a lone human row and is null without a bot_share row", async () => {
+    const density = [{ snapshot_date: "2026-10-11", country_code: "US", label: "US", rank: 1, value_pct: 30, traffic_pct: 20, bound: null }];
+    const lone = makeHarness({
+      bot_density: density,
+      densityShare: [{ snapshot_date: "2026-10-11", dim_key: "human", value_pct: 65, fetched_at: "x" }],
+    });
+    const a = (await (await call(lone.env)).json()) as { data: { bot_density_global_pct: number | null } };
+    expect(a.data.bot_density_global_pct).toBe(35);
+    const none = makeHarness({ bot_density: density });
+    const b = (await (await call(none.env)).json()) as { data: { bot_density_global_pct: number | null } };
+    expect(b.data.bot_density_global_pct).toBeNull();
+  });
+
+  it("cache key is v4", () => {
+    expect(botTrafficCacheKey(7)).toBe("bot_traffic:v4:7");
+    expect(botTrafficCacheKey(30)).toBe("bot_traffic:v4:30");
+    expect(botTrafficCacheKey(90)).toBe("bot_traffic:v4:90");
   });
 
   it("cache hit returns the cached payload without touching D1 or writing the cache", async () => {
