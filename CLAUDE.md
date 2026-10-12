@@ -638,6 +638,21 @@ executive_monitor: 26 */6 * * * (every 6h at :26 — EXEC_IMPERSONATION Stage 4
                              `executive_monitor` AgentModule, so it writes `agent_runs`
                              + `agent_events` like every other dispatch. Manual/fallback
                              trigger: `POST /api/internal/agents/executive_monitor/run`.)
+page_capture: */10 * * * *  (every 10 min — phishing page evidence capture, spec
+                             docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md. Own Worker budget
+                             (Browser Rendering wall time never competes with the hourly
+                             mesh). `handleScheduled` early-returns on an exact
+                             `event.cron === '*/10 * * * *'` match — ABOVE the hourly-mesh
+                             guard, same as executive_monitor; `*/5` (navigator) and `*/10`
+                             fire as separate events at :00/:10/…, so neither double-runs.
+                             Calls `executeAgent` on the `page_capture` AgentModule
+                             (`agent_runs` + telemetry `agent_events` `pages_captured`).
+                             Batch of 5 captures/tick (`CAPTURE_BATCH`). Hour-only gate (UTC
+                             hour 0) runs the daily 180-day expiry sweep, deduped by a KV
+                             day stamp (`page_capture:sweep:<date>`) — no minute gate. No AI.
+                             Needs R2 `PHISH_CAPTURES` + `[browser]` `BROWSER` (prod only;
+                             absent → clean no-op). Manual/fallback trigger:
+                             `POST /api/internal/agents/page_capture/run`.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -1398,6 +1413,8 @@ threat_cube_arcs          ← OLAP cube: hourly country × brand arc corridors (
 hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results
+page_captures             ← Phishing-page capture queue + evidence index (migration 0290); R2 keys +
+                            SHA-256 per object, 180-day expiry; written by the page_capture agent
 org_executives            ← Org-scoped executive identity registry (migration 0244); watched
                             by the executive_monitor agent (Doppelganger) for name→handle
                             impersonation, raising executive_impersonation alerts
