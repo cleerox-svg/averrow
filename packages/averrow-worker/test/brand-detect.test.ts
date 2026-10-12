@@ -6,6 +6,8 @@ import {
   keywordMatchesHost,
   hostOf,
   isGenericBrand,
+  isMultiTenantHost,
+  isPlatformTenantHost,
   type BrandRow,
 } from "../src/lib/brandDetect";
 
@@ -415,5 +417,58 @@ describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", ()
     expect(brandOf("bbva-entra.com")).toBeNull(); // compound-only lure, no stripping
     expect(keywordMatchesHost("okta", "withpersona.okta-linksso.com")).toBe(false);
     expect(keywordMatchesHost("persona", "withpersona.okta-linksso.com")).toBe(true);
+  });
+});
+
+describe("free site builders are platform suffixes (chase-login.jimdofree.com is Chase)", () => {
+  const mon = (name: string, canonical_domain: string, id: string): BrandRow =>
+    ({ id, name, canonical_domain, tier: "monitored" });
+  const CAT: BrandRow[] = [
+    mon("Jimdofree", "jimdofree.com", "b_jimdofree"), mon("Jimdo", "jimdo.com", "b_jimdo"),
+    mon("Tilda", "tilda.ws", "b_tilda"), mon("Chase", "chase.com", "b_chase"),
+    mon("Microsoft", "microsoft.com", "b_ms"), mon("Strikingly", "strikingly.com", "b_strk"),
+  ];
+  const of = (h: string) => fuzzyMatchBrand([h], CAT);
+
+  it.each([
+    ["chase-login.jimdofree.com", "b_chase"], ["chase-secure.jimdosite.com", "b_chase"],
+    ["microsoft-login.tilda.ws", "b_ms"],
+    ["microsoft365.mystrikingly.com", "b_ms"], ["chase-verify.yolasite.com", "b_chase"],
+    ["chase.webnode.page", "b_chase"], ["chase-online.site123.me", "b_chase"],
+    ["chase-login.framer.website", "b_chase"], ["chase-login.square.site", "b_chase"],
+  ])("%s → %s", (host, brand) => {
+    expect(of(host)).toBe(brand);
+  });
+
+  it("a tenant label that names no brand credits nobody (not the builder)", () => {
+    expect(of("xk2-login.jimdofree.com")).toBeNull();
+    expect(of("project1234.tilda.ws")).toBeNull();
+  });
+
+  it("the builder's own site still matches the builder brand", () => {
+    expect(of("jimdofree.com")).toBe("b_jimdofree");
+    expect(of("www.jimdo.com")).toBe("b_jimdo");
+    expect(of("https://tilda.ws/")).toBe("b_tilda");
+  });
+
+  it("jimdo.com is Jimdo's corporate domain, not a free-site host", () => {
+    expect(of("help.jimdo.com")).toBe("b_jimdo");
+    expect(of("accounts.jimdo.com")).toBe("b_jimdo");
+    expect(isPlatformTenantHost("help.jimdo.com")).toBe(false);
+    expect(isMultiTenantHost("jimdo.com")).toBe(false);
+  });
+
+  it("tenant subdomains are single-tenant platform hosts; the apex is shared", () => {
+    expect(isPlatformTenantHost("chase-login.jimdofree.com")).toBe(true);
+    expect(isMultiTenantHost("chase-login.jimdofree.com")).toBe(false);
+    expect(isMultiTenantHost("jimdofree.com")).toBe(true);
+  });
+
+  it("the pair validator no longer accepts the builder brand on a tenant host", () => {
+    expect(matchBrandToHost("chase-login.jimdofree.com", CAT[0]!)).toBeNull();
+    // IdP lure on a builder: the legacy (old full-host) path is built from the
+    // suffix-stripped labels, so it cannot accept Jimdofree either.
+    expect(matchBrandToHost("login-microsoftonnline.jimdofree.com", CAT[0]!)).toBeNull();
+    expect(matchBrandToHost("login-microsoftonnline.jimdofree.com", CAT[4]!)).toBe("token");
   });
 });
