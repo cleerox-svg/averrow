@@ -397,7 +397,9 @@ function BotTrafficContent() {
                       <Th className="w-8">#</Th>
                       <Th>Country</Th>
                       <Th className="text-right">Bot share</Th>
-                      <Th className="text-right">Traffic share</Th>
+                      {/* Below sm the traffic share folds under the country name so
+                          the table fits a 375px card without a hidden column. */}
+                      <Th className="hidden sm:table-cell text-right">Traffic share</Th>
                     </tr>
                   </thead>
                   <tbody>
@@ -408,9 +410,12 @@ function BotTrafficContent() {
                           <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.rank}</Td>
                           <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
                             {d.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.code}</span>
+                            <div className="sm:hidden font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                              {fmtPct(d.traffic_pct)} of traffic
+                            </div>
                           </Td>
                           <Td className="py-1.5 text-right">
-                            <div className="ml-auto w-24 sm:w-40">
+                            <div className="ml-auto w-20 sm:w-40">
                               <span
                                 className="font-mono"
                                 style={{ color: above ? 'var(--sev-medium-text)' : 'var(--text-primary)' }}
@@ -426,7 +431,7 @@ function BotTrafficContent() {
                               </div>
                             </div>
                           </Td>
-                          <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtPct(d.traffic_pct)}</Td>
+                          <Td className="hidden sm:table-cell py-1.5 text-right font-mono" style={{ color: 'var(--text-secondary)' }}>{fmtPct(d.traffic_pct)}</Td>
                         </tr>
                       );
                     })}
