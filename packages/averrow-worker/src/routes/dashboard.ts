@@ -31,6 +31,7 @@ import {
   handleTrendIntelligence, handleTrendThreatVolume, handleTrendBrandMomentum,
   handleTrendProviderMomentum, handleTrendNexusActive,
 } from "../handlers/trends";
+import { handleBotTraffic } from "../handlers/botTraffic";
 
 export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   // ─── Dashboard Stats (v1) — removed ──────────────────────────────
@@ -349,5 +350,12 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     const ctx = await requireStaff(request, env);
     if (!isAuthContext(ctx)) return ctx;
     return handleTrendNexusActive(request, env);
+  });
+
+  // ─── Internet bot traffic (Cloudflare Radar, feed cf_radar_bots) ──
+  router.get("/api/bot-traffic", async (request: Request, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    return handleBotTraffic(request, env);
   });
 }

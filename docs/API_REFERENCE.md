@@ -851,6 +851,28 @@ free text. They remain on `lookalike_domains` for staff
 | GET | `/api/trends/provider-momentum` | Staff | Hosting provider momentum (7d/30d) |
 | GET | `/api/trends/nexus-active` | Staff | Active accelerating Nexus clusters |
 
+## Bot Traffic
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/bot-traffic` | Staff | Internet bot-vs-human HTTP traffic from Cloudflare Radar (feed `cf_radar_bots`, table `bot_traffic_snapshots`, migration 0290). `?days=7\|30\|90` (default 30; any other value → 400). KV-cached 1h under `bot_traffic:v1:<days>` (the feed drops the keys after each write). Empty table → `latest: null` + empty arrays (200) |
+
+Response `data` (handler `handlers/botTraffic.ts`):
+
+```
+{
+  source: 'cloudflare_radar',
+  latest: { snapshot_date, bot_pct, human_pct, fetched_at } | null,   // newest bot_share date, regardless of `days`
+  series: [{ date, bot_pct, human_pct }],                            // ascending, last `days` days
+  top_locations: [{ code, name, pct, rank }],                        // newest snapshot_date with top_location rows
+  top_asns: [{ asn, name, pct, rank }],                              // asn is a number
+  categories: [{ category, pct }],                                   // verified-bot categories, pct desc
+  last_fetch: { status, last_success_at, last_error }                // status = newest finished feed_pull_history row; others from feed_status
+}
+```
+
+`top_locations` / `top_asns` are shares of **likely-automated** traffic; `categories` are shares of **verified-bot** traffic. Timestamps (`fetched_at`, `last_success_at`) are SQLite `datetime('now')` strings (`YYYY-MM-DD HH:MM:SS`, UTC, no `Z`).
+
 ## Signals
 
 | Method | Path | Auth | Description |

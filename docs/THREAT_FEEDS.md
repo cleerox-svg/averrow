@@ -226,6 +226,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 |------|------|--------|-------------|
 | **Cloudflare Scanner** | `cloudflare_scanner.ts` | Cloudflare Radar | URL scanner results |
 | **Cloudflare Email** | `cloudflare_email.ts` | Cloudflare Email | Email routing intelligence |
+| **Cloudflare Radar — Bot Traffic** | `cf_radar_bots.ts` | Cloudflare Radar API | Platform context, **not IOCs**: daily (`0 6 * * *` interval) pull of global bot-vs-human HTTP share (+ 28-day daily backfill), top countries/ASNs of likely-automated traffic, and verified-bot category mix into `bot_traffic_snapshots` (migration 0290); served by `GET /api/bot-traffic`. Never writes `threats`; reports `itemsNew = 0` so it never triggers Sentinel. **Requires the `Radar Read` permission on `CF_API_TOKEN`** (the same secret `cloudflare_scanner` uses) — without it every pull fails as `CF Radar: CF_API_TOKEN lacks Radar Read permission (HTTP 401/403)`. The bot-class summary is required (failure = failed pull); the timeseries/top-N/category endpoints are best-effort and count as `records_rejected` when they fail |
 
 ### Ingest Feeds — Third-Party Intelligence
 
