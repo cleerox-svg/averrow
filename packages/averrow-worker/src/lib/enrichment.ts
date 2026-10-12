@@ -17,6 +17,7 @@ import { batchResolve } from "./dns";
 import { batchGeoLookup, normalizeProvider, upsertHostingProvider, isPrivateIP, getGeoUsage, PRIVATE_IP_SQL_FILTER } from "./geoip";
 import { batchRDAPLookup } from "./whois";
 import { enrichBrands } from "./brandDetect";
+import { prioritizeIdpDns } from "./dns-queue-priority";
 import { cachedCount, THREATS_TOTAL_TTL_S } from "./cached-count";
 
 export interface EnrichmentResult {
@@ -252,6 +253,19 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
   try {
     const brandResult = await enrichBrands(env.DB);
     result.brandsMatched = brandResult.matched;
+    // Threats tagged IdP-family only AFTER insert (weak lure + newly known
+    // brand, tagIdpAfterBrandMatch) never pass through the reconciler's
+    // insert-time priority stamp — promote them into the DNS priority lane
+    // (lib/dns-queue-priority.ts). Only when this pass matched something;
+    // one indexed read (≤200 IdP rows, 7d) + ≤200 promote-only upserts;
+    // no-op without DNS_QUEUE_DB.
+    if (brandResult.matched > 0 && env.DNS_QUEUE_DB) {
+      try {
+        await prioritizeIdpDns(env, 7, 200);
+      } catch (err) {
+        console.error("[enrich] Stage 4 IdP DNS promotion failed:", err);
+      }
+    }
   } catch (err) {
     console.error("[enrich] Stage 4 brand detection failed:", err);
   }

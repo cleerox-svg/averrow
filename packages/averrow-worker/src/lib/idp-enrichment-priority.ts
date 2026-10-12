@@ -78,6 +78,53 @@ export async function readIdpSlice<T>(db: D1Database, sql: string, limit: number
   }
 }
 
+// ── VT error backoff ────────────────────────────────────────────────
+// A domain whose VT call errors stays vt_checked = 0, so without this it
+// would re-occupy an IdP slot every run for the whole 7-day window. An
+// errored domain gets a per-domain KV cooldown; the VT slice over-fetches
+// and skips cooled-down domains, so they rotate out (and back in after the
+// TTL — at most ~7 retries over the window). threats has no VT attempt
+// column, and KV keeps this off the D1 write budget.
+
+export const IDP_VT_BACKOFF_TTL_S = 86_400;
+/** Slice candidates read per run = slice × this, filtered by the backoff. */
+export const IDP_VT_OVERFETCH = 4;
+const VT_BACKOFF_PREFIX = "vt:idp_backoff:";
+
+export function vtBackoffKey(domain: string): string {
+  return `${VT_BACKOFF_PREFIX}${domain}`;
+}
+
+/** Record a VT error cooldown for `domain`. Never throws. */
+export async function recordVtBackoff(cache: KVNamespace, domain: string): Promise<void> {
+  try {
+    await cache.put(vtBackoffKey(domain), "1", { expirationTtl: IDP_VT_BACKOFF_TTL_S });
+  } catch {
+    // Best-effort — worst case the domain retries next run.
+  }
+}
+
+/** First `want` rows whose domain is not cooling down (KV read error →
+ *  treated as not cooling down). Sequential, stops once `want` is reached. */
+export async function filterVtBackoff<T extends { malicious_domain: string }>(
+  cache: KVNamespace,
+  rows: readonly T[],
+  want: number,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (const row of rows) {
+    if (out.length >= want) break;
+    let cooling = false;
+    try {
+      cooling = (await cache.get(vtBackoffKey(row.malicious_domain))) !== null;
+    } catch {
+      cooling = false;
+    }
+    if (!cooling) out.push(row);
+  }
+  return out;
+}
+
 /** IdP slice first, then the regular selector's rows (deduped by `key`),
  *  capped at `cap`. */
 export function mergeIdpFirst<T>(idp: readonly T[], rest: readonly T[], key: (row: T) => string, cap: number): T[] {

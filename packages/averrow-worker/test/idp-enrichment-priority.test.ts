@@ -15,8 +15,13 @@ import {
   IDP_SLICE_SECLOOKUP,
   IDP_SLICE_VIRUSTOTAL,
   IDP_VT_SLICE_SQL,
+  IDP_VT_BACKOFF_TTL_S,
+  IDP_VT_OVERFETCH,
+  filterVtBackoff,
   mergeIdpFirst,
   readIdpSlice,
+  recordVtBackoff,
+  vtBackoffKey,
 } from "../src/lib/idp-enrichment-priority";
 import { IDP_FAMILY_TECHNIQUES } from "../src/lib/idp-impersonation";
 import { d1FromSqlite, hasSqlite, openDerivedDb, type SqliteDb } from "./sqlite-d1-harness";
@@ -144,4 +149,58 @@ describe("feeds wire their slice ahead of the severity selector", () => {
       expect(src).toMatch(/mergeIdpFirst\(idpSlice, unchecked\.results/);
     });
   }
+});
+
+describe("VT slice error backoff", () => {
+  function kv(seed: string[] = [], opts: { getThrows?: boolean; putThrows?: boolean } = {}) {
+    const store = new Map<string, { v: string; ttl?: number }>(seed.map((d) => [vtBackoffKey(d), { v: "1" }]));
+    return {
+      store,
+      cache: {
+        get: async (k: string) => { if (opts.getThrows) throw new Error("kv"); return store.get(k)?.v ?? null; },
+        put: async (k: string, v: string, o?: { expirationTtl?: number }) => {
+          if (opts.putThrows) throw new Error("kv");
+          store.set(k, { v, ttl: o?.expirationTtl });
+        },
+      } as unknown as KVNamespace,
+    };
+  }
+  const rows = (...d: string[]) => d.map((malicious_domain) => ({ malicious_domain }));
+
+  it("an errored domain is recorded with a TTL and skipped by the slice, which rotates in the next candidate", async () => {
+    const k = kv();
+    await recordVtBackoff(k.cache, "bad.example");
+    expect(k.store.get(vtBackoffKey("bad.example"))).toEqual({ v: "1", ttl: IDP_VT_BACKOFF_TTL_S });
+    const out = await filterVtBackoff(k.cache, rows("bad.example", "a.example", "b.example", "c.example", "d.example"), IDP_SLICE_VIRUSTOTAL);
+    expect(out.map((r) => r.malicious_domain)).toEqual(["a.example", "b.example", "c.example"]);
+  });
+
+  it("over-fetch leaves room for every slot to be refilled", () => {
+    expect(IDP_VT_OVERFETCH).toBeGreaterThan(1);
+  });
+
+  it("KV failures never throw: get → not cooling, put → swallowed", async () => {
+    const k = kv(["a.example"], { getThrows: true, putThrows: true });
+    await expect(recordVtBackoff(k.cache, "x.example")).resolves.toBeUndefined();
+    expect(await filterVtBackoff(k.cache, rows("a.example"), 3)).toHaveLength(1);
+  });
+
+  it("virustotal.ts filters the over-fetched slice and records backoff on non-429 errors", () => {
+    const src = readFileSync(resolve(__dirname, "..", "src", "feeds", "virustotal.ts"), "utf8");
+    expect(src).toMatch(/IDP_SLICE_VIRUSTOTAL \* IDP_VT_OVERFETCH/);
+    expect(src).toMatch(/filterVtBackoff\(env\.CACHE, idpCandidates, IDP_SLICE_VIRUSTOTAL\)/);
+    const catchIdx = src.indexOf('if (msg.includes("429")) break;');
+    expect(catchIdx).toBeGreaterThan(0);
+    expect(src.slice(catchIdx, catchIdx + 400)).toContain("recordVtBackoff(env.CACHE, row.malicious_domain)");
+  });
+});
+
+describe("late IdP tags reach the DNS priority lane", () => {
+  it("enrichment Stage 4 promotes after a brand-match pass that matched rows", () => {
+    const src = readFileSync(resolve(__dirname, "..", "src", "lib", "enrichment.ts"), "utf8");
+    const stage = src.indexOf("await enrichBrands(env.DB)");
+    const block = src.slice(stage, stage + 1200);
+    expect(block).toMatch(/if \(brandResult\.matched > 0 && env\.DNS_QUEUE_DB\)/);
+    expect(block).toContain("prioritizeIdpDns(env, 7, 200)");
+  });
 });
