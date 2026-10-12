@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
+import { IDP_PULSEDIVE_SLICE_SQL, IDP_SLICE_PULSEDIVE, mergeIdpFirst, readIdpSlice } from "../lib/idp-enrichment-priority";
 
 /**
  * Pulsedive — IOC risk scoring (enrichment).
@@ -289,8 +290,13 @@ export const pulsedive: FeedModule = {
     // remaining month.
     const batchLimit = Math.min(BATCH_SIZE, DAILY_LIMIT - dailyCalls, MONTHLY_LIMIT - monthlyCalls);
 
-    // Highest-severity, recently-seen threats with a scoreable indicator
-    // (domain preferred, else IP) not yet checked.
+    // Reserved IdP-impersonation slice first (up to 3 of the batch, any
+    // severity — lib/idp-enrichment-priority.ts), then highest-severity,
+    // recently-seen threats with a scoreable indicator (domain preferred,
+    // else IP) not yet checked fill the rest.
+    const idpSlice = await readIdpSlice<{ id: string; indicator: string }>(
+      env.DB, IDP_PULSEDIVE_SLICE_SQL, Math.min(IDP_SLICE_PULSEDIVE, batchLimit),
+    );
     const unchecked = await env.DB.prepare(`
       SELECT id, COALESCE(malicious_domain, ip_address) AS indicator
       FROM threats
@@ -302,7 +308,7 @@ export const pulsedive: FeedModule = {
       LIMIT ?
     `).bind(batchLimit).all<{ id: string; indicator: string }>();
 
-    const threats = unchecked.results;
+    const threats = mergeIdpFirst(idpSlice, unchecked.results, (r) => r.id, batchLimit);
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;

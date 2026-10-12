@@ -2,6 +2,9 @@ import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
 import { deriveDomainAge } from "../lib/domain-age";
+import {
+  IDP_SLICE_VIRUSTOTAL, IDP_VT_OVERFETCH, IDP_VT_SLICE_SQL, filterVtBackoff, mergeIdpFirst, readIdpSlice, recordVtBackoff,
+} from "../lib/idp-enrichment-priority";
 
 /**
  * VirusTotal — Domain reputation enrichment for high-severity threats.
@@ -94,6 +97,8 @@ async function incrementDailyCallCount(env: Env): Promise<void> {
 }
 
 const DAILY_LIMIT = 480;
+/** Domains per run (IdP slice included). */
+const VT_BATCH_SIZE = 10;
 
 export const virustotal: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
@@ -110,7 +115,15 @@ export const virustotal: FeedModule = {
       return { itemsFetched: 0, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 
-    // Query high-severity threats without VT data (limit 10 per run)
+    // Reserved IdP-impersonation slice first (up to 3 of the 10, any
+    // severity — lib/idp-enrichment-priority.ts), then high-severity
+    // threats without VT data fill the rest.
+    // Over-fetch and skip domains cooling down after a VT error, so a
+    // persistently failing domain can't hold a slot every run.
+    const idpCandidates = await readIdpSlice<{ malicious_domain: string }>(
+      env.DB, IDP_VT_SLICE_SQL, IDP_SLICE_VIRUSTOTAL * IDP_VT_OVERFETCH,
+    );
+    const idpSlice = await filterVtBackoff(env.CACHE, idpCandidates, IDP_SLICE_VIRUSTOTAL);
     const unchecked = await env.DB.prepare(`
       SELECT DISTINCT malicious_domain FROM threats
       WHERE vt_checked = 0
@@ -121,10 +134,10 @@ export const virustotal: FeedModule = {
       ORDER BY
         CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
         created_at DESC
-      LIMIT 10
-    `).all<{ malicious_domain: string }>();
+      LIMIT ?
+    `).bind(VT_BATCH_SIZE).all<{ malicious_domain: string }>();
 
-    const domains = unchecked.results;
+    const domains = mergeIdpFirst(idpSlice, unchecked.results, (r) => r.malicious_domain, VT_BATCH_SIZE);
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;
@@ -239,9 +252,12 @@ export const virustotal: FeedModule = {
           error: msg,
         });
 
-        // If rate limited, stop immediately
+        // If rate limited, stop immediately (not the domain's fault — no backoff)
         if (msg.includes("429")) break;
 
+        // Per-domain cooldown so an erroring domain rotates out of the IdP
+        // slice (lib/idp-enrichment-priority.ts). Never throws.
+        await recordVtBackoff(env.CACHE, row.malicious_domain);
         itemsError++;
       }
     }

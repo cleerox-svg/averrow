@@ -442,3 +442,15 @@ describe("abuse-mailbox technique precedence (real SQLite)", async () => {
     expect(read(h.sql)).toEqual({ technique: "clickfix", impersonated_idp: null });
   });
 });
+
+describe("IdP-lure attribution keeps impersonated_idp unchanged", () => {
+  it("withpersona.okta-linksso.com still tags okta / idp_lookalike", () => {
+    for (const tokens of [undefined, ["Persona", "withpersona"], ["Okta", "okta"]]) {
+      expect(tagThreat({ malicious_domain: "withpersona.okta-linksso.com" }, tokens))
+        .toEqual({ technique: "idp_lookalike", impersonated_idp: "okta" });
+    }
+    expect(tagThreat({ malicious_domain: "okta-acme.com" }, ["Acme", "acme"]))
+      .toEqual({ technique: "idp_lookalike", impersonated_idp: "okta" });
+    expect(tagThreat({ malicious_domain: "okta-login-secure.com" }).impersonated_idp).toBe("okta");
+  });
+});

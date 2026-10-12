@@ -254,3 +254,83 @@ describe("tier gate (2026-10-01 production dry run)", () => {
       .toEqual({ brandId: "brand_harbor_com", method: "token" });
   });
 });
+
+describe("IdP-lure lookalikes credit the targeted brand, not the IdP vendor", () => {
+  const m = (name: string, canonical_domain: string, id: string): BrandRow =>
+    ({ id, name, canonical_domain, tier: "monitored" });
+  const IDP_BRANDS: BrandRow[] = [
+    m("Okta", "okta.com", "b_okta"),
+    m("Microsoft", "microsoft.com", "b_ms"),
+    m("Persona", "withpersona.com", "b_persona"),
+    m("Acme", "acme.com", "b_acme"),
+    m("Persona Identities", "personaid.io", "b_personaid"),
+    // Generic catalog names the platform already mis-credits.
+    m("One", "one.com", "b_one"), m("Cloud", "cloud.com", "b_cloud"), m("Gnu", "gnu.org", "b_gnu"),
+    m("Login", "login.gov", "b_login"), m("Portal", "portal.io", "b_portal"),
+  ];
+  const brandOf = (h: string) => fuzzyMatchBrandDetailed([h], IDP_BRANDS)?.brandId ?? null;
+
+  it.each([
+    ["withpersona.okta-linksso.com", "b_persona"],
+    ["https://withpersona.okta-linksso.com/app/sso/saml", "b_persona"],
+    ["okta-acme.com", "b_acme"],
+    ["acme-okta-sso.net", "b_acme"],
+    ["withpersona.microsoftonline-sso.com", "b_persona"],
+    // IdP tenant host — unchanged tenant-label rule.
+    ["acme-sso.okta.com", "b_acme"],
+  ])("%s → %s", (host, brand) => {
+    expect(brandOf(host)).toBe(brand);
+  });
+
+  it("a remainder label equal to a brand's canonical owner label matches it", () => {
+    // "Persona Identities" is not a substring of "personaid"; the owner label is.
+    expect(brandOf("personaid.okta-verify.com")).toBe("b_personaid");
+  });
+
+  it("vendor-only lure (no other brand evidence) credits the IdP vendor itself", () => {
+    expect(brandOf("okta-login-secure.com")).toBe("b_okta");
+    expect(brandOf("oktalogin.com")).toBe("b_okta");
+    expect(brandOf("0kta-verify.com")).toBe("b_okta");
+  });
+
+  it("a leftover that matches no brand does not block the vendor fallback", () => {
+    for (const h of [
+      "www2.okta-login.com", "a8f3kd.okta-signin.com", "okta-auth-7hj2k.duckdns.org",
+      "cdn.okta-sso.com", "mail-okta-verify.com", "contosoltd.okta-linksso.com", "okta-contosoltd.com",
+    ]) expect(brandOf(h), h).toBe("b_okta");
+    // …but a leftover that DOES match a brand still wins.
+    expect(brandOf("withpersona.okta-linksso.com")).toBe("b_persona");
+  });
+
+  it("filler owner labels are never brand evidence beside a lure", () => {
+    const withRemote: BrandRow[] = [...IDP_BRANDS, m("Remote Inc", "remote.com", "b_remote")];
+    expect(fuzzyMatchBrandDetailed(["okta-acme-remote.com"], withRemote)?.brandId).toBe("b_acme");
+  });
+
+  it.each([
+    "one-okta-login.com", "okta-cloud-portal.com", "okta-gnu.com", "login.okta-sso.com",
+    "secure-portal.okta-access.net",
+  ])("generic words never become the brand: %s → Okta (vendor-only)", (host) => {
+    expect(brandOf(host)).toBe("b_okta");
+  });
+
+  it("matchBrandToHost (catalog-free) validates the remainder and the vendor fallback", () => {
+    const okta = IDP_BRANDS[0]!;
+    const persona = IDP_BRANDS[2]!;
+    // Permissive by design: without the catalog it cannot know the leftover
+    // names Persona, so the vendor fallback validates. Catalog-aware
+    // re-attribution uses fuzzyMatchBrandDetailed (idp-reattribution).
+    expect(matchBrandToHost("withpersona.okta-linksso.com", okta)).toBe("token");
+    expect(matchBrandToHost("okta-acme.com", IDP_BRANDS[3]!)).toBe("token");
+    expect(matchBrandToHost("withpersona.okta-linksso.com", persona)).toBe("token"); // canonical owner label
+    expect(matchBrandToHost("okta-login-secure.com", okta)).toBe("token");
+    expect(matchBrandToHost("personaid.okta-verify.com", IDP_BRANDS[4]!)).toBe("token");
+  });
+
+  it("non-IdP hosts are unaffected", () => {
+    expect(brandOf("acme-login.com")).toBe("b_acme");
+    expect(brandOf("bbva-entra.com")).toBeNull(); // compound-only lure, no stripping
+    expect(keywordMatchesHost("okta", "withpersona.okta-linksso.com")).toBe(false);
+    expect(keywordMatchesHost("persona", "withpersona.okta-linksso.com")).toBe(true);
+  });
+});

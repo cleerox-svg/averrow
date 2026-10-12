@@ -1,6 +1,7 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import type { Env } from "../types";
 import { logger } from "../lib/logger";
+import { IDP_SECLOOKUP_SLICE_SQL, IDP_SLICE_SECLOOKUP, mergeIdpFirst, readIdpSlice } from "../lib/idp-enrichment-priority";
 
 /**
  * SecLookup — Domain + IP threat intelligence enrichment.
@@ -152,7 +153,13 @@ export const seclookup: FeedModule = {
     const remaining = MONTHLY_LIMIT - monthlyCalls;
     const batchLimit = Math.min(BATCH_SIZE, remaining);
 
-    // Query unchecked threats (prioritize by severity)
+    // Reserved IdP-impersonation slice first (up to 20 of the batch, any
+    // severity — lib/idp-enrichment-priority.ts), then unchecked threats by
+    // severity fill the rest.
+    type Candidate = { id: string; malicious_domain: string | null; ip_address: string | null };
+    const idpSlice = await readIdpSlice<Candidate>(
+      env.DB, IDP_SECLOOKUP_SLICE_SQL, Math.min(IDP_SLICE_SECLOOKUP, batchLimit),
+    );
     const unchecked = await env.DB.prepare(`
       SELECT DISTINCT id, malicious_domain, ip_address FROM threats
       WHERE seclookup_checked = 0
@@ -162,9 +169,9 @@ export const seclookup: FeedModule = {
         CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
         created_at DESC
       LIMIT ?
-    `).bind(batchLimit).all<{ id: string; malicious_domain: string | null; ip_address: string | null }>();
+    `).bind(batchLimit).all<Candidate>();
 
-    const threats = unchecked.results;
+    const threats = mergeIdpFirst(idpSlice, unchecked.results, (r) => r.id, batchLimit);
     let itemsFetched = 0;
     let itemsNew = 0;
     let itemsDuplicate = 0;

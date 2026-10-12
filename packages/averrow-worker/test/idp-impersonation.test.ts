@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyIdpImpersonation as classify,
   idpTenantLabel,
+  splitIdpLureToken,
   techniqueToVector,
   IDP_FAMILY_TECHNIQUES,
   IDP_TECHNIQUE,
@@ -246,5 +247,26 @@ describe('labels and MITRE map', () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).not.toContain('T1621');
     for (const v of vectors) expect(IDP_MITRE.some((m) => m.vectors.includes(v))).toBe(true);
+  });
+});
+
+describe('splitIdpLureToken (brand-attribution helper)', () => {
+  it.each([
+    ['okta', 'okta', ''],
+    ['0kta', 'okta', ''],
+    ['oktalogin', 'okta', 'login'],
+    ['linksso', 'sso', 'link'],
+    ['entraid', 'entra', 'id'],
+    ['microsoftonline', 'microsoftonline', ''],
+  ])('%s → lure %s, rest "%s"', (tok, lure, rest) => {
+    expect(splitIdpLureToken(tok)).toMatchObject({ lure, rest });
+  });
+  it.each(['entra', 'withpersona', 'acme', 'oktava2x', '550'])('%s → null', (tok) => {
+    if (tok === 'oktava2x') {
+      // a non-lure compound still splits; the caller keeps it (rest not filler)
+      expect(splitIdpLureToken(tok)?.rest).toBe('va2x');
+      return;
+    }
+    expect(splitIdpLureToken(tok)).toBeNull();
   });
 });

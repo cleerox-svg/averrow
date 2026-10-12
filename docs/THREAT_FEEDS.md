@@ -138,7 +138,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 |------|------|--------|-------------|
 | **PhishTank** | `phishtank.ts` | Community-sourced | Verified phishing URLs via CIRCL API |
 | **OpenPhish** | `openphish.ts` | Automated detection | Machine-detected phishing URLs |
-| **PhishDestroy** | `phishdestroy.ts` | Takedown service | Active phishing sites |
+| **PhishDestroy** | `phishdestroy.ts` | phishdestroy/destroylist (`raw.githubusercontent.com/.../main/list.json`) | Curated phishing/scam domain list: a JSON array (~218K entries), sorted alphabetically, no timestamps. **Diff ingestion:** each run compares the list against the previous run's snapshot (sorted 64-bit domain hashes in KV `feed:phishdestroy:snapshot:v1`) and inserts only domains that are new and not already in `threats`, at most 1,000 per run; the remainder carries to the next run. The first run records a baseline and inserts nothing, so the back-catalog is never bulk-ingested. If `feed_configs.source_url` returns 404, the feed falls back to the canonical URL and writes a WARNING to that pull's `feed_pull_history.error_message`. Rows are IdP-tagged at ingest |
 | **PhishStats** | `phishstats.ts` | Community-sourced | Public phishing URL feed, score 0-10 mapped to severity |
 | **urlscan.io** | `urlscanio.ts` | Public URL scanner | Recently-flagged-malicious public submissions (no auth, ~1/hr) |
 | **CryptoScamDB** | `cryptoscamdb.ts` | Community-maintained | Crypto/web3 phishing + fake-exchange scam URLs |

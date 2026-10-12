@@ -15,6 +15,8 @@
  */
 
 import { createRequire } from "node:module";
+import { readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, vi } from "vitest";
 import {
   reconcileDnsQueue,
@@ -30,6 +32,7 @@ import {
   RECONCILER_READ_LIMIT,
 } from "../src/lib/dns-queue-reconciler";
 import type { Env } from "../src/types";
+import { IDP_FAMILY_TECHNIQUES } from "../src/lib/idp-impersonation";
 
 const CURSOR_KEY = "reconciler:dns_queue:cursor";
 
@@ -127,6 +130,7 @@ const THREATS_DDL = `
     ip_address TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     dns_exhausted_at TEXT,
+    technique TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE INDEX idx_threats_status ON threats(status);
@@ -134,16 +138,13 @@ const THREATS_DDL = `
   CREATE INDEX IF NOT EXISTS idx_threats_status_created ON threats(status, created_at DESC);
 `;
 
-const QUEUE_DDL = `
-  CREATE TABLE dns_queue (
-    malicious_domain TEXT PRIMARY KEY,
-    enrichment_attempts INTEGER NOT NULL DEFAULT 0,
-    attempted_resolve_at TEXT,
-    last_outcome TEXT,
-    enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
-    source_feed TEXT
-  );
-`;
+// Replayed from migrations-dns-queue/ so the queue shape (incl. the
+// 0002 priority column + index) can never drift from prod.
+const QUEUE_DDL = readdirSync(resolve(__dirname, "..", "migrations-dns-queue"))
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readFileSync(resolve(__dirname, "..", "migrations-dns-queue", f), "utf8"))
+  .join("\n");
 
 interface Harness {
   env: Env;
@@ -547,5 +548,48 @@ describe.skipIf(noSqlite)("stepDnsQueueReconciler / seedDnsQueueCursor", () => {
     const sel = h.captured.threatSelects.find((s) => /ORDER BY created_at DESC/.test(s.sql))!;
     expect(sel.binds[0]).toBe("2026-10-06 12:00:00");
     expect(h.queueDomains()).toEqual(["hist.example"]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// IdP priority lane (lib/dns-queue-priority.ts, DNS-queue migration 0002)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe.skipIf(noSqlite)("reconciler stamps the IdP priority lane", () => {
+  const priorities = (h: Harness) =>
+    Object.fromEntries(
+      (h.queue.prepare("SELECT malicious_domain, priority FROM dns_queue").all() as Array<{ malicious_domain: string; priority: number }>)
+        .map((r) => [r.malicious_domain, r.priority]),
+    );
+
+  it("IdP-family candidates enqueue at priority 1, others at 0; an already-queued domain is promoted", async () => {
+    const SECOND = "2026-10-06 12:00:00";
+    const h = makeHarness({ cursor: SECOND });
+    h.queue.exec("INSERT INTO dns_queue (malicious_domain, priority) VALUES ('queued.example', 0)");
+    const ins = h.threats.prepare(
+      "INSERT INTO threats (id, malicious_domain, status, technique, created_at) VALUES (?, ?, 'active', ?, ?)",
+    );
+    ins.run("p1", "okta-sso.example", IDP_FAMILY_TECHNIQUES[0], "2026-10-06 12:00:01");
+    ins.run("p2", "plain.example", null, "2026-10-06 12:00:01");
+    ins.run("p3", "queued.example", IDP_FAMILY_TECHNIQUES[0], "2026-10-06 12:00:02");
+    // Same domain twice in one page, normal first then IdP → max wins.
+    ins.run("p4", "dup.example", null, "2026-10-06 12:00:03");
+    ins.run("p5", "dup.example", IDP_FAMILY_TECHNIQUES[0], "2026-10-06 12:00:03");
+
+    const r = await reconcileDnsQueue(h.env);
+    expect(r.skipped).toBe(false);
+    expect(r.enqueued).toBe(4); // 3 inserts + 1 promotion
+    expect(priorities(h)).toEqual({
+      "okta-sso.example": 1,
+      "plain.example": 0,
+      "queued.example": 1,
+      "dup.example": 1,
+    });
+
+    // Re-running the same page never demotes and writes nothing.
+    await seedDnsQueueCursor(h.env, SECOND);
+    const again = await reconcileDnsQueue(h.env);
+    expect(again.enqueued).toBe(0);
+    expect(priorities(h)["queued.example"]).toBe(1);
   });
 });

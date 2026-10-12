@@ -11,6 +11,7 @@ import type { Env } from '../types';
 import { computeSanHash } from '../lib/ssl-cert-identity';
 import { tagThreat, isIdpFamilyTag } from '../lib/idp-tagging';
 import { enqueueAutoCaptures } from '../lib/page-capture';
+import { enqueueIdpDns } from '../lib/dns-queue-priority';
 import { cachedValue, seedValue } from '../lib/cached-value';
 
 /** KV key (cachedValue namespace) for the CertStream brand match sets. */
@@ -493,7 +494,15 @@ export class CertStreamMonitor {
       const captureItems = matches.flatMap((m, i) => (idpTags[i] && isIdpFamilyTag(idpTags[i])
         ? [{ threatId: threatIds[i]!, maliciousDomain: m.domain, maliciousUrl: `https://${m.domain}` }]
         : []));
-      if (captureItems.length > 0) await enqueueAutoCaptures(db, captureItems);
+      if (captureItems.length > 0) {
+        await enqueueAutoCaptures(db, captureItems);
+        // …and straight into the DNS priority lane (lib/dns-queue-priority.ts)
+        // so they resolve ahead of the backlog without waiting for the
+        // 5-min reconciler. No-op without DNS_QUEUE_DB; never throws.
+        await enqueueIdpDns(this.env.DNS_QUEUE_DB, captureItems.map((c) => ({
+          malicious_domain: c.maliciousDomain, source_feed: 'certstream',
+        })));
+      }
       console.log(`[certstream] Flushed ${matches.length} threats to D1`);
     } catch (err) {
       console.error('[certstream] D1 write error:', err);
