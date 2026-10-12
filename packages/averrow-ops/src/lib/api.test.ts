@@ -129,11 +129,11 @@ describe('api.ts — post-refresh retry error handling', () => {
 
   it('a 5xx on a mutation still resolves with the envelope (callers read res.error)', async () => {
     global.fetch = vi.fn(async () => mockResponse(500, { success: false, error: 'nope' })) as unknown as typeof fetch;
-    await expect(api.post('/api/alerts/1', {})).resolves.toEqual({ success: false, error: 'nope' });
+    await expect(api.post('/api/alerts/1', {})).resolves.toEqual({ success: false, error: 'nope', status: 500 });
   });
 
   it('a 4xx GET still resolves with the envelope (not-found / permission copy is the caller\'s)', async () => {
     global.fetch = vi.fn(async () => mockResponse(404, { success: false, error: 'missing' })) as unknown as typeof fetch;
-    await expect(api.get('/api/x')).resolves.toEqual({ success: false, error: 'missing' });
+    await expect(api.get('/api/x')).resolves.toEqual({ success: false, error: 'missing', status: 404 });
   });
 });

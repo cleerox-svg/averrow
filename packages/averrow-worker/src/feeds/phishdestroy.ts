@@ -1,7 +1,8 @@
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { threatId } from "./types";
 import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "../lib/threatScoring";
-import { tagThreat } from "../lib/idp-tagging";
+import { tagThreat, isIdpFamilyTag } from "../lib/idp-tagging";
+import { enqueueAutoCaptures, type AutoCaptureItem } from "../lib/page-capture";
 
 /**
  * PhishDestroy (destroylist) — Curated phishing & scam domain blocklist.
@@ -99,8 +100,10 @@ export const phishdestroy: FeedModule = {
     // D1 transaction; failures roll back that chunk only.
     // IdP-impersonation tagging (lib/idp-tagging.ts): domain-only, no
     // brand context here, so strong lures + IdP tenant hosts only.
+    const idpFamily: boolean[] = [];
     const stmts = valid.map((domain) => {
       const idp = tagThreat({ malicious_domain: domain, malicious_url: `https://${domain}` });
+      idpFamily.push(isIdpFamilyTag(idp));
       return ctx.env.DB.prepare(
         `INSERT OR IGNORE INTO threats
            (id, source_feed, threat_type, malicious_url, malicious_domain,
@@ -123,19 +126,29 @@ export const phishdestroy: FeedModule = {
 
     let itemsNew = 0;
     let itemsError = 0;
+    const captureItems: AutoCaptureItem[] = [];
     for (let i = 0; i < stmts.length; i += BATCH_CHUNK) {
       const chunk = stmts.slice(i, i + BATCH_CHUNK);
       try {
         const results = await ctx.env.DB.batch(chunk);
-        for (const r of results) {
+        for (let k = 0; k < results.length; k++) {
           // INSERT OR IGNORE: changes=1 → new row, changes=0 → PK collision (duplicate).
-          itemsNew += r.meta?.changes ?? 0;
+          const changed = results[k]?.meta?.changes ?? 0;
+          itemsNew += changed;
+          const domain = valid[i + k];
+          if (changed > 0 && domain && idpFamily[i + k]) {
+            captureItems.push({ threatId: threatId("phishdestroy", "domain", domain), maliciousDomain: domain });
+          }
         }
       } catch (err) {
         itemsError += chunk.length;
         console.error(`[phishdestroy] batch ${i}-${i + chunk.length} failed:`, err);
       }
     }
+
+    // New IdP-family rows → page-capture queue (lib/page-capture.ts).
+    // Best-effort, never throws, never awaits the browser.
+    if (captureItems.length > 0) await enqueueAutoCaptures(ctx.env.DB, captureItems);
 
     const itemsDuplicate = valid.length - itemsNew - itemsError;
     return { itemsFetched: valid.length, itemsNew, itemsDuplicate, itemsError };

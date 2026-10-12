@@ -62,6 +62,13 @@ export function needsBrandTokens(row: IdpTaggable): boolean {
   return tagThreat(row, probe).impersonated_idp !== null;
 }
 
+/** True when a tag places the threat in the IdP family — the page-capture
+ *  enqueue predicate (lib/page-capture.ts enqueueAutoCaptures). Callers that
+ *  just wrote an IdP-tagged threat pass it on to the capture queue. */
+export function isIdpFamilyTag(tag: Pick<IdpTag, "technique">): boolean {
+  return tag.technique !== null && IDP_FAMILY_TECHNIQUES.includes(tag.technique);
+}
+
 function techniqueIsSet(row: IdpTaggable): boolean {
   return row.technique !== null && row.technique !== undefined && row.technique !== "";
 }

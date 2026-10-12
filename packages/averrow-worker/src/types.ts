@@ -93,6 +93,13 @@ export interface Env {
   // throws (staging/dev bind neither this nor GEOIP_STAGING, so the feed
   // fails there either way).
   NRD_ARCHIVE?: R2Bucket;
+  // Phishing page capture (docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md). Prod only
+  // (top-level wrangler bindings). BROWSER = Cloudflare Browser Rendering;
+  // PHISH_CAPTURES = private R2 bucket `averrow-phish-captures` (180-day
+  // lifecycle). Either absent → the page_capture agent is a clean no-op and
+  // the capture routes answer 503.
+  BROWSER?: Fetcher;
+  PHISH_CAPTURES?: R2Bucket;
   // Threat intelligence feeds (optional)
   OTX_API_KEY?: string;
   ABUSEIPDB_API_KEY?: string;

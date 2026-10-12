@@ -219,6 +219,16 @@ Server-side verification (`packages/averrow-worker/src/lib/turnstile.ts`) gates 
   3. Add to the top-level `[vars]` in `wrangler.toml` (owner-approved change): `TURNSTILE_MODE = "monitor"` and `TURNSTILE_SITE_KEY = "<site key>"`. Leave `[env.staging]` / `[env.dev]` unset (`off`) — their hostnames are not in the allowlist.
   4. Ship the widget on every page that posts to these endpoints (marketing site, plus the Worker-rendered `/scan` page and `/legacy` homepage), watch `turnstile_verdict` logs until failures are only genuine bots, then set `TURNSTILE_MODE = "enforce"`. Rollback: set it back to `off` (or `monitor`).
 
+### Phishing page capture: migration 0290 + `PHISH_CAPTURES` R2 bucket + Browser Rendering (2026-10-12)
+
+Spec: `docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md`. Prerequisites before the deploy that adds the `page_capture` agent (dedicated `*/10 * * * *` cron):
+
+- **Migration 0290** (`0290_page_captures.sql`) is additive: the `page_captures` table, its indexes and the `agent_approvals` grandfather row for `page_capture`. Apply it before the Worker.
+- **R2 bucket:** `wrangler.toml` binds `PHISH_CAPTURES` to `averrow-phish-captures` at the top level (prod only; `staging`/`dev` don't inherit it). `wrangler deploy` fails on a missing bucket, so create it first: `npx wrangler r2 bucket create averrow-phish-captures`. Keep it PRIVATE (no public access, no custom domain); objects are only streamed back through the staff API.
+- **Lifecycle rule (operator step, not in `wrangler.toml`):** prefix `captures/`, delete after 180 days (dashboard R2 → bucket → Settings → Object lifecycle rules, or `wrangler r2 bucket lifecycle add`). The daily sweep also deletes expired objects, but the rule is the retention backstop.
+- **Browser Rendering:** `[browser] binding = "BROWSER"` (Workers Paid; no provisioning beyond the plan). Prod only.
+- With either `BROWSER` or `PHISH_CAPTURES` unbound (staging/dev) the agent is a clean no-op.
+
 ## Manual Deploy
 
 ```bash

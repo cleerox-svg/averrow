@@ -490,6 +490,21 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return runIdpLureTopupBackfill(request, env, INTERNAL_BACKFILL_ACTOR);
       }
 
+      // POST /api/internal/captures/backfill?days=7&limit=200
+      // Enqueue page captures (lib/page-capture.ts) for IdP-family threats
+      // from the last `days` (1..30, default 7), newest first, up to `limit`
+      // (1..500, default 200). Idempotent — a threat that has ever had a
+      // capture is skipped. Audited `page_capture_backfill` (actor internal).
+      if (url.pathname === '/api/internal/captures/backfill' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { handleCaptureBackfill } = await import('./handlers/pageCaptures');
+        return handleCaptureBackfill(request, env);
+      }
+
       // POST /api/internal/db/analyze?table=lookalike_domains|threats
       // Refreshes planner stats for ONE hard-coded index per allowlisted
       // table (index-scoped ANALYZE — a table ANALYZE on threats walks every
@@ -647,6 +662,16 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           const mod = agentModules["executive_monitor"];
           if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
           return Response.json({ triggered: true, agent: 'executive_monitor' });
+        }
+
+        // Phishing page capture — manual trigger / fallback for the
+        // `*/10 * * * *` dedicated cron (docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md).
+        if (url.pathname === '/api/internal/agents/page_capture/run') {
+          const { agentModules } = await import('./agents/index');
+          const { executeAgent } = await import('./lib/agentRunner');
+          const mod = agentModules["page_capture"];
+          if (mod) ctx.waitUntil(executeAgent(env, mod, { trigger: 'manual' }, "api", "event"));
+          return Response.json({ triggered: true, agent: 'page_capture' });
         }
 
         // Phantom-domain enumerator — manual / on-demand trigger (no cron

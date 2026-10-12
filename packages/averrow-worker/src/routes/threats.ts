@@ -1,7 +1,7 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAdmin, requireStaff, requireStaffMutation, isAuthContext, getOrgScope } from "../middleware/auth";
+import { requireAdmin, requireStaff, requireStaffMutation, requirePermission, isAuthContext, getOrgScope } from "../middleware/auth";
 import { corsHeaders, json } from "../lib/cors";
 import { rateLimitCustom } from "../middleware/rateLimit";
 import {
@@ -335,6 +335,29 @@ export function registerThreatRoutes(router: RouterType<IRequest>): void {
     if (!isAuthContext(ctx)) return ctx;
     const { handleIdentityDetectionDetail } = await import("../handlers/identityDetections");
     return handleIdentityDetectionDetail(request, env, request.params["threatId"] ?? "");
+  });
+
+  // ─── Intel: Phishing page capture (docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md) ─
+  // Manual "Capture now" — edit_alerts (super_admin/admin/analyst/support),
+  // audited, 409 when one is already open, 20/hour/user KV rate limit.
+  router.post("/api/intel/identity-threats/detections/:threatId/capture", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requirePermission("edit_alerts")(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleRequestCapture } = await import("../handlers/pageCaptures");
+    return handleRequestCapture(request, env, ctx, request.params["threatId"] ?? "");
+  });
+  // Evidence objects, streamed from the private R2 bucket (never public).
+  router.get("/api/intel/captures/:id/screenshot", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleCaptureScreenshot } = await import("../handlers/pageCaptures");
+    return handleCaptureScreenshot(request, env, request.params["id"] ?? "");
+  });
+  router.get("/api/intel/captures/:id/html", async (request: Request & { params: Record<string, string> }, env: Env) => {
+    const ctx = await requireStaff(request, env);
+    if (!isAuthContext(ctx)) return ctx;
+    const { handleCaptureHtml } = await import("../handlers/pageCaptures");
+    return handleCaptureHtml(request, env, request.params["id"] ?? "");
   });
 
   // ─── Intel: Critical banner (post-audit signal-alignment) ─────────

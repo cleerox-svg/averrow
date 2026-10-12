@@ -38,6 +38,14 @@ export function buildContentSecurityPolicy(pathname?: string): string {
   ].join("; ");
 }
 
+/** True only when a CSP value is EXACTLY the bare `sandbox` directive
+ *  (whitespace / case / a trailing `;` normalized). Anything else — incl.
+ *  `sandbox allow-scripts` or `sandbox; default-src *` — is not kept. */
+export function isSandboxPolicy(csp: string | null): boolean {
+  if (!csp) return false;
+  return csp.trim().replace(/;\s*$/, "").trim().toLowerCase() === "sandbox";
+}
+
 /** `pathname` scopes the Turnstile CSP sources; omitted → not allowed. */
 export function applySecurityHeaders(response: Response, pathname?: string): Response {
   const headers = new Headers(response.headers);
@@ -57,8 +65,13 @@ export function applySecurityHeaders(response: Response, pathname?: string): Res
   // Permissions policy — disable features we don't use
   headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
 
-  // Content Security Policy
-  headers.set("Content-Security-Policy", buildContentSecurityPolicy(pathname));
+  // Content Security Policy. A handler that set exactly `sandbox`
+  // (attacker-controlled evidence downloads — handlers/pageCaptures.ts)
+  // keeps it: replacing it with the site policy would DROP the sandbox.
+  // Any other handler-set policy is overwritten with the site policy.
+  if (!isSandboxPolicy(headers.get("Content-Security-Policy"))) {
+    headers.set("Content-Security-Policy", buildContentSecurityPolicy(pathname));
+  }
 
   // HSTS — enforce HTTPS (1 year, include subdomains)
   headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");

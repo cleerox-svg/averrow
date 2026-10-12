@@ -820,6 +820,15 @@ const icons: Record<string, (size: number) => JSX.Element> = {
     </svg>
   ),
 
+  // Page Capture — a camera framing a page (screenshot evidence).
+  page_capture: (s) => (
+    <svg width={s} height={s} viewBox="0 0 36 36" fill="none">
+      <path d="M6 12 L12 12 L14 9 L22 9 L24 12 L30 12 L30 28 L6 28 Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" opacity="0.75" />
+      <circle cx="18" cy="19" r="5" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="18" cy="19" r="1.6" fill="currentColor" />
+    </svg>
+  ),
+
   // Evidence Assembler — assembles takedown evidence packages.
   // Visual: an evidence folder / dossier with a paperclip + pages
   // and a small AI sparkle marker indicating the AI-generated draft.

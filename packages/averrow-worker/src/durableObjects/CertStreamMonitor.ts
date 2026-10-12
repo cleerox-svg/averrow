@@ -9,7 +9,8 @@
 
 import type { Env } from '../types';
 import { computeSanHash } from '../lib/ssl-cert-identity';
-import { tagThreat } from '../lib/idp-tagging';
+import { tagThreat, isIdpFamilyTag } from '../lib/idp-tagging';
+import { enqueueAutoCaptures } from '../lib/page-capture';
 import { cachedValue, seedValue } from '../lib/cached-value';
 
 /** KV key (cachedValue namespace) for the CertStream brand match sets. */
@@ -449,6 +450,7 @@ export class CertStreamMonitor {
         { malicious_domain: m.domain, malicious_url: `https://${m.domain}` },
         m.brandMatch ? [m.brandMatch] : undefined,
       ));
+      const threatIds = matches.map(() => `cs_${crypto.randomUUID().slice(0, 12)}`);
       const stmts = matches.map((m, i) =>
         db.prepare(`
           INSERT OR IGNORE INTO threats (
@@ -458,7 +460,7 @@ export class CertStreamMonitor {
             technique, impersonated_idp
           ) VALUES (?, ?, ?, ?, ?, ?, 'certstream', datetime('now'), ?, ?, ?, ?, ?, ?, ?)
         `).bind(
-          `cs_${crypto.randomUUID().slice(0, 12)}`,
+          threatIds[i],
           m.domain,
           `https://${m.domain}`,
           m.brandMatch ? 'typosquatting' : 'suspicious_certificate',
@@ -486,6 +488,12 @@ export class CertStreamMonitor {
 
       await db.batch(stmts);
       this.stats.certsWritten += matches.length;
+      // IdP-family certs → page-capture queue (lib/page-capture.ts).
+      // Best-effort, never throws, never awaits the browser.
+      const captureItems = matches.flatMap((m, i) => (idpTags[i] && isIdpFamilyTag(idpTags[i])
+        ? [{ threatId: threatIds[i]!, maliciousDomain: m.domain, maliciousUrl: `https://${m.domain}` }]
+        : []));
+      if (captureItems.length > 0) await enqueueAutoCaptures(db, captureItems);
       console.log(`[certstream] Flushed ${matches.length} threats to D1`);
     } catch (err) {
       console.error('[certstream] D1 write error:', err);
