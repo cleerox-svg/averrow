@@ -484,6 +484,28 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
+      // POST /api/internal/dns-queue/prioritize-idp?days=14&limit=500
+      // Enqueue / promote IdP-family threats (technique IN
+      // IDP_FAMILY_TECHNIQUES) from the last `days` (1..30, default 14)
+      // that still lack ip_address into the dns_queue priority lane
+      // (lib/dns-queue-priority.ts), newest first, up to `limit` threats
+      // rows (1..1000, default 500). Idempotent (promote-only upsert);
+      // no-op without DNS_QUEUE_DB.
+      if (url.pathname === '/api/internal/dns-queue/prioritize-idp' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { parsePrioritizeIdpParams, prioritizeIdpDns } = await import('./lib/dns-queue-priority');
+        const params = parsePrioritizeIdpParams(url.searchParams);
+        if (!params.ok) {
+          return Response.json({ success: false, error: params.error }, { status: 400 });
+        }
+        const result = await prioritizeIdpDns(env, params.days, params.limit);
+        return Response.json({ success: true, data: result });
+      }
+
       // POST /api/internal/backfills/idp-impersonation?limit=N[&reset=1]
       // Internal-secret mirror of POST /api/admin/backfills/idp-impersonation
       // (requireAdmin). Same core (runIdpImpersonationBackfill), same KV
@@ -512,6 +534,21 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         }
         const { runIdpLureTopupBackfill, INTERNAL_BACKFILL_ACTOR } = await import('./handlers/admin/idpBackfill');
         return runIdpLureTopupBackfill(request, env, INTERNAL_BACKFILL_ACTOR);
+      }
+
+      // POST /api/internal/backfills/idp-reattribution?cursor=N&limit=N[&apply=1&confirm=…]
+      // One-off: re-attribute IdP-family threats credited to an IdP VENDOR
+      // brand to the targeted brand (handlers/admin/idpReattribution.ts).
+      // dry_run unless apply=1 + confirm; logged to brand_link_cleanup_log
+      // (undo via brand-links/cleanup mode=undo). Loop on next_cursor.
+      if (url.pathname === '/api/internal/backfills/idp-reattribution' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { handleIdpReattribution } = await import('./handlers/admin/idpReattribution');
+        return handleIdpReattribution(url, env);
       }
 
       // POST /api/internal/captures/backfill?days=7&limit=200

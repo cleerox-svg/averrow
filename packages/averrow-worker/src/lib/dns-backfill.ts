@@ -35,6 +35,7 @@
 
 import type { Env } from '../types';
 import { resolveDomain, extractHostname } from './domain-resolver';
+import { DNS_DRAIN_PRIORITY_SQL, DNS_DRAIN_NORMAL_SQL } from './dns-queue-priority';
 
 export interface DnsBackfillResult {
   processed: number;
@@ -155,6 +156,11 @@ export async function runDomainGeoBackfillBatch(
     //
     //   SCAN dns_queue USING INDEX idx_dns_queue_drainable
     //
+    // Two lanes since DNS-queue migration 0002: the IdP priority lane
+    // (SCAN … USING INDEX idx_dns_queue_priority_drainable) is read
+    // first, the normal lane fills the remainder. Plans pinned in
+    // test/dns-queue-priority.test.ts.
+    //
     // Index-only scan, LIMIT walks the index — 500 rows read per call
     // (vs 19,553 on the legacy threats-side strict index). The read
     // also moves to dns_queue's own 25B/month budget.
@@ -170,15 +176,25 @@ export async function runDomainGeoBackfillBatch(
     // unbound (dev) or temporarily reverted for rollback.
     let candidates: { malicious_domain: string }[];
     if (useQueueDb && queueDb) {
-      const r = await queueDb.prepare(`
-        SELECT malicious_domain
-        FROM dns_queue INDEXED BY idx_dns_queue_drainable
-        WHERE enrichment_attempts < 8
-          AND (attempted_resolve_at IS NULL
-               OR attempted_resolve_at < datetime('now', '-6 hours'))
-        LIMIT ?
-      `).bind(batchSize).all<{ malicious_domain: string }>();
-      candidates = r.results;
+      // IdP priority lane first (DNS-queue migration 0002,
+      // lib/dns-queue-priority.ts): drainable priority rows via the tiny
+      // idx_dns_queue_priority_drainable, then the normal lane fills the
+      // rest of the batch (`priority = 0` residual — no row twice).
+      const pr = await queueDb.prepare(DNS_DRAIN_PRIORITY_SQL)
+        .bind(batchSize).all<{ malicious_domain: string }>();
+      candidates = [...pr.results];
+      const room = batchSize - candidates.length;
+      if (room > 0) {
+        const seen = new Set(candidates.map((c) => c.malicious_domain));
+        const r = await queueDb.prepare(DNS_DRAIN_NORMAL_SQL)
+          .bind(room).all<{ malicious_domain: string }>();
+        for (const c of r.results) {
+          if (!seen.has(c.malicious_domain)) {
+            seen.add(c.malicious_domain);
+            candidates.push(c);
+          }
+        }
+      }
     } else {
       const r = await env.DB.prepare(`
         SELECT DISTINCT malicious_domain

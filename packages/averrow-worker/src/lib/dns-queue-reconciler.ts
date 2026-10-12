@@ -98,6 +98,7 @@
 
 import type { Env } from '../types';
 import { cachedCount } from './cached-count';
+import { dnsPriorityForTechnique, dnsQueueUpsertStmt } from './dns-queue-priority';
 
 const CURSOR_KEY = 'reconciler:dns_queue:cursor';
 const CURSOR_TTL_S = 86_400 * 30;
@@ -121,7 +122,7 @@ const CANDIDATE_FILTER_SQL = `
 
 /** Q1 — remainder of the cursor's own second. Binds: created_at, rowid, limit. */
 export const RECONCILER_TIE_SQL = `
-      SELECT rowid AS rid, malicious_domain, source_feed, created_at
+      SELECT rowid AS rid, malicious_domain, source_feed, created_at, technique
       FROM threats INDEXED BY idx_threats_status_created
       WHERE status = 'active'
         AND created_at = ?
@@ -131,7 +132,7 @@ export const RECONCILER_TIE_SQL = `
 
 /** Q2 — every later second. Binds: created_at, limit. */
 export const RECONCILER_AFTER_SQL = `
-      SELECT rowid AS rid, malicious_domain, source_feed, created_at
+      SELECT rowid AS rid, malicious_domain, source_feed, created_at, technique
       FROM threats INDEXED BY idx_threats_status_created
       WHERE status = 'active'
         AND created_at > ?${CANDIDATE_FILTER_SQL}
@@ -246,12 +247,34 @@ interface CandidateRow {
   malicious_domain: string;
   source_feed: string | null;
   created_at: string;
+  /** threats.technique — IdP-family rows enqueue into the priority lane
+   *  (lib/dns-queue-priority.ts). */
+  technique: string | null;
+}
+
+interface QueueInsert {
+  malicious_domain: string;
+  source_feed: string | null;
+  priority: number;
+}
+
+/** Dedupe candidates by domain, keeping the highest priority seen. */
+function dedupeForQueue(rows: ReadonlyArray<{ malicious_domain: string; source_feed: string | null; technique?: string | null }>): QueueInsert[] {
+  const byDomain = new Map<string, QueueInsert>();
+  for (const r of rows) {
+    const priority = dnsPriorityForTechnique(r.technique);
+    const prev = byDomain.get(r.malicious_domain);
+    if (!prev) byDomain.set(r.malicious_domain, { malicious_domain: r.malicious_domain, source_feed: r.source_feed, priority });
+    else if (priority > prev.priority) prev.priority = priority;
+  }
+  return [...byDomain.values()];
 }
 
 export interface ReconcileResult {
   skipped: boolean;
   reason?: string;
-  /** rows_written on the queue side from INSERT OR IGNORE. */
+  /** rows_written on the queue side from the promote-only upsert
+   *  (lib/dns-queue-priority.ts): new rows + rows promoted to the IdP lane. */
   enqueued: number;
   /** Number of new candidates pulled from threats since cursor. */
   scanned: number;
@@ -333,18 +356,15 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     // same malicious_domain (e.g., feed reposts). Batching via
     // db.batch() with duplicate PKs in one batch is risky on D1 (the
     // 2026-05-17 bug). Dedupe up-front.
-    const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
     let next: DnsQueueCursor = before;
     for (const c of candidates) {
-      if (!uniqueByDomain.has(c.malicious_domain)) {
-        uniqueByDomain.set(c.malicious_domain, c);
-      }
       if (typeof c.rid === 'number' && Number.isSafeInteger(c.rid)) {
         const key: DnsQueueCursor = { created_at: c.created_at, rowid: c.rid };
         if (compareDnsQueueCursor(key, next) > 0) next = key;
       }
     }
-    const toInsert = [...uniqueByDomain.values()];
+    // IdP-family candidates carry priority 1 (promote-only upsert).
+    const toInsert = dedupeForQueue(candidates);
 
     // Defensive self-heal: a full page that doesn't move the cursor
     // would pin it forever (the 2026-10-06 failure mode). Keyset makes
@@ -386,7 +406,10 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
       // queries fail too.
     }
 
-    // ── 5. INSERT OR IGNORE the dedupe'd new candidates ──
+    // ── 5. Upsert the dedupe'd new candidates ──
+    // INSERT … ON CONFLICT DO UPDATE SET priority WHERE higher: behaves as
+    // INSERT OR IGNORE for normal rows, and promotes an already-queued
+    // domain into the IdP priority lane (lib/dns-queue-priority.ts).
     // Per-row INSERTs batched via db.batch() (proven PR-2b pattern;
     // avoids the multi-row VALUES bug + gives per-statement
     // changes count).
@@ -394,11 +417,7 @@ export async function reconcileDnsQueue(env: Env): Promise<ReconcileResult> {
     for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
       const chunk = toInsert.slice(i, i + CHUNK_SIZE);
       const stmts = chunk.map((c) =>
-        env.DNS_QUEUE_DB!.prepare(`
-          INSERT OR IGNORE INTO dns_queue
-            (malicious_domain, enrichment_attempts, attempted_resolve_at, source_feed, enqueued_at)
-          VALUES (?, 0, NULL, ?, datetime('now'))
-        `).bind(c.malicious_domain, c.source_feed)
+        dnsQueueUpsertStmt(env.DNS_QUEUE_DB!, c.malicious_domain, c.source_feed, c.priority)
       );
       batchesAttempted++;
       try {
@@ -580,7 +599,7 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
 
     // Same candidate predicate as the forward reconciler, walking DOWN.
     const res = await env.DB.prepare(`
-      SELECT malicious_domain, source_feed, created_at
+      SELECT malicious_domain, source_feed, created_at, technique
       FROM threats INDEXED BY idx_threats_status_created
       WHERE status = 'active'
         AND created_at < ?
@@ -596,6 +615,7 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
       malicious_domain: string;
       source_feed: string | null;
       created_at: string;
+      technique: string | null;
     }>();
 
     const rows = res.results;
@@ -608,25 +628,19 @@ export async function backfillDnsQueueHistory(env: Env): Promise<BackfillResult>
       return { ...base, scanned: 0, done: true, durationMs: Date.now() - start };
     }
 
-    // Dedupe by domain (same DB-batch safety rationale as the reconciler)
-    // and track the minimum created_at to advance the descending cursor.
-    const uniqueByDomain = new Map<string, { malicious_domain: string; source_feed: string | null }>();
+    // Dedupe by domain (same DB-batch safety rationale as the reconciler;
+    // IdP-family rows keep priority 1) and track the minimum created_at to advance the descending cursor.
     let minCreatedAt = boundary;
     for (const r of rows) {
-      if (!uniqueByDomain.has(r.malicious_domain)) uniqueByDomain.set(r.malicious_domain, r);
       if (r.created_at < minCreatedAt) minCreatedAt = r.created_at;
     }
-    const toInsert = [...uniqueByDomain.values()];
+    const toInsert = dedupeForQueue(rows);
 
     let enqueued = 0;
     for (let i = 0; i < toInsert.length; i += CHUNK_SIZE) {
       const chunk = toInsert.slice(i, i + CHUNK_SIZE);
       const stmts = chunk.map((c) =>
-        env.DNS_QUEUE_DB!.prepare(`
-          INSERT OR IGNORE INTO dns_queue
-            (malicious_domain, enrichment_attempts, attempted_resolve_at, source_feed, enqueued_at)
-          VALUES (?, 0, NULL, ?, datetime('now'))
-        `).bind(c.malicious_domain, c.source_feed)
+        dnsQueueUpsertStmt(env.DNS_QUEUE_DB!, c.malicious_domain, c.source_feed, c.priority)
       );
       try {
         const results = await env.DNS_QUEUE_DB.batch(stmts);
