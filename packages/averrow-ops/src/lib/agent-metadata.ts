@@ -49,6 +49,7 @@ export type AgentId =
   | 'evidence_assembler'
   | 'campaign_hunter'
   | 'abuse_mailbox_classifier'
+  | 'page_capture'
   | 'executive_monitor'
   | 'phantom_enumerator';
 
@@ -161,6 +162,15 @@ export const AGENT_METADATA: Record<AgentId, AgentMetadata> = {
     color: '#0A8AB5',
     category: 'response',
     pipelinePosition: 41,
+  },
+  page_capture: {
+    id: 'page_capture',
+    displayName: 'Page Capture',
+    codename: null,
+    subtitle: 'Renders suspected fake sign-in pages in an isolated browser and saves screenshots as evidence',
+    color: '#0A8AB5',
+    category: 'response',
+    pipelinePosition: 45,
   },
   strategist: {
     id: 'strategist',
