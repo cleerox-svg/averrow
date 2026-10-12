@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@averrow/shared": "workspace:*",
+    "@cloudflare/puppeteer": "1.4.0",
     "@simplewebauthn/server": "^11.0.0",
     "itty-router": "^5.0.18",
     "zod": "^3.24.1"

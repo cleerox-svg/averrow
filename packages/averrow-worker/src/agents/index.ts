@@ -59,6 +59,7 @@ import { abuseMailboxClassifierAgent } from "./abuseMailboxClassifier";
 import { ctMonitorAgent } from "./ct-monitor";
 import { executiveMonitorAgent } from "./executiveMonitor";
 import { phantomEnumeratorAgent } from "./phantomEnumerator";
+import { pageCaptureAgent } from "./pageCapture";
 
 // TrustBot is a utility module for the /api/trustbot/chat endpoint — not a scheduled/event agent
 export { trustbotAgent } from "./trustbot";
@@ -109,4 +110,5 @@ export const agentModules: Record<string, AgentModule> = {
   "ct_monitor": ctMonitorAgent,
   "executive_monitor": executiveMonitorAgent,
   "phantom_enumerator": phantomEnumeratorAgent,
+  "page_capture": pageCaptureAgent,
 };

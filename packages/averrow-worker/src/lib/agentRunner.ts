@@ -59,7 +59,8 @@ export type AgentName =
   | "abuse_mailbox_classifier"
   | "ct_monitor"
   | "executive_monitor"
-  | "phantom_enumerator";
+  | "phantom_enumerator"
+  | "page_capture";
 
 export type TriggerType = "scheduled" | "event" | "manual" | "api";
 export type RunStatus = "success" | "partial" | "failed";

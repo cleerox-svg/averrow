@@ -116,8 +116,21 @@ not_found_handling = "404-page"
 #   :22 (hly)  lookalike_scanner     ← S0.1
 #   :23 (hly)  trademark_monitor     ← S0.1
 #   :26 (6h)   executive_monitor     ← EXEC_IMPERSONATION Stage 4
+#   :27 (4h)   pulsedive enrichment feed
+#   */10       page_capture          ← PHISH_PAGE_CAPTURE_SPEC_2026-10
 #   14:24 Mon  tenant weekly digest
-crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *"]
+#
+# `*/10 * * * *` is the phishing page capture worker (owner-approved
+# 2026-10-12, docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md). Claims ≤5 queued
+# page_captures rows per tick and renders them with Browser Rendering (the
+# [browser] binding below) — own invocation so browser wall time never
+# competes with the hourly mesh. It shares minutes :00/:10/…/:50 with the
+# */5 Navigator, but Cloudflare delivers one scheduled event per cron
+# expression, and handleScheduled matches BOTH by exact event.cron string,
+# so neither double-runs. No minute gates in the handler (its daily
+# retention sweep is an hour-only UTC-0 gate + KV day stamp) —
+# cron-audit-safe.
+crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *", "*/10 * * * *"]
 
 # ─── Workflows (durable multi-step processing) ──────────────
 [[workflows]]
@@ -326,6 +339,20 @@ bucket_name = "trust-radar-trademark-assets"
 binding = "NRD_ARCHIVE"
 bucket_name = "averrow-nrd-archive"
 
+# ─── R2 Storage (phishing page capture evidence) ─────────────
+# PRIVATE bucket (no public access, no custom domain) holding the page
+# capture worker's evidence: captures/{yyyy}/{mm}/{capture_id}/desktop.png,
+# mobile.png, page.html, meta.json (SHA-256 of each recorded in D1
+# page_captures + meta.json; customMetadata carries threat_id). Objects are
+# only ever streamed back through the staff API (/api/intel/captures/*).
+# Operator pre-req: create the bucket with a lifecycle rule — prefix
+# `captures/`, delete after 180 days (retention, owner decision 2026-10-12).
+# Deploy fails on a missing bucket. Top-level = prod only; absent in
+# staging/dev → the page_capture agent is a no-op.
+[[r2_buckets]]
+binding = "PHISH_CAPTURES"
+bucket_name = "averrow-phish-captures"
+
 # ─── Durable Objects (WebSocket push hub + CertStream monitor) ──
 [[durable_objects.bindings]]
 name = "THREAT_PUSH_HUB"
@@ -353,6 +380,13 @@ new_classes = ["CertStreamMonitor"]
 [limits]
 subrequests = 50_000
 cpu_ms = 300_000
+
+# ─── Browser Rendering (phishing page capture) ───────────────
+# Headless Chromium for lib/page-capture-browser.ts (@cloudflare/puppeteer).
+# Workers Paid. Production only (bindings don't inherit into [env.*]);
+# staging/dev run without it and the page_capture agent no-ops.
+[browser]
+binding = "BROWSER"
 
 # ─── Workers AI ───────────────────────────────────────────────
 # Production only (bindings don't inherit into [env.*]); staging/dev run

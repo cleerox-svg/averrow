@@ -17,7 +17,8 @@ import { calculateConfidence, calculateSeverity, reclassifyThreatType } from "./
 import { isPrivateIP } from "./geoip";
 import { withD1Retry } from "./d1-retry";
 import { computeBackoffRetryAt, FEED_RETRY_LADDER } from "./backoff";
-import { tagThreat, needsBrandTokens, loadBrandTokens } from "./idp-tagging";
+import { tagThreat, needsBrandTokens, loadBrandTokens, isIdpFamilyTag } from "./idp-tagging";
+import { enqueueAutoCaptures } from "./page-capture";
 
 // ─── Deduplication ───────────────────────────────────────────────
 
@@ -133,6 +134,15 @@ export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<b
   const result = await buildThreatInsertStmt(db, threat, brandTokens).run();
   const inserted = (result.meta?.changes ?? 0) > 0;
 
+  // Phishing page capture (lib/page-capture.ts): a NEW IdP-family threat is
+  // queued for a headless-browser capture. One cheap INSERT … WHERE NOT
+  // EXISTS; never awaits the browser; never throws.
+  if (inserted && isIdpFamilyTag(tagThreat(threat, brandTokens))) {
+    await enqueueAutoCaptures(db, [{
+      threatId: threat.id, maliciousUrl: threat.malicious_url, maliciousDomain: threat.malicious_domain,
+    }]);
+  }
+
   // Keep brands.threat_count moving WITH the link at the write site so the
   // cube_healer reconciler (lib/brand-count-reconciler.ts) stops having to
   // sweep ~429 brands every 6h. Only bump on a genuinely new row: an
@@ -194,9 +204,10 @@ export async function bulkInsertThreats(
     .filter((r) => r.target_brand_id && needsBrandTokens(r))
     .map((r) => r.target_brand_id as string);
   const brandTokens = tokenBrandIds.length > 0 ? await loadBrandTokens(db, tokenBrandIds) : null;
-  const stmts = rows.map((r) =>
-    buildThreatInsertStmt(db, r, r.target_brand_id ? brandTokens?.get(r.target_brand_id) : undefined),
-  );
+  const rowTokens = rows.map((r) => (r.target_brand_id ? brandTokens?.get(r.target_brand_id) : undefined));
+  const stmts = rows.map((r, i) => buildThreatInsertStmt(db, r, rowTokens[i]));
+  // NEW IdP-family rows → page-capture queue (after the inserts, below).
+  const captureCandidates: ThreatRow[] = [];
   let itemsNew = 0;
   let itemsError = 0;
   // Accumulate per-brand counts for rows that were ACTUALLY inserted this
@@ -216,6 +227,8 @@ export async function bulkInsertThreats(
         if (changed > 0) {
           const brandId = rows[i + k]?.target_brand_id;
           if (brandId) brandBumps.set(brandId, (brandBumps.get(brandId) ?? 0) + changed);
+          const row = rows[i + k];
+          if (row && isIdpFamilyTag(tagThreat(row, rowTokens[i + k]))) captureCandidates.push(row);
         }
       }
     } catch (err) {
@@ -240,6 +253,14 @@ export async function bulkInsertThreats(
     } catch (err) {
       console.error(`[bulkInsertThreats] brand threat_count flush failed:`, err instanceof Error ? err.message : String(err));
     }
+  }
+
+  // Page-capture enqueue for the new IdP-family rows — best-effort, never
+  // throws, never awaits the browser (lib/page-capture.ts).
+  if (captureCandidates.length > 0) {
+    await enqueueAutoCaptures(db, captureCandidates.map((r) => ({
+      threatId: r.id, maliciousUrl: r.malicious_url, maliciousDomain: r.malicious_domain,
+    })));
   }
 
   const itemsDuplicate = rows.length - itemsNew - itemsError;

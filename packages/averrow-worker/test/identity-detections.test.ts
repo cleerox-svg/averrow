@@ -22,7 +22,7 @@ import {
 import { IDP_MITRE } from "../src/lib/idp-impersonation";
 import type { Env } from "../src/types";
 
-const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests"];
+const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests", "page_captures"];
 const NOW = new Date("2026-10-10T12:00:00Z");
 const MIGRATIONS_DIR = resolve(__dirname, "..", "migrations");
 
@@ -265,6 +265,55 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
     });
     expect(d!.ttps.map((t) => t.id)).toContain("T1528");
     expect(d!.ttps.map((t) => t.id)).not.toContain("T1557");
+  });
+
+  it("detail: captures[] — newest first, max 5, spec contract shape", async () => {
+    // No captures yet → empty array (never undefined).
+    expect((await getIdentityDetection(env, req(), "t04"))!.captures).toEqual([]);
+
+    const ins = raw.prepare(
+      `INSERT INTO page_captures (id, threat_id, target_url, status, queued_at, created_at, captured_at, expires_at,
+         final_url, http_status, page_title, redirect_chain_json, form_action_hosts_json, anti_bot_wall, error,
+         desktop_key, mobile_key, html_key, desktop_sha256, mobile_sha256, html_sha256)
+       VALUES (?, 't01', 'https://acme-sso.okta.com/', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (let i = 1; i <= 5; i++) {
+      ins.run(`pc_old${i}`, "failed", `2026-10-0${i} 00:00:00`, `2026-10-0${i} 00:00:00`, null, null, null, null, null,
+        null, null, null, "net::ERR", null, null, null, null, null, null);
+    }
+    ins.run("pc_new", "captured", "2026-10-10 10:00:00", "2026-10-10 10:00:00", "2026-10-10 10:05:00", "2027-04-08 10:05:00",
+      "https://acme-sso.okta.com/login", 200, "Sign in", JSON.stringify(["https://acme-sso.okta.com/", "https://acme-sso.okta.com/login"]),
+      JSON.stringify(["collector.evil.net"]), null, null,
+      "captures/2026/10/pc_new/desktop.png", null, "captures/2026/10/pc_new/page.html", "dsha", null, "hsha");
+
+    const d = await getIdentityDetection(env, req(), "t01");
+    expect(d!.captures).toHaveLength(5);
+    expect(d!.captures.map((c) => c.id)).toEqual(["pc_new", "pc_old5", "pc_old4", "pc_old3", "pc_old2"]);
+    expect(d!.captures[0]).toEqual({
+      id: "pc_new",
+      status: "captured",
+      queued_at: "2026-10-10T10:00:00Z",
+      captured_at: "2026-10-10T10:05:00Z",
+      expires_at: "2027-04-08T10:05:00Z",
+      final_url: "https://acme-sso.okta.com/login",
+      http_status: 200,
+      page_title: "Sign in",
+      redirect_chain: ["https://acme-sso.okta.com/", "https://acme-sso.okta.com/login"],
+      form_action_hosts: ["collector.evil.net"],
+      anti_bot_wall: null,
+      error: null,
+      screenshot_desktop_url: "/api/intel/captures/pc_new/screenshot?variant=desktop",
+      // Mobile object not stored → null, never a dangling URL.
+      screenshot_mobile_url: null,
+      html_download_url: "/api/intel/captures/pc_new/html",
+      sha256: { desktop: "dsha", mobile: null, html: "hsha" },
+    });
+    expect(d!.captures[1]).toMatchObject({ status: "failed", error: "net::ERR", redirect_chain: [], form_action_hosts: [],
+      screenshot_desktop_url: null, html_download_url: null, captured_at: null });
+
+    const sql = log.find((l) => l.sql.includes("FROM page_captures"))!.sql;
+    const plan = raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("t01", 5).map((r) => String((r as { detail: string }).detail)).join(" | ");
+    expect(plan).toMatch(/SEARCH page_captures USING INDEX idx_page_captures_threat_created \(threat_id=\?\)/);
   });
 
   it("EXPLAIN: detail takedown lookup is indexed on source_id", async () => {

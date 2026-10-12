@@ -20,7 +20,8 @@
 //     so paging through a result set re-counts at most once per 2 minutes.
 //   * Detail — one primary-key read with LEFT JOINs (brands, hosting_providers,
 //     infrastructure_clusters) plus one takedown lookup on the partial index
-//     idx_takedown_requests_threat_source (migration 0289), in parallel.
+//     idx_takedown_requests_threat_source (migration 0289) and one page-capture
+//     lookup on idx_page_captures_threat_created (migration 0290), in parallel.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession } from "../lib/db";
@@ -36,6 +37,7 @@ import {
   type IdpVector,
 } from "../lib/idp-impersonation";
 import { brandTokensFrom } from "../lib/idp-tagging";
+import { CAPTURE_DETAIL_LIMIT, CAPTURE_DETAIL_SQL, toCaptureView, type CaptureRow, type CaptureView } from "../lib/page-capture";
 import {
   VECTORS,
   d1Time,
@@ -107,6 +109,9 @@ export interface IdentityDetectionDetail extends IdentityDetectionListItem {
   timeline: { first_seen: string | null; last_seen: string | null; created_at: string; enriched_at: string | null };
   takedown: { id: string; status: string; updated_at: string | null } | null;
   cluster: { id: string; name: string | null } | null;
+  /** Page captures (lib/page-capture.ts), newest first, max 5. Screenshot /
+   *  HTML URLs are staff API paths, null unless the object is stored. */
+  captures: CaptureView[];
 }
 
 // ─── Query parsing ───────────────────────────────────────────────────
@@ -411,7 +416,7 @@ export async function getIdentityDetection(
   threatId: string,
 ): Promise<IdentityDetectionDetail | null> {
   const db = getReadSession(env, getDbContext(request));
-  const [row, takedown] = await Promise.all([
+  const [row, takedown, captureRows] = await Promise.all([
     db.prepare(
       `SELECT t.id, t.malicious_domain, t.malicious_url, t.target_brand_id,
               b.name AS brand_name, b.canonical_domain AS brand_canonical_domain,
@@ -437,6 +442,8 @@ export async function getIdentityDetection(
         ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
         LIMIT 1`,
     ).bind(threatId).first<{ id: string; status: string; updated_at: string | null }>(),
+    // idx_page_captures_threat_created (migration 0290).
+    db.prepare(CAPTURE_DETAIL_SQL).bind(threatId, CAPTURE_DETAIL_LIMIT).all<CaptureRow>(),
   ]);
 
   const vector = row ? techniqueToVector(row.technique) : null;
@@ -498,6 +505,7 @@ export async function getIdentityDetection(
       ? { id: takedown.id, status: takedown.status, updated_at: isoOrNull(takedown.updated_at) }
       : null,
     cluster: row.cluster_id ? { id: row.cluster_id, name: row.cluster_name } : null,
+    captures: (captureRows.results ?? []).map(toCaptureView),
   };
 }
 

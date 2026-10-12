@@ -497,6 +497,43 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Phishing page capture: dedicated cron (*/10 * * * *) ──
+  //
+  // docs/PHISH_PAGE_CAPTURE_SPEC_2026-10.md. Claims ≤ CAPTURE_BATCH queued
+  // page_captures rows and renders them in Cloudflare Browser Rendering (one
+  // session, sequential, 20s/page, ~4 min budget) — own Worker invocation so
+  // browser wall time never competes with the hourly mesh. Dispatched via
+  // executeAgent → agent_runs + a telemetry agent_events row.
+  //
+  // CRON-AUDIT (CLAUDE.md §6): Cloudflare fires one scheduled event PER
+  // matching cron expression, each carrying its own `event.cron` string. At
+  // :00/:10/:20/:30/:40/:50 both `*/5 * * * *` (navigator, matched by exact
+  // string at the TOP of this function) and `*/10 * * * *` fire as two
+  // separate events — navigator's branch never sees '*/10 * * * *' and this
+  // branch never sees '*/5 * * * *', so neither double-runs. No minute gate
+  // anywhere here or in lib/page-capture.ts; its once-a-day retention sweep
+  // is an hour-only gate (UTC hour 0) deduped by a KV day stamp. MUST stay
+  // above the `event.cron !== '7 * * * *'` mesh guard below.
+  if (event.cron === '*/10 * * * *') {
+    try {
+      const { agentModules } = await import('../agents');
+      const { executeAgent } = await import('../lib/agentRunner');
+      const mod = agentModules['page_capture'];
+      if (mod) {
+        await executeAgent(
+          env,
+          mod,
+          { scheduledTime: new Date(event.scheduledTime).toISOString() },
+          'cron',
+          'scheduled',
+        );
+      }
+    } catch (err) {
+      logger.error('page_capture_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Hourly tick: full agent mesh (7 * * * *, 15min CPU ceiling) ───
   // Shifted from :00 to :07 in Wave 1A so the hourly mesh no longer collides
   // with the */5 Navigator that fires at :00. Parity-checker was removed as a

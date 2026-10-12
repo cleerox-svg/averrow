@@ -20,7 +20,8 @@
 
 import { registrableDomain } from "./domain-utils";
 import { IDP_TENANT_HOSTS, idpTenantLabel } from "./idp-impersonation";
-import { tagThreat, brandTokensFrom, idpTagUpdateStmt } from "./idp-tagging";
+import { tagThreat, brandTokensFrom, idpTagUpdateStmt, isIdpFamilyTag } from "./idp-tagging";
+import { enqueueAutoCaptures } from "./page-capture";
 
 export interface BrandRow {
   id: string;
@@ -561,7 +562,12 @@ export async function tagIdpAfterBrandMatch(
   const tag = tagThreat(row, brandTokensFrom(brand.name, brand.canonical_domain));
   if (!tag.impersonated_idp) return;
   try {
-    await idpTagUpdateStmt(db, row.id, tag).run();
+    const res = await idpTagUpdateStmt(db, row.id, tag).run();
+    // Newly IdP-tagged → page-capture queue (lib/page-capture.ts). Never
+    // throws, never awaits the browser.
+    if ((res.meta?.changes ?? 0) > 0 && isIdpFamilyTag(tag)) {
+      await enqueueAutoCaptures(db, [{ threatId: row.id, maliciousUrl: row.malicious_url, maliciousDomain: row.malicious_domain }]);
+    }
   } catch {
     // Best-effort — the IdP backfill re-covers it.
   }
