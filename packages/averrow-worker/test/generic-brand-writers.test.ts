@@ -12,6 +12,7 @@ import { numberedVariantBrandId } from "../src/agents/analyst";
 import { lookalikePermutationsForBrand } from "../src/scanners/lookalike-domains";
 import { generatePermutations } from "../src/lib/dnstwist";
 import { matchAbuseMailboxBrand } from "../src/lib/abuse-mailbox-brand-match";
+import { matchMonitoredBrand } from "../src/feeds/certstream";
 
 describe("typosquat scanner — variantsForBrand", () => {
   it("keeps every variant for an ordinary brand", () => {
@@ -90,5 +91,52 @@ describe("abuse mailbox — matchAbuseMailboxBrand", () => {
       .toMatchObject({ brand_id: "b_paypal", signal: "url_domain_typosquat" });
     expect(matchAbuseMailboxBrand(input({ subject: "PayPal: account limited" }), brands))
       .toMatchObject({ brand_id: "b_paypal", signal: "subject_keyword" });
+  });
+});
+
+describe("abuse mailbox — short generic brands stay excluded (review M4)", () => {
+  const brands = [
+    { id: "b_bit", name: "Bit", canonical_domain: "bit.ly" },
+    { id: "b_app", name: "App", canonical_domain: "app.com" },
+    { id: "b_mail", name: "Mail", canonical_domain: "mail.ru" },
+  ];
+  const input = (over: Partial<Parameters<typeof matchAbuseMailboxBrand>[0]>) =>
+    ({ from_domain: null, subject: null, body_snippet: null, url_domains: [], ...over });
+
+  it("a short-link report never wins Bit (bit.ly) at 95", () => {
+    expect(matchAbuseMailboxBrand(input({ url_domains: ["bit.ly"] }), brands)).toBeNull();
+    expect(matchAbuseMailboxBrand(input({ url_domains: ["x.app.com"] }), brands)).toBeNull();
+  });
+
+  it("a generic brand's multi-tenant subdomain is not url_domain_exact", () => {
+    expect(matchAbuseMailboxBrand(input({ url_domains: ["cloud.mail.ru"] }), brands)).toBeNull();
+    expect(matchAbuseMailboxBrand(input({ url_domains: ["e.mail.ru"] }), brands))
+      .toMatchObject({ brand_id: "b_mail", signal: "url_domain_exact" });
+  });
+});
+
+describe("CT feed — matchMonitoredBrand (review M1 / M3)", () => {
+  const entries = [
+    { id: "b_mail", keyword: "mailru", domain: "mail.ru", genericName: "Mail" },
+    { id: "b_live", keyword: "livecom", domain: "live.com", genericName: "Live" },
+    { id: "brand_microsoft_com", keyword: "microsoft", domain: "microsoft.com", genericName: null },
+  ];
+  it("generic brands only via the shared predicate", () => {
+    expect(matchMonitoredBrand("emailrules.com", entries)).toBeNull();
+    expect(matchMonitoredBrand("olivecompany.com", entries)).toBeNull();
+    expect(matchMonitoredBrand("mail.ru.evil.com", entries)).toMatchObject({ id: "b_mail", generic: true });
+    expect(matchMonitoredBrand("mai1ru-login.com", entries)).toMatchObject({ id: "b_mail", isHomoglyph: true });
+    expect(matchMonitoredBrand("e.mail.ru", entries)).toBeNull(); // own domain
+  });
+  it("a vendor-product generic brand hit credits the parent", () => {
+    expect(matchMonitoredBrand("outlook-live-verify.com", entries)).toMatchObject({ id: "brand_microsoft_com" });
+    expect(matchMonitoredBrand("outlook-live-verify.com", entries.slice(0, 2))).toBeNull(); // parent not loaded
+  });
+});
+
+describe("lure-gated generic brands in the other writers", () => {
+  it("typosquat scanner keeps LINE's lure combos", () => {
+    expect(variantsForBrand("Line", "line.me")).toContain("line-login.com");
+    expect(variantsForBrand("Line", "line.me")).not.toContain("line.com");
   });
 });

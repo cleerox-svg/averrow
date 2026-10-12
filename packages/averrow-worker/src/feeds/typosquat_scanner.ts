@@ -3,7 +3,7 @@ import { threatId } from "./types";
 import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
 import { checkBIMIExists } from "../email-security";
 import { createAlert } from "../lib/alerts";
-import { genericBrandHostMatch, isGenericBrandName } from "../lib/brandDetect";
+import { isGenericBrandName, matchGenericBrand } from "../lib/brandDetect";
 
 /**
  * Typosquat Scanner — generates domain variants for monitored brands
@@ -94,7 +94,7 @@ export function generateVariants(domain: string): string[] {
 export function variantsForBrand(name: string, domain: string): string[] {
   const variants = generateVariants(domain);
   if (!isGenericBrandName(name)) return variants;
-  return variants.filter((v) => genericBrandHostMatch(v, domain, { subdomains: false }) !== null);
+  return variants.filter((v) => matchGenericBrand(v, { name, canonical_domain: domain }, { subdomains: false }) !== null);
 }
 
 // ─── DNS Resolution via Cloudflare DoH ──────────────────────────

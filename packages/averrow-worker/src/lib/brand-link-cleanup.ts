@@ -47,12 +47,12 @@
 import type { Env } from "../types";
 import {
   fuzzyMatchBrandDetailed,
-  genericBrandHostMatch,
   genericBrandOwnerCredit,
   genericBrandWords,
   isGenericBrand,
   isGenericBrandName,
   isMatchableInput,
+  matchGenericBrand,
   loadBrands,
   matchBrandToHost,
   normalizeBrand,
@@ -249,7 +249,7 @@ export function decideGenericLink(
   }
   const haystacks = haystacksOf(row);
   for (const h of haystacks) {
-    const method = genericBrandHostMatch(h, row.brand_canonical, { subdomains: true });
+    const method = matchGenericBrand(h, { name: row.brand_name, canonical_domain: row.brand_canonical }, { subdomains: true });
     if (method) return { action: "keep", method, newBrandId: null, reason: null };
   }
   const reason: CleanupReason = haystacks.some(isMatchableInput) ? "generic_brand" : "non_hostname";

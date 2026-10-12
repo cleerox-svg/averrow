@@ -19,6 +19,7 @@ import { tagThreat, loadBrandTokens, idpTagUpdateStmt, lookalikeIdpLure } from "
 import { generateIdpLurePermutations } from "../../lib/dnstwist";
 import { MONITORED_BRAND_PREDICATE_SQL } from "../../lib/monitored-brands";
 import { storeLookalikePermutations } from "../../scanners/lookalike-domains";
+import { isGenericBrandName } from "../../lib/brandDetect";
 
 export const IDP_BACKFILL_THREAT_CURSOR_KEY = "backfill:idp:cursor";
 export const IDP_BACKFILL_LOOKALIKE_CURSOR_KEY = "backfill:idp:lookalike_cursor";
@@ -281,7 +282,7 @@ export function parseIdpLureTopupBrands(raw: string | null): number {
 export async function topUpIdpLures(env: Env, brandLimit: number): Promise<IdpLureTopupResult> {
   const cursor = await readCursor(env, IDP_LURE_TOPUP_CURSOR_KEY);
   const res = await env.DB.prepare(
-    `SELECT b.rowid AS rid, b.id AS brand_id, b.canonical_domain AS domain
+    `SELECT b.rowid AS rid, b.id AS brand_id, b.canonical_domain AS domain, b.name AS name
        FROM brands b
       WHERE b.rowid > ?
         AND b.canonical_domain IS NOT NULL
@@ -289,12 +290,16 @@ export async function topUpIdpLures(env: Env, brandLimit: number): Promise<IdpLu
         AND EXISTS (SELECT 1 FROM lookalike_domains ld WHERE ld.brand_id = b.id)
       ORDER BY b.rowid
       LIMIT ?`,
-  ).bind(cursor, brandLimit).all<{ rid: number; brand_id: string; domain: string }>();
+  ).bind(cursor, brandLimit).all<{ rid: number; brand_id: string; domain: string; name: string | null }>();
   const rows = res.results ?? [];
   if (rows.length === 0) return { brands_scanned: 0, inserted: 0, cursor, done: true };
 
   let inserted = 0;
   for (const b of rows) {
+    // Generic-word brands ("Mail" mail.ru): "<word>-okta.com" lures of a
+    // dictionary word are not lookalikes of the brand (brandDetect
+    // isGenericBrandName) — skip, as the general seeder does.
+    if (isGenericBrandName(b.name)) continue;
     const lures = generateIdpLurePermutations(b.domain);
     if (lures.length === 0) continue;
     inserted += (await storeLookalikePermutations(env, b.brand_id, b.domain, lures)).inserted;

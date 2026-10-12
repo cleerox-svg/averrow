@@ -8,7 +8,7 @@
  */
 
 import { generatePermutations, type DomainPermutation } from '../lib/dnstwist';
-import { genericBrandHostMatch, isGenericBrandName } from '../lib/brandDetect';
+import { isGenericBrandName, matchGenericBrand } from '../lib/brandDetect';
 import { lookalikeIdpLure } from '../lib/idp-tagging';
 import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
@@ -1128,7 +1128,7 @@ export function lookalikePermutationsForBrand(
   // TLD — "mаil.ru" with a Cyrillic а) are genuine lookalikes by construction;
   // their punycode form can't be checked by spelling.
   return permutations.filter((p) => p.type === 'idn_homoglyph'
-    || genericBrandHostMatch(p.domain, domain, { subdomains: false }) !== null);
+    || matchGenericBrand(p.domain, { name: brandName, canonical_domain: domain }, { subdomains: false }) !== null);
 }
 
 /**

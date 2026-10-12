@@ -12,9 +12,9 @@
  *                  raw or filler-stripped ("paypalsecure.com" → PayPal)
  * 4. levenshtein — label within edit distance of the brand name: 1 for
  *                  6–7 char names, 2 for 8+; same first character
- * 5. glued       — a 4–5 char name inside one long run-on token next to a
- *                  lure word ("invitationlauchjczoommeeting" → Zoom);
- *                  only when 1–4 found nothing (gluedTokenMatch)
+ * 5. glued       — an ALLOWLISTED 4–5 char name (GLUED_BRAND_ALLOWLIST)
+ *                  inside one long token whose rest splits into lure words
+ *                  ("adobeacrobatdoc" → Adobe); only when 1–4 found nothing
  *
  * Generic-word brand names ("Data", "Login", "Mail", "Site", …) never
  * match by name: only their canonical domain or a genuine lookalike of the
@@ -77,69 +77,100 @@ export interface BrandMatch {
 const MIN_SUBSTRING_LEN = 6;
 
 /**
- * Glued-substring rule (2026-10-12) for 4–5 char names, which otherwise
- * need a whole token: the name may sit INSIDE one long run-on token
- * ("invitationlauchjczoommeeting" → Zoom, "adobeacrobatdoc" → Adobe,
- * "myadobesign" → Adobe) when ALL of:
- *   - the brand is matchable (monitored/customer or untiered, not generic);
- *   - the hyphen token is at least GLUED_MIN_TOKEN_LEN chars (a short
- *     glue like "kicklogin"/"helpscout" stays a non-match);
- *   - a phishing / document-lure word (GLUED_LURE_WORDS) sits DIRECTLY
- *     beside the name on at least one side — the whole remaining side for a
- *     short word ("…sign"), or a prefix/suffix of it for a word of 5+ chars
- *     ("…meeting…", "acrobat…");
- *   - a name that is a common fragment of English words
- *     (GLUED_EMBED_HAZARD: purchase→chase, pineapple→apple, citizen→citi)
- *     must also sit at the token's start or end, with the lure on the
- *     other side ("chaseverifyaccount", "loginchase" yes; "purchaseverify",
- *     "pineapplelogin" no).
- * Never applies to IdP-lure leftovers (whole-token only) and runs only
- * after every other rule found nothing, so existing matches are unchanged.
+ * Credential / account lure words — the vocabulary every "glued" rule
+ * segments against (exact words only, never prefixes): the glued-brand rule
+ * below, the generic-brand full-domain token rule and the lure-gated
+ * generic-brand rule (genericBrandHostMatch).
  */
-const GLUED_MIN_TOKEN_LEN = 10;
-
-const GLUED_LURE_WORDS: readonly string[] = [
-  // account / credential lures
-  "login", "logon", "signin", "signon", "secure", "security", "verify", "verification",
-  "account", "accounts", "update", "confirm", "support", "password", "wallet", "billing",
-  "invoice", "payment", "refund", "recovery", "unlock", "alert", "notice", "auth",
-  // meeting / document / e-sign lures
-  "meeting", "meet", "invite", "invitation", "webinar", "join", "sign", "esign", "doc", "docs",
-  "document", "documents", "pdf", "acrobat", "reader", "share", "shared", "file", "files",
-  "drive", "fax", "scan",
+const CREDENTIAL_LURE_WORDS: readonly string[] = [
+  "login", "logon", "signin", "signon", "secure", "security", "verify", "verification", "verified",
+  "account", "accounts", "auth", "password", "unlock", "recovery", "recover", "reset", "confirm",
+  "validate", "validation", "suspended", "locked", "kyc", "sso", "mfa", "2fa", "otp",
+  "update", "updates", "support", "helpdesk", "alert", "alerts", "notice", "notification",
+  "wallet", "refund", "billing", "invoice", "payment", "payments", "restore", "claim",
+  "tracking", "parcel", "redelivery", "shipment", "facture", "factures",
 ];
 
-/** 4–5 char brand names that are common fragments of English words — an
- *  occurrence embedded mid-token is more likely the word than the brand. */
-const GLUED_EMBED_HAZARD: ReadonlySet<string> = new Set([
-  "chase", "ally", "citi", "meta", "uber", "dell", "visa", "wells", "steam", "kick", "wise",
-  "bolt", "epic", "apple", "intel", "chime", "curve", "slack", "shell", "opera", "metro",
-  "three", "hinge", "crave", "coles", "slate", "sushi", "lumen", "gusto", "wiley", "unity",
-  "azure", "globo", "forms", "pages", "ring", "nest", "mint", "bing", "ford", "audi", "wish",
-  "ramp", "tron", "atom", "near", "scout", "flow", "desk", "post",
-]);
+/** Glue that may sit beside a brand without being a lure ("myadobesign"). */
+const LURE_GLUE_WORDS: readonly string[] = ["my", "id", "www", "the", "get", "official"];
 
-function gluedLureAt(side: string, atEnd: boolean): boolean {
-  if (side.length === 0) return false;
-  for (const w of GLUED_LURE_WORDS) {
-    if (side === w) return true;
-    if (w.length >= 5 && (atEnd ? side.endsWith(w) : side.startsWith(w))) return true;
+/** Meeting / document / e-sign lures (glued-brand rule only). */
+const DOCUMENT_LURE_WORDS: readonly string[] = [
+  "meeting", "meet", "invite", "invitation", "webinar", "join", "sign", "esign", "doc", "docs",
+  "document", "documents", "pdf", "acrobat", "reader", "share", "shared", "file", "files", "fax", "scan",
+];
+
+/** True when `s` splits ENTIRELY into `vocab` words and digit runs, with at
+ *  least one `required` word when `required` is given. Exact words only. */
+function segmentsInto(s: string, vocab: ReadonlySet<string>, required?: ReadonlySet<string>): boolean {
+  // state per position: 0 = unreachable, 1 = reachable, 2 = reachable with a required word.
+  const st = new Uint8Array(s.length + 1);
+  st[0] = 1;
+  for (let i = 0; i < s.length; i++) {
+    const cur = st[i]!;
+    if (!cur) continue;
+    if (s.charCodeAt(i) >= 48 && s.charCodeAt(i) <= 57) st[i + 1] = Math.max(st[i + 1]!, cur);
+    for (const w of vocab) {
+      if (s.startsWith(w, i)) {
+        const next = required && required.has(w) ? 2 : cur;
+        st[i + w.length] = Math.max(st[i + w.length]!, next);
+      }
+    }
   }
-  return false;
+  const end = st[s.length]!;
+  return required ? end === 2 : end > 0;
 }
 
-/** The glued-substring rule for one hyphen token and one normalized name. */
+const GLUED_VOCAB: ReadonlySet<string> = new Set([...CREDENTIAL_LURE_WORDS, ...DOCUMENT_LURE_WORDS, ...LURE_GLUE_WORDS]);
+const GLUED_LURES: ReadonlySet<string> = new Set([...CREDENTIAL_LURE_WORDS, ...DOCUMENT_LURE_WORDS]);
+
+/**
+ * Glued-brand rule (2026-10-12): a SHORT brand name (4–5 chars, which
+ * otherwise needs a whole token) glued inside one long run-on token
+ * ("adobeacrobatdoc" → Adobe, "chaseverifyaccount" → Chase,
+ * "invitationlauchjczoommeeting" → Zoom). Applies ONLY to the curated
+ * GLUED_BRAND_ALLOWLIST (canonical domain → normalized name) — distinctive,
+ * frequently impersonated names; never an arbitrary 4–5 char catalog name
+ * (Link, Core, Gate, Port, Voice, Eset, … are dictionary fragments). And:
+ *   - the token is >= GLUED_MIN_TOKEN_LEN chars ("kicklogin" stays whole-token);
+ *   - the rest of the token, on each side of the name, splits ENTIRELY into
+ *     lure / glue words and digits (segmentsInto, exact words — never a
+ *     prefix: "documentary", "shareholders", "accountingservices" fail),
+ *     with at least one lure word;
+ *   - EXCEPT that one side may be a single unsegmentable chunk when the
+ *     other side is non-empty, starts right at the name and segments with a
+ *     lure word, and the chunk is a long run-on blob (>= GLUED_CHUNK_MIN_LEN:
+ *     "invitationlauchjc" + zoom + "meeting"; never the short English
+ *     fragment of "pur|chase|verify", "other|wise|login").
+ * Never applies to IdP-lure leftovers (whole-token only) and runs only after
+ * every other rule found nothing, so existing matches are unchanged.
+ */
+const GLUED_MIN_TOKEN_LEN = 10;
+const GLUED_CHUNK_MIN_LEN = 8;
+
+export const GLUED_BRAND_ALLOWLIST: Readonly<Record<string, string>> = {
+  "zoom.us": "zoom", "zoom.com": "zoom", "adobe.com": "adobe", "uber.com": "uber",
+  "xero.com": "xero", "hulu.com": "hulu", "nike.com": "nike", "avis.com": "avis",
+  "chase.com": "chase", "citi.com": "citi", "ally.com": "ally", "visa.com": "visa",
+  "americanexpress.com": "amex", "ebay.com": "ebay", "etsy.com": "etsy", "wise.com": "wise",
+  "usps.com": "usps", "fedex.com": "fedex", "lyft.com": "lyft", "venmo.com": "venmo",
+  "zellepay.com": "zelle", "xbox.com": "xbox", "sony.com": "sony", "bbva.com": "bbva",
+  "hsbc.com": "hsbc", "gmail.com": "gmail", "yahoo.com": "yahoo", "monzo.com": "monzo",
+  "steampowered.com": "steam", "hmrc.gov.uk": "hmrc", "bpost.be": "bpost",
+};
+
+/** The glued rule for one hyphen token and one allowlisted normalized name. */
 function gluedTokenMatch(token: string, norm: string): boolean {
   if (token.length < GLUED_MIN_TOKEN_LEN || token === norm) return false;
-  const edgeOnly = GLUED_EMBED_HAZARD.has(norm);
+  const ok = (side: string) => side === "" || segmentsInto(side, GLUED_VOCAB);
+  const lured = (side: string) => side !== "" && segmentsInto(side, GLUED_VOCAB, GLUED_LURES);
   for (let i = token.indexOf(norm); i >= 0; i = token.indexOf(norm, i + 1)) {
     const prefix = token.slice(0, i);
     const suffix = token.slice(i + norm.length);
-    if (edgeOnly) {
-      if ((prefix === "" && gluedLureAt(suffix, false)) || (suffix === "" && gluedLureAt(prefix, true))) return true;
-    } else if (gluedLureAt(suffix, false) || gluedLureAt(prefix, true)) {
-      return true;
-    }
+    if (ok(prefix) && ok(suffix) && (lured(prefix) || lured(suffix))) return true;
+    // One unsegmentable run-on chunk on the far side of a lure-adjacent name.
+    if (lured(suffix) && prefix.length >= GLUED_CHUNK_MIN_LEN && !ok(prefix)) return true;
+    if (lured(prefix) && suffix.length >= GLUED_CHUNK_MIN_LEN && !ok(suffix)) return true;
   }
   return false;
 }
@@ -270,13 +301,14 @@ export function isGenericBrandName(name: string | null | undefined): boolean {
 
 /**
  * Generic-word names that are ALSO the trading name phishers spell out bare
- * beside a lure ("line-login.com" targets LINE). Only the NRD keyword
- * matcher — whose generic rule demands an adjacent STRONG lure word
- * (lib/nrd-brand-match.ts) — keeps the bare word for these; every other
- * writer treats them like any generic brand. Keep this list tiny and
- * per-name justified.
+ * beside a credential lure ("line-login.com" targets LINE,
+ * "free-facture-login.com" targets Free / free.fr). For these,
+ * genericBrandHostMatch additionally accepts the bare word as a token next
+ * to a credential lure word, or glued to lure words only ("linelogin",
+ * "mylinelogin") — in every writer and in the cleanup alike. Keep this list
+ * tiny and per-name justified.
  */
-const LURE_GATED_GENERIC_BRANDS: ReadonlySet<string> = new Set(["line"]);
+const LURE_GATED_GENERIC_BRANDS: ReadonlySet<string> = new Set(["line", "free"]);
 
 export function isLureGatedGenericBrand(name: string | null | undefined): boolean {
   return LURE_GATED_GENERIC_BRANDS.has(normalizeBrand(name ?? ""));
@@ -314,21 +346,32 @@ const GENERIC_HOMOGLYPHS: Readonly<Record<string, readonly string[]>> = {
   t: ["7"], g: ["9"], b: ["6"], m: ["rn"], w: ["vv"], d: ["cl"],
 };
 
+/** End positions e such that s[start, e) spells `canon` exactly or with
+ *  homoglyphs swapped in; `swapped` says whether any homoglyph was used. */
+function spellingEnds(s: string, start: number, canon: string): Array<{ end: number; swapped: boolean }> {
+  const out: Array<{ end: number; swapped: boolean }> = [];
+  const walk = (i: number, j: number, swapped: boolean): void => {
+    if (j === canon.length) { out.push({ end: i, swapped }); return; }
+    if (i >= s.length) return;
+    const c = canon[j]!;
+    if (s[i] === c) walk(i + 1, j + 1, swapped);
+    for (const sub of GENERIC_HOMOGLYPHS[c] ?? []) {
+      if (s.startsWith(sub, i)) walk(i + sub.length, j + 1, true);
+    }
+  };
+  walk(start, 0, false);
+  return out;
+}
+
 /** True when `cand` spells `canon` with at least one homoglyph swapped in
  *  ("mai1" / "rnail" for "mail") — never for the identical string. */
 function homoglyphSpelling(cand: string, canon: string): boolean {
-  if (cand === canon) return false;
-  const walk = (i: number, j: number): boolean => {
-    if (j === canon.length) return i === cand.length;
-    if (i >= cand.length) return false;
-    const c = canon[j]!;
-    if (cand[i] === c && walk(i + 1, j + 1)) return true;
-    for (const sub of GENERIC_HOMOGLYPHS[c] ?? []) {
-      if (cand.startsWith(sub, i) && walk(i + sub.length, j + 1)) return true;
-    }
-    return false;
-  };
-  return walk(0, 0);
+  return spellingEnds(cand, 0, canon).some((e) => e.end === cand.length && e.swapped);
+}
+
+/** Exact or homoglyph spelling of `canon`. */
+function spells(cand: string, canon: string): boolean {
+  return cand === canon || homoglyphSpelling(cand, canon);
 }
 
 /**
@@ -373,15 +416,28 @@ const OWNER_LURE_WORDS: readonly string[] = [
 export function genericBrandOwnerCredit(
   raw: string,
   canonical: string | null | undefined,
+  opts: { requireWord?: boolean } = {},
 ): { parentBrandId: string } | null {
   const canon = canonicalLabels(canonical ?? "");
   const owner = GENERIC_BRAND_OWNERS[canon.join(".")];
   if (!owner) return null;
   const host = hostOf(raw);
   if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
+  // Shared / tenant hosts (safelinks wrappers, x.sharepoint.com,
+  // onedrive.live.com) carry the vendor's name but not a lure.
+  if (platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
+  // The generic brand's own domain is the vendor's property, not a lure.
+  const canonHost = canon.join(".");
+  if (host === canonHost || host.endsWith(`.${canonHost}`)) return null;
   const all = host.split(".").filter((l) => l.length > 0);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
   const word = canon[0]!.replace(/-/g, "");
+  // Writers (requireWord): only a host that names the generic product word
+  // itself ("office365-login", "outlook-live") — i.e. what the old matcher
+  // credited to Live / Office / Cloud by the bare word — moves to the
+  // parent; Microsoft context alone ("outlook.com", "hotmail.fr") is not a
+  // Live / Office / Cloud hit at all.
+  if (opts.requireWord && !labels.some((l) => l.includes(word))) return null;
   const strong = (t: string) => !OWNER_WEAK_FAMILY_TOKENS.has(t) && isIdpVendorFamilyToken(t, owner.family);
   for (const label of labels) {
     const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
@@ -404,31 +460,40 @@ const OWNER_GLUED_FAMILY: readonly string[] = [
   "outlook365", "onedrive", "sharepoint", "hotmail", "windowslive", "msaccount", "msonline",
 ];
 
-/** Lure words that may be glued onto a generic brand's full-domain token
- *  ("mymailru", "mailru-login" is covered by the token run). */
-const GENERIC_DOMAIN_GLUE: ReadonlySet<string> = new Set([
-  "my", "secure", "login", "logon", "signin", "verify", "account", "accounts", "support",
-  "help", "update", "confirm", "online", "web", "official", "auth", "id",
-]);
+/** What may be glued onto a generic brand's full-domain token or bare
+ *  lure-gated word: credential lures, glue words and digits, exact words
+ *  only ("mymailru", "mailru24", "mailruwallet", "linelogin"). */
+const GENERIC_GLUE_VOCAB: ReadonlySet<string> = new Set([...CREDENTIAL_LURE_WORDS, ...LURE_GLUE_WORDS]);
+const CREDENTIAL_LURES: ReadonlySet<string> = new Set(CREDENTIAL_LURE_WORDS);
 
 /**
- * How `raw` (domain, URL, IOC) relates to a GENERIC brand's canonical domain
- * — the single definition of what may credit a generic-word brand:
+ * THE predicate for "may this host be credited to this generic-word brand"
+ * — used by every writer (brand matcher, Analyst pre-match, NRD, CT,
+ * typosquat scanner, numbered-variant scan, lookalike seeder, spam trap,
+ * abuse mailbox) AND the brand-link cleanup, so they cannot disagree:
  *   canonical  — the canonical domain itself, or (subdomains: true) a
- *                subdomain of it ("e.mail.ru")
- *   token      — the full canonical as consecutive labels of a longer host
- *                ("mail.ru.secure-login.com"), or the full-domain token in
- *                a label ("mail-ru.com", "login-gov.us", "mymailru.net")
- *   levenshtein — a homoglyph spelling of the canonical under the SAME
- *                suffix ("mai1.ru", "rnail.ru")
- * The bare word never qualifies: "1lookupmails.com", "zs-mail.com",
- * "membersecurelogin.com", "x.site-enfejar.com", "rnail.info" → null.
- * Tier-agnostic and catalog-free.
+ *                subdomain of it that is not a platform tenant / multi-
+ *                tenant host ("e.mail.ru"; never "x.my.site.com",
+ *                "cloud.mail.ru")
+ *   token      — the full canonical as consecutive labels left of the host's
+ *                own registrable domain ("mail.ru.secure-login.com"); its
+ *                tokens as a hyphen run ("mail-ru.com", "login-gov.us"); or
+ *                the joined full-domain token inside one token with only
+ *                credential lures / glue / digits around it ("mymailru",
+ *                "mailru24", "mailruwallet"); lureGated brands (LINE, Free)
+ *                also by the bare word beside / glued to a credential lure
+ *                ("line-login.com", "linelogin.xyz", "free-facture-login.com")
+ *   levenshtein — any of the above spelled with homoglyphs ("mai1.ru",
+ *                "rnail.ru", "maiiru.com", "mai1ru-login.com")
+ * The bare word never qualifies otherwise: "1lookupmails.com",
+ * "emailrules.com", "zs-mail.com", "olivecompany.com", "rnail.info" → null.
+ * Tier-agnostic and catalog-free. Use matchGenericBrand to derive
+ * `lureGated` from the brand name.
  */
 export function genericBrandHostMatch(
   raw: string,
   canonical: string | null | undefined,
-  opts: { subdomains: boolean },
+  opts: { subdomains: boolean; lureGated?: boolean },
 ): BrandMatchMethod | null {
   const canon = canonicalLabels(canonical ?? "");
   if (canon.length < 2) return null;
@@ -436,15 +501,10 @@ export function genericBrandHostMatch(
   const host = hostOf(raw);
   if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
   if (host === canonHost) return "canonical";
-  // Cheap exact-superset prefilter (the catalog matcher calls this per
-  // generic brand for every unmatched host): every rule below needs the
-  // canonical's suffix at the end (subdomain / homoglyph) or all of its
-  // tokens somewhere in the host (label / token rules).
-  const canonTokens = canon.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
-  if (!host.endsWith(`.${canon.slice(1).join(".")}`) && !canonTokens.every((t) => host.includes(t))) return null;
   if (host.endsWith(`.${canonHost}`)) {
-    // A tenant subdomain of a platform ("evil.pages.dev" for "Pages") or a
-    // multi-tenant host belongs to an arbitrary party, not the brand.
+    // A tenant subdomain of a platform ("evil.pages.dev" for "Pages",
+    // "x.my.site.com" for "Site") or a multi-tenant host ("cloud.mail.ru")
+    // belongs to an arbitrary party, not the brand.
     if (!opts.subdomains || platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
     return "canonical";
   }
@@ -458,24 +518,77 @@ export function genericBrandHostMatch(
   for (let k = 0; k + canon.length <= regStart; k++) {
     if (canon.every((l, i) => all[k + i] === l)) return "token";
   }
+  // Homoglyph spelling of the canonical under the same suffix: mai1.ru.
   const tail = all.slice(-canon.length);
   if (tail.length === canon.length && tail.slice(1).join(".") === canon.slice(1).join(".")
       && homoglyphSpelling(tail[0]!, canon[0]!)) {
     return "levenshtein";
   }
 
-  const joined = canon.join("").replace(/-/g, "");
+  const canonTokens = canon.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
+  const joined = canonTokens.join("");
+  const word = canon[0]!.replace(/-/g, "");
+  const glue = (side: string) => side === "" || segmentsInto(side, GENERIC_GLUE_VOCAB);
+  const lured = (side: string) => side !== "" && segmentsInto(side, GENERIC_GLUE_VOCAB, CREDENTIAL_LURES);
   const labels = all.slice(0, all.length - suffixLabelCount(host));
   for (const label of labels) {
     const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
+    // Hyphen run of the canonical's tokens: mail-ru, login-gov, mai1-ru.
     for (let i = 0; i + canonTokens.length <= tokens.length; i++) {
-      if (canonTokens.every((t, k) => tokens[i + k] === t)) return "token";
+      if (canonTokens.every((t, k) => spells(tokens[i + k]!, t))) {
+        return canonTokens.every((t, k) => tokens[i + k] === t) ? "token" : "levenshtein";
+      }
     }
-    for (const t of tokens) {
-      if (t === joined) return "token";
-      if (t.startsWith(joined) && GENERIC_DOMAIN_GLUE.has(t.slice(joined.length))) return "token";
-      if (t.endsWith(joined) && GENERIC_DOMAIN_GLUE.has(t.slice(0, -joined.length))) return "token";
+    for (const [ti, t] of tokens.entries()) {
+      // Joined full-domain token with only lure / glue / digits around it.
+      for (let i = 0; i < t.length; i++) {
+        for (const { end, swapped } of spellingEnds(t, i, joined)) {
+          if (glue(t.slice(0, i)) && glue(t.slice(end))) return swapped ? "levenshtein" : "token";
+        }
+      }
+      if (!opts.lureGated) continue;
+      // Lure-gated bare word: beside a credential lure token, or glued to
+      // lure / glue words with at least one credential lure.
+      if (t === word && (lured(tokens[ti - 1] ?? "") || lured(tokens[ti + 1] ?? ""))) return "token";
+      for (let i = t.indexOf(word); i >= 0; i = t.indexOf(word, i + 1)) {
+        const pre = t.slice(0, i);
+        const post = t.slice(i + word.length);
+        if (glue(pre) && glue(post) && (lured(pre) || lured(post))) return "token";
+      }
     }
+  }
+  return null;
+}
+
+/** genericBrandHostMatch with `lureGated` derived from the brand name. */
+export function matchGenericBrand(
+  raw: string,
+  brand: { name: string | null; canonical_domain: string | null },
+  opts: { subdomains: boolean },
+): BrandMatchMethod | null {
+  return genericBrandHostMatch(raw, brand.canonical_domain, {
+    subdomains: opts.subdomains, lureGated: isLureGatedGenericBrand(brand.name),
+  });
+}
+
+/**
+ * What a WRITER credits for a host when the candidate brand is generic:
+ * the brand itself (matchGenericBrand, never by subdomain), else — for a
+ * vendor-product generic brand (GENERIC_BRAND_OWNERS) on a host with that
+ * vendor's lure context — its parent brand, provided `brandExists` knows it.
+ * The cleanup (decideGenericLink) applies the same two steps, with the
+ * catalog matcher's pick in between.
+ */
+export function creditGenericBrand(
+  raw: string,
+  brand: { id: string; name: string | null; canonical_domain: string | null },
+  brandExists: (brandId: string) => boolean,
+): { brandId: string; method: BrandMatchMethod } | null {
+  const own = matchGenericBrand(raw, brand, { subdomains: false });
+  if (own) return { brandId: brand.id, method: own };
+  const owner = genericBrandOwnerCredit(raw, brand.canonical_domain, { requireWord: true });
+  if (owner && owner.parentBrandId !== brand.id && brandExists(owner.parentBrandId)) {
+    return { brandId: owner.parentBrandId, method: "token" };
   }
   return null;
 }
@@ -574,6 +687,9 @@ const PLATFORM_SUFFIXES = [
   // accounts.jimdo.com), not a free-site host.
   "jimdofree.com", "jimdosite.com", "tilda.ws", "mystrikingly.com",
   "yolasite.com", "webnode.page", "site123.me", "framer.website",
+  // Salesforce Experience Cloud customer sites (<org>.my.site.com): the
+  // tenant is any Salesforce customer, never the "Site" (site.com) brand.
+  "my.site.com",
   // Subdomain-style IPFS gateways: <cid>.ipfs.dweb.link (path-style hosts
   // are in SHARED_HOSTS below).
   "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
@@ -623,6 +739,10 @@ export const MULTI_TENANT_HOSTS: ReadonlyArray<string> = [
   "l.facebook.com", "lm.facebook.com",
   // google.com/url?q= open redirect (and every *.google.com service)
   "google.com",
+  // Path-addressed user content under a generic-word brand's own domain
+  // (cloud.mail.ru/public/<id>, sites.free.fr/<user>, Orange perso pages):
+  // never evidence for that brand (brandDetect genericBrandHostMatch).
+  "cloud.mail.ru", "sites.free.fr", "pagesperso-orange.free.fr", "pagesperso-orange.fr",
 ];
 
 /**
@@ -914,11 +1034,13 @@ interface PreparedBrand {
   /** May be credited by name / owner label from an IdP-lure leftover
    *  (isIdpLeftoverEligible + the generic/short-name floor). */
   leftoverMatchable: boolean;
-  /** 4–5 char matchable name eligible for the glued-substring rule. */
+  /** Allowlisted 4–5 char name eligible for the glued rule (GLUED_BRAND_ALLOWLIST). */
   glued: boolean;
   /** Generic-word brand (isGenericBrand) outside the tracked catalog, with a
    *  canonical domain: credited by genericBrandHostMatch only. */
   genericLookalike: boolean;
+  /** Generic brand that may also match by the bare word beside a lure. */
+  lureGated: boolean;
 }
 
 function prepareOne(b: BrandRow): PreparedBrand {
@@ -932,8 +1054,9 @@ function prepareOne(b: BrandRow): PreparedBrand {
     norm,
     matchable,
     leftoverMatchable: norm.length >= 4 && !generic && isIdpLeftoverEligible(b),
-    glued: matchable && norm.length < MIN_SUBSTRING_LEN,
+    glued: matchable && norm.length < MIN_SUBSTRING_LEN && GLUED_BRAND_ALLOWLIST[canonical] === norm,
     genericLookalike: generic && b.tier !== "tracked" && canonical.includes("."),
+    lureGated: isLureGatedGenericBrand(b.name),
   };
 }
 
@@ -956,6 +1079,8 @@ interface BrandIndex {
   glued: PreparedBrand[];
   /** Generic-word brands credited only via genericBrandHostMatch. */
   generic: PreparedBrand[];
+  /** Every brand id in the catalog (owner-credit targets must exist). */
+  ids: Set<string>;
 }
 
 /** Owner label of a canonical domain when it is specific enough to be brand
@@ -982,10 +1107,11 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
   if (cached) return cached;
   const idx: BrandIndex = {
     canonical: new Map(), token: new Map(), leftoverToken: new Map(), ownerLabel: new Map(),
-    long: [], longByFirst: new Map(), glued: [], generic: [],
+    long: [], longByFirst: new Map(), glued: [], generic: [], ids: new Set(),
   };
   for (const b of brands) {
     const p = prepareOne(b);
+    idx.ids.add(p.id);
     if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
     if (p.genericLookalike) idx.generic.push(p);
     if (p.glued) idx.glued.push(p);
@@ -1111,7 +1237,9 @@ function pairMatch(raw: string, brand: BrandRow, mode: "permissive" | "leftover"
   // A subdomain is accepted here (an existing link to e.mail.ru stays
   // valid) but the catalog matcher never CREATES one — a generic brand's
   // subdomains are often multi-tenant (cloud.mail.ru, *.my.site.com).
-  if (p.genericLookalike) return genericBrandHostMatch(parts.host, p.canonical, { subdomains: true });
+  if (p.genericLookalike) {
+    return genericBrandHostMatch(parts.host, p.canonical, { subdomains: true, lureGated: p.lureGated });
+  }
   if (parts.idpLure || parts.idpVendor) {
     if (mode === "leftover") return parts.idpLure ? matchIdpPartsToBrand(parts, p) : null;
     const strict = matchIdpPartsToBrand(parts, p)
@@ -1243,8 +1371,14 @@ function matchPartsInIndex(parts: HostParts, idx: BrandIndex): BrandMatch | null
 /** Generic-word brands: full-domain lookalikes of the canonical only. */
 function matchGenericInIndex(host: string, idx: BrandIndex): BrandMatch | null {
   for (const b of idx.generic) {
-    const method = genericBrandHostMatch(host, b.canonical, { subdomains: false });
+    const method = genericBrandHostMatch(host, b.canonical, { subdomains: false, lureGated: b.lureGated });
     if (method) return { brandId: b.id, method };
+  }
+  // Vendor-product generic brands (Live / Office / Cloud): the parent brand
+  // on a host with that vendor's lure context (creditGenericBrand).
+  for (const b of idx.generic) {
+    const owner = genericBrandOwnerCredit(host, b.canonical, { requireWord: true });
+    if (owner && idx.ids.has(owner.parentBrandId)) return { brandId: owner.parentBrandId, method: "token" };
   }
   return null;
 }

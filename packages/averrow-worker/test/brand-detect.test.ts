@@ -13,6 +13,8 @@ import {
   genericBrandHostMatch,
   genericBrandOwnerCredit,
   GENERIC_BRAND_OWNERS,
+  GLUED_BRAND_ALLOWLIST,
+  matchGenericBrand,
   type BrandRow,
 } from "../src/lib/brandDetect";
 
@@ -636,5 +638,92 @@ describe("genericBrandOwnerCredit — vendor-product generic brands (Live / Offi
     expect(genericBrandOwnerCredit("outlook-verify.com", "mail.ru")).toBeNull();
     expect(genericBrandOwnerCredit("outlook-verify.com", "site.com")).toBeNull();
     expect(GENERIC_BRAND_OWNERS["live.com"]).toEqual({ parentBrandId: "brand_microsoft_com", family: "entra" });
+  });
+});
+
+// ─── Review of #1830 (2026-10-12) ───
+describe("glued rule: curated allowlist + exact-word segmentation (review H1)", () => {
+  const mon = (name: string, canonical_domain: string): BrandRow =>
+    ({ id: `b_${canonical_domain}`, name, canonical_domain, tier: "monitored" });
+  // Dictionary-word 4–5 char monitored brands from prod + allowlisted ones.
+  const CAT: BrandRow[] = [
+    mon("ESET", "eset.com"), mon("Gate", "gate.io"), mon("Port", "port.com"), mon("Voice", "voice.com"),
+    mon("Link", "link.com"), mon("Core", "core.com"), mon("Home", "home.com"), mon("Ring", "ring.com"),
+    mon("Uber", "uber.com"), mon("Nike", "nike.com"), mon("Zoom", "zoom.us"), mon("Adobe", "adobe.com"),
+    mon("Chase", "chase.com"), mon("Wise", "wise.com"),
+  ];
+  const of = (h: string) => fuzzyMatchBrand([h], CAT);
+
+  it.each([
+    "resetpasswordlogin.com", "navigatelogin.com", "airportlogin.com", "invoicepaymentportal.com",
+    "uberaccountingservices.com", "nikeshareholders.com", "zoomdocumentary.com",
+    "purchaseverify.com", "otherwiselogin.com", "homeloginportal.com", "ringsecurelogin.com",
+    "linkverifyaccount.com", "coresecurelogin.com",
+  ])("%s → no brand", (host) => {
+    expect(of(host)).toBeNull();
+    for (const brand of CAT) expect(matchBrandToHost(host, brand), `${host} x ${brand.name}`).toBeNull();
+  });
+
+  it.each([
+    ["invitationlauchjczoommeeting.com", "b_zoom.us"], ["adobeacrobatdoc.com", "b_adobe.com"],
+    ["myadobesign.net", "b_adobe.com"], ["chaseverifyaccount.com", "b_chase.com"], ["loginchase.com", "b_chase.com"],
+    ["uberaccountverify.com", "b_uber.com"], ["nikerefund2024.com", "b_nike.com"],
+  ])("%s → %s", (host, id) => {
+    expect(of(host)).toBe(id);
+  });
+
+  it("the allowlist is keyed by canonical domain, not the name", () => {
+    expect(GLUED_BRAND_ALLOWLIST["zoom.us"]).toBe("zoom");
+    expect(fuzzyMatchBrand(["invitationlauchjczoommeeting.com"], [mon("Zoom", "zoom-video.example")])).toBeNull();
+  });
+});
+
+describe("one generic-brand predicate for writers and cleanup (review H2 / M1 / M2 / M3)", () => {
+  const mon = (name: string, canonical_domain: string, id = `b_${canonical_domain}`): BrandRow =>
+    ({ id, name, canonical_domain, tier: "monitored" });
+  const CAT: BrandRow[] = [
+    mon("Mail", "mail.ru"), mon("Site", "site.com"), mon("Live", "live.com"), mon("Office", "office.com"),
+    mon("Shop", "shop.app"), mon("Free", "free.fr"), mon("Line", "line.me"),
+    mon("Microsoft", "microsoft.com", "brand_microsoft_com"),
+  ];
+  const of = (h: string) => fuzzyMatchBrand([h], CAT);
+
+  it.each([
+    "emailrules.com", "mywebsitecompany.com", "olivecompany.com", "postofficecommunity.org",
+    "workshopapp.io", "carefreefrance.com", "online-store.com", "freeshipping.com", "airline-tickets.com",
+  ])("substring of a full-domain token is not a lookalike: %s", (host) => {
+    expect(of(host)).toBeNull();
+  });
+
+  it.each([
+    ["mail.ru.evil.com", "b_mail.ru"], ["mai1ru-login.com", "b_mail.ru"], ["mailru24.com", "b_mail.ru"],
+    ["mailruwallet.com", "b_mail.ru"], ["maiiru.com", "b_mail.ru"],
+    ["line-login.com", "b_line.me"], ["linelogin.xyz", "b_line.me"], ["mylinelogin.com", "b_line.me"],
+    ["free-facture-login.com", "b_free.fr"], ["freelogin-verify.net", "b_free.fr"],
+  ])("%s → %s (matcher)", (host, id) => {
+    expect(of(host)).toBe(id);
+    const brand = CAT.find((x) => x.id === id)!;
+    expect(matchGenericBrand(host, brand, { subdomains: true }), host).not.toBeNull();
+  });
+
+  it("vendor-product generic brands credit the parent in the matcher (M3)", () => {
+    expect(of("office365-login.com")).toBe("brand_microsoft_com");
+    expect(of("outlook-live.com")).toBe("brand_microsoft_com");
+    // Parent absent from the catalog → nothing.
+    expect(fuzzyMatchBrand(["office365-login.com"], CAT.filter((b) => b.id !== "brand_microsoft_com"))).toBeNull();
+  });
+
+  it.each([
+    ["acme-login.my.site.com", "site.com"], ["cloud.mail.ru", "mail.ru"], ["x.cloud.mail.ru", "mail.ru"],
+    ["sites.free.fr", "free.fr"], ["pagesperso-orange.free.fr", "free.fr"],
+  ])("multi-tenant subdomain %s is never kept as %s (M2)", (host, canonical) => {
+    const brand = CAT.find((b) => b.canonical_domain === canonical)!;
+    expect(matchBrandToHost(host, brand)).toBeNull();
+  });
+
+  it("an ordinary subdomain still is (e.mail.ru), and my.site.com is a platform suffix", () => {
+    expect(matchBrandToHost("e.mail.ru", CAT[0]!)).toBe("canonical");
+    expect(isPlatformTenantHost("acme-login.my.site.com")).toBe(true);
+    expect(fuzzyMatchBrand(["paypal-login.my.site.com"], [mon("PayPal", "paypal.com")])).toBe("b_paypal.com");
   });
 });

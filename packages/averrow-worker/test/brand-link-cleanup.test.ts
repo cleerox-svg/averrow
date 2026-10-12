@@ -219,6 +219,26 @@ describe("decideGenericLink — generic_brands scope", () => {
       .toMatchObject({ action: "clear" });
   });
 
+  it("keeps exactly what the writers credit: lure-gated LINE / Free, NRD full-domain variants (review H2)", () => {
+    const keep = (host: string, name: string, canonical: string) =>
+      decideGenericLink(row({ malicious_domain: host, brand_name: name, brand_canonical: canonical, source_feed: "nrd_hagezi" }), never);
+    for (const h of ["line-login.com", "linelogin.xyz", "mylinelogin.com"]) expect(keep(h, "Line", "line.me"), h).toMatchObject({ action: "keep" });
+    expect(keep("free-facture-login.com", "Free", "free.fr")).toMatchObject({ action: "keep", method: "token" });
+    for (const h of ["mai1ru-login.com", "mailru24.com", "mailruwallet.com", "maiiru.com"]) {
+      expect(keep(h, "Mail", "mail.ru"), h).toMatchObject({ action: "keep" });
+    }
+  });
+
+  it("clears links on multi-tenant subdomains of a generic brand (review M2)", () => {
+    for (const [host, name, canonical] of [
+      ["acme-login.my.site.com", "Site", "site.com"], ["cloud.mail.ru", "Mail", "mail.ru"],
+      ["sites.free.fr", "Free", "free.fr"], ["pagesperso-orange.free.fr", "Free", "free.fr"],
+    ] as const) {
+      expect(decideGenericLink(row({ malicious_domain: host, brand_name: name, brand_canonical: canonical }), () => null), host)
+        .toMatchObject({ action: "clear", reason: "generic_brand" });
+    }
+  });
+
   it("leaves a non-generic brand alone", () => {
     expect(decideGenericLink(row({ malicious_domain: "evil.com", brand_name: "PayPal", brand_canonical: "paypal.com" }), never))
       .toMatchObject({ action: "keep", protectedBy: "not_generic_brand" });
@@ -386,6 +406,12 @@ describe("handleBrandLinkCleanup", () => {
   it("rejects unknown modes and bad run ids", async () => {
     expect((await call("mode=delete")).status).toBe(400);
     expect((await call("run_id=bad%20id")).status).toBe(400);
+  });
+  it("refuses scope/brand with undo or reconcile", async () => {
+    expect((await call(`mode=undo&confirm=${UNDO_CONFIRM_TOKEN}&scope=generic_brands`)).status).toBe(400);
+    expect((await call(`mode=undo&confirm=${UNDO_CONFIRM_TOKEN}&brand=brand_mail_ru`)).status).toBe(400);
+    expect((await call("mode=reconcile&scope=all")).status).toBe(400);
+    expect((await call("mode=reconcile")).status).toBe(200);
   });
   it("validates the brand filter", async () => {
     expect((await call("brand=brand_mail_ru")).status).toBe(400); // needs scope=generic_brands

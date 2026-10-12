@@ -35,6 +35,11 @@ export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string):
   }
   // `scope` (dry_run/apply only): "all" (default) or the opt-in
   // "generic_brands" re-validation (lib/brand-link-cleanup.ts CleanupScope).
+  if ((mode === "undo" || mode === "reconcile") && (url.searchParams.has("scope") || url.searchParams.has("brand"))) {
+    // undo is per run_id; reconcile is global — a scope/brand filter there
+    // would silently be ignored, so refuse it.
+    return Response.json({ success: false, error: `scope/brand do not apply to mode=${mode}` }, { status: 400 });
+  }
   const scopeParam = url.searchParams.get("scope") ?? "all";
   const scope = SCOPES.find((x) => x === scopeParam);
   if (!scope) {

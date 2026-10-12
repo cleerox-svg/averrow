@@ -15,7 +15,7 @@ import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
 import { cachedValue } from "../lib/cached-value";
-import { genericBrandDomainKeywords, genericBrandHostMatch, isGenericBrand, isGenericBrandName, keywordMatchesHost } from "../lib/brandDetect";
+import { creditGenericBrand, isGenericBrand, isGenericBrandName, keywordMatchesHost, matchGenericBrand } from "../lib/brandDetect";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -93,7 +93,8 @@ export function numberedVariantBrandId(
 ): string | null {
   if (!seed.target_brand_id) return null;
   if (!isGenericBrandName(seed.brand_name)) return seed.target_brand_id;
-  return genericBrandHostMatch(variantDomain, seed.brand_canonical, { subdomains: true }) ? seed.target_brand_id : null;
+  return matchGenericBrand(variantDomain, { name: seed.brand_name, canonical_domain: seed.brand_canonical }, { subdomains: true })
+    ? seed.target_brand_id : null;
 }
 
 /** Check if a domain contains a numeric segment that can be varied. */
@@ -190,6 +191,8 @@ export const analystAgent: AgentModule = {
     // that swap letters for digits hit the pre-match instead of falling
     // through to Haiku. See generateTypoVariants() above.
     const keywordToBrandId = new Map<string, string>();
+    const genericBrands: Array<{ id: string; name: string; canonical_domain: string | null }> = [];
+    const loadedBrandIds = new Set(brands.results.map((b) => b.id));
     for (const b of brands.results) {
       const addKeyword = (kw: string) => {
         const norm = kw.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -206,10 +209,10 @@ export const analystAgent: AgentModule = {
         }
       };
       // Generic-word brand ("Mail" mail.ru, "Site" site.com): its name,
-      // keywords and aliases are dictionary words — pre-match only on the
-      // FULL canonical domain's token ("mailru", "logingov").
+      // keywords and aliases are dictionary words — no keyword at all; the
+      // shared predicate (brandDetect.creditGenericBrand) decides below.
       if (isGenericBrandName(b.name)) {
-        for (const kw of genericBrandDomainKeywords(b.canonical_domain)) addKeyword(kw);
+        genericBrands.push(b);
         continue;
       }
       addKeyword(b.name);
@@ -283,6 +286,12 @@ export const analystAgent: AgentModule = {
             preMatchedBrandId = brandId;
             break;
           }
+        }
+        // Generic-word brands: full-canonical lookalikes only (or a
+        // vendor-product brand's loaded parent, Live → Microsoft).
+        for (const g of preMatchedBrandId ? [] : genericBrands) {
+          const hit = creditGenericBrand(preMatchHost, g, (id) => loadedBrandIds.has(id));
+          if (hit) { preMatchedBrandId = hit.brandId; break; }
         }
       }
 

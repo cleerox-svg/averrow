@@ -14,7 +14,7 @@ import type { EmailMessage } from "./dmarc-receiver";
 import { extractDomain } from "./lib/domain-utils";
 import { createNotification } from "./lib/notifications";
 import { bumpBrandThreatCountStmt } from "./db/brands";
-import { genericBrandHostMatch, isGenericBrandName } from "./lib/brandDetect";
+import { isGenericBrandName, matchGenericBrand } from "./lib/brandDetect";
 
 // ─── Interfaces ────────────────────────────────────────────────────
 
@@ -305,7 +305,7 @@ async function matchBrand(
     // Reply-To or URL ("gmail.com", "Your mail is waiting"). Only a From
     // domain that is a genuine lookalike of the full canonical domain.
     if (isGenericBrandName(brand.name)) {
-      if (fromDomain && genericBrandHostMatch(fromDomain, domain, { subdomains: false })) {
+      if (fromDomain && matchGenericBrand(fromDomain, brand, { subdomains: false })) {
         return { brandId: brand.id, spoofedDomain: domain, method: "from_header", confidence: 75 };
       }
       continue;

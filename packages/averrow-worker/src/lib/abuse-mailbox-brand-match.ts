@@ -34,7 +34,7 @@
 // (e.g., URL-typosquat is much stronger evidence than body keyword).
 
 import type { Env } from "../types";
-import { genericBrandHostMatch, isGenericBrandName } from "./brandDetect";
+import { isGenericBrandName, matchGenericBrand } from "./brandDetect";
 
 const HOMOGLYPHS: Record<string, string[]> = {
   l: ["1", "i"],
@@ -151,10 +151,19 @@ export function matchAbuseMailboxBrand(
     canonical_domain:  b.canonical_domain.toLowerCase(),
     keyword:           normalize(b.name),
     generic:           isGenericBrandName(b.name),
-  })).filter((b) => (b.generic || b.keyword.length >= MIN_KEYWORD_LEN) && b.canonical_domain.includes("."));
+  })).filter((b) => b.keyword.length >= MIN_KEYWORD_LEN && b.canonical_domain.includes("."));
+  // ^ short names stay excluded for generic brands too: "Bit" (bit.ly),
+  //   "App", "Web", "One" would otherwise win url_domain_exact (95) on every
+  //   short-link / app-host report.
+  // Exact / subdomain; for a generic brand never a tenant / multi-tenant
+  // subdomain (cloud.mail.ru, x.my.site.com — genericBrandHostMatch).
+  const isOwnDomain = (dom: string, b: (typeof brandIndex)[number]): boolean =>
+    b.generic
+      ? matchGenericBrand(dom, b, { subdomains: true }) === "canonical"
+      : dom === b.canonical_domain || dom.endsWith("." + b.canonical_domain);
   const isLookalikeOf = (dom: string, b: (typeof brandIndex)[number]): boolean =>
     b.generic
-      ? genericBrandHostMatch(dom, b.canonical_domain, { subdomains: false }) !== null
+      ? matchGenericBrand(dom, b, { subdomains: false }) !== null
       : isTyposquatOf(sldLabel(dom), b.canonical_domain);
 
   // ── 1 & 2: URL-domain signals ────────────────────────────────
@@ -163,7 +172,7 @@ export function matchAbuseMailboxBrand(
     const dom = rawDomain.toLowerCase();
     for (const b of brandIndex) {
       // Exact / subdomain of the canonical → high confidence.
-      if (dom === b.canonical_domain || dom.endsWith("." + b.canonical_domain)) {
+      if (isOwnDomain(dom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
@@ -194,7 +203,7 @@ export function matchAbuseMailboxBrand(
   const fromDom = input.from_domain?.toLowerCase() ?? null;
   if (fromDom) {
     for (const b of brandIndex) {
-      if (fromDom === b.canonical_domain || fromDom.endsWith("." + b.canonical_domain)) {
+      if (isOwnDomain(fromDom, b)) {
         return {
           brand_id:   b.id,
           brand_name: b.name,
