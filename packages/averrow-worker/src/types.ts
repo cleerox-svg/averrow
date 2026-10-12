@@ -67,6 +67,8 @@ export interface Env {
   // Cloudflare Radar
   CF_ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
+  // Dedicated read-only Radar token for the cf_radar_bots feed; falls back to CF_API_TOKEN.
+  CF_RADAR_API_TOKEN?: string;
   // GeoIP
   IPINFO_TOKEN?: string;
   // MaxMind GeoLite2 license key — required by the geoip_refresh
