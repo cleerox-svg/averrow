@@ -229,6 +229,16 @@ describe("decideGenericLink — generic_brands scope", () => {
     }
   });
 
+  it("clears lure-gated links the narrow lure set no longer credits (review N4)", () => {
+    for (const [host, name, canonical] of [
+      ["free-claim.com", "Free", "free.fr"], ["freetracking.com", "Free", "free.fr"], ["freeupdate.org", "Free", "free.fr"],
+      ["linesupport.com", "Line", "line.me"], ["line-tracking.com", "Line", "line.me"], ["online-line-update.com", "Line", "line.me"],
+    ] as const) {
+      expect(decideGenericLink(row({ malicious_domain: host, brand_name: name, brand_canonical: canonical }), () => null), host)
+        .toMatchObject({ action: "clear" });
+    }
+  });
+
   it("clears links on multi-tenant subdomains of a generic brand (review M2)", () => {
     for (const [host, name, canonical] of [
       ["acme-login.my.site.com", "Site", "site.com"], ["cloud.mail.ru", "Mail", "mail.ru"],

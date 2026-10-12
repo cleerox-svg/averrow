@@ -388,6 +388,32 @@ export const GENERIC_BRAND_OWNERS: Readonly<Record<string, { parentBrandId: stri
   "cloud.microsoft": { parentBrandId: "brand_microsoft_com", family: "entra" },
 };
 
+/**
+ * Per parent brand: the vendor's REAL product / brand tokens that a WRITER
+ * needs before crediting the parent (review N3 — "cloud", "office", "live"
+ * alone never are: cloud-login.com, box-office-login.com), and the vendor's
+ * own registrable domains, which are never a lure (outlook.office365.com).
+ * Short tokens count only as a whole hyphen token; long ones also glued.
+ */
+const OWNER_VENDORS: Readonly<Record<string, { tokens: readonly string[]; glued: readonly string[]; ownDomains: ReadonlySet<string> }>> = {
+  brand_microsoft_com: {
+    tokens: ["msn", "msft", "o365", "m365", "azure", "outlook", "hotmail", "onedrive", "sharepoint",
+      "microsoft", "office365", "microsoft365", "windowslive", "livecom"],
+    glued: ["microsoft", "microsoftonline", "onmicrosoft", "office365", "microsoft365", "outlook",
+      "outlook365", "onedrive", "sharepoint", "hotmail", "windowslive", "msaccount", "msonline"],
+    ownDomains: new Set([
+      "microsoft.com", "microsoftonline.com", "onmicrosoft.com", "microsoft365.com", "office.com",
+      "office.net", "office365.com", "live.com", "outlook.com", "hotmail.com", "msn.com", "sharepoint.com",
+      "onedrive.com", "azure.com", "windows.net", "msft.net", "msauth.net", "msftauth.net",
+    ]),
+  },
+};
+
+/** Cheap superset precheck: any vendor token as a substring at all. */
+const OWNER_PRECHECK: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, [...new Set([...v.tokens, ...v.glued])]]),
+);
+
 /** Vendor-family words that are also everyday words ("live", "office",
  *  "teams", "edge") — never vendor context on their own. */
 const OWNER_WEAK_FAMILY_TOKENS: ReadonlySet<string> = new Set([
@@ -397,57 +423,76 @@ const OWNER_WEAK_FAMILY_TOKENS: ReadonlySet<string> = new Set([
   "workspace", "calendar", "chrome", "android", "slides", "sheets",
 ]);
 
-/** Credential-lure words: the generic word itself beside one ("live-login",
- *  "officesignin") is vendor context too. */
+/** Credential-lure words: in the CLEANUP, the generic word itself beside
+ *  one ("live-login") is vendor context too. */
 const OWNER_LURE_WORDS: readonly string[] = [
   "login", "logon", "signin", "signon", "verify", "verification", "account", "accounts",
   "secure", "security", "auth", "password", "webmail", "mfa",
 ];
 
 /**
- * Parent brand to credit instead of clearing a generic-brand link
- * (GENERIC_BRAND_OWNERS), or null. Vendor context = a strong vendor-family
- * token (microsoft, outlook, o365, hotmail, msn, onedrive, sharepoint, …;
- * one-edit typos of the high-value ones), a strong family word glued inside
- * a label, or the generic word itself beside a credential lure word
- * ("live-login.com", "office365" counts on its own; "live-stream.tv" and
- * "zs-office.com" do not).
+ * Parent brand for a vendor-product generic brand (GENERIC_BRAND_OWNERS),
+ * or null. Never on a shared / tenant host, the generic brand's own domain
+ * or the vendor's own domains (OWNER_VENDORS.ownDomains).
+ *   writer: true (matcher, NRD, CT, Analyst) — the host must name the
+ *     generic product word ("office365-login", "outlook-live") AND carry a
+ *     REAL vendor token (OWNER_VENDORS.tokens / glued); the generic word
+ *     alone never suffices.
+ *   writer: false (cleanup, a link already on Live / Office / Cloud) —
+ *     any vendor-family context: a strong family token (incl. one-edit
+ *     typos), a glued vendor word, or the generic word beside a credential
+ *     lure ("live-login.com").
  */
 export function genericBrandOwnerCredit(
   raw: string,
   canonical: string | null | undefined,
-  opts: { requireWord?: boolean } = {},
+  opts: { writer?: boolean } = {},
 ): { parentBrandId: string } | null {
-  const canon = canonicalLabels(canonical ?? "");
-  const owner = GENERIC_BRAND_OWNERS[canon.join(".")];
+  const spec = genericSpec(canonical ?? "", false);
+  if (!spec) return null;
+  const ctx = hostCtx(raw);
+  if (!ctx) return null;
+  return ownerCreditSpec(ctx, spec, !!opts.writer);
+}
+
+function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec, writer: boolean): { parentBrandId: string } | null {
+  const owner = GENERIC_BRAND_OWNERS[spec.canonHost];
   if (!owner) return null;
-  const host = hostOf(raw);
-  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
+  const opts = { writer };
+  const canon = spec.canon;
+  const vendor = OWNER_VENDORS[owner.parentBrandId];
+  const { host } = ctx;
+  // Writers: cheap substring precheck before any parsing (review N1).
+  if (opts.writer && !(OWNER_PRECHECK.get(owner.parentBrandId) ?? []).some((t) => host.includes(t))) return null;
   // Shared / tenant hosts (safelinks wrappers, x.sharepoint.com,
   // onedrive.live.com) carry the vendor's name but not a lure.
   if (platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
-  // The generic brand's own domain is the vendor's property, not a lure.
-  const canonHost = canon.join(".");
-  if (host === canonHost || host.endsWith(`.${canonHost}`)) return null;
-  const all = host.split(".").filter((l) => l.length > 0);
-  const labels = all.slice(0, all.length - suffixLabelCount(host));
+  // The generic brand's own domain and the vendor's own domains are not lures.
+  if (host === spec.canonHost || host.endsWith(spec.canonDot)) return null;
+  const reg = registrableDomain(host);
+  if (vendor && reg && vendor.ownDomains.has(reg)) return null;
+  const labels = ctx.labels();
   const word = canon[0]!.replace(/-/g, "");
-  // Writers (requireWord): only a host that names the generic product word
-  // itself ("office365-login", "outlook-live") — i.e. what the old matcher
-  // credited to Live / Office / Cloud by the bare word — moves to the
-  // parent; Microsoft context alone ("outlook.com", "hotmail.fr") is not a
-  // Live / Office / Cloud hit at all.
-  if (opts.requireWord && !labels.some((l) => l.includes(word))) return null;
+  const credit = { parentBrandId: owner.parentBrandId };
+  if (opts.writer) {
+    if (!vendor || !labels.some((l) => l.includes(word))) return null;
+    for (const label of labels) {
+      for (const t of label.split(/[-_]/).filter((x) => x.length > 0)) {
+        if (vendor.tokens.includes(t) || vendor.glued.some((g) => t !== g && t.includes(g))) return credit;
+      }
+    }
+    return null;
+  }
   const strong = (t: string) => !OWNER_WEAK_FAMILY_TOKENS.has(t) && isIdpVendorFamilyToken(t, owner.family);
   for (const label of labels) {
     const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
     for (const [i, t] of tokens.entries()) {
-      if (strong(t)) return { parentBrandId: owner.parentBrandId };
+      if (strong(t)) return credit;
       if (t === word && (OWNER_LURE_WORDS.includes(tokens[i - 1] ?? "") || OWNER_LURE_WORDS.includes(tokens[i + 1] ?? ""))) {
-        return { parentBrandId: owner.parentBrandId };
+        return credit;
       }
-      if (OWNER_LURE_WORDS.some((w) => t === word + w || t === w + word)) return { parentBrandId: owner.parentBrandId };
-      if (OWNER_GLUED_FAMILY.some((w) => t.includes(w))) return { parentBrandId: owner.parentBrandId };
+      if (OWNER_LURE_WORDS.some((w) => t === word + w || t === w + word)) return credit;
+      if (OWNER_GLUED_FAMILY.some((w) => t.includes(w))) return credit;
     }
   }
   return null;
@@ -464,7 +509,6 @@ const OWNER_GLUED_FAMILY: readonly string[] = [
  *  lure-gated word: credential lures, glue words and digits, exact words
  *  only ("mymailru", "mailru24", "mailruwallet", "linelogin"). */
 const GENERIC_GLUE_VOCAB: ReadonlySet<string> = new Set([...CREDENTIAL_LURE_WORDS, ...LURE_GLUE_WORDS]);
-const CREDENTIAL_LURES: ReadonlySet<string> = new Set(CREDENTIAL_LURE_WORDS);
 
 /**
  * THE predicate for "may this host be credited to this generic-word brand"
@@ -495,69 +539,272 @@ export function genericBrandHostMatch(
   canonical: string | null | undefined,
   opts: { subdomains: boolean; lureGated?: boolean },
 ): BrandMatchMethod | null {
-  const canon = canonicalLabels(canonical ?? "");
-  if (canon.length < 2) return null;
-  const canonHost = canon.join(".");
-  const host = hostOf(raw);
-  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
-  if (host === canonHost) return "canonical";
-  if (host.endsWith(`.${canonHost}`)) {
+  const spec = genericSpec(canonical ?? "", !!opts.lureGated);
+  if (!spec) return null;
+  const ctx = hostCtx(raw);
+  if (!ctx) return null;
+  return genericMatchSpec(ctx, spec, opts.subdomains);
+}
+
+function genericMatchSpec(ctx: HostCtx, spec: GenericSpec, subdomains: boolean): BrandMatchMethod | null {
+  const { host } = ctx;
+  if (host === spec.canonHost) return "canonical";
+  if (host.endsWith(spec.canonDot)) {
     // A tenant subdomain of a platform ("evil.pages.dev" for "Pages",
     // "x.my.site.com" for "Site") or a multi-tenant host ("cloud.mail.ru")
     // belongs to an arbitrary party, not the brand.
-    if (!opts.subdomains || platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
+    if (!subdomains || platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
     return "canonical";
   }
+  // Cheap early exit (2026-10-12 perf, review N1). The token rules below
+  // need the canonical host as labels, its tokens joined or hyphen/underscore
+  // separated (raw or homoglyph-folded — homoglyphSkeleton), or — lure-gated
+  // brands only — the bare word; the tail rule needs the canonical's
+  // suffix at the end. Most hosts fail all of them.
+  const sk = ctx.skeleton;
+  const tailOnly = !sk.includes(spec.skelFirstTok) || !(host.includes(spec.canonHost) || sk.includes(spec.skelJoined)
+    || sk.includes(spec.skelHyphen) || sk.includes(spec.skelUnderscore)
+    || (spec.lureGated && host.includes(spec.word) && LURE_GATED_LURE_LIST.some((w) => host.includes(w))));
+  if (tailOnly && !host.endsWith(spec.suffixDot)) return null;
 
-  const all = host.split(".").filter((l) => l.length > 0);
+  const all = ctx.all;
+  // Homoglyph spelling of the canonical under the same suffix: mai1.ru.
+  // (The suffix check is host.endsWith(suffixDot); the label must fold to
+  // the same skeleton before the exact spelling walk.)
+  const ti = all.length - spec.canon.length;
+  if (ti >= 0 && host.endsWith(spec.suffixDot) && ctx.labelSkeleton(ti) === spec.skelFirstLabel
+      && homoglyphSpelling(all[ti]!, spec.canon[0]!)) {
+    return "levenshtein";
+  }
+  if (tailOnly) return null;
+
   // The canonical as consecutive labels, entirely LEFT of the host's own
   // registrable domain: mail.ru.secure-login.com, never x.site.com.br
   // (whose registrable domain is site.com.br itself).
-  const reg = registrableDomain(host);
-  const regStart = reg ? all.length - reg.split(".").length : all.length;
-  for (let k = 0; k + canon.length <= regStart; k++) {
-    if (canon.every((l, i) => all[k + i] === l)) return "token";
-  }
-  // Homoglyph spelling of the canonical under the same suffix: mai1.ru.
-  const tail = all.slice(-canon.length);
-  if (tail.length === canon.length && tail.slice(1).join(".") === canon.slice(1).join(".")
-      && homoglyphSpelling(tail[0]!, canon[0]!)) {
-    return "levenshtein";
+  const regStart = ctx.regStart();
+  for (let k = 0; k + spec.canon.length <= regStart; k++) {
+    if (spec.canon.every((l, i) => all[k + i] === l)) return "token";
   }
 
-  const canonTokens = canon.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
-  const joined = canonTokens.join("");
-  const word = canon[0]!.replace(/-/g, "");
   const glue = (side: string) => side === "" || segmentsInto(side, GENERIC_GLUE_VOCAB);
-  const lured = (side: string) => side !== "" && segmentsInto(side, GENERIC_GLUE_VOCAB, CREDENTIAL_LURES);
-  const labels = all.slice(0, all.length - suffixLabelCount(host));
-  for (const label of labels) {
+  const gated = (side: string) => side === "" || segmentsInto(side, LURE_GATED_VOCAB);
+  const gatedLured = (side: string) => side !== "" && segmentsInto(side, LURE_GATED_VOCAB, LURE_GATED_LURES);
+  for (const label of ctx.labels()) {
     const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
     // Hyphen run of the canonical's tokens: mail-ru, login-gov, mai1-ru.
-    for (let i = 0; i + canonTokens.length <= tokens.length; i++) {
-      if (canonTokens.every((t, k) => spells(tokens[i + k]!, t))) {
-        return canonTokens.every((t, k) => tokens[i + k] === t) ? "token" : "levenshtein";
+    for (let i = 0; i + spec.canonTokens.length <= tokens.length; i++) {
+      if (spec.canonTokens.every((t, k) => spells(tokens[i + k]!, t))) {
+        return spec.canonTokens.every((t, k) => tokens[i + k] === t) ? "token" : "levenshtein";
       }
     }
     for (const [ti, t] of tokens.entries()) {
       // Joined full-domain token with only lure / glue / digits around it.
       for (let i = 0; i < t.length; i++) {
-        for (const { end, swapped } of spellingEnds(t, i, joined)) {
+        for (const { end, swapped } of spellingEnds(t, i, spec.joined)) {
           if (glue(t.slice(0, i)) && glue(t.slice(end))) return swapped ? "levenshtein" : "token";
         }
       }
-      if (!opts.lureGated) continue;
-      // Lure-gated bare word: beside a credential lure token, or glued to
-      // lure / glue words with at least one credential lure.
-      if (t === word && (lured(tokens[ti - 1] ?? "") || lured(tokens[ti + 1] ?? ""))) return "token";
+      if (!spec.lureGated) continue;
+      // Lure-gated bare word (LINE, Free): beside a NARROW credential lure
+      // token (LURE_GATED_LURES), or glued to such lures / glue only.
+      const word = spec.word;
+      if (t === word && (gatedLured(tokens[ti - 1] ?? "") || gatedLured(tokens[ti + 1] ?? ""))) return "token";
       for (let i = t.indexOf(word); i >= 0; i = t.indexOf(word, i + 1)) {
         const pre = t.slice(0, i);
         const post = t.slice(i + word.length);
-        if (glue(pre) && glue(post) && (lured(pre) || lured(post))) return "token";
+        if (gated(pre) && gated(post) && (gatedLured(pre) || gatedLured(post))) return "token";
       }
     }
   }
   return null;
+}
+
+/**
+ * Narrow lure set for lure-gated generic brands (LINE, Free — review N4):
+ * only sign-in / account words. The broad CREDENTIAL_LURE_WORDS (claim,
+ * wallet, tracking, update, support, refund) are everyday words next to
+ * "free"/"line" ("free-claim", "freetracking", "linesupport").
+ */
+const LURE_GATED_LURES: ReadonlySet<string> = new Set([
+  "login", "logon", "signin", "signon", "verify", "verification", "account", "accounts",
+  "password", "auth", "secure", "id", "facture",
+]);
+const LURE_GATED_LURE_LIST: readonly string[] = [...LURE_GATED_LURES];
+const LURE_GATED_VOCAB: ReadonlySet<string> = new Set([...LURE_GATED_LURES, "my", "www", "the", "get", "official"]);
+
+interface GenericSpec {
+  canon: string[];
+  canonHost: string;
+  canonDot: string;
+  suffix: string;
+  suffixDot: string;
+  canonTokens: string[];
+  joined: string;
+  word: string;
+  skelJoined: string;
+  skelFirstLabel: string;
+  skelFirstTok: string;
+  skelHyphen: string;
+  skelUnderscore: string;
+  lureGated: boolean;
+}
+
+/** Per (canonical, lureGated) precomputation — a handful of generic brands,
+ *  so a plain Map is enough (review N1). */
+const genericSpecCache = new Map<string, GenericSpec | null>();
+
+function genericSpec(canonical: string, lureGated: boolean): GenericSpec | null {
+  const key = `${canonical}|${lureGated ? 1 : 0}`;
+  const hit = genericSpecCache.get(key);
+  if (hit !== undefined) return hit;
+  const canon = canonicalLabels(canonical);
+  let spec: GenericSpec | null = null;
+  if (canon.length >= 2) {
+    const canonHost = canon.join(".");
+    const canonTokens = canon.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
+    const suffix = canon.slice(1).join(".");
+    spec = {
+      canon, canonHost, canonDot: `.${canonHost}`, suffix, suffixDot: `.${suffix}`, canonTokens,
+      joined: canonTokens.join(""), word: canon[0]!.replace(/-/g, ""),
+      skelJoined: homoglyphSkeleton(canonTokens.join("")), skelFirstLabel: homoglyphSkeleton(canon[0]!),
+      skelFirstTok: homoglyphSkeleton(canonTokens[0]!), skelHyphen: homoglyphSkeleton(canonTokens.join("-")),
+      skelUnderscore: homoglyphSkeleton(canonTokens.join("_")), lureGated,
+    };
+  }
+  if (genericSpecCache.size > 10_000) genericSpecCache.clear();
+  genericSpecCache.set(key, spec);
+  return spec;
+}
+
+/**
+ * Fold every GENERIC_HOMOGLYPHS spelling onto one character, so a host
+ * that spells a word with homoglyphs CONTAINS the word's skeleton
+ * ("rnai1" → "mall", "mail" → "mall"). Used only as a superset prefilter.
+ */
+/** ASCII fold table: each GENERIC_HOMOGLYPHS single-char spelling → the
+ *  character it stands for (1/i → l, 0 → o, 3 → e, …). */
+const SKELETON_FOLD: Uint8Array = (() => {
+  const t = new Uint8Array(128);
+  for (let i = 0; i < 128; i++) t[i] = i;
+  const set = (from: string, to: string) => { t[from.charCodeAt(0)] = to.charCodeAt(0); };
+  set("1", "l"); set("i", "l"); set("0", "o"); set("3", "e"); set("4", "a");
+  set("5", "s"); set("7", "t"); set("9", "g"); set("6", "b");
+  return t;
+})();
+const CH_R = 114, CH_N = 110, CH_M = 109, CH_V = 118, CH_W = 119, CH_C = 99, CH_L = 108, CH_D = 100;
+
+function homoglyphSkeleton(s: string): string {
+  // One pass: fold single-char homoglyphs, then merge rn → m, vv → w,
+  // cl → d over the folded stream (same result as folding first and then
+  // replacing the pairs left to right).
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    const f = c < 128 ? SKELETON_FOLD[c]! : c;
+    const last = out.length - 1;
+    const prev = last >= 0 ? out[last] : -1;
+    if (prev === CH_R && f === CH_N) out[last] = CH_M;
+    else if (prev === CH_V && f === CH_V) out[last] = CH_W;
+    else if (prev === CH_C && f === CH_L) out[last] = CH_D;
+    else out.push(f);
+  }
+  return String.fromCharCode(...out);
+}
+
+interface HostCtx {
+  host: string;
+  all: string[];
+  skeleton: string;
+  labelSkeleton: (i: number) => string;
+  regStart: () => number;
+  labels: () => string[];
+}
+
+/** Host parsed once and reused across every generic brand checked for it
+ *  (single-entry memo — the writers check one host against all brands in a
+ *  row). null for non-hostnames. */
+let lastHostCtx: { raw: string; ctx: HostCtx | null } | null = null;
+
+function hostCtx(raw: string): HostCtx | null {
+  if (lastHostCtx && lastHostCtx.raw === raw) return lastHostCtx.ctx;
+  const host = hostOf(raw);
+  let ctx: HostCtx | null = null;
+  if (HOSTNAME_RE.test(host) && !IPV4_RE.test(host)) {
+    const all = host.split(".").filter((l) => l.length > 0);
+    let regStart: number | undefined;
+    let labels: string[] | undefined;
+    const labelSkels: string[] = [];
+    ctx = {
+      host, all, skeleton: homoglyphSkeleton(host),
+      labelSkeleton: (i: number) => (labelSkels[i] ??= homoglyphSkeleton(all[i] ?? "")),
+      regStart: () => {
+        if (regStart === undefined) {
+          const reg = registrableDomain(host);
+          regStart = reg ? all.length - reg.split(".").length : all.length;
+        }
+        return regStart;
+      },
+      labels: () => (labels ??= all.slice(0, all.length - suffixLabelCount(host))),
+    };
+  }
+  lastHostCtx = { raw, ctx };
+  return ctx;
+}
+
+/**
+ * A prepared set of generic-word brands for the high-volume writers (brand
+ * matcher index, NRD, CT, Analyst): each brand's spec is built once, each
+ * host is parsed once, and owner credit is tried only when the set holds a
+ * vendor-product brand and the host passes its cheap vendor-token precheck
+ * (review N1). credit() == the first creditGenericBrand hit over the brands
+ * in order, own-brand matches before any parent credit.
+ */
+export class GenericBrandSet {
+  private readonly entries: Array<{ id: string; spec: GenericSpec; canonical: string; owner: boolean }> = [];
+  readonly size: number;
+
+  constructor(
+    brands: ReadonlyArray<{ id: string; name: string | null; canonical_domain: string | null }>,
+    private readonly brandExists: (brandId: string) => boolean,
+    /** NRD / CT: a brand never matches its own canonical domain. */
+    private readonly opts: { excludeOwnDomain?: boolean } = {},
+  ) {
+    for (const b of brands) {
+      const canonical = b.canonical_domain ?? "";
+      const spec = genericSpec(canonical, isLureGatedGenericBrand(b.name));
+      if (!spec) continue;
+      this.entries.push({ id: b.id, spec, canonical, owner: GENERIC_BRAND_OWNERS[spec.canonHost] !== undefined });
+    }
+    this.size = this.entries.length;
+    // Union of the owners' vendor tokens: one substring sweep per host
+    // decides whether any parent credit is possible at all.
+    this.ownerPrecheck = [...new Set(this.entries.filter((e) => e.owner)
+      .flatMap((e) => OWNER_PRECHECK.get(GENERIC_BRAND_OWNERS[e.spec.canonHost]!.parentBrandId) ?? []))];
+  }
+
+  private readonly ownerPrecheck: string[];
+
+  /** `via` is the generic brand that produced the credit (== brandId unless
+   *  a parent was credited). */
+  credit(raw: string): { brandId: string; method: BrandMatchMethod; via: string } | null {
+    if (this.entries.length === 0) return null;
+    const ctx = hostCtx(raw);
+    if (!ctx) return null;
+    for (const e of this.entries) {
+      if (this.opts.excludeOwnDomain && ctx.host === e.spec.canonHost) continue;
+      const m = genericMatchSpec(ctx, e.spec, false);
+      if (m) return { brandId: e.id, method: m, via: e.id };
+    }
+    if (this.ownerPrecheck.length === 0 || !this.ownerPrecheck.some((t) => ctx.host.includes(t))) return null;
+    for (const e of this.entries) {
+      if (!e.owner) continue;
+      const owner = ownerCreditSpec(ctx, e.spec, true);
+      if (owner && owner.parentBrandId !== e.id && this.brandExists(owner.parentBrandId)) {
+        return { brandId: owner.parentBrandId, method: "token", via: e.id };
+      }
+    }
+    return null;
+  }
 }
 
 /** genericBrandHostMatch with `lureGated` derived from the brand name. */
@@ -586,7 +833,7 @@ export function creditGenericBrand(
 ): { brandId: string; method: BrandMatchMethod } | null {
   const own = matchGenericBrand(raw, brand, { subdomains: false });
   if (own) return { brandId: brand.id, method: own };
-  const owner = genericBrandOwnerCredit(raw, brand.canonical_domain, { requireWord: true });
+  const owner = genericBrandOwnerCredit(raw, brand.canonical_domain, { writer: true });
   if (owner && owner.parentBrandId !== brand.id && brandExists(owner.parentBrandId)) {
     return { brandId: owner.parentBrandId, method: "token" };
   }
@@ -762,6 +1009,24 @@ export function isSharedHostingHost(raw: string): boolean {
 
 const IDP_SUFFIXES: ReadonlySet<string> = new Set(Object.keys(IDP_TENANT_HOSTS));
 
+/** PLATFORM_SUFFIXES entry → its FIRST list index (the order decides ties). */
+const PLATFORM_SUFFIX_INDEX: ReadonlyMap<string, number> = (() => {
+  const m = new Map<string, number>();
+  PLATFORM_SUFFIXES.forEach((p, i) => { if (!m.has(p)) m.set(p, i); });
+  return m;
+})();
+
+const MULTI_TENANT_SET: ReadonlySet<string> = new Set(MULTI_TENANT_HOSTS);
+
+/** host is a MULTI_TENANT_HOSTS entry or a subdomain of one (suffix walk). */
+function inMultiTenantHosts(host: string): boolean {
+  if (MULTI_TENANT_SET.has(host)) return true;
+  for (let i = host.indexOf("."); i >= 0; i = host.indexOf(".", i + 1)) {
+    if (MULTI_TENANT_SET.has(host.slice(i + 1))) return true;
+  }
+  return false;
+}
+
 /**
  * The PLATFORM_SUFFIXES entry `host` is a tenant of, or null. A
  * vendor-owned subdomain of an IdP suffix (login.okta.com, eu.auth0.com,
@@ -769,12 +1034,38 @@ const IDP_SUFFIXES: ReadonlySet<string> = new Set(Object.keys(IDP_TENANT_HOSTS))
  * idpTenantLabel) is NOT a tenant: it belongs to the vendor.
  */
 function platformSuffixFor(host: string): string | null {
+  // Suffix walk over a list-index map instead of scanning every entry
+  // (review N1). Picks the matching entry with the LOWEST list index —
+  // exactly what the original first-match loop over PLATFORM_SUFFIXES did.
+  let best = -1;
+  for (let i = host.indexOf("."); i >= 0; i = host.indexOf(".", i + 1)) {
+    const idx = PLATFORM_SUFFIX_INDEX.get(host.slice(i + 1));
+    if (idx === undefined || (best >= 0 && idx > best)) continue;
+    const p = PLATFORM_SUFFIXES[idx]!;
+    if (IDP_SUFFIXES.has(p) && idpTenantLabel(host) === null) continue;
+    best = idx;
+  }
+  return best >= 0 ? PLATFORM_SUFFIXES[best]! : null;
+}
+
+/** Original first-match loop — kept for the equivalence test only. */
+export function platformSuffixForSlow(host: string): string | null {
   for (const p of PLATFORM_SUFFIXES) {
     if (!host.endsWith(`.${p}`)) continue;
     if (IDP_SUFFIXES.has(p) && idpTenantLabel(host) === null) continue;
     return p;
   }
   return null;
+}
+
+/** The PLATFORM_SUFFIXES list, for the equivalence test. */
+export function platformSuffixList(): readonly string[] {
+  return PLATFORM_SUFFIXES;
+}
+
+/** platformSuffixFor, exported for the equivalence test. */
+export function platformSuffixOf(host: string): string | null {
+  return platformSuffixFor(host);
 }
 
 /** True when `raw` is a single tenant's subdomain of a PLATFORM_SUFFIXES
@@ -805,7 +1096,7 @@ export function isMultiTenantHost(raw: string): boolean {
   if (!host) return false;
   if (isPlatformTenantHost(host)) return false;
   if (isSharedHostingHost(host)) return true;
-  return MULTI_TENANT_HOSTS.some((s) => host === s || host.endsWith(`.${s}`));
+  return inMultiTenantHosts(host);
 }
 
 function suffixLabelCount(host: string): number {
@@ -1081,6 +1372,8 @@ interface BrandIndex {
   generic: PreparedBrand[];
   /** Every brand id in the catalog (owner-credit targets must exist). */
   ids: Set<string>;
+  /** idx.generic as a prepared GenericBrandSet (built after the loop). */
+  genericSet: GenericBrandSet | null;
 }
 
 /** Owner label of a canonical domain when it is specific enough to be brand
@@ -1107,13 +1400,14 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
   if (cached) return cached;
   const idx: BrandIndex = {
     canonical: new Map(), token: new Map(), leftoverToken: new Map(), ownerLabel: new Map(),
-    long: [], longByFirst: new Map(), glued: [], generic: [], ids: new Set(),
+    long: [], longByFirst: new Map(), glued: [], generic: [], ids: new Set(), genericSet: null,
   };
+  const genericRows: BrandRow[] = [];
   for (const b of brands) {
     const p = prepareOne(b);
     idx.ids.add(p.id);
     if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
-    if (p.genericLookalike) idx.generic.push(p);
+    if (p.genericLookalike) { idx.generic.push(p); genericRows.push(b); }
     if (p.glued) idx.glued.push(p);
     if (p.leftoverMatchable) {
       if (!idx.leftoverToken.has(p.norm)) idx.leftoverToken.set(p.norm, p.id);
@@ -1133,6 +1427,7 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
   // Longest name first (stable: array order breaks ties), so a 5-char name
   // beats a 4-char one glued into the same token.
   idx.glued.sort((a, b) => b.norm.length - a.norm.length);
+  idx.genericSet = new GenericBrandSet(genericRows, (id) => idx.ids.has(id));
   indexCache.set(brands, idx);
   return idx;
 }
@@ -1370,17 +1665,10 @@ function matchPartsInIndex(parts: HostParts, idx: BrandIndex): BrandMatch | null
 
 /** Generic-word brands: full-domain lookalikes of the canonical only. */
 function matchGenericInIndex(host: string, idx: BrandIndex): BrandMatch | null {
-  for (const b of idx.generic) {
-    const method = genericBrandHostMatch(host, b.canonical, { subdomains: false, lureGated: b.lureGated });
-    if (method) return { brandId: b.id, method };
-  }
-  // Vendor-product generic brands (Live / Office / Cloud): the parent brand
-  // on a host with that vendor's lure context (creditGenericBrand).
-  for (const b of idx.generic) {
-    const owner = genericBrandOwnerCredit(host, b.canonical, { requireWord: true });
-    if (owner && idx.ids.has(owner.parentBrandId)) return { brandId: owner.parentBrandId, method: "token" };
-  }
-  return null;
+  // Own-brand full-canonical lookalikes first, then a vendor-product
+  // brand's parent (Live / Office / Cloud → Microsoft) — GenericBrandSet.
+  const hit = idx.genericSet?.credit(host);
+  return hit ? { brandId: hit.brandId, method: hit.method } : null;
 }
 
 /** As fuzzyMatchBrandDetailed, returning only the brand id. */

@@ -13,6 +13,7 @@ import { lookalikePermutationsForBrand } from "../src/scanners/lookalike-domains
 import { generatePermutations } from "../src/lib/dnstwist";
 import { matchAbuseMailboxBrand } from "../src/lib/abuse-mailbox-brand-match";
 import { matchMonitoredBrand } from "../src/feeds/certstream";
+import { GenericBrandSet, creditGenericBrand, genericBrandOwnerCredit, matchGenericBrand } from "../src/lib/brandDetect";
 
 describe("typosquat scanner — variantsForBrand", () => {
   it("keeps every variant for an ordinary brand", () => {
@@ -115,22 +116,37 @@ describe("abuse mailbox — short generic brands stay excluded (review M4)", () 
   });
 });
 
-describe("CT feed — matchMonitoredBrand (review M1 / M3)", () => {
-  const entries = [
-    { id: "b_mail", keyword: "mailru", domain: "mail.ru", genericName: "Mail" },
-    { id: "b_live", keyword: "livecom", domain: "live.com", genericName: "Live" },
-    { id: "brand_microsoft_com", keyword: "microsoft", domain: "microsoft.com", genericName: null },
-  ];
-  it("generic brands only via the shared predicate", () => {
+describe("CT feed — matchMonitoredBrand (review M1 / M3 / N2 / N3)", () => {
+  const live = { id: "b_live", keyword: "livecom", domain: "live.com", genericName: "Live" };
+  const cloud = { id: "b_cloud", keyword: "cloudmicrosoft", domain: "cloud.microsoft", genericName: "Cloud" };
+  const mail = { id: "b_mail", keyword: "mailru", domain: "mail.ru", genericName: "Mail" };
+  const ms = { id: "brand_microsoft_com", keyword: "microsoft", domain: "microsoft.com", genericName: null };
+  const paypal = { id: "b_paypal", keyword: "paypal", domain: "paypal.com", genericName: null };
+  const coinbase = { id: "b_coinbase", keyword: "coinbase", domain: "coinbase.com", genericName: null };
+
+  it("generic brands only via the shared predicate, scored on their own word", () => {
+    const entries = [mail, live, ms];
     expect(matchMonitoredBrand("emailrules.com", entries)).toBeNull();
     expect(matchMonitoredBrand("olivecompany.com", entries)).toBeNull();
-    expect(matchMonitoredBrand("mail.ru.evil.com", entries)).toMatchObject({ id: "b_mail", generic: true });
+    expect(matchMonitoredBrand("mail.ru.evil.com", entries)).toEqual({ id: "b_mail", keyword: "mail", isHomoglyph: false });
     expect(matchMonitoredBrand("mai1ru-login.com", entries)).toMatchObject({ id: "b_mail", isHomoglyph: true });
     expect(matchMonitoredBrand("e.mail.ru", entries)).toBeNull(); // own domain
   });
-  it("a vendor-product generic brand hit credits the parent", () => {
-    expect(matchMonitoredBrand("outlook-live-verify.com", entries)).toMatchObject({ id: "brand_microsoft_com" });
-    expect(matchMonitoredBrand("outlook-live-verify.com", entries.slice(0, 2))).toBeNull(); // parent not loaded
+
+  it("an ordinary brand always wins over a generic one, whatever the row order (N2)", () => {
+    for (const order of [[live, cloud, paypal, coinbase, ms], [paypal, coinbase, ms, live, cloud]]) {
+      expect(matchMonitoredBrand("paypal-live-login.com", order)?.id).toBe("b_paypal");
+      expect(matchMonitoredBrand("coinbase-cloud-login.com", order)?.id).toBe("b_coinbase");
+    }
+  });
+
+  it("a vendor-product generic brand credits the parent only with a real vendor token (N3)", () => {
+    const entries = [live, cloud, { id: "b_office", keyword: "officecom", domain: "office.com", genericName: "Office" }, ms];
+    expect(matchMonitoredBrand("outlook-live-verify.com", entries)).toMatchObject({ id: "brand_microsoft_com", keyword: "live" });
+    for (const h of ["cloud-login.com", "secure-cloud-login.net", "cloudlogin.io", "box-office-login.com", "live-login.com"]) {
+      expect(matchMonitoredBrand(h, entries), h).toBeNull();
+    }
+    expect(matchMonitoredBrand("outlook-live-verify.com", [live, cloud])).toBeNull(); // parent not loaded
   });
 });
 
@@ -138,5 +154,44 @@ describe("lure-gated generic brands in the other writers", () => {
   it("typosquat scanner keeps LINE's lure combos", () => {
     expect(variantsForBrand("Line", "line.me")).toContain("line-login.com");
     expect(variantsForBrand("Line", "line.me")).not.toContain("line.com");
+  });
+});
+
+describe("writers never credit Microsoft from the generic word alone (review N3)", () => {
+  const brands = [
+    { id: "b_cloud", name: "Cloud", canonical_domain: "cloud.microsoft" },
+    { id: "b_office", name: "Office", canonical_domain: "office.com" },
+    { id: "b_live", name: "Live", canonical_domain: "live.com" },
+  ];
+  const set = new GenericBrandSet(brands, (id) => id === "brand_microsoft_com");
+  it.each(["cloud-login.com", "secure-cloud-login.net", "cloudlogin.io", "box-office-login.com", "live-login.com",
+    "outlook.office365.com", "login.live.com", "x.outlook.com"])("%s → nothing", (host) => {
+    expect(set.credit(host)).toBeNull();
+    for (const b of brands) expect(creditGenericBrand(host, b, () => true), `${host} x ${b.name}`).toBeNull();
+  });
+  it.each(["office365-login.com", "outlook-live.com", "onedrive-cloud-share.net", "hotmail-live-verify.com"])("%s → Microsoft", (host) => {
+    expect(set.credit(host)?.brandId).toBe("brand_microsoft_com");
+  });
+  it("the cleanup's broader rule still moves an existing Live link on live-login.com", () => {
+    expect(genericBrandOwnerCredit("live-login.com", "live.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(genericBrandOwnerCredit("outlook.office365.com", "office.com")).toBeNull(); // Microsoft's own host
+  });
+});
+
+describe("lure-gated LINE / Free use a narrow lure set (review N4)", () => {
+  const line = { name: "Line", canonical_domain: "line.me" };
+  const free = { name: "Free", canonical_domain: "free.fr" };
+  it.each([
+    ["free-claim.com", free], ["freetracking.com", free], ["free-wallet-claim.io", free], ["freeupdate.org", free],
+    ["free-support-center.com", free], ["freerefund.net", free],
+    ["linesupport.com", line], ["line-tracking.com", line], ["online-line-update.com", line], ["line-wallet.io", line],
+  ] as const)("%s → not credited", (host, brand) => {
+    expect(matchGenericBrand(host, brand, { subdomains: true })).toBeNull();
+  });
+  it.each([
+    ["line-login.com", line], ["linelogin.xyz", line], ["mylinelogin.com", line], ["secure-line-verify.com", line],
+    ["line-id-verify.com", line], ["free-facture-login.com", free], ["freelogin-verify.net", free], ["free-account.fr", free],
+  ] as const)("%s → credited", (host, brand) => {
+    expect(matchGenericBrand(host, brand, { subdomains: true })).toBe("token");
   });
 });

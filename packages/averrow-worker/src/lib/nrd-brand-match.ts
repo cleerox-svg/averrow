@@ -1,6 +1,6 @@
 import type { ThreatRow } from "../feeds/types";
 import { threatId } from "../feeds/types";
-import { creditGenericBrand, isGenericBrandName } from "./brandDetect";
+import { GenericBrandSet, isGenericBrandName } from "./brandDetect";
 
 /**
  * NRD brand-keyword matcher (nrd_hagezi feed): finds COMBOSQUATS, i.e. new
@@ -573,11 +573,16 @@ export class BrandMatcher {
   private readonly rowsByBrand = new Map<number, number>();
   private readonly demotedTexts = new Set<string>();
   private readonly demoted: string[] = [];
-  private readonly ids: Set<string>;
+  private readonly generic: GenericBrandSet;
 
   constructor(private readonly brands: BrandMatchEntry[], opts: BrandMatcherOptions = {}) {
     this.demoteAfter = opts.demoteAfter ?? NRD_KEYWORD_DEMOTE_AFTER;
-    this.ids = new Set(brands.map((b) => b.id));
+    const ids = new Set(brands.map((b) => b.id));
+    // Generic brands in id order (brands are sorted); never their own domain.
+    this.generic = new GenericBrandSet(
+      brands.filter((b) => b.genericName !== undefined)
+        .map((b) => ({ id: b.id, name: b.genericName ?? null, canonical_domain: b.domain })),
+      (id) => ids.has(id), { excludeOwnDomain: true });
     const lengths = new Set<number>();
     brands.forEach((b, bi) => {
       for (const k of b.keywords) {
@@ -609,7 +614,7 @@ export class BrandMatcher {
   }
 
   get empty(): boolean {
-    return this.index.size === 0 && !this.brands.some((b) => b.genericName !== undefined);
+    return this.index.size === 0 && this.generic.size === 0;
   }
 
   /**
@@ -620,13 +625,7 @@ export class BrandMatcher {
    * parent is among the loaded brands. Tried only when no keyword matched.
    */
   private genericHit(domain: string): string | null {
-    for (const b of this.brands) {
-      if (b.genericName === undefined) continue;
-      if (domain === b.domain || domain.endsWith(`.${b.domain}`)) continue; // never its own domain
-      const hit = creditGenericBrand(domain, { id: b.id, name: b.genericName, canonical_domain: b.domain }, (id) => this.ids.has(id));
-      if (hit) return hit.brandId;
-    }
-    return null;
+    return this.generic.credit(domain)?.brandId ?? null;
   }
 
   /** Keyword texts demoted to generic this run, in demotion order. */

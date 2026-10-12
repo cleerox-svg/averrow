@@ -15,7 +15,7 @@ import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
 import { cachedValue } from "../lib/cached-value";
-import { creditGenericBrand, isGenericBrand, isGenericBrandName, keywordMatchesHost, matchGenericBrand } from "../lib/brandDetect";
+import { GenericBrandSet, isGenericBrand, isGenericBrandName, keywordMatchesHost, matchGenericBrand } from "../lib/brandDetect";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -230,6 +230,8 @@ export const analystAgent: AgentModule = {
       }
     }
 
+    const genericSet = new GenericBrandSet(genericBrands, (id) => loadedBrandIds.has(id));
+
     // Load safe domains for allowlist filtering
     const safeSet = await loadSafeDomainSet(env.DB);
 
@@ -289,10 +291,7 @@ export const analystAgent: AgentModule = {
         }
         // Generic-word brands: full-canonical lookalikes only (or a
         // vendor-product brand's loaded parent, Live → Microsoft).
-        for (const g of preMatchedBrandId ? [] : genericBrands) {
-          const hit = creditGenericBrand(preMatchHost, g, (id) => loadedBrandIds.has(id));
-          if (hit) { preMatchedBrandId = hit.brandId; break; }
-        }
+        if (!preMatchedBrandId) preMatchedBrandId = genericSet.credit(preMatchHost)?.brandId ?? null;
       }
 
       if (preMatchedBrandId) {
