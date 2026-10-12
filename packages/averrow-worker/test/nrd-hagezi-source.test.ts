@@ -560,8 +560,33 @@ describe("brand keywords + classification", () => {
       "hydro-quebec",
     ]);
     expect(brandKeywords("HP", "hp.com")).toEqual([]);
-    expect(brandKeywords("Mail", "mail.ru")).toEqual([]);
     expect(brandKeywords("Www", "www.gov.uk")).toEqual([]);
+  });
+
+  it("generic-word brands get only their FULL canonical domain as a distinctive keyword (2026-10-12)", () => {
+    expect(brandKeywords("Mail", "mail.ru")).toEqual([
+      { keyword: "mailru", generic: false },
+      { keyword: "mail-ru", generic: false },
+    ]);
+    expect(brandKeywords("Login", "login.gov").map((k) => k.keyword)).toEqual(["logingov", "login-gov"]);
+    expect(brandKeywords("Site", "site.com").map((k) => k.keyword)).toEqual(["sitecom", "site-com"]);
+    // LINE is a generic word but also the bare trading name: lure-gated word kept.
+    expect(brandKeywords("Line", "line.me")).toEqual([{ keyword: "line", generic: true }]);
+    const brands = buildBrandKeywords([
+      { id: "b_mail", name: "Mail", canonical_domain: "mail.ru" },
+      { id: "b_login", name: "Login", canonical_domain: "login.gov" },
+      { id: "b_site", name: "Site", canonical_domain: "site.com" },
+    ]);
+    const { rows } = collectBrandMatchRows([
+      "1lookupmails.com", "zs-mail.com", "secure-login.com", "verify-login.net", "site-login.com",
+      "membersecurelogin.com", "mail-ru.com", "mailru-login.net", "login-gov.us", "secure-login-gov.com",
+    ], brands);
+    expect(Object.fromEntries(rows.map((r) => [r.malicious_domain, r.target_brand_id]))).toEqual({
+      "mail-ru.com": "b_mail",
+      "mailru-login.net": "b_mail",
+      "login-gov.us": "b_login",
+      "secure-login-gov.com": "b_login",
+    });
   });
 
   it("generic = ≤4 chars, a curated dictionary word, or itself lure vocabulary (hyphens ignored); else distinctive", () => {

@@ -7,6 +7,7 @@ const auditMock = vi.fn(async () => {});
 vi.mock("../src/lib/audit", () => ({ audit: (...a: unknown[]) => auditMock(...(a as [])) }));
 
 import {
+  decideGenericLink,
   decideLink,
   legacyFuzzyMatched,
   runBrandLinkCleanup,
@@ -137,6 +138,67 @@ describe("cleanup scope — only undo what the old buggy matcher made", () => {
   it("always clears a dangling brand id", () => {
     const d = decideLink(row({ malicious_domain: "example.com", brand_name: null, source_feed: "typosquat_scanner" }), () => null);
     expect(d).toMatchObject({ action: "clear", reason: "missing_brand" });
+  });
+});
+
+describe("decideLink — a brand glued inside one run-on label (2026-10-12)", () => {
+  it.each([
+    ["invitationlauchjczoommeeting.com", "Zoom", "zoom.us"],
+    ["adobeacrobatdoc.com", "Adobe", "adobe.com"],
+  ])("keeps %s → %s (tweetfeed)", (host, name, canonical) => {
+    const d = decideLink(row({
+      malicious_domain: host, malicious_url: `https://${host}/`, brand_name: name, brand_canonical: canonical,
+      brand_tier: "monitored", source_feed: "tweetfeed",
+    }), never);
+    expect(d).toEqual({ action: "keep", method: "substring", newBrandId: null, reason: null });
+  });
+});
+
+describe("decideGenericLink — generic_brands scope", () => {
+  const mail = (over: Partial<LinkRow>) => row({
+    target_brand_id: "brand_mail_ru", brand_name: "Mail", brand_canonical: "mail.ru", brand_tier: "monitored", ...over,
+  });
+
+  it("re-validates authoritative-feed links to a generic brand and clears the bare-word ones", () => {
+    for (const [host, source_feed] of [
+      ["1lookupmails.com", "nrd_hagezi"], ["0v.litemailkit.info", "numbered_variant_scan"],
+      ["www.tiktok--mall.xyz", "ct_logs"], ["zs-mail.com", "spam_trap"], ["mail-login.framer.website", "abuse_mailbox"],
+    ] as const) {
+      const d = decideGenericLink(mail({ malicious_domain: host, source_feed }), () => null);
+      expect(d, host).toEqual({ action: "clear", method: null, newBrandId: null, reason: "generic_brand" });
+    }
+  });
+
+  it("keeps canonical, subdomain and full-domain lookalike links", () => {
+    for (const [host, method] of [
+      ["mail.ru", "canonical"], ["e.mail.ru", "canonical"], ["mail-ru.com", "token"], ["mai1.ru", "levenshtein"],
+    ] as const) {
+      expect(decideGenericLink(mail({ malicious_domain: host, source_feed: "nrd_hagezi" }), never), host)
+        .toEqual({ action: "keep", method, newBrandId: null, reason: null });
+    }
+  });
+
+  it("is tier-agnostic: a tracked generic brand's genuine lookalike is kept", () => {
+    expect(decideGenericLink(mail({ malicious_domain: "mail-ru.com", brand_tier: "tracked" }), never))
+      .toMatchObject({ action: "keep", method: "token" });
+  });
+
+  it("relinks to the brand the matcher now finds", () => {
+    const d = decideGenericLink(mail({ malicious_domain: "xfinitymail97.weebly.com", source_feed: "numbered_variant_scan" }),
+      () => ({ brandId: "brand_xfinity", method: "substring" }));
+    expect(d).toEqual({ action: "relink", method: "substring", newBrandId: "brand_xfinity", reason: "generic_brand" });
+  });
+
+  it("clears non-hostname inputs without a catalog scan", () => {
+    const d = decideGenericLink(row({
+      ioc_value: '{"dataplane_feed":"telnetlogin"}', brand_name: "Login", brand_canonical: "login.gov",
+    }), never);
+    expect(d).toMatchObject({ action: "clear", reason: "non_hostname" });
+  });
+
+  it("leaves a non-generic brand alone", () => {
+    expect(decideGenericLink(row({ malicious_domain: "evil.com", brand_name: "PayPal", brand_canonical: "paypal.com" }), never))
+      .toMatchObject({ action: "keep", protectedBy: "not_generic_brand" });
   });
 });
 
@@ -301,6 +363,13 @@ describe("handleBrandLinkCleanup", () => {
   it("rejects unknown modes and bad run ids", async () => {
     expect((await call("mode=delete")).status).toBe(400);
     expect((await call("run_id=bad%20id")).status).toBe(400);
+  });
+  it("validates scope and echoes it", async () => {
+    expect((await call("scope=everything")).status).toBe(400);
+    const res = await call("scope=generic_brands");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { scope: string } }).data.scope).toBe("generic_brands");
+    expect(((await (await call("")).json()) as { data: { scope: string } }).data.scope).toBe("all");
   });
   it("accepts apply/undo with the right token", async () => {
     expect((await call(`mode=apply&confirm=${APPLY_CONFIRM_TOKEN}`)).status).toBe(200);

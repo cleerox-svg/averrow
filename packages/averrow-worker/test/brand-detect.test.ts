@@ -8,6 +8,9 @@ import {
   isGenericBrand,
   isMultiTenantHost,
   isPlatformTenantHost,
+  isGenericBrandName,
+  genericBrandDomainKeywords,
+  genericBrandHostMatch,
   type BrandRow,
 } from "../src/lib/brandDetect";
 
@@ -470,5 +473,141 @@ describe("free site builders are platform suffixes (chase-login.jimdofree.com is
     // suffix-stripped labels, so it cannot accept Jimdofree either.
     expect(matchBrandToHost("login-microsoftonnline.jimdofree.com", CAT[0]!)).toBeNull();
     expect(matchBrandToHost("login-microsoftonnline.jimdofree.com", CAT[4]!)).toBe("token");
+  });
+});
+
+// ─── 2026-10-12: generic-word brands credit only their FULL canonical domain ───
+describe("generic-word brands (Mail mail.ru, Site site.com, Login login.gov)", () => {
+  const mon = (name: string, canonical_domain: string, id: string): BrandRow =>
+    ({ id, name, canonical_domain, tier: "monitored", tranco_rank: 11 });
+  const MAIL = mon("Mail", "mail.ru", "b_mail");
+  const SITE = mon("Site", "site.com", "b_site");
+  const LOGIN = mon("Login", "login.gov", "b_login");
+  const CAT: BrandRow[] = [MAIL, SITE, LOGIN, mon("PayPal", "paypal.com", "b_paypal"), mon("Xfinity", "xfinity.com", "b_xfinity")];
+  const of = (h: string) => fuzzyMatchBrandDetailed([h], CAT);
+
+  // Production hosts (2026-10-12) wrongly linked to the three generic brands.
+  it.each([
+    "1lookupmails.com", "zs-mail.com", "0v.litemailkit.info", "www.tiktok--mall.xyz",
+    "0bmmubit.site-enfejar-ba-zarib-bala.com", "free-5532325.webadorsite.com",
+    "x.membersecurelogin.com", "voiceloginqa4.fmr.com", "loginwifi.etisalat.ae",
+    "abc.framer.website", "mail-login.framer.website", "rnail.info", "mail.com", "mail.net",
+    "secure-mail-login.com", "site-login.com", "my-site.com", "x.site.com.br",
+  ])("%s credits none of the generic brands", (host) => {
+    for (const brand of [MAIL, SITE, LOGIN]) expect(matchBrandToHost(host, brand), `${host} x ${brand.name}`).toBeNull();
+    const hit = of(host);
+    expect(["b_mail", "b_site", "b_login"]).not.toContain(hit?.brandId);
+  });
+
+  it("a real brand on the same host still wins (xfinitymail97.weebly.com → Xfinity, not Mail)", () => {
+    expect(of("xfinitymail97.weebly.com")).toEqual({ brandId: "b_xfinity", method: "substring" });
+    expect(of("paypal-mail-login.com")).toEqual({ brandId: "b_paypal", method: "token" });
+  });
+
+  it.each([
+    ["mail.ru", "b_mail", "canonical"],
+    ["www.mail.ru", "b_mail", "canonical"],
+    ["mail-ru.com", "b_mail", "token"],
+    ["mailru-login.net", "b_mail", "token"],
+    ["mymailru.net", "b_mail", "token"],
+    ["mail.ru.secure-login.com", "b_mail", "token"],
+    ["login.gov.account-verify.us", "b_login", "token"],
+    ["mai1.ru", "b_mail", "levenshtein"],
+    ["rnail.ru", "b_mail", "levenshtein"],
+    ["login-gov.us", "b_login", "token"],
+    ["secure-login-gov.com", "b_login", "token"],
+    ["site-com.xyz", "b_site", "token"],
+    ["s1te.com", "b_site", "levenshtein"],
+  ])("%s → %s via %s (full-canonical lookalike)", (host, brandId, method) => {
+    expect(of(host)).toEqual({ brandId, method });
+    const brand = CAT.find((b) => b.id === brandId)!;
+    expect(matchBrandToHost(host, brand)).toBe(method);
+  });
+
+  it("a subdomain of the canonical is a valid EXISTING link, but the catalog matcher never creates one", () => {
+    expect(matchBrandToHost("e.mail.ru", MAIL)).toBe("canonical");
+    expect(of("e.mail.ru")).toBeNull();
+    expect(genericBrandHostMatch("e.mail.ru", "mail.ru", { subdomains: false })).toBeNull();
+  });
+
+  it("a platform-tenant subdomain is never the generic brand's", () => {
+    expect(matchBrandToHost("evil.pages.dev", b("Pages", "pages.dev"))).toBeNull();
+  });
+
+  it("tracked generic brands stay canonical-only", () => {
+    const tracked: BrandRow = { ...MAIL, tier: "tracked" };
+    expect(matchBrandToHost("mail-ru.com", tracked)).toBeNull();
+    expect(matchBrandToHost("mail.ru", tracked)).toBe("canonical");
+    expect(fuzzyMatchBrand(["mail-ru.com"], [tracked])).toBeNull();
+  });
+
+  it("isGenericBrandName / genericBrandDomainKeywords are the shared definition", () => {
+    for (const n of ["Mail", "Site", "Login", "One", "Cloud", "Live", "Online", "Web", "App", "Secure",
+      "Account", "Bank", "Shop", "Store", "Pay", "Gnu", "1&1"]) {
+      expect(isGenericBrandName(n), n).toBe(true);
+    }
+    for (const n of ["Zoom", "Adobe", "Discord", "PayPal", "Box", "Mail.ru"]) expect(isGenericBrandName(n), n).toBe(false);
+    expect(genericBrandDomainKeywords("mail.ru")).toEqual(["mailru", "mail-ru"]);
+    expect(genericBrandDomainKeywords("www.login.gov")).toEqual(["logingov", "login-gov"]);
+    expect(genericBrandDomainKeywords("www.gov.uk")).toEqual([]); // bare public suffix
+    expect(genericBrandDomainKeywords("")).toEqual([]);
+  });
+});
+
+// ─── 2026-10-12: a 4–5 char brand glued inside one long run-on label ───
+describe("glued-substring rule (4–5 char names inside one long token)", () => {
+  const mon = (name: string, canonical_domain: string, id: string): BrandRow =>
+    ({ id, name, canonical_domain, tier: "monitored" });
+  const CAT: BrandRow[] = [
+    mon("Zoom", "zoom.us", "b_zoom"), mon("Adobe", "adobe.com", "b_adobe"), mon("PayPal", "paypal.com", "b_paypal"),
+    mon("Chase", "chase.com", "b_chase"), mon("Apple", "apple.com", "b_apple"), mon("Scout", "scout.com", "b_scout"),
+    mon("Kick", "kick.com", "b_kick"), mon("Citi", "citi.com", "b_citi"),
+  ];
+  const of = (h: string) => fuzzyMatchBrandDetailed([h], CAT);
+
+  it.each([
+    ["invitationlauchjczoommeeting.com", "b_zoom", "substring"],
+    ["adobeacrobatdoc.com", "b_adobe", "substring"],
+    ["zoommeeting-invite.com", "b_zoom", "substring"],
+    ["myadobesign.net", "b_adobe", "substring"],
+    ["paypalsecureverify.com", "b_paypal", "substring"], // 6+ chars: the existing substring rule
+    ["chaseverifyaccount.com", "b_chase", "substring"], // hazard name anchored at the token start
+    ["loginchase.com", "b_chase", "substring"], // …or at its end
+  ])("%s → %s", (host, brandId, method) => {
+    expect(of(host)).toEqual({ brandId, method });
+    expect(matchBrandToHost(host, CAT.find((x) => x.id === brandId)!)).toBe(method);
+  });
+
+  it.each([
+    "helpscout.net", "kicklogin.com", // short glue (< 10 chars) stays whole-token only
+    "purchaseverify.com", "pineapplelogin.com", "citizenlogin.com", // English-word fragments
+    "zoomcarrentals.com", "applebeesgrill.com", "santafeadobehomes.com", // no lure word beside the name
+    "sonydoctorhouse.com",
+  ])("%s → no brand", (host) => {
+    expect(of(host)).toBeNull();
+    for (const brand of CAT) expect(matchBrandToHost(host, brand), `${host} x ${brand.name}`).toBeNull();
+  });
+
+  it("tracked and generic brands never use it", () => {
+    expect(matchBrandToHost("invitationlauchjczoommeeting.com", { ...CAT[0]!, tier: "tracked" })).toBeNull();
+    expect(matchBrandToHost("mymailmeetinginvite.com", { id: "m", name: "Mail", canonical_domain: "mail.ru", tier: "monitored" }))
+      .toBeNull();
+  });
+
+  it("an existing rule still wins over the glued rule", () => {
+    const cat: BrandRow[] = [...CAT, mon("Meeting Hub", "meetinghub.com", "b_mh")];
+    expect(fuzzyMatchBrand(["zoom-login.com"], cat)).toBe("b_zoom"); // token
+  });
+
+  it("#1823 negatives stay negative: IdP-lure leftovers remain whole-token only", () => {
+    const idp: BrandRow[] = [
+      mon("Okta", "okta.com", "b_okta"), mon("Microsoft", "microsoft.com", "b_ms"),
+      mon("Author", "author.today", "b_author"), mon("Register", "register.com", "b_reg"), ...CAT,
+    ];
+    expect(fuzzyMatchBrand(["login.o365.teams-microsoftonline-com-common-oauth2-v2-0-authorize-login.com"], idp)).toBe("b_ms");
+    expect(fuzzyMatchBrand(["register.microsoftonline-p-int.com"], idp)).toBe("b_ms");
+    expect(fuzzyMatchBrand(["helpscout-okta.com"], idp)).toBe("b_okta");
+    // A glued leftover beside an IdP lure is not evidence for the glued rule.
+    expect(fuzzyMatchBrand(["invitationzoommeetings-okta.com"], idp)).toBe("b_okta");
   });
 });

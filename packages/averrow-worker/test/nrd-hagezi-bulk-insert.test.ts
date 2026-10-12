@@ -225,33 +225,38 @@ describe.skipIf(!hasSqlite())("nrd_hagezi — bulk brand-match insert", () => {
     // Both brands carry the distinctive keyword "acmebank" (name / name).
     seedBrand("b_acme", "Acme Bank", "acmebank.com");
     seedBrand("b_acme_eu", "AcmeBank", "acmebank.eu");
-    seedBrand("b_bank", "Bank", "bank.example"); // "bank": generic (≤4 chars)
+    seedBrand("b_bank", "Zank", "zank.example"); // "zank": generic NRD keyword (≤4 chars)
+    // A generic-WORD brand (lib/brandDetect isGenericBrandName) never matches by name.
+    seedBrand("b_bankword", "Bank", "bank.example");
     serve([
       "acmebank-login.example", // matches both acmebank brands (same needle length) → lowest id (b_acme)
       "acmebank.com", // canonical for b_acme → skipped for it, falls through to b_acme_eu
       "acmebank.eu", // b_acme_eu's canonical, but b_acme comes first → b_acme
-      "bank-secure.example", // generic "bank" + adjacent STRONG lure word → b_bank
-      "mybank-secure.example", // GLUE "my" may sit next to a generic keyword → b_bank
-      "bankshop-secure.example", // "shop" is WEAK, not GLUE → "bankshop" is no generic token → no threat
-      "bank.example", // b_bank's own canonical (and no lure word) → no threat
+      "zank-secure.example", // generic "zank" + adjacent STRONG lure word → b_bank
+      "myzank-secure.example", // GLUE "my" may sit next to a generic keyword → b_bank
+      "zankshop-secure.example", // "shop" is WEAK, not GLUE → "zankshop" is no generic token → no threat
+      "zank.example", // b_bank's own canonical (and no lure word) → no threat
+      "bank-secure.example", // "Bank" is a generic-word brand: never by name → no threat
     ]);
 
     const result = await ingest(countingKv().kv);
 
-    expect(result).toEqual({ itemsFetched: 7, itemsNew: 5, itemsDuplicate: 0, itemsError: 0 });
+    expect(result).toEqual({ itemsFetched: 8, itemsNew: 5, itemsDuplicate: 0, itemsError: 0 });
     const brandOf = (d: string) =>
       (raw.prepare("SELECT target_brand_id AS b FROM threats WHERE malicious_domain = ?").all(d) as Array<{ b: string }>)
         .map((r) => r.b);
     expect(brandOf("acmebank-login.example")).toEqual(["b_acme"]);
     expect(brandOf("acmebank.com")).toEqual(["b_acme_eu"]);
     expect(brandOf("acmebank.eu")).toEqual(["b_acme"]);
-    expect(brandOf("bank-secure.example")).toEqual(["b_bank"]);
-    expect(brandOf("mybank-secure.example")).toEqual(["b_bank"]);
-    expect(brandOf("bankshop-secure.example")).toEqual([]);
-    expect(brandOf("bank.example")).toEqual([]);
+    expect(brandOf("zank-secure.example")).toEqual(["b_bank"]);
+    expect(brandOf("myzank-secure.example")).toEqual(["b_bank"]);
+    expect(brandOf("zankshop-secure.example")).toEqual([]);
+    expect(brandOf("zank.example")).toEqual([]);
+    expect(brandOf("bank-secure.example")).toEqual([]);
     expect(brandThreatCount("b_acme")).toBe(2);
     expect(brandThreatCount("b_acme_eu")).toBe(1);
     expect(brandThreatCount("b_bank")).toBe(2);
+    expect(brandThreatCount("b_bankword")).toBe(0);
   });
 
   it("keyword demotion carries across flushes within one run (per brand, deterministic in list order)", async () => {

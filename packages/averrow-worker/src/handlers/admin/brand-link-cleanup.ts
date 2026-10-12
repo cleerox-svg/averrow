@@ -10,9 +10,11 @@ import {
   clampLimit,
   runBrandLinkCleanup,
   type CleanupMode,
+  type CleanupScope,
 } from "../../lib/brand-link-cleanup";
 
 const MODES: readonly CleanupMode[] = ["dry_run", "apply", "undo", "reconcile"];
+const SCOPES: readonly CleanupScope[] = ["all", "generic_brands"];
 const RUN_ID_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 /**
@@ -29,6 +31,13 @@ export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string):
   if (token && url.searchParams.get("confirm") !== token) {
     return Response.json({ success: false, error: `${mode} requires the confirm parameter` }, { status: 400 });
   }
+  // `scope` (dry_run/apply only): "all" (default) or the opt-in
+  // "generic_brands" re-validation (lib/brand-link-cleanup.ts CleanupScope).
+  const scopeParam = url.searchParams.get("scope") ?? "all";
+  const scope = SCOPES.find((x) => x === scopeParam);
+  if (!scope) {
+    return Response.json({ success: false, error: `scope must be one of ${SCOPES.join(", ")}` }, { status: 400 });
+  }
   const runId = url.searchParams.get("run_id") ?? "manual";
   if (!RUN_ID_RE.test(runId)) {
     return Response.json({ success: false, error: "run_id must match [A-Za-z0-9_.:-]{1,64}" }, { status: 400 });
@@ -41,6 +50,7 @@ export async function handleBrandLinkCleanup(url: URL, env: Env, actor: string):
       limit: clampLimit(url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined),
       runId,
       actor,
+      scope,
     });
     return Response.json({ success: true, data });
   } catch (err) {

@@ -5,6 +5,7 @@ import { computeSanHash } from "../lib/ssl-cert-identity";
 import { loadSafeDomainSet, isSafeDomain } from "../lib/safeDomains";
 import { createNotification } from "../lib/notifications";
 import { isKnownBrandDomain, calculateSuspicionScore } from "../lib/threatScoring";
+import { genericBrandDomainKeywords, isGenericBrandName } from "../lib/brandDetect";
 
 /** Common homoglyph substitutions for brand matching */
 const HOMOGLYPHS: Record<string, string[]> = {
@@ -35,11 +36,17 @@ export const certstream: FeedModule = {
        WHERE mb.status = 'active'`
     ).all<{ id: string; name: string; canonical_domain: string }>();
 
-    const brandKeywords = brands.results.map((b) => ({
-      id: b.id,
-      keyword: b.name.toLowerCase().replace(/[^a-z0-9]/g, ""),
-      domain: b.canonical_domain.toLowerCase(),
-    }));
+    // Generic-word brands ("Mail" mail.ru, "Site" site.com — lib/brandDetect
+    // isGenericBrandName) are searched and matched by their FULL canonical
+    // domain only ("mailru", "mail-ru"): the bare word, plus the homoglyph
+    // swap below, credited mail.ru with every "*mail*" / "*mall*" cert.
+    const brandKeywords = brands.results.flatMap((b) => {
+      const domain = (b.canonical_domain ?? "").toLowerCase();
+      const keywords = isGenericBrandName(b.name)
+        ? genericBrandDomainKeywords(domain)
+        : [b.name.toLowerCase().replace(/[^a-z0-9]/g, "")];
+      return keywords.map((keyword) => ({ id: b.id, keyword, domain }));
+    });
     // Load safe domains to skip owned domains
     const safeSet = await loadSafeDomainSet(ctx.env.DB);
 
@@ -47,7 +54,7 @@ export const certstream: FeedModule = {
     // Use monitored brand names + hardcoded fallback keywords for crt.sh query
     const hardcodedKeywords = ["paypal", "microsoft-login", "apple-id", "netflix-verify", "amazon-secure"];
     const allSearchKeywords = [
-      ...brandKeywords.filter((b) => b.keyword.length >= 4).map((b) => b.keyword),
+      ...brandKeywords.filter((b) => b.keyword.length >= 4 && !b.keyword.includes("-")).map((b) => b.keyword),
       ...hardcodedKeywords,
     ];
     // Rotate through keywords each 15-minute window

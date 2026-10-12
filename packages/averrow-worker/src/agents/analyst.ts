@@ -15,7 +15,7 @@ import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
 import { cachedValue } from "../lib/cached-value";
-import { isGenericBrand, keywordMatchesHost } from "../lib/brandDetect";
+import { genericBrandDomainKeywords, genericBrandHostMatch, isGenericBrand, isGenericBrandName, keywordMatchesHost } from "../lib/brandDetect";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
 
@@ -76,6 +76,24 @@ function generateTypoVariants(keyword: string): string[] {
     }
   }
   return Array.from(variants);
+}
+
+/**
+ * Brand a numbered variant inherits from its seed threat. A generic-word
+ * brand ("Mail" mail.ru — lib/brandDetect isGenericBrandName) is inherited
+ * only when the VARIANT itself is a genuine lookalike of the brand's full
+ * canonical domain (genericBrandHostMatch); otherwise the variant is
+ * inserted unlinked and left to the brand matcher. Before 2026-10-12 a seed
+ * wrongly linked to Mail fanned out to ~20 Mail-linked variants per seed
+ * ("xfinitymail97.weebly.com" → …87…107).
+ */
+export function numberedVariantBrandId(
+  variantDomain: string,
+  seed: { target_brand_id: string | null; brand_name: string | null; brand_canonical: string | null },
+): string | null {
+  if (!seed.target_brand_id) return null;
+  if (!isGenericBrandName(seed.brand_name)) return seed.target_brand_id;
+  return genericBrandHostMatch(variantDomain, seed.brand_canonical, { subdomains: true }) ? seed.target_brand_id : null;
 }
 
 /** Check if a domain contains a numeric segment that can be varied. */
@@ -161,8 +179,8 @@ export const analystAgent: AgentModule = {
 
     // Load known brands with their keyword/alias data for cheap pre-matching
     const brands = await env.DB.prepare(
-      "SELECT id, name, brand_keywords, aliases FROM brands WHERE tier IN ('monitored', 'customer') ORDER BY threat_count DESC LIMIT 100"
-    ).all<{ id: string; name: string; brand_keywords: string | null; aliases: string | null }>();
+      "SELECT id, name, canonical_domain, brand_keywords, aliases FROM brands WHERE tier IN ('monitored', 'customer') ORDER BY threat_count DESC LIMIT 100"
+    ).all<{ id: string; name: string; canonical_domain: string | null; brand_keywords: string | null; aliases: string | null }>();
     const brandNames = brands.results.map((b) => b.name);
 
     // Build a flat keyword → brand_id map for substring matching.
@@ -187,6 +205,13 @@ export const analystAgent: AgentModule = {
           }
         }
       };
+      // Generic-word brand ("Mail" mail.ru, "Site" site.com): its name,
+      // keywords and aliases are dictionary words — pre-match only on the
+      // FULL canonical domain's token ("mailru", "logingov").
+      if (isGenericBrandName(b.name)) {
+        for (const kw of genericBrandDomainKeywords(b.canonical_domain)) addKeyword(kw);
+        continue;
+      }
       addKeyword(b.name);
       if (b.brand_keywords) {
         try {
@@ -1139,17 +1164,20 @@ export const analystAgent: AgentModule = {
     try {
       // Find recent malicious domains containing numbers
       const numberedThreats = await env.DB.prepare(`
-        SELECT id, malicious_domain, threat_type, campaign_id, target_brand_id, severity
-        FROM threats
-        WHERE malicious_domain IS NOT NULL
-          AND malicious_domain GLOB '*[0-9]*'
-          AND severity IN ('high', 'critical')
-          AND created_at >= datetime('now', '-24 hours')
-        ORDER BY created_at DESC
+        SELECT t.id, t.malicious_domain, t.threat_type, t.campaign_id, t.target_brand_id, t.severity,
+               b.name AS brand_name, b.canonical_domain AS brand_canonical
+        FROM threats t
+        LEFT JOIN brands b ON b.id = t.target_brand_id
+        WHERE t.malicious_domain IS NOT NULL
+          AND t.malicious_domain GLOB '*[0-9]*'
+          AND t.severity IN ('high', 'critical')
+          AND t.created_at >= datetime('now', '-24 hours')
+        ORDER BY t.created_at DESC
         LIMIT 20
       `).all<{
         id: string; malicious_domain: string; threat_type: string;
         campaign_id: string | null; target_brand_id: string | null; severity: string;
+        brand_name: string | null; brand_canonical: string | null;
       }>();
 
       for (const threat of numberedThreats.results) {
@@ -1208,7 +1236,7 @@ export const analystAgent: AgentModule = {
               VALUES (?, ?, ?, ?, 'numbered_variant_scan', ?, ?, datetime('now'), 'active', datetime('now'))
             `).bind(
               newId, resolvedDomain, threat.threat_type, threat.severity,
-              threat.campaign_id, threat.target_brand_id,
+              threat.campaign_id, numberedVariantBrandId(resolvedDomain, threat),
             ).run();
             numberedVariantsFound++;
           }

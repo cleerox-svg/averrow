@@ -1,5 +1,6 @@
 import type { ThreatRow } from "../feeds/types";
 import { threatId } from "../feeds/types";
+import { genericBrandDomainKeywords, isGenericBrandName, isLureGatedGenericBrand } from "./brandDetect";
 
 /**
  * NRD brand-keyword matcher (nrd_hagezi feed): finds COMBOSQUATS, i.e. new
@@ -291,6 +292,18 @@ function foldName(name: string): string {
  * Keywords for one brand (see module header). Exported for tests.
  */
 export function brandKeywords(name: string, canonicalDomain: string): BrandKeywordSpec[] {
+  // Generic-word brand ("Mail" mail.ru, "Login" login.gov, "Site" site.com —
+  // lib/brandDetect.ts isGenericBrandName): its name and owner label are the
+  // dictionary word, so the only keywords are the FULL canonical domain's
+  // spellings ("mailru", "mail-ru"), matched as distinctive. 2026-10-12:
+  // the generic needle "login"/"site" credited login.gov / site.com with
+  // every <lure>-login / <x>-site NRD. LINE-style trading names
+  // (isLureGatedGenericBrand) keep the lure-gated bare word below.
+  if (isGenericBrandName(name) && !isLureGatedGenericBrand(name)) {
+    return genericBrandDomainKeywords(canonicalDomain)
+      .filter((k) => k.replace(/-/g, "").length >= MIN_KEYWORD_LEN)
+      .map((keyword) => ({ keyword, generic: false }));
+  }
   const folded = foldName(name);
   const candidates: Array<{ keyword: string; fromName: boolean }> = [];
   candidates.push({ keyword: folded.replace(/[^a-z0-9]/g, ""), fromName: true });

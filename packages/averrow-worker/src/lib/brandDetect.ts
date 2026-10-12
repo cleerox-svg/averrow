@@ -12,9 +12,14 @@
  *                  raw or filler-stripped ("paypalsecure.com" → PayPal)
  * 4. levenshtein — label within edit distance of the brand name: 1 for
  *                  6–7 char names, 2 for 8+; same first character
+ * 5. glued       — a 4–5 char name inside one long run-on token next to a
+ *                  lure word ("invitationlauchjczoommeeting" → Zoom);
+ *                  only when 1–4 found nothing (gluedTokenMatch)
  *
- * Generic-word brand names ("Data", "Login", "Click", …) only ever match
- * by canonical domain — the catalog holds 100K+ brands, and a
+ * Generic-word brand names ("Data", "Login", "Mail", "Site", …) never
+ * match by name: only their canonical domain or a genuine lookalike of the
+ * FULL canonical domain ("mai1.ru", "mail-ru.com" — genericBrandHostMatch),
+ * tried after every other rule. The catalog holds 100K+ brands, and a
  * dictionary-word name otherwise matches unrelated infrastructure.
  */
 
@@ -70,6 +75,74 @@ export interface BrandMatch {
 
 /** Brand names shorter than this need a whole-token match (no substring/fuzzy). */
 const MIN_SUBSTRING_LEN = 6;
+
+/**
+ * Glued-substring rule (2026-10-12) for 4–5 char names, which otherwise
+ * need a whole token: the name may sit INSIDE one long run-on token
+ * ("invitationlauchjczoommeeting" → Zoom, "adobeacrobatdoc" → Adobe,
+ * "myadobesign" → Adobe) when ALL of:
+ *   - the brand is matchable (monitored/customer or untiered, not generic);
+ *   - the hyphen token is at least GLUED_MIN_TOKEN_LEN chars (a short
+ *     glue like "kicklogin"/"helpscout" stays a non-match);
+ *   - a phishing / document-lure word (GLUED_LURE_WORDS) sits DIRECTLY
+ *     beside the name on at least one side — the whole remaining side for a
+ *     short word ("…sign"), or a prefix/suffix of it for a word of 5+ chars
+ *     ("…meeting…", "acrobat…");
+ *   - a name that is a common fragment of English words
+ *     (GLUED_EMBED_HAZARD: purchase→chase, pineapple→apple, citizen→citi)
+ *     must also sit at the token's start or end, with the lure on the
+ *     other side ("chaseverifyaccount", "loginchase" yes; "purchaseverify",
+ *     "pineapplelogin" no).
+ * Never applies to IdP-lure leftovers (whole-token only) and runs only
+ * after every other rule found nothing, so existing matches are unchanged.
+ */
+const GLUED_MIN_TOKEN_LEN = 10;
+
+const GLUED_LURE_WORDS: readonly string[] = [
+  // account / credential lures
+  "login", "logon", "signin", "signon", "secure", "security", "verify", "verification",
+  "account", "accounts", "update", "confirm", "support", "password", "wallet", "billing",
+  "invoice", "payment", "refund", "recovery", "unlock", "alert", "notice", "auth",
+  // meeting / document / e-sign lures
+  "meeting", "meet", "invite", "invitation", "webinar", "join", "sign", "esign", "doc", "docs",
+  "document", "documents", "pdf", "acrobat", "reader", "share", "shared", "file", "files",
+  "drive", "fax", "scan",
+];
+
+/** 4–5 char brand names that are common fragments of English words — an
+ *  occurrence embedded mid-token is more likely the word than the brand. */
+const GLUED_EMBED_HAZARD: ReadonlySet<string> = new Set([
+  "chase", "ally", "citi", "meta", "uber", "dell", "visa", "wells", "steam", "kick", "wise",
+  "bolt", "epic", "apple", "intel", "chime", "curve", "slack", "shell", "opera", "metro",
+  "three", "hinge", "crave", "coles", "slate", "sushi", "lumen", "gusto", "wiley", "unity",
+  "azure", "globo", "forms", "pages", "ring", "nest", "mint", "bing", "ford", "audi", "wish",
+  "ramp", "tron", "atom", "near", "scout", "flow", "desk", "post",
+]);
+
+function gluedLureAt(side: string, atEnd: boolean): boolean {
+  if (side.length === 0) return false;
+  for (const w of GLUED_LURE_WORDS) {
+    if (side === w) return true;
+    if (w.length >= 5 && (atEnd ? side.endsWith(w) : side.startsWith(w))) return true;
+  }
+  return false;
+}
+
+/** The glued-substring rule for one hyphen token and one normalized name. */
+function gluedTokenMatch(token: string, norm: string): boolean {
+  if (token.length < GLUED_MIN_TOKEN_LEN || token === norm) return false;
+  const edgeOnly = GLUED_EMBED_HAZARD.has(norm);
+  for (let i = token.indexOf(norm); i >= 0; i = token.indexOf(norm, i + 1)) {
+    const prefix = token.slice(0, i);
+    const suffix = token.slice(i + norm.length);
+    if (edgeOnly) {
+      if ((prefix === "" && gluedLureAt(suffix, false)) || (suffix === "" && gluedLureAt(prefix, true))) return true;
+    } else if (gluedLureAt(suffix, false) || gluedLureAt(prefix, true)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Words commonly inserted into typosquat / phishing domains to obfuscate. */
 const OBFUSCATION_WORDS = [
@@ -164,11 +237,174 @@ const GENERIC_BRAND_NAMES = new Set([
   "mart", "base", "labs", "code", "test", "demo", "beta", "next", "daily",
   "open", "team", "work", "works", "tools", "apps", "games", "game", "play",
   "company", "people", "matrix", "token", "photo", "food", "love", "bill",
+  // 2026-10-12 generic-brand audit. Sub-4-char words never reach the
+  // name matcher (MIN length 4) but the keyword writers (NRD, CT, spam
+  // trap, abuse mailbox, typosquat scanner) read this list too.
+  "pay", "gnu", "inbox", "message", "messages", "connect",
 ]);
+
+/** The generic-word list (normalized), for SQL prefilters
+ *  (brand-link cleanup generic_brands scope). Numeric names are separate. */
+export function genericBrandWords(): string[] {
+  return [...GENERIC_BRAND_NAMES];
+}
 
 /** Returns true if a normalized brand name may only match by canonical domain. */
 export function isGenericBrand(normalized: string): boolean {
   return /^\d+$/.test(normalized) || GENERIC_BRAND_NAMES.has(normalized);
+}
+
+/**
+ * The one shared "is this a generic-word brand" predicate over a raw brand
+ * NAME ("Mail", "Site", "Login", "1&1"). Every writer that credits a brand
+ * by name or keyword (brand matcher, Analyst keyword pre-match, NRD
+ * keyword matcher, CT keyword feed, typosquat scanner, numbered-variant
+ * scan, lookalike seeder, spam trap, abuse mailbox) consults it: a generic
+ * brand is credited ONLY for its canonical domain, a subdomain of it, or a
+ * genuine lookalike of the FULL canonical domain (genericBrandHostMatch) —
+ * never for the bare word in a host ("1lookupmails.com" is not Mail.ru).
+ */
+export function isGenericBrandName(name: string | null | undefined): boolean {
+  return isGenericBrand(normalizeBrand(name ?? ""));
+}
+
+/**
+ * Generic-word names that are ALSO the trading name phishers spell out bare
+ * beside a lure ("line-login.com" targets LINE). Only the NRD keyword
+ * matcher — whose generic rule demands an adjacent STRONG lure word
+ * (lib/nrd-brand-match.ts) — keeps the bare word for these; every other
+ * writer treats them like any generic brand. Keep this list tiny and
+ * per-name justified.
+ */
+const LURE_GATED_GENERIC_BRANDS: ReadonlySet<string> = new Set(["line"]);
+
+export function isLureGatedGenericBrand(name: string | null | undefined): boolean {
+  return LURE_GATED_GENERIC_BRANDS.has(normalizeBrand(name ?? ""));
+}
+
+/** Canonical domain → lowercase labels, `www.` and trailing dot dropped.
+ *  [] when that leaves a bare public suffix ("www.gov.uk" → "gov.uk"),
+ *  which names no brand. */
+function canonicalLabels(canonical: string): string[] {
+  const labels = canonical.trim().toLowerCase().replace(/\.$/, "").replace(/^www\./, "")
+    .split(".").filter((l) => l.length > 0);
+  const host = labels.join(".");
+  if (labels.length >= 2 && registrableDomain(`x.${host}`) === `x.${host}`) return [];
+  return labels;
+}
+
+/**
+ * Keyword spellings of a generic brand's FULL canonical domain, for the
+ * keyword-based writers: "mail.ru" → ["mailru", "mail-ru"], "login.gov" →
+ * ["logingov", "login-gov"]. These carry the TLD-distinguishing token, so
+ * they name the brand's domain rather than the dictionary word. [] when
+ * the canonical has fewer than two labels.
+ */
+export function genericBrandDomainKeywords(canonical: string | null | undefined): string[] {
+  const labels = canonicalLabels(canonical ?? "").map((l) => l.replace(/[^a-z0-9-]/g, ""))
+    .filter((l) => l.length > 0);
+  if (labels.length < 2) return [];
+  return [...new Set([labels.join("").replace(/-/g, ""), labels.join("-")])];
+}
+
+/** Visual homoglyphs, keyed by the CANONICAL character (multi-char allowed:
+ *  m → rn, w → vv, d → cl). Letter↔letter swaps limited to i/l. */
+const GENERIC_HOMOGLYPHS: Readonly<Record<string, readonly string[]>> = {
+  a: ["4"], e: ["3"], i: ["1", "l"], l: ["1", "i"], o: ["0"], s: ["5"],
+  t: ["7"], g: ["9"], b: ["6"], m: ["rn"], w: ["vv"], d: ["cl"],
+};
+
+/** True when `cand` spells `canon` with at least one homoglyph swapped in
+ *  ("mai1" / "rnail" for "mail") — never for the identical string. */
+function homoglyphSpelling(cand: string, canon: string): boolean {
+  if (cand === canon) return false;
+  const walk = (i: number, j: number): boolean => {
+    if (j === canon.length) return i === cand.length;
+    if (i >= cand.length) return false;
+    const c = canon[j]!;
+    if (cand[i] === c && walk(i + 1, j + 1)) return true;
+    for (const sub of GENERIC_HOMOGLYPHS[c] ?? []) {
+      if (cand.startsWith(sub, i) && walk(i + sub.length, j + 1)) return true;
+    }
+    return false;
+  };
+  return walk(0, 0);
+}
+
+/** Lure words that may be glued onto a generic brand's full-domain token
+ *  ("mymailru", "mailru-login" is covered by the token run). */
+const GENERIC_DOMAIN_GLUE: ReadonlySet<string> = new Set([
+  "my", "secure", "login", "logon", "signin", "verify", "account", "accounts", "support",
+  "help", "update", "confirm", "online", "web", "official", "auth", "id",
+]);
+
+/**
+ * How `raw` (domain, URL, IOC) relates to a GENERIC brand's canonical domain
+ * — the single definition of what may credit a generic-word brand:
+ *   canonical  — the canonical domain itself, or (subdomains: true) a
+ *                subdomain of it ("e.mail.ru")
+ *   token      — the full canonical as consecutive labels of a longer host
+ *                ("mail.ru.secure-login.com"), or the full-domain token in
+ *                a label ("mail-ru.com", "login-gov.us", "mymailru.net")
+ *   levenshtein — a homoglyph spelling of the canonical under the SAME
+ *                suffix ("mai1.ru", "rnail.ru")
+ * The bare word never qualifies: "1lookupmails.com", "zs-mail.com",
+ * "membersecurelogin.com", "x.site-enfejar.com", "rnail.info" → null.
+ * Tier-agnostic and catalog-free.
+ */
+export function genericBrandHostMatch(
+  raw: string,
+  canonical: string | null | undefined,
+  opts: { subdomains: boolean },
+): BrandMatchMethod | null {
+  const canon = canonicalLabels(canonical ?? "");
+  if (canon.length < 2) return null;
+  const canonHost = canon.join(".");
+  const host = hostOf(raw);
+  if (!HOSTNAME_RE.test(host) || IPV4_RE.test(host)) return null;
+  if (host === canonHost) return "canonical";
+  // Cheap exact-superset prefilter (the catalog matcher calls this per
+  // generic brand for every unmatched host): every rule below needs the
+  // canonical's suffix at the end (subdomain / homoglyph) or all of its
+  // tokens somewhere in the host (label / token rules).
+  const canonTokens = canon.flatMap((l) => l.split("-")).filter((t) => t.length > 0);
+  if (!host.endsWith(`.${canon.slice(1).join(".")}`) && !canonTokens.every((t) => host.includes(t))) return null;
+  if (host.endsWith(`.${canonHost}`)) {
+    // A tenant subdomain of a platform ("evil.pages.dev" for "Pages") or a
+    // multi-tenant host belongs to an arbitrary party, not the brand.
+    if (!opts.subdomains || platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
+    return "canonical";
+  }
+
+  const all = host.split(".").filter((l) => l.length > 0);
+  // The canonical as consecutive labels, entirely LEFT of the host's own
+  // registrable domain: mail.ru.secure-login.com, never x.site.com.br
+  // (whose registrable domain is site.com.br itself).
+  const reg = registrableDomain(host);
+  const regStart = reg ? all.length - reg.split(".").length : all.length;
+  for (let k = 0; k + canon.length <= regStart; k++) {
+    if (canon.every((l, i) => all[k + i] === l)) return "token";
+  }
+  const tail = all.slice(-canon.length);
+  if (tail.length === canon.length && tail.slice(1).join(".") === canon.slice(1).join(".")
+      && homoglyphSpelling(tail[0]!, canon[0]!)) {
+    return "levenshtein";
+  }
+
+  const joined = canon.join("").replace(/-/g, "");
+  const labels = all.slice(0, all.length - suffixLabelCount(host));
+  for (const label of labels) {
+    const tokens = label.split(/[-_]/).filter((t) => t.length > 0);
+    for (let i = 0; i + canonTokens.length <= tokens.length; i++) {
+      if (canonTokens.every((t, k) => tokens[i + k] === t)) return "token";
+    }
+    for (const t of tokens) {
+      if (t === joined) return "token";
+      if (t.startsWith(joined) && GENERIC_DOMAIN_GLUE.has(t.slice(joined.length))) return "token";
+      if (t.endsWith(joined) && GENERIC_DOMAIN_GLUE.has(t.slice(0, -joined.length))) return "token";
+    }
+  }
+  return null;
 }
 
 /**
@@ -605,17 +841,26 @@ interface PreparedBrand {
   /** May be credited by name / owner label from an IdP-lure leftover
    *  (isIdpLeftoverEligible + the generic/short-name floor). */
   leftoverMatchable: boolean;
+  /** 4–5 char matchable name eligible for the glued-substring rule. */
+  glued: boolean;
+  /** Generic-word brand (isGenericBrand) outside the tracked catalog, with a
+   *  canonical domain: credited by genericBrandHostMatch only. */
+  genericLookalike: boolean;
 }
 
 function prepareOne(b: BrandRow): PreparedBrand {
   const norm = normalizeBrand(b.name);
   const canonical = (b.canonical_domain ?? "").toLowerCase().replace(/^www\./, "");
+  const generic = isGenericBrand(norm);
+  const matchable = norm.length >= 4 && !generic && b.tier !== "tracked";
   return {
     id: b.id,
     canonical,
     norm,
-    matchable: norm.length >= 4 && !isGenericBrand(norm) && b.tier !== "tracked",
-    leftoverMatchable: norm.length >= 4 && !isGenericBrand(norm) && isIdpLeftoverEligible(b),
+    matchable,
+    leftoverMatchable: norm.length >= 4 && !generic && isIdpLeftoverEligible(b),
+    glued: matchable && norm.length < MIN_SUBSTRING_LEN,
+    genericLookalike: generic && b.tier !== "tracked" && canonical.includes("."),
   };
 }
 
@@ -634,6 +879,10 @@ interface BrandIndex {
   long: PreparedBrand[];
   /** Same, bucketed by first character for edit-distance matching. */
   longByFirst: Map<string, PreparedBrand[]>;
+  /** 4–5 char names eligible for the glued-substring rule, longest first. */
+  glued: PreparedBrand[];
+  /** Generic-word brands credited only via genericBrandHostMatch. */
+  generic: PreparedBrand[];
 }
 
 /** Owner label of a canonical domain when it is specific enough to be brand
@@ -660,11 +909,13 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
   if (cached) return cached;
   const idx: BrandIndex = {
     canonical: new Map(), token: new Map(), leftoverToken: new Map(), ownerLabel: new Map(),
-    long: [], longByFirst: new Map(),
+    long: [], longByFirst: new Map(), glued: [], generic: [],
   };
   for (const b of brands) {
     const p = prepareOne(b);
     if (p.canonical && !idx.canonical.has(p.canonical)) idx.canonical.set(p.canonical, p.id);
+    if (p.genericLookalike) idx.generic.push(p);
+    if (p.glued) idx.glued.push(p);
     if (p.leftoverMatchable) {
       if (!idx.leftoverToken.has(p.norm)) idx.leftoverToken.set(p.norm, p.id);
       const owner = ownerLabelOf(p.canonical);
@@ -680,6 +931,9 @@ function indexBrands(brands: BrandRow[]): BrandIndex {
       else idx.longByFirst.set(first, [p]);
     }
   }
+  // Longest name first (stable: array order breaks ties), so a 5-char name
+  // beats a 4-char one glued into the same token.
+  idx.glued.sort((a, b) => b.norm.length - a.norm.length);
   indexCache.set(brands, idx);
   return idx;
 }
@@ -780,6 +1034,11 @@ function pairMatch(raw: string, brand: BrandRow, mode: "permissive" | "leftover"
   if (!parts) return null;
   const p = prepareOne(brand);
   if (p.canonical && parts.host === p.canonical) return "canonical";
+  // Generic-word brand: canonical / subdomain / full-domain lookalike only.
+  // A subdomain is accepted here (an existing link to e.mail.ru stays
+  // valid) but the catalog matcher never CREATES one — a generic brand's
+  // subdomains are often multi-tenant (cloud.mail.ru, *.my.site.com).
+  if (p.genericLookalike) return genericBrandHostMatch(parts.host, p.canonical, { subdomains: true });
   if (parts.idpLure || parts.idpVendor) {
     if (mode === "leftover") return parts.idpLure ? matchIdpPartsToBrand(parts, p) : null;
     const strict = matchIdpPartsToBrand(parts, p)
@@ -807,6 +1066,7 @@ function matchPreparedToParts(parts: HostParts, p: PreparedBrand): BrandMatchMet
   if (tokenMatch(parts, p.norm)) return "token";
   if (substringMatch(parts, p.norm)) return "substring";
   if (parts.candidates.some((c) => fuzzyMatch(c, p.norm))) return "levenshtein";
+  if (p.glued && parts.tokens.some((t) => gluedTokenMatch(t, p.norm))) return "substring";
   return null;
 }
 
@@ -840,7 +1100,8 @@ export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[])
     if (canonicalId) return { brandId: canonicalId, method: "canonical" };
 
     const hit = matchPartsInIndex(parts, idx)
-      ?? (parts.vendorFallback ? matchPartsInIndex(parts.vendorFallback, idx) : null);
+      ?? (parts.vendorFallback ? matchPartsInIndex(parts.vendorFallback, idx) : null)
+      ?? matchGenericInIndex(parts.host, idx);
     if (hit) return hit;
   }
   return null;
@@ -894,6 +1155,23 @@ function matchPartsInIndex(parts: HostParts, idx: BrandIndex): BrandMatch | null
     for (const b of idx.longByFirst.get(c[0] ?? "") ?? []) {
       if (fuzzyMatch(c, b.norm)) return { brandId: b.id, method: "levenshtein" };
     }
+  }
+
+  // Glued-substring rule — only when every rule above found nothing.
+  const longTokens = parts.tokens.filter((t) => t.length >= GLUED_MIN_TOKEN_LEN);
+  if (longTokens.length > 0) {
+    for (const b of idx.glued) {
+      if (longTokens.some((t) => gluedTokenMatch(t, b.norm))) return { brandId: b.id, method: "substring" };
+    }
+  }
+  return null;
+}
+
+/** Generic-word brands: full-domain lookalikes of the canonical only. */
+function matchGenericInIndex(host: string, idx: BrandIndex): BrandMatch | null {
+  for (const b of idx.generic) {
+    const method = genericBrandHostMatch(host, b.canonical, { subdomains: false });
+    if (method) return { brandId: b.id, method };
   }
   return null;
 }

@@ -9,6 +9,9 @@
 #   RUN_ID=cleanup-2026-10 ./scripts/brand-link-cleanup.sh apply
 #   RUN_ID=cleanup-2026-10 ./scripts/brand-link-cleanup.sh undo
 #   START_CURSOR=123456 ./scripts/brand-link-cleanup.sh   # resume (totals reloaded)
+#   SCOPE=generic_brands RUN_ID=generic-2026-10 ./scripts/brand-link-cleanup.sh   # opt-in
+#     generic-word brand re-validation (Mail/Site/Login …); see the
+#     `scope` doc in docs/API_REFERENCE.md. Use its own RUN_ID.
 #
 # apply/undo prompt for the confirm token, then run ONE brand-counter
 # reconcile at the end. After apply/undo, rebuild cube history older than
@@ -18,7 +21,8 @@
 #   AVERROW_INTERNAL_SECRET  — must match the averrow Worker secret
 #   AVERROW_API_URL          — (optional) defaults to https://averrow.com
 # Optional: BATCH (default 500), RUN_ID (apply/undo; default
-#   cleanup-<UTC date>), STATE_FILE (default ./brand-link-cleanup.state.json)
+#   cleanup-<UTC date>), STATE_FILE (default ./brand-link-cleanup.state.json),
+#   SCOPE (all | generic_brands; default all — dry_run/apply only)
 
 set -euo pipefail
 
@@ -46,6 +50,12 @@ case "$MODE" in
 esac
 
 QS="mode=${MODE}&limit=${BATCH}&run_id=${RUN_ID}"
+case "${SCOPE:-all}" in
+  all) ;;
+  generic_brands)
+    if [ "$MODE" != "undo" ]; then QS="${QS}&scope=generic_brands"; fi ;;
+  *) echo "Error: SCOPE must be all or generic_brands." >&2; exit 1 ;;
+esac
 if [ -n "$TOKEN" ]; then
   echo "${MODE^^} mode rewrites threats.target_brand_id on production (run_id=${RUN_ID}; logged + reversible)." >&2
   read -r -p "Type '${TOKEN}' to continue: " answer
@@ -65,7 +75,7 @@ else
 fi
 
 resume_hint() {
-  echo "Resume with: START_CURSOR=${CURSOR} RUN_ID=${RUN_ID} $0 ${MODE}" >&2
+  echo "Resume with: START_CURSOR=${CURSOR} RUN_ID=${RUN_ID} SCOPE=${SCOPE:-all} $0 ${MODE}" >&2
 }
 
 # The secret goes to curl on stdin (-K -), never on its command line.
@@ -89,9 +99,9 @@ batch = json.load(open(sys.argv[1]))["data"]
 totals = json.load(open(sys.argv[2]))
 for k in ("scanned", "keep", "relink", "clear", "alerts_affected", "changed", "skipped"):
     totals[k] = totals.get(k, 0) + batch[k]
-for k in ("keep_by_method", "kept_protected", "by_reason", "removed_by_brand", "added_by_brand"):
+for k in ("keep_by_method", "kept_protected", "by_reason", "removed_by_brand", "added_by_brand", "removed_by_source"):
     agg = totals.setdefault(k, {})
-    for key, n in batch[k].items():
+    for key, n in batch.get(k, {}).items():
         agg[key] = agg.get(key, 0) + n
 totals["next_cursor"] = batch["next_cursor"]
 json.dump(totals, open(sys.argv[2], "w"))
@@ -124,6 +134,7 @@ summary["kept_protected"] = t.get("kept_protected", {})
 summary["by_reason"] = t.get("by_reason", {})
 summary["top_removed_by_brand"] = top(t.get("removed_by_brand", {}))
 summary["top_added_by_brand"] = top(t.get("added_by_brand", {}))
+summary["removed_by_source"] = t.get("removed_by_source", {})
 summary["brands_losing_links"] = len(t.get("removed_by_brand", {}))
 if "reconciled" in t:
     summary["reconciled"] = t["reconciled"]

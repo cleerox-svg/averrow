@@ -7,7 +7,8 @@
  * `classifyLookalikeTransitions` and the dispatch in `runCheckRows`.
  */
 
-import { generatePermutations } from '../lib/dnstwist';
+import { generatePermutations, type DomainPermutation } from '../lib/dnstwist';
+import { genericBrandHostMatch, isGenericBrandName } from '../lib/brandDetect';
 import { lookalikeIdpLure } from '../lib/idp-tagging';
 import { createAlert } from '../lib/alerts';
 import { checkBIMIExists } from '../email-security';
@@ -1091,8 +1092,9 @@ export async function generateAndStoreLookalikes(
   brandId: string,
   domain: string,
   insertedDomains?: string[],
+  brandName?: string | null,
 ): Promise<number> {
-  const permutations = generatePermutations(domain);
+  const permutations = lookalikePermutationsForBrand(brandName, domain);
   if (permutations.length === 0) return 0;
   const { inserted, benign } = await storeLookalikePermutations(env, brandId, domain, permutations, insertedDomains);
 
@@ -1105,6 +1107,28 @@ export async function generateAndStoreLookalikes(
   });
 
   return inserted;
+}
+
+/**
+ * dnstwist permutations to seed for one brand. A generic-word brand ("Mail"
+ * mail.ru, "Site" site.com — lib/brandDetect isGenericBrandName) keeps only
+ * permutations that are genuine lookalikes of its FULL canonical domain
+ * (genericBrandHostMatch: homoglyphs under the same suffix, "mail-ru"
+ * hyphenation); omissions, TLD swaps and keyword combos of a dictionary
+ * word ("mail.com", "mal.ru", "securesite.com") are unrelated domains.
+ * `brandName` unknown (undefined/null) → all permutations, as before.
+ */
+export function lookalikePermutationsForBrand(
+  brandName: string | null | undefined,
+  domain: string,
+): DomainPermutation[] {
+  const permutations = generatePermutations(domain);
+  if (!brandName || !isGenericBrandName(brandName)) return permutations;
+  // IDN homoglyphs (single visual substitution of the full canonical, same
+  // TLD — "mаil.ru" with a Cyrillic а) are genuine lookalikes by construction;
+  // their punycode form can't be checked by spelling.
+  return permutations.filter((p) => p.type === 'idn_homoglyph'
+    || genericBrandHostMatch(p.domain, domain, { subdomains: false }) !== null);
 }
 
 /**
@@ -1220,19 +1244,19 @@ export async function seedLookalikesForOrgBrands(
   // 50/tick drain — is why `checkLookalikeBatch` budgets its two cohorts
   // separately; see its selection comment.
   const brands = await env.DB.prepare(
-    `SELECT DISTINCT b.id AS brand_id, b.canonical_domain AS domain
+    `SELECT DISTINCT b.id AS brand_id, b.canonical_domain AS domain, b.name AS name
      FROM brands b
      WHERE b.canonical_domain IS NOT NULL
        AND ${MONITORED_BRAND_PREDICATE_SQL}
        AND NOT EXISTS (SELECT 1 FROM lookalike_domains ld WHERE ld.brand_id = b.id)
      LIMIT ?`,
-  ).bind(brandLimit).all<{ brand_id: string; domain: string }>();
+  ).bind(brandLimit).all<{ brand_id: string; domain: string; name: string | null }>();
 
   let brandsSeeded = 0;
   let candidatesCreated = 0;
   const newDomains: string[] = [];
   for (const b of brands.results) {
-    const created = await generateAndStoreLookalikes(env, b.brand_id, b.domain, newDomains);
+    const created = await generateAndStoreLookalikes(env, b.brand_id, b.domain, newDomains, b.name);
     candidatesCreated += created;
     brandsSeeded++;
   }

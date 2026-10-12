@@ -14,6 +14,7 @@ import type { EmailMessage } from "./dmarc-receiver";
 import { extractDomain } from "./lib/domain-utils";
 import { createNotification } from "./lib/notifications";
 import { bumpBrandThreatCountStmt } from "./db/brands";
+import { genericBrandHostMatch, isGenericBrandName } from "./lib/brandDetect";
 
 // ─── Interfaces ────────────────────────────────────────────────────
 
@@ -298,6 +299,17 @@ async function matchBrand(
   for (const brand of brands.results) {
     const name = brand.name.toLowerCase();
     const domain = (brand.canonical_domain || "").toLowerCase();
+
+    // Generic-word brand ("Mail" mail.ru, "Site", "Login" — lib/brandDetect
+    // isGenericBrandName): never by the bare word in a From domain, subject,
+    // Reply-To or URL ("gmail.com", "Your mail is waiting"). Only a From
+    // domain that is a genuine lookalike of the full canonical domain.
+    if (isGenericBrandName(brand.name)) {
+      if (fromDomain && genericBrandHostMatch(fromDomain, domain, { subdomains: false })) {
+        return { brandId: brand.id, spoofedDomain: domain, method: "from_header", confidence: 75 };
+      }
+      continue;
+    }
 
     if (name.length > 3 && fromDomain.includes(name)) {
       return { brandId: brand.id, spoofedDomain: domain, method: "from_header", confidence: 75 };

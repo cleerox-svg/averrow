@@ -187,20 +187,20 @@ async function findBrandForCaller(
   brandId: string,
   ctx:     AuthContext,
   access:  "read" | "write",
-): Promise<{ id: string; canonical_domain: string } | null> {
+): Promise<{ id: string; name: string | null; canonical_domain: string } | null> {
   const isGlobal = access === "read" ? isPlatformStaff(ctx.role) : hasGlobalReadScope(ctx.role);
   if (isGlobal) {
     return env.DB.prepare(
-      "SELECT id, canonical_domain FROM brands WHERE id = ?",
-    ).bind(brandId).first<{ id: string; canonical_domain: string }>();
+      "SELECT id, name, canonical_domain FROM brands WHERE id = ?",
+    ).bind(brandId).first<{ id: string; name: string | null; canonical_domain: string }>();
   }
   if (!ctx.orgId) return null;
   return env.DB.prepare(
-    `SELECT b.id, b.canonical_domain
+    `SELECT b.id, b.name, b.canonical_domain
      FROM brands b
      JOIN org_brands ob ON ob.brand_id = b.id
      WHERE b.id = ? AND ob.org_id = ?`,
-  ).bind(brandId, ctx.orgId).first<{ id: string; canonical_domain: string }>();
+  ).bind(brandId, ctx.orgId).first<{ id: string; name: string | null; canonical_domain: string }>();
 }
 
 // ─── GET /api/lookalikes/:brandId — List lookalike domains for a brand ───
@@ -277,7 +277,7 @@ export async function handleGenerateLookalikes(
     }
 
     const newDomains: string[] = [];
-    const newCount = await generateAndStoreLookalikes(env, brandId, brand.canonical_domain, newDomains);
+    const newCount = await generateAndStoreLookalikes(env, brandId, brand.canonical_domain, newDomains, brand.name);
     // NRD archive back-check (lib/nrd-archive-backcheck.ts): the NRD feed
     // only stores NRDs that were lookalike domains at ingest, so look the
     // just-seeded permutations up in the last 8 days of the R2 archive and

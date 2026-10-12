@@ -3,6 +3,7 @@ import { threatId } from "./types";
 import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
 import { checkBIMIExists } from "../email-security";
 import { createAlert } from "../lib/alerts";
+import { genericBrandHostMatch, isGenericBrandName } from "../lib/brandDetect";
 
 /**
  * Typosquat Scanner — generates domain variants for monitored brands
@@ -82,6 +83,20 @@ export function generateVariants(domain: string): string[] {
   return [...new Set(variants)].filter(v => v !== domain && v.length > 3);
 }
 
+/**
+ * Variants to probe for one brand. A generic-word brand ("Mail" mail.ru,
+ * "Site" site.com — lib/brandDetect isGenericBrandName) keeps only variants
+ * that are genuine lookalikes of its FULL canonical domain
+ * (genericBrandHostMatch: "ma1l.ru", "rnail.ru"); omissions, TLD swaps and
+ * combos of a dictionary word ("mail.com", "mal.ru", "secure-site.com") are
+ * other people's domains, not squats.
+ */
+export function variantsForBrand(name: string, domain: string): string[] {
+  const variants = generateVariants(domain);
+  if (!isGenericBrandName(name)) return variants;
+  return variants.filter((v) => genericBrandHostMatch(v, domain, { subdomains: false }) !== null);
+}
+
 // ─── DNS Resolution via Cloudflare DoH ──────────────────────────
 
 interface DohResponse {
@@ -145,7 +160,7 @@ export const typosquat_scanner: FeedModule = {
 
     for (const brand of brands.results) {
       const domain = brand.canonical_domain.toLowerCase();
-      const variants = generateVariants(domain);
+      const variants = variantsForBrand(brand.name, domain);
       itemsFetched += variants.length;
 
       for (const variant of variants) {
