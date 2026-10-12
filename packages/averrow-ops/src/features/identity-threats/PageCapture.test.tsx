@@ -89,7 +89,7 @@ const revokeObjectURL = () => URL.revokeObjectURL as unknown as ReturnType<typeo
 describe('Page capture group', () => {
   it('renders none state with Capture now', async () => {
     await open([]);
-    expect(screen.getByText('No page capture yet.')).toBeInTheDocument();
+    expect(screen.getByText('No capture yet. Capture the page to preserve evidence.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Capture now' })).toBeEnabled();
   });
 
@@ -99,7 +99,7 @@ describe('Page capture group', () => {
     expect(screen.getByText('Sign in')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download HTML/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy HTML SHA-256' })).toBeInTheDocument();
-    const img = await screen.findByAltText(/Screenshot of/);
+    const img = await screen.findByAltText('Mobile screenshot of the captured page');
     expect(img).toHaveAttribute('src', expect.stringMatching(/^blob:/));
     expect(getBlob).toHaveBeenCalledWith('/api/intel/captures/c1/screenshot?variant=mobile');
     // No anchor ever points at the evidence URL.
@@ -108,19 +108,19 @@ describe('Page capture group', () => {
 
   it('renders queued, blocked, failed, expired states', async () => {
     await open([cap({ status: 'queued', captured_at: null })]);
-    expect(screen.getByText(/Capturing… usually within 10 min/)).toBeInTheDocument();
+    expect(screen.getByText(/Queued — capture starts shortly/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Capture now|Retry capture/ })).toBeNull();
   });
 
   it('blocked shows anti-bot message and screenshot', async () => {
     await open([cap({ status: 'blocked', anti_bot_wall: 'cloudflare' })]);
     expect(screen.getByText(/Page hid behind an anti-bot check \(cloudflare\)/)).toBeInTheDocument();
-    expect(await screen.findByAltText(/Screenshot of/)).toBeInTheDocument();
+    expect(await screen.findByAltText('Mobile screenshot of the captured page')).toBeInTheDocument();
   });
 
   it('failed shows error and Retry capture', async () => {
     await open([cap({ status: 'failed', error: 'navigation timeout', screenshot_mobile_url: null, screenshot_desktop_url: null })]);
-    expect(screen.getByText('navigation timeout')).toBeInTheDocument();
+    expect(screen.getByText('Capture failed: navigation timeout')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry capture' })).toBeInTheDocument();
   });
 
@@ -134,7 +134,8 @@ describe('Page capture group', () => {
     await open([cap({ form_action_hosts: ['acme-login.okta-evil.com', 'collector.evil.ru'] })]);
     const off = document.querySelector('[data-offdomain]');
     expect(off).toHaveTextContent('collector.evil.ru');
-    expect(off).toHaveTextContent(/differs from the page host/);
+    expect(screen.getByRole('note')).toHaveTextContent('Credentials would be sent to a different site than this page.');
+    expect(screen.getByRole('note')).toHaveTextContent('collector.evil.ru');
     expect(document.querySelectorAll('[data-offdomain]')).toHaveLength(1);
   });
 
@@ -149,7 +150,7 @@ describe('Page capture group', () => {
     await open([cap()]);
     await userEvent.click(await screen.findByRole('button', { name: /full screen/i }));
     const dlg = await screen.findByRole('dialog');
-    await userEvent.click(within(dlg).getByRole('button', { name: 'Desktop' }));
+    await userEvent.click(within(dlg).getByRole('tab', { name: 'Desktop' }));
     await waitFor(() => expect(getBlob).toHaveBeenCalledWith('/api/intel/captures/c1/screenshot?variant=desktop'));
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
@@ -158,7 +159,7 @@ describe('Page capture group', () => {
 
   it('revokes blob URLs on unmount', async () => {
     await open([cap()]);
-    await screen.findByAltText(/Screenshot of/);
+    await screen.findByAltText('Mobile screenshot of the captured page');
     const made = createObjectURL().mock.results.map((r) => r.value);
     // Closing the detection panel unmounts the group.
     await userEvent.click(screen.getByRole('button', { name: /acme-login\.okta-evil\.com/ }));
@@ -175,6 +176,15 @@ describe('Page capture group', () => {
   });
 });
 
+describe('image load error', () => {
+  it('shows Retry and reloads', async () => {
+    getBlob.mockRejectedValueOnce(new Error('x'));
+    await open([cap()]);
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByAltText('Mobile screenshot of the captured page')).toBeInTheDocument();
+  });
+});
+
 describe('capture-now mutation', () => {
   it('posts, shows queued optimistically', async () => {
     post.mockImplementation(async () => {
@@ -184,7 +194,7 @@ describe('capture-now mutation', () => {
     await open([]);
     await userEvent.click(screen.getByRole('button', { name: 'Capture now' }));
     expect(post).toHaveBeenCalledWith('/api/intel/identity-threats/detections/t1/capture');
-    expect(await screen.findByText(/Capturing… usually within 10 min/)).toBeInTheDocument();
+    expect(await screen.findByText(/Queued — capture starts shortly/)).toBeInTheDocument();
   });
 
   it('shows the 409 message', async () => {
@@ -198,7 +208,7 @@ describe('capture-now mutation', () => {
     await open([], 'sales');
     const btn = screen.getByRole('button', { name: 'Capture now' });
     expect(btn).toBeDisabled();
-    expect(screen.getByText('Requires the edit alerts permission.')).toBeInTheDocument();
+    expect(screen.getByText("Your role can't queue captures. Ask an analyst or admin.")).toBeInTheDocument();
     await userEvent.click(btn);
     expect(post).not.toHaveBeenCalled();
   });

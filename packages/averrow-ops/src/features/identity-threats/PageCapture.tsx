@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronRight, Download } from 'lucide-react';
-import { CopyField, Dialog } from '@averrow/shared/ui';
+import { CopyField, Dialog, Tabs } from '@averrow/shared/ui';
 import { Badge, Button } from '@/design-system/components';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
@@ -54,43 +54,51 @@ function Viewer({ capture, open, onOpenChange }: { capture: PageCapture; open: b
   const [variant, setVariant] = useState<'mobile' | 'desktop'>(capture.screenshot_mobile_url ? 'mobile' : 'desktop');
   const path = variant === 'mobile' ? capture.screenshot_mobile_url : capture.screenshot_desktop_url;
   const img = useAuthedBlobUrl(path, open);
+  const tabs = [
+    ...(capture.screenshot_mobile_url ? [{ id: 'mobile', label: 'Mobile' }] : []),
+    ...(capture.screenshot_desktop_url ? [{ id: 'desktop', label: 'Desktop' }] : []),
+  ];
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
       title="Page capture"
-      description={capture.final_url ?? undefined}
+      description={capture.final_url ? <span style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}>{capture.final_url}</span> : undefined}
       width="min(960px, calc(100vw - 32px))"
       presentation="dialog"
     >
-      <div role="group" aria-label="Screenshot size" className="mb-3 flex gap-2">
-        {(['mobile', 'desktop'] as const).map((v) => {
-          const has = v === 'mobile' ? capture.screenshot_mobile_url : capture.screenshot_desktop_url;
-          return (
-            <Button
-              key={v}
-              type="button"
-              size="sm"
-              variant={variant === v ? 'primary' : 'secondary'}
-              aria-pressed={variant === v}
-              disabled={!has}
-              onClick={() => setVariant(v)}
-            >
-              {v === 'mobile' ? 'Mobile' : 'Desktop'}
-            </Button>
-          );
-        })}
-      </div>
+      {tabs.length > 1 && (
+        <div className="mb-3">
+          <Tabs
+            tabs={tabs}
+            activeTab={variant}
+            onChange={(id) => setVariant(id === 'desktop' ? 'desktop' : 'mobile')}
+            variant="pills"
+            size="md"
+            activation="auto"
+            aria-label="Screenshot size"
+          />
+        </div>
+      )}
       <div className="flex justify-center overflow-auto" style={{ maxHeight: '70dvh' }}>
         {img.url ? (
-          <img src={img.url} alt={`${variant} screenshot of ${capture.final_url ?? 'captured page'}`} style={{ maxWidth: '100%', height: 'auto' }} />
+          <img src={img.url} alt={`${variant === 'mobile' ? 'Mobile' : 'Desktop'} screenshot of the captured page`} style={{ maxWidth: '100%', height: 'auto' }} />
+        ) : img.error ? (
+          <ImageError onRetry={img.retry} />
         ) : (
-          <p className="m-0 text-[13px]" role="status" style={MUTED}>
-            {img.error ? "Couldn't load the screenshot." : img.loading ? 'Loading screenshot…' : 'No screenshot for this size.'}
-          </p>
+          <p className="m-0 text-[13px]" role="status" style={MUTED}>{img.loading ? 'Loading screenshot…' : 'No screenshot for this size.'}</p>
         )}
       </div>
     </Dialog>
+  );
+}
+
+function ImageError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div role="alert" className="text-[13px]" style={MUTED}>
+      <p className="m-0 mb-1">Couldn't load the screenshot.</p>
+      <Button type="button" variant="secondary" size="sm" onClick={onRetry}>Retry</Button>
+    </div>
   );
 }
 
@@ -121,19 +129,26 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
       {thumbPath && (
         <div className="mb-2">
           {thumb.url ? (
-            <button
-              type="button"
-              onClick={() => setViewerOpen(true)}
-              aria-label="View page capture full screen"
-              className="block cursor-pointer rounded-lg border-0 bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-              style={{ border: '1px solid var(--border-base)' }}
-            >
-              <img src={thumb.url} alt={`Screenshot of ${capture.final_url ?? 'captured page'}`} style={{ display: 'block', width: '100%', maxWidth: 200, height: 'auto', borderRadius: 8 }} />
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setViewerOpen(true)}
+                aria-label="View page capture full screen"
+                className="block min-h-[44px] w-full cursor-pointer overflow-hidden rounded-lg bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+                style={{ border: '1px solid var(--border-base)' }}
+              >
+                <img
+                  src={thumb.url}
+                  alt="Mobile screenshot of the captured page"
+                  style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'cover', objectPosition: 'top' }}
+                />
+              </button>
+              <p className="m-0 mt-1 text-[12px]" style={MUTED}>Tap to enlarge</p>
+            </>
+          ) : thumb.error ? (
+            <ImageError onRetry={thumb.retry} />
           ) : (
-            <p className="m-0 text-[13px]" role="status" style={MUTED}>
-              {thumb.error ? "Couldn't load the screenshot." : 'Loading screenshot…'}
-            </p>
+            <p className="m-0 text-[13px]" role="status" style={MUTED}>Loading screenshot…</p>
           )}
           <Viewer capture={capture} open={viewerOpen} onOpenChange={setViewerOpen} />
         </div>
@@ -145,18 +160,30 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
         <Row label="Final URL">{capture.final_url ?? '—'}</Row>
         <Row label="Login form posts to">
           {capture.form_action_hosts.length === 0 ? 'No login form found' : (
-            <ul className="m-0 list-none p-0">
-              {capture.form_action_hosts.map((h) => {
-                const isOff = off.includes(h);
-                return (
-                  <li key={h} data-offdomain={isOff || undefined} style={isOff ? { color: 'var(--sev-high-text)' } : undefined}>
-                    {isOff && <AlertTriangle aria-hidden="true" size={13} style={{ display: 'inline', marginRight: 4, verticalAlign: '-2px' }} />}
-                    {h}
-                    {isOff && <span className="font-sans"> — differs from the page host</span>}
-                  </li>
-                );
-              })}
-            </ul>
+            <>
+              {off.length > 0 && (
+                <div
+                  role="note"
+                  data-offdomain-note
+                  className="mb-1 rounded-lg px-3 py-2 font-sans text-[13px]"
+                  style={{ background: 'var(--sev-high-bg)', border: '1px solid var(--sev-high-border)', color: 'var(--sev-high-text)' }}
+                >
+                  <AlertTriangle aria-hidden="true" size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+                  <strong className="font-mono">{off.join(', ')}</strong>
+                  <span className="block">Credentials would be sent to a different site than this page.</span>
+                </div>
+              )}
+              <ul className="m-0 list-none p-0">
+                {capture.form_action_hosts.map((h) => {
+                  const isOff = off.includes(h);
+                  return (
+                    <li key={h} data-offdomain={isOff || undefined} style={isOff ? { color: 'var(--sev-high-text)', fontWeight: 700 } : undefined}>
+                      {h}{isOff && <span className="sr-only"> (different from the page host)</span>}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           )}
         </Row>
         {chain.length > 0 && (
@@ -227,7 +254,7 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
       </Button>
       {!canCapture && (
         <p id="capture-perm-reason" className="m-0 mt-1 text-[12px]" style={MUTED}>
-          Requires the edit alerts permission.
+          Your role can't queue captures. Ask an analyst or admin.
         </p>
       )}
       {errMsg && <p role="alert" className="m-0 mt-1 text-[13px]" style={{ color: 'var(--sev-critical-text)' }}>{errMsg}</p>}
@@ -236,11 +263,15 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
 
   let body: ReactNode;
   if (!latest) {
-    body = <p className="m-0 text-[13px]" style={MUTED}>No page capture yet.</p>;
+    body = <p className="m-0 text-[13px]" style={MUTED}>No capture yet. Capture the page to preserve evidence.</p>;
   } else if (pending) {
-    body = <p className="m-0 text-[13px]" role="status" style={{ color: 'var(--text-primary)' }}>Capturing… usually within 10 min</p>;
+    body = (
+      <p className="m-0 text-[13px]" role="status" style={{ color: 'var(--text-primary)' }}>
+        {latest.status === 'queued' ? 'Queued — capture starts shortly, usually within 10 min' : 'Capturing… usually within 10 min'}
+      </p>
+    );
   } else if (latest.status === 'failed') {
-    body = <p className="m-0 text-[13px]" style={{ color: 'var(--sev-critical-text)', overflowWrap: 'anywhere' }}>{latest.error ?? 'The capture failed.'}</p>;
+    body = <p className="m-0 text-[13px]" style={{ color: 'var(--sev-critical-text)', overflowWrap: 'anywhere' }}>Capture failed: {latest.error ?? 'unknown error'}</p>;
   } else if (latest.status === 'expired') {
     body = <p className="m-0 text-[13px]" style={MUTED}>Capture expired{latest.expires_at ? ` on ${formatDateTime(latest.expires_at)}` : ''}. Evidence has been deleted.</p>;
   } else {

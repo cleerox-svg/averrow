@@ -9,10 +9,11 @@ export function isApiPath(path: string | null | undefined): path is string {
   return !!path && path.startsWith('/api/') && !path.startsWith('//') && !path.includes('://');
 }
 
-export interface BlobUrlState { url: string | null; loading: boolean; error: boolean }
+export interface BlobUrlState { url: string | null; loading: boolean; error: boolean; retry: () => void }
 
 export function useAuthedBlobUrl(path: string | null | undefined, enabled = true): BlobUrlState {
-  const [state, setState] = useState<BlobUrlState>({ url: null, loading: false, error: false });
+  const [state, setState] = useState<Omit<BlobUrlState, 'retry'>>({ url: null, loading: false, error: false });
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!enabled || !isApiPath(path)) {
       setState({ url: null, loading: false, error: false });
@@ -33,8 +34,8 @@ export function useAuthedBlobUrl(path: string | null | undefined, enabled = true
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [path, enabled]);
-  return state;
+  }, [path, enabled, attempt]);
+  return { ...state, retry: () => setAttempt((n) => n + 1) };
 }
 
 /** Fetch with auth and save through a temporary same-document blob anchor. */
