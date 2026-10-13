@@ -15,6 +15,7 @@ import {
   type Severity,
 } from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
+import { AlertQueueBanner } from './AlertQueueBanner';
 import {
   useAlerts, useAlert, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
   BULK_BATCH, type Alert, type AlertFilters, type BulkAckResult, type BulkTakedownResult,
@@ -1080,9 +1081,31 @@ export function Alerts() {
   });
   const stats = statsData && typeof statsData.total === 'number' ? statsData : undefined;
 
-  // SLA breach/at-risk counts over the fetched queue (open alerts only).
-  const slaBreached = rawAlerts.filter(a => slaFor(a).state === 'breach').length;
-  const slaAtRisk = rawAlerts.filter(a => slaFor(a).state === 'warn').length;
+  // Queue banner inputs: platform-wide server counts when present, else a
+  // fallback computed over the loaded (<=200) alerts.
+  const queueBanner = useMemo(() => {
+    const unreviewed = stats?.new_count ?? 0;
+    if (typeof stats?.sla_breached === 'number') {
+      return {
+        unreviewed,
+        breached: stats.sla_breached,
+        breachedCritical: stats.sla_breached_critical ?? 0,
+        atRisk: stats.sla_at_risk ?? 0,
+        oldestBreachMs: (stats.sla_oldest_breach_minutes ?? 0) * 60_000,
+        sampled: false,
+      };
+    }
+    let breached = 0, breachedCritical = 0, atRisk = 0, oldestBreachMs = 0;
+    for (const a of rawAlerts) {
+      const sla = slaFor(a);
+      if (sla.state === 'breach') {
+        breached++;
+        if (severityToBadge(a.severity) === 'critical') breachedCritical++;
+        oldestBreachMs = Math.max(oldestBreachMs, sla.overdueMs);
+      } else if (sla.state === 'warn') atRisk++;
+    }
+    return { unreviewed, breached, breachedCritical, atRisk, oldestBreachMs, sampled: true, sampledCount: rawAlerts.length };
+  }, [stats, rawAlerts]);
 
   const groups = useMemo(() => groupByBrand(alerts), [alerts]);
 
@@ -1226,30 +1249,13 @@ export function Alerts() {
         </div>
       )}
 
-      {stats && stats.new_count > 0 && (
-        <Card variant="critical" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <SeverityDot severity="critical" size={10} pulse />
-          <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {stats.new_count} unacknowledged {stats.high > 0 ? 'HIGH' : ''} severity alert{stats.new_count !== 1 ? 's' : ''} require review
-          </span>
-        </Card>
-      )}
-
-      {/* SLA breach banner — open alerts past their severity window. */}
-      {slaBreached > 0 && (
-        <Card variant="critical" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <SeverityDot severity="critical" size={10} pulse />
-          <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {slaBreached} open alert{slaBreached !== 1 ? 's' : ''} past SLA
-            {slaAtRisk > 0 ? ` · ${slaAtRisk} approaching` : ''}
-          </span>
-          <button
-            onClick={() => setSlaFilter('breached')}
-            className="ml-auto font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[#E5A832] hover:bg-afterburner-muted transition-all"
-          >
-            Show breached
-          </button>
-        </Card>
+      {stats && (
+        <AlertQueueBanner
+          {...queueBanner}
+          onShowBreached={() => setSlaFilter('breached')}
+          onShowApproaching={() => setSlaFilter('atrisk')}
+          onShowCritical={() => { setFilter('severity', 'critical'); setSlaFilter('breached'); }}
+        />
       )}
 
       {!canEdit && (
