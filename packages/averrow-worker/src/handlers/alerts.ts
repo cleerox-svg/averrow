@@ -448,6 +448,25 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
 // PR-C: platform-wide for staff, so the answer is identical for every staff
 // caller — cached 60s per scope segment (`alerts_stats:global` for staff)
 // and dropped by invalidateAlertCaches on any ops alert mutation.
+//
+// SLA fields (`sla_*`) are computed over the WHOLE open queue in the same
+// single scan, so the ops banner no longer undercounts from the ≤200-row
+// list page. Definitions mirror `slaFor` in the ops Alerts page: open =
+// status new/acknowledged; breach when age >= window; at-risk when
+// 0.75·window <= age < window. The 60s cache staleness is acceptable for a
+// time-varying count.
+
+// Mirrors SLA_MINUTES in packages/averrow-ops/src/features/alerts/Alerts.tsx
+// (critical 15m · high 1h · medium 4h · everything else 24h). The alerts
+// CHECK constraint admits only lowercase critical/high/medium/low; ELSE is
+// the 24h fallback, matching the ops severityToBadge 'low' default.
+const SLA_WINDOW_MINUTES_SQL = `(CASE a.severity WHEN 'critical' THEN 15 WHEN 'high' THEN 60 WHEN 'medium' THEN 240 ELSE 1440 END)`;
+// alerts.created_at defaults to datetime('now') ('YYYY-MM-DD HH:MM:SS', UTC);
+// julianday() also parses ISO 'YYYY-MM-DDTHH:MM:SS(.sss)Z', so either form works.
+const SLA_AGE_MINUTES_SQL = `((julianday('now') - julianday(a.created_at)) * 1440)`;
+const SLA_OPEN_SQL = `a.status IN ('new','acknowledged')`;
+const SLA_BREACH_SQL = `${SLA_OPEN_SQL} AND ${SLA_AGE_MINUTES_SQL} >= ${SLA_WINDOW_MINUTES_SQL}`;
+
 export async function handleAlertStats(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -473,7 +492,14 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
           SUM(CASE WHEN a.severity='critical' THEN 1 ELSE 0 END) as critical,
           SUM(CASE WHEN a.severity='high' THEN 1 ELSE 0 END) as high,
           SUM(CASE WHEN a.severity='medium' THEN 1 ELSE 0 END) as medium,
-          SUM(CASE WHEN a.severity='low' THEN 1 ELSE 0 END) as low
+          SUM(CASE WHEN a.severity='low' THEN 1 ELSE 0 END) as low,
+          SUM(CASE WHEN ${SLA_BREACH_SQL} THEN 1 ELSE 0 END) as sla_breached,
+          SUM(CASE WHEN ${SLA_BREACH_SQL} AND a.severity='critical' THEN 1 ELSE 0 END) as sla_breached_critical,
+          SUM(CASE WHEN ${SLA_OPEN_SQL}
+                    AND ${SLA_AGE_MINUTES_SQL} >= 0.75 * ${SLA_WINDOW_MINUTES_SQL}
+                    AND ${SLA_AGE_MINUTES_SQL} < ${SLA_WINDOW_MINUTES_SQL} THEN 1 ELSE 0 END) as sla_at_risk,
+          CAST(MAX(CASE WHEN ${SLA_BREACH_SQL}
+                        THEN ${SLA_AGE_MINUTES_SQL} - ${SLA_WINDOW_MINUTES_SQL} END) AS INTEGER) as sla_oldest_breach_minutes
          FROM alerts a WHERE ${scopeFilter.where}`
       ).bind(...scopeFilter.params).first<Record<string, number | null>>();
       tally.queries += 1;
@@ -492,6 +518,10 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
       high: n("high"),
       medium: n("medium"),
       low: n("low"),
+      sla_breached: n("sla_breached"),
+      sla_breached_critical: n("sla_breached_critical"),
+      sla_at_risk: n("sla_at_risk"),
+      sla_oldest_breach_minutes: n("sla_oldest_breach_minutes"),
     };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: ALERT_CACHE_TTL_SECONDS });
     recordD1Reads(env, "alerts_stats", tally);
