@@ -332,7 +332,7 @@ describe('AdminAudit', () => {
   it('shows "—" (aria-busy), not 0, while loading', () => {
     routeApi([{ match: list, result: 'pending' }]);
     renderWithProviders(<AdminAudit />);
-    expect(tileFor('Total Events')).toHaveAttribute('aria-busy', 'true');
+    expect(tileFor('Total events')).toHaveAttribute('aria-busy', 'true');
     expect(screen.queryByText('0')).not.toBeInTheDocument();
   });
 });
@@ -368,7 +368,7 @@ describe('SpamTrap', () => {
   it('shows loading tiles (not 0 / never) while pending', () => {
     routeApi([{ match: '/api/spam-trap/', result: 'pending' }]);
     renderWithProviders(<SpamTrap />);
-    expect(tileFor('SEEDS DEPLOYED')).toHaveAttribute('aria-busy', 'true');
+    expect(tileFor('Seeds deployed')).toHaveAttribute('aria-busy', 'true');
     expect(screen.queryByText('never')).not.toBeInTheDocument();
   });
 });

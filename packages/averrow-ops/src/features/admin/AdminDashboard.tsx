@@ -847,19 +847,19 @@ export function AdminDashboard() {
                 so it's gated on `healthReady` (dashboard-snapshot-derived). */}
             {healthReady ? (
               <StatGrid cols={4}>
-                <StatTile label="Threats Today" value={fmt(threats.today)} accent="var(--red)" sub={`${fmt(threats.total)} total`} />
-                <StatTile label="Feed Ingestion" value={fmt(feeds.ingested)} accent="var(--amber)" sub="records (24h)" />
-                <StatTile label="Agent Runs" value={fmt(agents.total)} accent="var(--blue)" sub={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
-                <StatTile label="Active Sessions" value={fmt(activeSessions)} accent="var(--green)" sub="authenticated" />
+                <StatTile label="Threats today" value={fmt(threats.today)} accent="var(--red)" sub={`${fmt(threats.total)} total`} />
+                <StatTile label="Feed ingestion" value={fmt(feeds.ingested)} accent="var(--amber)" sub="records (24h)" />
+                <StatTile label="Agent runs" value={fmt(agents.total)} accent="var(--blue)" sub={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
+                <StatTile label="Active sessions" value={fmt(activeSessions)} accent="var(--green)" sub="authenticated" />
               </StatGrid>
             ) : snapshotError ? (
               // The snapshot request FAILED: say so ("Couldn't load") instead of
               // skeletons that never resolve.
               <StatGrid cols={4}>
-                <StatTile label="Threats Today" value={null} error />
-                <StatTile label="Feed Ingestion" value={null} error />
-                <StatTile label="Agent Runs" value={null} error />
-                <StatTile label="Active Sessions" value={null} error />
+                <StatTile label="Threats today" value={null} error />
+                <StatTile label="Feed ingestion" value={null} error />
+                <StatTile label="Agent runs" value={null} error />
+                <StatTile label="Active sessions" value={null} error />
               </StatGrid>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

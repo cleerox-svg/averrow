@@ -391,7 +391,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
           accent={SEVERITY_ACCENT[highestSev]}
         />
         <StatTile
-          label="Critical · High"
+          label="Critical · high"
           value={peek ? (sevCounts.critical + sevCounts.high).toLocaleString() : null}
           error={peekFailed}
           sub={peek ? `${sevCounts.critical} critical · ${sevCounts.high} high` : undefined}

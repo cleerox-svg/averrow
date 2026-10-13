@@ -1,19 +1,22 @@
 // @averrow/shared/ui — StatTile
 //
-// KPI tile: label, big count-up number, optional sub-line, optional critical
-// pill and footer. API from averrow-ops `components/ui/StatTile`; look and
-// error state from the v4 console `KpiTile` (glow orb, mono label).
+// KPI tile ("Instrument glass"): gradient-hairline surface, sans label, big
+// count-up number, optional delta chip, sparkline, sub-line, critical pill and
+// footer. Styles live in theme/tokens.css (`.ds-stat*`). API from averrow-ops
+// `components/ui/StatTile`.
 //
 // States
 //   value === null            loading: "—" + aria-busy (never a misleading 0)
-//   value === null + error    "Couldn't load", not busy (glow dimmed); root aria-label
+//   value === null + error    "Couldn't load", not busy; root aria-label
 //                             `<label>: couldn't load` / `<label>: loading`
 //   value === 0               neutral accent (resolveStatAccent), calm not alarming
 //   onClick                   renders a real <button>
 //   asChild                   renders the single child element (e.g. a router
 //                             <Link>) as the tile root; no router import here.
+//   live                      animated conic hairline; only when value > 0 and
+//                             settled. At most ONE live tile per page.
 
-import type { HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
+import type { CSSProperties, HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { Slot, Slottable } from '@radix-ui/react-slot';
 import { cn } from './cn';
 import { useCountUp } from './lib/useCountUp';
@@ -50,19 +53,61 @@ export interface StatTileProps
   children?: ReactNode;
   /** Non-interactive content under the sub-line (it may sit inside a button). */
   footer?: ReactNode;
+  /** Change chip beside the label. `label` is the accessible text and must say what it compares to. */
+  delta?: StatDelta;
+  /** Series for an inline sparkline under the number (needs >= 2 points). */
+  trend?: number[];
+  /** Animated hairline for the one tile that needs action. Ignored unless value > 0. */
+  live?: boolean;
 }
 
-const ROOT =
-  'group relative block w-full overflow-hidden text-left font-[inherit] text-[var(--text-primary)] no-underline ' +
-  'rounded-[18px] px-5 pt-[18px] pb-4 border border-[var(--border-base)] ' +
-  '[background:linear-gradient(160deg,var(--bg-card),var(--bg-card-deep))] shadow-[var(--card-shadow)] ' +
-  'max-sm:rounded-xl max-sm:px-3.5 max-sm:py-2.5';
+export interface StatDelta {
+  value: string;
+  tone?: 'good' | 'bad' | 'neutral';
+  /** e.g. "412 more than yesterday" (aria-label). */
+  label?: string;
+}
 
-const INTERACTIVE =
-  'cursor-pointer pb-6 transition-[transform,border-color,box-shadow] duration-150 ' +
-  'hover:-translate-y-0.5 hover:border-[var(--amber-border)] hover:shadow-[var(--card-shadow),0_0_22px_color-mix(in_srgb,var(--amber)_14%,transparent)] ' +
-  'motion-reduce:transition-none motion-reduce:hover:translate-y-0 ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-page)]';
+function numericValue(value: number | string | null): number {
+  if (value == null) return NaN;
+  return typeof value === 'number' ? value : Number(String(value).replace(/[\s,%]/g, ''));
+}
+
+const TREND_W = 100;
+const TREND_H = 26;
+const TREND_PAD = 3;
+
+function Trend({ points }: { points: number[] }) {
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const flat = max === min;
+  const xs = points.map((_, i) => (i / (points.length - 1)) * TREND_W);
+  const ys = points.map((p) =>
+    flat ? TREND_H / 2 : TREND_PAD + (1 - (p - min) / (max - min)) * (TREND_H - TREND_PAD * 2),
+  );
+  const line = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(2)},${ys[i]!.toFixed(2)}`).join(' ');
+  const area = `${line} L${TREND_W},${TREND_H} L0,${TREND_H} Z`;
+  return (
+    <span aria-hidden className="ds-stat-trend-wrap relative block" data-testid="stat-trend" data-points={points.length}>
+      <svg className="ds-stat-trend" viewBox={`0 0 ${TREND_W} ${TREND_H}`} preserveAspectRatio="none">
+        {flat ? (
+          <line className="ds-stat-trend-flat" x1="0" x2={TREND_W} y1={TREND_H / 2} y2={TREND_H / 2} />
+        ) : (
+          <>
+            <path className="ds-stat-trend-area" d={area} />
+            <path className="ds-stat-trend-line" d={line} />
+          </>
+        )}
+      </svg>
+      {!flat && (
+        <span
+          className="ds-stat-trend-dot absolute h-[5px] w-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+          style={{ left: '100%', top: `${(ys[ys.length - 1]! / TREND_H) * 100}%` }}
+        />
+      )}
+    </span>
+  );
+}
 
 export function StatTile({
   label,
@@ -76,6 +121,9 @@ export function StatTile({
   asChild = false,
   children,
   footer,
+  delta,
+  trend,
+  live = false,
   className,
   ...rest
 }: StatTileProps) {
@@ -91,61 +139,51 @@ export function StatTile({
   const critCount = critical ?? 0;
   const clickable = !!onClick || asChild;
 
+  const isLive = live && !isNull && numericValue(value) > 0;
+  const showTrend = !!trend && trend.length >= 2;
+  const deltaChip = delta ? (
+    <span
+      role="img"
+      aria-label={delta.label ?? delta.value}
+      data-tone={delta.tone ?? 'neutral'}
+      className={cn('ds-stat-delta', critCount > 0 && 'ds-stat-delta--inline')}
+    >
+      {delta.value}
+    </span>
+  ) : null;
+
   const inner = (
     <>
-      <span
-        aria-hidden
-        className={cn(
-          'pointer-events-none absolute -right-[34px] -top-[34px] h-[130px] w-[130px] rounded-full blur-[36px] max-sm:h-[70px] max-sm:w-[70px] max-sm:blur-[24px]',
-          // A loading or failed tile must not glow like a live red/amber alert.
-          loading || failed ? 'opacity-20' : 'opacity-[0.55]',
-        )}
-        style={{ background: accent }}
-      />
       {critCount > 0 && (
-        <span
-          aria-label={`${critCount} critical`}
-          className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 font-mono text-[9px] font-extrabold text-white"
-          style={{
-            background: 'linear-gradient(135deg, var(--red), var(--red-dim))',
-            border: '1px solid var(--sev-critical-border)',
-          }}
-        >
+        <span aria-label={`${critCount} critical`} className="ds-stat-crit">
           {critCount}
         </span>
       )}
-      <span className="relative block font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--text-secondary)] max-sm:text-[9.5px]">
-        {label}
-      </span>
-      <span
-        className={cn(
-          'relative mt-2.5 block text-[42px] font-extrabold leading-[1.05] tracking-[-1.5px] tabular-nums max-sm:mt-0.5 max-sm:text-[26px] max-sm:tracking-[-1px]',
-          loading || failed ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-primary)]',
-        )}
-        style={loading || failed ? undefined : { textShadow: `0 0 28px color-mix(in srgb, ${accent} 48%, transparent)` }}
-      >
-        {display}
-      </span>
-      {failed ? (
-        <span className="relative mt-2 block font-mono text-[11px] text-[var(--text-secondary)]">
-          Couldn't load
+      <span className="ds-stat-head">
+        <span className="ds-stat-label">
+          {label}
+          {critCount > 0 ? deltaChip : null}
         </span>
+        {critCount > 0 ? null : deltaChip}
+      </span>
+      <span className={cn('ds-stat-value', (loading || failed) && 'ds-stat-value--muted')}>{display}</span>
+      {showTrend && !loading && !failed ? <Trend points={trend} /> : null}
+      {failed ? (
+        <span className="ds-stat-sub">Couldn't load</span>
       ) : sub ? (
-        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1 max-sm:text-[10px]">{sub}</span>
+        <span className="ds-stat-sub">{sub}</span>
       ) : null}
-      {footer ? <span className="relative mt-3 block">{footer}</span> : null}
+      {footer ? <span className="ds-stat-foot">{footer}</span> : null}
       {clickable && (
-        <span
-          aria-hidden
-          className="absolute bottom-[13px] right-4 font-mono text-[10.5px] tracking-[0.04em] text-[var(--text-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 max-sm:hidden motion-reduce:transition-none"
-        >
+        <span aria-hidden className="ds-stat-hint">
           View →
         </span>
       )}
     </>
   );
 
-  const cls = cn(ROOT, clickable && INTERACTIVE, className);
+  const cls = cn('ds-stat', clickable && 'ds-stat--interactive', isLive && 'ds-stat--live', className);
+  const styleProp = { ...(rest.style ?? {}), '--st-accent': accent } as CSSProperties;
   // The accessible name carries the state so it is announced on the tile
   // itself (no nested live region). Healthy tiles keep their content name.
   const stateName = failed ? `${label}: couldn't load` : loading ? `${label}: loading` : undefined;
@@ -156,7 +194,7 @@ export function StatTile({
 
   if (asChild) {
     return (
-      <Slot className={cls} {...aria} onClick={onClick} {...rest}>
+      <Slot className={cls} {...aria} onClick={onClick} {...rest} style={styleProp}>
         <Slottable>{children}</Slottable>
         {inner}
       </Slot>
@@ -164,7 +202,7 @@ export function StatTile({
   }
   if (onClick) {
     return (
-      <button type="button" className={cls} {...aria} onClick={onClick} {...(rest as HTMLAttributes<HTMLButtonElement>)}>
+      <button type="button" className={cls} {...aria} onClick={onClick} {...(rest as HTMLAttributes<HTMLButtonElement>)} style={styleProp}>
         {inner}
       </button>
     );
@@ -172,7 +210,7 @@ export function StatTile({
   // aria-label on a plain div is ignored without a role, so the state name
   // needs role="group" to be exposed.
   return (
-    <div className={cls} {...aria} {...(stateName ? { role: 'group' } : {})} {...rest}>
+    <div className={cls} {...aria} {...(stateName ? { role: 'group' } : {})} {...rest} style={styleProp}>
       {inner}
     </div>
   );

@@ -291,10 +291,10 @@ export function AdminAudit() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatTile label="Total Events" value={tile(total)} error={failed} />
+        <StatTile label="Total events" value={tile(total)} error={failed} />
         <StatTile label="Today" value={tile(todayCount)} error={failed} />
-        <StatTile label="Failures / Denied" value={tile(failureDeniedCount)} error={failed} />
-        <StatTile label="Unique Actions" value={tile(uniqueActions)} error={failed} />
+        <StatTile label="Failures / denied" value={tile(failureDeniedCount)} error={failed} />
+        <StatTile label="Unique actions" value={tile(uniqueActions)} error={failed} />
       </div>
 
       {/* Filter Bar */}

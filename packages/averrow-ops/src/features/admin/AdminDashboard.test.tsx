@@ -189,7 +189,7 @@ describe('AdminDashboard', () => {
     });
     const { container } = renderWithProviders(<AdminDashboard />);
     expect(screen.getAllByText("Couldn't load").length).toBeGreaterThanOrEqual(4);
-    expect(screen.getByText('Threats Today')).toBeInTheDocument();
+    expect(screen.getByText('Threats today')).toBeInTheDocument();
     // VerdictBand: failed, not "pending" forever.
     expect(screen.getByText('UNAVAILABLE')).toBeInTheDocument();
     const alerts = screen.getAllByRole('alert');
@@ -288,7 +288,7 @@ describe('AdminDashboard', () => {
       expect(screen.getByText('trust-radar-v2')).toBeInTheDocument();
 
       // Overview's top stat row is gone now that it isn't the active tab.
-      expect(screen.queryByText('Threats Today')).not.toBeInTheDocument();
+      expect(screen.queryByText('Threats today')).not.toBeInTheDocument();
     });
   });
 
@@ -406,7 +406,7 @@ describe('AdminDashboard', () => {
       (useDashboardSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({ data: null, isLoading: true, isError: false });
       const { container } = renderWithProviders(<AdminDashboard />);
 
-      expect(screen.queryByText('Threats Today')).not.toBeInTheDocument();
+      expect(screen.queryByText('Threats today')).not.toBeInTheDocument();
       expect(screen.queryByText('Feed Ingestion')).not.toBeInTheDocument();
       expect(screen.queryByText(/success rate/)).not.toBeInTheDocument();
       expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);

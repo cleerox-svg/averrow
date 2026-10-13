@@ -258,7 +258,7 @@ export function AttributionBacklog() {
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatTile
-          label="Total Clusters"
+          label="Total clusters"
           value={tile(totals?.total_clusters)}
           error={failed}
         />
@@ -273,13 +273,13 @@ export function AttributionBacklog() {
           }
         />
         <StatTile
-          label="AI Tried, Unknown"
+          label="AI tried, unknown"
           value={tile(totals?.attempted_unknown)}
           error={failed}
           sub="Sent to Haiku → no match"
         />
         <StatTile
-          label="Never Attempted"
+          label="Never attempted"
           value={tile(totals?.never_attempted)}
           error={failed}
           sub="Skipped by Attributor"

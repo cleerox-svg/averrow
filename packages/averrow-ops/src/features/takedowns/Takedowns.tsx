@@ -937,9 +937,9 @@ export function Takedowns() {
           {/* ─── PROSPECT STAT CARDS ─────────────────── */}
           <StatGrid cols={4}>
             <StatTile label="Brands"          value={statValue(prospectStats.brands)} error={listFailed}        accent="var(--amber)" />
-            <StatTile label="Total Drafts"    value={statValue(stats.total)} error={listFailed}                 accent="var(--blue)" />
-            <StatTile label="High/Critical"   value={statValue(prospectStats.highSeverity)} error={listFailed}  accent="var(--red)" />
-            <StatTile label="Evidence Points" value={statValue(prospectStats.evidenceTotal)} error={listFailed} accent="var(--green)" />
+            <StatTile label="Total drafts"    value={statValue(stats.total)} error={listFailed}                 accent="var(--blue)" />
+            <StatTile label="High/critical"   value={statValue(prospectStats.highSeverity)} error={listFailed}  accent="var(--red)" />
+            <StatTile label="Evidence points" value={statValue(prospectStats.evidenceTotal)} error={listFailed} accent="var(--green)" />
           </StatGrid>
 
           {/* ─── LOADING STATE ───────────────────────── */}
@@ -988,8 +988,8 @@ export function Takedowns() {
         <>
           {/* ─── STAT CARDS ──────────────────────────── */}
           <StatGrid cols={4}>
-            <StatTile label="Total Takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--amber)" />
-            <StatTile label="Pending Review"  value={statValue(stats.draft)} error={listFailed}     accent="var(--sev-high)" />
+            <StatTile label="Total takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--amber)" />
+            <StatTile label="Pending review"  value={statValue(stats.draft)} error={listFailed}     accent="var(--sev-high)" />
             <StatTile label="Submitted"       value={statValue(stats.submitted)} error={listFailed} accent="var(--blue)" />
             <StatTile label="Resolved"        value={statValue(stats.resolved)} error={listFailed}  accent="var(--green)" />
           </StatGrid>

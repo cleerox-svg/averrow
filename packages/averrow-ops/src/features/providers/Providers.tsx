@@ -748,13 +748,13 @@ export function Providers() {
 
       <StatGrid cols={4}>
         <StatTile
-          label="Providers Tracked"
+          label="Providers tracked"
           value={intelValue(intelligence?.total_providers)}
           error={intelFailed}
           sub={`${intelligence?.total_clusters ?? 0} clusters`}
         />
         <StatTile
-          label="Active Operations"
+          label="Active operations"
           value={intelValue(intelligence?.active_operations)}
           error={intelFailed}
           accent="var(--green)"
@@ -768,7 +768,7 @@ export function Providers() {
           sub="7d trend > 30d average"
         />
         <StatTile
-          label="Pivots Detected"
+          label="Pivots detected"
           value={intelValue(intelligence?.pivots_detected)}
           error={intelFailed}
           accent="var(--red)"
