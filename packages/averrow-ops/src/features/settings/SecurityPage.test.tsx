@@ -121,6 +121,10 @@ describe('Security page — states never lie', () => {
     expect(add).toBeDisabled();
     expect(add).toHaveAttribute('title', expect.stringMatching(/doesn't support passkeys/));
     expect(screen.getAllByText(/doesn't support passkeys/).length).toBeGreaterThan(0);
+    const banner = screen.getAllByText(/doesn't support passkeys/).map((el) => el.closest('.ds-banner')).find(Boolean) as HTMLElement;
+    expect(banner).toHaveAttribute('data-tone', 'info');
+    expect(banner).toHaveAttribute('data-density', 'compact');
+    expect(banner).toHaveTextContent("Passkeys aren't available here");
   });
 });
 

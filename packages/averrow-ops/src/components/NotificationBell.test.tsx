@@ -11,6 +11,7 @@ import type { Notification } from '@/hooks/useNotifications';
 import { SNOOZE_OPTIONS } from '@/lib/snooze';
 
 const mocks = vi.hoisted(() => ({
+  navigate: vi.fn(),
   isMobile: false,
   unread: 0 as number | undefined,
   feed: { data: undefined as { notifications: unknown[]; unread_count: number } | undefined, isLoading: false, isError: false },
@@ -23,6 +24,10 @@ const mocks = vi.hoisted(() => ({
   markAll: vi.fn(),
 }));
 
+vi.mock('react-router-dom', async (orig) => ({
+  ...(await orig<typeof import('react-router-dom')>()),
+  useNavigate: () => mocks.navigate,
+}));
 vi.mock('@/lib/auth', () => ({ useAuth: mocks.useAuth }));
 vi.mock('@/hooks/useAlerts', () => ({ useAlertTriageSummary: mocks.useAlertTriageSummary }));
 vi.mock('@/hooks/useWindowWidth', () => ({ useIsMobile: () => mocks.isMobile }));
@@ -289,5 +294,28 @@ describe('NotificationBell triage row', () => {
     expect(mocks.useAlertTriageSummary).toHaveBeenCalledWith({ enabled: false });
     expect(mocks.useAlertTriageSummary).not.toHaveBeenCalledWith({ enabled: true });
     expect(screen.queryByText(/awaiting triage/)).not.toBeInTheDocument();
+  });
+});
+
+describe('NotificationBell row navigation', () => {
+  it.each([
+    ['/v2/threats/9', '/threats/9'],
+    ['/threats/9', '/threats/9'],
+    ['//evil.example', '/notifications'],
+    ['https://evil.example/x', '/notifications'],
+  ])('routes link %s through the shared resolver (navigates to %s)', async (link, expected) => {
+    setFeed([note({ id: 'a', link, title: 'Go there' })]);
+    renderBell();
+    await openBell();
+    await userEvent.click(screen.getByRole('button', { name: /Go there/ }));
+    expect(mocks.navigate).toHaveBeenCalledWith(expected);
+  });
+
+  it('does not navigate for a row without a link', async () => {
+    setFeed([note({ id: 'a', link: null, title: 'Go there' })]);
+    renderBell();
+    await openBell();
+    await userEvent.click(screen.getByRole('button', { name: /Go there/ }));
+    expect(mocks.navigate).not.toHaveBeenCalled();
   });
 });

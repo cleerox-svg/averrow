@@ -28,6 +28,7 @@ import { useIsMobile } from '@/hooks/useWindowWidth';
 import { snoozeUntilIso } from '@/lib/snooze';
 import { DayHeading, NotificationRow, NotificationRowSkeletons, typeLabel, type RowActions } from '@/components/notifications/NotificationRow';
 import { groupByDay } from '@/components/notifications/groupByDay';
+import { resolveNotificationLink } from '@/lib/notificationLink';
 
 type TypeFilter = 'all' | NotificationEventKey;
 type SeverityFilter = 'all' | NotificationSeverity;
@@ -150,7 +151,7 @@ function NotificationsInbox() {
   const actionOpts = { onSuccess: () => setActionFailed(false), onError: () => setActionFailed(true) };
   const handleActivate = (n: Notification) => {
     if (n.state === 'unread') markRead.mutate(n.id, actionOpts);
-    if (n.link) navigate(n.link);
+    if (n.link) navigate(resolveNotificationLink(n.link, '/notifications'));
   };
   // Success toasts only: failures stay as the persistent inline error below.
   // No Undo on snooze/done: the API has no un-snooze / un-done endpoint.

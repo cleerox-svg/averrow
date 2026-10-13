@@ -14,6 +14,7 @@ import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Card, Tabs, Button } from '@/design-system/components';
+import { ObservatoryLoadError } from './components/ObservatoryLoadError';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -413,35 +414,15 @@ export function ObservatoryV3() {
           (previously the only version that surfaced this) — a failed
           threats/stats/arcs/heatmap fetch no longer renders silently. */}
       {loadError && (
-        <Card
-          variant="critical"
-          style={{
-            position: 'absolute',
-            top: 56,
-            // Clear the default-open desktop SidePanel (w-80 = 320px) +
-            // its own inset gap; collapses to a flat right-16 when the
-            // panel is closed, on mobile, or in heatmap mode (SidePanel
-            // doesn't render in any of those cases — the panel toggle that
-            // would otherwise flip `showPanel` back is hidden in heatmap
-            // mode, so `showPanel` alone isn't a reliable signal there).
-            right: showPanel && !isMobile && hasSidePanel ? 336 : 16,
-            zIndex: Z_TOGGLE,
-            padding: '8px 12px',
-            maxWidth: 260,
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={13} style={{ color: 'var(--sev-critical-text)', flexShrink: 0 }} />
-            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
-              Observatory data failed to load
-            </span>
-          </div>
-          <div className="mt-1.5">
-            <Button variant="danger" size="sm" onClick={retryFailed} icon={<RefreshCw size={11} />}>
-              Retry
-            </Button>
-          </div>
-        </Card>
+        // Right offset clears the default-open desktop SidePanel (w-80 = 320px)
+        // + its inset gap; a flat 16 when the panel is closed, on mobile, or in
+        // heatmap mode (no SidePanel there, and the panel toggle is hidden, so
+        // `showPanel` alone isn't a reliable signal).
+        <ObservatoryLoadError
+          onRetry={retryFailed}
+          right={showPanel && !isMobile && hasSidePanel ? 336 : 16}
+          zIndex={Z_TOGGLE}
+        />
       )}
 
       {/* ─── Bottom-left: Layer toggles ───────────────────────── */}

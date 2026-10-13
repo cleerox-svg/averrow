@@ -3,7 +3,7 @@
 
 import { useState, type ReactElement } from 'react';
 import {
-  Button, InlineBanner, Select, SettingsGroup, SettingsRow, Switch,
+  Button, Banner, Select, SettingsGroup, SettingsRow, Switch,
 } from '../../ui';
 import {
   BellIcon, EyeIcon, LayersIcon, MailIcon, PhoneIcon, SendIcon, ShieldAlertIcon,
@@ -149,16 +149,16 @@ export function ChannelsSection({
   return (
     <div className="space-y-6">
       {denied && (
-        <InlineBanner tone="warn" title="Push is blocked in this browser">
+        <Banner density="compact" tone="medium" role="status" title="Push is blocked in this browser">
           {PUSH_DENIED}
-        </InlineBanner>
+        </Banner>
       )}
       {unsupported && (
-        <InlineBanner tone="info" title="Push isn't available here">
+        <Banner density="compact" tone="info" title="Push isn't available here">
           {push.needsInstall
             ? `On iPhone and iPad, add ${product} to your Home Screen first (Share, then Add to Home Screen), then open it from there.`
             : "This browser can't receive push notifications. Email and the in-app bell still work."}
-        </InlineBanner>
+        </Banner>
       )}
 
       <SettingsGroup title="Push" footer="Push alerts go to the browser or app you turn this on in.">

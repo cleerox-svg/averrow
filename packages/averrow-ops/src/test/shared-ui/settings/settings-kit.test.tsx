@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
-  AccountHero, CopyField, DangerZone, IconTile, InlineBanner, SettingsGroup, SettingsRow,
+  AccountHero, CopyField, DangerZone, IconTile, SettingsGroup, SettingsRow,
   describeAccountScope,
 } from '../../../../../shared/src/ui/settings';
 import { TestSwitch, stubViewport } from './helpers';
@@ -154,22 +154,6 @@ describe('DangerZone', () => {
     expect(screen.getByRole('button', { name: 'Sign out others' }).className).not.toContain('sev-critical');
     await userEvent.click(danger);
     expect(onAction).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('InlineBanner', () => {
-  it('error is role=alert, others are role=status', () => {
-    const { rerender } = render(<InlineBanner tone="error">Push is blocked.</InlineBanner>);
-    expect(screen.getByRole('alert')).toHaveTextContent('Push is blocked.');
-    rerender(<InlineBanner tone="info" title="Heads up">Details</InlineBanner>);
-    expect(screen.getByRole('status')).toHaveTextContent('Heads up');
-  });
-
-  it('dismiss button calls onDismiss', async () => {
-    const onDismiss = vi.fn();
-    render(<InlineBanner tone="warn" onDismiss={onDismiss}>Offline</InlineBanner>);
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(onDismiss).toHaveBeenCalled();
   });
 });
 

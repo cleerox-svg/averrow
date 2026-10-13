@@ -14,6 +14,7 @@ import { AlertIcon, ChevronRightIcon, InfoIcon, CheckIcon, WarnIcon, XIcon } fro
 
 export type BannerTone = 'critical' | 'high' | 'medium' | 'low' | 'info' | 'success';
 export type BannerVariant = 'inline' | 'prominent';
+export type BannerDensity = 'default' | 'compact';
 
 const ICONS: Record<BannerTone, typeof InfoIcon> = {
   critical: AlertIcon, high: WarnIcon, medium: WarnIcon, low: InfoIcon, info: InfoIcon, success: CheckIcon,
@@ -24,10 +25,10 @@ type Slot = 'icon' | 'main' | 'actions' | 'close';
 // Grid columns/areas built from what is actually rendered, so an absent
 // icon/actions/close never leaves an empty track. `stacked` puts actions on a
 // second row under the text column (narrow screens and the prominent variant).
-function layout(has: Record<Exclude<Slot, 'main'>, boolean>, stacked: boolean): { cols: string; areas: string } {
+function layout(has: Record<Exclude<Slot, 'main'>, boolean>, stacked: boolean, iconWidth: string): { cols: string; areas: string } {
   const row: Slot[] = [];
   const cols: string[] = [];
-  if (has.icon) { row.push('icon'); cols.push('28px'); }
+  if (has.icon) { row.push('icon'); cols.push(iconWidth); }
   row.push('main'); cols.push('minmax(0, 1fr)');
   if (has.actions && !stacked) { row.push('actions'); cols.push('auto'); }
   if (has.close) { row.push('close'); cols.push('auto'); }
@@ -45,6 +46,8 @@ function resolveTone(tone: string | undefined): BannerTone {
 export interface BannerProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> {
   tone?: BannerTone;
   variant?: BannerVariant;
+  /** `compact` is the form/settings flavour (inside cards, forms, settings groups): tinted fill, bare 20px icon, never clamped. Inline variant only. Default is page-level. */
+  density?: BannerDensity;
   title: ReactNode;
   /** Message. Inline banners clamp title/message to 2 lines while collapsed, and offer "Show more" only when the text actually overflows. */
   children?: ReactNode;
@@ -73,7 +76,7 @@ export interface BannerProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> 
 }
 
 export function Banner({
-  tone, variant = 'inline', title, children, eyebrow, icon, pulse = false, actions, footer, details,
+  tone, variant = 'inline', density = 'default', title, children, eyebrow, icon, pulse = false, actions, footer, details,
   detailsTrigger = 'button', open, defaultOpen = false, onOpenChange, onDismiss,
   dismissLabel = 'Dismiss', headingLevel = 'none', labelFromTitle = false, headerRef, className, style, ...rest
 }: BannerProps) {
@@ -93,7 +96,8 @@ export function Banner({
   // Inline banners clamp while collapsed (and the clamp is measured); the
   // header-toggle title lives in a button and is never clamped. Prominent
   // banners never clamp.
-  const clampable = variant === 'inline';
+  const compact = variant === 'inline' && density === 'compact';
+  const clampable = variant === 'inline' && !compact;
   const titleRef = useRef<HTMLElement | null>(null);
   const msgRef = useRef<HTMLDivElement | null>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -124,8 +128,9 @@ export function Banner({
 
   const toggleControls = { 'aria-expanded': isOpen, 'aria-controls': hasDetails ? detailsId : undefined };
   const stacked = variant === 'prominent';
-  const wide = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, stacked);
-  const narrow = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, true);
+  const iconWidth = compact ? '20px' : '28px';
+  const wide = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, stacked, iconWidth);
+  const narrow = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, true, iconWidth);
   const gridVars = {
     '--bn-cols': wide.cols, '--bn-areas': wide.areas, '--bn-cols-s': narrow.cols, '--bn-areas-s': narrow.areas,
   } as CSSProperties;
@@ -144,6 +149,7 @@ export function Banner({
       aria-labelledby={rest['aria-labelledby'] ?? (labelFromTitle ? titleId : undefined)}
       data-tone={t}
       data-variant={variant}
+      data-density={compact ? 'compact' : 'default'}
       className={cn('ds-banner', className)}
       style={{ ...gridVars, ...style }}
     >

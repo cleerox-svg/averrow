@@ -61,7 +61,7 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 > SegmentedControl, Field/Label/HelpText/FieldError, Input, Select, TimeInput),
 > `ui/overlays/` (Sheet, Dialog, ConfirmDialog, Menu family, ResponsiveMenu,
 > ToastProvider/useToast, TimezoneSelect) and `ui/settings/` (SettingsShell,
-> SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone, InlineBanner,
+> SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone,
 > CopyField), on Radix primitives (owner-approved), plus new tokens and opt-in
 > props on Badge/Tabs/FilterBar/Card/Avatar. These are imported from
 > `@averrow/shared/ui` directly — the ops `design-system/components` barrel does

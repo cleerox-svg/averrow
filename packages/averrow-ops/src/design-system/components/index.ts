@@ -14,6 +14,8 @@
 
 // ── Foundation ─────────────────────────────────────────────────────────────
 export { Button } from '../../components/ui/Button';
+// Shared-kit Button (sans, sentence case) for Banner actions; the ops Button above is mono/uppercase.
+export { Button as KitButton } from '@averrow/shared/ui';
 export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui/Button';
 
 // ── Shared kit (@averrow/shared/ui) ────────────────────────────────────────
