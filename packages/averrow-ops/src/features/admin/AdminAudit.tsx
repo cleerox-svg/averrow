@@ -463,7 +463,7 @@ export function AdminAudit() {
                         ? 'border-white/30'
                         : 'border-white/10 text-white/55'
                     }`}
-                    style={page === p ? { color: 'var(--amber)', borderColor: 'var(--amber)' } : undefined}
+                    style={page === p ? { color: 'var(--amber-text)', borderColor: 'var(--amber)' } : undefined}
                   >
                     {p}
                   </button>
@@ -551,7 +551,7 @@ function AuditRow({ entry, expanded, onToggle }: {
                     to={href}
                     onClick={(e) => e.stopPropagation()}
                     className="hover:underline"
-                    style={{ color: 'var(--blue)' }}
+                    style={{ color: 'var(--blue-text)' }}
                   >
                     {label} ↗
                   </Link>

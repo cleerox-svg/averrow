@@ -48,7 +48,7 @@ export function ScoreBreakdownCard({ breakdownJson, totalScore }: ScoreBreakdown
     <Card>
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Score Breakdown</SectionLabel>
-        <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber)' }}>
+        <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber-text)' }}>
           {Math.round(totalScore)} pts
         </span>
       </div>

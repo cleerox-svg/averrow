@@ -18,7 +18,7 @@ export function MarketingVisibility() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load marketing analytics. Try again in a moment.
         </p>
       </Card>
@@ -124,7 +124,7 @@ function AiCrawlerBreakdown({ data }: { data: MarketingVisibilityPayload }) {
             <div key={row.crawler_name}>
               <div className="flex items-center justify-between font-mono text-[11px] mb-1">
                 <span style={{ color: 'var(--text-primary)' }}>{row.crawler_name}</span>
-                <span style={{ color: 'var(--amber)' }}>{row.hits.toLocaleString()}</span>
+                <span style={{ color: 'var(--amber-text)' }}>{row.hits.toLocaleString()}</span>
               </div>
               <div className="rounded-full overflow-hidden" style={{ height: 3, background: 'var(--border-base)' }}>
                 <div
@@ -166,7 +166,7 @@ function AiReferralBySource({ data }: { data: MarketingVisibilityPayload }) {
             <div key={row.ai_source}>
               <div className="flex items-center justify-between font-mono text-[11px] mb-1">
                 <span style={{ color: 'var(--text-primary)' }}>{row.ai_source}</span>
-                <span style={{ color: 'var(--blue)' }}>{row.sessions.toLocaleString()}</span>
+                <span style={{ color: 'var(--blue-text)' }}>{row.sessions.toLocaleString()}</span>
               </div>
               <div className="rounded-full overflow-hidden" style={{ height: 3, background: 'var(--border-base)' }}>
                 <div

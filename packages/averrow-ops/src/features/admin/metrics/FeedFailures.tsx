@@ -36,7 +36,7 @@ export function FeedFailures() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load feed-failure data. Try again in a moment.
         </p>
       </Card>
@@ -353,7 +353,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
           </div>
         </div>
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
             Last failure
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -367,7 +367,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded font-mono text-[10px] tracking-[0.12em] uppercase transition-colors"
         style={{
           background: 'var(--amber-glow)',
-          color:      'var(--amber)',
+          color:      'var(--amber-text)',
           border:     '1px solid var(--amber-border)',
         }}
         onClick={(e) => e.stopPropagation()}
@@ -446,7 +446,7 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
               </span>
               <span
                 className="font-mono text-[11px] flex-1 break-words"
-                style={{ color: 'var(--sev-high)' }}
+                style={{ color: 'var(--sev-high-text)' }}
               >
                 {err.error_message}
               </span>

@@ -543,7 +543,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
           {lead.company_domain && <span>{lead.company_domain}</span>}
           {lead.company_domain && <span>·</span>}
-          <span>Score: <span className="font-bold" style={{ color: 'var(--amber)' }}>{Math.round(lead.prospect_score)}</span></span>
+          <span>Score: <span className="font-bold" style={{ color: 'var(--amber-text)' }}>{Math.round(lead.prospect_score)}</span></span>
           {lead.email_security_grade && (
             <>
               <span>·</span>
@@ -801,7 +801,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber)' }}>{lead.prospect_score}</span>
+                  <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber-text)' }}>{lead.prospect_score}</span>
                   {lead.email_security_grade && (
                     <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[8px] py-0 px-1.5">
                       {lead.email_security_grade}

@@ -42,6 +42,7 @@ import { Card, Avatar, Badge, Button, Sparkline, StatTile, PageState, Table, Th,
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { SignalBreakdownCard } from '@/components/ui/SignalBreakdownCard';
 import { timeAgo } from '@/lib/time';
+import { accentText } from '@/lib/accent-text';
 import {
   ExposureIndexCard,
   ActiveThreatsCard,
@@ -452,7 +453,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
           </div>
           <Link
             to={tabUrl('threats', { brand_id: brandId })}
-            className="text-[11px] font-mono text-[var(--amber)] hover:underline"
+            className="text-[11px] font-mono text-[var(--amber-text)] hover:underline"
           >
             Open in Threats →
           </Link>
@@ -520,7 +521,7 @@ function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
           </div>
           <Link
             to={tabUrl('alerts', { brand_id: brandId })}
-            className="text-[11px] font-mono text-[var(--amber)] hover:underline"
+            className="text-[11px] font-mono text-[var(--amber-text)] hover:underline"
           >
             Open in Alerts →
           </Link>
@@ -811,9 +812,9 @@ function AttackInfraSection({ providers, campaigns }: {
                 <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">{p.name}</span>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {p.active_count > 0 && (
-                    <span className="font-mono text-[9px] uppercase tracking-wide text-[var(--sev-high)]">{p.active_count} active</span>
+                    <span className="font-mono text-[9px] uppercase tracking-wide text-[var(--sev-high-text)]">{p.active_count} active</span>
                   )}
-                  <span className="font-mono text-xs font-bold text-[var(--blue)]">{p.threat_count.toLocaleString()}</span>
+                  <span className="font-mono text-xs font-bold text-[var(--blue-text)]">{p.threat_count.toLocaleString()}</span>
                   <span className="text-[var(--text-muted)]">→</span>
                 </div>
               </Link>
@@ -842,7 +843,7 @@ function AttackInfraSection({ providers, campaigns }: {
                     <Badge status={active ? 'active' : 'inactive'} label={active ? 'Active' : 'Dormant'} size="xs" pulse={active} />
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="font-mono text-xs font-bold text-[var(--amber)]">{(c.threat_count ?? 0).toLocaleString()}</span>
+                    <span className="font-mono text-xs font-bold text-[var(--amber-text)]">{(c.threat_count ?? 0).toLocaleString()}</span>
                     <span className="text-[var(--text-muted)]">→</span>
                   </div>
                 </Link>
@@ -957,14 +958,14 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
               style={{
                 background: 'var(--bg-card-deep)',
                 borderLeft: `3px solid ${sev.color}`,
-                border: `1px solid ${sev.color}25`,
-                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 14px ${sev.color}10`,
+                border: `1px solid color-mix(in srgb, ${sev.color} 15%, transparent)`,
+                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 14px color-mix(in srgb, ${sev.color} 6%, transparent)`,
               }}
             >
               <div className="flex items-start gap-3 mb-1.5">
                 <span
                   className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider flex-shrink-0"
-                  style={{ background: `${sev.color}20`, color: sev.color, border: `1px solid ${sev.color}40` }}
+                  style={{ background: `color-mix(in srgb, ${sev.color} 13%, transparent)`, color: accentText(sev.color), border: `1px solid color-mix(in srgb, ${sev.color} 25%, transparent)` }}
                 >
                   <span style={{ width: 5, height: 5, borderRadius: 999, background: sev.color, boxShadow: `0 0 6px ${sev.color}` }} />
                   {sev.label}
@@ -1046,8 +1047,8 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
         <SectionLabel>Typosquats <span className="text-[var(--text-muted)]">({rows.length})</span></SectionLabel>
         {(critical > 0 || high > 0) && (
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
-            {critical > 0 && <span className="text-[var(--sev-critical)]">{critical} critical</span>}
-            {high > 0 && <span className="text-[var(--amber)]">{high} high</span>}
+            {critical > 0 && <span className="text-[var(--sev-critical-text)]">{critical} critical</span>}
+            {high > 0 && <span className="text-[var(--amber-text)]">{high} high</span>}
           </div>
         )}
       </div>
@@ -1467,7 +1468,7 @@ function ScoreCard({
         {grade && (
           <span style={{
             padding: '2px 8px', borderRadius: 4,
-            background: 'rgba(60,184,120,0.10)', color: 'var(--green)',
+            background: 'rgba(60,184,120,0.10)', color: 'var(--green-text)',
             fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
           }}>{grade}</span>
         )}

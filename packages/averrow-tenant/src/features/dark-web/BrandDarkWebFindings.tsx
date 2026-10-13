@@ -110,7 +110,7 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
         <div className="flex items-center gap-1.5 flex-wrap mt-2">
           <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">matched</span>
           {matchedTerms.map((t) => (
-            <span key={t} className="text-[11px] font-mono text-amber/80 bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
+            <span key={t} className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
               {t}
             </span>
           ))}
@@ -166,7 +166,7 @@ function SourceChip({ source }: { source: string }) {
 
 function MatchTypeChip({ matchType }: { matchType: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue/85 bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {MATCH_TYPE_LABELS[matchType] ?? matchType}
     </span>
   );
@@ -177,7 +177,7 @@ function SeverityPill({ level }: { level: string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>

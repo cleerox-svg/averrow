@@ -39,7 +39,7 @@ export function ScoreChip({ score, size = 'md', className }: ScoreChipProps) {
       style={{
         background: tone.bg,
         border: `1px solid ${tone.border}`,
-        color: 'var(--amber)',
+        color: 'var(--amber-text)',
       }}
       title={`Prospect score: ${score}`}
     >

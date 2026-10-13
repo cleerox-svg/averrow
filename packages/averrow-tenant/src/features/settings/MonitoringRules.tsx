@@ -175,7 +175,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
           >
             {update.isPending ? 'Saving…' : 'Save rules'}
           </button>
-          {!dirty && !update.isPending && update.isSuccess && <span className="text-[12px] text-green/80">Saved.</span>}
+          {!dirty && !update.isPending && update.isSuccess && <span className="text-[12px] text-green">Saved.</span>}
           {update.isError && <span className="text-[12px] text-sev-critical">{update.error instanceof Error ? update.error.message : 'Save failed'}</span>}
         </div>
       ) : (

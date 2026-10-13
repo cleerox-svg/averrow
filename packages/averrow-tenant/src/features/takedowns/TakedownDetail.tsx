@@ -44,7 +44,7 @@ export function TakedownDetail() {
           {isStaff && <StaffTriageNote />}
           {canTriage && takedownActionsFor(data.takedown.status).length > 0 && (
             <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-2">Your decision</div>
+              <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-amber mb-2">Your decision</div>
               <p className="text-[12px] text-white/60 mb-3">
                 Review the evidence below, then approve to submit this request to the provider, or withdraw to decline it.
               </p>
@@ -186,7 +186,7 @@ function SubmissionRow({ row: r }: { row: TakedownSubmissionAuditRow }) {
           {SUBMITTER_KIND_LABELS[r.submitter_kind] ?? r.submitter_kind}
         </span>
         {r.ticket_id && (
-          <span className="text-[11px] font-mono text-amber/85">
+          <span className="text-[11px] font-mono text-amber">
             ticket: {r.ticket_id}
           </span>
         )}
@@ -220,7 +220,7 @@ function SubmissionRow({ row: r }: { row: TakedownSubmissionAuditRow }) {
 
 function OutcomePill({ outcome }: { outcome: string }) {
   const tone =
-    outcome === 'submitted' ? 'text-green/85   bg-green/[0.06]   border-green/[0.15]' :
+    outcome === 'submitted' ? 'text-green   bg-green/[0.06]   border-green/[0.15]' :
     outcome === 'queued'    ? 'text-amber      bg-amber/[0.10]   border-amber/[0.20]' :
     outcome === 'rejected'
     || outcome === 'failed' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
@@ -234,7 +234,7 @@ function OutcomePill({ outcome }: { outcome: string }) {
 
 function StatusPill({ status }: { status: string }) {
   const tone =
-    status === 'taken_down'                    ? 'text-green/85    bg-green/[0.06]    border-green/[0.15]' :
+    status === 'taken_down'                    ? 'text-green    bg-green/[0.06]    border-green/[0.15]' :
     status === 'failed' || status === 'expired' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     status === 'submitted' || status === 'pending_response' ? 'text-amber bg-amber/[0.10] border-amber/[0.20]' :
                                                  'text-white/55 bg-white/[0.04] border-white/[0.08]';
@@ -250,7 +250,7 @@ function SeverityPill({ level }: { level: string }) {
   const tone =
     norm === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     norm === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    norm === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    norm === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -261,7 +261,7 @@ function SeverityPill({ level }: { level: string }) {
 
 function ModuleChip({ module_key }: { module_key: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue/85 bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {MODULE_LABELS[module_key] ?? module_key}
     </span>
   );

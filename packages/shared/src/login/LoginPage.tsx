@@ -382,7 +382,7 @@ export function LoginPage(props: LoginPageProps) {
           <span
             className="mt-2 font-mono uppercase"
             style={{
-              color: 'var(--amber)',
+              color: 'var(--amber-text)',
               fontSize: 9,
               letterSpacing: '0.24em',
               fontWeight: 700,
@@ -417,7 +417,7 @@ export function LoginPage(props: LoginPageProps) {
             role="alert"
             data-testid="login-passkey-error"
             className="mt-2 font-mono"
-            style={{ color: 'var(--sev-critical)', fontSize: 11 }}
+            style={{ color: 'var(--sev-critical-text)', fontSize: 11 }}
           >
             {passkeyError}
           </p>
@@ -481,7 +481,7 @@ export function LoginPage(props: LoginPageProps) {
             >
               {magicLinkSentCopy ? magicLinkSentCopy(magicLink.email) : (
                 <>
-                  <strong style={{ color: 'var(--green)' }}>Check your inbox.</strong>
+                  <strong style={{ color: 'var(--green-text)' }}>Check your inbox.</strong>
                   {' '}We sent a sign-in link to{' '}
                   <span className="font-mono">{magicLink.email}</span>. The link
                   expires in {magicLink.minutes} minutes and can only be used once.
@@ -494,7 +494,7 @@ export function LoginPage(props: LoginPageProps) {
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: 'var(--amber)',
+                  color: 'var(--amber-text)',
                   fontSize: 10,
                   letterSpacing: '0.14em',
                   fontWeight: 700,
@@ -563,7 +563,7 @@ export function LoginPage(props: LoginPageProps) {
               role="alert"
               data-testid="login-magic-link-error"
               className="mt-2 font-mono"
-              style={{ color: 'var(--sev-critical)', fontSize: 11 }}
+              style={{ color: 'var(--sev-critical-text)', fontSize: 11 }}
             >
               {magicLink.message}
             </p>
@@ -583,7 +583,7 @@ export function LoginPage(props: LoginPageProps) {
             role="alert"
             data-testid="login-error"
             className="mt-6 font-mono"
-            style={{ color: 'var(--sev-critical)', fontSize: 12, outline: 'none' }}
+            style={{ color: 'var(--sev-critical-text)', fontSize: 12, outline: 'none' }}
           >
             {pageError}
           </p>

@@ -69,7 +69,7 @@ function Entry({ entry: e }: { entry: AuditEntry }) {
   const denied = e.outcome === 'denied' || e.outcome === 'failure';
   return (
     <div className="flex items-start gap-3 px-4 py-3">
-      <div className={`mt-0.5 rounded-md border p-1.5 ${isAuto ? 'border-blue/[0.20] bg-blue/[0.06] text-blue/85' : 'border-white/[0.08] bg-white/[0.04] text-white/60'}`}>
+      <div className={`mt-0.5 rounded-md border p-1.5 ${isAuto ? 'border-blue/[0.20] bg-blue/[0.06] text-blue' : 'border-white/[0.08] bg-white/[0.04] text-white/60'}`}>
         {isAuto ? <Bot size={13} /> : <User size={13} />}
       </div>
       <div className="flex-1 min-w-0">

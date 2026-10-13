@@ -208,7 +208,7 @@ export function AgentReview() {
                 rows={4}
               />
               {actionError && (
-                <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--sev-critical)' }}>
+                <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--sev-critical-text)' }}>
                   {actionError}
                 </div>
               )}
@@ -261,7 +261,7 @@ export function AgentReview() {
                       <span style={{ color: 'var(--text-tertiary)' }}>{run.records_processed} rec</span>
                     )}
                     {run.error_message && (
-                      <span className="italic truncate" style={{ color: 'var(--sev-critical)' }}>{run.error_message}</span>
+                      <span className="italic truncate" style={{ color: 'var(--sev-critical-text)' }}>{run.error_message}</span>
                     )}
                   </div>
                 ))}

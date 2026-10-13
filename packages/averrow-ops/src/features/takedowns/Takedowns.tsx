@@ -19,6 +19,7 @@ import {
 } from '@/design-system/components';
 import type { BadgeStatus, Severity } from '@/design-system/components';
 import { ReportPanel } from '@/components/ui/ReportPanel';
+import { accentText } from '@/lib/accent-text';
 
 // ─── Status mapping (DB → display) ────────────────────────────
 
@@ -187,22 +188,22 @@ function TakedownCard({
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '10px 14px',
         borderBottom: '1px solid var(--border-base)',
-        background: `${typeConf.color}08`,
+        background: `color-mix(in srgb, ${typeConf.color} 3%, transparent)`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {/* Type badge */}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 5,
             padding: '3px 8px', borderRadius: 6,
-            background: `${typeConf.color}15`,
-            border: `1px solid ${typeConf.color}35`,
+            background: `color-mix(in srgb, ${typeConf.color} 8%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${typeConf.color} 21%, transparent)`,
             flexShrink: 0,
           }}>
             <span style={{ fontSize: 12 }}>{typeConf.icon}</span>
             <span style={{
               fontSize: 9, fontFamily: 'var(--font-mono)',
               fontWeight: 800, letterSpacing: '0.12em',
-              color: typeConf.color, textTransform: 'uppercase',
+              color: accentText(typeConf.color), textTransform: 'uppercase',
             }}>
               {typeConf.label}
             </span>
@@ -224,10 +225,10 @@ function TakedownCard({
         <div style={{
           fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 800,
           letterSpacing: '0.14em', textTransform: 'uppercase',
-          color: statusConf.color,
+          color: accentText(statusConf.color),
           padding: '2px 8px', borderRadius: 4,
-          background: `${statusConf.color}12`,
-          border: `1px solid ${statusConf.color}30`,
+          background: `color-mix(in srgb, ${statusConf.color} 7%, transparent)`,
+          border: `1px solid color-mix(in srgb, ${statusConf.color} 19%, transparent)`,
           flexShrink: 0,
         }}>
           {statusConf.label}
@@ -247,7 +248,7 @@ function TakedownCard({
               to={`/brands/${takedown.brand_id}`}
               onClick={(e) => e.stopPropagation()}
               style={{ color: 'var(--text-muted)' }}
-              className="hover:text-[var(--amber)] transition-colors"
+              className="hover:text-[var(--amber-text)] transition-colors"
             >
               {takedown.brand_name} ↗
             </Link>
@@ -919,7 +920,7 @@ export function Takedowns() {
       {prospectTruncated && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--sev-high)',
+          fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--sev-high-text)',
           padding: '8px 12px', borderRadius: 8,
           background: 'var(--sev-high-bg)', border: '1px solid rgba(251,146,60,0.30)',
         }}>

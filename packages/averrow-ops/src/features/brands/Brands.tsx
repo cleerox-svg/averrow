@@ -13,6 +13,7 @@
 // PR3's scoring populates and PR5's candidates accumulate.
 
 import { useState, useMemo } from 'react';
+import { accentText } from '@/lib/accent-text';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip } from 'recharts';
 import { useAuth } from '@/lib/auth';
@@ -344,7 +345,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
             <div style={{
               fontSize: i === 3 ? 22 : 30,
               fontWeight: 800,
-              color: t.accent,
+              color: accentText(t.accent),
               textShadow: `0 0 12px ${t.accent}55`,
               textTransform: i === 3 ? 'capitalize' : 'none',
               lineHeight: 1.05,
@@ -659,13 +660,13 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
                   size={28}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--amber)] transition-colors">
+                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--amber-text)] transition-colors">
                     {b.name}
                   </div>
                   <div className="text-[11px] font-mono text-[var(--text-tertiary)] truncate">{b.canonical_domain}</div>
                 </div>
                 <div className="text-right flex-shrink-0" style={{ minWidth: 76 }}>
-                  <div className="text-sm font-bold" style={{ color: accent, textShadow: `0 0 6px ${accent}55` }}>
+                  <div className="text-sm font-bold" style={{ color: accentText(accent), textShadow: `0 0 6px ${accent}55` }}>
                     {b.delta_7d >= 0 ? '+' : ''}{b.delta_7d}
                   </div>
                   <div className="text-[10px] font-mono text-[var(--text-muted)]">
@@ -764,7 +765,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
         ))}
         <button
           onClick={onViewAll}
-          className="w-full mt-1 text-[11px] font-mono text-[var(--amber)] hover:underline"
+          className="w-full mt-1 text-[11px] font-mono text-[var(--amber-text)] hover:underline"
         >
           View {data?.total ?? 0} pending candidates →
         </button>
@@ -948,10 +949,10 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
                     {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
-                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber)' }}>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}>
                       {c.cert_count} certs
                     </span>
-                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue)' }}>
+                    <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(10,138,181,0.10)', color: 'var(--blue-text)' }}>
                       {c.distinct_issuers} issuers
                     </span>
                     <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(255,255,255,0.04)', color: 'var(--text-tertiary)' }}>
@@ -1040,7 +1041,7 @@ function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null 
           return (
             <div key={row.grade}>
               <div className="flex items-center justify-between text-[11px] font-mono">
-                <span className="font-bold" style={{ color: accent }}>{row.grade}</span>
+                <span className="font-bold" style={{ color: accentText(accent) }}>{row.grade}</span>
                 <span className="text-[var(--text-tertiary)]">
                   {formatNumber(row.count)} <span className="text-[var(--text-muted)]">({pct.toFixed(1)}%)</span>
                 </span>
@@ -1075,7 +1076,7 @@ function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate |
         </span>
       </div>
       <div className="mt-3">
-        <div className="text-2xl font-bold" style={{ color: 'var(--green)', textShadow: '0 0 8px rgba(60,184,120,0.55)' }}>
+        <div className="text-2xl font-bold" style={{ color: 'var(--green-text)', textShadow: '0 0 8px rgba(60,184,120,0.55)' }}>
           {enforcePct.toFixed(0)}%
         </div>
         <div className="text-[11px] font-mono text-[var(--text-tertiary)]">
@@ -1148,7 +1149,7 @@ function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
                 </div>
-                <span className="text-xs font-bold" style={{ color: accent }}>{b.count}</span>
+                <span className="text-xs font-bold" style={{ color: accentText(accent) }}>{b.count}</span>
               </div>
             </div>
           );
@@ -1332,7 +1333,7 @@ function ScoreBucketCard({ title, data, tone, subtitle, status }: {
           return (
             <div key={row.bucket}>
               <div className="flex items-center justify-between text-[11px] font-mono">
-                <span style={{ color }}>{row.bucket}</span>
+                <span style={{ color: accentText(color) }}>{row.bucket}</span>
                 <span className="text-[var(--text-tertiary)]">{formatNumber(row.count)}</span>
               </div>
               <div className="mt-0.5 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
@@ -1388,7 +1389,7 @@ function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
                 <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
                 <div className="text-[10px] font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
               </div>
-              <span className="text-sm font-bold flex-shrink-0" style={{ color: accent }}>
+              <span className="text-sm font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
                 {b.delta > 0 ? '+' : ''}{b.delta}
               </span>
             </div>

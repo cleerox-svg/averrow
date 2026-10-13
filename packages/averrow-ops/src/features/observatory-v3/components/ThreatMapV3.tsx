@@ -333,7 +333,7 @@ function MapFallback({ message, onRetry }: { message: string; onRetry?: () => vo
           style={{
             background: 'rgba(229,168,50,0.15)',
             border: '1px solid rgba(229,168,50,0.30)',
-            color: 'var(--amber)',
+            color: 'var(--amber-text)',
             cursor: 'pointer',
           }}
         >

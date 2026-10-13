@@ -109,7 +109,7 @@ function NotificationRow({ notification: n }: { notification: Notification }) {
           <h3 className="text-sm font-semibold text-white/90">{n.title}</h3>
           <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{n.message}</p>
           {n.recommended_action && (
-            <p className="text-[11px] text-amber/80 mt-2 font-mono">→ {n.recommended_action}</p>
+            <p className="text-[11px] text-amber mt-2 font-mono">→ {n.recommended_action}</p>
           )}
         </div>
         <span className="text-[10px] font-mono text-white/55 flex-shrink-0">

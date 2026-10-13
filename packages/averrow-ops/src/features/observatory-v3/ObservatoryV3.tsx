@@ -184,7 +184,7 @@ export function ObservatoryV3() {
               <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot density&hellip;</div>
             ) : botError ? (
               <div role="alert">
-                <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical)' }}>
+                <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical-text)' }}>
                   <AlertTriangle size={13} /> Bot density failed to load
                 </div>
                 <div className="mt-2">
@@ -431,8 +431,8 @@ export function ObservatoryV3() {
           }}
         >
           <div className="flex items-center gap-2">
-            <AlertTriangle size={13} style={{ color: 'var(--sev-critical)', flexShrink: 0 }} />
-            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+            <AlertTriangle size={13} style={{ color: 'var(--sev-critical-text)', flexShrink: 0 }} />
+            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
               Observatory data failed to load
             </span>
           </div>
@@ -523,7 +523,7 @@ export function ObservatoryV3() {
         </div>
         <div className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
-            <span style={{ color: 'var(--sev-info)' }}>GPU particles active</span>
+            <span style={{ color: 'var(--sev-info-text)' }}>GPU particles active</span>
           )}
         </div>
       </div>
@@ -662,7 +662,7 @@ export function ObservatoryV3() {
           </div>
           <div className="space-y-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
             <div>{clickedArc.arc.volume} threat{clickedArc.arc.volume > 1 ? 's' : ''}</div>
-            {clickedArc.arc.brand_name && <div style={{ color: 'var(--amber)' }}>Target: {clickedArc.arc.brand_name}</div>}
+            {clickedArc.arc.brand_name && <div style={{ color: 'var(--amber-text)' }}>Target: {clickedArc.arc.brand_name}</div>}
             {clickedArc.arc.source_region && <div>From: {clickedArc.arc.source_region}</div>}
             <div className="uppercase" style={{ color: `var(--sev-${clickedArc.arc.severity || 'medium'})` }}>
               {clickedArc.arc.severity}

@@ -1,4 +1,5 @@
 import { useState, useEffect, type CSSProperties } from 'react';
+import { accentText } from '@/lib/accent-text';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -125,7 +126,7 @@ function CardEyebrow({ icon: Icon, label, right }: { icon?: LucideIcon; label: s
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {Icon && <Icon size={12} style={{ color: 'var(--amber)' }} />}
+        {Icon && <Icon size={12} style={{ color: 'var(--amber-text)' }} />}
         <div style={sectionEyebrow}>{label}</div>
       </div>
       {right}
@@ -183,7 +184,7 @@ function BudgetPanel() {
       <CardEyebrow icon={DollarSign} label="AI Budget" right={<ThrottleBadge level={budget.throttle_level} />} />
 
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-        <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: accent, lineHeight: 1, letterSpacing: -0.5 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 800, color: accentText(accent), lineHeight: 1, letterSpacing: -0.5 }}>
           ${budget.spent_this_month.toFixed(2)}
         </span>
         <span style={{ ...mono, fontSize: 11, ...textTertiary }}>
@@ -247,7 +248,7 @@ function BudgetPanel() {
               onClick={() => setShowAll(!showAll)}
               style={{
                 marginTop: 8, ...mono, fontSize: 11, fontWeight: 600,
-                color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: 'var(--amber-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
               }}
             >
               {showAll ? 'Show top 5 only' : `Show all ${breakdownItems.length} agents`}
@@ -263,7 +264,7 @@ function BudgetPanel() {
           onClick={() => { setEditing(true); setLimitInput(String(budget.config.monthly_limit_usd)); }}
           style={{
             ...mono, fontSize: 11, fontWeight: 600,
-            color: 'var(--amber)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            color: 'var(--amber-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
           }}
         >
           Edit monthly limit →
@@ -355,7 +356,7 @@ function EmailSecuritySection() {
             )}
             {scanAction.state === 'confirming' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ ...mono, fontSize: 11, color: 'var(--amber)' }}>Scan all pending?</span>
+                <span style={{ ...mono, fontSize: 11, color: 'var(--amber-text)' }}>Scan all pending?</span>
                 <Button variant="ghost" size="sm" onClick={scanAction.execute}>
                   <Check size={12} /> Confirm
                 </Button>
@@ -365,17 +366,17 @@ function EmailSecuritySection() {
               </div>
             )}
             {scanAction.state === 'loading' && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber-text)' }}>
                 <Loader2 size={12} className="animate-spin" /> Scanning...
               </span>
             )}
             {scanAction.state === 'success' && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green)' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green-text)' }}>
                 <Check size={12} /> Queued for {pending} brands
               </span>
             )}
             {scanAction.state === 'error' && (
-              <span style={{ ...mono, fontSize: 11, color: 'var(--red)' }}>{scanAction.error}</span>
+              <span style={{ ...mono, fontSize: 11, color: 'var(--red-text)' }}>{scanAction.error}</span>
             )}
           </>
         }
@@ -493,7 +494,7 @@ function OperationCard({ op }: { op: OperationConfig }) {
   return (
     <Card padding="16px">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <Icon size={14} style={{ color: 'var(--amber)' }} />
+        <Icon size={14} style={{ color: 'var(--amber-text)' }} />
         <span style={{ ...mono, fontSize: 12, fontWeight: 700, ...textPrimary }}>{op.label}</span>
       </div>
       <div style={{ ...mono, fontSize: 11, ...textTertiary, marginBottom: 12 }}>{op.badge}</div>
@@ -505,7 +506,7 @@ function OperationCard({ op }: { op: OperationConfig }) {
       )}
       {action.state === 'confirming' && (
         <div>
-          <div style={{ ...mono, fontSize: 11, color: 'var(--amber)', marginBottom: 8, lineHeight: 1.5 }}>
+          <div style={{ ...mono, fontSize: 11, color: 'var(--amber-text)', marginBottom: 8, lineHeight: 1.5 }}>
             {op.confirmText}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
@@ -519,17 +520,17 @@ function OperationCard({ op }: { op: OperationConfig }) {
         </div>
       )}
       {action.state === 'loading' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--amber-text)' }}>
           <Loader2 size={12} className="animate-spin" /> Running…
         </div>
       )}
       {action.state === 'success' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--green-text)' }}>
           <Check size={12} /> Done
         </div>
       )}
       {action.state === 'error' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--red)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 11, color: 'var(--red-text)' }}>
           <X size={12} /> {action.error || 'Failed'}
         </div>
       )}
@@ -570,10 +571,10 @@ function MaintenanceSection() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Cpu size={14} style={{ color: 'var(--amber)' }} />
+            <Cpu size={14} style={{ color: 'var(--amber-text)' }} />
             <div style={sectionEyebrow}>Maintenance Operations</div>
           </div>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--amber)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--amber-text)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
             <AlertTriangle size={11} /> Super Admin
           </span>
         </div>
@@ -629,7 +630,7 @@ function PushBootstrapCard() {
       <Card variant="elevated" padding="12px 16px">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <BellRing size={14} style={{ color: 'var(--green)', flexShrink: 0 }} />
+            <BellRing size={14} style={{ color: 'var(--green-text)', flexShrink: 0 }} />
             <span style={{ ...mono, fontSize: 11, ...textTertiary }}>Push notifications · configured</span>
           </div>
           <Button variant="ghost" size="sm" onClick={() => navigate('/admin/push')}>
@@ -648,7 +649,7 @@ function PushBootstrapCard() {
             style={{
               flexShrink: 0, width: 36, height: 36, borderRadius: 8,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'var(--amber-glow)', color: 'var(--amber)',
+              background: 'var(--amber-glow)', color: 'var(--amber-text)',
             }}
           >
             <BellRing size={16} />
@@ -1164,7 +1165,7 @@ export function AdminDashboard() {
                     right={
                       <Link
                         to="/admin/governance?tab=audit"
-                        style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber)', textDecoration: 'none' }}
+                        style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber-text)', textDecoration: 'none' }}
                       >
                         Audit Log →
                       </Link>
@@ -1190,11 +1191,11 @@ export function AdminDashboard() {
                       {classifying ? 'Classifying…' : 'Classify SaaS Techniques'}
                     </Button>
                     {classifyResult && (
-                      <span style={{ ...mono, fontSize: 11, color: 'var(--green)' }}>✓ {classifyResult}</span>
+                      <span style={{ ...mono, fontSize: 11, color: 'var(--green-text)' }}>✓ {classifyResult}</span>
                     )}
                     <Link
                       to="/settings/security"
-                      style={{ ...mono, fontSize: 11, color: 'var(--amber)', textDecoration: 'none' }}
+                      style={{ ...mono, fontSize: 11, color: 'var(--amber-text)', textDecoration: 'none' }}
                     >
                       Revoke all sessions →
                     </Link>
@@ -1264,7 +1265,7 @@ function InfraTile({
               boxShadow: `0 0 10px ${pulseColor}`, flexShrink: 0,
             }} />
           ) : (
-            <Icon size={13} style={{ color: 'var(--amber)' }} />
+            <Icon size={13} style={{ color: 'var(--amber-text)' }} />
           )}
           <span style={{
             ...mono, fontSize: 12, fontWeight: 700, ...textPrimary,

@@ -16,6 +16,7 @@
 // (Strategist creates notifications with `link: /campaigns/:id`).
 // This page is the drill-down those clicks land on.
 import { useNavigate, useParams, Link } from 'react-router-dom';
+import { accentText } from '@/lib/accent-text';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import {
   Badge,
@@ -169,7 +170,7 @@ export function CampaignDetail() {
       {/* ─── Back link ─────────────────────────────────────── */}
       <button
         onClick={backToList}
-        className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
+        className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber-text)]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         <ArrowLeft size={12} /> Back to Operations
@@ -198,7 +199,7 @@ export function CampaignDetail() {
                   style={{
                     background: `${accent}15`,
                     border: `1px solid ${accent}40`,
-                    color: accent,
+                    color: accentText(accent),
                   }}
                 >
                   {attackType.replace(/_/g, ' ')}
@@ -316,7 +317,7 @@ export function CampaignDetail() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold" style={{ color: accent }}>
+                    <span className="font-mono text-xs font-bold" style={{ color: accentText(accent) }}>
                       {b.threat_count.toLocaleString()}
                     </span>
                     <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />
@@ -348,7 +349,7 @@ export function CampaignDetail() {
                     {p.provider_name}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold" style={{ color: 'var(--blue)' }}>
+                    <span className="font-mono text-xs font-bold" style={{ color: 'var(--blue-text)' }}>
                       {p.threat_count.toLocaleString()}
                     </span>
                     <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />

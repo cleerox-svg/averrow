@@ -23,7 +23,7 @@ export function AverrowLogo({ size = 'default' }: { size?: 'small' | 'default' |
       </svg>
       <div>
         <div className="font-bold tracking-[0.15em] text-sm" style={{ color: 'var(--text-primary)' }}>AVERROW</div>
-        <div className="font-mono text-[7px] tracking-[0.2em]" style={{ color: 'var(--amber)' }}>TENANT</div>
+        <div className="font-mono text-[7px] tracking-[0.2em]" style={{ color: 'var(--amber-text)' }}>TENANT</div>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { accentText } from '@/lib/accent-text';
 import { useSpamTrapAddresses, useSeedingSources, useRetireSeedAddress } from '@/hooks/useSpamTrap';
 import type { SeedAddress, SeedingSource } from '@/hooks/useSpamTrap';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -394,10 +395,10 @@ export function HoneypotNetworkPanel() {
                       {isOpen
                         ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
                         : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
-                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accent }}>
+                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accent }}>
+                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accentText(accent) }}>
                         {items.length}
                       </span>
                       <span className="font-mono text-[9px] text-white/55 truncate">
@@ -478,7 +479,7 @@ export function HoneypotNetworkPanel() {
                   <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Bot Visits</div>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
-                  <div className="font-mono text-xl font-bold text-[#E5A832]">{seedingData.honeypot_visits.last_24h}</div>
+                  <div className="font-mono text-xl font-bold text-[var(--amber-text)]">{seedingData.honeypot_visits.last_24h}</div>
                   <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Last 24h</div>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
@@ -593,10 +594,10 @@ export function HoneypotNetworkPanel() {
                       {isOpen
                         ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
                         : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
-                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accent }}>
+                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accent }}>
+                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accentText(accent) }}>
                         {items.length}
                       </span>
                       <span
