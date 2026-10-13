@@ -27,12 +27,12 @@ export function BrandSocialFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/social" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/modules/social" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO SOCIAL MEDIA
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Social Media Impersonation · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Social Media Impersonation · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
@@ -71,8 +71,8 @@ export function BrandSocialFindings() {
 function ProfilesSection({ rows }: { rows: SocialProfileRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Profiles <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        Profiles <span className="text-white/55">({rows.length})</span>
       </h2>
       <div className="space-y-2">
         {rows.map((p) => <ProfileRow key={p.id} profile={p} />)}
@@ -118,13 +118,13 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-white/90 truncate">@{p.handle}</span>
-          {p.display_name && <span className="text-[12px] text-white/45 truncate hidden sm:inline">{p.display_name}</span>}
+          {p.display_name && <span className="text-[12px] text-white/55 truncate hidden sm:inline">{p.display_name}</span>}
           <PlatformChip platform={p.platform} />
           <Badge severity={p.severity} size="md" />
           <Badge classification={p.classification} size="md" />
         </div>
         {secondary && (
-          <p className="text-[11px] text-white/45 mt-0.5 truncate" title={secondary}>{secondary}</p>
+          <p className="text-[11px] text-white/55 mt-0.5 truncate" title={secondary}>{secondary}</p>
         )}
       </div>
 
@@ -134,12 +134,12 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
             <span className={`text-lg font-bold tabular-nums ${p.impersonation_score >= 0.7 ? 'text-sev-critical' : 'text-amber'}`}>
               {Math.round(p.impersonation_score * 100)}%
             </span>
-            <div className="text-[8px] uppercase tracking-widest font-mono text-white/35 mt-0.5">match</div>
+            <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mt-0.5">match</div>
           </div>
         )}
         <div className="flex items-center gap-2 mt-0.5">
           {p.followers_count !== null && (
-            <span className="text-[10px] font-mono text-white/40">{formatFollowers(p.followers_count)}</span>
+            <span className="text-[10px] font-mono text-white/55">{formatFollowers(p.followers_count)}</span>
           )}
           {p.profile_url && (
             <a
@@ -194,7 +194,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No social profiles tracked for this brand yet.</p>
-      <p className="text-white/35 text-xs mt-1">Profiles are added as the social monitor scanner finds them.</p>
+      <p className="text-white/55 text-xs mt-1">Profiles are added as the social monitor scanner finds them.</p>
     </div>
   );
 }

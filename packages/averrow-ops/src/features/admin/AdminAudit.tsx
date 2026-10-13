@@ -439,21 +439,21 @@ export function AdminAudit() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-1">
-          <span className="font-mono text-[11px] text-white/40">
+          <span className="font-mono text-[11px] text-white/55">
             Showing {showFrom}&ndash;{showTo} of {total.toLocaleString()} entries
           </span>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 disabled:opacity-30 transition-colors"
+              className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/55 disabled:opacity-30 transition-colors"
             >
               Prev
             </button>
             <span className="hidden sm:contents">
               {pageNumbers.map((p, i) =>
                 p === 'ellipsis' ? (
-                  <span key={`e${i}`} className="font-mono text-[11px] text-white/30 px-1">&hellip;</span>
+                  <span key={`e${i}`} className="font-mono text-[11px] text-white/55 px-1">&hellip;</span>
                 ) : (
                   <button
                     key={p}
@@ -461,7 +461,7 @@ export function AdminAudit() {
                     className={`font-mono text-[11px] px-2.5 py-1 rounded border transition-colors ${
                       page === p
                         ? 'border-white/30'
-                        : 'border-white/10 text-white/40'
+                        : 'border-white/10 text-white/55'
                     }`}
                     style={page === p ? { color: 'var(--amber)', borderColor: 'var(--amber)' } : undefined}
                   >
@@ -473,7 +473,7 @@ export function AdminAudit() {
             <button
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 disabled:opacity-30 transition-colors"
+              className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/55 disabled:opacity-30 transition-colors"
             >
               Next
             </button>
@@ -532,7 +532,7 @@ function AuditRow({ entry, expanded, onToggle }: {
 
         {/* User */}
         <Td className="px-3 py-2.5 font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>
-          {entry.user_id ? truncateMiddle(entry.user_id, 20) : <span className="text-white/40">System</span>}
+          {entry.user_id ? truncateMiddle(entry.user_id, 20) : <span className="text-white/55">System</span>}
         </Td>
 
         {/* IP */}
@@ -564,7 +564,7 @@ function AuditRow({ entry, expanded, onToggle }: {
         <Td className="px-3 py-2.5 text-center">
           <svg
             aria-hidden="true"
-            className={`w-4 h-4 text-white/40 group-hover:text-white/50 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            className={`w-4 h-4 text-white/55 group-hover:text-white/80 transition-transform ${expanded ? 'rotate-180' : ''}`}
             fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />

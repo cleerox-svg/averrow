@@ -18,7 +18,7 @@ export function AuditLog() {
   return (
     <div className="max-w-3xl space-y-6">
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Account</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Account</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Audit Log</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           Every automation and human action on your organization — signal triage, takedown decisions, authorization changes, and membership — with who did it and when.
@@ -33,7 +33,7 @@ export function AuditLog() {
 
       {canView && (
         <>
-          {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading…</div>}
+          {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading…</div>}
           {error && (
             <section className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-5">
               <h2 className="text-sm font-semibold text-white/90">Couldn't load the audit log</h2>
@@ -43,9 +43,9 @@ export function AuditLog() {
 
           {data && (data.entries.length === 0 ? (
             <section className="rounded-xl border border-white/[0.06] bg-bg-card p-8 text-center">
-              <ScrollText size={26} className="mx-auto text-white/30 mb-2" />
+              <ScrollText size={26} className="mx-auto text-white/55 mb-2" />
               <p className="text-sm text-white/70">No recorded actions yet.</p>
-              <p className="text-[11px] text-white/40 mt-1">Actions on your org will appear here as they happen.</p>
+              <p className="text-[11px] text-white/55 mt-1">Actions on your org will appear here as they happen.</p>
             </section>
           ) : (
             <section className="rounded-xl border border-white/[0.06] bg-bg-card divide-y divide-white/[0.05]">
@@ -82,7 +82,7 @@ function Entry({ entry: e }: { entry: AuditEntry }) {
             </span>
           )}
         </div>
-        <div className="text-[11px] text-white/40 mt-0.5 font-mono">
+        <div className="text-[11px] text-white/55 mt-0.5 font-mono">
           {e.actor ?? 'Automation'}{e.resource_type ? ` · ${e.resource_type.replace(/_/g, ' ')}` : ''} · {formatTimestamp(e.timestamp)}
         </div>
       </div>
@@ -100,7 +100,7 @@ function Pager({
   const btn = 'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[11px] text-white/40 font-mono">showing {start}–{end} of {total}</span>
+      <span className="text-[11px] text-white/55 font-mono">showing {start}–{end} of {total}</span>
       <div className="flex items-center gap-1.5">
         <button type="button" className={btn} disabled={page === 0} onClick={() => onPage(page - 1)}>Prev</button>
         <button type="button" className={btn} disabled={end >= total} onClick={() => onPage(page + 1)}>Next</button>

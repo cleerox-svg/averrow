@@ -119,7 +119,7 @@ function gradeBadge(grade: string | null) {
 }
 
 function rankBadge(rank: number) {
-  let style = 'border-white/10 text-white/40';
+  let style = 'border-white/10 text-white/55';
   if (rank === 1) style = 'border-yellow-400 text-yellow-400';
   else if (rank === 2) style = 'border-[var(--border-strong)] text-[var(--text-secondary)]';
   else if (rank === 3) style = 'border-amber-600 text-amber-600';
@@ -798,23 +798,23 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-3">
-                <span className="font-mono text-[11px] text-white/40">
+                <span className="font-mono text-[11px] text-white/55">
                   Showing {showFrom}&ndash;{showTo} of {filteredBrands.length.toLocaleString()}
                   {brandStats?.total_tracked && brandStats.total_tracked > filteredBrands.length ? (
-                    <> &middot; <span className="text-white/30">{brandStats.total_tracked.toLocaleString()} in catalog</span></>
+                    <> &middot; <span className="text-white/55">{brandStats.total_tracked.toLocaleString()} in catalog</span></>
                   ) : null}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setPage(p => Math.max(1, p - 1))}
                     disabled={page === 1}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
+                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
                   >
                     Prev
                   </button>
                   {pageNumbers.map((p, i) =>
                     p === 'ellipsis' ? (
-                      <span key={`e${i}`} className="font-mono text-[11px] text-white/30 px-1">&hellip;</span>
+                      <span key={`e${i}`} className="font-mono text-[11px] text-white/55 px-1">&hellip;</span>
                     ) : (
                       <button
                         key={p}
@@ -823,7 +823,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                           'font-mono text-[11px] px-2.5 py-1 rounded border transition-colors',
                           page === p
                             ? 'border-afterburner text-[#E5A832]'
-                            : 'border-white/10 text-white/40 hover:text-[var(--text-primary)]',
+                            : 'border-white/10 text-white/55 hover:text-[var(--text-primary)]',
                         )}
                       >
                         {p}
@@ -833,7 +833,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                   <button
                     onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                     disabled={page >= totalPages}
-                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/40 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
+                    className="font-mono text-[11px] px-2.5 py-1 rounded border border-white/10 text-white/55 hover:text-[var(--text-primary)] disabled:opacity-30 transition-colors"
                   >
                     Next
                   </button>

@@ -86,7 +86,7 @@ export function FirmographicsCard({ lead, onRefresh, refreshing }: Firmographics
       </div>
 
       {!hasAny ? (
-        <p className="text-sm text-white/40 italic">
+        <p className="text-sm text-white/55 italic">
           No firmographic data yet. SEC EDGAR / Wikidata coverage is sparse for private companies and brands outside US/UK.
           {onRefresh && ' Click Refresh to try the public-records lookup.'}
         </p>

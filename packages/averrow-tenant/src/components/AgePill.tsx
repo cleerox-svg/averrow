@@ -7,7 +7,7 @@ import { ageInfo } from '@/lib/sla';
 const TONE: Record<string, string> = {
   overdue: 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]',
   aging:   'text-amber        bg-amber/[0.08]        border-amber/[0.18]',
-  ok:      'text-white/45     bg-white/[0.03]        border-white/[0.07]',
+  ok:      'text-white/55     bg-white/[0.03]        border-white/[0.07]',
 };
 
 const TITLE: Record<string, string> = {

@@ -513,7 +513,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                 </defs>
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 9, fill: '#78A0C8', opacity: 0.5 }}
+                  tick={{ fontSize: 9, fill: '#78A0C8', opacity: 0.8 }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -539,7 +539,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-40 flex items-center justify-center font-mono text-[11px] text-white/40">
+            <div className="h-40 flex items-center justify-center font-mono text-[11px] text-white/55">
               No timeline data
             </div>
           )}
@@ -576,7 +576,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               ))}
             </div>
           ) : (
-            <div className="font-mono text-[11px] text-white/40 py-4 text-center">
+            <div className="font-mono text-[11px] text-white/55 py-4 text-center">
               No cluster linkage
             </div>
           )}

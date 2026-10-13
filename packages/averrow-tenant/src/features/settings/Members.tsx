@@ -31,14 +31,14 @@ export function Members() {
     <div className="max-w-3xl space-y-6">
       <Link
         to="/settings"
-        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70"
+        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70"
       >
         <ArrowLeft size={12} /> BACK TO SETTINGS
       </Link>
 
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Settings</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>
           <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Members</h1>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
             Anyone with access to {user?.organization?.name ?? 'this organization'}. Org admins and owners can invite, remove, and change roles.
@@ -63,13 +63,13 @@ export function Members() {
           <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-white/90">Active members</h2>
-              <span className="text-[11px] font-mono text-white/45 tabular-nums">
+              <span className="text-[11px] font-mono text-white/55 tabular-nums">
                 {members?.length ?? 0}
               </span>
             </div>
 
             {membersLoading && (
-              <p className="text-[12px] text-white/40 font-mono py-6 text-center">Loading…</p>
+              <p className="text-[12px] text-white/55 font-mono py-6 text-center">Loading…</p>
             )}
             {membersError && (
               <p className="text-[12px] text-sev-critical py-2">
@@ -77,7 +77,7 @@ export function Members() {
               </p>
             )}
             {!membersLoading && !membersError && (!members || members.length === 0) && (
-              <p className="text-[12px] text-white/45 py-2">No members yet.</p>
+              <p className="text-[12px] text-white/55 py-2">No members yet.</p>
             )}
             {!membersLoading && members && members.length > 0 && (
               <div className="space-y-1">
@@ -96,16 +96,16 @@ export function Members() {
           <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-white/90">Pending invitations</h2>
-              <span className="text-[11px] font-mono text-white/45 tabular-nums">
+              <span className="text-[11px] font-mono text-white/55 tabular-nums">
                 {invites?.length ?? 0}
               </span>
             </div>
 
             {invitesLoading && (
-              <p className="text-[12px] text-white/40 font-mono py-6 text-center">Loading…</p>
+              <p className="text-[12px] text-white/55 font-mono py-6 text-center">Loading…</p>
             )}
             {!invitesLoading && (!invites || invites.length === 0) && (
-              <p className="text-[12px] text-white/45 py-2">No pending invitations.</p>
+              <p className="text-[12px] text-white/55 py-2">No pending invitations.</p>
             )}
             {!invitesLoading && invites && invites.length > 0 && (
               <div className="space-y-1">
@@ -170,7 +170,7 @@ function InviteForm() {
           placeholder="email@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="flex-1 min-w-0 rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
+          className="flex-1 min-w-0 rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
         />
         <select
           value={role}
@@ -215,7 +215,7 @@ function InviteForm() {
             <button
               type="button"
               onClick={() => setCopiedUrl(null)}
-              className="flex-shrink-0 text-[11px] font-mono text-white/45 hover:text-white/70 px-1"
+              className="flex-shrink-0 text-[11px] font-mono text-white/55 hover:text-white/70 px-1"
             >
               ✕
             </button>
@@ -287,7 +287,7 @@ function MemberRow({
             </span>
           )}
         </div>
-        <div className="text-[11px] font-mono text-white/45 truncate">{member.is_averrow ? 'Averrow security operations' : member.email}</div>
+        <div className="text-[11px] font-mono text-white/55 truncate">{member.is_averrow ? 'Averrow security operations' : member.email}</div>
       </div>
       <div className="flex-shrink-0 flex items-center gap-2">
         {editingRole && canManageThis ? (
@@ -310,7 +310,7 @@ function MemberRow({
             className={`text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border ${
               canManageThis
                 ? 'border-white/[0.10] text-white/75 hover:text-white hover:border-white/[0.25] cursor-pointer'
-                : 'border-white/[0.05] text-white/45 cursor-default'
+                : 'border-white/[0.05] text-white/55 cursor-default'
             } transition-colors`}
             title={canManageThis ? 'Click to change role' : undefined}
           >
@@ -322,7 +322,7 @@ function MemberRow({
             type="button"
             onClick={handleRemove}
             disabled={removeMember.isPending}
-            className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+            className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
             title="Remove member"
           >
             <Trash2 size={13} />
@@ -396,7 +396,7 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
               </span>
             )}
           </div>
-          <div className="text-[11px] font-mono text-white/45">
+          <div className="text-[11px] font-mono text-white/55">
             Invited as {ORG_ROLE_LABELS[invite.org_role] ?? invite.org_role}
             {!isExpired && ' · expires '}
             {!isExpired && formatRelative(invite.expires_at)}
@@ -408,7 +408,7 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
               type="button"
               onClick={handleResend}
               disabled={resend.isPending}
-              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-amber hover:bg-amber/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-amber hover:bg-amber/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
               title={isExpired ? 'Resend (rotates token + extends expiry)' : 'Resend invite (rotates token)'}
             >
               {resend.isPending ? <Check size={13} /> : <Send size={13} />}
@@ -417,7 +417,7 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
               type="button"
               onClick={handleRevoke}
               disabled={revoke.isPending}
-              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
               title="Revoke invitation"
             >
               {revoke.isPending ? <Check size={13} /> : <Trash2 size={13} />}
@@ -452,7 +452,7 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
             <button
               type="button"
               onClick={() => setResentUrl(null)}
-              className="flex-shrink-0 text-[10px] font-mono text-white/45 hover:text-white/70 px-1"
+              className="flex-shrink-0 text-[10px] font-mono text-white/55 hover:text-white/70 px-1"
             >
               ✕
             </button>
@@ -537,7 +537,7 @@ function TransferOwnershipSection({
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm text-white/90 truncate">{m.user_name || m.email}</div>
-                <div className="text-[11px] font-mono text-white/45 truncate">
+                <div className="text-[11px] font-mono text-white/55 truncate">
                   {ORG_ROLE_LABELS[m.role] ?? m.role} · {m.email}
                 </div>
               </div>

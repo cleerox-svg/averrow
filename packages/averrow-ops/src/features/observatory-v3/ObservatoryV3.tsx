@@ -656,7 +656,7 @@ export function ObservatoryV3() {
             <span className="font-mono text-xs font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
               {clickedArc.arc.threat_type?.replace(/_/g, ' ')}
             </span>
-            <button onClick={() => setClickedArc(null)} className="text-white/30 hover:text-white/60" style={{ cursor: 'pointer', background: 'none', border: 'none' }}>
+            <button onClick={() => setClickedArc(null)} className="text-white/55 hover:text-white/60" style={{ cursor: 'pointer', background: 'none', border: 'none' }}>
               x
             </button>
           </div>

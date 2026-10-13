@@ -194,7 +194,7 @@ export function DarkWeb() {
           <FilterSelect label="Severity"       value={severity}       onChange={(v) => { setSeverity(v); setPage(0); }}       options={SEVERITY_OPTIONS} />
           <FilterSelect label="Classification" value={classification} onChange={(v) => { setClassification(v); setPage(0); }} options={CLASSIFICATION_OPTIONS} />
           <FilterSelect label="Status"         value={status}         onChange={(v) => { setStatus(v as DarkWebStatus); setPage(0); }} options={STATUS_OPTIONS} />
-          <div className="ml-auto font-mono text-[10px] text-white/40">
+          <div className="ml-auto font-mono text-[10px] text-white/55">
             {formatCount(total)} match{total === 1 ? '' : 'es'}
           </div>
         </div>
@@ -257,9 +257,9 @@ function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n:
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Source mix · all active</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Source mix · all active</div>
         {data.length === 0 ? (
-          <div className="text-white/40 text-xs">No mentions ingested yet.</div>
+          <div className="text-white/55 text-xs">No mentions ingested yet.</div>
         ) : (
           <div className="space-y-2">
             {data.map(d => {
@@ -289,9 +289,9 @@ function SeverityMixCard({ data, totalActive }: { data: Array<{ severity: string
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Severity mix · all active</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Severity mix · all active</div>
         {totalActive === 0 ? (
-          <div className="text-white/40 text-xs">No mentions ingested yet.</div>
+          <div className="text-white/55 text-xs">No mentions ingested yet.</div>
         ) : (
           <div className="space-y-2">
             {order.map(sev => {
@@ -332,13 +332,13 @@ function SearchAndScopeCard({
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Search & scope</div>
+        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Search & scope</div>
         <input
           type="text"
           value={q}
           onChange={e => onQ(e.target.value)}
           placeholder="Search snippet, channel, brand…"
-          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/35 focus:border-[var(--amber-border)] focus:outline-none"
+          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-[var(--amber-border)] focus:outline-none"
         />
         {hasFilters && (
           <button
@@ -363,7 +363,7 @@ function FilterSelect({
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-white/40">
+    <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-white/55">
       <span>{label}</span>
       <select
         value={value}
@@ -432,10 +432,10 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             className="text-left hover:text-[var(--amber-text)]"
           >
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
-            {m.brand_domain && <div className="font-mono text-[10px] text-white/45">{m.brand_domain}</div>}
+            {m.brand_domain && <div className="font-mono text-[10px] text-white/55">{m.brand_domain}</div>}
           </button>
         ) : (
-          <span className="text-white/40 text-xs">—</span>
+          <span className="text-white/55 text-xs">—</span>
         )}
       </Td>
       <Td>
@@ -444,17 +444,17 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             {snippet}
           </div>
         ) : (
-          <span className="text-white/35 text-xs">no snippet</span>
+          <span className="text-white/55 text-xs">no snippet</span>
         )}
         {m.classification_reason && (
-          <div className="text-[10px] text-white/40 mt-1 italic line-clamp-1">{m.classification_reason}</div>
+          <div className="text-[10px] text-white/55 mt-1 italic line-clamp-1">{m.classification_reason}</div>
         )}
       </Td>
       <Td>
         {m.source_channel ? (
           <span className="font-mono text-[11px] text-white/65">{m.source_channel}</span>
         ) : (
-          <span className="text-white/30 text-xs">—</span>
+          <span className="text-white/55 text-xs">—</span>
         )}
       </Td>
       <Td className="text-right">

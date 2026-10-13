@@ -10,7 +10,7 @@ const statusConfig = {
   warn:     { dot: 'bg-amber-500',   text: 'text-amber-400',   label: 'WARN' },
   fail:     { dot: 'bg-red-500',     text: 'text-red-400',     label: 'FAIL' },
   missing:  { dot: 'bg-red-500',     text: 'text-red-400',     label: 'MISSING' },
-  none:     { dot: 'bg-white/20',    text: 'text-white/40',    label: 'NONE' },
+  none:     { dot: 'bg-white/20',    text: 'text-white/55',    label: 'NONE' },
 };
 
 export function BIMIStatusRow({ label, status, detail }: BIMIStatusRowProps) {
@@ -23,7 +23,7 @@ export function BIMIStatusRow({ label, status, detail }: BIMIStatusRowProps) {
       </div>
       <div className="flex items-center gap-2">
         {detail && (
-          <span className="text-white/30 text-[10px] font-mono truncate max-w-[120px]">
+          <span className="text-white/55 text-[10px] font-mono truncate max-w-[120px]">
             {detail}
           </span>
         )}

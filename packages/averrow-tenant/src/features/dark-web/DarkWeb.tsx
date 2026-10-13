@@ -103,7 +103,7 @@ export function DarkWeb() {
 
   return (
     <div className="max-w-7xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
       </Link>
 
@@ -153,13 +153,13 @@ export function DarkWeb() {
               options={[{ value: '', label: 'All brands' }, ...brandOpts]}
             />
           )}
-          <div className="ml-auto font-mono text-[10px] text-white/40">
+          <div className="ml-auto font-mono text-[10px] text-white/55">
             {total.toLocaleString()} match{total === 1 ? '' : 'es'}
           </div>
         </div>
 
         {query.isLoading ? (
-          <div className="text-white/40 text-sm font-mono py-12 text-center">Loading mentions…</div>
+          <div className="text-white/55 text-sm font-mono py-12 text-center">Loading mentions…</div>
         ) : rows.length === 0 ? (
           <EmptyMentions hasFilters={hasActiveFilters || status !== 'active'} />
         ) : (
@@ -210,7 +210,7 @@ function StatTile({
                         'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">{label}</div>
       <div className={`text-3xl font-bold tabular-nums ${color}`}>{value.toLocaleString()}</div>
     </div>
   );
@@ -219,9 +219,9 @@ function StatTile({
 function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n: number }>; totalActive: number }) {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Source mix</div>
+      <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Source mix</div>
       {data.length === 0 ? (
-        <div className="text-white/40 text-xs">No mentions yet.</div>
+        <div className="text-white/55 text-xs">No mentions yet.</div>
       ) : (
         <div className="space-y-2">
           {data.map(d => {
@@ -249,9 +249,9 @@ function SeverityMixCard({ data, totalActive }: { data: Array<{ severity: string
   const map = new Map(data.map(d => [d.severity, d.n]));
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Severity mix</div>
+      <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Severity mix</div>
       {totalActive === 0 ? (
-        <div className="text-white/40 text-xs">No mentions yet.</div>
+        <div className="text-white/55 text-xs">No mentions yet.</div>
       ) : (
         <div className="space-y-2">
           {order.map(sev => {
@@ -285,13 +285,13 @@ function SearchAndScopeCard({
 }: { q: string; onQ: (v: string) => void; hasFilters: boolean; onReset: () => void }) {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-3">Search & scope</div>
+      <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Search & scope</div>
       <input
         type="text"
         value={q}
         onChange={e => onQ(e.target.value)}
         placeholder="Search snippet, channel, brand…"
-        className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/35 focus:border-amber/40 focus:outline-none"
+        className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-amber/40 focus:outline-none"
       />
       {hasFilters && (
         <button
@@ -315,7 +315,7 @@ function FilterSelect({
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-white/40">
+    <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-white/55">
       <span>{label}</span>
       <select
         value={value}
@@ -332,7 +332,7 @@ function FilterSelect({
 
 function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <th className={`px-3 py-2.5 text-left font-mono text-[11px] uppercase tracking-wider text-white/40 border-b border-white/[0.06] ${className}`}>
+    <th className={`px-3 py-2.5 text-left font-mono text-[11px] uppercase tracking-wider text-white/55 border-b border-white/[0.06] ${className}`}>
       {children}
     </th>
   );
@@ -382,10 +382,10 @@ function MentionRow({ m }: { m: DarkWebMentionWithBrand }) {
         {m.brand_id ? (
           <Link to={`/modules/dark-web/brands/${m.brand_id}`} className="text-left hover:text-amber">
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
-            {m.brand_domain && <div className="font-mono text-[10px] text-white/45">{m.brand_domain}</div>}
+            {m.brand_domain && <div className="font-mono text-[10px] text-white/55">{m.brand_domain}</div>}
           </Link>
         ) : (
-          <span className="text-white/40 text-xs">—</span>
+          <span className="text-white/55 text-xs">—</span>
         )}
       </td>
       <td className="px-3 py-2.5 border-b border-white/[0.03]">
@@ -394,17 +394,17 @@ function MentionRow({ m }: { m: DarkWebMentionWithBrand }) {
             {snippet}
           </div>
         ) : (
-          <span className="text-white/35 text-xs">no snippet</span>
+          <span className="text-white/55 text-xs">no snippet</span>
         )}
         {m.classification_reason && (
-          <div className="text-[10px] text-white/40 mt-1 italic line-clamp-1">{m.classification_reason}</div>
+          <div className="text-[10px] text-white/55 mt-1 italic line-clamp-1">{m.classification_reason}</div>
         )}
       </td>
       <td className="px-3 py-2.5 border-b border-white/[0.03]">
         {m.source_channel ? (
           <span className="font-mono text-[11px] text-white/65">{m.source_channel}</span>
         ) : (
-          <span className="text-white/30 text-xs">—</span>
+          <span className="text-white/55 text-xs">—</span>
         )}
       </td>
       <td className="px-3 py-2.5 text-right border-b border-white/[0.03]">
@@ -444,7 +444,7 @@ function ClassificationPill({ classification }: { classification: string }) {
   const tone =
     classification === 'confirmed'      ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     classification === 'suspicious'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    classification === 'false_positive' ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
+    classification === 'false_positive' ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
@@ -460,7 +460,7 @@ function EmptyMentions({ hasFilters }: { hasFilters: boolean }) {
       <p className="text-white/65 text-sm">
         {hasFilters ? 'No mentions match these filters.' : 'No active dark web mentions for your brands yet.'}
       </p>
-      <p className="text-white/40 text-xs mt-2 max-w-md mx-auto">
+      <p className="text-white/55 text-xs mt-2 max-w-md mx-auto">
         {hasFilters
           ? 'Clear filters to see all active mentions.'
           : 'The dark web monitor scans every 6 hours. New findings appear here as paste archives, Telegram leak channels, and ransomware leak sites are processed.'}

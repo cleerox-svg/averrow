@@ -351,9 +351,9 @@ function UserRow({
 function SessionsPanel({ userId }: { userId: string }) {
   const { data: sessions, isLoading } = useUserSessions(userId);
 
-  if (isLoading) return <div className="text-white/40 text-[11px] font-mono py-2">Loading sessions…</div>;
+  if (isLoading) return <div className="text-white/55 text-[11px] font-mono py-2">Loading sessions…</div>;
   if (!sessions || sessions.length === 0) {
-    return <div className="text-white/40 text-[11px] font-mono py-2">No sessions recorded.</div>;
+    return <div className="text-white/55 text-[11px] font-mono py-2">No sessions recorded.</div>;
   }
   return (
     <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1.5">

@@ -1494,7 +1494,7 @@ export function Alerts() {
 
       {/* Total count */}
       {!alertsLoading && alertsData && (
-        <div className="text-center font-mono text-[10px] text-white/40 pb-4">
+        <div className="text-center font-mono text-[10px] text-white/55 pb-4">
           Showing {alerts.length} of {alertsData.total} alerts
         </div>
       )}

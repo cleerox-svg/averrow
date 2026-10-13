@@ -9,7 +9,6 @@ import {
   Card, Button, PageHeader, PageState, StatTile, Table, Th, Td,
 } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { cn } from '@/lib/cn';
 import { isAboveAverage, formatBotShare, resolveGlobalAvg } from '@/features/observatory-v3/lib/bot-density';
 
@@ -71,7 +70,7 @@ function AsOfNote({ date }: { date: string }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 font-mono text-[10px]"
-      style={{ color: 'var(--text-tertiary)' }}
+      style={{ color: 'var(--text-secondary)' }}
       title={`This section was last updated ${fmtDate(date)}, earlier than the bot share figure`}
     >
       <span
@@ -85,10 +84,19 @@ function AsOfNote({ date }: { date: string }) {
   );
 }
 
+/** Section heading for this page — the shared `.section-label` (AA-contrast amber). */
+function PageSectionLabel({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <h3 className={cn('section-label', className)}>
+      {children}
+    </h3>
+  );
+}
+
 function SectionHeader({ title, staleDate }: { title: string; staleDate: string | null }) {
   return (
     <div className="mb-4 flex items-baseline justify-between gap-3">
-      <SectionLabel>{title}</SectionLabel>
+      <PageSectionLabel>{title}</PageSectionLabel>
       {staleDate ? <AsOfNote date={staleDate} /> : null}
     </div>
   );
@@ -125,11 +133,11 @@ export function absoluteBarWidth(pct: number): number {
 }
 
 function Caption({ children }: { children: ReactNode }) {
-  return <p className="mb-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>{children}</p>;
+  return <p className="mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>{children}</p>;
 }
 
 function NoDataYet() {
-  return <p className="py-4 text-center text-xs" style={{ color: 'var(--text-tertiary)' }}>No data yet</p>;
+  return <p className="py-4 text-center text-xs" style={{ color: 'var(--text-secondary)' }}>No data yet</p>;
 }
 
 interface AttackRow { code: string; name: string; pct: number; rank: number }
@@ -157,9 +165,9 @@ function AttackTable({ title, rows, staleDate }: { title: string; rows: AttackRo
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.code}>
-                    <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{r.rank}</Td>
+                    <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{r.rank}</Td>
                     <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
-                      {r.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{r.code}</span>
+                      {r.name} <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{r.code}</span>
                     </Td>
                     <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(r.pct)}</Td>
                   </tr>
@@ -306,7 +314,7 @@ function BotTrafficContent() {
       <div className={cn('space-y-6 transition-opacity', isPlaceholderData && 'opacity-60')} aria-busy={isPlaceholderData}>
       <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
         {INTRO}{' '}
-        <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
           Data as of {fmtDate(latest.snapshot_date)}.
         </span>
       </p>
@@ -331,10 +339,10 @@ function BotTrafficContent() {
       </div>
 
       <section>
-        <SectionLabel className="mb-4">Bot share over time</SectionLabel>
+        <PageSectionLabel className="mb-4">Bot share over time</PageSectionLabel>
         <Card>
           {series.length < 2 ? (
-            <p className="text-sm py-8 text-center" style={{ color: 'var(--text-tertiary)' }}>
+            <p className="text-sm py-8 text-center" style={{ color: 'var(--text-secondary)' }}>
               Not enough history yet to draw a trend. One snapshot is added per day.
             </p>
           ) : (
@@ -343,14 +351,14 @@ function BotTrafficContent() {
               <AreaChart data={series}>
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                  tick={{ fill: 'var(--text-secondary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                   axisLine={{ stroke: 'var(--border-base)' }}
                   tickLine={false}
                   minTickGap={24}
                   tickFormatter={(v: string) => fmtShortDate(v)}
                 />
                 <YAxis
-                  tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                  tick={{ fill: 'var(--text-secondary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                   axisLine={false}
                   tickLine={false}
                   domain={['auto', 'auto']}
@@ -387,7 +395,7 @@ function BotTrafficContent() {
               <p className="mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
                 Global average:{' '}
                 <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(globalAvg ?? latest.bot_pct)}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}> · the bar tick marks it; ▲ marks countries above it</span>
+                <span style={{ color: 'var(--text-secondary)' }}> · the bar tick marks it; ▲ marks countries above it</span>
               </p>
               <div className="overflow-x-auto">
                 <Table className="w-full text-sm">
@@ -407,10 +415,10 @@ function BotTrafficContent() {
                       const above = isAboveAverage(d.bot_pct, globalAvg, d.bound);
                       return (
                         <tr key={d.code}>
-                          <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.rank}</Td>
+                          <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{d.rank}</Td>
                           <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
-                            {d.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{d.code}</span>
-                            <div className="sm:hidden font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                            {d.name} <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{d.code}</span>
+                            <div className="sm:hidden font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
                               {fmtPct(d.traffic_pct)} of traffic
                             </div>
                           </Td>
@@ -438,14 +446,14 @@ function BotTrafficContent() {
                   </tbody>
                 </Table>
               </div>
-              <p className="mt-3 text-xs" style={{ color: 'var(--text-tertiary)' }}>Bars show absolute share, 0–100%</p>
+              <p className="mt-3 text-xs" style={{ color: 'var(--text-secondary)' }}>Bars show absolute share, 0–100%</p>
             </>
           )}
         </Card>
       </section>
 
       <section>
-        <SectionLabel className="mb-1">Attack origins vs targets</SectionLabel>
+        <PageSectionLabel className="mb-1">Attack origins vs targets</PageSectionLabel>
         <Caption>
           Layer-7 (HTTP) attacks seen by Cloudflare, last 7 days. Origin = attacking client's IP location; target = attacked site's country.
         </Caption>
@@ -463,7 +471,7 @@ function BotTrafficContent() {
           </Caption>
           <Card>
             {locs.length === 0 ? (
-              <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No country data</p>
+              <p className="text-sm py-4 text-center" style={{ color: 'var(--text-secondary)' }}>No country data</p>
             ) : (
               <div className="overflow-x-auto">
                 <Table className="w-full text-sm">
@@ -477,9 +485,9 @@ function BotTrafficContent() {
                   <tbody>
                     {locs.map((l) => (
                       <tr key={l.code}>
-                        <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{l.rank}</Td>
+                        <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{l.rank}</Td>
                         <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
-                          {l.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{l.code}</span>
+                          {l.name} <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{l.code}</span>
                         </Td>
                         <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(l.pct)}</Td>
                       </tr>
@@ -496,7 +504,7 @@ function BotTrafficContent() {
           <Caption>Share of all automated traffic, by network (ASN) — mostly cloud and hosting providers.</Caption>
           <Card>
             {asns.length === 0 ? (
-              <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No network data</p>
+              <p className="text-sm py-4 text-center" style={{ color: 'var(--text-secondary)' }}>No network data</p>
             ) : (
               <div className="overflow-x-auto">
                 <Table className="w-full text-sm">
@@ -510,9 +518,9 @@ function BotTrafficContent() {
                   <tbody>
                     {asns.map((a) => (
                       <tr key={a.asn}>
-                        <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>{a.rank}</Td>
+                        <Td className="py-1.5 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{a.rank}</Td>
                         <Td className="py-1.5" style={{ color: 'var(--text-primary)' }}>
-                          {a.name} <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>AS{a.asn}</span>
+                          {a.name} <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>AS{a.asn}</span>
                         </Td>
                         <Td className="py-1.5 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(a.pct)}</Td>
                       </tr>
@@ -529,7 +537,7 @@ function BotTrafficContent() {
         <SectionHeader title="Verified-bot categories" staleDate={catsStale} />
         <Card>
           {cats.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-tertiary)' }}>No category data</p>
+            <p className="text-sm py-4 text-center" style={{ color: 'var(--text-secondary)' }}>No category data</p>
           ) : (
             <>
             <ul className="space-y-3">
@@ -543,7 +551,7 @@ function BotTrafficContent() {
                 </li>
               ))}
             </ul>
-            <p className="mt-4 text-xs" style={{ color: 'var(--text-tertiary)' }}>Bars scaled to the largest category</p>
+            <p className="mt-4 text-xs" style={{ color: 'var(--text-secondary)' }}>Bars scaled to the largest category</p>
             </>
           )}
         </Card>

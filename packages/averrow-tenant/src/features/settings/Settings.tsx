@@ -60,7 +60,7 @@ export function Settings() {
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5 flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <Users size={14} className="text-white/45" />
+            <Users size={14} className="text-white/55" />
             <h2 className="text-sm font-semibold text-white/90">Members</h2>
           </div>
           <p className="text-[11px] text-white/55 mt-1 max-w-md">
@@ -140,13 +140,13 @@ export function TakedownAuthorizationPage() {
     <div className="max-w-3xl space-y-6">
       <Link
         to="/settings"
-        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70"
+        className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70"
       >
         <ArrowLeft size={12} /> BACK TO SETTINGS
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Settings</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Takedown Authorization</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           One signed authorization lets Averrow submit takedown requests on your behalf — DNS, hosting, app stores, social. Scope and limits are recorded per-org.
@@ -154,7 +154,7 @@ export function TakedownAuthorizationPage() {
       </header>
 
       {isLoading && (
-        <div className="text-white/40 text-sm font-mono py-12 text-center">Loading…</div>
+        <div className="text-white/55 text-sm font-mono py-12 text-center">Loading…</div>
       )}
 
       {error && (
@@ -205,7 +205,7 @@ function AuthorizationDetails({
       </section>
 
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
-        <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-3">Scope</h3>
+        <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-3">Scope</h3>
         <dl className="space-y-3">
           <Row label="Automation level">
             <span className="text-[13px] text-white/85 font-semibold">
@@ -239,7 +239,7 @@ function AuthorizationDetails({
           )}
           <Row label="Modules covered">
             {auth.scope.modules.length === 0 ? (
-              <span className="text-[12px] text-white/45">None — contact support to expand coverage.</span>
+              <span className="text-[12px] text-white/55">None — contact support to expand coverage.</span>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {auth.scope.modules.map((m) => (
@@ -276,7 +276,7 @@ function AuthorizationDetails({
       </section>
 
       <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
-        <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/45 mb-3">Signing record</h3>
+        <h3 className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-3">Signing record</h3>
         <dl className="space-y-2">
           <Row label="Signed by"><span className="text-[12px] text-white/75 font-mono">{auth.signed_by_name ?? auth.signed_by_user_id ?? '—'}</span></Row>
           <Row label="Signed at"><span className="text-[12px] text-white/75 font-mono">{formatDateTime(auth.signed_at)}</span></Row>
@@ -306,7 +306,7 @@ function AuthorizationDetails({
               {revoking ? 'Revoking…' : 'Revoke'}
             </button>
           ) : (
-            <span className="text-[11px] text-white/45 font-mono">Org admin or owner required</span>
+            <span className="text-[11px] text-white/55 font-mono">Org admin or owner required</span>
           )}
         </div>
         {revokeError !== null && revokeError !== undefined && (
@@ -433,7 +433,7 @@ function SignAuthorizationForm() {
                 <p className="text-[12px] text-white/65 leading-relaxed">{s.body}</p>
               </div>
             ))}
-            <p className="text-[10px] text-white/40 italic pt-2 border-t border-white/[0.06]">
+            <p className="text-[10px] text-white/55 italic pt-2 border-t border-white/[0.06]">
               {AGREEMENT_VERSION.includes('draft')
                 ? 'This is a working-draft version of the agreement. Final legal copy will replace it before general availability; existing signed authorizations retain their original version stamp in the audit trail.'
                 : 'See your organization\'s MSA for the master agreement these terms incorporate.'}
@@ -447,7 +447,7 @@ function SignAuthorizationForm() {
         <h3 className="text-sm font-semibold text-white/90">Scope</h3>
 
         <div>
-          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-2">
             Modules covered ({selectedModules.size} of {ALL_MODULE_KEYS.length})
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
@@ -477,7 +477,7 @@ function SignAuthorizationForm() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
               Monthly cap
             </label>
             <input
@@ -486,13 +486,13 @@ function SignAuthorizationForm() {
               placeholder="Unlimited"
               value={cap}
               onChange={(e) => setCap(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
             />
-            <p className="text-[10px] text-white/40 mt-1">Leave blank for unlimited.</p>
+            <p className="text-[10px] text-white/55 mt-1">Leave blank for unlimited.</p>
           </div>
 
           <div>
-            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+            <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
               Auto-followup (h)
             </label>
             <input
@@ -501,14 +501,14 @@ function SignAuthorizationForm() {
               placeholder="Off"
               value={autoFollowup}
               onChange={(e) => setAutoFollowup(e.target.value)}
-              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
+              className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
             />
-            <p className="text-[10px] text-white/40 mt-1">Re-submit after provider misses SLA.</p>
+            <p className="text-[10px] text-white/55 mt-1">Re-submit after provider misses SLA.</p>
           </div>
         </div>
 
         <div>
-          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
             Escalation
           </label>
           <select
@@ -523,7 +523,7 @@ function SignAuthorizationForm() {
 
         {/* Automation level — the Off / Semi-Auto / Auto dial */}
         <div>
-          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
+          <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-2">
             Automation level
           </label>
           <div className="grid grid-cols-3 gap-1.5">
@@ -545,7 +545,7 @@ function SignAuthorizationForm() {
               );
             })}
           </div>
-          <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
+          <p className="text-[11px] text-white/55 mt-2 leading-relaxed">
             {mode === 'off'
               ? 'Averrow drafts takedowns; you pick which ones to submit, manually.'
               : mode === 'semi_auto'
@@ -642,7 +642,7 @@ function ChipPicker({
 }) {
   return (
     <div>
-      <label className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+      <label className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
         {label}
       </label>
       <div className="flex flex-wrap gap-1.5">
@@ -664,7 +664,7 @@ function ChipPicker({
           );
         })}
       </div>
-      <p className="text-[10px] text-white/40 mt-1">{hint}</p>
+      <p className="text-[10px] text-white/55 mt-1">{hint}</p>
     </div>
   );
 }
@@ -672,7 +672,7 @@ function ChipPicker({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap">
-      <dt className="text-[11px] uppercase tracking-wider font-mono text-white/40 min-w-[140px]">{label}</dt>
+      <dt className="text-[11px] uppercase tracking-wider font-mono text-white/55 min-w-[140px]">{label}</dt>
       <dd className="text-right">{children}</dd>
     </div>
   );

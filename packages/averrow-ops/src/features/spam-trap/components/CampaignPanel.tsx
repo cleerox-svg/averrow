@@ -41,7 +41,7 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
           size="xs"
         />
       </div>
-      <div className="flex items-center gap-4 text-[10px] font-mono text-white/40">
+      <div className="flex items-center gap-4 text-[10px] font-mono text-white/55">
         <span>{seedCount} seeds</span>
         <span>{targetBrands.length} brands</span>
         <span>{channels.join(', ')}</span>
@@ -199,7 +199,7 @@ export function CampaignPanel() {
         </div>
       ) : (campaigns ?? []).length === 0 ? (
         <div className="flex items-center justify-center h-[200px]">
-          <span className="text-white/40 text-sm font-mono">
+          <span className="text-white/55 text-sm font-mono">
             No campaigns configured
           </span>
         </div>

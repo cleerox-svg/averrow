@@ -23,17 +23,17 @@ export function BrandAppStoreFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/app-store" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/modules/app-store" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO APP STORE
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">App Store Impersonation · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">App Store Impersonation · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading apps…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading apps…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load apps</h3>
@@ -55,8 +55,8 @@ export function BrandAppStoreFindings() {
 function ListingsSection({ rows }: { rows: AppStoreListingRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Apps <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        Apps <span className="text-white/55">({rows.length})</span>
       </h2>
       <div className="space-y-2">
         {rows.map((l) => <ListingRow key={l.id} listing={l} />)}
@@ -85,9 +85,9 @@ function ListingRow({ listing: l }: { listing: AppStoreListingRow }) {
             <div className="text-[12px] text-white/55 mt-0.5">by {l.developer_name}</div>
           )}
           {l.classification_reason && (
-            <p className="text-[11px] text-white/40 mt-2 italic">{l.classification_reason}</p>
+            <p className="text-[11px] text-white/55 mt-2 italic">{l.classification_reason}</p>
           )}
-          <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-white/40">
+          <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-white/55">
             {l.bundle_id && (
               <span className="truncate max-w-[260px]">id: {l.bundle_id}</span>
             )}
@@ -96,7 +96,7 @@ function ListingRow({ listing: l }: { listing: AppStoreListingRow }) {
                 <Star size={11} className="fill-[var(--amber-text)] text-[var(--amber-text)]" />
                 {l.rating.toFixed(1)}
                 {l.rating_count !== null && l.rating_count > 0 && (
-                  <span className="text-white/35">({formatCount(l.rating_count)})</span>
+                  <span className="text-white/55">({formatCount(l.rating_count)})</span>
                 )}
               </span>
             )}
@@ -176,7 +176,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No apps tracked for this brand yet.</p>
-      <p className="text-white/35 text-xs mt-1">Listings appear as the app store monitor finds them across stores.</p>
+      <p className="text-white/55 text-xs mt-1">Listings appear as the app store monitor finds them across stores.</p>
     </div>
   );
 }

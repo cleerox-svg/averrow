@@ -27,7 +27,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
       </div>
 
       {sorted.length === 0 ? (
-        <p className="text-[11px] text-white/40">No threat data</p>
+        <p className="text-[11px] text-white/55">No threat data</p>
       ) : (
         <div className="flex flex-col gap-2">
           {sorted.map(([type, count]) => {
@@ -44,7 +44,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
                     style={{ width: `${widthPct}%`, backgroundColor: color }}
                   />
                 </div>
-                <span className="w-12 flex-shrink-0 text-right font-mono text-[10px] text-white/40">
+                <span className="w-12 flex-shrink-0 text-right font-mono text-[10px] text-white/55">
                   {count}
                 </span>
               </div>

@@ -33,7 +33,7 @@ export function Investigations() {
     <div className="max-w-4xl space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Workspace</div>
+          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Workspace</div>
           <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Investigations</h1>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
             Group related signals, threats and takedowns into a case — work the whole campaign as one unit, with a shared status, owner and notes timeline.
@@ -75,13 +75,13 @@ export function Investigations() {
         })}
       </div>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading…</div>}
 
       {!isLoading && (data?.data.length ?? 0) === 0 && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-10 text-center">
           <FolderSearch size={28} className="text-white/20 mx-auto mb-3" />
           <p className="text-sm text-white/70">No investigations yet.</p>
-          <p className="text-[12px] text-white/40 mt-1">
+          <p className="text-[12px] text-white/55 mt-1">
             {canEdit ? 'Open one from a signal, or start a fresh case above.' : 'An analyst can open a case from a signal.'}
           </p>
         </section>
@@ -109,12 +109,12 @@ function Row({ inv }: { inv: Investigation }) {
           </div>
           {inv.description && <p className="text-[12px] text-white/50 mt-1 line-clamp-2 leading-relaxed">{inv.description}</p>}
         </div>
-        <div className="text-right text-[10px] font-mono text-white/40 flex-shrink-0">
+        <div className="text-right text-[10px] font-mono text-white/55 flex-shrink-0">
           <div>{new Date(inv.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
           {inv.assigned_to_name && <div className="mt-0.5 text-white/55 truncate max-w-[120px]">{inv.assigned_to_name}</div>}
         </div>
       </div>
-      <div className="flex items-center gap-3 mt-2.5 text-[11px] font-mono text-white/40">
+      <div className="flex items-center gap-3 mt-2.5 text-[11px] font-mono text-white/55">
         <span className="inline-flex items-center gap-1"><Layers size={11} /> {inv.item_count ?? 0} linked</span>
         <span className="inline-flex items-center gap-1"><MessageSquare size={11} /> {inv.note_count ?? 0} notes</span>
         {inv.created_by_name && <span>· opened by {inv.created_by_name}</span>}
@@ -148,7 +148,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Investigation title — e.g. “Q2 payroll-phish campaign”"
         autoFocus
-        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[14px] text-white/90 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40]"
+        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[14px] text-white/90 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
         onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
       />
       <textarea
@@ -156,11 +156,11 @@ function CreateForm({ onDone }: { onDone: () => void }) {
         onChange={(e) => setDescription(e.target.value)}
         placeholder="What ties these together? (optional)"
         rows={2}
-        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[12.5px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40] resize-none"
+        className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-3 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40] resize-none"
       />
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-white/45 font-mono">Priority</span>
+          <span className="text-[11px] text-white/55 font-mono">Priority</span>
           {SEVERITIES.map((s) => (
             <button
               key={s}
@@ -168,7 +168,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
               onClick={() => setSeverity(s)}
               className={[
                 'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors',
-                severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/45 border-white/[0.07]',
+                severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
               ].join(' ')}
             >
               {s}

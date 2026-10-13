@@ -97,7 +97,7 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
             <span className="font-mono text-[10px] font-semibold uppercase" style={{ color: severityColor }}>
               {category}
             </span>
-            <span className="text-white/40 text-[10px]">·</span>
+            <span className="text-white/55 text-[10px]">·</span>
             <span className="font-mono text-[10px] text-white/50 uppercase">{severity}</span>
           </div>
           <span className="font-mono text-[10px] text-white/50">{captureDate}</span>
@@ -105,7 +105,7 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
         <p className="text-[11px] text-white/70 truncate mb-1">
           &ldquo;{capture.subject ?? '(no subject)'}&rdquo;
         </p>
-        <div className="flex items-center gap-2 text-[10px] text-white/40 font-mono">
+        <div className="flex items-center gap-2 text-[10px] text-white/55 font-mono">
           <span>FROM {capture.from_address ?? '—'}</span>
           <span>→</span>
           <span>{capture.trap_address ?? '—'}</span>
@@ -114,8 +114,8 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
           <AuthBadge label="SPF" result={capture.spf_result} />
           <AuthBadge label="DKIM" result={capture.dkim_result} />
           <AuthBadge label="DMARC" result={capture.dmarc_result} />
-          <span className="text-white/40 text-[10px]">·</span>
-          <span className="font-mono text-[10px] text-white/40">{capture.url_count ?? 0} URLs</span>
+          <span className="text-white/55 text-[10px]">·</span>
+          <span className="font-mono text-[10px] text-white/55">{capture.url_count ?? 0} URLs</span>
           <span className="ml-auto font-mono text-[10px] text-white/50">
             {expanded ? '[Collapse ▲]' : '[Expand ▼]'}
           </span>
@@ -213,7 +213,7 @@ function ExpandedDetail({
         </div>
         {detail.spoofed_domain && (
           <div className="mt-2">
-            <span className="text-[10px] text-white/40 font-mono">Brand spoofed: </span>
+            <span className="text-[10px] text-white/55 font-mono">Brand spoofed: </span>
             <span
               className={`text-[11px] font-mono font-semibold ${brandConfidence > 70 ? 'text-red-400' : 'text-white/70'}`}
               style={brandConfidence > 70 ? { textShadow: '0 0 8px rgba(248,113,113,0.5)' } : undefined}
@@ -311,7 +311,7 @@ function ExpandedDetail({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <span className="text-white/40 font-mono w-[60px] shrink-0">{label}</span>
+      <span className="text-white/55 font-mono w-[60px] shrink-0">{label}</span>
       <span className="text-white/70 font-mono truncate" title={value}>{value}</span>
     </div>
   );
@@ -340,7 +340,7 @@ export function CaptureForensicsPanel() {
         </div>
       ) : (captures ?? []).length === 0 ? (
         <div className="flex items-center justify-center h-[300px]">
-          <span className="text-white/40 text-sm font-mono">
+          <span className="text-white/55 text-sm font-mono">
             No captures yet — honeypots are listening
           </span>
         </div>

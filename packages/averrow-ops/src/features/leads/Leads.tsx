@@ -416,7 +416,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
             </tbody>
           </Table>
           {filtered.length === 0 && (
-            <p className="text-sm text-white/40 text-center py-8">No leads match the current filters.</p>
+            <p className="text-sm text-white/55 text-center py-8">No leads match the current filters.</p>
           )}
         </Card>
       </div>
@@ -590,7 +590,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
               {lead.findings_summary}
             </p>
           ) : (
-            <p className="text-sm text-white/40 italic">No AI findings yet. Enrich this lead to generate analysis.</p>
+            <p className="text-sm text-white/55 italic">No AI findings yet. Enrich this lead to generate analysis.</p>
           )}
         </Card>
 
@@ -676,7 +676,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
               )}
             </div>
           ) : (
-            <p className="text-sm text-white/40 italic">Not yet researched</p>
+            <p className="text-sm text-white/55 italic">Not yet researched</p>
           )}
         </Card>
 

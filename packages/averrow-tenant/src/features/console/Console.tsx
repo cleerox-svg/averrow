@@ -131,10 +131,10 @@ function DraftRow({ takedown: t, canTriage }: { takedown: TakedownListRow; canTr
           <SeverityPill level={t.severity} />
           <AgePill createdAt={t.created_at} severity={t.severity} />
           {t.module_key && <Chip>{t.module_key.replace(/_/g, ' ')}</Chip>}
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{t.target_type}</span>
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{t.target_type}</span>
         </div>
         <div className="text-[13px] font-mono text-white/90 truncate">{t.target_value}</div>
-        <div className="text-[11px] text-white/45 mt-0.5">{t.brand_name ?? t.brand_id}{t.provider_name ? ` · ${t.provider_name}` : ''}</div>
+        <div className="text-[11px] text-white/55 mt-0.5">{t.brand_name ?? t.brand_id}{t.provider_name ? ` · ${t.provider_name}` : ''}</div>
       </Link>
       {actions.length > 0 && (
         <TakedownActions takedownId={t.id} actions={actions} className="px-3.5 py-2 border-t border-white/[0.06]" />
@@ -152,8 +152,8 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
         <AgePill createdAt={a.created_at} severity={a.severity} />
         {conf !== null && <Chip>{conf}% conf</Chip>}
         <VerdictChip raw={a.ai_assessment} />
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">{a.alert_type.replace(/_/g, ' ')}</span>
-        <span className="ml-auto text-[10px] font-mono text-white/35">{a.brand_name}</span>
+        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{a.alert_type.replace(/_/g, ' ')}</span>
+        <span className="ml-auto text-[10px] font-mono text-white/55">{a.brand_name}</span>
       </div>
       <div className="text-[13.5px] font-semibold leading-snug">
         <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
@@ -172,7 +172,7 @@ function HandledRow({ alert: a }: { alert: Alert }) {
         <div className="text-[12.5px] truncate">
           <Link to={`/alerts/${a.id}`} className="text-white/80 hover:text-amber transition-colors">{a.title}</Link>
         </div>
-        <div className="text-[11px] text-white/40 mt-0.5 font-mono">
+        <div className="text-[11px] text-white/55 mt-0.5 font-mono">
           {a.status.replace(/_/g, ' ')}{a.resolution_notes ? ` · ${a.resolution_notes}` : ''} · {a.brand_name}
         </div>
       </div>
@@ -186,11 +186,11 @@ function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number 
   const accent = tone === 'warn' ? 'text-amber' : tone === 'ok' ? 'text-green/85' : 'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
         <Icon size={11} /><span className="truncate">{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value ?? '—'}</div>
-      {value == null && <div role="status" className="text-[11px] text-white/40 mt-0.5">Couldn't load</div>}
+      {value == null && <div role="status" className="text-[11px] text-white/55 mt-0.5">Couldn't load</div>}
     </div>
   );
 }
@@ -200,17 +200,17 @@ function StreamHeader({ icon: Icon, title, subtitle, count }: { icon: LucideIcon
     <div className="flex items-center gap-2.5">
       <Icon size={16} className="text-white/55" />
       <h2 className="text-[15px] font-bold text-white/90">{title}</h2>
-      <span className="text-[11px] font-mono text-white/35">{count ?? '—'}</span>
-      <span className="text-[11px] text-white/40 hidden sm:inline">· {subtitle}</span>
+      <span className="text-[11px] font-mono text-white/55">{count ?? '—'}</span>
+      <span className="text-[11px] text-white/55 hidden sm:inline">· {subtitle}</span>
     </div>
   );
 }
 
 function SubLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/40 pt-1">{children}</div>;
+  return <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/55 pt-1">{children}</div>;
 }
 function Muted({ children }: { children: React.ReactNode }) {
-  return <span className="text-white/25">{children}</span>;
+  return <span className="text-white/55">{children}</span>;
 }
 
 function ViewAll({ to, label }: { to: string; label: string }) {
@@ -246,9 +246,9 @@ function SeverityPill({ level }: { level: string | AlertSeverity }) {
 function EmptyCard({ icon: Icon, title, sub }: { icon: LucideIcon; title: string; sub: string }) {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-8 text-center">
-      <Icon size={26} className="mx-auto text-white/30 mb-2" />
+      <Icon size={26} className="mx-auto text-white/55 mb-2" />
       <p className="text-sm text-white/70">{title}</p>
-      <p className="text-[11px] text-white/40 mt-1">{sub}</p>
+      <p className="text-[11px] text-white/55 mt-1">{sub}</p>
     </div>
   );
 }
@@ -278,5 +278,5 @@ function ErrorCard({ title, onRetry, retrying }: { title: string; onRetry: () =>
 }
 
 function Loading() {
-  return <div className="text-white/40 text-sm font-mono py-8 text-center">Loading…</div>;
+  return <div className="text-white/55 text-sm font-mono py-8 text-center">Loading…</div>;
 }

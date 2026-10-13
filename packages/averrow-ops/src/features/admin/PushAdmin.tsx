@@ -47,7 +47,7 @@ export function PushAdmin() {
       <div className="space-y-6">
         <PageHeader title="Push Notifications" subtitle="Platform VAPID configuration" />
         <Card>
-          <div className="font-mono text-xs text-white/40">Loading…</div>
+          <div className="font-mono text-xs text-white/55">Loading…</div>
         </Card>
       </div>
     );
@@ -122,7 +122,7 @@ function StatusPanel({
 
       {config.vapid_public_key && (
         <div className="mt-4 pt-4 border-t border-white/[0.06]">
-          <div className="font-mono text-[10px] uppercase tracking-wider text-white/40 mb-1">
+          <div className="font-mono text-[10px] uppercase tracking-wider text-white/55 mb-1">
             VAPID public key
           </div>
           <code className="block break-all font-mono text-[11px] p-2 rounded" style={{

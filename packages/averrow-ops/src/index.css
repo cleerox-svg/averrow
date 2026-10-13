@@ -6,7 +6,7 @@
    Secondary: text-white/60+    (sub-labels, domains, descriptions)
    Tertiary:  text-white/50+    (metadata, captions, timestamps)
    Section:   text-white/50+    (uppercase tracking headers)
-   Empty/Disabled ONLY: text-white/30 acceptable
+   Empty/Disabled ONLY: text-white/55 acceptable
 */
 
 @tailwind base;
@@ -353,15 +353,12 @@
 
 /* ── SECTION LABELS ──────────────────────────── */
 .section-label {
-  font-size: 0.6rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(229,168,50,0.55);
-  font-family: var(--font-mono);
-}
-[data-theme="light"] .section-label {
   color: var(--amber-text);
+  font-family: var(--font-mono);
 }
 
 /* ── PROGRESS BARS ───────────────────────────── */
@@ -438,7 +435,7 @@
 /* .glass-input is now defined in @layer utilities with new tokens.
    Placeholder styling kept here as it can't be expressed in @apply. */
 .glass-input::placeholder {
-  color: rgba(255,255,255,0.3);
+  color: var(--text-muted);
 }
 [data-theme="light"] .glass-input::placeholder {
   color: var(--text-muted);

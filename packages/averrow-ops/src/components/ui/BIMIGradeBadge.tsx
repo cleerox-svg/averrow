@@ -73,7 +73,7 @@ export function BIMIGradeBadge({
   if (!grade) {
     return (
       <span className={`inline-flex items-center font-mono font-bold
-        bg-white/5 border border-white/10 text-white/30
+        bg-white/5 border border-white/10 text-white/55
         ${sizeClasses[size]}`}>
         {showLabel && <span className="mr-1 font-normal opacity-60">EMAIL</span>}
         &mdash;

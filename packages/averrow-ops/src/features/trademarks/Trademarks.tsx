@@ -103,7 +103,7 @@ export function Trademarks() {
       ) : (
         <Card>
           <div className="divide-y divide-white/[0.04]">
-            <div className="px-4 py-2 flex items-center gap-4 font-mono text-[9px] uppercase tracking-widest text-white/40 border-b border-white/10">
+            <div className="px-4 py-2 flex items-center gap-4 font-mono text-[9px] uppercase tracking-widest text-white/55 border-b border-white/10">
               <div className="flex-1">Brand</div>
               <div className="flex-shrink-0">Findings</div>
               <div className="w-28 flex-shrink-0 text-right">Assets</div>

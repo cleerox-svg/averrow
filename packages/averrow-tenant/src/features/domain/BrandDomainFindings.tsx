@@ -40,17 +40,17 @@ export function BrandDomainFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/domain" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/modules/domain" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO DOMAIN MONITORING
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Domain Monitoring · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Domain Monitoring · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading findings…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading findings…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load findings</h3>
@@ -91,10 +91,10 @@ export function MaliciousDomainsSection({
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-          Malicious Domains &amp; URLs <span className="text-white/30">(0)</span>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+          Malicious Domains &amp; URLs <span className="text-white/55">(0)</span>
         </h2>
-        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/45 text-sm">
+        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
           No malicious domains or URLs attributed to this brand yet.
         </div>
       </section>
@@ -116,25 +116,25 @@ export function MaliciousDomainsSection({
     { key: 'hosting', header: 'Hosting', sortAccessor: (r) => r.hosting_provider ?? '', cellClassName: 'max-w-[180px] truncate',
       render: (r) => (
         <span className="text-white/55">
-          {r.hosting_provider ?? <span className="text-white/30">unknown</span>}
-          {r.country_code && <span className="ml-1.5 text-[10px] font-mono text-white/35">{r.country_code}</span>}
+          {r.hosting_provider ?? <span className="text-white/55">unknown</span>}
+          {r.country_code && <span className="ml-1.5 text-[10px] font-mono text-white/55">{r.country_code}</span>}
         </span>
       ) },
     { key: 'first_seen', header: 'First seen', align: 'right', sortAccessor: (r) => r.first_seen ?? '',
-      render: (r) => <span className="text-white/45 font-mono text-[11px]">{r.first_seen ? new Date(r.first_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
+      render: (r) => <span className="text-white/55 font-mono text-[11px]">{r.first_seen ? new Date(r.first_seen).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
     { key: 'action', header: 'Action', align: 'right',
       render: (r) => r.takedown_status
         ? <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
         : !canTriage
-          ? <span className="text-white/30 font-mono text-[11px]">—</span>
+          ? <span className="text-white/55 font-mono text-[11px]">—</span>
         : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
   ];
 
   return (
     <section>
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-          Malicious Domains &amp; URLs <span className="text-white/30">({rows.length})</span>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+          Malicious Domains &amp; URLs <span className="text-white/55">({rows.length})</span>
         </h2>
         <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
           {criticalCount > 0 && (
@@ -206,13 +206,13 @@ function RequestTakedownDialog({
       >
         <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">Confirm takedown request</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Confirm takedown request</div>
             <div className="mt-1 text-sm text-white/90 font-mono">{target}</div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-white/40 hover:text-white/70 transition-colors"
+            className="text-white/55 hover:text-white/70 transition-colors"
             aria-label="Close"
           >
             <X size={16} />
@@ -232,7 +232,7 @@ function RequestTakedownDialog({
           </div>
 
           <div>
-            <label htmlFor="td-summary" className="block text-[10px] uppercase tracking-widest font-mono text-white/45 mb-1.5">
+            <label htmlFor="td-summary" className="block text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1.5">
               Evidence summary
             </label>
             <textarea
@@ -240,10 +240,10 @@ function RequestTakedownDialog({
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               rows={4}
-              className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-3 py-2 text-[12px] text-white/90 font-mono placeholder:text-white/30"
+              className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-3 py-2 text-[12px] text-white/90 font-mono placeholder:text-white/55"
               placeholder="Optional — auto-generated from threat intel if left blank"
             />
-            <p className="mt-1.5 text-[10px] font-mono text-white/40">
+            <p className="mt-1.5 text-[10px] font-mono text-white/55">
               Submitted to the hosting provider's abuse contact under your signed authorization.
               Track progress under Takedowns.
             </p>
@@ -282,7 +282,7 @@ function RequestTakedownDialog({
 function Field({ label, value, valueClass = 'text-white/80' }: { label: string; value: string; valueClass?: string }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-white/40">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-white/55">{label}</div>
       <div className={`mt-0.5 ${valueClass}`}>{value}</div>
     </div>
   );
@@ -358,10 +358,10 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-          Lookalike Domains <span className="text-white/30">(0)</span>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+          Lookalike Domains <span className="text-white/55">(0)</span>
         </h2>
-        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/45 text-sm">
+        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
           No lookalike domains tracked for this brand yet.
         </div>
       </section>
@@ -370,7 +370,7 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
 
   const columns: Column<LookalikeRow>[] = [
     { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono',
-      render: (r) => <span className={r.registered ? 'text-white/90' : 'text-white/40'}>{r.domain}</span> },
+      render: (r) => <span className={r.registered ? 'text-white/90' : 'text-white/55'}>{r.domain}</span> },
     { key: 'type', header: 'Type', sortAccessor: (r) => r.permutation_type, cellClassName: 'text-white/55 capitalize',
       render: (r) => r.permutation_type.replace(/_/g, ' ') },
     { key: 'threat', header: 'Threat', sortAccessor: (r) => SEVERITY_RANK[(r.threat_level ?? '').toLowerCase()] ?? 0,
@@ -388,13 +388,13 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
       </div>
     ) },
     { key: 'last_checked', header: 'Last seen', align: 'right', sortAccessor: (r) => r.last_checked ?? '',
-      render: (r) => <span className="text-white/45 font-mono text-[11px]">{r.last_checked ? new Date(r.last_checked).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
+      render: (r) => <span className="text-white/55 font-mono text-[11px]">{r.last_checked ? new Date(r.last_checked).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</span> },
   ];
 
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-        Lookalike Domains <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+        Lookalike Domains <span className="text-white/55">({rows.length})</span>
       </h2>
       <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'threat', dir: 'desc' }} />
       {detailRow && (
@@ -492,7 +492,7 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
           <button
             type="button"
             onClick={onClose}
-            className="text-white/40 hover:text-white/70 transition-colors"
+            className="text-white/55 hover:text-white/70 transition-colors"
             aria-label="Close"
           >
             <X size={16} />
@@ -592,10 +592,10 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-          Certificate Transparency <span className="text-white/30">(0)</span>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+          Certificate Transparency <span className="text-white/55">(0)</span>
         </h2>
-        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/45 text-sm">
+        <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
           No CT log entries flagged for this brand yet.
         </div>
       </section>
@@ -606,16 +606,16 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
     { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono', render: (r) => r.domain },
     { key: 'issuer', header: 'Issuer', sortAccessor: (r) => r.issuer ?? '', cellClassName: 'text-white/55 truncate max-w-[200px]', render: (r) => r.issuer ?? '—' },
     { key: 'suspicious', header: 'Suspicious', align: 'center', sortAccessor: (r) => r.suspicious,
-      render: (r) => r.suspicious === 1 ? <span className="text-amber">●</span> : <span className="text-white/30">●</span> },
+      render: (r) => r.suspicious === 1 ? <span className="text-amber">●</span> : <span className="text-white/55">●</span> },
     { key: 'status', header: 'Status', sortAccessor: (r) => r.status, render: (r) => <CertStatusPill status={r.status} /> },
     { key: 'issued', header: 'Issued', align: 'right', sortAccessor: (r) => r.created_at,
-      render: (r) => <span className="text-white/45 font-mono text-[11px]">{new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> },
+      render: (r) => <span className="text-white/55 font-mono text-[11px]">{new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> },
   ];
 
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
-        Certificate Transparency <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+        Certificate Transparency <span className="text-white/55">({rows.length})</span>
       </h2>
       <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'suspicious', dir: 'desc' }} />
     </section>
@@ -640,7 +640,7 @@ function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'confirmed_threat' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     status === 'taken_down'       ? 'text-green/80     bg-green/[0.10]        border-green/[0.20]'        :
-    status === 'benign'           ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
+    status === 'benign'           ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                     'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -653,7 +653,7 @@ function CertStatusPill({ status }: { status: string }) {
   const tone =
     status === 'malicious' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     status === 'reviewed'  ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
-    status === 'benign'    ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
+    status === 'benign'    ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                              'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>

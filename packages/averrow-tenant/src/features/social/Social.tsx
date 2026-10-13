@@ -15,7 +15,7 @@ export function Social() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
       </Link>
 
@@ -33,7 +33,7 @@ export function Social() {
         </p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading findings…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading findings…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load Social Monitoring</h3>
@@ -45,7 +45,7 @@ export function Social() {
         <>
           <HeadlineMetrics totals={data.totals} brandCount={data.brands.length} />
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">Per brand</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Per brand</h2>
             {data.brands.length === 0 ? (
               <NoBrands />
             ) : (
@@ -110,11 +110,11 @@ function HeadlineMetrics({
                                 'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
-            <p className="text-[11px] text-white/40 mt-1 leading-relaxed">{c.sub}</p>
+            <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{c.sub}</p>
           </div>
         );
       })}
@@ -135,10 +135,10 @@ function BrandCard({ brand: b }: { brand: SocialBrandSummary }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-white/90 truncate">{b.brand_name}</div>
-          <div className="text-[11px] text-white/45 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
+          <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
         </div>
         {b.profiles_total === 0 ? (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-white/30 flex-shrink-0">no profiles tracked</span>
+          <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">no profiles tracked</span>
         ) : (
           <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
             {b.profiles_total} profile{b.profiles_total === 1 ? '' : 's'}
@@ -162,13 +162,13 @@ function ClassChip({
   tone: 'crit' | 'warn' | 'ok';
 }) {
   const accent =
-    count === 0       ? 'text-white/35'                    :
+    count === 0       ? 'text-white/55'                    :
     tone === 'crit'   ? 'text-sev-critical'                :
     tone === 'warn'   ? 'text-amber'                       :
                         'text-white/85';
   return (
     <div>
-      <div className="text-[8px] uppercase tracking-widest font-mono text-white/35 mb-0.5">{label}</div>
+      <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-lg font-bold tabular-nums ${accent}`}>{count}</div>
     </div>
   );
@@ -178,7 +178,7 @@ function NoBrands() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
       </p>
     </div>

@@ -21,7 +21,7 @@ export interface SectionLabelProps {
 
 export function SectionLabel({
   label,
-  accent       = '#E5A832',
+  accent       = 'var(--amber-text)',
   action,
   onAction,
   attribution,
@@ -83,7 +83,7 @@ export function SectionLabel({
             color:      accent,
             cursor:     'pointer',
             fontWeight: 700,
-            textShadow: `0 0 10px ${accent}60`,
+            textShadow: `0 0 10px color-mix(in srgb, ${accent} 38%, transparent)`,
           }}
         >
           {action} →
