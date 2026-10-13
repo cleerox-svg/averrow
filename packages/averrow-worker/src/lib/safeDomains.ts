@@ -149,6 +149,7 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   // server hosts are not listable here — inmotionhosting.com is InMotion's own.
   "cpanel.site", "hostingersite.com", "meusitehostgator.com.br", "misitiohostgator.com",
   "mybluehost.me", "linodeobjects.com", "linodeusercontent.com",
+  "firebaseio.com", "firebasedatabase.app", "myqcloud.com", "tcloudbaseapp.com",
   // Identity-provider tenant hosts: acme-sso.okta.com is an attacker's
   // tenant, never an "official subdomain" of Okta / OneLogin / Auth0
   // (docs/IDP_IMPERSONATION_PLAN_2026-10.md). Same table the classifier uses.

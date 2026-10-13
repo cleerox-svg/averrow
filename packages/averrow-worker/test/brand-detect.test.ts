@@ -745,9 +745,12 @@ describe("hosting-company customer sites are platform suffixes (2026-10-13)", ()
     mon("Bluehost", "bluehost.com"), mon("Amazonaws", "amazonaws.com"), mon("Amazon AWS", "aws.amazon.com"),
     mon("Amazon", "amazon.com"), mon("PayPal", "paypal.com"), mon("Netflix", "netflix.com"),
     mon("Microsoft", "microsoft.com"), mon("DocuSign", "docusign.com"), mon("GitHub", "github.com"), mon("Chase", "chase.com"),
+    mon("Myqcloud", "myqcloud.com"), mon("Qcloud", "qcloud.com"), mon("Firebaseio", "firebaseio.com"),
+    mon("Firebase", "firebase.google.com"),
   ];
   const HOSTING = new Set(["brand_inmotionhosting_com", "brand_cpanel_net", "brand_hostgator_com", "brand_hostgator_com_br",
-    "brand_linode_com", "brand_hostinger_com", "brand_bluehost_com", "brand_amazonaws_com", "brand_aws_amazon_com"]);
+    "brand_linode_com", "brand_hostinger_com", "brand_bluehost_com", "brand_amazonaws_com", "brand_aws_amazon_com",
+    "brand_myqcloud_com", "brand_qcloud_com", "brand_firebaseio_com", "brand_firebase_google_com"]);
   const of = (h: string) => fuzzyMatchBrand([h], CAT);
 
   // Production hosts credited to the hosting company before this change.
@@ -764,6 +767,11 @@ describe("hosting-company customer sites are platform suffixes (2026-10-13)", ()
     "gstjaps.s3-website-us-west-1.amazonaws.com", "x.s3.dualstack.us-east-1.amazonaws.com",
     "x.s3-website.eu-west-1.amazonaws.com", "bucket.s3-accelerate.amazonaws.com",
     "ec2-16-146-96-209.us-west-2.compute.amazonaws.com", "ec2-107-21-100-205.compute-1.amazonaws.com",
+    // Tencent COS buckets / CloudBase and Firebase Realtime Database (prod Cloud-brand links, 2026-10-13).
+    "laonashijie-1433552147.cos.ap-hongkong.myqcloud.com", "lai-1451610693.cos.ap-guangzhou.myqcloud.com",
+    "site-1300000000.cos-website.na-siliconvalley.myqcloud.com", "x-125.cos.accelerate.myqcloud.com",
+    "env-abc123.tcloudbaseapp.com",
+    "secure-login-7f3a.firebaseio.com", "proj-default-rtdb.europe-west1.firebasedatabase.app",
   ];
 
   it.each(CUSTOMER_HOSTS)("%s does not credit the hosting company", (host) => {
@@ -782,6 +790,8 @@ describe("hosting-company customer sites are platform suffixes (2026-10-13)", ()
     ["chase-verify.0191838.meusitehostgator.com.br", "brand_chase_com"],
     ["paypal.zcy.ypo.mybluehost.me", "brand_paypal_com"],
     ["docusign-verify.ip.linodeusercontent.com", "brand_docusign_com"],
+    ["paypal-verify-1300000000.cos.ap-hongkong.myqcloud.com", "brand_paypal_com"],
+    ["netflix-billing-default-rtdb.firebaseio.com", "brand_netflix_com"],
   ])("%s credits the embedded brand (%s)", (host, brand) => {
     expect(of(host)).toBe(brand);
   });
@@ -797,6 +807,7 @@ describe("hosting-company customer sites are platform suffixes (2026-10-13)", ()
     ["cognito-identity.amazonaws.com", "brand_amazonaws_com"], ["s3.us-east-1.amazonaws.com", "brand_amazonaws_com"],
     // A bare platform apex is unchanged (it is the provider's own name).
     ["cpanel.site", "brand_cpanel_net"], ["hostingersite.com", "brand_hostinger_com"], ["us-east-1.linodeobjects.com", "brand_linode_com"],
+    ["myqcloud.com", "brand_myqcloud_com"], ["console.myqcloud.com", "brand_myqcloud_com"], ["firebaseio.com", "brand_firebaseio_com"],
   ])("the provider's own host %s still matches %s", (host, brand) => {
     expect(of(host)).toBe(brand);
   });
@@ -822,7 +833,8 @@ describe("hosting-company customer sites are platform suffixes (2026-10-13)", ()
   it("anchored patterns: lookalikes of the endpoints are not platform tenants", () => {
     for (const h of ["s3.eu-west-1.amazonaws.com.evil.com", "paypal.s3.eu-west-1.amazonaws.com.evil.com",
       "ded1234.inmotionhosting.com.evil.com", "secure.inmotionhosting.com", "dedicated.inmotionhosting.com",
-      "x.ded12a.inmotionhosting.com", "x.us-east.linodeobjects.com", "evil-cpanel.site-login.com", "inmotionhosting.com"]) {
+      "x.ded12a.inmotionhosting.com", "x.us-east.linodeobjects.com", "evil-cpanel.site-login.com", "inmotionhosting.com",
+      "cos.ap-hongkong.myqcloud.com.evil.com", "x.cos.ap-hongkong.myqcloud.com.evil.com", "console.myqcloud.com"]) {
       expect(isPlatformTenantHost(h), h).toBe(false);
     }
   });

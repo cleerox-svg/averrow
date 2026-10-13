@@ -1038,6 +1038,9 @@ const PLATFORM_SUFFIXES = [
   "misitiohostgator.com",      // HostGator LatAm customer sites
   "mybluehost.me",             // Bluehost temporary domains
   "ip.linodeusercontent.com",  // Linode instance reverse DNS (<ip-dashed>.ip.…)
+  "firebaseio.com",            // Firebase Realtime Database <project>.firebaseio.com
+  "firebasedatabase.app",      // Firebase RTDB <project>-default-rtdb.<region>.firebasedatabase.app
+  "tcloudbaseapp.com",         // Tencent CloudBase static hosting
   // Regional S3 / EC2 / Linode Object Storage endpoints and InMotion
   // dedicated/VPS server hosts need a pattern: PLATFORM_SUFFIX_PATTERNS.
   // Identity-provider tenant hosts (acme-sso.okta.com, acme.eu.auth0.com):
@@ -1084,6 +1087,12 @@ const PLATFORM_SUFFIX_PATTERNS: ReadonlyArray<PlatformSuffixPattern> = [
   { re: new RegExp(String.raw`^(?:website-)?${CLOUD_REGION}\.linodeobjects\.com$`) },
   // InMotion dedicated / VPS server hostnames (dedNNNN / vpsNNNN).
   { re: /^inmotionhosting\.com$/, tenant: /^(?:ded|vps)\d+$/ },
+  // Tencent Cloud Object Storage buckets: <bucket>-<appid>.cos.<region>.myqcloud.com,
+  // static sites <bucket>.cos-website.<region>.myqcloud.com, and the global
+  // accelerate endpoint <bucket>.cos.accelerate.myqcloud.com. Regions look
+  // like ap-hongkong, ap-guangzhou, na-siliconvalley, eu-frankfurt.
+  { re: /^cos(?:-website)?\.[a-z]{2}-[a-z]+(?:-\d{1,2})?\.myqcloud\.com$/ },
+  { re: /^cos\.accelerate\.myqcloud\.com$/ },
 ];
 
 interface PlatformSuffixMatch {
