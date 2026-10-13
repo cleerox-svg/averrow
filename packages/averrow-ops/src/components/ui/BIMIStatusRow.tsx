@@ -19,7 +19,7 @@ export function BIMIStatusRow({ label, status, detail }: BIMIStatusRowProps) {
     <div className="flex items-center justify-between py-1.5">
       <div className="flex items-center gap-2">
         <div className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
-        <span className="text-white/50 text-xs font-mono">{label}</span>
+        <span className="text-white/55 text-xs font-mono">{label}</span>
       </div>
       <div className="flex items-center gap-2">
         {detail && (

@@ -107,7 +107,7 @@ function Row({ inv }: { inv: Investigation }) {
             <StatusPill status={inv.status} />
             <h3 className="text-[15px] font-semibold text-white/90 truncate">{inv.title}</h3>
           </div>
-          {inv.description && <p className="text-[12px] text-white/50 mt-1 line-clamp-2 leading-relaxed">{inv.description}</p>}
+          {inv.description && <p className="text-[12px] text-white/55 mt-1 line-clamp-2 leading-relaxed">{inv.description}</p>}
         </div>
         <div className="text-right text-[10px] font-mono text-white/55 flex-shrink-0">
           <div>{new Date(inv.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>

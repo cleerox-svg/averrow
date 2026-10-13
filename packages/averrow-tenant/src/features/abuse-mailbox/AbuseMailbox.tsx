@@ -594,7 +594,7 @@ function TenantDeepAnalysisSection({
     abuse_report: 'text-amber border-amber/[0.30] bg-black/30',
     block:        'text-amber border-amber/[0.30] bg-black/30',
     monitor:      'text-white/70 border-white/[0.10] bg-black/30',
-    none:         'text-white/50 border-white/[0.08] bg-black/30',
+    none:         'text-white/55 border-white/[0.08] bg-black/30',
   };
   const tone = ACTION_TONE[d.recommended_action.category] ?? 'text-white/70 border-white/[0.10] bg-black/30';
   return (
@@ -895,7 +895,7 @@ function TenantEmptyPanel({ text }: { text: string }) {
 
 function TenantLoadingPanel() {
   return (
-    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono bg-black/20 border border-white/[0.04]">
+    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/55 font-mono bg-black/20 border border-white/[0.04]">
       Loading…
     </div>
   );

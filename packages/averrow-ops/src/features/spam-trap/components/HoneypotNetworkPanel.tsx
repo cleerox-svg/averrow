@@ -275,7 +275,7 @@ export function HoneypotNetworkPanel() {
               className={`px-2 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider transition-colors ${
                 activeTab === tab
                   ? 'bg-white/10 text-white/80'
-                  : 'text-white/50 hover:text-white/70'
+                  : 'text-white/55 hover:text-white/70'
               }`}
             >
               {tab}
@@ -296,12 +296,12 @@ export function HoneypotNetworkPanel() {
             </div>
           ) : (
             <div className="space-y-1.5 mb-4">
-              <div className="font-mono text-[9px] uppercase tracking-widest text-white/50 mb-1">
+              <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-1">
                 Seeds by Channel
               </div>
               {channelCounts.map(({ channel, seeded, productive }) => (
                 <div key={channel} className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] text-white/50 w-[100px] truncate">
+                  <span className="font-mono text-[10px] text-white/55 w-[100px] truncate">
                     {channel}
                   </span>
                   <div className="flex-1 h-4 bg-white/5 rounded-sm overflow-hidden relative">
@@ -344,12 +344,12 @@ export function HoneypotNetworkPanel() {
         <div className="space-y-4">
           {/* Source type breakdown — productive_locations / total_locations */}
           <div className="space-y-1.5">
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/50 mb-1">
+            <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-1">
               Seeds by Source Type
             </div>
             {seedingGroups.map(([type, data]) => (
               <div key={type} className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-white/50 w-[80px] truncate capitalize">
+                <span className="font-mono text-[10px] text-white/55 w-[80px] truncate capitalize">
                   {type}
                 </span>
                 <div className="flex-1 h-4 bg-white/5 rounded-sm overflow-hidden">
@@ -392,8 +392,8 @@ export function HoneypotNetworkPanel() {
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.03] transition-colors text-left"
                     >
                       {isOpen
-                        ? <ChevronDown className="w-3.5 h-3.5 text-white/50 shrink-0" />
-                        : <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />}
+                        ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
+                        : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
                       <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accent }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
@@ -496,7 +496,7 @@ export function HoneypotNetworkPanel() {
               {/* Visits by page */}
               {seedingData.honeypot_visits.by_page.length > 0 && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/50 mb-2">
+                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-2">
                     Visits by Page
                   </div>
                   {seedingData.honeypot_visits.by_page.map((p) => (
@@ -514,7 +514,7 @@ export function HoneypotNetworkPanel() {
               {/* Recent crawlers */}
               {seedingData.honeypot_visits.recent_crawlers.length > 0 && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/50 mb-2">
+                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-2">
                     Recent Crawlers
                   </div>
                   <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
@@ -524,17 +524,17 @@ export function HoneypotNetworkPanel() {
                           <span className="font-mono text-[10px] text-red-400 font-semibold">
                             {c.bot_name || 'unknown'}
                           </span>
-                          <span className="font-mono text-[9px] text-white/50">
+                          <span className="font-mono text-[9px] text-white/55">
                             {c.visited_at ? new Date(c.visited_at + 'Z').toLocaleString() : '—'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono text-[10px] text-white/50">{c.page}</span>
+                          <span className="font-mono text-[10px] text-white/55">{c.page}</span>
                           {c.visitor_ip && (
-                            <span className="font-mono text-[10px] text-white/50">{c.visitor_ip}</span>
+                            <span className="font-mono text-[10px] text-white/55">{c.visitor_ip}</span>
                           )}
                           {c.country && (
-                            <span className="font-mono text-[10px] text-white/50">{c.country}</span>
+                            <span className="font-mono text-[10px] text-white/55">{c.country}</span>
                           )}
                         </div>
                       </div>
@@ -591,8 +591,8 @@ export function HoneypotNetworkPanel() {
                       className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.03] transition-colors text-left"
                     >
                       {isOpen
-                        ? <ChevronDown className="w-3.5 h-3.5 text-white/50 shrink-0" />
-                        : <ChevronRight className="w-3.5 h-3.5 text-white/50 shrink-0" />}
+                        ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
+                        : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
                       <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accent }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
@@ -612,13 +612,13 @@ export function HoneypotNetworkPanel() {
                         <Table className="w-full text-left">
                           <thead>
                             <tr className="border-b border-white/[0.06]">
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pl-3 pb-1.5 pt-1.5 pr-2">Address</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Channel</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Location</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Catches</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Last catch</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-2">Seeded</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 pt-1.5 pr-3"></Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pl-3 pb-1.5 pt-1.5 pr-2">Address</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Channel</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Location</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Catches</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Last catch</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Seeded</Th>
+                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-3"></Th>
                             </tr>
                           </thead>
                           <tbody>

@@ -99,7 +99,7 @@ function threatColor(count: number): string {
 function threatTypePill(type: string | null) {
   if (!type) return null;
   const key = type.toLowerCase().replace(/[_\s]/g, '');
-  const style = THREAT_TYPE_STYLES[key] ?? 'text-white/50 border-white/20';
+  const style = THREAT_TYPE_STYLES[key] ?? 'text-white/55 border-white/20';
   return (
     <span className={cn('text-[10px] font-mono px-2 py-0.5 rounded border', style)}>
       {type.replace(/_/g, ' ')}
@@ -748,7 +748,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                         'px-3 py-1.5 text-[10px] font-mono tracking-wider capitalize rounded-lg border transition-colors whitespace-nowrap',
                         activeTab === tab
                           ? 'text-[#E5A832] border-afterburner-border bg-afterburner-muted'
-                          : 'text-white/50 border-white/10 hover:text-white/70'
+                          : 'text-white/55 border-white/10 hover:text-white/70'
                       )}
                     >
                       {tab === 'targeted' ? 'Top Threatened' : tab}

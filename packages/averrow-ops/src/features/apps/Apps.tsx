@@ -24,7 +24,7 @@ function BrandRow({ row, onClick }: { row: AppStoreOverviewRow; onClick: () => v
     >
       <div className="flex-1 min-w-0">
         <div className="font-mono text-sm text-[var(--text-primary)] truncate">{row.brand_name}</div>
-        <div className="font-mono text-[10px] text-white/50 truncate">
+        <div className="font-mono text-[10px] text-white/55 truncate">
           {row.domain ?? 'no domain'}
           {!row.has_allowlist && (
             <span className="ml-2 px-1.5 py-0.5 rounded bg-white/5 text-white/60 border border-white/10 text-[9px] uppercase tracking-widest">
@@ -49,7 +49,7 @@ function BrandRow({ row, onClick }: { row: AppStoreOverviewRow; onClick: () => v
         )}
       </div>
 
-      <div className="w-32 flex-shrink-0 text-right font-mono text-[10px] text-white/50">
+      <div className="w-32 flex-shrink-0 text-right font-mono text-[10px] text-white/55">
         {row.last_checked ? relativeTime(row.last_checked) : 'Never scanned'}
       </div>
     </button>

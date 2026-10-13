@@ -278,7 +278,7 @@ function Notes({ investigationId, notes, canEdit }: {
 
 function Back() {
   return (
-    <Link to="/investigations" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/50 hover:text-white/85 transition-colors">
+    <Link to="/investigations" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
       <ArrowLeft size={14} /> Investigations
     </Link>
   );

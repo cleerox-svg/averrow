@@ -433,7 +433,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                         {String(threat.severity ?? '—')}
                       </span>
                     </Td>
-                    <Td className="p-0 font-mono text-[10px] text-white/50 py-1.5 px-2">
+                    <Td className="p-0 font-mono text-[10px] text-white/55 py-1.5 px-2">
                       {threat.first_seen ? new Date(String(threat.first_seen)).toLocaleDateString() : '—'}
                     </Td>
                   </tr>

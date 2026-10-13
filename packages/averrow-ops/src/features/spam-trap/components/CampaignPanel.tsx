@@ -52,18 +52,18 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
         <Table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/[0.06]">
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5">Channel</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Seeds</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Catches</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Rate</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5">Channel</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Seeds</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Catches</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Rate</Th>
             </tr>
           </thead>
           <tbody>
             {channels.map((ch) => (
               <tr key={ch} className="border-b border-white/[0.03]">
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-white/60">{ch}</Td>
-                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{seedCount}</Td>
-                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{catches}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{seedCount}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{catches}</Td>
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-[#E5A832] text-right">{catchRate}%</Td>
               </tr>
             ))}

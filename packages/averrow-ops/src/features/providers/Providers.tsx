@@ -149,7 +149,7 @@ function ClusterPanel({
                 {cluster.threat_count.toLocaleString()} threats
               </span>
               {cluster.countries && (
-                <span className="font-mono text-[10px] text-white/50">
+                <span className="font-mono text-[10px] text-white/55">
                   {(() => {
                     try {
                       return (JSON.parse(cluster.countries) as string[]).map(countryFlag).join(' ');
@@ -616,7 +616,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                         {threat.severity}
                       </span>
                     </Td>
-                    <Td className="p-0 font-mono text-[10px] text-white/50 py-1.5 px-2">
+                    <Td className="p-0 font-mono text-[10px] text-white/55 py-1.5 px-2">
                       {threat.first_seen ? new Date(threat.first_seen).toLocaleDateString() : '—'}
                     </Td>
                   </tr>

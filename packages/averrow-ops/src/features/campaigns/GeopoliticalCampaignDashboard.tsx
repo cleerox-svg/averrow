@@ -184,7 +184,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
           <p className="text-red-400 text-xs font-semibold mb-1">
             Email Vulnerability
           </p>
-          <p className="text-white/50 text-xs">
+          <p className="text-white/55 text-xs">
             {vulnerable.length} of {brands.length} targeted brands lack
             DMARC enforcement — email spoofing attacks will reach inboxes.
           </p>
@@ -363,7 +363,7 @@ function RecentThreatsTable({ threats }: { threats: GeoCampaignThreat[] }) {
               </Td>
               <Td className="p-0 text-[11px] py-2 pr-4 text-white/60">{threat.brand_name ?? '—'}</Td>
               <Td className="p-0 text-[11px] py-2 pr-4 text-white/60">{countryFlag(threat.country_code)} {threat.country_code ?? '—'}</Td>
-              <Td className="p-0 text-[11px] py-2 text-white/50">{formatDate(threat.created_at)}</Td>
+              <Td className="p-0 text-[11px] py-2 text-white/55">{formatDate(threat.created_at)}</Td>
             </tr>
           ))}
         </tbody>

@@ -102,13 +102,13 @@ export function AdminAbuseMailbox() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Abuse Mailbox</h1>
-          <p className="text-white/50 text-sm font-mono mt-1">
+          <p className="text-white/55 text-sm font-mono mt-1">
             AVERROW SELF · MARKETING-FACING ABUSE INTAKE · COVERT SPAM TRAP
           </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="dot-pulse dot-pulse-green" />
-          <span className="text-xs font-mono text-white/50">LISTENING</span>
+          <span className="text-xs font-mono text-white/55">LISTENING</span>
         </div>
       </div>
 
@@ -246,13 +246,13 @@ export function AdminAbuseMailbox() {
                         <BulkBtn label="Dismiss"     color="var(--text-secondary)"  disabled={bulkUpdate.isPending} onClick={() => runBulk('dismissed', 'Dismiss')} />
                         <button
                           type="button"
-                          className="text-[10px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/50 hover:text-white/80"
+                          className="text-[10px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/55 hover:text-white/80"
                           onClick={() => setCheckedIds(new Set())}
                         >
                           Clear
                         </button>
                         {bulkUpdate.isPending && (
-                          <span className="text-[10px] font-mono text-white/50">Updating…</span>
+                          <span className="text-[10px] font-mono text-white/55">Updating…</span>
                         )}
                         {bulkUpdate.isError && (
                           <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical)' }}>

@@ -289,7 +289,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                         {infra.confidence}
                       </span>
                     </Td>
-                    <Td className="p-0 text-[11px] py-2 text-white/50">{infra.notes ?? '—'}</Td>
+                    <Td className="p-0 text-[11px] py-2 text-white/55">{infra.notes ?? '—'}</Td>
                   </tr>
                 ))}
               </tbody>

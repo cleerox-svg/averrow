@@ -24,7 +24,7 @@ function BrandRow({ row, onClick }: { row: TrademarkOverviewRow; onClick: () => 
     >
       <div className="flex-1 min-w-0">
         <div className="font-mono text-sm text-[var(--text-primary)] truncate">{row.brand_name}</div>
-        <div className="font-mono text-[10px] text-white/50 truncate">{row.domain ?? 'no domain'}</div>
+        <div className="font-mono text-[10px] text-white/55 truncate">{row.domain ?? 'no domain'}</div>
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -40,7 +40,7 @@ function BrandRow({ row, onClick }: { row: TrademarkOverviewRow; onClick: () => 
         {!hasFindings && <Badge variant="success">Clean</Badge>}
       </div>
 
-      <div className="w-28 flex-shrink-0 text-right font-mono text-[10px] text-white/50">
+      <div className="w-28 flex-shrink-0 text-right font-mono text-[10px] text-white/55">
         {row.assets_active} asset{row.assets_active === 1 ? '' : 's'}
       </div>
     </button>

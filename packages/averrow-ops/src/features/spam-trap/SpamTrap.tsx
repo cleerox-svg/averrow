@@ -92,13 +92,13 @@ export function SpamTrap() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Spam Trap</h1>
-          <p className="text-white/50 text-sm font-mono mt-1">
+          <p className="text-white/55 text-sm font-mono mt-1">
             THREAT ACTOR INTELLIGENCE · HONEYPOT NETWORK
           </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="dot-pulse dot-pulse-green" />
-          <span className="text-xs font-mono text-white/50">HONEYPOT ACTIVE</span>
+          <span className="text-xs font-mono text-white/55">HONEYPOT ACTIVE</span>
         </div>
       </div>
 

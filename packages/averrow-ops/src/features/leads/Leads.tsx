@@ -743,7 +743,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
               </Button>
             )}
           </div>
-          <div className="mt-2 font-mono text-[10px] text-white/50">
+          <div className="mt-2 font-mono text-[10px] text-white/55">
             Created {relativeTime(lead.created_at)} · Updated {relativeTime(lead.updated_at)}
           </div>
         </Card>

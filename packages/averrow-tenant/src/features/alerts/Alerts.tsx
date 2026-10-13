@@ -417,7 +417,7 @@ function ConfidencePill({ value }: { value: number | null }) {
   const tone =
     value >= 80 ? 'text-blue/90 bg-blue/[0.08] border-blue/[0.22]' :
     value >= 50 ? 'text-blue/70 bg-blue/[0.05] border-blue/[0.15]' :
-                  'text-white/50 bg-white/[0.04] border-white/[0.08]';
+                  'text-white/55 bg-white/[0.04] border-white/[0.08]';
   return (
     <span
       title="Detection confidence"

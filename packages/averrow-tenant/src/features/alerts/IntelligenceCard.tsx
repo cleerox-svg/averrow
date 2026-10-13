@@ -319,7 +319,7 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
 
 function BackLink() {
   return (
-    <Link to="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/50 hover:text-white/85 transition-colors">
+    <Link to="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
       <ArrowLeft size={14} /> Alerts
     </Link>
   );
@@ -376,7 +376,7 @@ const STATUS_TONE: Record<string, string> = {
   acknowledged:   'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
   investigating:  'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
   resolved:       'text-green/85   bg-green/[0.06]       border-green/[0.15]',
-  false_positive: 'text-white/50   bg-white/[0.04]       border-white/[0.08]',
+  false_positive: 'text-white/55   bg-white/[0.04]       border-white/[0.08]',
 };
 
 function StatusPill({ status }: { status: string }) {

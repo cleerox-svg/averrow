@@ -21,7 +21,7 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
   if (!canTriage) {
     if (!assigneeName) return null;
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/50 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
         <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
       </span>
     );

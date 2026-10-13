@@ -43,7 +43,7 @@ function ProfileCard({ profile }: { profile: ActorProfile }) {
       <div className="flex items-center gap-2">
         <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">Profile</span>
         <span className="text-white/55 text-[9px]">·</span>
-        <span className="font-mono text-[9px] text-white/50">
+        <span className="font-mono text-[9px] text-white/55">
           {profile.captures.length} signal{profile.captures.length !== 1 ? 's' : ''}
         </span>
       </div>
@@ -52,7 +52,7 @@ function ProfileCard({ profile }: { profile: ActorProfile }) {
 
       <div className="space-y-1 text-[10px] font-mono text-white/55">
         <div>
-          <span className="text-white/50">from_domain:</span>{' '}
+          <span className="text-white/55">from_domain:</span>{' '}
           <span className="text-white/60">{profile.domain}</span>
         </div>
         <div>
@@ -63,7 +63,7 @@ function ProfileCard({ profile }: { profile: ActorProfile }) {
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-mono text-white/50">Risk:</span>
+        <span className="text-[10px] font-mono text-white/55">Risk:</span>
         <span
           className="text-[10px] font-mono font-semibold uppercase"
           style={{ color: severityColor }}
@@ -157,7 +157,7 @@ export function ThreatActorPanel() {
       <div className="border-t border-white/[0.06] pt-3">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-afterburner animate-pulse" />
-          <span className="text-[10px] font-mono text-white/50">
+          <span className="text-[10px] font-mono text-white/55">
             Checking for infrastructure overlap with known NEXUS clusters…
           </span>
         </div>

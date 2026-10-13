@@ -137,7 +137,7 @@ export function Sidebar() {
                 <NavLink
                   key={m.module_key}
                   to={MODULE_PATHS[m.module_key]}
-                  className={cn(NAV_BASE, 'text-white/55 hover:text-white/55')}
+                  className={cn(NAV_BASE, 'text-white/55 hover:text-white/75')}
                 >
                   <Icon size={16} className="opacity-50" />
                   <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>

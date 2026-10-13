@@ -80,7 +80,7 @@ export function LiveFeedCard() {
                     {t.country_code}
                   </span>
                 )}
-                <span className="flex-shrink-0 font-mono text-[9px] text-white/50">
+                <span className="flex-shrink-0 font-mono text-[9px] text-white/55">
                   {timeAgo(t.created_at)}
                 </span>
               </div>
