@@ -13,9 +13,8 @@ import { ThreatMapV3 } from './components/ThreatMapV3';
 import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
-import { Banner, Card, Tabs, Button } from '@/design-system/components';
-// Shared-kit Button for banner actions (the ops barrel Button is mono/uppercase).
-import { Button as KitButton } from '@averrow/shared/ui';
+import { Card, Tabs, Button } from '@/design-system/components';
+import { ObservatoryLoadError } from './components/ObservatoryLoadError';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -415,28 +414,15 @@ export function ObservatoryV3() {
           (previously the only version that surfaced this) — a failed
           threats/stats/arcs/heatmap fetch no longer renders silently. */}
       {loadError && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 56,
-            // Clear the default-open desktop SidePanel (w-80 = 320px) +
-            // its own inset gap; collapses to a flat right-16 when the
-            // panel is closed, on mobile, or in heatmap mode (SidePanel
-            // doesn't render in any of those cases — the panel toggle that
-            // would otherwise flip `showPanel` back is hidden in heatmap
-            // mode, so `showPanel` alone isn't a reliable signal there).
-            right: showPanel && !isMobile && hasSidePanel ? 336 : 16,
-            zIndex: Z_TOGGLE,
-            maxWidth: 300,
-          }}
-        >
-          <Banner
-            tone="critical"
-            aria-label="Observatory load error"
-            title="Observatory data failed to load"
-            actions={<KitButton size="sm" variant="secondary" onClick={retryFailed}>Retry</KitButton>}
-          />
-        </div>
+        // Right offset clears the default-open desktop SidePanel (w-80 = 320px)
+        // + its inset gap; a flat 16 when the panel is closed, on mobile, or in
+        // heatmap mode (no SidePanel there, and the panel toggle is hidden, so
+        // `showPanel` alone isn't a reliable signal).
+        <ObservatoryLoadError
+          onRetry={retryFailed}
+          right={showPanel && !isMobile && hasSidePanel ? 336 : 16}
+          zIndex={Z_TOGGLE}
+        />
       )}
 
       {/* ─── Bottom-left: Layer toggles ───────────────────────── */}

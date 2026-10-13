@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 describe('BotTraffic banners', () => {
-  it('shows the last fetch error as a named critical Banner next to the empty state', () => {
+  it('permission errors lead with the actionable hint and keep the raw error in details', async () => {
     mocks.result = {
       data: payload({ last_fetch: { status: 'error', last_success_at: null, last_error: 'Radar 403 forbidden' } }),
       isError: false,
@@ -50,18 +50,26 @@ describe('BotTraffic banners', () => {
     expect(screen.getByText('No bot traffic data yet')).toBeInTheDocument();
     const region = screen.getByRole('region', { name: 'Last fetch error' });
     expect(region).toHaveAttribute('data-tone', 'critical');
-    expect(region).toHaveTextContent('Radar 403 forbidden');
+    expect(region).toHaveTextContent('The last bot traffic fetch failed');
     expect(region).toHaveTextContent(/lacks the Radar Read permission/);
     expect(region).not.toHaveAttribute('role', 'alert');
+    const toggle = screen.getByRole('button', { name: 'Details' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Radar 403 forbidden')).toBeVisible();
   });
 
-  it('omits the permission hint for other errors and the banner when there is no error', () => {
+  it('other errors show the raw error as the message with no details toggle', () => {
     mocks.result = {
       data: payload({ last_fetch: { status: 'error', last_success_at: null, last_error: 'timeout' } }),
       isError: false,
     };
     const { unmount } = renderPage();
-    expect(screen.getByRole('region', { name: 'Last fetch error' })).not.toHaveTextContent(/Radar Read/);
+    const region = screen.getByRole('region', { name: 'Last fetch error' });
+    expect(region).toHaveTextContent('timeout');
+    expect(region).not.toHaveTextContent(/Radar Read/);
+    expect(screen.queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
     unmount();
 
     mocks.result = { data: payload(), isError: false };
@@ -72,8 +80,9 @@ describe('BotTraffic banners', () => {
   it('shows a refresh-failed Banner with a working Retry when data is already on screen', async () => {
     mocks.result = { data: payload(), isError: true };
     renderPage();
-    const region = screen.getByRole('region', { name: 'Bot traffic refresh failed' });
-    expect(region).toHaveAttribute('data-tone', 'critical');
+    const region = screen.getByRole('status', { name: 'Bot traffic refresh failed' });
+    expect(region).toHaveAttribute('data-tone', 'medium');
+    expect(region).toHaveAttribute('role', 'status');
     expect(region).toHaveTextContent("Couldn't refresh bot traffic");
     expect(region).toHaveTextContent('Showing the last loaded data.');
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));

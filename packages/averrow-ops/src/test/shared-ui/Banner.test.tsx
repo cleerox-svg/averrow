@@ -147,3 +147,36 @@ describe('shared Banner', () => {
     expect(still.querySelector('[style*="live-ping"]')).toBeNull();
   });
 });
+
+describe('Banner density', () => {
+  it('defaults to density=default and exposes compact via data-density', () => {
+    const { container, rerender } = render(<Banner title="T" />);
+    expect(container.firstElementChild).toHaveAttribute('data-density', 'default');
+    rerender(<Banner title="T" density="compact" />);
+    expect(container.firstElementChild).toHaveAttribute('data-density', 'compact');
+    expect(container.firstElementChild).toHaveAttribute('data-variant', 'inline');
+  });
+
+  it('compact never clamps and never offers Show more', () => {
+    const { container, rerender } = render(<Banner title="T">msg</Banner>);
+    expect(container.querySelector('.ds-banner-clamp')).not.toBeNull();
+    rerender(<Banner title="T" density="compact">msg</Banner>);
+    expect(container.querySelector('.ds-banner-clamp')).toBeNull();
+    expect(screen.queryByRole('button', { name: /show more/i })).toBeNull();
+  });
+
+  it('compact uses a 20px icon column and still shows actions and dismiss', () => {
+    const { container } = render(
+      <Banner title="T" density="compact" actions={<button type="button">Go</button>} onDismiss={() => {}} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.style.getPropertyValue('--bn-cols')).toMatch(/^20px /);
+    expect(screen.getByRole('button', { name: 'Go' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('density is ignored for the prominent variant', () => {
+    const { container } = render(<Banner variant="prominent" density="compact" title="T" />);
+    expect(container.firstElementChild).toHaveAttribute('data-density', 'default');
+  });
+});

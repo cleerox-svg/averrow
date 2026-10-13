@@ -781,6 +781,7 @@ data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
 | `info` | Neutral notice (unknown tones fall back to this). |
 | `success` | Confirmation that something resolved. |
 
+- `density`: `default` is page-level. `compact` is for banners inside cards, forms and settings groups (inline variant only): tinted tone fill, 1px tone border, bare 20px icon (no tile), 13-14px text, never clamped (no "Show more"; full text always shown). Compact banners do not count as the page-level banner.
 - One page-level banner per page, at the top of the page content. Not sticky.
 - Never repeat a stat tile's number; say what is wrong and what to do.
 - At most one primary action (shared-kit `Button`); secondary actions are `secondary`/`ghost` or text links.

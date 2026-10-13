@@ -132,6 +132,7 @@ describe('DevicesSettings — push devices', () => {
     setup({ push: { supported: false } });
     const banner = (await screen.findByText(/can't receive push notifications/)).closest('.ds-banner') as HTMLElement;
     expect(banner).toHaveAttribute('data-tone', 'info');
+    expect(banner).toHaveAttribute('data-density', 'compact');
     expect(banner).toHaveTextContent('Use the installed app or a supported browser on your phone.');
   });
 
@@ -139,6 +140,7 @@ describe('DevicesSettings — push devices', () => {
     setup({ push: { needsInstall: true } });
     const banner = (await screen.findByText('Install the app first')).closest('.ds-banner') as HTMLElement;
     expect(banner).toHaveAttribute('data-tone', 'info');
+    expect(banner).toHaveAttribute('data-density', 'compact');
   });
 });
 

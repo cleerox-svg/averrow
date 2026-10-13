@@ -30,9 +30,7 @@ import {
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
 import { useAuth } from '@/lib/auth';
-import { Banner, Card, StatTile, StatGrid, PageHeader, Badge, PageState } from '@/design-system/components';
-// Shared-kit Button: the ops barrel Button is mono/uppercase.
-import { Button } from '@averrow/shared/ui';
+import { Banner, Card, KitButton, StatTile, StatGrid, PageHeader, Badge, PageState } from '@/design-system/components';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { AgentIcon } from '@/components/brand/AgentIcon';
@@ -104,12 +102,16 @@ const COMPLIANCE_AXES = [
 // React Query dedupes the cache so this adds zero new requests
 // when both pages are open. Kept off the Sidebar deliberately to
 // avoid amplifying API load on every authenticated session.
-export function PendingApprovalsBanner() {
+function usePendingApprovalCount(): number {
   // /api/admin/agents/approvals/pending is super_admin-only — other roles must
   // not fire the request (the 403 envelope would otherwise read as "none").
   const { isSuperAdmin } = useAuth();
   const { data } = usePendingApprovals({ enabled: isSuperAdmin });
-  const count = data?.pending?.length ?? 0;
+  return data?.pending?.length ?? 0;
+}
+
+export function PendingApprovalsBanner() {
+  const count = usePendingApprovalCount();
   if (count === 0) return null;
 
   return (
@@ -119,9 +121,9 @@ export function PendingApprovalsBanner() {
       aria-label="Agent deployment approvals"
       title={count === 1 ? '1 agent awaiting deployment review' : `${count} agents awaiting deployment review`}
       actions={
-        <Button asChild size="sm" variant="secondary">
+        <KitButton asChild size="sm" variant="secondary">
           <Link to="/agents/approvals">Review</Link>
-        </Button>
+        </KitButton>
       }
     >
       Newly deployed agents are blocked until a super admin approves them.
@@ -132,25 +134,38 @@ export function PendingApprovalsBanner() {
 export interface StalledRun { id: string | number; agent_id: string; started_at: string }
 
 // Operational alert: runs stuck in "running" for over 15 minutes (GA4).
+// One page-level banner: when approvals are also pending they ride along as a
+// footer line instead of a second banner (the page renders only this one).
+// No action: there is no route that lists runs, so none is linked.
 export function StalledRunsBanner({ stalled }: { stalled: StalledRun[] }) {
+  const pending = usePendingApprovalCount();
   if (stalled.length === 0) return null;
   return (
     <Banner
-      tone="critical"
+      tone="high"
+      role="status"
       aria-label="Stalled agent runs"
       icon={<AlertTriangle size={16} />}
       title={`${stalled.length} stalled run${stalled.length !== 1 ? 's' : ''}, stuck for over 15 minutes`}
       footer={
-        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-          {stalled.slice(0, 8).map(r => (
-            <span key={r.id} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-              {r.agent_id} <span style={{ color: 'var(--text-tertiary)' }}>· started {relativeTime(r.started_at)}</span>
-            </span>
-          ))}
-          {stalled.length > 8 && (
-            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>+{stalled.length - 8} more</span>
+        <>
+          <ul className="list-none m-0 p-0 flex flex-wrap gap-x-4 gap-y-1 mt-2">
+            {stalled.slice(0, 8).map(r => (
+              <li key={r.id} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                {r.agent_id} <span style={{ color: 'var(--text-tertiary)' }}>· started {relativeTime(r.started_at)}</span>
+              </li>
+            ))}
+            {stalled.length > 8 && (
+              <li className="text-xs" style={{ color: 'var(--text-tertiary)' }}>+{stalled.length - 8} more</li>
+            )}
+          </ul>
+          {pending > 0 && (
+            <p className="m-0 mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+              Also: {pending} {pending === 1 ? 'deployment' : 'deployments'} awaiting approval ·{' '}
+              <Link to="/agents/approvals" style={{ color: 'var(--text-primary)', textDecoration: 'underline' }}>Review</Link>
+            </p>
           )}
-        </div>
+        </>
       }
     />
   );
@@ -1009,10 +1024,9 @@ export function Agents() {
         <PageState kind="error" layout="inline" title="Couldn't refresh agents" description="Showing the last loaded list." onRetry={() => { void refetch(); }} />
       )}
 
-      <PendingApprovalsBanner />
 
       {/* Stalled runs (GA4) — stuck >15min, was only in internal diagnostics. */}
-      <StalledRunsBanner stalled={stalled} />
+      {stalled.length > 0 ? <StalledRunsBanner stalled={stalled} /> : <PendingApprovalsBanner />}
 
       <StatGrid cols={4}>
         <StatTile label="Agents operational" value={`${operational}/${agents.length}`} accent="var(--green)" />

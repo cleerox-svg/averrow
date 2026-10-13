@@ -264,7 +264,8 @@ describe('push', () => {
     expect(screen.getByRole('switch', { name: 'Push notifications' })).toBeDisabled();
     const banner = screen.getByText('Push is blocked in this browser').closest('.ds-banner') as HTMLElement;
     expect(banner).toHaveAttribute('data-tone', 'medium');
-    expect(banner).not.toHaveAttribute('role', 'alert');
+    expect(banner).toHaveAttribute('role', 'status');
+    expect(banner).toHaveAttribute('data-density', 'compact');
   });
 
   it('reports the test notification result inline', async () => {

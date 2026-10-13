@@ -24,7 +24,7 @@ export {
   type BadgeProps, type BadgeSize, type BadgeStatus, type Severity,
   type ContextTag, type VerdictTag, type Classification, type LegacyVariant,
 } from './Badge';
-export { Banner, type BannerProps, type BannerTone, type BannerVariant } from './Banner';
+export { Banner, type BannerProps, type BannerTone, type BannerVariant, type BannerDensity } from './Banner';
 export { StatTile, type StatTileProps, type StatTone } from './StatTile';
 export {
   PageState, pageStateKind,

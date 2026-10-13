@@ -254,14 +254,15 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
       {!push.supported && (
         <Banner
           className="mb-4"
+          density="compact"
           tone="info"
-          title="This browser can't receive push notifications."
+          title="This browser can't receive push notifications"
         >
           Use the installed app or a supported browser on your phone.
         </Banner>
       )}
       {push.supported && push.needsInstall && (
-        <Banner className="mb-4" tone="info" title="Install the app first">
+        <Banner className="mb-4" density="compact" tone="info" title="Install the app first">
           On iPhone and iPad, notifications work once {product} is on your Home Screen.
         </Banner>
       )}

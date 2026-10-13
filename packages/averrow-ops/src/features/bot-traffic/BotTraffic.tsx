@@ -6,11 +6,9 @@ import {
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import type { BotTrafficAsOf, BotTrafficDays } from '@/hooks/useBotTraffic';
 import {
-  Banner, Card, Button, PageHeader, PageState, StatTile, Table, Th, Td,
+  Banner, Card, Button, KitButton, PageHeader, PageState, StatTile, Table, Th, Td,
 } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-// Shared-kit Button for banner actions (the ops barrel Button is mono/uppercase).
-import { Button as KitButton } from '@averrow/shared/ui';
 import { cn } from '@/lib/cn';
 import { isAboveAverage, formatBotShare, resolveGlobalAvg } from '@/features/observatory-v3/lib/bot-density';
 
@@ -208,13 +206,15 @@ function EmptyState({ err }: { err: string | null }) {
         description="The daily Cloudflare Radar feed hasn't produced data yet. It runs once a day; check back after the next fetch."
       />
       {err ? (
-        <Banner tone="critical" aria-label="Last fetch error" title="The last bot traffic fetch failed">
-          <span className="break-words">{err}</span>
-          {isPermissionError(err) ? (
-            <span className="block mt-1">
-              The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.
-            </span>
-          ) : null}
+        <Banner
+          tone="critical"
+          aria-label="Last fetch error"
+          title="The last bot traffic fetch failed"
+          {...(isPermissionError(err) ? { details: <span className="break-words">{err}</span>, detailsTrigger: 'button' as const } : {})}
+        >
+          {isPermissionError(err)
+            ? 'The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.'
+            : <span className="break-words">{err}</span>}
         </Banner>
       ) : null}
     </div>
@@ -260,7 +260,8 @@ function BotTrafficContent() {
 
   const retryBanner = isError ? (
     <Banner
-      tone="critical"
+      tone="medium"
+      role="status"
       aria-label="Bot traffic refresh failed"
       title="Couldn't refresh bot traffic"
       actions={<KitButton size="sm" variant="secondary" onClick={() => { void refetch(); }}>Retry</KitButton>}

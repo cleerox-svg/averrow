@@ -277,11 +277,12 @@ export function SecuritySettings({
             )}
             {noPasskey && (
               <Banner
+                density="compact"
                 tone="medium"
                 className="mt-4"
-                title={`Your account relies on ${signInProvider} sign-in alone.`}
+                title="Add a passkey"
               >
-                A passkey adds a faster, phishing-resistant way in.
+                Your account relies on {signInProvider} sign-in alone. A passkey adds a faster, phishing-resistant way in.
               </Banner>
             )}
             {keysState.status === 'error' && (
@@ -303,7 +304,7 @@ export function SecuritySettings({
       >
         {!supported && (
           <div className="p-3">
-            <Banner tone="info" title={addDisabledReason} />
+            <Banner density="compact" tone="info" title="Passkeys aren't available here">{addDisabledReason}</Banner>
           </div>
         )}
         {keysState.status === 'loading' && <RowSkeleton label="Loading your passkeys…" />}
@@ -320,11 +321,14 @@ export function SecuritySettings({
         {keysState.status === 'ready' && keysState.stale && (
           <div className="p-3">
             <Banner
+              density="compact"
               tone="medium"
               role="status"
-              title="Couldn't refresh this list. It may be out of date."
+              title="Couldn't refresh this list"
               actions={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadKeys(); }}>Retry</Button>}
-            />
+            >
+              It may be out of date.
+            </Banner>
           </div>
         )}
         {keys && keys.length === 0 && (
@@ -383,11 +387,14 @@ export function SecuritySettings({
         {sessState.status === 'ready' && sessState.stale && (
           <div className="p-3">
             <Banner
+              density="compact"
               tone="medium"
               role="status"
-              title="Couldn't refresh this list. It may be out of date."
+              title="Couldn't refresh this list"
               actions={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadSessions(); }}>Retry</Button>}
-            />
+            >
+              It may be out of date.
+            </Banner>
           </div>
         )}
         {sess && sess.sessions.length === 0 && (

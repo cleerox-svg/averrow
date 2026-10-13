@@ -40,7 +40,7 @@ export function NotificationSettings(props: NotificationSettingsProps): ReactEle
       <div className="space-y-4">
         <SummaryStrip prefs={prefs} push={push} />
         {!online && (
-          <Banner tone="medium" role="status" title="You're offline">
+          <Banner density="compact" tone="medium" role="status" title="You're offline">
             Changes will not save until you're back online.
           </Banner>
         )}

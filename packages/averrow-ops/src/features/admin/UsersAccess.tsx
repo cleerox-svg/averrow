@@ -281,6 +281,7 @@ function StaffTab() {
     <div className="space-y-4">
       {revocation && (
         <Banner
+          density="compact"
           tone="medium"
           role="status"
           title="Sessions not yet revoked"

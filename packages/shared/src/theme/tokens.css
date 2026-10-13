@@ -978,7 +978,7 @@ code, kbd, samp, pre, .font-mono, .tt-mono {
 /* multi-line descriptions (event rows): never clamp on mobile */
 .ds-srow--fulldesc .ds-srow-desc { -webkit-line-clamp: unset; display: block; }
 
-/* CopyField / InlineBanner */
+/* CopyField */
 .ds-copy { display: flex; align-items: center; gap: 4px; min-height: 44px; min-width: 0; }
 .ds-copy-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; color: var(--text-primary); user-select: all; }
@@ -1106,6 +1106,14 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
   mask-composite: exclude;
 }
+.ds-banner[data-density="compact"] {
+  padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--bn-line);
+  background: linear-gradient(var(--bn-bg), var(--bn-bg)), var(--bg-card);
+}
+.ds-banner[data-density="compact"] .ds-banner-icon { width: 20px; height: 20px; border-radius: 0; background: transparent; }
+.ds-banner[data-density="compact"] .ds-banner-icon > svg { width: 18px; height: 18px; }
+.ds-banner[data-density="compact"] .ds-banner-title { font-size: 14px; }
+.ds-banner[data-density="compact"] .ds-banner-msg { font-size: 13px; }
 .ds-banner-icon {
   grid-area: icon; position: relative; width: 28px; height: 28px; border-radius: 8px; flex: none;
   display: flex; align-items: center; justify-content: center; background: var(--bn-bg); color: var(--bn-fg);
