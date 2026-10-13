@@ -18,11 +18,14 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui
 
 // ── Shared kit (@averrow/shared/ui) ────────────────────────────────────────
 export {
-  Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind,
+  Banner, Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind,
   Card, CardHeader, CardTitle, CardContent, CardFooter,
   Table, Th, Td, DataTable,
 } from '@averrow/shared/ui';
 export type {
+  BannerProps,
+  BannerTone,
+  BannerVariant,
   BadgeProps,
   Severity,
   BadgeStatus,

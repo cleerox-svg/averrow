@@ -92,7 +92,7 @@ describe('AlertQueueBanner', () => {
     expect(stored.until).toBeGreaterThan(Date.now());
     expect(stored.count).toBe(2);
     expect(onAnnounce).toHaveBeenCalledWith('Critical SLA card snoozed for 1 hour');
-    await waitFor(() => expect(document.activeElement?.tagName).toBe('SUMMARY'));
+    await waitFor(() => expect(document.activeElement?.tagName).toBe('BUTTON'));
   });
 
   it('honours a valid snooze and ignores expired / skewed / unparseable / legacy ones', () => {

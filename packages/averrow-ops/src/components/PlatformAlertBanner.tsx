@@ -12,8 +12,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { X } from 'lucide-react';
+// Shared-kit Button on purpose (same choice as AlertQueueBanner): the ops barrel Button is mono/uppercase.
+import { Banner, Button, type BannerTone } from '@averrow/shared/ui';
 import { useNotifications, useMarkRead, type Notification } from '@/hooks/useNotifications';
+import { resolveNotificationLink } from '@/lib/notificationLink';
 
 // Overview, plus the Agents and Feeds panes of the Operations workspace
 // (`?tab=` absent or unknown renders the default pane, Agents). Only the
@@ -49,55 +51,13 @@ const SEVERITY_RANK: Record<Notification['severity'], number> = {
   info: 0,
 };
 
-interface PaletteEntry {
-  bg: string;
-  border: string;
-  text: string;
-  dot: string;
-  glow: string;
-}
-
-// Text values are var(--sev-*-text) tokens (dark-mode value identical
-// to the hexes this table hardcoded before — S2.3 follow-up), so light
-// mode gets AA contrast instead of pale-on-white on the loudest
-// in-app channel.
-const PALETTE: Record<Notification['severity'], PaletteEntry> = {
-  critical: {
-    bg: 'rgba(239,68,68,0.10)',
-    border: 'rgba(239,68,68,0.35)',
-    text: 'var(--sev-critical-text)',
-    dot: '#f87171',
-    glow: 'rgba(248,113,113,0.9)',
-  },
-  high: {
-    bg: 'rgba(249,115,22,0.10)',
-    border: 'rgba(249,115,22,0.30)',
-    text: 'var(--sev-high-text)',
-    dot: '#fb923c',
-    glow: 'rgba(251,146,60,0.9)',
-  },
-  medium: {
-    bg: 'rgba(229,168,50,0.10)',
-    border: 'rgba(229,168,50,0.30)',
-    text: 'var(--sev-medium-text)',
-    dot: '#fbbf24',
-    glow: 'rgba(251,191,36,0.9)',
-  },
-  low: {
-    bg: 'rgba(59,130,246,0.10)',
-    border: 'rgba(59,130,246,0.30)',
-    text: 'var(--sev-low-text)',
-    dot: '#60a5fa',
-    glow: 'rgba(96,165,250,0.9)',
-  },
-  info: {
-    bg: 'var(--border-base)',
-    border: 'var(--border-strong)',
-    text: 'var(--text-primary)',
-    dot: '#9ca3af',
-    glow: 'rgba(156,163,175,0.6)',
-  },
+const TONE: Record<Notification['severity'], BannerTone> = {
+  critical: 'critical', high: 'high', medium: 'medium', low: 'low', info: 'info',
 };
+
+// Same destination as the notification bell's "View all".
+const INBOX_ROUTE = '/notifications';
+const LONG_MESSAGE = 90;
 
 export function PlatformAlertBanner() {
   const location = useLocation();
@@ -110,20 +70,23 @@ export function PlatformAlertBanner() {
   const { data } = useNotifications(onTargetRoute);
   const markRead = useMarkRead();
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
+  const [expanded, setExpanded] = useState(false);
 
-  // Pick the highest-severity unread platform_* notification that the
-  // user hasn't already dismissed on this device. Newer ties beat older.
-  const alert = useMemo(() => {
+  // Highest-severity unread platform_* notification the user hasn't
+  // dismissed on this device (newer ties beat older), plus the count of
+  // the others still waiting.
+  const { alert, moreCount } = useMemo(() => {
     const items = data?.notifications ?? [];
     const candidates = items.filter(
       (n) => n.type.startsWith('platform_') && n.state === 'unread' && !dismissed.has(n.id),
     );
-    if (candidates.length === 0) return null;
-    return [...candidates].sort((a, b) => {
-      const sev = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+    if (candidates.length === 0) return { alert: null, moreCount: 0 };
+    const top = [...candidates].sort((a, b) => {
+      const sev = (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0);
       if (sev !== 0) return sev;
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     })[0]!;
+    return { alert: top, moreCount: candidates.length - 1 };
   }, [data, dismissed]);
 
   // Trim the dismissed set to only ids that are still in the inbox so
@@ -144,17 +107,18 @@ export function PlatformAlertBanner() {
     }
   }, [data, dismissed]);
 
+  // A different alert surfaces collapsed.
+  const alertId = alert?.id;
+  useEffect(() => { setExpanded(false); }, [alertId]);
+
   if (!onTargetRoute || !alert) return null;
 
-  // Defensive: alert.severity comes from API notification data
-  // (data?.notifications) and PALETTE has no index signature, so an
-  // unexpected/malformed severity value would make this `undefined` and
-  // crash the render below (same bug class as PlatformStatusBadge's
-  // PALETTE[status]). Fall back to the neutral 'info' entry — it's the
-  // least alarming, theme-aware (uses var(--text-primary) / var(--border-*))
-  // entry in the palette, so a malformed alert still renders as a plain,
-  // non-scary banner instead of throwing.
-  const palette = PALETTE[alert.severity] ?? PALETTE.info;
+  // Defensive: severity comes from API data; an unexpected value falls back
+  // to the neutral 'info' tone (Banner also normalises unknown tones).
+  const tone = TONE[alert.severity] ?? 'info';
+  const href = resolveNotificationLink(alert.link, INBOX_ROUTE);
+  const hasExtra = Boolean(alert.reason_text || alert.recommended_action);
+  const canExpand = hasExtra || alert.message.length > LONG_MESSAGE || alert.title.length > LONG_MESSAGE;
 
   const handleDismiss = () => {
     const next = new Set(dismissed);
@@ -171,77 +135,45 @@ export function PlatformAlertBanner() {
   };
 
   return (
-    <div
-      role="alert"
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        margin: '0 0 12px',
-        padding: '10px 14px',
-        background: palette.bg,
-        border: `1px solid ${palette.border}`,
-        borderRadius: 10,
-        backdropFilter: 'blur(8px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-      }}
+    <Banner
+      aria-label="Platform alert"
+      variant="inline"
+      tone={tone}
+      pulse={tone === 'critical'}
+      title={alert.title}
+      detailsTrigger="button"
+      expandable={canExpand}
+      open={expanded}
+      onOpenChange={setExpanded}
+      details={
+        hasExtra ? (
+          <>
+            {alert.reason_text && <p style={{ margin: 0 }}><span style={{ color: 'var(--text-tertiary)' }}>Why:</span> {alert.reason_text}</p>}
+            {alert.recommended_action && (
+              <p style={{ margin: alert.reason_text ? '4px 0 0' : 0 }}>
+                <span style={{ color: 'var(--text-tertiary)' }}>What to do:</span> {alert.recommended_action}
+              </p>
+            )}
+          </>
+        ) : undefined
+      }
+      actions={
+        <>
+          <Button asChild size="sm" variant="secondary">
+            <Link to={href} onClick={handleMarkRead}>View</Link>
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleMarkRead}>Mark read</Button>
+          {moreCount > 0 && (
+            <Link to={INBOX_ROUTE} className="ds-banner-link">+{moreCount} more</Link>
+          )}
+        </>
+      }
+      onDismiss={handleDismiss}
+      dismissLabel="Dismiss platform alert"
+      // Sticky chrome: keep it above scrolling content with a blurred surface.
+      style={{ position: 'sticky', top: 0, zIndex: 50, margin: '0 0 12px', backdropFilter: 'blur(12px)' }}
     >
-      <div style={{ position: 'relative', width: 8, height: 8, flexShrink: 0 }}>
-        <div
-          style={{
-            position: 'absolute', inset: 0, borderRadius: '50%',
-            background: palette.dot, opacity: 0.7,
-            animation: 'mcc-ping 1.4s ease-in-out infinite',
-          }}
-        />
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, boxShadow: `0 0 8px ${palette.glow}` }} />
-      </div>
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 12, fontWeight: 700, color: palette.text,
-          fontFamily: 'var(--font-mono)', letterSpacing: '0.04em',
-          textTransform: 'uppercase',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {alert.title}
-        </div>
-        <div style={{
-          fontSize: 12, color: 'var(--text-secondary)',
-          marginTop: 2,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {alert.message}
-        </div>
-      </div>
-
-      <Link
-        to="/console?tab=alerts"
-        onClick={handleMarkRead}
-        style={{
-          fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
-          color: 'var(--amber-text)', textDecoration: 'none',
-          letterSpacing: '0.06em', padding: '6px 10px',
-          flexShrink: 0,
-        }}
-      >
-        VIEW →
-      </Link>
-      <button
-        onClick={handleDismiss}
-        aria-label="Dismiss platform alert"
-        style={{
-          width: 28, height: 28, padding: 0,
-          background: 'transparent', border: 'none', cursor: 'pointer',
-          color: 'var(--text-tertiary)', flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          borderRadius: 6,
-        }}
-      >
-        <X size={14} />
-      </button>
-    </div>
+      {alert.message}
+    </Banner>
   );
 }

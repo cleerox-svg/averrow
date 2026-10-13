@@ -6,11 +6,10 @@
 // Pure presentational: counts in, callbacks out. Styling uses design-system
 // tokens only so both themes work.
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Shared-kit Button on purpose: the ops barrel Button is mono/uppercase, which this design moves away from.
-import { Button } from '@averrow/shared/ui';
+import { Banner, Button } from '@averrow/shared/ui';
 import { formatSpan } from '@/lib/time';
-import './alert-queue-banner.css';
 
 export interface AlertQueueBannerProps {
   /** Alerts waiting for review (stats.new_count). */
@@ -66,23 +65,6 @@ function writeSnooze(s: Snooze) {
 const NUM: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontVariantNumeric: 'tabular-nums' };
 
-function PulseDot({ pulse }: { pulse: boolean }) {
-  const color = pulse ? 'var(--sev-critical)' : 'var(--sev-high)';
-  return (
-    <span aria-hidden="true" style={{ position: 'relative', width: 8, height: 8, flexShrink: 0, display: 'inline-block' }}>
-      {pulse && (
-        <span
-          style={{
-            position: 'absolute', inset: 0, borderRadius: '50%', background: color, opacity: 0.6,
-            animation: 'live-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite',
-          }}
-        />
-      )}
-      <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: color }} />
-    </span>
-  );
-}
-
 function SampledNote({ count }: { count?: number }) {
   return (
     <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
@@ -100,8 +82,7 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
   const [open, setOpen] = useState<boolean>(readOpen);
   const [snooze, setSnooze] = useState<Snooze | null>(readSnooze);
   const [now, setNow] = useState<number>(() => Date.now());
-  const headingId = useId();
-  const summaryRef = useRef<HTMLElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
 
   // Valid only while unexpired, not implausibly far in the future (clock
   // skew / tampering), and the incident has not worsened since.
@@ -127,60 +108,52 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
       </div>
     );
     return (
-      <section
-        aria-labelledby={headingId}
-        className="aqb-hairline"
-        style={{
-          borderRadius: 'var(--card-radius)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12,
-          background: 'var(--card-critical-bg)',
-        }}
+      <Banner
+        variant="prominent"
+        tone="critical"
+        eyebrow="SLA breach"
+        pulse
+        labelFromTitle
+        headingLevel={2}
+        title={<><span style={NUM}>{n(breachedCritical)}</span> critical {plural(breachedCritical, 'alert', 'alerts')} past the response deadline</>}
+        footer={
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: '12px 20px', marginTop: 12 }}>
+              {stat('Breached', n(breached))}
+              {stat('Critical', n(breachedCritical))}
+              {stat('Approaching', n(atRisk))}
+              {stat('Oldest', formatSpan(oldestBreachMs), true)}
+            </div>
+            {sampled && <div style={{ marginTop: 12 }}><SampledNote count={sampledCount} /></div>}
+          </>
+        }
+        actions={
+          <>
+            <Button size="sm" onClick={onShowCritical}>Show critical breaches</Button>
+            <Button size="sm" variant="secondary" onClick={onShowBreached}>Show all breached</Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                const next = { until: Date.now() + SNOOZE_MS, count: breachedCritical };
+                writeSnooze(next);
+                setSnooze(next);
+                setNow(Date.now());
+                onAnnounce?.('Critical SLA card snoozed for 1 hour');
+                requestAnimationFrame(() => headerRef.current?.focus());
+              }}
+            >
+              Snooze 1 hour
+            </Button>
+          </>
+        }
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <PulseDot pulse />
-          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--sev-critical-text)' }}>
-            SLA breach
-          </span>
-        </div>
-        <div>
-          <h2 id={headingId} style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
-            <span style={NUM}>{n(breachedCritical)}</span> critical {plural(breachedCritical, 'alert', 'alerts')} past the response deadline
-          </h2>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            Oldest breach is <span style={MONO}>{formatSpan(oldestBreachMs)}</span> past its deadline.
-          </p>
-        </div>
-        <div className="aqb-stats">
-          {stat('Breached', n(breached))}
-          {stat('Critical', n(breachedCritical))}
-          {stat('Approaching', n(atRisk))}
-          {stat('Oldest', formatSpan(oldestBreachMs), true)}
-        </div>
-        {sampled && <SampledNote count={sampledCount} />}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-          <Button size="sm" onClick={onShowCritical}>Show critical breaches</Button>
-          <Button size="sm" variant="secondary" onClick={onShowBreached}>Show all breached</Button>
-          <button
-            type="button"
-            className="aqb-snooze"
-            onClick={() => {
-              const next = { until: Date.now() + SNOOZE_MS, count: breachedCritical };
-              writeSnooze(next);
-              setSnooze(next);
-              setNow(Date.now());
-              onAnnounce?.('Critical SLA card snoozed for 1 hour');
-              requestAnimationFrame(() => summaryRef.current?.focus());
-            }}
-            style={{ background: 'none', border: 0, cursor: 'pointer', minHeight: 36, padding: '8px 10px', fontSize: 12, color: 'var(--text-tertiary)', borderRadius: 8 }}
-          >
-            Snooze 1 hour
-          </button>
-        </div>
-      </section>
+        Oldest breach is <span style={MONO}>{formatSpan(oldestBreachMs)}</span> past its deadline.
+      </Banner>
     );
   }
 
   const critical = breached > 0;
-  const accent = critical ? 'var(--sev-critical)' : 'var(--sev-high)';
   const title = critical
     ? <><span style={NUM}>{n(breached)}</span> {plural(breached, 'alert', 'alerts')} past SLA</>
     : unreviewed > 0
@@ -198,41 +171,34 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
   );
 
   return (
-    <details
+    <Banner
+      variant="inline"
+      tone={critical ? 'critical' : 'high'}
+      pulse={critical}
+      headingLevel="none"
+      detailsTrigger="header"
+      headerRef={headerRef}
       open={open}
-      onToggle={e => {
-        const next = (e.currentTarget as HTMLDetailsElement).open;
-        if (next !== open) { setOpen(next); writeOpen(next); }
-      }}
-      style={{
-        borderRadius: 'var(--radius-md)', border: '1px solid var(--border-base)', background: 'var(--bg-card)',
-        borderLeft: `3px solid ${accent}`,
-      }}
-    >
-      <summary ref={summaryRef} className="aqb-summary" tabIndex={-1} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
-        <PulseDot pulse={critical} />
-        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{subtitle}</span>
-        </span>
-        <svg className="aqb-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <path d="m9 6 6 6-6 6" />
-        </svg>
-      </summary>
-      <div style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <div>
-          {row('Critical past SLA', n(breachedCritical))}
-          {row('Approaching SLA', n(atRisk))}
-          {breached > 0 && row('Oldest breach', formatSpan(oldestBreachMs), true)}
-        </div>
-        {(breached > 0 || atRisk > 0) && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {breached > 0 && <Button size="sm" onClick={onShowBreached}>Show breached</Button>}
-            {atRisk > 0 && <Button size="sm" variant="secondary" onClick={onShowApproaching}>Show approaching</Button>}
+      onOpenChange={next => { setOpen(next); writeOpen(next); }}
+      title={title}
+      details={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div>
+            {row('Critical past SLA', n(breachedCritical))}
+            {row('Approaching SLA', n(atRisk))}
+            {breached > 0 && row('Oldest breach', formatSpan(oldestBreachMs), true)}
           </div>
-        )}
-        {sampled && <SampledNote count={sampledCount} />}
-      </div>
-    </details>
+          {(breached > 0 || atRisk > 0) && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {breached > 0 && <Button size="sm" onClick={onShowBreached}>Show breached</Button>}
+              {atRisk > 0 && <Button size="sm" variant="secondary" onClick={onShowApproaching}>Show approaching</Button>}
+            </div>
+          )}
+          {sampled && <SampledNote count={sampledCount} />}
+        </div>
+      }
+    >
+      {subtitle}
+    </Banner>
   );
 }

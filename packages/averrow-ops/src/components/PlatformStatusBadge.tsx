@@ -78,7 +78,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
             style={{
               position: 'absolute', inset: 0, borderRadius: '50%',
               background: palette.dot, opacity: 0.6,
-              animation: status === 'operational' ? 'mcc-ping 1.6s ease-in-out infinite' : 'mcc-ping 1s ease-in-out infinite',
+              animation: status === 'operational' ? 'live-ping 1.6s ease-in-out infinite' : 'live-ping 1s ease-in-out infinite',
             }}
           />
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, boxShadow: `0 0 8px ${palette.glow}` }} />
@@ -104,7 +104,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
           width: 8, height: 8, borderRadius: '50%',
           background: palette.dot,
           boxShadow: `0 0 8px ${palette.glow}`,
-          animation: status === 'operational' ? 'mcc-ping 2s ease-in-out infinite' : 'mcc-ping 1s ease-in-out infinite',
+          animation: status === 'operational' ? 'live-ping 2s ease-in-out infinite' : 'live-ping 1s ease-in-out infinite',
         }}
       />
       <span

@@ -738,6 +738,19 @@ and pass `onRetry={refetch}`; if a refetch fails while data is on screen, keep t
 data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
 `value={null}` while loading (never `'—'`, `'...'` or `0`) and `error` on failure.
 
+**Banner:** `Banner` (`@averrow/shared/ui`, re-exported from the ops barrel) is the
+one page-level notice primitive; `PlatformAlertBanner` and `AlertQueueBanner` are
+built on it. `tone` = `critical | high | medium | low | info | success` (unknown
+falls back to `info`); default icon tile per tone, `pulse` adds a `live-ping` ring.
+Use `variant="inline"` (flat card, 3px tone edge) by default. Use
+`variant="prominent"` (tinted surface + hairline) only for act-now states, with an
+`eyebrow`. One page-level banner per page. A banner must not repeat the number on
+a stat tile beside it: say what to do, not the count again. Details expand with
+`detailsTrigger="button"` ("Details") or `"header"` (the title row is the toggle,
+chevron). There is no static `role="alert"`: pass `aria-label` (or `labelFromTitle`)
+to make it a named region. Put sticky/blur positioning at the call site via
+`style`/`className`.
+
 ---
 
 ## Account & Settings (kit + pages)
