@@ -210,11 +210,21 @@ function EmptyState({ err }: { err: string | null }) {
           tone="critical"
           aria-label="Last fetch error"
           title="The last bot traffic fetch failed"
-          {...(isPermissionError(err) ? { details: <span className="break-words">{err}</span>, detailsTrigger: 'button' as const } : {})}
+          {...(isPermissionError(err)
+            ? {
+                // The fix is the actionable part, so it goes in the footer,
+                // which is never clamped; the raw error stays one tap away.
+                footer: (
+                  <p className="ds-banner-msg m-0">
+                    The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.
+                  </p>
+                ),
+                details: <span className="break-words">{err}</span>,
+                detailsTrigger: 'button' as const,
+              }
+            : {})}
         >
-          {isPermissionError(err)
-            ? 'The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.'
-            : <span className="break-words">{err}</span>}
+          {isPermissionError(err) ? null : <span className="break-words">{err}</span>}
         </Banner>
       ) : null}
     </div>
