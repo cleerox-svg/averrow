@@ -464,7 +464,9 @@ function ownerPrecheckHit(ctx: HostCtx, pre: OwnerPrecheck | undefined): boolean
  * ("office365-login", "outlook-live-login") AND carry a REAL vendor token
  * (OWNER_VENDORS.tokens as a hyphen token, or OWNER_VENDORS.glued inside
  * one); the generic word alone never suffices ("cloud-login.com",
- * "live-login.com", "box-office-login.com" → null). The vendor's NAME may
+ * "live-login.com", "box-office-login.com" → null), and the product word must
+ * be a whole token or glued only to lures / vendor tokens (productWordIn —
+ * "paypal-delivery.outlook-x.com", "olive-outlook.com" → null). The vendor's NAME may
  * be homoglyph-spelled ("office358.rricrosoft-offices.org"); the product
  * word may not.
  *
@@ -508,7 +510,8 @@ function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: stri
   if (reg && vendor.ownDomains.has(reg)) return null;
   const labels = ctx.labels();
   const word = spec.canon[0]!.replace(/-/g, "");
-  if (!labels.some((l) => l.includes(word))) return null;
+  const tokens = labels.flatMap((l) => l.split(/[-_]/)).filter((x) => x.length > 0);
+  if (!tokens.some((t) => productWordIn(t, word, owner.parentBrandId))) return null;
   for (const label of labels) {
     for (const t of label.split(/[-_]/).filter((x) => x.length > 0)) {
       if (vendor.tokens.includes(t) || vendor.glued.some((g) => t.includes(g))) return { parentBrandId: owner.parentBrandId };
@@ -519,6 +522,42 @@ function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: stri
     }
   }
   return null;
+}
+
+/** Per parent brand: what may be glued onto the product word inside one
+ *  token — credential lures, glue words, digits and the vendor's own tokens
+ *  ("livelogin", "office358", "myoffice365", "hotmaillive"). */
+const OWNER_GLUE_VOCAB: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, new Set([
+    ...CREDENTIAL_LURE_WORDS, ...LURE_GLUE_WORDS, ...v.tokens, ...v.glued,
+  ])]),
+);
+
+/**
+ * The generic product word ("live", "office", "cloud") as brand evidence in
+ * one hyphen token — never as a substring of an unrelated word
+ * ("delivery", "olive", "livenation", "officemax"). Accepted when the token
+ *   - IS the word ("outlook-live-login"), or
+ *   - is the word glued only to lures / glue / digits / vendor tokens
+ *     ("livelogin", "office358", "office365"), or
+ *   - has a vendor token directly beside the word
+ *     ("outlookliveprotectionaccess", "liveoutlook"), or
+ *   - holds the word inside a vendor token ("segoffice365", "windowslive").
+ */
+function productWordIn(t: string, word: string, parentBrandId: string): boolean {
+  if (t === word) return true;
+  const vendor = OWNER_VENDORS[parentBrandId];
+  const vocab = OWNER_GLUE_VOCAB.get(parentBrandId);
+  if (!vendor || !vocab) return false;
+  const names = [...vendor.tokens, ...vendor.glued];
+  if (names.some((g) => g !== word && g.includes(word) && t.includes(g))) return true;
+  for (let i = t.indexOf(word); i >= 0; i = t.indexOf(word, i + 1)) {
+    const pre = t.slice(0, i);
+    const post = t.slice(i + word.length);
+    if ((pre === "" || segmentsInto(pre, vocab)) && (post === "" || segmentsInto(post, vocab))) return true;
+    if (names.some((g) => (pre !== "" && pre.endsWith(g)) || (post !== "" && post.startsWith(g)))) return true;
+  }
+  return false;
 }
 
 /** What may be glued onto a generic brand's full-domain token or bare

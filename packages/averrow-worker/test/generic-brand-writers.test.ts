@@ -217,6 +217,21 @@ describe("owner credit on attacker-controlled tenant / subdomain labels (2026-10
       for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
     }
   });
+  it("the product word must be a whole token or glued only to lures / vendor tokens (review M1)", () => {
+    for (const host of ["paypal-delivery.outlook-x.com", "olive-outlook.com", "deliveryoutlook-help.com",
+      "paypal-delivery.rnicrosoft-support.com", "livenation-outlook.com", "officemax-outlook.com"]) {
+      for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
+    }
+    for (const [host, c] of [["livelogin-outlook.com", "live.com"], ["liveoutlook-verify.com", "live.com"],
+      ["hotmaillive.com", "live.com"], ["myoffice-microsoft.com", "office.com"], ["office358-outlook.net", "office.com"]] as const) {
+      expect(genericBrandOwnerCredit(host, c), host).toEqual({ parentBrandId: "brand_microsoft_com" });
+    }
+  });
+  it("IdP tenant hosts: the tenant label is attacker-chosen, the vendor's own subdomain is not (review L1)", () => {
+    expect(genericBrandOwnerCredit("outlook-live.okta.com", "live.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(genericBrandOwnerCredit("login.okta.com", "live.com")).toBeNull();
+    expect(genericBrandOwnerCredit("login.okta.com", "office.com")).toBeNull();
+  });
   it("the homoglyph fold applies to the vendor NAME only, never the product word", () => {
     expect(genericBrandOwnerCredit("office-rnicrosoft.com", "office.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
     expect(genericBrandOwnerCredit("office-micr0soft.com", "office.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
