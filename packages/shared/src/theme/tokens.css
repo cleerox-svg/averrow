@@ -99,8 +99,9 @@
 
   /* Accent-as-text tokens: green/red/blue accents fail AA as text on light
      cards (and red/blue on dark). Use these for TEXT; keep --green/--red/
-     --blue for fills, borders and icons. */
-  --green-text: #5fd69a;
+     --blue for fills, borders and icons. Dark green already passes
+     (~6.4:1 on the card), so it stays the --green hex. */
+  --green-text: #3CB878;
   --red-text:   #f87171;
   --blue-text:  #5cc8ea;
 
@@ -649,7 +650,7 @@
 [data-theme="light"] .text-sev-medium   { color: var(--sev-medium-text); }
 [data-theme="light"] .text-sev-low      { color: var(--sev-low-text); }
 [data-theme="light"] .text-amber        { color: var(--amber-text); }
-/* green/red/blue text utilities are AA-fixed in BOTH themes (dark raw accents are <4.5:1 too) */
+/* green/red/blue text utilities read the text tokens in BOTH themes (dark raw red/blue are <4.5:1; dark green is unchanged) */
 :root .text-green        { color: var(--green-text); }
 :root .text-red          { color: var(--red-text); }
 :root .text-blue         { color: var(--blue-text); }

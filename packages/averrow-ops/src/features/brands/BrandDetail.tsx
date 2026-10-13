@@ -42,6 +42,7 @@ import { Card, Avatar, Badge, Button, Sparkline, StatTile, PageState, Table, Th,
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { SignalBreakdownCard } from '@/components/ui/SignalBreakdownCard';
 import { timeAgo } from '@/lib/time';
+import { accentText } from '@/lib/accent-text';
 import {
   ExposureIndexCard,
   ActiveThreatsCard,
@@ -927,10 +928,10 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
   if (!narratives || narratives.length === 0) return null;
 
   const SEV: Record<string, { color: string; label: string }> = {
-    CRITICAL: { color: 'var(--sev-critical-text)', label: 'Critical' },
-    HIGH:     { color: 'var(--sev-high-text)',     label: 'High' },
-    MEDIUM:   { color: 'var(--sev-medium-text)',   label: 'Medium' },
-    LOW:      { color: 'var(--sev-low-text)',      label: 'Low' },
+    CRITICAL: { color: 'var(--sev-critical)', label: 'Critical' },
+    HIGH:     { color: 'var(--sev-high)',     label: 'High' },
+    MEDIUM:   { color: 'var(--sev-medium)',   label: 'Medium' },
+    LOW:      { color: 'var(--sev-low)',      label: 'Low' },
     INFO:     { color: 'var(--text-secondary)', label: 'Info' },
   };
 
@@ -957,14 +958,14 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
               style={{
                 background: 'var(--bg-card-deep)',
                 borderLeft: `3px solid ${sev.color}`,
-                border: `1px solid ${sev.color}25`,
-                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 14px ${sev.color}10`,
+                border: `1px solid color-mix(in srgb, ${sev.color} 15%, transparent)`,
+                boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 0 14px color-mix(in srgb, ${sev.color} 6%, transparent)`,
               }}
             >
               <div className="flex items-start gap-3 mb-1.5">
                 <span
                   className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider flex-shrink-0"
-                  style={{ background: `${sev.color}20`, color: sev.color, border: `1px solid ${sev.color}40` }}
+                  style={{ background: `color-mix(in srgb, ${sev.color} 13%, transparent)`, color: accentText(sev.color), border: `1px solid color-mix(in srgb, ${sev.color} 25%, transparent)` }}
                 >
                   <span style={{ width: 5, height: 5, borderRadius: 999, background: sev.color, boxShadow: `0 0 6px ${sev.color}` }} />
                   {sev.label}

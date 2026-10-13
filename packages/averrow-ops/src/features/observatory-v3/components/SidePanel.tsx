@@ -101,10 +101,10 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
   const sevTotal = sev.critical + sev.high + sev.medium + sev.low;
 
   const segs: Array<{ k: keyof typeof sev; color: string }> = [
-    { k: 'critical', color: 'var(--sev-critical-text)' },
-    { k: 'high', color: 'var(--sev-high-text)' },
-    { k: 'medium', color: 'var(--sev-medium-text)' },
-    { k: 'low', color: 'var(--sev-low-text)' },
+    { k: 'critical', color: 'var(--sev-critical)' },
+    { k: 'high', color: 'var(--sev-high)' },
+    { k: 'medium', color: 'var(--sev-medium)' },
+    { k: 'low', color: 'var(--sev-low)' },
   ];
 
   const Stat = ({ label, value }: { label: string; value: number | null | undefined }) => (
