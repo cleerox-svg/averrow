@@ -44,7 +44,7 @@ interface Opts {
   byId?: Record<string, Alert | 'fail'>;
   /** by-id requests for this id never settle (loading state). */
   hang?: string;
-  stats?: Record<string, number>;
+  stats?: Record<string, number | number[]>;
 }
 
 function setup(role: string, url: string, opts: Opts = {}) {
@@ -353,12 +353,53 @@ describe('Alerts staff ownership, notes and bulk batching', () => {
     expect(post).toHaveBeenCalledTimes(2);
   });
 
-  it('renders the auto-triage line from stats (no by_brand needed)', async () => {
+  const BASE = { total: 8, new_count: 3, acknowledged: 2, resolved: 1, dismissed: 4, auto_dismissed: 6, critical: 9, high: 1, medium: 0, low: 0 };
+
+  it('renders the new KPI tiles from the extended stats and drops the auto-triage line', async () => {
     setup('analyst', '/console?tab=alerts', {
       list: [alert('a1')],
-      stats: { total: 5, new_count: 1, acknowledged: 0, resolved: 0, dismissed: 4, auto_dismissed: 3, critical: 0, high: 1, medium: 0, low: 0 },
+      stats: { ...BASE, open_critical: 2, open_total: 5, daily_new_7d: [1, 2, 1, 3, 2, 4, 7] },
     });
-    expect(await screen.findByText(/Auto-triage cleared 3 of 4 dismissed signals \(75%\)/)).toBeInTheDocument();
+    const crit = (await screen.findByText('Critical open')).closest('.ds-stat') as HTMLElement;
+    await waitFor(() => expect(crit).toHaveClass('ds-stat--live'));
+    expect(within(crit).getByText('2')).toBeInTheDocument();
+    const queue = screen.getByText('Open queue').closest('.ds-stat') as HTMLElement;
+    expect(await within(queue).findByText('7 new today · 7-day intake')).toBeInTheDocument();
+    expect(within(queue).getByText('5')).toBeInTheDocument();
+    expect(within(queue).queryByRole('img')).not.toBeInTheDocument(); // no delta chip
+    expect(within(queue).getByTestId('stat-trend')).toHaveAttribute('data-points', '7');
+    const auto = screen.getByText('Auto-triaged').closest('.ds-stat') as HTMLElement;
+    await within(auto).findByText('75%');
+    expect(within(auto).getByText('75%')).toBeInTheDocument();
+    expect(within(auto).getByText('6 of 8 closed automatically')).toBeInTheDocument();
+    expect(screen.queryByText(/Auto-triage cleared/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Total alerts')).not.toBeInTheDocument();
+  });
+
+  it('is not live when there are no open critical alerts', async () => {
+    setup('analyst', '/console?tab=alerts', {
+      list: [alert('a1')],
+      stats: { ...BASE, open_critical: 0, open_total: 5, daily_new_7d: [1, 2, 1, 3, 2, 4, 1] },
+    });
+    const crit = (await screen.findByText('Critical open')).closest('.ds-stat') as HTMLElement;
+    expect(await screen.findByText('1 new today · 7-day intake')).toBeInTheDocument();
+    expect(crit).not.toHaveClass('ds-stat--live');
+  });
+
+  it('falls back to Total alerts and derived open queue when the new fields are absent (pre-deploy)', async () => {
+    setup('analyst', '/console?tab=alerts', { list: [alert('a1')], stats: BASE });
+    expect(await screen.findByText('Total alerts')).toBeInTheDocument();
+    expect(screen.queryByText('Critical open')).not.toBeInTheDocument();
+    const queue = screen.getByText('Open queue').closest('.ds-stat') as HTMLElement;
+    expect(await within(queue).findByText('5')).toBeInTheDocument();
+    expect(within(queue).queryByTestId('stat-trend')).not.toBeInTheDocument();
+    expect(within(queue).queryByRole('img')).not.toBeInTheDocument();
+  });
+
+  it('shows 0% auto-triaged when there are no alerts', async () => {
+    setup('analyst', '/console?tab=alerts', { list: [], stats: { ...BASE, total: 0, auto_dismissed: 0, open_critical: 0 } });
+    const auto = (await screen.findByText('Auto-triaged')).closest('.ds-stat') as HTMLElement;
+    expect(await within(auto).findByText('0%')).toBeInTheDocument();
   });
 });
 

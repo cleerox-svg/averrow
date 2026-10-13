@@ -1111,6 +1111,11 @@ export function Alerts() {
   const statValue = (n: number | undefined): number | null =>
     stats ? (n ?? 0) : (statsLoading || statsError ? null : 0);
 
+  const autoDismissed = stats?.auto_dismissed ?? 0;
+  const autoTriagePct = stats?.total ? Math.round((autoDismissed / stats.total) * 100) : 0;
+
+  const newToday = stats?.daily_new_7d?.length ? stats.daily_new_7d[stats.daily_new_7d.length - 1] : undefined;
+
   const listFailed = alertsError && (!alertsData || alertsPlaceholder);
   // Banner counts are platform-wide but the list only holds the loaded page:
   // say so when an SLA filter hides part of what the banner counted.
@@ -1218,40 +1223,45 @@ export function Alerts() {
       <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
 
       <StatGrid cols={4}>
+        {stats && stats.open_critical === undefined ? (
+          // Pre-deploy worker: no open-critical figure yet. `stats.critical` is
+          // all-time, so it must not stand in for "Critical open".
+          <StatTile
+            label="Total alerts"
+            value={statValue(stats.total)}
+            accent="var(--red)"
+          />
+        ) : (
+          <StatTile
+            label="Critical open"
+            value={statValue(stats?.open_critical)}
+            error={statsError && !stats}
+            accent="var(--red)"
+            live
+          />
+        )}
         <StatTile
-          label="Total Alerts"
-          value={statValue(stats?.total)}
-          error={statsError && !stats}
-          accent="var(--red)"
-        />
-        <StatTile
-          label="New / Unacknowledged"
-          value={statValue(stats?.new_count)}
+          label="Open queue"
+          value={statValue(stats ? (stats.open_total ?? (stats.new_count ?? 0) + (stats.acknowledged ?? 0)) : undefined)}
           error={statsError && !stats}
           accent="var(--sev-high)"
+          trend={stats?.daily_new_7d}
+          sub={newToday !== undefined ? `${newToday.toLocaleString()} new today · 7-day intake` : undefined}
         />
         <StatTile
-          label="Acknowledged"
-          value={statValue(stats?.acknowledged)}
+          label="Auto-triaged"
+          value={stats ? `${autoTriagePct}%` : statValue(undefined)}
           error={statsError && !stats}
-          accent="var(--amber)"
+          accent="var(--green)"
+          sub={stats ? `${autoDismissed.toLocaleString()} of ${(stats.total ?? 0).toLocaleString()} closed automatically` : undefined}
         />
         <StatTile
           label="Resolved"
           value={statValue(stats?.resolved)}
           error={statsError && !stats}
-          accent="var(--green)"
+          accent="var(--blue)"
         />
       </StatGrid>
-
-      {/* Auto-triage transparency (W5/W7) — how much noise rule + AI triage
-          has cleared, so the auto-dismissals aren't a black box. */}
-      {stats && stats.dismissed > 0 && (
-        <div className="font-mono text-[10px] text-[var(--text-muted)] -mt-2">
-          Auto-triage cleared {stats.auto_dismissed} of {stats.dismissed} dismissed signals
-          {stats.dismissed > 0 ? ` (${Math.round((stats.auto_dismissed / stats.dismissed) * 100)}%)` : ''} — rule + AI judge
-        </div>
-      )}
 
       {stats && (
         <AlertQueueBanner

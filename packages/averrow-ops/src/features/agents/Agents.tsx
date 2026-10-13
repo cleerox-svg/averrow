@@ -1026,11 +1026,11 @@ export function Agents() {
       )}
 
       <StatGrid cols={4}>
-        <StatTile label="Agents Operational" value={`${operational}/${agents.length}`} accent="var(--green)" />
+        <StatTile label="Agents operational" value={`${operational}/${agents.length}`} accent="var(--green)" />
         <StatTile label="Jobs (24h)" value={totalJobs.toLocaleString()} />
         <StatTile label="Outputs (24h)" value={totalOutputs.toLocaleString()} />
         <StatTile
-          label="Failure Patterns"
+          label="Failure patterns"
           value={failureCount + decommissionCount}
           accent={(failureCount + decommissionCount) > 0 ? 'var(--sev-high)' : undefined}
         />

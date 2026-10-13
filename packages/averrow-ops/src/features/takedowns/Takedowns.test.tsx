@@ -91,8 +91,8 @@ describe('Takedowns Page', () => {
 
   it('renders stat cards with correct values', () => {
     renderWithProviders(<Takedowns />);
-    expect(screen.getByText('Total Takedowns')).toBeInTheDocument();
-    expect(screen.getByText('Pending Review')).toBeInTheDocument();
+    expect(screen.getByText('Total takedowns')).toBeInTheDocument();
+    expect(screen.getByText('Pending review')).toBeInTheDocument();
     // "Submitted" and "Resolved" also appear as status labels on the takedown
     // cards — stat-card label + card status pill — so we expect ≥1 match.
     expect(screen.getAllByText('Submitted').length).toBeGreaterThanOrEqual(1);
@@ -368,8 +368,8 @@ describe('Takedowns — scope toggle', () => {
     expect(prospectTab).toHaveAttribute('aria-selected', 'false');
 
     // Authorized-mode stat cards, not the prospect ones.
-    expect(screen.getByText('Total Takedowns')).toBeInTheDocument();
-    expect(screen.queryByText('Total Drafts')).not.toBeInTheDocument();
+    expect(screen.getByText('Total takedowns')).toBeInTheDocument();
+    expect(screen.queryByText('Total drafts')).not.toBeInTheDocument();
   });
 
   it('the initial useAdminTakedowns call defaults scope to authorized and is enabled', () => {
@@ -400,11 +400,11 @@ describe('Takedowns — scope toggle', () => {
 
     // Prospect stat labels replace the authorized status-workflow stats.
     expect(screen.getByText('Brands')).toBeInTheDocument();
-    expect(screen.getByText('Total Drafts')).toBeInTheDocument();
-    expect(screen.getByText('High/Critical')).toBeInTheDocument();
-    expect(screen.getByText('Evidence Points')).toBeInTheDocument();
-    expect(screen.queryByText('Total Takedowns')).not.toBeInTheDocument();
-    expect(screen.queryByText('Pending Review')).not.toBeInTheDocument();
+    expect(screen.getByText('Total drafts')).toBeInTheDocument();
+    expect(screen.getByText('High/critical')).toBeInTheDocument();
+    expect(screen.getByText('Evidence points')).toBeInTheDocument();
+    expect(screen.queryByText('Total takedowns')).not.toBeInTheDocument();
+    expect(screen.queryByText('Pending review')).not.toBeInTheDocument();
   });
 
   it('prospect mode requests only { scope, brand_id, enabled } from useAdminTakedownsAll — no authorized-only filter/sort/limit params leak in (F1)', async () => {
@@ -580,7 +580,7 @@ describe('Takedowns — URL param sync', () => {
     const prospectTab = screen.getByRole('tab', { name: 'Prospect' });
     expect(authorizedTab).toHaveAttribute('aria-selected', 'true');
     expect(prospectTab).toHaveAttribute('aria-selected', 'false');
-    expect(screen.getByText('Total Takedowns')).toBeInTheDocument();
+    expect(screen.getByText('Total takedowns')).toBeInTheDocument();
   });
 
   it('initializes scope + brand filter from ?scope=prospect&brand=<id> and shows the brand filter chip', () => {

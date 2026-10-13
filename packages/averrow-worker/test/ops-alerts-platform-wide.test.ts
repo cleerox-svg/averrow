@@ -11,12 +11,13 @@
 // any staff caller, so before PR-C (`a.user_id = ?` pin) every staff read was
 // empty and every mutation 404'd / updated 0 rows.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { registerDashboardRoutes } from "../src/routes/dashboard";
+import { dailyAlertDayKeys } from "../src/handlers/alerts";
 import { handleTenantAlerts, handleTenantAlertDetail, AVERROW_SOC_LABEL } from "../src/handlers/tenantData";
 import type { AuthContext } from "../src/middleware/auth";
 import { deriveSchema, splitStatements } from "./migration-schema";
@@ -669,6 +670,119 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     it("no breach → oldest_breach_minutes is 0", async () => {
       raw.exec("UPDATE alerts SET status = 'resolved' WHERE id = 'a_crit_new_old'");
       expect(await stats()).toMatchObject({ sla_breached: 0, sla_breached_critical: 0, sla_oldest_breach_minutes: 0 });
+    });
+  });
+
+  describe("stats tile fields (open_* + 7-day series)", () => {
+    async function stats(): Promise<Record<string, unknown>> {
+      const res = await call("admin", "/api/alerts/stats");
+      expect(res.status).toBe(200);
+      return (await res.json<{ data: Record<string, unknown> }>()).data;
+    }
+    const DAY_MS = 86_400_000;
+    const utcDay = (ms: number) => Math.floor(ms / DAY_MS);
+    // Index into the oldest→newest 7-slot series for an instant `minsAgo` before NOW_MS.
+    const slot = (minsAgo: number) => 6 - (utcDay(NOW_MS) - utcDay(NOW_MS - minsAgo * 60_000));
+    function expectedSeries(rows: Array<{ minsAgo: number; count?: boolean }>): number[] {
+      const out = [0, 0, 0, 0, 0, 0, 0];
+      for (const r of rows) {
+        const i = slot(r.minsAgo);
+        if (i >= 0 && i <= 6 && r.count !== false) out[i]! += 1;
+      }
+      return out;
+    }
+
+    it("open_total / open_critical count only new + acknowledged", async () => {
+      // Fixture: 4 new + 1 acknowledged open; 2 open criticals.
+      raw.exec(`UPDATE alerts SET status = 'investigating' WHERE id = 'a_low_new'`);
+      raw.exec(
+        `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, created_at, updated_at)
+         VALUES ('o_crit_ack', 'b2', 't_bob', 'phishing_detected', 'critical', 'x', 'summary', 'acknowledged', '${ts(5)}', '${ts(5)}'),
+                ('o_crit_fp',  'b2', 't_bob', 'phishing_detected', 'critical', 'x', 'summary', 'false_positive', '${ts(5)}', '${ts(5)}')`,
+      );
+      expect(await stats()).toMatchObject({ open_total: 5, open_critical: 3 });
+    });
+
+    it("daily_new_7d: 7 slots oldest→newest, zero-filled, ISO rows bucketed, >6-day-old rows excluded", async () => {
+      const iso = (minsAgo: number) => new Date(NOW_MS - minsAgo * 60_000).toISOString();
+      const ins = raw.prepare(
+        `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, resolution_notes, created_at, updated_at)
+         VALUES (?, 'b1', 't_alice', 'phishing_detected', 'low', 'x', 'summary', ?, ?, ?, ?)`,
+      );
+      const D2 = 2 * 1440 + 30;   // two days ago
+      const D6 = 6 * 1440;        // six days ago — oldest slot (window starts at 00:00 UTC six days back)
+      const D8 = 8 * 1440;        // eight days ago — excluded
+      ins.run("d_iso_2d", "new", null, iso(D2), iso(D2));
+      ins.run("d_auto_2d", "false_positive", "auto: clean enrichment", ts(D2), ts(D2));
+      ins.run("d_manual_fp_2d", "false_positive", "customer says benign", ts(D2), ts(D2));
+      ins.run("d_6d", "new", null, ts(D6), ts(D6));
+      ins.run("d_8d", "new", null, ts(D8), ts(D8));
+      ins.run("d_8d_iso", "new", null, iso(D8), iso(D8));
+
+      const data = await stats();
+      const allRows = [...ALERTS.map((a) => ({ minsAgo: a.minsAgo })),
+        { minsAgo: D2 }, { minsAgo: D2 }, { minsAgo: D2 }, { minsAgo: D6 }, { minsAgo: D8 }, { minsAgo: D8 }];
+      const series = data.daily_new_7d as number[];
+      expect(series).toHaveLength(7);
+      expect(series).toEqual(expectedSeries(allRows));
+      // Explicit spot checks independent of the helper.
+      expect(series[slot(D2)]).toBe(3);
+      expect(series.reduce((s, n) => s + n, 0)).toBe(ALERTS.length + 4);
+      // Only the auto:-stamped false positive counts, on its created day.
+      const auto = data.daily_auto_dismissed_7d as number[];
+      expect(auto).toHaveLength(7);
+      expect(auto).toEqual(expectedSeries([{ minsAgo: D2 }]));
+    });
+
+    it("empty table → all-zero series and zero open counts, never null", async () => {
+      raw.exec("DELETE FROM alerts");
+      expect(await stats()).toMatchObject({
+        open_total: 0,
+        open_critical: 0,
+        daily_new_7d: [0, 0, 0, 0, 0, 0, 0],
+        daily_auto_dismissed_7d: [0, 0, 0, 0, 0, 0, 0],
+      });
+    });
+
+    it("the series is cached with the rest of the stats object", async () => {
+      await stats();
+      const cached = JSON.parse(kv.store.get("alerts_stats:global")!) as Record<string, unknown>;
+      expect(cached.daily_new_7d).toHaveLength(7);
+      expect(cached).toHaveProperty("open_total", 5);
+    });
+
+    it("dailyAlertDayKeys: 7 UTC keys oldest→newest, crossing a month end", () => {
+      expect(dailyAlertDayKeys(Date.parse("2025-03-01T00:00:05Z"))).toEqual([
+        "2025-02-23", "2025-02-24", "2025-02-25", "2025-02-26", "2025-02-27", "2025-02-28", "2025-03-01",
+      ]);
+    });
+
+    it("just after 00:00 UTC: SQL window and day keys share one clock (Date.now pinned)", async () => {
+      // Pinned far from the real date so a window still derived from SQLite
+      // date('now') would miss every seeded row and fail loudly.
+      const pinned = Date.parse("2025-03-01T00:00:05Z");
+      const spy = vi.spyOn(Date, "now").mockReturnValue(pinned);
+      try {
+        raw.exec("DELETE FROM alerts");
+        const ins = raw.prepare(
+          `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, resolution_notes, created_at, updated_at)
+           VALUES (?, 'b1', 't_alice', 'phishing_detected', 'low', 'x', 'summary', ?, ?, ?, ?)`,
+        );
+        const row = (id: string, at: string, status = "new", notes: string | null = null) => ins.run(id, status, notes, at, at);
+        row("m_today", "2025-03-01 00:00:01");                    // slot 6
+        row("m_today_iso", "2025-03-01T00:00:03.000Z");           // slot 6
+        row("m_yesterday", "2025-02-28 23:59:58");                // slot 5
+        row("m_yesterday_auto", "2025-02-28 12:00:00", "false_positive", "auto: clean"); // slot 5
+        row("m_oldest", "2025-02-23 00:00:00");                   // slot 0 (window boundary, inclusive)
+        row("m_oldest_iso", "2025-02-23T00:00:00Z");              // slot 0
+        row("m_out", "2025-02-22 23:59:59");                      // before window
+        row("m_out_iso", "2025-02-22T23:59:59.999Z");             // before window
+        const data = await stats();
+        expect(data.daily_new_7d).toEqual([2, 0, 0, 0, 0, 2, 2]);
+        expect(data.daily_auto_dismissed_7d).toEqual([0, 0, 0, 0, 0, 1, 0]);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

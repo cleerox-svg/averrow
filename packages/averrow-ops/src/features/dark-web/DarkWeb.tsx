@@ -154,7 +154,7 @@ export function DarkWeb() {
 
       <StatGrid>
         <StatTile
-          label="Active Mentions"
+          label="Active mentions"
           value={statValue(slice?.total_active ?? 0)}
           error={listFailed}
           accent="var(--red)"
@@ -166,7 +166,7 @@ export function DarkWeb() {
           accent={(slice?.confirmed_active ?? 0) > 0 ? 'var(--red)' : 'var(--blue)'}
         />
         <StatTile
-          label="Critical / High"
+          label="Critical / high"
           value={statValue((slice?.critical_active ?? 0) + (slice?.high_active ?? 0))}
           error={listFailed}
           accent={
@@ -175,7 +175,7 @@ export function DarkWeb() {
           }
         />
         <StatTile
-          label="Sources Active"
+          label="Sources active"
           value={statValue(bySource.length)}
           error={listFailed}
           accent={bySource.length > 1 ? 'var(--amber)' : 'var(--blue)'}

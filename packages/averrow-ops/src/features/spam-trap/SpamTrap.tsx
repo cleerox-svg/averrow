@@ -104,12 +104,12 @@ export function SpamTrap() {
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatTile label="SEEDS DEPLOYED"   value={tileValue(seedCount, addresses === undefined)}   error={addrFailed} accent="#E5A832" />
-        <StatTile label="DOMAINS"          value={tileValue(domainCount, addresses === undefined)} error={addrFailed} accent="#E5A832" />
-        <StatTile label="CAPTURES"         value={tileValue(captureCount, stats === undefined)}    error={statsFailed} accent="#fb923c" />
-        <StatTile label="CATCH RATE · ALL" value={tileValue(catchRate, addresses === undefined || stats === undefined)} error={addrFailed || statsFailed} accent="#4ADE80" />
-        <StatTile label="CATCH RATE · 7D"  value={tileValue(last7Rate, addresses === undefined || daily === undefined)} error={addrFailed || dailyFailed} accent="#4ADE80" />
-        <StatTile label="LAST CATCH"       value={tileValue(lastCatch, addresses === undefined)}   error={addrFailed} accent="var(--text-secondary)" />
+        <StatTile label="Seeds deployed"   value={tileValue(seedCount, addresses === undefined)}   error={addrFailed} accent="#E5A832" />
+        <StatTile label="Domains"          value={tileValue(domainCount, addresses === undefined)} error={addrFailed} accent="#E5A832" />
+        <StatTile label="Captures"         value={tileValue(captureCount, stats === undefined)}    error={statsFailed} accent="#fb923c" />
+        <StatTile label="Catch rate · all" value={tileValue(catchRate, addresses === undefined || stats === undefined)} error={addrFailed || statsFailed} accent="#4ADE80" />
+        <StatTile label="Catch rate · 7d"  value={tileValue(last7Rate, addresses === undefined || daily === undefined)} error={addrFailed || dailyFailed} accent="#4ADE80" />
+        <StatTile label="Last catch"       value={tileValue(lastCatch, addresses === undefined)}   error={addrFailed} accent="var(--text-secondary)" />
       </div>
 
       {/* 30-day sparkline */}

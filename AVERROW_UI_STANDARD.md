@@ -712,6 +712,33 @@ import {
   not clipped). Button, StatTile and the PageHeader back control use the amber
   ring (`focus-visible:ring-2`).
 
+**StatTile ("Instrument glass", 2026-10):** gradient-hairline surface (mask
+technique, as `.ds-banner[data-variant="prominent"]`), inset top highlight, no glow
+orb, no number text-shadow. Label is app sans 12px / 500 / `--text-secondary`,
+**sentence case** (the CSS no longer uppercases, so write "Open alerts", not
+"Open Alerts"; keep acronyms). Number 600 weight, -0.03em, tabular-nums. Styles are
+`.ds-stat*` in `packages/shared/src/theme/tokens.css`. Optional props on top of
+`label/value/sub/tone/accent/critical/error/onClick/asChild/footer`:
+- `delta?: { value, tone?: 'good'|'bad'|'neutral', label? }` chip beside the label
+  (inline after the label when the `critical` pill is present). `value` renders as
+  given; `label` is the aria-label. **A delta must say what it compares to**
+  ("412 more than yesterday"), never a bare "+412".
+- `trend?: number[]` inline sparkline (needs >= 2 points; flat/all-zero draws a dashed
+  baseline; aria-hidden, accent from `resolveStatAccent`).
+- `live?: boolean` animated conic hairline (`@property --ds-stat-angle`, static accent
+  hairline under reduced motion); only applies when the value is > 0 and settled.
+  **At most one `live` tile per page** — it marks the single thing that needs action.
+- Tone/accent is visible as the 6px label dot (hidden while loading/error, grey for a
+  zero value), the trend stroke and the `live` ring. There is no glow any more.
+- **Dynamic/enum labels must be formatted by the caller** (`label="Meeting"`, never a raw
+  `'meeting'`): the tile does no case transform.
+- **A delta must compare like-for-like periods** (full day vs full day, same window vs
+  previous window); never partial-today vs full-yesterday. If the number and the
+  delta/trend measure different things (backlog vs intake), say so in `sub` and drop
+  the delta.
+- Use `live` sparingly: at most one per page, and avoid it when a prominent banner
+  already flags the same thing. It runs 3 revolutions then rests as a static hairline.
+
 **Ops import path (PR6a):** `@/design-system/components` is the single ops barrel
 (`components/ui/index.ts` is gone). It re-exports Badge, Tabs, FilterBar, Sparkline
 and Avatar straight from the kit, and exports an ops `PageHeader` adapter

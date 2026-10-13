@@ -63,3 +63,17 @@ describe('Leads — cross-pipeline deep link + correlated scan lead', () => {
     expect(link).toHaveAttribute('href', '/leads?view=scan&lead=scan_7');
   });
 });
+
+describe('Leads — pipeline stat tiles', () => {
+  it('shows display-cased stage labels, not raw enum values', () => {
+    window.history.pushState({}, '', '/leads?view=pipeline');
+    mocks.useLeads.mockReturnValue({ data: { data: [lead] }, isLoading: false });
+    mocks.useLeadStats.mockReturnValue({ data: null });
+    mocks.useUpdateLead.mockReturnValue({ mutate: vi.fn(), isPending: false });
+    renderWithProviders(<Leads />);
+    for (const label of ['New', 'Researched', 'Drafted', 'Meeting', 'Converted']) {
+      expect(screen.getAllByText(label, { selector: '.ds-stat-label' }).length).toBe(1);
+    }
+    expect(screen.queryByText('meeting', { selector: '.ds-stat-label' })).not.toBeInTheDocument();
+  });
+});

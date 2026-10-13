@@ -731,25 +731,25 @@ export function Campaigns() {
       {/* ─── Header Stats (4 cards) ─────────────────────────────── */}
       <StatGrid cols={4}>
         <StatTile
-          label="Active Operations"
+          label="Active operations"
           value={opsStatValue(opsStats?.active_operations)}
           error={opsStatsError && !opsStats}
           accent="var(--green)"
         />
         <StatTile
-          label="Campaigns Tracked"
+          label="Campaigns tracked"
           value={opsStatValue(opsStats?.campaigns_tracked)}
           error={opsStatsError && !opsStats}
           accent="var(--amber)"
         />
         <StatTile
-          label="Brands Targeted"
+          label="Brands targeted"
           value={opsStatValue(opsStats?.brands_targeted)}
           error={opsStatsError && !opsStats}
           accent="var(--red)"
         />
         <StatTile
-          label="Threat Types"
+          label="Threat types"
           value={!opsStats ? (opsStatsLoading || opsStatsError ? null : '0') : (() => {
             const raw: unknown = opsStats?.threat_types;
             if (raw == null) return '0';

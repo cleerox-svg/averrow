@@ -30,6 +30,11 @@ import { ScoreBreakdownCard } from './components/ScoreBreakdownCard';
 
 const PIPELINE_STATUSES = ['new', 'researched', 'drafted', 'approved', 'sent', 'responded', 'meeting', 'converted'] as const;
 
+/** Sentence-case display label for StatTile (the tile no longer uppercases). */
+function statusLabel(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
+}
+
 function columnLabel(s: string) {
   return s.replace(/_/g, ' ').toUpperCase();
 }
@@ -226,7 +231,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
         {PIPELINE_STATUSES.map(s => (
           <StatTile
             key={s}
-            label={s}
+            label={statusLabel(s)}
             value={stats ? getPipelineCount(stats.pipeline, s) : null}
             error={statsFailed}
           />
@@ -557,9 +562,9 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
 
         {/* Overview Stats */}
         <StatGrid cols={4}>
-          <StatTile label="Prospect Score" value={Math.round(lead.prospect_score)} accent="#E5A832" />
+          <StatTile label="Prospect score" value={Math.round(lead.prospect_score)} accent="#E5A832" />
           <StatTile
-            label="Email Grade"
+            label="Email grade"
             value={lead.email_security_grade ?? '—'}
             accent={lead.email_security_grade === 'F' ? '#C83C3C' : lead.email_security_grade === 'C' ? '#FB923C' : '#0A8AB5'}
           />
@@ -764,9 +769,9 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
   return (
     <div className="space-y-6">
       <StatGrid cols={3}>
-        <StatTile label="Total Leads" value={leads.length} accent="#E5A832" />
-        <StatTile label="AI Enriched" value={enriched.length} accent="#3CB878" />
-        <StatTile label="Awaiting Enrichment" value={unenriched.length} accent="#0A8AB5" />
+        <StatTile label="Total leads" value={leads.length} accent="#E5A832" />
+        <StatTile label="AI enriched" value={enriched.length} accent="#3CB878" />
+        <StatTile label="Awaiting enrichment" value={unenriched.length} accent="#0A8AB5" />
       </StatGrid>
 
       {unenriched.length > 0 && (

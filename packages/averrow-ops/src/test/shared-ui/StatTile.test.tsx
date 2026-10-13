@@ -4,9 +4,9 @@ import userEvent from '@testing-library/user-event';
 import { StatTile } from '@averrow/shared/ui';
 import { stubMatchMedia } from './helpers';
 
-// jsdom serialises '#5a6a85' as rgb(90, 106, 133).
-const NEUTRAL_RGB = 'rgb(90, 106, 133)';
-const orb = (c: HTMLElement) => c.querySelector('span[aria-hidden]') as HTMLElement;
+// Custom properties are stored verbatim.
+const NEUTRAL = '#5a6a85';
+const accentOf = (c: HTMLElement) => (c.firstChild as HTMLElement).style.getPropertyValue('--st-accent');
 
 describe('shared StatTile', () => {
   beforeEach(() => stubMatchMedia(true));
@@ -38,17 +38,17 @@ describe('shared StatTile', () => {
     const { container } = render(<StatTile label="Alerts" value={0} accent="#ff0000" />);
     expect(screen.getByText('0')).toBeInTheDocument();
     expect(container.firstChild).not.toHaveAttribute('aria-busy');
-    expect(orb(container).style.background).toBe(NEUTRAL_RGB);
+    expect(accentOf(container)).toBe(NEUTRAL);
   });
 
   it('keeps the caller accent for a non-zero value', () => {
     const { container } = render(<StatTile label="Alerts" value={3} accent="#ff0000" />);
-    expect(orb(container).style.background).toBe('rgb(255, 0, 0)');
+    expect(accentOf(container)).toBe('#ff0000');
   });
 
   it('treats a string "0" as zero for accent purposes', () => {
     const { container } = render(<StatTile label="Rate" value="0%" accent="#ff0000" />);
-    expect(orb(container).style.background).toBe(NEUTRAL_RGB);
+    expect(accentOf(container)).toBe(NEUTRAL);
   });
 
   it('shows the final value immediately under reduced motion, with grouping', () => {
@@ -146,13 +146,96 @@ describe('shared StatTile', () => {
     expect(screen.queryByRole('group')).not.toBeInTheDocument();
   });
 
-  it('dims the glow while loading or failed so it does not read as a live alert', () => {
-    const { container, rerender } = render(<StatTile label="A" value={null} accent="var(--red)" />);
-    expect(orb(container)).toHaveClass('opacity-20');
-    rerender(<StatTile label="A" value={null} error accent="var(--red)" />);
-    expect(orb(container)).toHaveClass('opacity-20');
-    rerender(<StatTile label="A" value={4} accent="var(--red)" />);
-    expect(orb(container)).toHaveClass('opacity-[0.55]');
+  it('has no glow orb and no number text-shadow', () => {
+    const { container } = render(<StatTile label="A" value={4} accent="var(--red)" />);
+    expect(container.querySelector('.blur-\\[36px\\]')).toBeNull();
+    // Only aria-hidden children allowed are the trend/hint; none here.
+    expect(container.querySelector('[aria-hidden]')).toBeNull();
+    expect((screen.getByText('4') as HTMLElement).style.textShadow).toBe('');
+  });
+
+  it('label is plain sans text, not uppercase/mono/tracked', () => {
+    render(<StatTile label="Open alerts" value={4} />);
+    const cls = screen.getByText('Open alerts').className;
+    expect(cls).toBe('ds-stat-label');
+    expect(cls).not.toMatch(/uppercase|font-mono|tracking/);
+  });
+
+  it('renders a delta chip with an accessible label and tone', () => {
+    render(<StatTile label="Queue" value={9} delta={{ value: '+412', tone: 'bad', label: '412 more than yesterday' }} />);
+    const chip = screen.getByLabelText('412 more than yesterday');
+    expect(chip).toHaveTextContent('+412');
+    expect(chip).toHaveAttribute('data-tone', 'bad');
+    expect(chip).not.toHaveClass('ds-stat-delta--inline');
+  });
+
+  it('delta falls back to its value as the name and defaults to neutral', () => {
+    render(<StatTile label="Queue" value={9} delta={{ value: '0' }} />);
+    expect(screen.getByLabelText('0')).toHaveAttribute('data-tone', 'neutral');
+  });
+
+  it('does not render the delta chip while loading or failed', () => {
+    const { rerender } = render(<StatTile label="Q" value={null} delta={{ value: '+1', label: 'one more' }} />);
+    expect(screen.queryByLabelText('one more')).not.toBeInTheDocument();
+    rerender(<StatTile label="Q" value={null} error delta={{ value: '+1', label: 'one more' }} />);
+    expect(screen.queryByLabelText('one more')).not.toBeInTheDocument();
+  });
+
+  it('marks critical and idle (loading/error) tiles with modifier classes', () => {
+    const { container, rerender } = render(<StatTile label="Q" value={3} critical={2} />);
+    expect(container.firstChild).toHaveClass('ds-stat--crit');
+    expect(container.firstChild).not.toHaveClass('ds-stat--idle');
+    rerender(<StatTile label="Q" value={null} />);
+    expect(container.firstChild).toHaveClass('ds-stat--idle');
+  });
+
+  it('delta goes inline after the label when the critical pill is present', () => {
+    render(<StatTile label="Queue" value={9} critical={2} delta={{ value: '+1', label: 'one more' }} />);
+    const chip = screen.getByLabelText('one more');
+    expect(chip).toHaveClass('ds-stat-delta--inline');
+    expect(screen.getByText('Queue')).toContainElement(chip);
+  });
+
+  it('renders a trend sparkline with one path point per value, hidden from AT', () => {
+    render(<StatTile label="Q" value={9} trend={[1, 3, 2, 5]} />);
+    const trend = screen.getByTestId('stat-trend');
+    expect(trend).toHaveAttribute('aria-hidden', 'true');
+    const d = trend.querySelector('.ds-stat-trend-line')!.getAttribute('d')!;
+    expect(d.match(/[ML]/g)).toHaveLength(4);
+    expect(trend.querySelector('.ds-stat-trend-dot')).not.toBeNull();
+    expect(trend.querySelector('.ds-stat-trend-dot')!.className).not.toMatch(/h-\[|w-\[/); // sized in CSS
+  });
+
+  it('renders a dashed baseline for a flat or all-zero series', () => {
+    const { rerender } = render(<StatTile label="Q" value={9} trend={[0, 0, 0]} />);
+    expect(screen.getByTestId('stat-trend').querySelector('.ds-stat-trend-flat')).not.toBeNull();
+    expect(screen.getByTestId('stat-trend').querySelector('.ds-stat-trend-line')).toBeNull();
+    rerender(<StatTile label="Q" value={9} trend={[4, 4, 4]} />);
+    expect(screen.getByTestId('stat-trend').querySelector('.ds-stat-trend-flat')).not.toBeNull();
+  });
+
+  it('renders no sparkline for fewer than 2 points, empty, or while loading', () => {
+    const { rerender } = render(<StatTile label="Q" value={9} trend={[3]} />);
+    expect(screen.queryByTestId('stat-trend')).not.toBeInTheDocument();
+    rerender(<StatTile label="Q" value={9} trend={[]} />);
+    expect(screen.queryByTestId('stat-trend')).not.toBeInTheDocument();
+    rerender(<StatTile label="Q" value={null} trend={[1, 2, 3]} />);
+    expect(screen.queryByTestId('stat-trend')).not.toBeInTheDocument();
+  });
+
+  it('live adds the live class only for a settled value > 0', () => {
+    const { container, rerender } = render(<StatTile label="A" value={3} live />);
+    expect(container.firstChild).toHaveClass('ds-stat--live');
+    rerender(<StatTile label="A" value={0} live />);
+    expect(container.firstChild).not.toHaveClass('ds-stat--live');
+    rerender(<StatTile label="A" value={null} live />);
+    expect(container.firstChild).not.toHaveClass('ds-stat--live');
+    rerender(<StatTile label="A" value={null} error live />);
+    expect(container.firstChild).not.toHaveClass('ds-stat--live');
+    rerender(<StatTile label="A" value="12%" live />);
+    expect(container.firstChild).toHaveClass('ds-stat--live');
+    rerender(<StatTile label="A" value={3} />);
+    expect(container.firstChild).not.toHaveClass('ds-stat--live');
   });
 
   it('keeps the sub-line visible on small screens (it can carry data)', () => {
@@ -169,15 +252,8 @@ describe('shared StatTile', () => {
 
   it('reserves bottom space for the "View" hint only when clickable', () => {
     const { container, rerender } = render(<StatTile label="A" value={1} sub="a long wrapped sub line" onClick={() => {}} />);
-    expect((container.firstChild as HTMLElement).className).toMatch(/\bpb-6\b/);
+    expect((container.firstChild as HTMLElement).className).toContain('ds-stat--interactive');
     rerender(<StatTile label="A" value={1} />);
-    expect((container.firstChild as HTMLElement).className).not.toMatch(/\bpb-6\b/);
-  });
-
-  it('uses tokens, not hardcoded colours, for shadow and hover glow', () => {
-    const { container } = render(<StatTile label="A" value={1} onClick={() => {}} />);
-    const cls = (container.firstChild as HTMLElement).className;
-    expect(cls).toContain('var(--card-shadow)');
-    expect(cls).not.toMatch(/rgba\(0,0,0|rgba\(229,168,50/);
+    expect((container.firstChild as HTMLElement).className).not.toContain('ds-stat--interactive');
   });
 });

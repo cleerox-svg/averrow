@@ -455,6 +455,10 @@ export async function handleUpdateAlert(request: Request, env: Env, alertId: str
 // status new/acknowledged; breach when age >= window; at-risk when
 // 0.75·window <= age < window. The 60s cache staleness is acceptable for a
 // time-varying count.
+//
+// Stat tiles: `open_total` / `open_critical` ride the same SELECT;
+// `daily_new_7d` / `daily_auto_dismissed_7d` come from one extra GROUP BY
+// (see fillDailyAlertBuckets) run in parallel and cached in the same object.
 
 // Mirrors SLA_MINUTES in packages/averrow-ops/src/features/alerts/Alerts.tsx
 // (critical 15m · high 1h · medium 4h · everything else 24h). The alerts
@@ -466,6 +470,43 @@ const SLA_WINDOW_MINUTES_SQL = `(CASE a.severity WHEN 'critical' THEN 15 WHEN 'h
 const SLA_AGE_MINUTES_SQL = `((julianday('now') - julianday(a.created_at)) * 1440)`;
 const SLA_OPEN_SQL = `a.status IN ('new','acknowledged')`;
 const SLA_BREACH_SQL = `${SLA_OPEN_SQL} AND ${SLA_AGE_MINUTES_SQL} >= ${SLA_WINDOW_MINUTES_SQL}`;
+
+// Stat-tile sparklines: `daily_new_7d` / `daily_auto_dismissed_7d` are
+// exactly DAILY_WINDOW_DAYS integers, oldest → newest, one per UTC day
+// ending today (missing days = 0). Bucketed by CREATED day, so the
+// auto-dismissed series is "alerts created that day that have since been
+// auto-dismissed", not "dismissals performed that day".
+const DAILY_WINDOW_DAYS = 7;
+
+interface DailyAlertRow { d: string | null; n: number | null; auto_n: number | null }
+
+/** UTC 'YYYY-MM-DD' keys for the window ending at `nowMs`, oldest → newest. */
+export function dailyAlertDayKeys(nowMs: number): string[] {
+  const keys: string[] = [];
+  for (let i = DAILY_WINDOW_DAYS - 1; i >= 0; i--) {
+    keys.push(new Date(nowMs - i * 86_400_000).toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+// `nowMs` MUST be the same instant whose oldest key bounded the SQL window
+// (handleAlertStats reads Date.now() once), so a request straddling 00:00 UTC
+// can't query one window and label another.
+export function fillDailyAlertBuckets(
+  rows: DailyAlertRow[],
+  nowMs: number,
+): { daily_new_7d: number[]; daily_auto_dismissed_7d: number[] } {
+  const byDay = new Map<string, DailyAlertRow>();
+  for (const r of rows) if (r.d) byDay.set(r.d, r);
+  const daily_new_7d: number[] = [];
+  const daily_auto_dismissed_7d: number[] = [];
+  for (const day of dailyAlertDayKeys(nowMs)) {
+    const r = byDay.get(day);
+    daily_new_7d.push(r?.n ?? 0);
+    daily_auto_dismissed_7d.push(r?.auto_n ?? 0);
+  }
+  return { daily_new_7d, daily_auto_dismissed_7d };
+}
 
 export async function handleAlertStats(request: Request, env: Env, scope?: OrgScope | null): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -479,11 +520,16 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
     }
 
     const tally = newTally();
+    // One clock read for both the SQL window bound and the JS day keys.
+    const nowMs = Date.now();
     let stats: Record<string, number | null> | null = null;
+    let dailyRows: DailyAlertRow[] = [];
     if (scopeFilter) {
-      stats = await env.DB.prepare(
+      const statsQuery = env.DB.prepare(
         `SELECT
           COUNT(*) as total,
+          SUM(CASE WHEN ${SLA_OPEN_SQL} THEN 1 ELSE 0 END) as open_total,
+          SUM(CASE WHEN ${SLA_OPEN_SQL} AND a.severity='critical' THEN 1 ELSE 0 END) as open_critical,
           SUM(CASE WHEN a.status='new' THEN 1 ELSE 0 END) as new_count,
           SUM(CASE WHEN a.status='acknowledged' THEN 1 ELSE 0 END) as acknowledged,
           SUM(CASE WHEN a.status='resolved' THEN 1 ELSE 0 END) as resolved,
@@ -501,9 +547,29 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
           CAST(MAX(CASE WHEN ${SLA_BREACH_SQL}
                         THEN ${SLA_AGE_MINUTES_SQL} - ${SLA_WINDOW_MINUTES_SQL} END) AS INTEGER) as sla_oldest_breach_minutes
          FROM alerts a WHERE ${scopeFilter.where}`
-      ).bind(...scopeFilter.params).first<Record<string, number | null>>();
-      tally.queries += 1;
+      ).bind(...scopeFilter.params).all<Record<string, number | null>>();
+      // Range-scans idx_alerts_created. date() normalises both created_at
+      // spellings ('YYYY-MM-DD HH:MM:SS' default and ISO '…T…Z') to the UTC
+      // day; the >= string compare against the bare 'YYYY-MM-DD' bound is
+      // correct for both because each starts with the same date prefix. The
+      // bound is the oldest JS day key (not SQLite date('now')) so window and
+      // labels share one clock.
+      const dailyQuery = env.DB.prepare(
+        `SELECT date(a.created_at) AS d,
+                COUNT(*) AS n,
+                SUM(CASE WHEN a.status='false_positive' AND a.resolution_notes LIKE 'auto%' THEN 1 ELSE 0 END) AS auto_n
+           FROM alerts a
+          WHERE ${scopeFilter.where} AND a.created_at >= ?
+          GROUP BY d`
+      ).bind(...scopeFilter.params, dailyAlertDayKeys(nowMs)[0]).all<DailyAlertRow>();
+      const [statsRes, dailyRes] = await Promise.all([statsQuery, dailyQuery]);
+      // Aggregate SELECT always yields exactly one row.
+      stats = statsRes.results?.[0] ?? null;
+      addToTally(tally, statsRes.meta);
+      addToTally(tally, dailyRes.meta);
+      dailyRows = dailyRes.results ?? [];
     }
+    const { daily_new_7d, daily_auto_dismissed_7d } = fillDailyAlertBuckets(dailyRows, nowMs);
 
     // SUM over zero rows is NULL — normalise every field to a number.
     const n = (k: string): number => stats?.[k] ?? 0;
@@ -522,6 +588,10 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
       sla_breached_critical: n("sla_breached_critical"),
       sla_at_risk: n("sla_at_risk"),
       sla_oldest_breach_minutes: n("sla_oldest_breach_minutes"),
+      open_total: n("open_total"),
+      open_critical: n("open_critical"),
+      daily_new_7d,
+      daily_auto_dismissed_7d,
     };
     await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: ALERT_CACHE_TTL_SECONDS });
     recordD1Reads(env, "alerts_stats", tally);

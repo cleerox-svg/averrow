@@ -84,7 +84,7 @@ export function Apps() {
       {totals && (
         <StatGrid>
           <StatTile
-            label="Total Listings"
+            label="Total listings"
             value={formatCount(totals.total)}
             accent="var(--blue)"
           />
@@ -99,7 +99,7 @@ export function Apps() {
             accent={totals.suspicious > 0 ? 'var(--amber)' : 'var(--blue)'}
           />
           <StatTile
-            label="Legit / Official"
+            label="Legit / official"
             value={formatCount(totals.legitimate + totals.official)}
             accent="var(--green)"
           />

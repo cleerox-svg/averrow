@@ -653,7 +653,7 @@ export function Feeds() {
         <StatTile label="Disabled"     value={stats ? stats.disabled : null} error={statsError && !stats} />
         <StatTile label="Records (24h)" value={stats ? stats.total_ingested.toLocaleString() : null} error={statsError && !stats} />
         <StatTile
-          label="Failure Patterns"
+          label="Failure patterns"
           value={failureCount}
           accent={failureCount > 0 ? 'var(--sev-high)' : undefined}
         />
