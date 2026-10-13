@@ -130,12 +130,15 @@ describe('DevicesSettings — push devices', () => {
 
   it('explains unsupported browsers and the iOS install requirement', async () => {
     setup({ push: { supported: false } });
-    expect(await screen.findByText(/can't receive push notifications/)).toBeInTheDocument();
+    const banner = (await screen.findByText(/can't receive push notifications/)).closest('.ds-banner') as HTMLElement;
+    expect(banner).toHaveAttribute('data-tone', 'info');
+    expect(banner).toHaveTextContent('Use the installed app or a supported browser on your phone.');
   });
 
   it('asks iOS users to install first', async () => {
     setup({ push: { needsInstall: true } });
-    expect(await screen.findByText('Install the app first')).toBeInTheDocument();
+    const banner = (await screen.findByText('Install the app first')).closest('.ds-banner') as HTMLElement;
+    expect(banner).toHaveAttribute('data-tone', 'info');
   });
 });
 

@@ -10,12 +10,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Badge } from '../ui/Badge';
+import { Banner } from '../ui/Banner';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { PageState } from '../ui/PageState';
 import { ConfirmDialog, Dialog, useToast } from '../ui/overlays';
 import {
-  CopyField, IconTile, InlineBanner, SettingsGroup, SettingsRow, useMediaQuery,
+  CopyField, IconTile, SettingsGroup, SettingsRow, useMediaQuery,
 } from '../ui/settings';
 import {
   DownloadIcon, InfoCircleIcon, MonitorIcon, RefreshIcon, SendIcon, ShareIcon, SmartphoneIcon,
@@ -251,14 +252,18 @@ export function DevicesSettings({ install, push, version, onClearCache, onTurnOn
 
       {/* 2. Push devices */}
       {!push.supported && (
-        <InlineBanner className="mb-4" tone="info">
-          This browser can&apos;t receive push notifications. Use the installed app or a supported browser on your phone.
-        </InlineBanner>
+        <Banner
+          className="mb-4"
+          tone="info"
+          title="This browser can't receive push notifications."
+        >
+          Use the installed app or a supported browser on your phone.
+        </Banner>
       )}
       {push.supported && push.needsInstall && (
-        <InlineBanner className="mb-4" tone="info" title="Install the app first">
+        <Banner className="mb-4" tone="info" title="Install the app first">
           On iPhone and iPad, notifications work once {product} is on your Home Screen.
-        </InlineBanner>
+        </Banner>
       )}
 
       <SettingsGroup

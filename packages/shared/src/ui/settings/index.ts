@@ -6,7 +6,6 @@ export { IconTile, ICON_TILE_TONES, type IconTileProps, type IconTileTone } from
 export { SettingsGroup, type SettingsGroupProps } from './SettingsGroup';
 export { SettingsRow, type SettingsRowProps, type SettingsRowControlContext } from './SettingsRow';
 export { DangerZone, type DangerZoneProps, type DangerZoneAction } from './DangerZone';
-export { InlineBanner, type InlineBannerProps, type InlineBannerTone } from './InlineBanner';
 export { CopyField, copyText, type CopyFieldProps } from './CopyField';
 export { AccountHero, describeAccountScope, type AccountHeroProps } from './AccountHero';
 export { roleBadgeProps, type RoleBadgeProps } from './roleBadge';

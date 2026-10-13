@@ -262,6 +262,9 @@ describe('push', () => {
     renderPage('channels');
     expect(await screen.findByText(/Notifications are blocked in this browser\. Allow them in your browser's site settings, then come back\./)).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Push notifications' })).toBeDisabled();
+    const banner = screen.getByText('Push is blocked in this browser').closest('.ds-banner') as HTMLElement;
+    expect(banner).toHaveAttribute('data-tone', 'medium');
+    expect(banner).not.toHaveAttribute('role', 'alert');
   });
 
   it('reports the test notification result inline', async () => {

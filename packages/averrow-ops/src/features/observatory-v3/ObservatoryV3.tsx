@@ -13,7 +13,9 @@ import { ThreatMapV3 } from './components/ThreatMapV3';
 import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
-import { Card, Tabs, Button } from '@/design-system/components';
+import { Banner, Card, Tabs, Button } from '@/design-system/components';
+// Shared-kit Button for banner actions (the ops barrel Button is mono/uppercase).
+import { Button as KitButton } from '@averrow/shared/ui';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
@@ -413,8 +415,7 @@ export function ObservatoryV3() {
           (previously the only version that surfaced this) — a failed
           threats/stats/arcs/heatmap fetch no longer renders silently. */}
       {loadError && (
-        <Card
-          variant="critical"
+        <div
           style={{
             position: 'absolute',
             top: 56,
@@ -426,22 +427,16 @@ export function ObservatoryV3() {
             // mode, so `showPanel` alone isn't a reliable signal there).
             right: showPanel && !isMobile && hasSidePanel ? 336 : 16,
             zIndex: Z_TOGGLE,
-            padding: '8px 12px',
-            maxWidth: 260,
+            maxWidth: 300,
           }}
         >
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={13} style={{ color: 'var(--sev-critical-text)', flexShrink: 0 }} />
-            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
-              Observatory data failed to load
-            </span>
-          </div>
-          <div className="mt-1.5">
-            <Button variant="danger" size="sm" onClick={retryFailed} icon={<RefreshCw size={11} />}>
-              Retry
-            </Button>
-          </div>
-        </Card>
+          <Banner
+            tone="critical"
+            aria-label="Observatory load error"
+            title="Observatory data failed to load"
+            actions={<KitButton size="sm" variant="secondary" onClick={retryFailed}>Retry</KitButton>}
+          />
+        </div>
       )}
 
       {/* ─── Bottom-left: Layer toggles ───────────────────────── */}

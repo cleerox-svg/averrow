@@ -22,7 +22,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { roleLabel } from '@averrow/shared';
 import {
-  Badge, Button, Card, ConfirmDialog, DataTable, Field, InlineBanner, Input, PageHeader,
+  Badge, Button, Card, ConfirmDialog, DataTable, Field, Banner, Input, PageHeader,
   PageState, Select, roleBadgeProps, SettingsGroup, SettingsRow, Tabs, ToastProvider, useMediaQuery, useToast,
   type Column, type Tab,
 } from '@averrow/shared/ui';
@@ -280,14 +280,15 @@ function StaffTab() {
   return (
     <div className="space-y-4">
       {revocation && (
-        <InlineBanner
-          tone="warn"
+        <Banner
+          tone="medium"
+          role="status"
           title="Sessions not yet revoked"
           onDismiss={() => setRevocation(null)}
-          action={
+          actions={
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={forceLogout.isPending}
               onClick={() =>
                 forceLogout.mutate(revocation.userId, {
@@ -301,7 +302,7 @@ function StaffTab() {
           }
         >
           {revocation.warning}
-        </InlineBanner>
+        </Banner>
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_200px_200px]">

@@ -259,6 +259,21 @@ describe('UsersAccess: staff changes confirm before the guarded PATCH', () => {
     await user.click(screen.getByRole('button', { name: 'Sign out everywhere' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/api/admin/users/u_ad/force-logout'));
   });
+
+  it('the revocation notice is a medium Banner (polite status, no alert) that can be dismissed', async () => {
+    patch.mockResolvedValue({ success: true, data: USERS[2], revocation_pending: true, warning: 'Role updated, but existing sessions could not be revoked.' });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Ada Admin');
+    await user.selectOptions(screen.getByLabelText('Role for Ada Admin'), 'analyst');
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Make Analyst' }));
+    const banner = (await screen.findByText('Sessions not yet revoked')).closest('.ds-banner') as HTMLElement;
+    expect(banner).toHaveAttribute('data-tone', 'medium');
+    expect(banner).toHaveAttribute('role', 'status');
+    expect(within(banner).queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(within(banner).getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText('Sessions not yet revoked')).not.toBeInTheDocument();
+  });
 });
 
 describe('UsersAccess: staff list states', () => {

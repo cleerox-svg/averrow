@@ -225,7 +225,7 @@ Grid: `[tile 32] [text 1fr] [trailing auto]`, gap 12px, padding `12px 16px` (des
 
 ### 4.14 Other small pieces
 - `Badge` for every status (never ad-hoc pills). Min badge size on this surface = `md` (10px is current floor; raise `md` text to 11px in Badge or use label sizes >= 11).
-- `InlineBanner` (info/warn/error, 14px text, tinted using `--sev-*-bg/border`) for "Push blocked in this browser".
+- shared `Banner` (tone info/medium/critical, inline variant) for "Push blocked in this browser".
 - `CopyField` for read-only IDs: mono 13px, 44px row, copy button 44x44.
 
 ---
@@ -259,7 +259,7 @@ Empty/err: hero skeleton; load error -> `PageState kind=error layout=card onRetr
 
 ### 5.2 Security (`/settings/security`)
 1. **Status card** (`Card active accent=var(--green)` when passkey present, `variant=base` + amber banner otherwise): shield tile 40, title "Your account is protected" / "Add a passkey to secure your account", 14px description, summary chips: "N passkeys", "N active sessions", "Signed in with Google".
-2. Group **Passkeys**: header action `Button secondary sm` "+ Add passkey" (44px on mobile, full-width in group footer). Each passkey `SettingsRow`: tile (key glyph), title = label ("MacBook Touch ID"), description "Added Mar 3 · Last used 2 days ago" (13px, relative time with title=absolute), trailing: overflow icon button (44) -> Menu: Rename, Remove (destructive -> ConfirmDialog "Remove this passkey?"; if it's the last passkey and no other sign-in method, dialog warns). Empty: inline `PageState kind=empty compact` "No passkeys yet — Sign in with Face ID, Touch ID or a security key" + Add button. Unsupported browser: InlineBanner info, disables Add with reason.
+2. Group **Passkeys**: header action `Button secondary sm` "+ Add passkey" (44px on mobile, full-width in group footer). Each passkey `SettingsRow`: tile (key glyph), title = label ("MacBook Touch ID"), description "Added Mar 3 · Last used 2 days ago" (13px, relative time with title=absolute), trailing: overflow icon button (44) -> Menu: Rename, Remove (destructive -> ConfirmDialog "Remove this passkey?"; if it's the last passkey and no other sign-in method, dialog warns). Empty: inline `PageState kind=empty compact` "No passkeys yet — Sign in with Face ID, Touch ID or a security key" + Add button. Unsupported browser: Banner info, disables Add with reason.
 3. Group **Active sessions**: row per session: tile (laptop/phone glyph by UA class), title "Chrome on macOS" + **`Badge status="active" ` "This device"** (green, sits after title), description "Toronto, CA · Active now" / "Last active 3 h ago", meta mono 12px IP (masked last octet). Trailing: "Sign out" ghost sm for non-current rows (44 min on mobile via overflow Menu if narrow); current row has none. Sorted: this device first, then recency. Cap 5 visible + "Show N more".
 4. **DangerZone** group: Row "Sign out everywhere" — "Ends every session, including this one. You'll need to sign in again." trailing outline-red Button -> ConfirmDialog (copy §8). Secondary row "Sign out other devices" (keeps this one) — **primary recommended action, listed first**, standard (non-red) outline button.
 5. Footer text: "Averrow never stores your Google password. Sign-in is handled by Google."
@@ -267,7 +267,7 @@ Empty/err: hero skeleton; load error -> `PageState kind=error layout=card onRetr
 ### 5.3 Notifications (`/settings/notifications/*`)
 Pane top: summary strip (Card flat, 14px): "Push on this device · Email on · Quiet hours 22:00–07:00" each as Badge-like status text; below, `Tabs underline`.
 - **Channels** (default):
-  - Group **Push** (global master): Row "Push notifications" Switch (+ browser permission state; blocked -> InlineBanner with how-to-unblock, Switch disabled w/ reason). Row "Send me" -> Select severity floor (Everything / Medium and above / High and above / Critical only), with live count hint "About 4 a day at this level" if data exists (omit otherwise). Row "Send a test notification" -> `Button secondary sm` "Send test" (loading spinner; success inline "Sent — check your device", failure with reason).
+  - Group **Push** (global master): Row "Push notifications" Switch (+ browser permission state; blocked -> Banner with how-to-unblock, Switch disabled w/ reason). Row "Send me" -> Select severity floor (Everything / Medium and above / High and above / Critical only), with live count hint "About 4 a day at this level" if data exists (omit otherwise). Row "Send a test notification" -> `Button secondary sm` "Send test" (loading spinner; success inline "Sent — check your device", failure with reason).
   - Group **Email**: Switch "Email notifications"; Select "Send me" floor; Row "Email address" read-only value.
   - Group **In app** (bell): floor Select (default Everything).
   - Mobile: each group = card; floors are stacked full-width Selects.
@@ -360,7 +360,7 @@ Light/dark parity rules:
 States (always via `PageState`, `kind` required):
 - Initial load: layout-shaped skeleton (rows at final height) — `kind=loading layout=card`. No spinners on whole page.
 - Empty: `kind=empty compact` with one action (Add passkey / Turn on push). Good-empty (no unread, no sessions beyond this one): `kind=clear`.
-- Error: `kind=error layout=card onRetry`; inline row errors for single-control failures; never blank. Offline: InlineBanner "You're offline — changes will not save" and disable writes.
+- Error: `kind=error layout=card onRetry`; inline row errors for single-control failures; never blank. Offline: Banner "You're offline — changes will not save" and disable writes.
 - Locked: `kind=locked` for staff-only sections viewed by non-staff ("Ask an admin for access").
 - Saving: per-control spinner (row loading), Save buttons show spinner + keep width.
 
@@ -604,7 +604,7 @@ Error/empty micro-copy: lead with the fact, then the next step, max 2 short sent
 Factual notes only; the sections above remain the design intent.
 
 - **Shell name and location.** The shell is `SettingsShell` (`packages/shared/src/ui/settings/SettingsShell.tsx`), not `account/AccountShell`. Its props include `sections`, `activeId`, `basePath`, `home`, `homeFooter`, `railFooter`, `renderLink`, `onNavigate`. `getAccountSections` / `accountSectionIdFromPath` (`packages/shared/src/account/sections.tsx`) describe the rail/list/menu entries once.
-- **Kit layout.** Primitives are split across `ui/forms/` (Switch, SegmentedControl, Field/Label/HelpText/FieldError, Input, Select, TimeInput), `ui/overlays/` (Sheet, Dialog, ConfirmDialog, Menu/ResponsiveMenu/MenuRadioGroup/MenuRadioItem, ToastProvider/useToast, TimezoneSelect) and `ui/settings/` (SettingsShell, SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone, InlineBanner, CopyField), all re-exported from `@averrow/shared/ui`. Pages are in `packages/shared/src/account/` (`@averrow/shared/account`).
+- **Kit layout.** Primitives are split across `ui/forms/` (Switch, SegmentedControl, Field/Label/HelpText/FieldError, Input, Select, TimeInput), `ui/overlays/` (Sheet, Dialog, ConfirmDialog, Menu/ResponsiveMenu/MenuRadioGroup/MenuRadioItem, ToastProvider/useToast, TimezoneSelect) and `ui/settings/` (SettingsShell, SettingsGroup, SettingsRow, IconTile, AccountHero, DangerZone, CopyField), all re-exported from `@averrow/shared/ui`. Pages are in `packages/shared/src/account/` (`@averrow/shared/account`).
 - **Extra tokens beyond §4.0:** `--text-help`, `--card-shadow-elevated`, `--card-rim-elevated`, `--z-popover`, `--switch-off-border`, `--switch-knob-off` (`theme/tokens.css`).
 - **Opt-in props shipped:** `Badge font="sans"`, `Tabs size="md"`, `FilterBar size="md"`, `Card overflow`, `SheetContent labelledBy`, `Avatar shape="squircle"` / `tone="self"`.
 - **Mounts.** Ops: `/settings/{profile,security,notifications/:tab,devices}` (`features/settings/`). Tenant: `/tenant/account/{profile,security,notifications/:tab}` (`features/account/`, `ACCOUNT_BASE_PATH = '/account'`; there is no Devices & App because the tenant has no service worker). Legacy `/profile` and `/notifications/preferences` redirect in ops; `/profile` redirects in tenant. `/notifications` (the inbox) is unchanged in ops.

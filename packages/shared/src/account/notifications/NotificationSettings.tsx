@@ -4,7 +4,7 @@
 // (ops: /settings/notifications/:tab).
 
 import type { ReactElement } from 'react';
-import { InlineBanner, Tabs, type Tab } from '../../ui';
+import { Banner, Tabs, type Tab } from '../../ui';
 import { ChannelsSection } from './ChannelsSection';
 import { EventsSection } from './EventsSection';
 import { DigestSection } from './DigestSection';
@@ -40,9 +40,9 @@ export function NotificationSettings(props: NotificationSettingsProps): ReactEle
       <div className="space-y-4">
         <SummaryStrip prefs={prefs} push={push} />
         {!online && (
-          <InlineBanner tone="warn" title="You're offline">
+          <Banner tone="medium" role="status" title="You're offline">
             Changes will not save until you're back online.
-          </InlineBanner>
+          </Banner>
         )}
         <Tabs
           tabs={[...NOTIFICATION_TAB_LABELS]}

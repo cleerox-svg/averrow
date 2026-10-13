@@ -6,9 +6,11 @@ import {
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import type { BotTrafficAsOf, BotTrafficDays } from '@/hooks/useBotTraffic';
 import {
-  Card, Button, PageHeader, PageState, StatTile, Table, Th, Td,
+  Banner, Card, Button, PageHeader, PageState, StatTile, Table, Th, Td,
 } from '@/design-system/components';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+// Shared-kit Button for banner actions (the ops barrel Button is mono/uppercase).
+import { Button as KitButton } from '@averrow/shared/ui';
 import { cn } from '@/lib/cn';
 import { isAboveAverage, formatBotShare, resolveGlobalAvg } from '@/features/observatory-v3/lib/bot-density';
 
@@ -206,17 +208,14 @@ function EmptyState({ err }: { err: string | null }) {
         description="The daily Cloudflare Radar feed hasn't produced data yet. It runs once a day; check back after the next fetch."
       />
       {err ? (
-        <Card variant="critical">
-          <div className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--sev-critical-text)' }}>
-            Last fetch error
-          </div>
-          <p className="text-sm break-words" style={{ color: 'var(--text-primary)' }}>{err}</p>
+        <Banner tone="critical" aria-label="Last fetch error" title="The last bot traffic fetch failed">
+          <span className="break-words">{err}</span>
           {isPermissionError(err) ? (
-            <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>
+            <span className="block mt-1">
               The Radar token likely lacks the Radar Read permission. Set a read-only CF_RADAR_API_TOKEN Worker secret (preferred), or add Radar Read to CF_API_TOKEN.
-            </p>
+            </span>
           ) : null}
-        </Card>
+        </Banner>
       ) : null}
     </div>
   );
@@ -260,14 +259,14 @@ function BotTrafficContent() {
   );
 
   const retryBanner = isError ? (
-    <Card variant="critical">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
-          Couldn't refresh bot traffic. Showing the last loaded data.
-        </p>
-        <Button variant="secondary" size="sm" onClick={() => { void refetch(); }}>Retry</Button>
-      </div>
-    </Card>
+    <Banner
+      tone="critical"
+      aria-label="Bot traffic refresh failed"
+      title="Couldn't refresh bot traffic"
+      actions={<KitButton size="sm" variant="secondary" onClick={() => { void refetch(); }}>Retry</KitButton>}
+    >
+      Showing the last loaded data.
+    </Banner>
   ) : null;
 
   if (!latest) {

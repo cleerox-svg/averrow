@@ -27,6 +27,7 @@ import { snoozeUntilIso } from '@/lib/snooze';
 import { useUnreadSummary } from './notifications/useUnreadSummary';
 import { DayHeading, NotificationRow, NotificationRowSkeletons } from './notifications/NotificationRow';
 import { groupByDay } from './notifications/groupByDay';
+import { resolveNotificationLink } from '@/lib/notificationLink';
 
 type FilterKey = 'all' | 'unread';
 
@@ -86,7 +87,7 @@ function NotificationPanel({
   const handleActivate = (n: Notification) => {
     if (n.state === 'unread') markRead.mutate(n.id);
     if (n.link) {
-      navigate(n.link);
+      navigate(resolveNotificationLink(n.link, '/notifications'));
       onClose();
     }
   };

@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Badge, Button, Card, ConfirmDialog, DangerZone, IconTile, InlineBanner,
+  Badge, Button, Card, ConfirmDialog, DangerZone, IconTile, Banner,
   Menu, MenuContent, MenuItem, MenuTrigger, PageState, SettingsGroup, SettingsRow, useToast,
 } from '../ui';
 import { KeyIcon, LaptopIcon, MoreIcon, PhoneIcon, PlusIcon, ShieldAlertIcon, ShieldCheckIcon, TrashIcon } from './security/icons';
@@ -276,9 +276,13 @@ export function SecuritySettings({
               </div>
             )}
             {noPasskey && (
-              <InlineBanner tone="warn" className="mt-4">
-                Your account relies on {signInProvider} sign-in alone. A passkey adds a faster, phishing-resistant way in.
-              </InlineBanner>
+              <Banner
+                tone="medium"
+                className="mt-4"
+                title={`Your account relies on ${signInProvider} sign-in alone.`}
+              >
+                A passkey adds a faster, phishing-resistant way in.
+              </Banner>
             )}
             {keysState.status === 'error' && (
               <div className="mt-3">
@@ -299,7 +303,7 @@ export function SecuritySettings({
       >
         {!supported && (
           <div className="p-3">
-            <InlineBanner tone="info">{addDisabledReason}</InlineBanner>
+            <Banner tone="info" title={addDisabledReason} />
           </div>
         )}
         {keysState.status === 'loading' && <RowSkeleton label="Loading your passkeys…" />}
@@ -315,9 +319,12 @@ export function SecuritySettings({
         )}
         {keysState.status === 'ready' && keysState.stale && (
           <div className="p-3">
-            <InlineBanner tone="warn" action={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadKeys(); }}>Retry</Button>}>
-              Couldn&apos;t refresh this list. It may be out of date.
-            </InlineBanner>
+            <Banner
+              tone="medium"
+              role="status"
+              title="Couldn't refresh this list. It may be out of date."
+              actions={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadKeys(); }}>Retry</Button>}
+            />
           </div>
         )}
         {keys && keys.length === 0 && (
@@ -375,9 +382,12 @@ export function SecuritySettings({
         )}
         {sessState.status === 'ready' && sessState.stale && (
           <div className="p-3">
-            <InlineBanner tone="warn" action={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadSessions(); }}>Retry</Button>}>
-              Couldn&apos;t refresh this list. It may be out of date.
-            </InlineBanner>
+            <Banner
+              tone="medium"
+              role="status"
+              title="Couldn't refresh this list. It may be out of date."
+              actions={<Button type="button" size="sm" variant="secondary" className={TOUCH_MIN} onClick={() => { void reloadSessions(); }}>Retry</Button>}
+            />
           </div>
         )}
         {sess && sess.sessions.length === 0 && (

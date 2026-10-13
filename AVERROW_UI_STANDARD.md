@@ -816,7 +816,7 @@ or router imports):
 |---|---|
 | `ui/forms/` | `Switch`, `SegmentedControl`, `Field` / `Label` / `HelpText` / `FieldError`, `Input`, `Select` (native, styled), `TimeInput` |
 | `ui/overlays/` | `Sheet`, `Dialog`, `ConfirmDialog`, `Menu` / `MenuRadioGroup` / `MenuRadioItem` / `ResponsiveMenu`, `ToastProvider` + `useToast`, `TimezoneSelect` (searchable) |
-| `ui/settings/` | `SettingsShell` (desktop rail + pane, mobile list -> detail), `SettingsGroup`, `SettingsRow`, `IconTile`, `AccountHero`, `DangerZone`, `InlineBanner`, `CopyField` |
+| `ui/settings/` | `SettingsShell` (desktop rail + pane, mobile list -> detail), `SettingsGroup`, `SettingsRow`, `IconTile`, `AccountHero`, `DangerZone`, `CopyField` |
 
 Radix underneath: `react-switch`, `react-dropdown-menu`, `react-dialog`,
 `react-radio-group` (+ `react-slot`), declared in `packages/shared/package.json`.

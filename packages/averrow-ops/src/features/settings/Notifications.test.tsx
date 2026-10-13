@@ -161,6 +161,17 @@ describe('Notifications rows', () => {
     expect(mocks.navigate).toHaveBeenCalledWith('/threats/9');
   });
 
+  it.each([
+    ['/v2/threats/9', '/threats/9'],
+    ['//evil.example', '/notifications'],
+    ['https://evil.example/x', '/notifications'],
+  ])('routes link %s through the shared resolver (navigates to %s)', async (link, expected) => {
+    withRows([note({ id: 'a', link, title: 'Go' })]);
+    renderPage();
+    await userEvent.click(screen.getByRole('button', { name: /Go/ }));
+    expect(mocks.navigate).toHaveBeenCalledWith(expected);
+  });
+
   it('collapses same-group rows and expands them', async () => {
     withRows([
       note({ id: 'a', group_key: 'g', title: 'Head' }),

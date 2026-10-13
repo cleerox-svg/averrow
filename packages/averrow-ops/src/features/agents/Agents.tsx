@@ -30,7 +30,9 @@ import {
 import type { Agent, AgentOutput } from '@/hooks/useAgents';
 import { usePendingApprovals } from '@/hooks/useAgentApprovals';
 import { useAuth } from '@/lib/auth';
-import { Card, StatTile, StatGrid, PageHeader, Badge, PageState } from '@/design-system/components';
+import { Banner, Card, StatTile, StatGrid, PageHeader, Badge, PageState } from '@/design-system/components';
+// Shared-kit Button: the ops barrel Button is mono/uppercase.
+import { Button } from '@averrow/shared/ui';
 import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { CardGridLoader } from '@/components/ui/ListLoaders';
 import { AgentIcon } from '@/components/brand/AgentIcon';
@@ -111,40 +113,46 @@ export function PendingApprovalsBanner() {
   if (count === 0) return null;
 
   return (
-    <Link
-      to="/agents/approvals"
-      className="block group"
-      style={{
-        padding: '12px 16px', borderRadius: 8,
-        border: '1px solid var(--sev-medium-border, rgba(229,168,50,0.30))',
-        background: 'var(--sev-medium-bg, rgba(229,168,50,0.08))',
-        textDecoration: 'none',
-      }}
+    <Banner
+      tone="medium"
+      icon={<Shield size={16} />}
+      aria-label="Agent deployment approvals"
+      title={count === 1 ? '1 agent awaiting deployment review' : `${count} agents awaiting deployment review`}
+      actions={
+        <Button asChild size="sm" variant="secondary">
+          <Link to="/agents/approvals">Review</Link>
+        </Button>
+      }
     >
-      <div className="flex items-center gap-3">
-        <Shield size={16} style={{ color: 'var(--amber-text)', flexShrink: 0 }} />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-            {count === 1
-              ? '1 agent awaiting deployment review'
-              : `${count} agents awaiting deployment review`}
-          </div>
-          <div className="text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
-            Newly-deployed agents are blocked until a super_admin approves them.
-          </div>
+      Newly deployed agents are blocked until a super admin approves them.
+    </Banner>
+  );
+}
+
+export interface StalledRun { id: string | number; agent_id: string; started_at: string }
+
+// Operational alert: runs stuck in "running" for over 15 minutes (GA4).
+export function StalledRunsBanner({ stalled }: { stalled: StalledRun[] }) {
+  if (stalled.length === 0) return null;
+  return (
+    <Banner
+      tone="critical"
+      aria-label="Stalled agent runs"
+      icon={<AlertTriangle size={16} />}
+      title={`${stalled.length} stalled run${stalled.length !== 1 ? 's' : ''}, stuck for over 15 minutes`}
+      footer={
+        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+          {stalled.slice(0, 8).map(r => (
+            <span key={r.id} className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {r.agent_id} <span style={{ color: 'var(--text-tertiary)' }}>· started {relativeTime(r.started_at)}</span>
+            </span>
+          ))}
+          {stalled.length > 8 && (
+            <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>+{stalled.length - 8} more</span>
+          )}
         </div>
-        <span
-          className="text-[11px] font-mono uppercase tracking-wider px-2 py-1 rounded transition-colors"
-          style={{
-            background: 'var(--amber)',
-            color: '#0A0F1C',
-            fontWeight: 600,
-          }}
-        >
-          Review →
-        </span>
-      </div>
-    </Link>
+      }
+    />
   );
 }
 
@@ -1004,26 +1012,7 @@ export function Agents() {
       <PendingApprovalsBanner />
 
       {/* Stalled runs (GA4) — stuck >15min, was only in internal diagnostics. */}
-      {stalled.length > 0 && (
-        <Card variant="critical" style={{ padding: '12px 16px' }}>
-          <div className="flex items-center gap-2 mb-1.5">
-            <AlertTriangle size={14} style={{ color: 'var(--sev-critical-text)' }} />
-            <span className="font-mono text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
-              {stalled.length} stalled run{stalled.length !== 1 ? 's' : ''} · stuck &gt;15m
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {stalled.slice(0, 8).map(r => (
-              <span key={r.id} className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                {r.agent_id} <span style={{ color: 'var(--text-muted)' }}>· started {relativeTime(r.started_at)}</span>
-              </span>
-            ))}
-            {stalled.length > 8 && (
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>+{stalled.length - 8} more</span>
-            )}
-          </div>
-        </Card>
-      )}
+      <StalledRunsBanner stalled={stalled} />
 
       <StatGrid cols={4}>
         <StatTile label="Agents operational" value={`${operational}/${agents.length}`} accent="var(--green)" />
