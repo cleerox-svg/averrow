@@ -111,7 +111,7 @@ function ClusterRow({
             aria-controls={`attribute-picker-${cluster.id}`}
             disabled={busy}
             className="font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
-            style={{ color: 'var(--amber)', background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(229,168,50,0.35)' }}
+            style={{ color: 'var(--amber-text)', background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(229,168,50,0.35)' }}
           >
             {pickerOpen ? 'Close' : 'Attribute'}
           </button>
@@ -172,13 +172,13 @@ function AttributePickerRow({ cluster, onDone }: {
               autoFocus
             />
             {isFetching && <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Searching…</span>}
-            {attribute.isPending && <span className="font-mono text-[10px]" style={{ color: 'var(--amber)' }}>Attributing…</span>}
+            {attribute.isPending && <span className="font-mono text-[10px]" style={{ color: 'var(--amber-text)' }}>Attributing…</span>}
             {attribute.isError && (
-              <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+              <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
                 {(attribute.error as Error).message}
               </span>
             )}
-            {result && <span className="font-mono text-[10px]" style={{ color: 'var(--green)' }}>{result}</span>}
+            {result && <span className="font-mono text-[10px]" style={{ color: 'var(--green-text)' }}>{result}</span>}
           </div>
           {q.trim().length >= 2 && !result && (
             actors.length === 0 && !isFetching ? (

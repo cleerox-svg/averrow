@@ -378,7 +378,7 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
     <div className="py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.02] transition-colors">
       <div className="flex items-center gap-3">
         <div
-          className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#0a0a0a] opacity-60"
+          className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#0a0a0a]"
           style={{ backgroundColor: color }}
         >
           {initials}

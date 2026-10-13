@@ -408,7 +408,7 @@ function SignAuthorizationForm() {
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-amber">{AGREEMENT_TITLE}</h2>
             <p className="text-[12px] text-white/70 mt-1 leading-relaxed">{AGREEMENT_SUMMARY}</p>
-            <p className="text-[10px] font-mono uppercase tracking-wider text-amber/70 mt-2">
+            <p className="text-[10px] font-mono uppercase tracking-wider text-amber mt-2">
               Agreement {AGREEMENT_VERSION}
             </p>
           </div>

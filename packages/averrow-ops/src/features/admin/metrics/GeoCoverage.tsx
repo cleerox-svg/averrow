@@ -37,7 +37,7 @@ export function GeoCoverage() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load geo coverage. Try again in a moment.
         </p>
       </Card>
@@ -99,7 +99,7 @@ function WindowTile({ window: w }: { window: GeoCoverageWindow }) {
         </span>
         {verdict.sev && <Badge severity={verdict.sev}>{verdict.label}</Badge>}
         {!verdict.sev && (
-          <span className="font-mono text-[9px] tracking-wide uppercase" style={{ color: 'var(--green)' }}>
+          <span className="font-mono text-[9px] tracking-wide uppercase" style={{ color: 'var(--green-text)' }}>
             {verdict.label}
           </span>
         )}

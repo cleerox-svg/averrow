@@ -359,11 +359,11 @@ function Recommendations({ items }: { items: string[] }) {
   const shown = open ? items : items.slice(0, 2);
   return (
     <div className="mt-3 rounded-lg border border-amber/[0.16] bg-amber/[0.04] px-3 py-2.5">
-      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-1.5">Recommended actions</div>
+      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-1.5">Recommended actions</div>
       <ul className="space-y-1.5">
         {shown.map((r, i) => (
           <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">
-            <span className="text-amber/80 flex-shrink-0 mt-[2px]">▸</span>
+            <span className="text-amber flex-shrink-0 mt-[2px]">▸</span>
             <span>{r}</span>
           </li>
         ))}
@@ -372,7 +372,7 @@ function Recommendations({ items }: { items: string[] }) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-amber/70 hover:text-amber"
+          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-amber hover:text-amber"
         >
           {open ? 'show less' : `+${items.length - 2} more`}
         </button>
@@ -386,7 +386,7 @@ function SeverityPill({ level }: { level: AlertSeverity | string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -399,7 +399,7 @@ function StatusPill({ status }: { status: AlertStatus }) {
   const tone =
     status === 'new'           ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
     status === 'acknowledged'  ? 'text-white/70     bg-white/[0.06]        border-white/[0.10]'        :
-    status === 'investigating' ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    status === 'investigating' ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
     status === 'resolved'      ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                  'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
@@ -416,7 +416,7 @@ function ConfidencePill({ value }: { value: number | null }) {
   if (value === null) return null;
   const tone =
     value >= 80 ? 'text-blue/90 bg-blue/[0.08] border-blue/[0.22]' :
-    value >= 50 ? 'text-blue/70 bg-blue/[0.05] border-blue/[0.15]' :
+    value >= 50 ? 'text-blue bg-blue/[0.05] border-blue/[0.15]' :
                   'text-white/55 bg-white/[0.04] border-white/[0.08]';
   return (
     <span

@@ -70,7 +70,7 @@ function AttackTypeBadge({ type }: { type: string | null }) {
   if (!type) return null;
   const t = type.toLowerCase();
   let cls = 'border-white/10 bg-white/5 text-white/55';
-  if (t.includes('phishing')) cls = 'border-[#C83C3C]/30 bg-[#C83C3C]/10 text-[#C83C3C]';
+  if (t.includes('phishing')) cls = 'border-[#C83C3C]/30 bg-[#C83C3C]/10 text-[var(--red-text)]';
   else if (t.includes('malware')) cls = 'border-[#FB923C]/30 bg-[#FB923C]/10 text-[#FB923C]';
   else if (t === 'c2') cls = 'border-[#A78BFA]/30 bg-[#A78BFA]/10 text-[#A78BFA]';
   else if (t.includes('credential')) cls = 'border-[#F97316]/30 bg-[#F97316]/10 text-[#F97316]';
@@ -174,7 +174,7 @@ function OperationCard({
                 onClick={(e) => e.stopPropagation()}
                 className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded transition-colors hover:underline"
                 style={{
-                  color: 'var(--blue)',
+                  color: 'var(--blue-text)',
                   background: 'rgba(10, 138, 181, 0.10)',
                   border: '1px solid rgba(10, 138, 181, 0.30)',
                 }}

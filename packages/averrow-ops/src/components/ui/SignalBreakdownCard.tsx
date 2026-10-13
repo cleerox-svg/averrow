@@ -148,7 +148,7 @@ export function SignalBreakdownCard({
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Page Signal Breakdown</SectionLabel>
         {score !== null && score !== undefined && (
-          <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber)' }}>
+          <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber-text)' }}>
             {Math.round(score)} / 100
           </span>
         )}

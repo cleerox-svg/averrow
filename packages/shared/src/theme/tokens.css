@@ -97,6 +97,13 @@
      supplies the only override. ── */
   --amber-text: var(--amber);
 
+  /* Accent-as-text tokens: green/red/blue accents fail AA as text on light
+     cards (and red/blue on dark). Use these for TEXT; keep --green/--red/
+     --blue for fills, borders and icons. */
+  --green-text: #5fd69a;
+  --red-text:   #f87171;
+  --blue-text:  #5cc8ea;
+
   /* ── Text ── */
   --text-primary:   rgba(255, 255, 255, 0.92);
   --text-secondary: rgba(255, 255, 255, 0.72);
@@ -352,6 +359,9 @@
      effectively unchanged from raw white, so the same value clears
      the badge-pill case too (see task #23 notes). */
   --amber-text: #8a5a00;
+  --green-text: #166534;
+  --red-text:   #b91c1c;
+  --blue-text:  #075985;
 
   /* NEXUS badge/label text — no platform token existed for the
      #A78BFA/#6d28d9 purple used by badge-nexus and the
@@ -639,6 +649,23 @@
 [data-theme="light"] .text-sev-medium   { color: var(--sev-medium-text); }
 [data-theme="light"] .text-sev-low      { color: var(--sev-low-text); }
 [data-theme="light"] .text-amber        { color: var(--amber-text); }
+/* green/red/blue text utilities are AA-fixed in BOTH themes (dark raw accents are <4.5:1 too) */
+:root .text-green        { color: var(--green-text); }
+:root .text-red          { color: var(--red-text); }
+:root .text-blue         { color: var(--blue-text); }
+/* Tailwind default-palette 300/400 text hues are ~1.5-3:1 on light cards;
+   map them to the theme-aware text tokens under light only (dark keeps the
+   pale hues, which pass on dark surfaces). */
+[data-theme="light"] .text-red-300,
+[data-theme="light"] .text-red-400     { color: var(--red-text); }
+[data-theme="light"] .text-amber-400,
+[data-theme="light"] .text-amber-600   { color: var(--amber-text); }
+[data-theme="light"] .text-orange-400  { color: var(--sev-high-text); }
+[data-theme="light"] .text-green-400,
+[data-theme="light"] .text-emerald-300,
+[data-theme="light"] .text-emerald-400 { color: var(--green-text); }
+[data-theme="light"] .text-blue-300,
+[data-theme="light"] .text-blue-400    { color: var(--blue-text); }
 /* No `.text-sev-info` rule here: tenant's tailwind.config declares no
    `sev-info` color key and neither app has a `text-sev-info` call
    site, so the class is never generated — dead selector, dropped.

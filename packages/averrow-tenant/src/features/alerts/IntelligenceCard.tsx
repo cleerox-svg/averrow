@@ -161,13 +161,13 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {recs.length > 0 && (
         <section className="rounded-xl border border-amber/[0.16] bg-amber/[0.04] p-4">
-          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber/70 mb-2 flex items-center gap-1.5">
+          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-2 flex items-center gap-1.5">
             <Sparkles size={11} /> Recommended actions
           </div>
           <ul className="space-y-1.5">
             {recs.map((r, i) => (
               <li key={i} className="flex gap-2 text-[12px] text-white/75 leading-relaxed">
-                <span className="text-amber/80 flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
+                <span className="text-amber flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
               </li>
             ))}
           </ul>
@@ -366,7 +366,7 @@ function SeverityPill({ level }: { level: AlertSeverity | string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>{sev}</span>;
 }
@@ -375,7 +375,7 @@ const STATUS_TONE: Record<string, string> = {
   new:            'text-blue       bg-blue/[0.08]        border-blue/[0.18]',
   acknowledged:   'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
   investigating:  'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
-  resolved:       'text-green/85   bg-green/[0.06]       border-green/[0.15]',
+  resolved:       'text-green   bg-green/[0.06]       border-green/[0.15]',
   false_positive: 'text-white/55   bg-white/[0.04]       border-white/[0.08]',
 };
 

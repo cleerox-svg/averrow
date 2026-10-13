@@ -101,10 +101,10 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
   const sevTotal = sev.critical + sev.high + sev.medium + sev.low;
 
   const segs: Array<{ k: keyof typeof sev; color: string }> = [
-    { k: 'critical', color: 'var(--sev-critical)' },
-    { k: 'high', color: 'var(--sev-high)' },
-    { k: 'medium', color: 'var(--sev-medium)' },
-    { k: 'low', color: 'var(--sev-low)' },
+    { k: 'critical', color: 'var(--sev-critical-text)' },
+    { k: 'high', color: 'var(--sev-high-text)' },
+    { k: 'medium', color: 'var(--sev-medium-text)' },
+    { k: 'low', color: 'var(--sev-low-text)' },
   ];
 
   const Stat = ({ label, value }: { label: string; value: number | null | undefined }) => (
@@ -259,7 +259,7 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
               <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>{brand.canonical_domain}</div>
             </div>
             <div className="flex-shrink-0">
-              <span className="text-xs font-mono font-bold" style={{ color: 'var(--sev-critical)' }}>
+              <span className="text-xs font-mono font-bold" style={{ color: 'var(--sev-critical-text)' }}>
                 {(brand.threat_count ?? 0).toLocaleString()}
               </span>
             </div>
@@ -281,7 +281,7 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div className="mb-2">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-critical)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical)' }}>Worsening</span>
+          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical-text)' }}>Worsening</span>
         </div>
         {worsening.length === 0 ? (
           <div className="text-[10px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No worsening providers</div>
@@ -292,7 +292,7 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div>
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-info)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info)' }}>Improving</span>
+          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info-text)' }}>Improving</span>
         </div>
         {improving.length === 0 ? (
           <div className="text-[10px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No improving providers</div>

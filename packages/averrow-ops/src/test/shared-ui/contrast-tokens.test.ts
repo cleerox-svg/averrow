@@ -69,4 +69,30 @@ describe('theme-aware text colour guards', () => {
       expect(ratio('#6d28d9', '#FFFFFF')).toBeGreaterThanOrEqual(4.5); // light card
     });
   });
+  describe('accent-as-text tokens (--green-text / --red-text / --blue-text)', () => {
+    const css = read('../../../../shared/src/theme/tokens.css');
+    const block = (open: string) => {
+      const start = css.indexOf(open);
+      return css.slice(start, css.indexOf('\n}', start));
+    };
+    const dark = block(':root {');
+    const light = block('[data-theme="light"] {');
+    const val = (b: string, name: string) => b.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim() ?? '';
+    const lum = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+    };
+    const ratio = (a: string, b: string) => {
+      const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+      return (hi! + 0.05) / (lo! + 0.05);
+    };
+
+    it.each(['--green-text', '--red-text', '--blue-text'])('%s clears 4.5:1 in both themes', (name) => {
+      expect(ratio(val(dark, name), '#161E30')).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(val(dark, name), '#060A14')).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(val(light, name), '#FFFFFF')).toBeGreaterThanOrEqual(4.5);
+      expect(ratio(val(light, name), '#EFF2F7')).toBeGreaterThanOrEqual(4.5);
+    });
+  });
 });

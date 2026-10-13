@@ -92,7 +92,7 @@ export function LiveFeedCard() {
       <Link
         to="/contacts"
         className="mt-3 block text-[10px] transition-colors hover:text-[var(--text-primary)]"
-        style={{ color: 'var(--amber)' }}
+        style={{ color: 'var(--amber-text)' }}
       >
         View all in Observatory →
       </Link>

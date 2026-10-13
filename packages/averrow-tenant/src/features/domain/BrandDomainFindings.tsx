@@ -321,7 +321,7 @@ function SeverityPill({ severity }: { severity: string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -332,9 +332,9 @@ function SeverityPill({ severity }: { severity: string }) {
 
 function TakedownStatusPill({ status, takedownId }: { status: string; takedownId: string | null }) {
   const tone =
-    status === 'resolved'  ? 'text-green/80 bg-green/[0.10] border-green/[0.20]' :
+    status === 'resolved'  ? 'text-green bg-green/[0.10] border-green/[0.20]' :
     status === 'submitted' ||
-    status === 'in_flight' ? 'text-amber/70 bg-amber/[0.06] border-amber/[0.10]' :
+    status === 'in_flight' ? 'text-amber bg-amber/[0.06] border-amber/[0.10]' :
     status === 'failed'    ? 'text-sev-critical bg-sev-critical/[0.08] border-sev-critical/[0.16]' :
                              'text-white/55 bg-white/[0.04] border-white/[0.08]';
   const label = status.replace(/_/g, ' ');
@@ -603,7 +603,7 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
   }
 
   const columns: Column<CertRow>[] = [
-    { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono', render: (r) => r.domain },
+    { key: 'domain', header: 'Domain', sortAccessor: (r) => r.domain, cellClassName: 'font-mono text-white/90', render: (r) => r.domain },
     { key: 'issuer', header: 'Issuer', sortAccessor: (r) => r.issuer ?? '', cellClassName: 'text-white/55 truncate max-w-[200px]', render: (r) => r.issuer ?? '—' },
     { key: 'suspicious', header: 'Suspicious', align: 'center', sortAccessor: (r) => r.suspicious,
       render: (r) => r.suspicious === 1 ? <span className="text-amber">●</span> : <span className="text-white/55">●</span> },
@@ -627,7 +627,7 @@ function ThreatPill({ level }: { level: string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -639,7 +639,7 @@ function ThreatPill({ level }: { level: string }) {
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'confirmed_threat' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    status === 'taken_down'       ? 'text-green/80     bg-green/[0.10]        border-green/[0.20]'        :
+    status === 'taken_down'       ? 'text-green     bg-green/[0.10]        border-green/[0.20]'        :
     status === 'benign'           ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                     'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (
@@ -652,7 +652,7 @@ function StatusPill({ status }: { status: string }) {
 function CertStatusPill({ status }: { status: string }) {
   const tone =
     status === 'malicious' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
-    status === 'reviewed'  ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    status === 'reviewed'  ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
     status === 'benign'    ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                              'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (

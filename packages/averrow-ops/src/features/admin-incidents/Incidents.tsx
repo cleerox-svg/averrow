@@ -119,7 +119,7 @@ export function AdminIncidents() {
                   {inc.affected_components.length > 0 && (
                     <span>{inc.affected_components.slice(0, 2).join(' · ')}{inc.affected_components.length > 2 ? ` +${inc.affected_components.length - 2}` : ''}</span>
                   )}
-                  {inc.visibility === 'public' && <span style={{ color: 'var(--amber)' }}>PUBLIC</span>}
+                  {inc.visibility === 'public' && <span style={{ color: 'var(--amber-text)' }}>PUBLIC</span>}
                   {inc.source !== 'manual' && <span>auto</span>}
                 </div>
               </div>
@@ -250,7 +250,7 @@ function CreateIncidentPanel({ onDone }: { onDone: () => void }) {
           Created as internal (never on /status) with status "investigating". Promote visibility from the incident's detail page.
         </p>
         {create.isError && (
-          <p className="text-[11px]" style={{ color: 'var(--sev-critical)' }}>
+          <p className="text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
             {(create.error as Error).message}
           </p>
         )}

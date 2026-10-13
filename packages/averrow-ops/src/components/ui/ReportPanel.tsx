@@ -151,7 +151,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
               flexShrink: 0,
             }} />
             <h2 style={{
-              fontSize: 11, fontWeight: 800, color: 'var(--amber)',
+              fontSize: 11, fontWeight: 800, color: 'var(--amber-text)',
               fontFamily: 'var(--font-mono)', letterSpacing: '0.16em',
               textTransform: 'uppercase', margin: 0,
             }}>
@@ -190,7 +190,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
           {(section.items ?? []).map((item, i) => (
             <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <span style={{
-                color: 'var(--amber)', fontSize: 10, marginTop: 4,
+                color: 'var(--amber-text)', fontSize: 10, marginTop: 4,
                 flexShrink: 0, fontFamily: 'var(--font-mono)',
               }}>›</span>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
@@ -203,10 +203,10 @@ function renderSection(section: Section, idx: number): React.ReactNode {
 
     case 'callout': {
       const CALLOUT_STYLES = {
-        warning:  { bg: 'var(--sev-medium-bg)',   border: 'var(--sev-medium-border)',   icon: '⚠', color: 'var(--sev-medium)' },
-        critical: { bg: 'var(--sev-critical-bg)', border: 'var(--sev-critical-border)', icon: '🚨', color: 'var(--sev-critical)' },
-        info:     { bg: 'var(--blue-glow)',       border: 'var(--blue-border)',         icon: 'ℹ', color: 'var(--blue)' },
-        success:  { bg: 'var(--sev-info-bg)',     border: 'var(--sev-info-border)',     icon: '✓', color: 'var(--sev-info)' },
+        warning:  { bg: 'var(--sev-medium-bg)',   border: 'var(--sev-medium-border)',   icon: '⚠', color: 'var(--sev-medium-text)' },
+        critical: { bg: 'var(--sev-critical-bg)', border: 'var(--sev-critical-border)', icon: '🚨', color: 'var(--sev-critical-text)' },
+        info:     { bg: 'var(--blue-glow)',       border: 'var(--blue-border)',         icon: 'ℹ', color: 'var(--blue-text)' },
+        success:  { bg: 'var(--sev-info-bg)',     border: 'var(--sev-info-border)',     icon: '✓', color: 'var(--sev-info-text)' },
       };
       const s = CALLOUT_STYLES[section.variant ?? 'info'];
       return (

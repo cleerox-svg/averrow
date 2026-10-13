@@ -60,7 +60,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
         {!inline && (
           <button
             onClick={() => navigate('/explore?tab=actors')}
-            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber)]"
+            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber-text)]"
             style={{ color: 'var(--text-tertiary)' }}
           >
             <ArrowLeft size={12} /> Back to Threat Actors
@@ -132,7 +132,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           <h1 className="text-xl font-mono font-bold text-[var(--text-primary)]">{actor.name}</h1>
           <span className="text-lg">{countryFlag(actor.country)}</span>
           <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold uppercase ${
-            actor.status === 'active' ? 'bg-[var(--sev-critical)]/20 text-[var(--sev-critical)] border-[var(--sev-critical)]/30' : 'bg-white/5 text-[var(--text-tertiary)] border-white/10'
+            actor.status === 'active' ? 'bg-[var(--sev-critical)]/20 text-[var(--sev-critical-text)] border-[var(--sev-critical)]/30' : 'bg-white/5 text-[var(--text-tertiary)] border-white/10'
           }`}>
             {actor.status}
           </span>
@@ -151,7 +151,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <BreakdownCard
           title="ATTRIBUTION"
-          metric={<span className="text-lg sm:text-[28px] font-bold leading-none text-[var(--sev-critical)]">{actor.attribution ?? '?'}</span>}
+          metric={<span className="text-lg sm:text-[28px] font-bold leading-none text-[var(--sev-critical-text)]">{actor.attribution ?? '?'}</span>}
           metricLabel="state sponsor"
         >
           <div className="space-y-1">
@@ -169,7 +169,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
         </BreakdownCard>
         <BreakdownCard
           title="TARGET SECTORS"
-          metric={<span className="text-lg sm:text-[24px] font-bold leading-none" style={{ color: 'var(--amber)' }}>{sectors.length || 0}</span>}
+          metric={<span className="text-lg sm:text-[24px] font-bold leading-none" style={{ color: 'var(--amber-text)' }}>{sectors.length || 0}</span>}
           metricLabel="sectors"
         >
           {sectors.length > 0 ? (
@@ -224,10 +224,10 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   to={`/campaigns/${campaign.id}`}
                   className="flex items-center justify-between p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.10] transition-all group"
                 >
-                  <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--amber)] transition-colors">
+                  <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--amber-text)] transition-colors">
                     {campaign.name}
                   </p>
-                  <span className="text-white/55 group-hover:text-[var(--amber)] transition-colors">&rarr;</span>
+                  <span className="text-white/55 group-hover:text-[var(--amber-text)] transition-colors">&rarr;</span>
                 </Link>
               ) : (
                 <div
@@ -284,7 +284,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     <Td className="p-0 text-[11px] py-2 pr-4 text-white/70">
                       <span className={
                         infra.confidence === 'confirmed' ? 'text-green-400' :
-                        infra.confidence === 'high' ? 'text-[var(--amber)]' : 'text-[var(--text-tertiary)]'
+                        infra.confidence === 'high' ? 'text-[var(--amber-text)]' : 'text-[var(--text-tertiary)]'
                       }>
                         {infra.confidence}
                       </span>
@@ -410,7 +410,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                       {m.source_feed}
                     </span>
                     {m.is_geopolitical === 1 && (
-                      <span className="rounded bg-[var(--sev-critical)]/10 border border-[var(--sev-critical)]/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-[var(--sev-critical)]">
+                      <span className="rounded bg-[var(--sev-critical)]/10 border border-[var(--sev-critical)]/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-[var(--sev-critical-text)]">
                         Geopolitical
                       </span>
                     )}

@@ -97,7 +97,7 @@ export function TopBar() {
                 {user?.email}
               </div>
               {user?.organization && (
-                <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-amber/85 mt-1.5">
+                <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-amber mt-1.5">
                   {user.organization.role} · {user.organization.plan}
                 </div>
               )}

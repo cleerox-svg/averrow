@@ -114,7 +114,7 @@ function HeadlineMetrics({ totals }: { totals: TakedownTotals }) {
         const accent =
           c.tone === 'crit' ? 'text-sev-critical' :
           c.tone === 'warn' ? 'text-amber'        :
-          c.tone === 'ok'   ? 'text-green/85'     :
+          c.tone === 'ok'   ? 'text-green'     :
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
@@ -182,7 +182,7 @@ function TakedownsList({ rows, canTriage }: { rows: TakedownListRow[]; canTriage
       <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
         Requests <span className="text-white/55">({rows.length})</span>
         {canTriage && pending > 0 && (
-          <span className="ml-2 text-amber/80 normal-case tracking-normal">· {pending} awaiting your approval</span>
+          <span className="ml-2 text-amber normal-case tracking-normal">· {pending} awaiting your approval</span>
         )}
       </h2>
       <div className="space-y-2">
@@ -253,7 +253,7 @@ function TakedownRow({ takedown: t, canTriage }: { takedown: TakedownListRow; ca
 
 function StatusPill({ status }: { status: string }) {
   const tone =
-    status === 'taken_down'                    ? 'text-green/85    bg-green/[0.06]    border-green/[0.15]' :
+    status === 'taken_down'                    ? 'text-green    bg-green/[0.06]    border-green/[0.15]' :
     status === 'failed' || status === 'expired' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     status === 'submitted' || status === 'pending_response' ? 'text-amber bg-amber/[0.10] border-amber/[0.20]' :
                                                  'text-white/55 bg-white/[0.04] border-white/[0.08]';
@@ -269,7 +269,7 @@ function SeverityPill({ level }: { level: string }) {
   const tone =
     norm === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     norm === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    norm === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    norm === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -280,7 +280,7 @@ function SeverityPill({ level }: { level: string }) {
 
 function ModuleChip({ module_key }: { module_key: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue/85 bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {MODULE_LABELS[module_key] ?? module_key}
     </span>
   );

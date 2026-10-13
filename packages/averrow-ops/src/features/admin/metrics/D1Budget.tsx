@@ -32,7 +32,7 @@ export function D1Budget() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load D1 budget. Try again in a moment.
         </p>
       </Card>

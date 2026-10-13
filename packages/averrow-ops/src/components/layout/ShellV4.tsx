@@ -357,7 +357,7 @@ export function ShellV4() {
           <ThemeCycleButton />
         </div>
         <div className="v4-verline" title={`${VERSION_LABEL} · ${BUILD_SHA}`}>
-          {VERSION_LABEL}<span style={{ opacity: 0.5 }}> · {BUILD_SHA}</span>
+          {VERSION_LABEL}<span> · {BUILD_SHA}</span>
         </div>
       </aside>
 

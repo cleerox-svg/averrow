@@ -218,7 +218,7 @@ function BootstrapPanel({
             <div className="p-3 rounded text-xs" style={{
               background: 'rgba(200,60,60,0.08)',
               border: '1px solid var(--sev-critical-border)',
-              color: 'var(--sev-critical)',
+              color: 'var(--sev-critical-text)',
             }}>
               <strong>One-time reveal.</strong> The server does NOT store the private
               key. If you close this dialog without saving it, you'll have to
@@ -354,7 +354,7 @@ function PrivateKeyRevealSheet({
           <div
             id="push-vapid-reveal-title"
             className="font-mono text-xs font-bold uppercase tracking-wider"
-            style={{ color: 'var(--amber)' }}
+            style={{ color: 'var(--amber-text)' }}
           >
             VAPID private key — save now
           </div>
@@ -415,7 +415,7 @@ function TogglePanel({
             {config.push_enabled ? 'enabled' : 'disabled'}
           </Badge>
           {!canEnable && !config.push_enabled && (
-            <span className="text-[11px]" style={{ color: 'var(--sev-high)' }}>
+            <span className="text-[11px]" style={{ color: 'var(--sev-high-text)' }}>
               Bootstrap keypair + secret first
             </span>
           )}

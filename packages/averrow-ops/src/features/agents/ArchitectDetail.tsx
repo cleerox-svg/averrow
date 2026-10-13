@@ -118,12 +118,12 @@ function severityStyle(scorecard: ComputedScorecard): {
   label: string;
 } {
   if (scorecard.overall.red > 0) {
-    return { color: 'var(--sev-critical)', label: 'red' };
+    return { color: 'var(--sev-critical-text)', label: 'red' };
   }
   if (scorecard.overall.amber > 0) {
-    return { color: 'var(--sev-medium)', label: 'amber' };
+    return { color: 'var(--sev-medium-text)', label: 'amber' };
   }
-  return { color: 'var(--green)', label: 'green' };
+  return { color: 'var(--green-text)', label: 'green' };
 }
 
 /* ─── Main page ───────────────────────────────────────────────────── */
@@ -226,7 +226,7 @@ export function ArchitectDetail() {
             size={22}
             strokeWidth={1.8}
             style={{
-              color: 'var(--amber)',
+              color: 'var(--amber-text)',
               filter: 'drop-shadow(0 0 6px rgba(229,168,50,0.45))',
             }}
           />
@@ -239,7 +239,7 @@ export function ArchitectDetail() {
           <div className="min-w-0">
             <div
               className="font-mono text-[10px] uppercase tracking-[0.18em]"
-              style={{ color: 'var(--amber)' }}
+              style={{ color: 'var(--amber-text)' }}
             >
               Run Audit
             </div>
@@ -275,12 +275,12 @@ export function ArchitectDetail() {
                 ? {
                     background: 'var(--sev-critical-bg)',
                     border: '1px solid var(--sev-critical-border)',
-                    color: 'var(--sev-critical)',
+                    color: 'var(--sev-critical-text)',
                   }
                 : {
                     background: 'rgba(229,168,50,0.08)',
                     border: '1px solid rgba(229,168,50,0.25)',
-                    color: 'var(--amber)',
+                    color: 'var(--amber-text)',
                   }
             }
           >
@@ -297,7 +297,7 @@ export function ArchitectDetail() {
         >
           <div
             className="font-mono text-[10px] uppercase tracking-[0.18em]"
-            style={{ color: 'var(--amber)' }}
+            style={{ color: 'var(--amber-text)' }}
           >
             Latest Audit
           </div>
@@ -428,11 +428,11 @@ export function ArchitectDetail() {
                       {label}
                     </div>
                     <div className="mt-1 flex items-baseline gap-2 font-mono text-[11px]">
-                      <span style={{ color: 'var(--green)' }}>{sc.green}g</span>
-                      <span style={{ color: 'var(--sev-medium)' }}>
+                      <span style={{ color: 'var(--green-text)' }}>{sc.green}g</span>
+                      <span style={{ color: 'var(--sev-medium-text)' }}>
                         {sc.amber}a
                       </span>
-                      <span style={{ color: 'var(--sev-critical)' }}>
+                      <span style={{ color: 'var(--sev-critical-text)' }}>
                         {sc.red}r
                       </span>
                       <span
@@ -504,7 +504,7 @@ export function ArchitectDetail() {
                 >
                   <div
                     className="font-mono text-[11px] uppercase tracking-[0.18em]"
-                    style={{ color: 'var(--amber)' }}
+                    style={{ color: 'var(--amber-text)' }}
                   >
                     {modalContent.title} · {latest?.details.run_id.slice(0, 8)}…
                   </div>

@@ -5,7 +5,7 @@ import type { InvestigationStatus } from '@/lib/investigations';
 const STATUS_TONE: Record<InvestigationStatus, string> = {
   open:       'text-amber      bg-amber/[0.10]       border-amber/[0.20]',
   monitoring: 'text-blue       bg-blue/[0.08]        border-blue/[0.18]',
-  closed:     'text-green/85   bg-green/[0.06]       border-green/[0.15]',
+  closed:     'text-green   bg-green/[0.06]       border-green/[0.15]',
 };
 
 export function StatusPill({ status }: { status: InvestigationStatus }) {

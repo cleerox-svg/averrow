@@ -113,10 +113,10 @@ interface StatusConf {
 }
 
 const TYPE_CONFIG: Record<string, TypeConf> = {
-  URL:    { icon: '🔗', color: 'var(--blue)',       label: 'URL'    },
-  SOCIAL: { icon: '👤', color: 'var(--sev-high)',   label: 'Social' },
-  DOMAIN: { icon: '🌐', color: 'var(--amber)',      label: 'Domain' },
-  EMAIL:  { icon: '📧', color: 'var(--sev-medium)', label: 'Email'  },
+  URL:    { icon: '🔗', color: 'var(--blue-text)',       label: 'URL'    },
+  SOCIAL: { icon: '👤', color: 'var(--sev-high-text)',   label: 'Social' },
+  DOMAIN: { icon: '🌐', color: 'var(--amber-text)',      label: 'Domain' },
+  EMAIL:  { icon: '📧', color: 'var(--sev-medium-text)', label: 'Email'  },
 };
 
 function resolveTypeConf(targetType: string | null | undefined): TypeConf {
@@ -144,11 +144,11 @@ const STATUS_CONFIG: Record<string, StatusConf> = {
   // No draft → requested CTA: 'requested' is the CUSTOMER-approval state and
   // only the tenant app moves a row into it (G21). Staff send a draft from
   // the detail panel ("Mark Submitted"), subject to the customer's policy.
-  draft:            { color: 'var(--amber)',      label: 'Draft',     cta: '',                 next: ''           },
-  requested:        { color: 'var(--sev-high)',   label: 'Pending',   cta: 'Mark Sent →',      next: 'submitted'  },
-  submitted:        { color: 'var(--blue)',       label: 'Submitted', cta: 'Mark Resolved →',  next: 'taken_down' },
-  pending_response: { color: 'var(--blue)',       label: 'Awaiting',  cta: 'Mark Resolved →',  next: 'taken_down' },
-  taken_down:       { color: 'var(--sev-info)',   label: 'Resolved',  cta: '',                 next: ''           },
+  draft:            { color: 'var(--amber-text)',      label: 'Draft',     cta: '',                 next: ''           },
+  requested:        { color: 'var(--sev-high-text)',   label: 'Pending',   cta: 'Mark Sent →',      next: 'submitted'  },
+  submitted:        { color: 'var(--blue-text)',       label: 'Submitted', cta: 'Mark Resolved →',  next: 'taken_down' },
+  pending_response: { color: 'var(--blue-text)',       label: 'Awaiting',  cta: 'Mark Resolved →',  next: 'taken_down' },
+  taken_down:       { color: 'var(--sev-info-text)',   label: 'Resolved',  cta: '',                 next: ''           },
   withdrawn:        { color: 'var(--text-muted)', label: 'Dismissed', cta: '',                 next: ''           },
   failed:           { color: 'var(--text-muted)', label: 'Failed',    cta: '',                 next: ''           },
   expired:          { color: 'var(--text-muted)', label: 'Expired',   cta: '',                 next: ''           },
@@ -247,7 +247,7 @@ function TakedownCard({
               to={`/brands/${takedown.brand_id}`}
               onClick={(e) => e.stopPropagation()}
               style={{ color: 'var(--text-muted)' }}
-              className="hover:text-[var(--amber)] transition-colors"
+              className="hover:text-[var(--amber-text)] transition-colors"
             >
               {takedown.brand_name} ↗
             </Link>
@@ -919,7 +919,7 @@ export function Takedowns() {
       {prospectTruncated && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--sev-high)',
+          fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--sev-high-text)',
           padding: '8px 12px', borderRadius: 8,
           background: 'var(--sev-high-bg)', border: '1px solid rgba(251,146,60,0.30)',
         }}>

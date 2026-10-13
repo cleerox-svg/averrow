@@ -159,7 +159,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
             <p className="text-white/55 text-[10px]">Period Trend</p>
           </div>
           <div className="min-w-0">
-            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--amber)' }}>
+            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--amber-text)' }}>
               {metrics.topType.label}
             </p>
             <p className="text-white/55 text-[10px]">Top Threat Type</p>

@@ -11,7 +11,7 @@ import {
 const VERDICT_META: Record<string, { label: string; tone: string }> = {
   active_threat: { label: 'Active threat', tone: 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' },
   needs_human:   { label: 'Needs human',   tone: 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        },
-  likely_safe:   { label: 'Likely safe',   tone: 'text-green/85     bg-green/[0.06]        border-green/[0.15]'        },
+  likely_safe:   { label: 'Likely safe',   tone: 'text-green     bg-green/[0.06]        border-green/[0.15]'        },
 };
 
 function verdictMeta(v: AiVerdict) {

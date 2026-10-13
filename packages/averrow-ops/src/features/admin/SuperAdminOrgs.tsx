@@ -472,7 +472,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
                   <div className="flex items-center gap-2">
                     <Link
                       to={`/brands/${b.brand_id}`}
-                      className="text-sm font-medium text-[color:var(--text-primary)] hover:text-[var(--amber)] transition-colors"
+                      className="text-sm font-medium text-[color:var(--text-primary)] hover:text-[var(--amber-text)] transition-colors"
                     >
                       {b.brand_name} ↗
                     </Link>

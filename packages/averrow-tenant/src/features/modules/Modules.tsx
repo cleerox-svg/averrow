@@ -325,7 +325,7 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
           const sevTone =
             sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.25]' :
             sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.25]'        :
-            sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.15]'        :
+            sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.15]'        :
                                  'text-white/55     bg-white/[0.04]        border-white/[0.08]';
           return (
             <div key={a.id} className="flex items-start justify-between gap-3 py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.02]">
@@ -363,7 +363,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
         'block rounded-xl border bg-bg-card p-4 transition-colors',
         entitled
           ? 'border-white/[0.06] hover:border-amber/[0.30]'
-          : 'border-white/[0.04] hover:border-white/[0.10] opacity-70',
+          : 'border-white/[0.04] hover:border-white/[0.10]',
       )}
     >
       <div className="flex items-start justify-between gap-3 mb-2">

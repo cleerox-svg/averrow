@@ -82,7 +82,7 @@ export function UserAvatar() {
                 role="img"
                 title="Passkey on"
                 aria-label="Passkey on"
-                className="inline-flex h-5 w-5 items-center justify-center text-[var(--green)]"
+                className="inline-flex h-5 w-5 items-center justify-center text-[var(--green-text)]"
               >
                 <ShieldCheck aria-hidden="true" className="h-[18px] w-[18px]" />
               </span>

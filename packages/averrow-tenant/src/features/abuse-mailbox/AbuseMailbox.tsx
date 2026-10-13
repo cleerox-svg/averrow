@@ -442,7 +442,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
         {m.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
       </div>
       <div className="text-[12px] text-white/75 mt-0.5">
-        from <span className="font-mono text-[var(--amber)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
+        from <span className="font-mono text-[var(--amber-text)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
         {m.original_from && m.forwarded_by_email && m.original_from !== m.forwarded_by_email && (
           <>
             {' '}· forwarded by <span className="font-mono text-white/90">{m.forwarded_by_email}</span>
@@ -935,7 +935,7 @@ function TenantStatusIcon({
   kind, sent, throttled,
 }: { kind: "ack" | "verdict"; sent: boolean; throttled: boolean }) {
   if (throttled) {
-    return <MailX size={13} className="text-amber/80" aria-label={`${kind} skipped — rate-limited`} />;
+    return <MailX size={13} className="text-amber" aria-label={`${kind} skipped — rate-limited`} />;
   }
   if (sent) {
     return <MailCheck size={13} className="text-green" aria-label={`${kind} sent`} />;
@@ -991,7 +991,7 @@ function SeverityPill({ level }: { level: string }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -1019,7 +1019,7 @@ function ClassificationPill({ classification }: { classification: string }) {
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'investigating' ? 'text-amber    bg-amber/[0.06]    border-amber/[0.15]' :
-    status === 'resolved'      ? 'text-green/85 bg-green/[0.06]    border-green/[0.15]' :
+    status === 'resolved'      ? 'text-green bg-green/[0.06]    border-green/[0.15]' :
     status === 'dismissed'     ? 'text-white/55 bg-white/[0.04]    border-white/[0.08]' :
                                  'text-white/65 bg-white/[0.04]    border-white/[0.08]';
   return (

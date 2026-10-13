@@ -109,7 +109,7 @@ function ClusterPanel({
         <button
           onClick={() => onSelect(null)}
           className="w-full text-left font-mono text-[10px] px-2 py-1 mb-1"
-          style={{ color: 'var(--amber)' }}
+          style={{ color: 'var(--amber-text)' }}
         >
           Clear filter
         </button>
@@ -432,7 +432,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
             )}
             {detail.abuse_contact.abuse_api_url && (
               <div className="flex items-start gap-2">
-                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber)' }} />
+                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber-text)' }} />
                 <div className="min-w-0 flex-1">
                   <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
                     API {detail.abuse_contact.abuse_api_type ? `· ${detail.abuse_contact.abuse_api_type}` : ''}

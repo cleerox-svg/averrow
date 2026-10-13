@@ -207,7 +207,7 @@ function EmptyState({ err }: { err: string | null }) {
       />
       {err ? (
         <Card variant="critical">
-          <div className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--sev-critical)' }}>
+          <div className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--sev-critical-text)' }}>
             Last fetch error
           </div>
           <p className="text-sm break-words" style={{ color: 'var(--text-primary)' }}>{err}</p>

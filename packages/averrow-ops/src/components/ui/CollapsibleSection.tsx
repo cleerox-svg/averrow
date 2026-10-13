@@ -58,7 +58,7 @@ export function CollapsibleSection({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Icon size={14} style={{ color: 'var(--amber)' }} />
+          <Icon size={14} style={{ color: 'var(--amber-text)' }} />
           <div style={sectionEyebrow}>{label}</div>
         </div>
         {expanded
