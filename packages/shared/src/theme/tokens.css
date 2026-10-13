@@ -1227,10 +1227,12 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-stat--live::before {
   padding: 1.5px;
   background: conic-gradient(from var(--ds-stat-angle), var(--st-accent), transparent 25%, transparent 75%, var(--st-accent));
-  /* Draws the eye on load, then stops (fill-mode keeps the final static arc). */
-  animation: ds-stat-spin 8s linear 3 forwards;
+  /* Draws the eye on load (3 turns), then rests as a full static accent
+     hairline — the same end state reduced-motion users get. */
+  animation: ds-stat-spin 8s linear 3, ds-stat-rest 1ms linear 24s forwards;
 }
 @keyframes ds-stat-spin { to { --ds-stat-angle: 360deg; } }
+@keyframes ds-stat-rest { to { background: var(--st-accent); } }
 @media (prefers-reduced-motion: reduce) {
   .ds-stat--live::before { animation: none; background: var(--st-accent); }
   .ds-stat--interactive, .ds-stat-hint { transition: none; }
