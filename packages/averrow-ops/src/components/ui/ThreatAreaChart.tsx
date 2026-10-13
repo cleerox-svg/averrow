@@ -54,7 +54,7 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
     }}>
       <div style={{
         fontSize: 11, fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.14em', color: 'var(--text-muted)',
+        letterSpacing: '0.12em', color: 'var(--text-muted)',
         marginBottom: 6, textTransform: 'uppercase',
       }}>
         {label}

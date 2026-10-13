@@ -18,7 +18,7 @@ export function AuditLog() {
   return (
     <div className="max-w-3xl space-y-6">
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Account</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Account</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Audit Log</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           Every automation and human action on your organization — signal triage, takedown decisions, authorization changes, and membership — with who did it and when.

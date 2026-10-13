@@ -419,7 +419,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
         <div className="space-y-3">
           {feed.description && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 What it does
               </div>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -437,7 +437,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
           </div>
           {feed.last_error && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
                 Last error
               </div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
@@ -463,7 +463,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
           </div>
           {feed.source_url && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Source
               </div>
               <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
@@ -472,7 +472,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
             </div>
           )}
           <div>
-            <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Recent pulls · last 20
             </div>
             <FeedHistorySection feedName={feed.feed_name} />
@@ -583,7 +583,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
   const color = tone === 'green' ? 'var(--green)' : tone === 'sev-high' ? 'var(--sev-high)' : 'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-lg font-mono" style={{ color }}>{value}</div>
     </div>
   );

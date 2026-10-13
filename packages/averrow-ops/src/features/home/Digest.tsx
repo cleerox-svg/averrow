@@ -32,7 +32,7 @@ export function Digest() {
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2
           id="home-digest-title"
-          className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
+          className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
           style={{ color: 'var(--text-secondary)', margin: 0 }}
         >
           Everything else

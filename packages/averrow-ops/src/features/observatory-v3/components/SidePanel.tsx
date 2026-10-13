@@ -68,7 +68,7 @@ function WidgetHeader({ label, count }: { label: string; count?: number }) {
   return (
     <div className="flex items-center justify-between mb-2">
       <span
-        className="text-[11px] font-mono font-bold uppercase tracking-[0.20em]"
+        className="text-[11px] font-mono font-bold uppercase tracking-[0.12em]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {label}

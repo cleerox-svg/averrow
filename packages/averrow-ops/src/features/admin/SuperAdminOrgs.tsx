@@ -606,7 +606,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
             <img src={previewLogo} width={30} height={30} alt="" style={{ display: 'block', width: 30, height: 30, borderRadius: 6 }} />
             <div>
               <div className="text-white font-bold text-[15px] leading-tight">{previewProduct}</div>
-              <div className="text-[11px] font-bold uppercase tracking-[0.18em] leading-none mt-0.5" style={{ color: previewAccent }}>{previewTagline}</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em] leading-none mt-0.5" style={{ color: previewAccent }}>{previewTagline}</div>
             </div>
           </div>
           <div style={{ background: previewAccent }} className="h-1" />

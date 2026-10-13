@@ -91,7 +91,7 @@ function Tile({
                           'var(--text-primary)';
   return (
     <Card variant="elevated" className="p-3">
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
       <div className="font-display text-2xl font-bold" style={{ color }}>
@@ -108,7 +108,7 @@ function AiCrawlerBreakdown({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <Card variant="elevated" className="p-4">
-      <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
         AI crawler breakdown
       </div>
       <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
@@ -150,7 +150,7 @@ function AiReferralBySource({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <Card variant="elevated" className="p-4">
-      <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
         AI referral sources
       </div>
       <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
@@ -191,7 +191,7 @@ function TopPages({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <div className="space-y-3">
-      <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
         Top pages
       </div>
       <Card variant="elevated" className="p-4">

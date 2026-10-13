@@ -182,7 +182,7 @@ export function CampaignDetail() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-2">
               <span
-                className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
+                className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
                 style={{ color: 'var(--text-muted)' }}
               >
                 Campaign

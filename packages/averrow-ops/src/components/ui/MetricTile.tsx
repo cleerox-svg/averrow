@@ -62,7 +62,7 @@ const TILE_STYLE = {
 const LABEL_STYLE = {
   fontSize: 11,
   fontFamily: 'var(--font-mono)',
-  letterSpacing: '0.14em',
+  letterSpacing: '0.12em',
   color: 'var(--text-muted)',
   textTransform: 'uppercase' as const,
   marginBottom: 5,

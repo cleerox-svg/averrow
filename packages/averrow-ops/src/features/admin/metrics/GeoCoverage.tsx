@@ -94,7 +94,7 @@ function WindowTile({ window: w }: { window: GeoCoverageWindow }) {
   return (
     <Card variant={variant} className="p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
           {w.window}
         </span>
         {verdict.sev && <Badge severity={verdict.sev}>{verdict.label}</Badge>}
@@ -343,13 +343,13 @@ function ExhaustedDetail({ row, pctOfTotal }: { row: GeoCoverageExhaustedByFeed;
         <Stat label="% of total pile" value={`${pctOfTotal.toFixed(1)}%`} />
         <Stat label="Source feed"     value={row.source_feed} mono />
       </div>
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         Threat type
       </div>
       <div className="font-mono text-[12px] mb-4" style={{ color: 'var(--text-primary)' }}>
         {row.threat_type}
       </div>
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         Why these are exhausted
       </div>
       <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -370,7 +370,7 @@ function SectionHeader({ title, subtitle, count }: { title: string; subtitle?: s
   return (
     <div className="flex items-end justify-between gap-3">
       <div>
-        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           {title}
         </div>
         {subtitle && (
@@ -398,7 +398,7 @@ function SectionHeader({ title, subtitle, count }: { title: string; subtitle?: s
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className={mono ? 'text-sm font-mono' : 'text-base font-mono'} style={{ color: 'var(--text-primary)' }}>
         {value}
       </div>

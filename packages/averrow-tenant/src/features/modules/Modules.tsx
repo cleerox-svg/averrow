@@ -93,7 +93,7 @@ export function Modules() {
 
       {/* Modules section — secondary, but still part of the overview. */}
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Active modules</h2>
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Active modules</h2>
         {active.length === 0 ? (
           <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
             <p className="text-white/55 text-sm">No modules active yet.</p>
@@ -110,7 +110,7 @@ export function Modules() {
 
       {locked.length > 0 && (
         <section>
-          <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Available to add</h2>
+          <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Available to add</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {locked.map((m) => (
               <ModuleCard key={m.module_key} module={m} entitled={false} />
@@ -204,7 +204,7 @@ function Stat({
 function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
         Brands ({brands.length})
       </h2>
       <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">

@@ -56,7 +56,7 @@ export function SectionLabel({
           <span style={{
             fontSize:      11,
             fontFamily:    'var(--font-mono)',
-            letterSpacing: '0.20em',
+            letterSpacing: '0.12em',
             color:         'var(--text-tertiary)',
             textTransform: 'uppercase',
             fontWeight:    700,

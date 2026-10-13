@@ -55,7 +55,7 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
   const ttps    = parseTtps(a.primary_ttps);
   return (
     <header className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Threat Actor</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Threat Actor</div>
       <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight mt-0.5">{a.name}</h1>
 
       <div className="flex items-center gap-2 flex-wrap mt-3">
@@ -124,7 +124,7 @@ function TargetedBrandsSection({ brands }: { brands: OrgTargetedBrand[] }) {
   if (brands.length === 0) return null;
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
         Your brands targeted <span className="text-white/55">({brands.length})</span>
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -148,7 +148,7 @@ function TargetedBrandsSection({ brands }: { brands: OrgTargetedBrand[] }) {
 function ThreatsSection({ threats }: { threats: OrgThreatRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Threats attributed to this actor (your brands) <span className="text-white/55">({threats.length})</span>
       </h2>
       {threats.length === 0 ? (
@@ -213,7 +213,7 @@ function InfrastructureSection({ rows }: { rows: ActorInfrastructureRow[] }) {
   if (rows.length === 0) return null;
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Known infrastructure <span className="text-white/55">({rows.length})</span>
       </h2>
       <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">

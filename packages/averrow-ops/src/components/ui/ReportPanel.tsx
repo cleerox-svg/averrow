@@ -152,7 +152,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
             }} />
             <h2 style={{
               fontSize: 11, fontWeight: 800, color: 'var(--amber-text)',
-              fontFamily: 'var(--font-mono)', letterSpacing: '0.16em',
+              fontFamily: 'var(--font-mono)', letterSpacing: '0.12em',
               textTransform: 'uppercase', margin: 0,
             }}>
               {section.content}

@@ -32,7 +32,7 @@ export function BrandSocialFindings() {
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Social Media Impersonation · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Social Media Impersonation · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
@@ -71,7 +71,7 @@ export function BrandSocialFindings() {
 function ProfilesSection({ rows }: { rows: SocialProfileRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Profiles <span className="text-white/55">({rows.length})</span>
       </h2>
       <div className="space-y-2">

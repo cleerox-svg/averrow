@@ -224,7 +224,7 @@ function TakedownCard({
         {/* Status */}
         <div style={{
           fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 800,
-          letterSpacing: '0.14em', textTransform: 'uppercase',
+          letterSpacing: '0.12em', textTransform: 'uppercase',
           color: accentText(statusConf.color),
           padding: '2px 8px', borderRadius: 4,
           background: `color-mix(in srgb, ${statusConf.color} 7%, transparent)`,

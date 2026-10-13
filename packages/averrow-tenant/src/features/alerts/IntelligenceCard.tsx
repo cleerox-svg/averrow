@@ -118,7 +118,7 @@ export function IntelligenceCard() {
         {/* Right rail — actions */}
         <aside className="space-y-4 lg:sticky lg:top-4">
           <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Disposition</div>
+            <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-2.5">Disposition</div>
             <div className="flex items-center justify-between gap-2">
               <StatusPill status={alert.status} />
               <AssigneeControl alert={alert} canTriage={canTriage} />
@@ -136,7 +136,7 @@ export function IntelligenceCard() {
 
           {canTriage && (
             <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Investigation</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-2.5">Investigation</div>
               <AddToInvestigation itemType="alert" itemId={alert.id} defaultTitle={alert.title} />
             </section>
           )}
@@ -161,7 +161,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {recs.length > 0 && (
         <section className="rounded-xl border border-amber/[0.16] bg-amber/[0.04] p-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-amber mb-2 flex items-center gap-1.5">
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-amber mb-2 flex items-center gap-1.5">
             <Sparkles size={11} /> Recommended actions
           </div>
           <ul className="space-y-1.5">
@@ -176,7 +176,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {alert.resolution_notes && (alert.status === 'resolved' || alert.status === 'false_positive') && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">Disposition note</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-1.5">Disposition note</div>
           <p className="text-[12px] text-white/70 italic">{alert.resolution_notes}</p>
         </section>
       )}

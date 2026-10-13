@@ -44,7 +44,7 @@ export function TakedownDetail() {
           {isStaff && <StaffTriageNote />}
           {canTriage && takedownActionsFor(data.takedown.status).length > 0 && (
             <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4">
-              <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-amber mb-2">Your decision</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-amber mb-2">Your decision</div>
               <p className="text-[12px] text-white/60 mb-3">
                 Review the evidence below, then approve to submit this request to the provider, or withdraw to decline it.
               </p>
@@ -63,7 +63,7 @@ export function TakedownDetail() {
 function Header({ takedown: t }: { takedown: TakedownDetailRow }) {
   return (
     <header className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Takedown · {t.target_type}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Takedown · {t.target_type}</div>
       <h1 className="text-[22px] font-bold text-[var(--text-primary)] tracking-tight mt-0.5 truncate font-mono">{t.target_value}</h1>
 
       <div className="flex items-center gap-2 flex-wrap mt-3">
@@ -152,7 +152,7 @@ function NoteSection({ takedown: t }: { takedown: TakedownDetailRow }) {
 function SubmissionsSection({ rows }: { rows: TakedownSubmissionAuditRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Submission audit trail <span className="text-white/55">({rows.length})</span>
       </h2>
       {rows.length === 0 ? (

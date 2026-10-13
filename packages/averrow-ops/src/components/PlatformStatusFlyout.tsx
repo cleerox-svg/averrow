@@ -173,7 +173,7 @@ export function PlatformStatusFlyout() {
           }}>
             <span style={{
               fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
-              letterSpacing: '0.20em', color: 'var(--text-tertiary)',
+              letterSpacing: '0.12em', color: 'var(--text-tertiary)',
               textTransform: 'uppercase',
             }}>
               Availability · Last 30 days

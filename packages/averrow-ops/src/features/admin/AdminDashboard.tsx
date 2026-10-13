@@ -84,7 +84,7 @@ const sectionEyebrow: CSSProperties = {
   fontFamily: 'var(--font-mono)',
   fontSize: 11,
   fontWeight: 700,
-  letterSpacing: '0.22em',
+  letterSpacing: '0.12em',
   textTransform: 'uppercase',
   color: 'var(--text-tertiary)',
 };
@@ -574,7 +574,7 @@ function MaintenanceSection() {
             <Cpu size={14} style={{ color: 'var(--amber-text)' }} />
             <div style={sectionEyebrow}>Maintenance Operations</div>
           </div>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 11, color: 'var(--amber-text)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 11, color: 'var(--amber-text)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
             <AlertTriangle size={11} /> Super Admin
           </span>
         </div>

@@ -47,7 +47,7 @@ export function AppStore() {
         <>
           <HeadlineMetrics totals={data.totals} brandCount={data.brands.length} />
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Per brand</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Per brand</h2>
             {data.brands.length === 0 ? (
               <NoBrands />
             ) : (

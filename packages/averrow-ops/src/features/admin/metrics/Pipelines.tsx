@@ -268,7 +268,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
     <Card variant="elevated" className="p-5 col-span-full">
       {detail.description && (
         <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What this pipeline does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -288,7 +288,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
             />
           ) : (
           <div>
-            <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Backlog · last 24h
             </div>
             {sparkData.length > 1 ? (
@@ -340,7 +340,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.drained_last_hour != null && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                 Drained · last hour
               </div>
               <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>
@@ -351,7 +351,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.why_grows && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Why this grows
               </div>
               <p className="font-mono text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -365,7 +365,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
         <div className="space-y-4">
           {fr && fr.total > 0 && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Failure rate · 24h · {fr.total} runs
               </div>
               <div className="grid grid-cols-3 gap-3">
@@ -384,7 +384,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {lr && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Last run
               </div>
               <div className="space-y-1 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -407,7 +407,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.endpoints && detail.endpoints.length > 0 && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 External endpoints
               </div>
               <div className="flex flex-wrap gap-1">
@@ -516,7 +516,7 @@ function ReferenceDatasetBlock({
     <div className="space-y-4">
       <div>
         <div className="flex items-center justify-between mb-2">
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
             Reference dataset
           </div>
           {isAdmin && (
@@ -544,7 +544,7 @@ function ReferenceDatasetBlock({
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Live rows" value={row_count.toLocaleString()} />
           <div>
-            <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
               Age
             </div>
             <div className="text-lg font-mono" style={{ color: ageColor }}>
@@ -566,7 +566,7 @@ function ReferenceDatasetBlock({
 
       {source_version && (
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
             Source release
           </div>
           <div
@@ -584,7 +584,7 @@ function ReferenceDatasetBlock({
           background: 'var(--sev-low-bg)',
           border:     '1px solid var(--border-base)',
         }}>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-low-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-low-text)' }}>
             Refresh in flight
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -598,7 +598,7 @@ function ReferenceDatasetBlock({
 
       {last_refresh_status === 'failed' && last_refresh_error && (
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-critical-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-critical-text)' }}>
             Last refresh failed
           </div>
           <div className="font-mono text-[11px] p-2 rounded" style={{
@@ -619,7 +619,7 @@ function ReferenceDatasetBlock({
 
       {attempts.length > 0 && (
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Recent attempts
           </div>
           <div className="space-y-1">
@@ -659,7 +659,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
                             'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-lg font-mono" style={{ color }}>{value}</div>
     </div>
   );

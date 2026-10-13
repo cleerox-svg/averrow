@@ -50,7 +50,7 @@ export function ThreatActor() {
         <>
           <HeadlineMetrics totals={data.totals} />
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Actors targeting your brands</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Actors targeting your brands</h2>
             {data.actors.length === 0 ? (
               <NoActors />
             ) : (

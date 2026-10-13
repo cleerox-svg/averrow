@@ -359,7 +359,7 @@ function Recommendations({ items }: { items: string[] }) {
   const shown = open ? items : items.slice(0, 2);
   return (
     <div className="mt-3 rounded-lg border border-amber/[0.16] bg-amber/[0.04] px-3 py-2.5">
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-amber mb-1.5">Recommended actions</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-amber mb-1.5">Recommended actions</div>
       <ul className="space-y-1.5">
         {shown.map((r, i) => (
           <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">

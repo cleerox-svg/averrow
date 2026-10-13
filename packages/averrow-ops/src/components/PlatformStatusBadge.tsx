@@ -85,7 +85,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
         </div>
         <span style={{
           fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
-          letterSpacing: '0.14em', color: palette.text,
+          letterSpacing: '0.12em', color: palette.text,
           textShadow: `0 0 10px ${palette.glow.replace('0.9', '0.5')}`,
         }}>
           {palette.label}
@@ -110,7 +110,7 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
       <span
         style={{
           fontSize: 11, fontFamily: 'var(--font-mono)',
-          color: palette.text, letterSpacing: '0.14em',
+          color: palette.text, letterSpacing: '0.12em',
           textTransform: 'uppercase',
         }}
       >

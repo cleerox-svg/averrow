@@ -81,7 +81,7 @@
 .tt-detail-td { padding: 0; background: rgba(0,0,0,0.18); }
 .tt-detail { padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .tt-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-.tt-sect-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; font-family: var(--font-mono); color: var(--text-tertiary); margin-bottom: 8px; }
+.tt-sect-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; font-family: var(--font-mono); color: var(--text-tertiary); margin-bottom: 8px; }
 .tt-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
 .tt-kv .k { color: var(--text-tertiary); font-family: var(--font-mono); }
 .tt-kv .v { color: var(--text-primary); text-align: right; }

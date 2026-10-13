@@ -77,7 +77,7 @@ export function AbuseMailbox() {
           />
 
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Per brand</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Per brand</h2>
             {summaryQ.data.brands.length === 0 ? (
               <NoBrands />
             ) : (
@@ -1076,7 +1076,7 @@ function TenantIntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
   return (
     <section className="rounded-xl border bg-bg-card p-4 space-y-3 border-white/[0.06]">
       <div className="flex items-center justify-between">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/65">
           Intel highlights
         </h2>
         <span className="text-[11px] font-mono text-white/55">
@@ -1190,7 +1190,7 @@ function TenantInboxToolbar({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/65">
           {activeBrand && activeBrandName ? `Filtered: ${activeBrandName}` : 'Inbox'}
           <span className="text-white/55 ml-1">({messages.length})</span>
         </h2>

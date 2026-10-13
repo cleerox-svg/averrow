@@ -486,7 +486,7 @@ function BrandCard({
         }}>
           <div style={{
             fontSize: 11, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
+            letterSpacing: '0.12em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
             Exposure
@@ -525,7 +525,7 @@ function BrandCard({
         }}>
           <div style={{
             fontSize: 11, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
+            letterSpacing: '0.12em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
             Email
@@ -556,7 +556,7 @@ function BrandCard({
         }}>
           <div style={{
             fontSize: 11, fontFamily: 'var(--font-mono)',
-            letterSpacing: '0.14em', color: 'var(--text-muted)',
+            letterSpacing: '0.12em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
             Social

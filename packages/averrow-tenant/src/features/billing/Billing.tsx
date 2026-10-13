@@ -48,7 +48,7 @@ export function Billing() {
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Settings</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Billing</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           Your current plan, monthly total, and active modules.

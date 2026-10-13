@@ -588,7 +588,7 @@ function GeoCampaignCard({
               pulse={status === 'active'}
             />
             <span
-              className="ml-auto font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
+              className="ml-auto font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
               style={{ color: 'var(--text-muted)' }}
             >
               Geopolitical

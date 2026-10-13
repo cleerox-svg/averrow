@@ -463,8 +463,8 @@
 .detail-stat-metric-label {
   font-size: 11px;
   font-family: var(--font-mono);
-  letter-spacing: 0.16em;
-  /* Theme-aware and AA at 9px (the old 25% white failed contrast). */
+  letter-spacing: 0.12em;
+  /* Theme-aware and AA at 11px (the old 25% white failed contrast). */
   color: var(--text-secondary);
   text-transform: uppercase;
   margin-top: 4px;

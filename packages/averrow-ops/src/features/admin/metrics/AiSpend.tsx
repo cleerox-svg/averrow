@@ -91,7 +91,7 @@ function Header({ windowSel, onWindowChange }: { windowSel: Window; onWindowChan
   return (
     <div className="flex items-center justify-between gap-3">
       <span
-        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         Window
@@ -113,7 +113,7 @@ function Header({ windowSel, onWindowChange }: { windowSel: Window; onWindowChan
               role="radio"
               aria-checked={active}
               onClick={() => onWindowChange(w)}
-              className="px-2.5 py-1 font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
+              className="px-2.5 py-1 font-mono text-[11px] tracking-[0.12em] uppercase transition-colors"
               style={{
                 background: active ? 'var(--amber)' : 'transparent',
                 color:      active ? '#0A0F1C' : 'var(--text-secondary)',
@@ -146,7 +146,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
   return (
     <Card variant="elevated" className="p-4">
       <div
-        className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {label}
@@ -497,7 +497,7 @@ function AgentSpendDetail({ agent, pctOfTotal }: { agent: AiSpendByAgentWindowed
     <Card variant="elevated" className="p-4 col-span-full">
       {meta?.subtitle && (
         <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What it does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -682,7 +682,7 @@ function LeverRoster({ levers }: { levers: CostLever[] }) {
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <span
-          className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
+          className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
           style={{ color: 'var(--text-primary)' }}
         >
           Lever roster
@@ -731,7 +731,7 @@ function LeverCard({ lever }: { lever: CostLever }) {
         <Stat label="Est. savings" value={`$${lever.estimated_savings_usd_per_year}/yr`} />
       </div>
       <div
-        className="font-mono text-[11px] tracking-[0.15em] uppercase mb-1"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1"
         style={{ color: 'var(--text-muted)' }}
       >
         Indicator
@@ -756,7 +756,7 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
   return (
     <div className="flex items-end justify-between gap-3">
       <span
-        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
@@ -780,7 +780,7 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 function Stat({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-base font-mono" style={{ color: valueColor ?? 'var(--text-primary)' }}>{value}</div>
     </div>
   );

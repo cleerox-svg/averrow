@@ -100,7 +100,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
                             'var(--text-primary)';
   return (
     <Card variant="elevated" className="p-3">
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
       <div className="font-display text-2xl font-bold" style={{ color }}>
@@ -156,7 +156,7 @@ function AtRiskGrid({
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
             {showAll ? 'All feeds' : 'At-risk feeds'}
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -168,7 +168,7 @@ function AtRiskGrid({
         <button
           type="button"
           onClick={onToggleShowAll}
-          className="px-2.5 py-1 font-mono text-[11px] tracking-[0.18em] uppercase rounded transition-colors"
+          className="px-2.5 py-1 font-mono text-[11px] tracking-[0.12em] uppercase rounded transition-colors"
           style={{
             background: 'var(--bg-input)',
             border:     '1px solid var(--border-base)',
@@ -345,7 +345,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Last success
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -353,7 +353,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
           </div>
         </div>
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
             Last failure
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -391,7 +391,7 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
   if (errors.length === 0) {
     return (
       <div className="space-y-2">
-        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Recent errors · 24h
         </div>
         <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -405,7 +405,7 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
             Recent errors · 24h
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -467,7 +467,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
                             'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-base font-mono" style={{ color }}>{value}</div>
     </div>
   );

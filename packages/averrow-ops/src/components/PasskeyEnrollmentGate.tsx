@@ -126,7 +126,7 @@ export function PasskeyEnrollmentGate() {
               marginTop: 10,
               fontFamily: 'var(--font-mono, monospace)',
               fontSize: 11,
-              letterSpacing: '0.22em',
+              letterSpacing: '0.12em',
               textTransform: 'uppercase',
               color: 'var(--text-tertiary)',
             }}

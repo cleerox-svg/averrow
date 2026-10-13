@@ -285,5 +285,5 @@ function Back() {
 }
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">{children}</div>;
+  return <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-1.5">{children}</div>;
 }

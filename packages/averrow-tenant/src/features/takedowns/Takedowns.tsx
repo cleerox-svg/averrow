@@ -179,7 +179,7 @@ function TakedownsList({ rows, canTriage }: { rows: TakedownListRow[]; canTriage
   const pending = rows.filter((t) => t.status === 'draft').length;
   return (
     <section className="space-y-2">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Requests <span className="text-white/55">({rows.length})</span>
         {canTriage && pending > 0 && (
           <span className="ml-2 text-amber normal-case tracking-normal">· {pending} awaiting your approval</span>

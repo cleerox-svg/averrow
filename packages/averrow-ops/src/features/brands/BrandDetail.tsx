@@ -1554,7 +1554,7 @@ function HealthExposureQuadrant({
           {quadrants.map(q => (
             <text key={q.label}
               x={q.x * 100} y={q.y * 100}
-              fontSize="6" fontFamily="var(--font-mono)"
+              fontSize="6" /* min-font-ok: viewBox units */ fontFamily="var(--font-mono)"
               fill="var(--text-muted)" textAnchor="middle"
               dominantBaseline="middle"
             >{q.label}</text>
@@ -1744,7 +1744,7 @@ function FootprintTile({
         background: 'var(--bg-input)',
       }}
     >
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-[var(--text-muted)]">{label}</div>
       <div className={`mt-1 text-sm ${mono ? 'font-mono' : 'font-semibold'} text-[var(--text-primary)]`}>{value}</div>
       {sub && <div className="mt-1 text-[11px] text-[var(--text-tertiary)]">{sub}</div>}
     </div>
@@ -1763,7 +1763,7 @@ function RollupTile({
       className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
       style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-base)', background: 'var(--bg-input)' }}
     >
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-[var(--text-muted)]">{label}</div>
       <div className="mt-1 text-2xl font-bold" style={{ color }}>{count}</div>
     </div>
   );

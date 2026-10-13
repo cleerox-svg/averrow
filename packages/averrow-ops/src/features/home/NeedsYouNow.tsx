@@ -124,7 +124,7 @@ export function NeedsYouNow({ queue, onRetry }: { queue: HomeQueue; onRetry: (id
       <div className="mb-2 flex items-center justify-between gap-3">
         <h2
           id="home-queue-title"
-          className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
+          className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
           style={{ color: 'var(--text-secondary)', margin: 0 }}
         >
           Needs you now

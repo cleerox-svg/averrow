@@ -514,7 +514,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
             <div style={{ position: 'relative' }}>
               <div className="flex items-center gap-2 mb-2">
                 <Icon size={14} style={{ color: accentText(t.accent) }} />
-                <span className="text-[11px] font-mono uppercase tracking-[0.20em]" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="text-[11px] font-mono uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
                   {t.label}
                 </span>
               </div>

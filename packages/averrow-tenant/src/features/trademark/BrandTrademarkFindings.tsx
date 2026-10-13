@@ -38,7 +38,7 @@ export function BrandTrademarkFindings() {
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Trademark Infringement · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Trademark Infringement · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
@@ -74,7 +74,7 @@ export function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
           Registered assets <span className="text-white/55">({assets.length})</span>
         </h2>
       </div>
@@ -215,7 +215,7 @@ function FindingsSection({
   const assetById = new Map(assets.map((a) => [a.id, a]));
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Findings <span className="text-white/55">({findings.length})</span>
       </h2>
       <div className="space-y-2">

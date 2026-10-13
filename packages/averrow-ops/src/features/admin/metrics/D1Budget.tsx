@@ -249,7 +249,7 @@ function Meter({
   return (
     <Card variant={variant} className="p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
           {label}
         </span>
         {badge && <Badge severity={badge.sev}>{badge.label}</Badge>}
@@ -453,7 +453,7 @@ function QueryDetail({ query, pctOfTotal }: { query: D1TopQuery; pctOfTotal: num
         />
       </div>
       <div>
-        <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Full SQL
         </div>
         <pre
@@ -616,7 +616,7 @@ function EndpointDetail({ endpoint, pctOfTotal }: { endpoint: D1EndpointAttribut
         <Stat label="Avg rows / req" value={formatBig(endpoint.avg_rows_per_request)} />
       </div>
       <div>
-        <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Full endpoint
         </div>
         <div
@@ -639,7 +639,7 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <div className="flex items-end justify-between gap-3">
       <span
-        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
@@ -662,7 +662,7 @@ function SectionEmpty({ title, message }: { title: string; message: string }) {
   return (
     <div className="space-y-2">
       <div
-        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
@@ -677,7 +677,7 @@ function SectionEmpty({ title, message }: { title: string; message: string }) {
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div
         className={mono ? 'text-sm font-mono' : 'text-lg font-mono'}
         style={{ color: 'var(--text-primary)' }}

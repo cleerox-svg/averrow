@@ -207,7 +207,7 @@ function StreamHeader({ icon: Icon, title, subtitle, count }: { icon: LucideIcon
 }
 
 function SubLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 pt-1">{children}</div>;
+  return <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 pt-1">{children}</div>;
 }
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-white/55">{children}</span>;

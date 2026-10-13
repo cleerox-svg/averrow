@@ -42,7 +42,7 @@ export function PlatformPulse() {
     <section aria-labelledby="home-pulse-title" className="flex flex-col gap-3">
       <h2
         id="home-pulse-title"
-        className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
+        className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
         style={{ color: 'var(--text-secondary)', margin: 0 }}
       >
         Platform pulse

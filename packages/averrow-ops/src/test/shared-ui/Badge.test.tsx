@@ -203,9 +203,14 @@ describe('shared Badge', () => {
       expect(styleOf('High').style.fontSize).toBe('11px');
     });
 
-    it('xs size is at least 9px', () => {
-      render(<Badge severity="high" size="xs" />);
-      expect(parseFloat(styleOf('High').style.fontSize)).toBeGreaterThanOrEqual(9);
+    it('xs size keeps the 11px floor and is tighter than sm', () => {
+      const xs = render(<Badge severity="high" size="xs" />);
+      const xsEl = styleOf('High');
+      expect(parseFloat(xsEl.style.fontSize)).toBeGreaterThanOrEqual(11);
+      expect(xsEl.style.padding).toBe('2px 6px');
+      xs.unmount();
+      render(<Badge severity="high" size="sm" />);
+      expect(styleOf('High').style.padding).toBe('3px 8px');
     });
 
     it('NEXUS and STABLE derive from --cyan-text, never the reserved teal', () => {

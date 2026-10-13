@@ -9,7 +9,7 @@ import type {
   IdentityDetectionDetail, IdentityDetectionListItem, IdentityFilters, IdentityWindow,
 } from './types';
 
-const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.18em]';
+const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.12em]';
 const DASH = '—';
 
 function titleCase(s: string): string {

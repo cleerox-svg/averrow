@@ -238,7 +238,7 @@ export function ArchitectDetail() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div
-              className="font-mono text-[11px] uppercase tracking-[0.18em]"
+              className="font-mono text-[11px] uppercase tracking-[0.12em]"
               style={{ color: 'var(--amber-text)' }}
             >
               Run Audit
@@ -296,7 +296,7 @@ export function ArchitectDetail() {
           style={{ borderBottom: '1px solid var(--border-base)' }}
         >
           <div
-            className="font-mono text-[11px] uppercase tracking-[0.18em]"
+            className="font-mono text-[11px] uppercase tracking-[0.12em]"
             style={{ color: 'var(--amber-text)' }}
           >
             Latest Audit
@@ -503,7 +503,7 @@ export function ArchitectDetail() {
                   style={{ borderBottom: '1px solid var(--border-base)' }}
                 >
                   <div
-                    className="font-mono text-[11px] uppercase tracking-[0.18em]"
+                    className="font-mono text-[11px] uppercase tracking-[0.12em]"
                     style={{ color: 'var(--amber-text)' }}
                   >
                     {modalContent.title} · {latest?.details.run_id.slice(0, 8)}…

@@ -115,7 +115,7 @@ export function FilterBar<V extends string = string>({
                 >
                   {f.label}
                   {f.count !== undefined && (
-                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[11px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)' }}>
+                    <span aria-hidden="true" className={cn('text-[11px]', md && 'font-mono')} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)' }}>
                       {f.count}
                     </span>
                   )}

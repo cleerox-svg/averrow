@@ -113,7 +113,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
         <div>
           <div style={{
             fontFamily: 'var(--font-mono)', fontSize: 11,
-            color: 'var(--text-tertiary)', letterSpacing: '0.14em',
+            color: 'var(--text-tertiary)', letterSpacing: '0.12em',
             textTransform: 'uppercase',
           }}>
             Threat Inflow

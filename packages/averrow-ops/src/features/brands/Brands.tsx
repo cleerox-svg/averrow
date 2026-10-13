@@ -337,7 +337,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
           }} />
           <div style={{ position: 'relative', marginTop: 4 }}>
             <div style={{
-              fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
+              fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.12em',
               color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8,
             }}>
               {t.label}
@@ -726,7 +726,7 @@ function BrandFavicon({
         />
       ) : (
         <span style={{
-          fontSize: Math.round(size * 0.4),
+          fontSize: Math.max(11, Math.round(size * 0.4)),
           fontWeight: 800,
           color: 'var(--text-secondary)',
         }}>

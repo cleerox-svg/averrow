@@ -361,7 +361,7 @@ function NetworkSection({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <GitBranch size={14} style={{ color: 'var(--blue-text)' }} />
-        <span className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Network View
         </span>
         <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -486,7 +486,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
       <ConnectivityChips agentName={agent.name} />
 
       <div>
-        <div className="font-mono text-[11px] tracking-[0.15em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Compliance · {okCount}/{COMPLIANCE_AXES.length}
         </div>
         <div className="flex flex-wrap gap-1">
@@ -660,7 +660,7 @@ function AgentControlBar({ agent }: { agent: Agent }) {
 
   return (
     <div className="mb-4 pb-4 border-b flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--border-base)' }}>
-      <span className="font-mono text-[11px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
+      <span className="font-mono text-[11px] tracking-[0.12em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
       {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--amber)', () => trigger.mutate(agent.name))}
       {isPaused
         ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
@@ -693,7 +693,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
       {isAdmin && <AgentControlBar agent={agent} />}
       {meta?.subtitle && (
         <div className="mb-5 pb-4 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What it does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -704,7 +704,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-4">
           <div>
-            <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Health · 24h runs · outputs · errors
             </div>
             <HealthChart name={agent.name} />
@@ -712,15 +712,15 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
           {detail?.stats && (
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total runs</div>
+                <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>Total runs</div>
                 <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{detail.stats.total_runs}</div>
               </div>
               <div>
-                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
+                <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
                 <div className="text-lg font-mono" style={{ color: 'var(--green-text)' }}>{detail.stats.successes}</div>
               </div>
               <div>
-                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
+                <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
                 <div className="text-lg font-mono" style={{ color: detail.stats.failures > 0 ? 'var(--sev-high)' : 'var(--text-primary)' }}>
                   {detail.stats.failures}
                 </div>
@@ -731,22 +731,22 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
               look. All-time per-agent from agent_runs.tokens_used. */}
           {tu && tu.total_tokens > 0 && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Token usage · all-time
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
+                  <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
                   <div className="text-lg font-mono" style={{ color: 'var(--amber-text)' }}>{fmtTokens(tu.total_tokens)}</div>
                 </div>
                 <div>
-                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
+                  <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
                   <div className="text-sm font-mono pt-1" style={{ color: 'var(--text-secondary)' }}>
                     {fmtTokens(tu.total_input_tokens)} · {fmtTokens(tu.total_output_tokens)}
                   </div>
                 </div>
                 <div>
-                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Runs w/ AI</div>
+                  <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>Runs w/ AI</div>
                   <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{tu.runs_with_tokens.toLocaleString()}</div>
                 </div>
               </div>
@@ -754,7 +754,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
           )}
           {agent.last_run_error && (
             <div>
-              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>Last error</div>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>Last error</div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
                 background: 'var(--sev-critical-bg)',
                 color:      'var(--text-primary)',
@@ -767,7 +767,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
         </div>
 
         <div>
-          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Recent outputs · last 5
           </div>
           {isLoading ? (
@@ -787,7 +787,7 @@ function GroupHeader({ label, description, count }: { label: string; description
   return (
     <div className="flex items-end justify-between gap-3 mb-3">
       <div>
-        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           {label}
         </div>
         <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{description}</div>
@@ -816,7 +816,7 @@ function SupervisorSection({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Shield size={14} style={{ color: 'var(--amber-text)' }} />
-        <span className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Supervisors
         </span>
         <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -877,7 +877,7 @@ function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: Vi
             role="radio"
             aria-checked={active}
             onClick={() => onChange(opt.id)}
-            className="px-2.5 py-1 font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
+            className="px-2.5 py-1 font-mono text-[11px] tracking-[0.12em] uppercase transition-colors"
             style={{
               background: active ? 'var(--blue)' : 'transparent',
               color:      active ? '#0A0F1C' : 'var(--text-secondary)',

@@ -59,7 +59,7 @@ export function AutomationPolicy() {
   return (
     <div className="max-w-3xl space-y-6">
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Account</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Account</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Automation Policy</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           How much of the remediation pipeline runs autonomously versus waiting for a human. Averrow is autonomous by default; this is the dial you turn the other way when your org wants a person in the loop.

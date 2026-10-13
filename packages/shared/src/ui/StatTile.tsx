@@ -114,7 +114,7 @@ export function StatTile({
           {critCount}
         </span>
       )}
-      <span className="relative block font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--text-secondary)] max-sm:text-[11px]">
+      <span className="relative block font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
         {label}
       </span>
       <span
@@ -135,7 +135,7 @@ export function StatTile({
           Couldn't load
         </span>
       ) : sub ? (
-        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1 max-sm:text-[11px]">{sub}</span>
+        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1">{sub}</span>
       ) : null}
       {footer ? <span className="relative mt-3 block">{footer}</span> : null}
       {clickable && (

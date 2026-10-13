@@ -45,7 +45,7 @@ export function BrandDomainFindings() {
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Domain Monitoring · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Domain Monitoring · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
@@ -91,7 +91,7 @@ export function MaliciousDomainsSection({
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
           Malicious Domains &amp; URLs <span className="text-white/55">(0)</span>
         </h2>
         <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
@@ -133,7 +133,7 @@ export function MaliciousDomainsSection({
   return (
     <section>
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
           Malicious Domains &amp; URLs <span className="text-white/55">({rows.length})</span>
         </h2>
         <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono">
@@ -206,7 +206,7 @@ function RequestTakedownDialog({
       >
         <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Confirm takedown request</div>
+            <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Confirm takedown request</div>
             <div className="mt-1 text-sm text-white/90 font-mono">{target}</div>
           </div>
           <button
@@ -358,7 +358,7 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
           Lookalike Domains <span className="text-white/55">(0)</span>
         </h2>
         <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
@@ -393,7 +393,7 @@ function LookalikesSection({ rows }: { rows: LookalikeRow[] }) {
 
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
         Lookalike Domains <span className="text-white/55">({rows.length})</span>
       </h2>
       <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'threat', dir: 'desc' }} />
@@ -486,7 +486,7 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
       >
         <div className="flex items-start justify-between border-b border-white/[0.06] px-5 py-4">
           <div>
-            <div id="page-analysis-title" className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/60">Page analysis</div>
+            <div id="page-analysis-title" className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/60">Page analysis</div>
             <div className="mt-1 text-sm text-white/90 font-mono">{row.domain}</div>
           </div>
           <button
@@ -592,7 +592,7 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
   if (rows.length === 0) {
     return (
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
           Certificate Transparency <span className="text-white/55">(0)</span>
         </h2>
         <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center text-white/55 text-sm">
@@ -614,7 +614,7 @@ function CertsSection({ rows }: { rows: CertRow[] }) {
 
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">
         Certificate Transparency <span className="text-white/55">({rows.length})</span>
       </h2>
       <SortableTable columns={columns} rows={rows} getRowKey={(r) => r.id} initialSort={{ key: 'suspicious', dir: 'desc' }} />

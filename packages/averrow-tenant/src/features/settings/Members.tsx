@@ -38,7 +38,7 @@ export function Members() {
 
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Settings</div>
           <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Members</h1>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
             Anyone with access to {user?.organization?.name ?? 'this organization'}. Org admins and owners can invite, remove, and change roles.

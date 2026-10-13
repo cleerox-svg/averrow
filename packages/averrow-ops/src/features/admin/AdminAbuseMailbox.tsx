@@ -1273,7 +1273,7 @@ function IntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
       }}
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/65">
           Intel highlights
         </h2>
         <span className="text-[11px] font-mono text-white/55">
@@ -1392,7 +1392,7 @@ function InboxToolbar({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
+        <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/65">
           Inbox <span className="text-white/55 ml-1">({countsUnavailable ? '—' : messages.length})</span>
         </h2>
         {activeBrand && (
