@@ -180,6 +180,74 @@ describe("writers never credit Microsoft from the generic word alone (review N3)
   });
 });
 
+describe("owner credit on attacker-controlled tenant / subdomain labels (2026-10-13)", () => {
+  const brands = [
+    { id: "b_office", name: "Office", canonical_domain: "office.com" },
+    { id: "b_live", name: "Live", canonical_domain: "live.com" },
+  ];
+  const set = new GenericBrandSet(brands, (id) => id === "brand_microsoft_com");
+  // Production Live / Office links that the generic cleanup would otherwise
+  // clear. Each is credited for the generic product its host names.
+  it.each([
+    ["ee6d1ec.outlookliveprotectionaccess.pages.dev", "live.com"],      // pages.dev tenant label
+    ["acesorvirtual-356--segoffice365.replit.app", "office.com"],       // replit.app tenant label
+    ["office358.rricrosoft-offices.org", "office.com"],                 // homoglyph "rricrosoft"
+    ["net-outlook-live-management-mimecast--secured-protection.com", "live.com"],
+    ["office365--account--verify.latestcasinoreviews.co.uk", "office.com"], // subdomain of an unrelated domain
+  ] as const)("%s → Microsoft (via %s)", (host, canonical) => {
+    expect(genericBrandOwnerCredit(host, canonical)).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(set.credit(host)?.brandId).toBe("brand_microsoft_com");
+    const brand = brands.find((x) => x.canonical_domain === canonical)!;
+    expect(creditGenericBrand(host, brand, (id) => id === "brand_microsoft_com")).toEqual({
+      brandId: "brand_microsoft_com", method: "token",
+    });
+  });
+  it("still needs the product word: a Live link on an Office-only host is not credited, and vice versa", () => {
+    expect(genericBrandOwnerCredit("acesorvirtual-356--segoffice365.replit.app", "live.com")).toBeNull();
+    expect(genericBrandOwnerCredit("ee6d1ec.outlookliveprotectionaccess.pages.dev", "office.com")).toBeNull();
+  });
+  it.each(["olive-sandpiper.hostingersite.com", "liveveiwtech.com", "livenation.com", "office-supplies.pages.dev",
+    "live-stream.replit.app", "officemax.com"])("%s → no Microsoft", (host) => {
+    for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
+    expect(set.credit(host)).toBeNull();
+  });
+  it("never on Microsoft's own hosts or shared multi-tenant hosts", () => {
+    for (const host of ["outlook.office365.com", "login.live.com", "contoso.sharepoint.com", "onedrive.live.com",
+      "office365-login.github.com", "outlook-live.safelinks.protection.outlook.com"]) {
+      for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
+    }
+  });
+  it("the product word must be a whole token or glued only to lures / vendor tokens (review M1)", () => {
+    for (const host of ["paypal-delivery.outlook-x.com", "olive-outlook.com", "deliveryoutlook-help.com",
+      "paypal-delivery.rnicrosoft-support.com", "livenation-outlook.com", "officemax-outlook.com",
+      "postoffice-outlook.com", "boxoffice-outlook.com", "soundcloud-outlook.com", "cloudflare-outlook.com"]) {
+      for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
+    }
+    for (const [host, c] of [["livelogin-outlook.com", "live.com"], ["liveoutlook-verify.com", "live.com"],
+      ["hotmaillive.com", "live.com"], ["myoffice-microsoft.com", "office.com"], ["office358-outlook.net", "office.com"]] as const) {
+      expect(genericBrandOwnerCredit(host, c), host).toEqual({ parentBrandId: "brand_microsoft_com" });
+    }
+  });
+  it("glued Microsoft lures that credited Microsoft on master still do (review M2)", () => {
+    for (const [host, c] of [["msoffice-outlook.com", "office.com"], ["officeonline-outlook.com", "office.com"],
+      ["liveoffice-outlook.com", "live.com"], ["liveoffice-outlook.com", "office.com"], ["mslive-outlook.com", "live.com"],
+      ["rnicrosoftlive.com", "live.com"]] as const) {
+      expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toEqual({ parentBrandId: "brand_microsoft_com" });
+    }
+  });
+  it("IdP tenant hosts: the tenant label is attacker-chosen, the vendor's own subdomain is not (review L1)", () => {
+    expect(genericBrandOwnerCredit("outlook-live.okta.com", "live.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(genericBrandOwnerCredit("login.okta.com", "live.com")).toBeNull();
+    expect(genericBrandOwnerCredit("login.okta.com", "office.com")).toBeNull();
+  });
+  it("the homoglyph fold applies to the vendor NAME only, never the product word", () => {
+    expect(genericBrandOwnerCredit("office-rnicrosoft.com", "office.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(genericBrandOwnerCredit("office-micr0soft.com", "office.com")).toEqual({ parentBrandId: "brand_microsoft_com" });
+    expect(genericBrandOwnerCredit("0ffice-microsoft.com", "office.com")).toBeNull();
+    expect(genericBrandOwnerCredit("office-mirror-soft.com", "office.com")).toBeNull();
+  });
+});
+
 describe("lure-gated LINE / Free use a narrow lure set (review N4)", () => {
   const line = { name: "Line", canonical_domain: "line.me" };
   const free = { name: "Free", canonical_domain: "free.fr" };

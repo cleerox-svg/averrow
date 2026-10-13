@@ -56,7 +56,13 @@ describe("platformSuffixFor suffix walk == original first-match loop", () => {
       for (const h of [p, `x.${p}`, `a.b.${p}`, `acme.${p}`, `login.${p}`, `www.${p}`]) hosts.add(h);
     }
     for (const h of ["paypal-login.github.io", "acme.eu.auth0.com", "acme.auth0.com", "login.okta.com", "acme-sso.okta.com",
-      "bucket.s3.amazonaws.com", "x.ipfs.dweb.link", "evil.com", "a.my.site.com"]) hosts.add(h);
+      "bucket.s3.amazonaws.com", "x.ipfs.dweb.link", "evil.com", "a.my.site.com",
+      // PLATFORM_SUFFIX_PATTERNS hosts: both paths share the same pattern
+      // fallback, so this only guards the list walk around them — the
+      // pattern rules themselves are covered by brand-detect.test.ts.
+      "b.s3.eu-west-1.amazonaws.com", "a.b.s3-website-us-west-1.amazonaws.com", "ec2-1-2-3-4.compute-1.amazonaws.com",
+      "x.website-us-southeast-1.linodeobjects.com", "mail.ded7815.inmotionhosting.com", "vps1.inmotionhosting.com",
+      "secure.inmotionhosting.com", "inmotionhosting.com"]) hosts.add(h);
     for (const h of hosts) expect(platformSuffixOf(h), h).toBe(platformSuffixForSlow(h));
   });
 });

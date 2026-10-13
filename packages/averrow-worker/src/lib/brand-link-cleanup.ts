@@ -231,11 +231,14 @@ export function decideLink(
  * generic_brands scope: decide one link to a generic-word brand. Kept only
  * when some input is the brand's canonical domain, a non-platform-tenant
  * subdomain of it, or a full-domain lookalike (genericBrandHostMatch) — no
- * source-feed or legacy-match protection. Otherwise relinked to what the
- * catalog matcher finds; else, for a vendor-product generic brand
- * (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft) whose host
- * passes the writers' owner-credit rule (genericBrandOwnerCredit: product word + a real vendor token), relinked to the parent brand
- * (method "token") when `brandExists` confirms it; else cleared. A link whose
+ * source-feed or legacy-match protection. Otherwise, for a vendor-product
+ * generic brand (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft)
+ * whose host passes the writers' owner-credit rule (genericBrandOwnerCredit:
+ * product word + a real vendor token), relinked to the parent brand (method
+ * "token") when `brandExists` confirms it. An exact (canonical / token)
+ * catalog re-match for another brand wins over owner credit; owner credit
+ * wins over a substring / levenshtein re-match; else relinked to what the
+ * catalog matcher finds; else cleared. A link whose
  * brand turns out not to be generic (SQL prefilter vs isGenericBrandName) is
  * left alone.
  */
@@ -253,9 +256,16 @@ export function decideGenericLink(
     if (method) return { action: "keep", method, newBrandId: null, reason: null };
   }
   const reason: CleanupReason = haystacks.some(isMatchableInput) ? "generic_brand" : "non_hostname";
+  // Owner credit vs the catalog re-match (generic scope only — writers keep
+  // ordinary brands first). An EXACT catalog hit (canonical / whole-token:
+  // paypal-office365.com → PayPal) wins, as in the writers. Owner credit —
+  // product word AND a real vendor token — beats a weaker substring /
+  // levenshtein hit (acesorvirtual-…--segoffice365.replit.app → not Virtua,
+  // office365--verify.latestcasinoreviews.co.uk → not reviews.io).
   const hit = reason === "non_hostname" ? null : rematch(haystacks);
-  if (hit && hit.brandId !== row.target_brand_id) {
-    return { action: "relink", method: hit.method, newBrandId: hit.brandId, reason };
+  const newHit = hit && hit.brandId !== row.target_brand_id ? hit : null;
+  if (newHit && (newHit.method === "canonical" || newHit.method === "token")) {
+    return { action: "relink", method: newHit.method, newBrandId: newHit.brandId, reason };
   }
   if (reason === "generic_brand") {
     for (const h of haystacks) {
@@ -265,6 +275,7 @@ export function decideGenericLink(
       }
     }
   }
+  if (newHit) return { action: "relink", method: newHit.method, newBrandId: newHit.brandId, reason };
   return { action: "clear", method: null, newBrandId: null, reason };
 }
 
