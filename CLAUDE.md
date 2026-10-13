@@ -1415,6 +1415,14 @@ provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups wri
 lookalike_domains         ← Typosquat scanner results
 page_captures             ← Phishing-page capture queue + evidence index (migration 0290); R2 keys +
                             SHA-256 per object, 180-day expiry; written by the page_capture agent
+bot_traffic_snapshots     ← Cloudflare Radar internet bot-vs-human share, top bot countries/ASNs, verified-bot
+                            categories (migration 0290). Platform context, NOT threats; written only by the
+                            `cf_radar_bots` feed (daily via its feed_configs interval, `itemsNew=0` so it never
+                            wakes Sentinel). Token: read-only `CF_RADAR_API_TOKEN` secret preferred, falls back
+                            to `CF_API_TOKEN`. Served by `GET /api/bot-traffic`; see docs/THREAT_FEEDS.md
+radar_country_snapshots   ← Radar per-country daily metrics (migration 0292): `attack_origin`, `attack_target`
+                            (7d L7 attack shares) and derived `bot_density`. Not threats; written only by
+                            `cf_radar_bots`; read by `GET /api/bot-traffic` (Observatory BOT DENSITY view)
 org_executives            ← Org-scoped executive identity registry (migration 0244); watched
                             by the executive_monitor agent (Doppelganger) for name→handle
                             impersonation, raising executive_impersonation alerts

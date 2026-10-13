@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.5.0",
+    publishedAt: "2026-10-12",
+    kind: "Feature",
+    title: "Global bot-traffic intelligence",
+    description:
+      "New platform intelligence on automated internet traffic, drawn from an industry-wide internet traffic dataset and refreshed daily. See the worldwide share of bot versus human traffic over 7, 30, or 90 days, the countries and networks where bot infrastructure is hosted, and the mix of well-known automated services. A new view also shows where application-layer attacks originate and which countries they target, along with a per-country bot density map where color shows bot share, size shows share of traffic, and a ring marks countries above the global average. Also fixed the map zoom control overlapping other controls, and improved layouts on phones for the bot density table and the Trends summary metrics.",
+  },
+  {
     version: "v4.4.0",
     publishedAt: "2026-10-10",
     kind: "Feature",
