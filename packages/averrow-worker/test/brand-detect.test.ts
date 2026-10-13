@@ -8,6 +8,7 @@ import {
   isGenericBrand,
   isMultiTenantHost,
   isPlatformTenantHost,
+  isSharedHostingHost,
   isGenericBrandName,
   genericBrandDomainKeywords,
   genericBrandHostMatch,
@@ -731,5 +732,118 @@ describe("one generic-brand predicate for writers and cleanup (review H2 / M1 / 
     expect(matchBrandToHost("e.mail.ru", CAT[0]!)).toBe("canonical");
     expect(isPlatformTenantHost("acme-login.my.site.com")).toBe(true);
     expect(fuzzyMatchBrand(["paypal-login.my.site.com"], [mon("PayPal", "paypal.com")])).toBe("b_paypal.com");
+  });
+});
+
+describe("hosting-company customer sites are platform suffixes (2026-10-13)", () => {
+  // Catalog rows as they exist in production (names / canonical domains).
+  const mon = (name: string, canonical_domain: string): BrandRow =>
+    ({ id: `brand_${canonical_domain.replace(/[^a-z0-9]/g, "_")}`, name, canonical_domain, tier: "monitored" });
+  const CAT: BrandRow[] = [
+    mon("Inmotionhosting", "inmotionhosting.com"), mon("Cpanel", "cpanel.net"), mon("Hostgator", "hostgator.com"),
+    mon("Hostgator", "hostgator.com.br"), mon("Linode", "linode.com"), mon("Hostinger", "hostinger.com"),
+    mon("Bluehost", "bluehost.com"), mon("Amazonaws", "amazonaws.com"), mon("Amazon AWS", "aws.amazon.com"),
+    mon("Amazon", "amazon.com"), mon("PayPal", "paypal.com"), mon("Netflix", "netflix.com"),
+    mon("Microsoft", "microsoft.com"), mon("DocuSign", "docusign.com"), mon("GitHub", "github.com"), mon("Chase", "chase.com"),
+  ];
+  const HOSTING = new Set(["brand_inmotionhosting_com", "brand_cpanel_net", "brand_hostgator_com", "brand_hostgator_com_br",
+    "brand_linode_com", "brand_hostinger_com", "brand_bluehost_com", "brand_amazonaws_com", "brand_aws_amazon_com"]);
+  const of = (h: string) => fuzzyMatchBrand([h], CAT);
+
+  // Production hosts credited to the hosting company before this change.
+  const CUSTOMER_HOSTS = [
+    "mail.ded7815.inmotionhosting.com", "mail.ded7865.inmotionhosting.com", "vps140325.inmotionhosting.com",
+    "mail.packageupdatestatus-deliveryupdatezip.119-121-114-233.cpanel.site",
+    "www.mail.wpt-9gek.162-215-130-152.cpanel.site", "20-228-132-238.cpanel.site",
+    "nikeadidad1779100089295.0191838.meusitehostgator.com.br",
+    "clienteservicio1787670946305.0440073.misitiohostgator.com",
+    "lib-563.website-us-southeast-1.linodeobjects.com", "kukume2.us-iad-10.linodeobjects.com",
+    "172-104-49-49.ip.linodeusercontent.com",
+    "navajowhite-curlew-592977.hostingersite.com", "website-e5c93d7a.aro.aub.mybluehost.me",
+    "servermailprotection-0sfinfomembers.s3.eu-west-1.amazonaws.com",
+    "gstjaps.s3-website-us-west-1.amazonaws.com", "x.s3.dualstack.us-east-1.amazonaws.com",
+    "x.s3-website.eu-west-1.amazonaws.com", "bucket.s3-accelerate.amazonaws.com",
+    "ec2-16-146-96-209.us-west-2.compute.amazonaws.com", "ec2-107-21-100-205.compute-1.amazonaws.com",
+  ];
+
+  it.each(CUSTOMER_HOSTS)("%s does not credit the hosting company", (host) => {
+    const hit = of(host);
+    expect(hit === null || !HOSTING.has(hit), `${host} → ${hit}`).toBe(true);
+    expect(isPlatformTenantHost(host)).toBe(true);
+    for (const brand of CAT.filter((x) => HOSTING.has(x.id))) expect(matchBrandToHost(host, brand), `${host} x ${brand.name}`).toBeNull();
+  });
+
+  it.each([
+    ["paypal-login.hostingersite.com", "brand_paypal_com"],
+    ["netflix-billing.1-2-3-4.cpanel.site", "brand_netflix_com"],
+    ["mail.paypal-secure.ded7815.inmotionhosting.com", "brand_paypal_com"],
+    ["paypal.s3.eu-west-1.amazonaws.com", "brand_paypal_com"],
+    ["netflix.us-east-1.linodeobjects.com", "brand_netflix_com"],
+    ["chase-verify.0191838.meusitehostgator.com.br", "brand_chase_com"],
+    ["paypal.zcy.ypo.mybluehost.me", "brand_paypal_com"],
+    ["docusign-verify.ip.linodeusercontent.com", "brand_docusign_com"],
+  ])("%s credits the embedded brand (%s)", (host, brand) => {
+    expect(of(host)).toBe(brand);
+  });
+
+  it.each([
+    ["inmotionhosting.com", "brand_inmotionhosting_com"], ["www.inmotionhosting.com", "brand_inmotionhosting_com"],
+    ["secure.inmotionhosting.com", "brand_inmotionhosting_com"], ["dedicated.inmotionhosting.com", "brand_inmotionhosting_com"],
+    ["inmotionhosting-login.com", "brand_inmotionhosting_com"], ["ded1234.inmotionhosting.com.evil.com", "brand_inmotionhosting_com"],
+    ["hostinger.com", "brand_hostinger_com"], ["hpanel.hostinger.com", "brand_hostinger_com"], ["smtp.hostinger.com", "brand_hostinger_com"],
+    ["cpanel.net", "brand_cpanel_net"], ["hostgator.com", "brand_hostgator_com"], ["hostgator.com.br", "brand_hostgator_com_br"],
+    ["linode.com", "brand_linode_com"], ["cloud.linode.com", "brand_linode_com"],
+    ["bluehost.com", "brand_bluehost_com"], ["my.bluehost.com", "brand_bluehost_com"],
+    ["cognito-identity.amazonaws.com", "brand_amazonaws_com"], ["s3.us-east-1.amazonaws.com", "brand_amazonaws_com"],
+    // A bare platform apex is unchanged (it is the provider's own name).
+    ["cpanel.site", "brand_cpanel_net"], ["hostingersite.com", "brand_hostinger_com"], ["us-east-1.linodeobjects.com", "brand_linode_com"],
+  ])("the provider's own host %s still matches %s", (host, brand) => {
+    expect(of(host)).toBe(brand);
+  });
+
+  // Old-vs-new: results computed with the pre-change matcher (master) on
+  // ordinary hosts, pinned. A broader run over 14.6K recent production
+  // threat hosts against the production catalog changed ONLY hosts under the
+  // new suffixes (184 links, all away from the hosting company).
+  it.each([
+    ["paypal-secure.com", "brand_paypal_com"], ["paypa1-login.com", "brand_paypal_com"],
+    ["docusign-verify.net", "brand_docusign_com"], ["microsoft365-login.co.uk", "brand_microsoft_com"],
+    ["paypal-login.github.io", "brand_paypal_com"], ["chase-login.jimdofree.com", "brand_chase_com"],
+    ["bucket.s3.amazonaws.com", null], ["paypal.s3.amazonaws.com", "brand_paypal_com"],
+    ["amazon-billing.com", "brand_amazon_com"], ["netflix-account-verify.net", "brand_netflix_com"],
+    ["login.microsoftonline.com.evil.ru", "brand_microsoft_com"],
+    ["s3.eu-west-1.amazonaws.com.evil.com", "brand_amazonaws_com"],
+    ["paypal.s3.eu-west-1.amazonaws.com.evil.com", "brand_paypal_com"],
+    ["evil-cpanel.site-login.com", "brand_cpanel_net"],
+  ])("unchanged ordinary host %s → %s", (host, brand) => {
+    expect(of(host)).toBe(brand);
+  });
+
+  it("anchored patterns: lookalikes of the endpoints are not platform tenants", () => {
+    for (const h of ["s3.eu-west-1.amazonaws.com.evil.com", "paypal.s3.eu-west-1.amazonaws.com.evil.com",
+      "ded1234.inmotionhosting.com.evil.com", "secure.inmotionhosting.com", "dedicated.inmotionhosting.com",
+      "x.ded12a.inmotionhosting.com", "x.us-east.linodeobjects.com", "evil-cpanel.site-login.com", "inmotionhosting.com"]) {
+      expect(isPlatformTenantHost(h), h).toBe(false);
+    }
+  });
+
+  it("consumer helpers only move in the cautious direction", () => {
+    // Domain-level intel gate (abuse-mailbox M1): tenants keep their old answer.
+    expect(isMultiTenantHost("bucket.s3.eu-west-1.amazonaws.com")).toBe(true);   // was true (amazonaws.com)
+    expect(isMultiTenantHost("ec2-1-2-3-4.us-west-2.compute.amazonaws.com")).toBe(true);
+    expect(isMultiTenantHost("mail.ded7815.inmotionhosting.com")).toBe(false);   // was false
+    expect(isMultiTenantHost("lib-563.website-us-southeast-1.linodeobjects.com")).toBe(false);
+    expect(isMultiTenantHost("x.1-2-3-4.cpanel.site")).toBe(false);
+    // Apexes / path-style endpoints become shared (domain-level intel no longer counts there).
+    for (const h of ["cpanel.site", "hostingersite.com", "meusitehostgator.com.br", "mybluehost.me",
+      "us-east-1.linodeobjects.com", "s3.eu-west-1.amazonaws.com"]) {
+      expect(isSharedHostingHost(h), h).toBe(true);
+      expect(isMultiTenantHost(h), h).toBe(true);
+    }
+    // The vendor's own domains are not shared hosting.
+    for (const h of ["inmotionhosting.com", "secure.inmotionhosting.com", "hostinger.com", "linode.com"]) {
+      expect(isSharedHostingHost(h), h).toBe(false);
+      expect(isMultiTenantHost(h), h).toBe(false);
+    }
   });
 });

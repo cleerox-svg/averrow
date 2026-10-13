@@ -395,12 +395,21 @@ export const GENERIC_BRAND_OWNERS: Readonly<Record<string, { parentBrandId: stri
  * own registrable domains, which are never a lure (outlook.office365.com).
  * Short tokens count only as a whole hyphen token; long ones also glued.
  */
-const OWNER_VENDORS: Readonly<Record<string, { tokens: readonly string[]; glued: readonly string[]; ownDomains: ReadonlySet<string> }>> = {
+const OWNER_VENDORS: Readonly<Record<string, {
+  tokens: readonly string[];
+  glued: readonly string[];
+  /** The vendor's NAME, also accepted homoglyph-spelled inside a token
+   *  (ownerFold: "rnicrosoft", "rricrosoft", "micr0soft" → microsoft). Kept
+   *  to the name itself so a fold never manufactures a product word. */
+  homoglyph: readonly string[];
+  ownDomains: ReadonlySet<string>;
+}>> = {
   brand_microsoft_com: {
     tokens: ["msn", "msft", "o365", "m365", "azure", "outlook", "hotmail", "onedrive", "sharepoint",
       "microsoft", "office365", "microsoft365", "windowslive", "livecom"],
     glued: ["microsoft", "microsoftonline", "onmicrosoft", "office365", "microsoft365", "outlook",
       "outlook365", "onedrive", "sharepoint", "hotmail", "windowslive", "msaccount", "msonline"],
+    homoglyph: ["microsoft"],
     ownDomains: new Set([
       "microsoft.com", "microsoftonline.com", "onmicrosoft.com", "microsoft365.com", "office.com",
       "office.net", "office365.com", "live.com", "outlook.com", "hotmail.com", "msn.com", "sharepoint.com",
@@ -409,10 +418,44 @@ const OWNER_VENDORS: Readonly<Record<string, { tokens: readonly string[]; glued:
   },
 };
 
-/** Cheap superset precheck: any vendor token as a substring at all. */
-const OWNER_PRECHECK: ReadonlyMap<string, readonly string[]> = new Map(
-  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, [...new Set([...v.tokens, ...v.glued])]]),
+/** ASCII fold table: each GENERIC_HOMOGLYPHS single-char spelling → the
+ *  character it stands for (1/i → l, 0 → o, 3 → e, …). */
+const SKELETON_FOLD: Uint8Array = (() => {
+  const t = new Uint8Array(128);
+  for (let i = 0; i < 128; i++) t[i] = i;
+  const set = (from: string, to: string) => { t[from.charCodeAt(0)] = to.charCodeAt(0); };
+  set("1", "l"); set("i", "l"); set("0", "o"); set("3", "e"); set("4", "a");
+  set("5", "s"); set("7", "t"); set("9", "g"); set("6", "b");
+  return t;
+})();
+const CH_R = 114, CH_N = 110, CH_M = 109, CH_V = 118, CH_W = 119, CH_C = 99, CH_L = 108, CH_D = 100;
+
+/**
+ * Owner-credit homoglyph fold: the generic skeleton (1/i → l, 0 → o, rn → m,
+ * …) plus "rr" → m, which phishers use for the m in "microsoft"
+ * ("rricrosoft"). Local to owner credit on purpose — the generic-brand
+ * skeleton prefilter is unchanged.
+ */
+function ownerFold(s: string): string {
+  return homoglyphSkeleton(s).replace(/rr/g, "m");
+}
+
+interface OwnerPrecheck { raw: readonly string[]; folded: readonly string[] }
+
+/** Cheap superset precheck: any vendor token as a substring at all, or the
+ *  vendor's name homoglyph-spelled anywhere in the folded host. */
+const OWNER_PRECHECK: ReadonlyMap<string, OwnerPrecheck> = new Map(
+  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, {
+    raw: [...new Set([...v.tokens, ...v.glued])],
+    folded: [...new Set(v.homoglyph.map(ownerFold))],
+  }]),
 );
+
+function ownerPrecheckHit(ctx: HostCtx, pre: OwnerPrecheck | undefined): boolean {
+  if (!pre) return false;
+  if (pre.raw.some((t) => ctx.host.includes(t))) return true;
+  return pre.folded.length > 0 && pre.folded.some((f) => ctx.ownerFold().includes(f));
+}
 
 /**
  * Parent brand for a vendor-product generic brand (GENERIC_BRAND_OWNERS),
@@ -421,8 +464,18 @@ const OWNER_PRECHECK: ReadonlyMap<string, readonly string[]> = new Map(
  * ("office365-login", "outlook-live-login") AND carry a REAL vendor token
  * (OWNER_VENDORS.tokens as a hyphen token, or OWNER_VENDORS.glued inside
  * one); the generic word alone never suffices ("cloud-login.com",
- * "live-login.com", "box-office-login.com" → null). Never on a shared /
- * tenant host, the generic brand's own domain or the vendor's own domains
+ * "live-login.com", "box-office-login.com" → null). The vendor's NAME may
+ * be homoglyph-spelled ("office358.rricrosoft-offices.org"); the product
+ * word may not.
+ *
+ * Labels checked: the customer / tenant labels of a platform host (the
+ * platform suffix removed: "ee6d1ec.outlookliveprotectionaccess.pages.dev",
+ * "x-segoffice365.replit.app" — the attacker chose them) and, on any other
+ * host, every label left of the public suffix (subdomain labels of an
+ * unrelated registrable domain included: "office365--verify.example.co.uk").
+ * Never on a shared / multi-tenant host that is not a single tenant's
+ * (safelinks wrappers, x.sharepoint.com, onedrive.live.com), the generic
+ * brand's own domain or the vendor's own domains
  * (OWNER_VENDORS.ownDomains: "outlook.office365.com").
  */
 export function genericBrandOwnerCredit(
@@ -443,10 +496,12 @@ function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: stri
   if (!vendor) return null;
   const { host } = ctx;
   // Cheap substring precheck before any parsing (review N1).
-  if (!(OWNER_PRECHECK.get(owner.parentBrandId) ?? []).some((t) => host.includes(t))) return null;
-  // Shared / tenant hosts (safelinks wrappers, x.sharepoint.com,
-  // onedrive.live.com) carry the vendor's name but not a lure.
-  if (platformSuffixFor(host) !== null || isMultiTenantHost(host)) return null;
+  if (!ownerPrecheckHit(ctx, OWNER_PRECHECK.get(owner.parentBrandId))) return null;
+  // Shared / multi-tenant hosts (safelinks wrappers, x.sharepoint.com,
+  // onedrive.live.com, a platform apex) carry the vendor's name but not a
+  // lure. A platform TENANT (x.pages.dev, bucket.s3.<region>.amazonaws.com)
+  // is one attacker-chosen name: its tenant labels (ctx.labels()) count.
+  if (platformSuffixFor(host) === null && isMultiTenantHost(host)) return null;
   // The generic brand's own domain and the vendor's own domains are not lures.
   if (host === spec.canonHost || host.endsWith(spec.canonDot)) return null;
   const reg = registrableDomain(host);
@@ -457,6 +512,10 @@ function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: stri
   for (const label of labels) {
     for (const t of label.split(/[-_]/).filter((x) => x.length > 0)) {
       if (vendor.tokens.includes(t) || vendor.glued.some((g) => t.includes(g))) return { parentBrandId: owner.parentBrandId };
+      if (vendor.homoglyph.length > 0) {
+        const folded = ownerFold(t);
+        if (vendor.homoglyph.some((h) => folded.includes(ownerFold(h)))) return { parentBrandId: owner.parentBrandId };
+      }
     }
   }
   return null;
@@ -638,18 +697,6 @@ function genericSpec(canonical: string, lureGated: boolean): GenericSpec | null 
  * that spells a word with homoglyphs CONTAINS the word's skeleton
  * ("rnai1" → "mall", "mail" → "mall"). Used only as a superset prefilter.
  */
-/** ASCII fold table: each GENERIC_HOMOGLYPHS single-char spelling → the
- *  character it stands for (1/i → l, 0 → o, 3 → e, …). */
-const SKELETON_FOLD: Uint8Array = (() => {
-  const t = new Uint8Array(128);
-  for (let i = 0; i < 128; i++) t[i] = i;
-  const set = (from: string, to: string) => { t[from.charCodeAt(0)] = to.charCodeAt(0); };
-  set("1", "l"); set("i", "l"); set("0", "o"); set("3", "e"); set("4", "a");
-  set("5", "s"); set("7", "t"); set("9", "g"); set("6", "b");
-  return t;
-})();
-const CH_R = 114, CH_N = 110, CH_M = 109, CH_V = 118, CH_W = 119, CH_C = 99, CH_L = 108, CH_D = 100;
-
 function homoglyphSkeleton(s: string): string {
   // One pass: fold single-char homoglyphs, then merge rn → m, vv → w,
   // cl → d over the folded stream (same result as folding first and then
@@ -675,6 +722,8 @@ interface HostCtx {
   labelSkeleton: (i: number) => string;
   regStart: () => number;
   labels: () => string[];
+  /** ownerFold(host), computed on first use. */
+  ownerFold: () => string;
 }
 
 /** Host parsed once and reused across every generic brand checked for it
@@ -691,8 +740,10 @@ function hostCtx(raw: string): HostCtx | null {
     let regStart: number | undefined;
     let labels: string[] | undefined;
     const labelSkels: string[] = [];
+    let folded: string | undefined;
+    const skeleton = homoglyphSkeleton(host);
     ctx = {
-      host, all, skeleton: homoglyphSkeleton(host),
+      host, all, skeleton,
       labelSkeleton: (i: number) => (labelSkels[i] ??= homoglyphSkeleton(all[i] ?? "")),
       regStart: () => {
         if (regStart === undefined) {
@@ -702,6 +753,8 @@ function hostCtx(raw: string): HostCtx | null {
         return regStart;
       },
       labels: () => (labels ??= all.slice(0, all.length - suffixLabelCount(host))),
+      // == ownerFold(host), reusing the skeleton already computed above.
+      ownerFold: () => (folded ??= skeleton.replace(/rr/g, "m")),
     };
   }
   lastHostCtx = { raw, ctx };
@@ -735,11 +788,16 @@ export class GenericBrandSet {
     this.size = this.entries.length;
     // Union of the owners' vendor tokens: one substring sweep per host
     // decides whether any parent credit is possible at all.
-    this.ownerPrecheck = [...new Set(this.entries.filter((e) => e.owner)
-      .flatMap((e) => OWNER_PRECHECK.get(GENERIC_BRAND_OWNERS[e.spec.canonHost]!.parentBrandId) ?? []))];
+    const pres = this.entries.filter((e) => e.owner)
+      .map((e) => OWNER_PRECHECK.get(GENERIC_BRAND_OWNERS[e.spec.canonHost]!.parentBrandId))
+      .filter((p): p is OwnerPrecheck => p !== undefined);
+    this.ownerPrecheck = pres.length === 0 ? null : {
+      raw: [...new Set(pres.flatMap((p) => p.raw))],
+      folded: [...new Set(pres.flatMap((p) => p.folded))],
+    };
   }
 
-  private readonly ownerPrecheck: string[];
+  private readonly ownerPrecheck: OwnerPrecheck | null;
 
   /** `via` is the generic brand that produced the credit (== brandId unless
    *  a parent was credited). */
@@ -752,7 +810,7 @@ export class GenericBrandSet {
       const m = genericMatchSpec(ctx, e.spec, false);
       if (m) return { brandId: e.id, method: m, via: e.id };
     }
-    if (this.ownerPrecheck.length === 0 || !this.ownerPrecheck.some((t) => ctx.host.includes(t))) return null;
+    if (!this.ownerPrecheck || !ownerPrecheckHit(ctx, this.ownerPrecheck)) return null;
     for (const e of this.entries) {
       if (!e.owner) continue;
       const owner = ownerCreditSpec(ctx, e.spec);
@@ -898,6 +956,19 @@ const PLATFORM_SUFFIXES = [
   // are in SHARED_HOSTS below).
   "ipfs.dweb.link", "ipfs.w3s.link", "ipfs.nftstorage.link", "ipfs.4everland.io",
   "mypinata.cloud", "ipfs.cf-ipfs.com",
+  // Hosting-company customer-site / temporary / preview domains (2026-10-13):
+  // every label in front is a customer account, so the hosting company is
+  // not the target (paypal-login.hostingersite.com is PayPal, not Hostinger).
+  // The companies' own domains (hostinger.com, cpanel.net, hostgator.com,
+  // bluehost.com, linode.com) are NOT listed and still match them.
+  "cpanel.site",               // cPanel temporary domains <site>.<ip-dashed>.cpanel.site
+  "hostingersite.com",         // Hostinger customer preview sites
+  "meusitehostgator.com.br",   // HostGator Brazil customer sites
+  "misitiohostgator.com",      // HostGator LatAm customer sites
+  "mybluehost.me",             // Bluehost temporary domains
+  "ip.linodeusercontent.com",  // Linode instance reverse DNS (<ip-dashed>.ip.…)
+  // Regional S3 / EC2 / Linode Object Storage endpoints and InMotion
+  // dedicated/VPS server hosts need a pattern: PLATFORM_SUFFIX_PATTERNS.
   // Identity-provider tenant hosts (acme-sso.okta.com, acme.eu.auth0.com):
   // the tenant label names the TARGETED brand, never the IdP vendor
   // (docs/IDP_IMPERSONATION_PLAN_2026-10.md owner decision 4 — the abused
@@ -906,6 +977,73 @@ const PLATFORM_SUFFIXES = [
   // (eu.auth0.com) wins over its parent in suffixLabelCount.
   ...Object.keys(IDP_TENANT_HOSTS).sort((a, b) => b.length - a.length),
 ];
+
+/**
+ * Customer-site platforms a fixed suffix string cannot express. Each rule is
+ * tested against every proper suffix of the host (the same suffix walk as
+ * PLATFORM_SUFFIXES); the matched suffix is the platform, the labels in
+ * front of it belong to one customer.
+ *
+ *   re      — the platform suffix itself (e.g. "s3.eu-west-1.amazonaws.com").
+ *   tenant  — when set, the label DIRECTLY in front of the suffix must match
+ *             too. Used where the suffix alone is the vendor's own domain:
+ *             ded7815.inmotionhosting.com / vps140325.inmotionhosting.com are
+ *             customer servers, but inmotionhosting.com, www. and
+ *             secure.inmotionhosting.com are InMotion's and still match it.
+ *
+ * Consulted only when no PLATFORM_SUFFIXES entry matches, so every host a
+ * listed entry already covers keeps its exact behaviour.
+ */
+interface PlatformSuffixPattern { re: RegExp; tenant?: RegExp }
+
+/** AWS / Linode region ids: us-east-1, eu-west-3, us-gov-west-1, us-iad-10. */
+const CLOUD_REGION = String.raw`[a-z]{2}(?:-gov)?-[a-z]+-\d{1,2}`;
+
+const PLATFORM_SUFFIX_PATTERNS: ReadonlyArray<PlatformSuffixPattern> = [
+  // Virtual-hosted S3 buckets on regional endpoints:
+  // <bucket>.s3.<region>, s3-<region>, s3-website-<region>, s3-website.<region>,
+  // s3.dualstack.<region>, s3-external-1 (s3.amazonaws.com itself is listed).
+  { re: new RegExp(String.raw`^s3(?:[.-]website)?(?:\.dualstack)?[.-](?:${CLOUD_REGION}|external-1)\.amazonaws\.com$`) },
+  { re: /^s3-accelerate(?:\.dualstack)?\.amazonaws\.com$/ },
+  // EC2 instance public DNS: ec2-1-2-3-4.<region>.compute.amazonaws.com,
+  // ec2-1-2-3-4.compute-1.amazonaws.com (us-east-1).
+  { re: new RegExp(String.raw`^(?:${CLOUD_REGION}\.compute|compute-1)\.amazonaws\.com$`) },
+  // Linode / Akamai Object Storage buckets: <bucket>.<cluster>.linodeobjects.com
+  // and static-site endpoints <bucket>.website-<cluster>.linodeobjects.com.
+  { re: new RegExp(String.raw`^(?:website-)?${CLOUD_REGION}\.linodeobjects\.com$`) },
+  // InMotion dedicated / VPS server hostnames (dedNNNN / vpsNNNN).
+  { re: /^inmotionhosting\.com$/, tenant: /^(?:ded|vps)\d+$/ },
+];
+
+interface PlatformSuffixMatch {
+  /** The platform suffix as it appears in the host. */
+  suffix: string;
+  /** "list" = a PLATFORM_SUFFIXES entry; "pattern" = PLATFORM_SUFFIX_PATTERNS. */
+  kind: "list" | "pattern";
+}
+
+/** Longest proper suffix of `host` matching a PLATFORM_SUFFIX_PATTERNS rule. */
+function patternSuffixFor(host: string): string | null {
+  for (let i = host.indexOf("."); i >= 0; i = host.indexOf(".", i + 1)) {
+    const suffix = host.slice(i + 1);
+    for (const rule of PLATFORM_SUFFIX_PATTERNS) {
+      if (!rule.re.test(suffix)) continue;
+      if (rule.tenant) {
+        const front = host.slice(0, i);
+        const tenantLabel = front.slice(front.lastIndexOf(".") + 1);
+        if (!rule.tenant.test(tenantLabel)) continue;
+      }
+      return suffix;
+    }
+  }
+  return null;
+}
+
+/** `host` IS a pattern platform's suffix (a path-style regional endpoint such
+ *  as s3.eu-west-1.amazonaws.com) — tenant-gated rules never qualify. */
+function isPatternPlatformApex(host: string): boolean {
+  return PLATFORM_SUFFIX_PATTERNS.some((rule) => !rule.tenant && rule.re.test(host));
+}
 
 /**
  * Shared content gateways: a threat AT this exact host is hosted content
@@ -961,7 +1099,10 @@ export function isSharedHostingHost(raw: string): boolean {
   if (!host) return false;
   if (SHARED_HOSTS.has(host)) return true;
   // An IdP apex (okta.com) is the vendor's own site, not shared hosting.
-  return PLATFORM_SUFFIXES.includes(host) && !IDP_SUFFIXES.has(host);
+  if (PLATFORM_SUFFIXES.includes(host) && !IDP_SUFFIXES.has(host)) return true;
+  // A path-style regional endpoint (s3.eu-west-1.amazonaws.com,
+  // us-east-1.linodeobjects.com) serves many customers' objects.
+  return isPatternPlatformApex(host);
 }
 
 const IDP_SUFFIXES: ReadonlySet<string> = new Set(Object.keys(IDP_TENANT_HOSTS));
@@ -991,6 +1132,19 @@ function inMultiTenantHosts(host: string): boolean {
  * idpTenantLabel) is NOT a tenant: it belongs to the vendor.
  */
 function platformSuffixFor(host: string): string | null {
+  return platformSuffixMatch(host)?.suffix ?? null;
+}
+
+/** platformSuffixFor plus which table matched. PLATFORM_SUFFIXES wins; the
+ *  patterns are consulted only when no listed entry matches. */
+function platformSuffixMatch(host: string): PlatformSuffixMatch | null {
+  const listed = listedPlatformSuffixFor(host);
+  if (listed) return { suffix: listed, kind: "list" };
+  const pattern = patternSuffixFor(host);
+  return pattern ? { suffix: pattern, kind: "pattern" } : null;
+}
+
+function listedPlatformSuffixFor(host: string): string | null {
   // Suffix walk over a list-index map instead of scanning every entry
   // (review N1). Picks the matching entry with the LOWEST list index —
   // exactly what the original first-match loop over PLATFORM_SUFFIXES did.
@@ -1005,14 +1159,15 @@ function platformSuffixFor(host: string): string | null {
   return best >= 0 ? PLATFORM_SUFFIXES[best]! : null;
 }
 
-/** Original first-match loop — kept for the equivalence test only. */
+/** Original first-match loop (plus the shared pattern fallback) — kept for
+ *  the equivalence test only. */
 export function platformSuffixForSlow(host: string): string | null {
   for (const p of PLATFORM_SUFFIXES) {
     if (!host.endsWith(`.${p}`)) continue;
     if (IDP_SUFFIXES.has(p) && idpTenantLabel(host) === null) continue;
     return p;
   }
-  return null;
+  return patternSuffixFor(host);
 }
 
 /** The PLATFORM_SUFFIXES list, for the equivalence test. */
@@ -1026,7 +1181,9 @@ export function platformSuffixOf(host: string): string | null {
 }
 
 /** True when `raw` is a single tenant's subdomain of a PLATFORM_SUFFIXES
- *  platform ("x.pages.dev", "x.duckdns.org", "bucket.s3.amazonaws.com"). */
+ *  platform ("x.pages.dev", "x.duckdns.org", "bucket.s3.amazonaws.com") or of
+ *  a PLATFORM_SUFFIX_PATTERNS platform ("bucket.s3.eu-west-1.amazonaws.com",
+ *  "mail.ded7815.inmotionhosting.com"). */
 export function isPlatformTenantHost(raw: string): boolean {
   const host = hostOf(raw);
   if (!host) return false;
@@ -1047,11 +1204,17 @@ export function isIdpTenantHost(raw: string): boolean {
  * MULTI_TENANT_HOSTS (incl. subdomains) qualify; a platform TENANT
  * subdomain never does (checked first, so "bucket.s3.amazonaws.com" stays
  * single-tenant even though "amazonaws.com" is multi-tenant).
+ *
+ * A PLATFORM_SUFFIX_PATTERNS tenant does NOT short-circuit: it falls through
+ * to the checks below, so the 2026-10-13 pattern additions never made a host
+ * LESS shared than before (bucket.s3.eu-west-1.amazonaws.com stays
+ * multi-tenant via amazonaws.com; ded/vps InMotion and Linode bucket hosts
+ * stay not-shared, exactly as before).
  */
 export function isMultiTenantHost(raw: string): boolean {
   const host = hostOf(raw);
   if (!host) return false;
-  if (isPlatformTenantHost(host)) return false;
+  if (platformSuffixMatch(host)?.kind === "list") return false;
   if (isSharedHostingHost(host)) return true;
   return inMultiTenantHosts(host);
 }

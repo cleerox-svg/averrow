@@ -144,6 +144,11 @@ export const SHARED_HOSTING_DOMAINS: ReadonlySet<string> = new Set([
   "jimdofree.com", "jimdo.com", "jimdosite.com", "square.site", "sites.google.com",
   "mystrikingly.com", "yolasite.com", "webnode.page", "site123.me", "tilda.ws",
   "wixstudio.com", "editorx.io", "framer.website",
+  // Hosting-company customer-site / temporary domains and object storage
+  // (brandDetect PLATFORM_SUFFIXES, 2026-10-13). InMotion's dedNNNN/vpsNNNN
+  // server hosts are not listable here — inmotionhosting.com is InMotion's own.
+  "cpanel.site", "hostingersite.com", "meusitehostgator.com.br", "misitiohostgator.com",
+  "mybluehost.me", "linodeobjects.com", "linodeusercontent.com",
   // Identity-provider tenant hosts: acme-sso.okta.com is an attacker's
   // tenant, never an "official subdomain" of Okta / OneLogin / Auth0
   // (docs/IDP_IMPERSONATION_PLAN_2026-10.md). Same table the classifier uses.

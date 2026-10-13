@@ -17,6 +17,7 @@ import {
   UNDO_CONFIRM_TOKEN,
   type LinkRow,
 } from "../src/lib/brand-link-cleanup";
+import { fuzzyMatchBrandDetailed } from "../src/lib/brandDetect";
 import { handleBrandLinkCleanup } from "../src/handlers/admin/brand-link-cleanup";
 import type { Env } from "../src/types";
 
@@ -154,6 +155,15 @@ describe("decideLink — a brand glued inside one run-on label (2026-10-12)", ()
   });
 });
 
+// Production catalog rows that won the catalog re-match before owner credit
+// was moved ahead of it (2026-10-13).
+const OWNER_RACE_CATALOG = [
+  { id: "brand_virtua_com_br", name: "Virtua", canonical_domain: "virtua.com.br", tier: "monitored" },
+  { id: "brand_reviews_io", name: "Reviews", canonical_domain: "reviews.io", tier: "monitored" },
+  { id: "brand_outlook_com", name: "Outlook", canonical_domain: "outlook.com", tier: "monitored" },
+  { id: "brand_microsoft_com", name: "Microsoft", canonical_domain: "microsoft.com", tier: "monitored" },
+];
+
 describe("decideGenericLink — generic_brands scope", () => {
   const mail = (over: Partial<LinkRow>) => row({
     target_brand_id: "brand_mail_ru", brand_name: "Mail", brand_canonical: "mail.ru", brand_tier: "monitored", ...over,
@@ -212,12 +222,45 @@ describe("decideGenericLink — generic_brands scope", () => {
     expect(decideGenericLink(live("live-login.com"), () => null)).toMatchObject({ action: "clear" });
     expect(decideGenericLink(cloud("cloud-login.com"), () => null)).toMatchObject({ action: "clear" });
     expect(decideGenericLink(live("outlook-verify-account.com"), () => null)).toMatchObject({ action: "clear" });
-    // A more specific brand the matcher finds still wins.
+    // Owner credit is tried BEFORE the catalog re-match (generic scope only).
     expect(decideGenericLink(live("paypal-outlook-live.com"), () => ({ brandId: "brand_paypal", method: "token" })))
+      .toMatchObject({ action: "relink", newBrandId: "brand_microsoft_com" });
+    // Where owner credit does not apply, the catalog match still relinks.
+    expect(decideGenericLink(live("paypal-live-login.com"), () => ({ brandId: "brand_paypal", method: "token" })))
+      .toMatchObject({ action: "relink", newBrandId: "brand_paypal" });
+    expect(decideGenericLink(live("outlook-live-login.com"), () => ({ brandId: "brand_paypal", method: "token" }), () => false))
       .toMatchObject({ action: "relink", newBrandId: "brand_paypal" });
     // Parent absent from the catalog → clear; kept links are unaffected.
     expect(decideGenericLink(live("outlook-live-login.com"), () => null, () => false)).toMatchObject({ action: "clear" });
     expect(decideGenericLink(live("login.live.com"), never)).toMatchObject({ action: "keep", method: "canonical" });
+  });
+
+  it("relinks Live / Office links on attacker-chosen tenant / subdomain labels to Microsoft (2026-10-13)", () => {
+    for (const [host, name, canonical, id] of [
+      ["ee6d1ec.outlookliveprotectionaccess.pages.dev", "Live", "live.com", "brand_live_com"],
+      ["acesorvirtual-356--segoffice365.replit.app", "Office", "office.com", "brand_office_com"],
+      ["office358.rricrosoft-offices.org", "Office", "office.com", "brand_office_com"],
+      ["net-outlook-live-management-mimecast--secured-protection.com", "Live", "live.com", "brand_live_com"],
+      ["office365--account--verify.latestcasinoreviews.co.uk", "Office", "office.com", "brand_office_com"],
+    ] as const) {
+      const r = row({ malicious_domain: host, target_brand_id: id, brand_name: name, brand_canonical: canonical });
+      const want = { action: "relink", method: "token", newBrandId: "brand_microsoft_com", reason: "generic_brand" };
+      expect(decideGenericLink(r, () => null), host).toEqual(want);
+      // Even when the catalog has a substring / token hit (production: Outlook,
+      // Virtua, reviews.io), owner credit wins in the generic cleanup.
+      expect(decideGenericLink(r, (hs) => fuzzyMatchBrandDetailed(hs, OWNER_RACE_CATALOG)), host).toEqual(want);
+    }
+    // The race catalog really does match these hosts (so the test is meaningful).
+    expect(fuzzyMatchBrandDetailed(["acesorvirtual-356--segoffice365.replit.app"], OWNER_RACE_CATALOG)?.brandId).toBe("brand_virtua_com_br");
+    expect(fuzzyMatchBrandDetailed(["office365--account--verify.latestcasinoreviews.co.uk"], OWNER_RACE_CATALOG)?.brandId).toBe("brand_reviews_io");
+    expect(fuzzyMatchBrandDetailed(["ee6d1ec.outlookliveprotectionaccess.pages.dev"], OWNER_RACE_CATALOG)?.brandId).toBe("brand_outlook_com");
+    // A generic link where owner credit does not apply still takes the catalog match.
+    expect(decideGenericLink(row({ malicious_domain: "virtua-live-login.replit.app", target_brand_id: "brand_live_com", brand_name: "Live", brand_canonical: "live.com" }),
+      (hs) => fuzzyMatchBrandDetailed(hs, OWNER_RACE_CATALOG))).toMatchObject({ action: "relink", newBrandId: "brand_virtua_com_br" });
+    for (const host of ["olive-sandpiper.hostingersite.com", "liveveiwtech.com", "livenation.com"]) {
+      expect(decideGenericLink(row({ malicious_domain: host, target_brand_id: "brand_live_com", brand_name: "Live", brand_canonical: "live.com" }), () => null), host)
+        .toMatchObject({ action: "clear" });
+    }
   });
 
   it("other generic brands never take the owner relink", () => {

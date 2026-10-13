@@ -231,11 +231,12 @@ export function decideLink(
  * generic_brands scope: decide one link to a generic-word brand. Kept only
  * when some input is the brand's canonical domain, a non-platform-tenant
  * subdomain of it, or a full-domain lookalike (genericBrandHostMatch) — no
- * source-feed or legacy-match protection. Otherwise relinked to what the
- * catalog matcher finds; else, for a vendor-product generic brand
- * (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft) whose host
- * passes the writers' owner-credit rule (genericBrandOwnerCredit: product word + a real vendor token), relinked to the parent brand
- * (method "token") when `brandExists` confirms it; else cleared. A link whose
+ * source-feed or legacy-match protection. Otherwise, for a vendor-product
+ * generic brand (GENERIC_BRAND_OWNERS: Live / Office / Cloud → Microsoft)
+ * whose host passes the writers' owner-credit rule (genericBrandOwnerCredit:
+ * product word + a real vendor token), relinked to the parent brand (method
+ * "token") when `brandExists` confirms it — checked BEFORE the catalog
+ * re-match; else relinked to what the catalog matcher finds; else cleared. A link whose
  * brand turns out not to be generic (SQL prefilter vs isGenericBrandName) is
  * left alone.
  */
@@ -253,10 +254,12 @@ export function decideGenericLink(
     if (method) return { action: "keep", method, newBrandId: null, reason: null };
   }
   const reason: CleanupReason = haystacks.some(isMatchableInput) ? "generic_brand" : "non_hostname";
-  const hit = reason === "non_hostname" ? null : rematch(haystacks);
-  if (hit && hit.brandId !== row.target_brand_id) {
-    return { action: "relink", method: hit.method, newBrandId: hit.brandId, reason };
-  }
+  // Owner credit BEFORE the catalog re-match (coordinator decision
+  // 2026-10-13, this generic scope only — writers keep ordinary brands
+  // first): it already requires the product word AND a real vendor token,
+  // stronger evidence than a substring catalog hit
+  // (acesorvirtual-…--segoffice365.replit.app → Virtua,
+  // office365--verify.latestcasinoreviews.co.uk → reviews.io).
   if (reason === "generic_brand") {
     for (const h of haystacks) {
       const owner = genericBrandOwnerCredit(h, row.brand_canonical);
@@ -264,6 +267,10 @@ export function decideGenericLink(
         return { action: "relink", method: "token", newBrandId: owner.parentBrandId, reason };
       }
     }
+  }
+  const hit = reason === "non_hostname" ? null : rematch(haystacks);
+  if (hit && hit.brandId !== row.target_brand_id) {
+    return { action: "relink", method: hit.method, newBrandId: hit.brandId, reason };
   }
   return { action: "clear", method: null, newBrandId: null, reason };
 }
