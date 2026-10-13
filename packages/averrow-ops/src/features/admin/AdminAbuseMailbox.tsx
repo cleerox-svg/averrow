@@ -15,6 +15,7 @@
 // Design tokens per CLAUDE.md §5 + AVERROW_UI_STANDARD.md.
 
 import { Fragment, useEffect, useState } from 'react';
+import { accentText } from '@/lib/accent-text';
 import { Mail, MailCheck, MailX, Inbox, AlertTriangle, ShieldCheck, Copy, Check, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { Navigate, useLocation } from 'react-router-dom';
@@ -124,7 +125,7 @@ export function AdminAbuseMailbox() {
         }}
       >
         <p className="text-sm text-white/85 leading-relaxed">
-          The marketing site at <a className="text-[var(--amber)] hover:underline font-medium" href="https://averrow.com/report-abuse" target="_blank" rel="noreferrer">averrow.com/report-abuse</a> advertises public mailboxes for the same service we sell to customers. Every submission — phishing reports, impersonation tips, vulnerability disclosures, attacker probes — lands here, gets classified by Haiku, and feeds platform threat intelligence. We dogfood the abuse-mailbox module on ourselves.
+          The marketing site at <a className="text-[var(--amber-text)] hover:underline font-medium" href="https://averrow.com/report-abuse" target="_blank" rel="noreferrer">averrow.com/report-abuse</a> advertises public mailboxes for the same service we sell to customers. Every submission — phishing reports, impersonation tips, vulnerability disclosures, attacker probes — lands here, gets classified by Haiku, and feeds platform threat intelligence. We dogfood the abuse-mailbox module on ourselves.
         </p>
       </div>
 
@@ -255,7 +256,7 @@ export function AdminAbuseMailbox() {
                           <span className="text-[10px] font-mono text-white/55">Updating…</span>
                         )}
                         {bulkUpdate.isError && (
-                          <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical)' }}>
+                          <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
                             {(bulkUpdate.error as Error).message}
                           </span>
                         )}
@@ -353,7 +354,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
               <div className="text-[10px] font-mono text-white/65 uppercase tracking-wider">
                 {m.label}
               </div>
-              <code className="text-[12px] font-mono text-[var(--amber)]">{m.addr}</code>
+              <code className="text-[12px] font-mono text-[var(--amber-text)]">{m.addr}</code>
             </div>
             <button
               type="button"
@@ -407,7 +408,7 @@ function HeadlineMetrics({
           <div className="text-[9px] font-mono uppercase tracking-widest text-white/65">
             {t.label}
           </div>
-          <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color: t.accent }}>
+          <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color: accentText(t.accent) }}>
             {t.value}
           </div>
         </div>
@@ -575,7 +576,7 @@ function MessageRow({ message, expanded, onToggle }: {
             <span
               className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ml-1"
               style={{
-                color: '#fbbf24',
+                color: 'var(--sev-medium-text)',
                 background: 'rgba(229,168,50,0.10)',
                 border: '1px solid rgba(229,168,50,0.30)',
               }}
@@ -597,7 +598,7 @@ function MessageRow({ message, expanded, onToggle }: {
       </div>
       <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/70 flex-wrap">
         <span>
-          from <span className="text-[var(--amber)]">{message.original_from ?? message.forwarded_by_email ?? '—'}</span>
+          from <span className="text-[var(--amber-text)]">{message.original_from ?? message.forwarded_by_email ?? '—'}</span>
         </span>
         {message.original_from && message.forwarded_by_email && message.original_from !== message.forwarded_by_email && (
           <>
@@ -741,7 +742,7 @@ function UnthrottleButton({ messageId }: { messageId: string }) {
       disabled={mutate.isPending}
       className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
       style={{
-        color: '#fbbf24',
+        color: 'var(--sev-medium-text)',
         background: 'rgba(229,168,50,0.10)',
         border: '1px solid rgba(229,168,50,0.30)',
       }}
@@ -884,7 +885,7 @@ function PlatformIntelSection({
           <div>
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
             <div className="text-[12px] text-white/90">
-              <span style={{ color: '#fbbf24', fontWeight: 600 }}>{correlatedCount}</span> URL/domain
+              <span style={{ color: 'var(--sev-medium-text)', fontWeight: 600 }}>{correlatedCount}</span> URL/domain
               {correlatedCount === 1 ? '' : 's'} already in threat intel
             </div>
           </div>
@@ -893,7 +894,7 @@ function PlatformIntelSection({
           <div>
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Promoted to platform</div>
             <div className="text-[12px] text-white/90">
-              <span style={{ color: 'var(--green)', fontWeight: 600 }}>{promotedCount}</span> threat
+              <span style={{ color: 'var(--green-text)', fontWeight: 600 }}>{promotedCount}</span> threat
               {promotedCount === 1 ? '' : 's'} written
             </div>
           </div>
@@ -1031,7 +1032,7 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
         {urls.map((u, i) => (
           <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
             {u.domain && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--amber)] min-w-0 shrink-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--amber-text)] min-w-0 shrink-0">
                 {u.domain}
               </span>
             )}
@@ -1073,7 +1074,7 @@ function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; 
           <tbody className="divide-y divide-white/[0.04]">
             {sorted.map(([k, v]) => (
               <tr key={k}>
-                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-[var(--amber)] whitespace-nowrap">{k}</Td>
+                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-[var(--amber-text)] whitespace-nowrap">{k}</Td>
                 <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-white/85 break-all">{v}</Td>
               </tr>
             ))}
@@ -1162,7 +1163,7 @@ function StatusIcon({
     return (
       <MailX
         size={13}
-        style={{ color: '#fbbf24', opacity: 0.65 }}
+        style={{ color: 'var(--sev-medium-text)', opacity: 0.65 }}
         aria-label={`${kind} skipped — rate-limited`}
       />
     );
@@ -1171,7 +1172,7 @@ function StatusIcon({
     return (
       <MailCheck
         size={13}
-        style={{ color: 'var(--green)' }}
+        style={{ color: 'var(--green-text)' }}
         aria-label={`${kind} sent`}
       />
     );
@@ -1539,7 +1540,7 @@ function EmptyMessages() {
     >
       <div className="inline-flex items-center justify-center w-10 h-10 rounded-full mb-3"
            style={{ background: 'rgba(229,168,50,0.10)' }}>
-        <Inbox size={18} style={{ color: 'var(--amber)' }} />
+        <Inbox size={18} style={{ color: 'var(--amber-text)' }} />
       </div>
       <div className="text-sm text-white/85 font-mono">No captures yet</div>
       <p className="text-[11px] text-white/65 mt-1 max-w-md mx-auto">

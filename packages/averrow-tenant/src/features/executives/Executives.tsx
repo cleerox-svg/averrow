@@ -283,7 +283,7 @@ function ExecutiveRow({
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-1">
             {showBrand && (
-              <span className="text-[11px] font-mono text-amber/80 bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
+              <span className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
                 {brand?.name ?? executive.brand_id}
               </span>
             )}

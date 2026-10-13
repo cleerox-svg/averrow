@@ -143,7 +143,7 @@ function BriefingCard({
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
               })}
             </span>
-            <span style={{ color: 'var(--amber)' }}>
+            <span style={{ color: 'var(--amber-text)' }}>
               {isSelected ? '▾ Collapse' : '▸ View context'}
             </span>
           </div>
@@ -376,9 +376,9 @@ function BrandRiskMomentum() {
   const { data: brands, isLoading } = useBrandMomentum();
 
   function changeGlow(pct: number): CSSProperties {
-    if (pct > 100) return { color: '#f87171', textShadow: '0 0 20px rgba(200,60,60,0.8)' };
-    if (pct > 50)  return { color: '#fb923c', textShadow: '0 0 20px rgba(251,146,60,0.7)' };
-    return { color: '#E5A832', textShadow: '0 0 20px rgba(229,168,50,0.7)' };
+    if (pct > 100) return { color: 'var(--sev-critical-text)', textShadow: '0 0 20px rgba(200,60,60,0.8)' };
+    if (pct > 50)  return { color: 'var(--sev-high-text)', textShadow: '0 0 20px rgba(251,146,60,0.7)' };
+    return { color: 'var(--amber-text)', textShadow: '0 0 20px rgba(229,168,50,0.7)' };
   }
 
   return (
@@ -413,7 +413,7 @@ function BrandRiskMomentum() {
                   <tr key={b.target_brand_id ?? b.brand_name} className="data-row border-t border-white/5">
                     <Td className="p-0 py-2" style={{ color: 'var(--text-primary)' }}>
                       {b.target_brand_id
-                        ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--amber)] transition-colors">{b.brand_name}</Link>
+                        ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--amber-text)] transition-colors">{b.brand_name}</Link>
                         : b.brand_name}
                     </Td>
                     <Td className="p-0 py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</Td>
@@ -467,7 +467,7 @@ function ProviderMomentumPanel() {
                 <div key={p.provider_id ?? p.provider} className="flex items-center gap-3">
                   <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>
                     {p.provider_id
-                      ? <Link to={tabUrl('providers', { focus: encodeURIComponent(p.provider_id) })} className="hover:text-[var(--amber)] transition-colors">{p.provider}</Link>
+                      ? <Link to={tabUrl('providers', { focus: encodeURIComponent(p.provider_id) })} className="hover:text-[var(--amber-text)] transition-colors">{p.provider}</Link>
                       : p.provider}
                   </div>
                   <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">

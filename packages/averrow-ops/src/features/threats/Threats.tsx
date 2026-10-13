@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { accentText } from '@/lib/accent-text';
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
@@ -231,9 +232,9 @@ export function Threats() {
           // remediated (brand bulk-remediate), false_positive (curator), active.
           const transitions = isAdmin
             ? ([
-                status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated',     color: 'var(--green)' },
+                status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated',     color: 'var(--green-text)' },
                 status !== 'false_positive' && { label: 'False positive',  to: 'false_positive', color: 'var(--text-tertiary)' },
-                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--amber)' },
+                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--amber-text)' },
               ].filter(Boolean) as Array<{ label: string; to: string; color: string }>)
             : [];
           if (!brandId && !actorId && transitions.length === 0) return null;
@@ -429,7 +430,7 @@ function ActiveFilterChips(props: {
           className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded"
           style={{
             background: 'rgba(229,168,50,0.10)',
-            color: 'var(--amber)',
+            color: 'var(--amber-text)',
             border: '1px solid rgba(229,168,50,0.30)',
           }}>
           <span>{c.label}</span>
@@ -512,14 +513,14 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
             }} />
             <div style={{ position: 'relative' }}>
               <div className="flex items-center gap-2 mb-2">
-                <Icon size={14} style={{ color: t.accent }} />
+                <Icon size={14} style={{ color: accentText(t.accent) }} />
                 <span className="text-[9px] font-mono uppercase tracking-[0.20em]" style={{ color: 'var(--text-tertiary)' }}>
                   {t.label}
                 </span>
               </div>
               <div style={{
                 fontSize: 30, fontWeight: 800, lineHeight: 1.05,
-                color: t.accent, textShadow: `0 0 12px ${t.accent}55`,
+                color: accentText(t.accent), textShadow: `0 0 12px ${t.accent}55`,
               }}>
                 {agg ? t.value : (failed ? '—' : '…')}
               </div>
@@ -632,7 +633,7 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
                   {r.brand_count} brands · {r.threat_count} threats{r.tag ? ` · ${r.tag}` : ''}
                 </div>
               </div>
-              <span className="text-base font-bold flex-shrink-0" style={{ color: accent }}>
+              <span className="text-base font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
                 {r.brand_count}
               </span>
             </div>
@@ -686,7 +687,7 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
               }} />
               <div className="relative flex items-center justify-between gap-2">
                 <div className="min-w-0 flex-1 flex items-center gap-2">
-                  <TrendingUp size={12} style={{ color: accent, transform: isUp ? 'none' : 'rotate(180deg)' }} />
+                  <TrendingUp size={12} style={{ color: accentText(accent), transform: isUp ? 'none' : 'rotate(180deg)' }} />
                   <span className="text-xs font-mono truncate" style={{ color: 'var(--text-primary)' }}>
                     {s.label.replace(/_/g, ' ')}
                   </span>
@@ -695,7 +696,7 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
                   </span>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <div className="text-sm font-bold" style={{ color: accent }}>
+                  <div className="text-sm font-bold" style={{ color: accentText(accent) }}>
                     {isUp ? '+' : ''}{s.delta_pct}%
                   </div>
                   <div className="text-[10px] font-mono text-[var(--text-tertiary)]">
@@ -794,7 +795,7 @@ function Leaderboard({ title, accent, rows }: {
                     <div className="text-[10px] font-mono text-[var(--text-tertiary)] truncate">{r.sub}</div>
                   )}
                 </div>
-                <span className="text-xs font-bold flex-shrink-0" style={{ color: accent }}>
+                <span className="text-xs font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
                   {r.count}
                 </span>
               </div>

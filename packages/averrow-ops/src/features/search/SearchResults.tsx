@@ -148,7 +148,7 @@ export function SearchResults() {
                   <Link
                     to={group.viewAllTo(q)}
                     className="font-mono text-[10px] font-bold uppercase tracking-wide"
-                    style={{ color: 'var(--amber)' }}
+                    style={{ color: 'var(--amber-text)' }}
                   >
                     View all in {group.heading.toLowerCase()} →
                   </Link>

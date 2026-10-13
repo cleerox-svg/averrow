@@ -122,7 +122,7 @@ export function PendingApprovalsBanner() {
       }}
     >
       <div className="flex items-center gap-3">
-        <Shield size={16} style={{ color: 'var(--amber)', flexShrink: 0 }} />
+        <Shield size={16} style={{ color: 'var(--amber-text)', flexShrink: 0 }} />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
             {count === 1
@@ -335,7 +335,7 @@ function ConnectivityChips({ agentName }: { agentName: string }) {
               className="px-1.5 py-0.5 rounded"
               style={{
                 background: 'var(--amber-glow)',
-                color:      'var(--amber)',
+                color:      'var(--amber-text)',
                 border:     '1px solid var(--amber-border)',
               }}
             >
@@ -360,7 +360,7 @@ function NetworkSection({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <GitBranch size={14} style={{ color: 'var(--blue)' }} />
+        <GitBranch size={14} style={{ color: 'var(--blue-text)' }} />
         <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Network View
         </span>
@@ -666,7 +666,7 @@ function AgentControlBar({ agent }: { agent: Agent }) {
         ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
         : btn(toggle.isPending ? 'Pausing…' : 'Pause', 'var(--text-secondary)', () => toggle.mutate({ agentId: agent.name, enabled: false }))}
       {isTripped && btn(resetCircuit.isPending ? 'Resetting…' : 'Reset circuit', 'var(--sev-high)', () => resetCircuit.mutate(agent.name))}
-      {failed && <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>Action failed — retry</span>}
+      {failed && <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>Action failed — retry</span>}
     </div>
   );
 }
@@ -717,7 +717,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
               </div>
               <div>
                 <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
-                <div className="text-lg font-mono" style={{ color: 'var(--green)' }}>{detail.stats.successes}</div>
+                <div className="text-lg font-mono" style={{ color: 'var(--green-text)' }}>{detail.stats.successes}</div>
               </div>
               <div>
                 <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
@@ -737,7 +737,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
-                  <div className="text-lg font-mono" style={{ color: 'var(--amber)' }}>{fmtTokens(tu.total_tokens)}</div>
+                  <div className="text-lg font-mono" style={{ color: 'var(--amber-text)' }}>{fmtTokens(tu.total_tokens)}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
@@ -754,7 +754,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
           )}
           {agent.last_run_error && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>Last error</div>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>Last error</div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
                 background: 'var(--sev-critical-bg)',
                 color:      'var(--text-primary)',
@@ -815,7 +815,7 @@ function SupervisorSection({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Shield size={14} style={{ color: 'var(--amber)' }} />
+        <Shield size={14} style={{ color: 'var(--amber-text)' }} />
         <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Supervisors
         </span>
@@ -1007,7 +1007,7 @@ export function Agents() {
       {stalled.length > 0 && (
         <Card variant="critical" style={{ padding: '12px 16px' }}>
           <div className="flex items-center gap-2 mb-1.5">
-            <AlertTriangle size={14} style={{ color: 'var(--sev-critical)' }} />
+            <AlertTriangle size={14} style={{ color: 'var(--sev-critical-text)' }} />
             <span className="font-mono text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-primary)' }}>
               {stalled.length} stalled run{stalled.length !== 1 ? 's' : ''} · stuck &gt;15m
             </span>

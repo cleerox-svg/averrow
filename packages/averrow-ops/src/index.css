@@ -150,7 +150,7 @@
   box-shadow:
     0 0 16px rgba(229,168,50,0.25),
     inset 0 1px 0 rgba(255,255,255,0.1);
-  color: var(--amber);
+  color: var(--amber-text);
 }
 .glass-btn-active:hover {
   box-shadow:
@@ -197,7 +197,7 @@
   background: rgba(229,168,50,0.1);
   border: 1px solid rgba(229,168,50,0.35);
   box-shadow: 0 0 8px rgba(229,168,50,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
-  color: var(--amber);
+  color: var(--amber-text);
 }
 .badge-active {
   background: rgba(74,222,128,0.1);
@@ -220,12 +220,12 @@
 .badge-high {
   background: rgba(229,168,50,0.12);
   border: 1px solid rgba(229,168,50,0.3);
-  color: var(--amber);
+  color: var(--amber-text);
 }
 .badge-medium {
   background: rgba(10,138,181,0.12);
   border: 1px solid rgba(10,138,181,0.3);
-  color: var(--blue);
+  color: var(--blue-text);
 }
 .badge-low {
   background: rgba(136,150,171,0.1);
@@ -342,7 +342,7 @@
 .nav-item-active {
   background: linear-gradient(90deg, rgba(229,168,50,0.1) 0%, rgba(229,168,50,0.02) 100%) !important;
   border-left: 2px solid #E5A832 !important;
-  color: var(--amber) !important;
+  color: var(--amber-text) !important;
   box-shadow: -4px 0 12px rgba(229, 168, 50, 0.15),
               inset 0 0 20px rgba(229,168,50,0.04);
 }

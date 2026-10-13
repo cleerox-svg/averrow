@@ -167,7 +167,7 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
 function HandledRow({ alert: a }: { alert: Alert }) {
   return (
     <div className="flex items-start gap-3 px-4 py-3">
-      <CheckCircle2 size={14} className="text-green/70 mt-0.5 flex-shrink-0" />
+      <CheckCircle2 size={14} className="text-green mt-0.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="text-[12.5px] truncate">
           <Link to={`/alerts/${a.id}`} className="text-white/80 hover:text-amber transition-colors">{a.title}</Link>
@@ -183,7 +183,7 @@ function HandledRow({ alert: a }: { alert: Alert }) {
 // ─── small parts ─────────────────────────────────────────────
 
 function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number | null; icon: LucideIcon; tone: 'warn' | 'ok' | 'neutral' }) {
-  const accent = tone === 'warn' ? 'text-amber' : tone === 'ok' ? 'text-green/85' : 'text-white/85';
+  const accent = tone === 'warn' ? 'text-amber' : tone === 'ok' ? 'text-green' : 'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
@@ -215,7 +215,7 @@ function Muted({ children }: { children: React.ReactNode }) {
 
 function ViewAll({ to, label }: { to: string; label: string }) {
   return (
-    <Link to={to} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber/80 hover:text-amber pt-0.5">
+    <Link to={to} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber hover:text-amber pt-0.5">
       {label} <ArrowRight size={11} />
     </Link>
   );
@@ -223,7 +223,7 @@ function ViewAll({ to, label }: { to: string; label: string }) {
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue/85 bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {children}
     </span>
   );
@@ -234,7 +234,7 @@ function SeverityPill({ level }: { level: string | AlertSeverity }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>

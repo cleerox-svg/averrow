@@ -63,7 +63,7 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {it.channel === 'api'
-                ? <Zap size={15} style={{ color: 'var(--amber)' }} />
+                ? <Zap size={15} style={{ color: 'var(--amber-text)' }} />
                 : <Send size={15} style={{ color: 'var(--text-secondary)' }} />}
               <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{it.label}</span>
             </div>
@@ -114,7 +114,7 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
         {it.last_error && (
           <div style={{
             display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 11,
-            color: 'var(--sev-high)', background: 'var(--sev-high-bg)',
+            color: 'var(--sev-high-text)', background: 'var(--sev-high-bg)',
             padding: '6px 8px', borderRadius: 6,
           }}>
             <AlertTriangle size={12} style={{ marginTop: 1, flexShrink: 0 }} />
@@ -178,8 +178,8 @@ export function Integrations() {
       {data && data.send_mode === 'draft' && (
         <Card>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
-            <AlertTriangle size={15} style={{ color: 'var(--amber)' }} />
-            Global send mode is <strong style={{ color: 'var(--amber)' }}>draft</strong> —
+            <AlertTriangle size={15} style={{ color: 'var(--amber-text)' }} />
+            Global send mode is <strong style={{ color: 'var(--amber-text)' }}>draft</strong> —
             API submitters are held until <code>TAKEDOWN_SEND_MODE=live</code>. Real abuse reports are not being sent.
           </div>
         </Card>

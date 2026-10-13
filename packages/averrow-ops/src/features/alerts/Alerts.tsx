@@ -164,8 +164,8 @@ function parseAiAssessment(raw: string | null): ParsedAiAssessment | null {
 }
 
 const AI_VERDICT_STYLE: Record<AiVerdict, { label: string; color: string; bg: string }> = {
-  active_threat: { label: 'AI: Threat',      color: '#f87171', bg: 'rgba(239,68,68,0.12)' },
-  needs_human:   { label: 'AI: Review',      color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
+  active_threat: { label: 'AI: Threat',      color: 'var(--sev-critical-text)', bg: 'rgba(239,68,68,0.12)' },
+  needs_human:   { label: 'AI: Review',      color: 'var(--sev-medium-text)', bg: 'rgba(251,191,36,0.12)' },
   likely_safe:   { label: 'AI: Likely Safe', color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
 };
 
@@ -246,7 +246,7 @@ function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
           className={cn(
             'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
             selected === o.value
-              ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
+              ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
               : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
           )}
         >
@@ -494,7 +494,7 @@ function BrandGroupCard({
               {remaining > 0 && !showAll && (
                 <button
                   onClick={() => setShowAll(true)}
-                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber)' }}
+                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber-text)' }}
                 >
                   + {remaining} more
                 </button>
@@ -522,7 +522,7 @@ function BrandGroupCard({
                 <button
                   onClick={onAcknowledgeAll}
                   disabled={bulkBusy}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
                   {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge All'}
                 </button>
@@ -623,7 +623,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               alt=""
               className="w-4 h-4 rounded-sm"
             />
-            <span className="font-display text-sm font-bold group-hover:text-[var(--amber)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
+            <span className="font-display text-sm font-bold group-hover:text-[var(--amber-text)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
             <span className="font-mono text-[10px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
           </Link>
 
@@ -634,14 +634,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             {alert.source_type === 'threat' && alert.source_id && (
               <Link
                 to={`/console?tab=threats&q=${encodeURIComponent(alert.source_id)}`}
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
+                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
               >
                 View source threat →
               </Link>
             )}
             <Link
               to={`/console?tab=threats&brand_id=${encodeURIComponent(alert.brand_id)}`}
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber)] transition-colors"
+              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
             >
               View brand's threats →
             </Link>
@@ -669,7 +669,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <span
                   className="font-display text-[28px] font-extrabold tabular-nums leading-none"
                   style={score >= 75
-                    ? { color: '#fb923c', textShadow: '0 0 20px rgba(251,146,60,0.7)' }
+                    ? { color: 'var(--sev-high-text)', textShadow: '0 0 20px rgba(251,146,60,0.7)' }
                     : { color: 'var(--text-secondary)' }}
                 >
                   {score}%
@@ -767,7 +767,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => currentUserId && onAssign(currentUserId)}
                   disabled={isAssigning || !currentUserId}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
                 >
                   {alert.staff_assigned_to ? 'Take over' : 'Assign to me'}
                 </button>
@@ -789,7 +789,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onUpdate('acknowledged')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
                   Acknowledge
                 </button>
@@ -861,7 +861,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               <button
                 onClick={() => onUpdate(alert.status, notes.trim() ? notes : null)}
                 disabled={isUpdating}
-                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber-text)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
               >
                 Save Notes
               </button>
@@ -1281,7 +1281,7 @@ export function Alerts() {
               className={cn(
                 'group inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
                 active
-                  ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
+                  ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
                   : 'bg-white/[0.03] text-[var(--text-tertiary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-secondary)]',
               )}
               onClick={() => applyView(v.filters)}
@@ -1406,7 +1406,7 @@ export function Alerts() {
             className={cn(
               'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
               mineOnly
-                ? 'bg-afterburner-muted text-[#E5A832] border-afterburner-border'
+                ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
                 : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
             )}
             title="Show only signals assigned to me"

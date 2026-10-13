@@ -410,7 +410,7 @@ export function AdminIncidentDetail() {
                     </span>
                   )}
                   {u.visibility === 'public' && (
-                    <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em' }}>
+                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em' }}>
                       PUBLIC
                     </span>
                   )}
@@ -434,7 +434,7 @@ export function AdminIncidentDetail() {
                     color: 'var(--text-secondary)',
                     fontFamily: 'var(--font-mono)',
                   }}>
-                    <span style={{ color: 'var(--amber)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
+                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
                     {u.public_message}
                   </div>
                 )}

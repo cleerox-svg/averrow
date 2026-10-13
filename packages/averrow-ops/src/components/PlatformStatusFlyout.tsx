@@ -215,7 +215,7 @@ export function PlatformStatusFlyout() {
               borderTop: '1px solid var(--border-base)',
               fontFamily: 'var(--font-mono)', fontSize: 10,
               fontWeight: 700, letterSpacing: '0.10em',
-              color: 'var(--amber)', textDecoration: 'none',
+              color: 'var(--amber-text)', textDecoration: 'none',
               textTransform: 'uppercase', textAlign: 'center',
             }}
           >

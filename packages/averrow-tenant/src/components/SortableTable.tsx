@@ -133,7 +133,7 @@ export function SeverityPill({ severity }: { severity: string | null }) {
   const tone =
     sev === 'critical' ? 'text-sev-critical bg-sev-critical/[0.12] border-sev-critical/[0.25]' :
     sev === 'high'     ? 'text-amber        bg-amber/[0.12]        border-amber/[0.25]'        :
-    sev === 'medium'   ? 'text-amber/70     bg-amber/[0.07]        border-amber/[0.15]'        :
+    sev === 'medium'   ? 'text-amber     bg-amber/[0.07]        border-amber/[0.15]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.10]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -146,8 +146,8 @@ export function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone
   const cls =
     tone === 'crit' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.22]' :
     tone === 'warn' ? 'text-amber        bg-amber/[0.10]        border-amber/[0.22]'        :
-    tone === 'ok'   ? 'text-green/80     bg-green/[0.10]        border-green/[0.22]'        :
-    tone === 'info' ? 'text-blue/85      bg-blue/[0.08]         border-blue/[0.18]'         :
+    tone === 'ok'   ? 'text-green     bg-green/[0.10]        border-green/[0.22]'        :
+    tone === 'info' ? 'text-blue      bg-blue/[0.08]         border-blue/[0.18]'         :
                       'text-white/60     bg-white/[0.04]        border-white/[0.10]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${cls}`}>

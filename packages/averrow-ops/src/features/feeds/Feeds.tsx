@@ -228,7 +228,7 @@ function FeedActionButton({
   if (a.state === 'confirming') {
     return (
       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        <Button type="button" variant="ghost" size="sm" onClick={a.execute} icon={<Check size={12} />} style={{ color: 'var(--green)' }}>
+        <Button type="button" variant="ghost" size="sm" onClick={a.execute} icon={<Check size={12} />} style={{ color: 'var(--green-text)' }}>
           {''}
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={a.cancel} icon={<X size={12} />}>
@@ -246,13 +246,13 @@ function FeedActionButton({
   }
   if (a.state === 'success') {
     return (
-      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: 'var(--green)' }} onClick={(e) => e.stopPropagation()}>
+      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: 'var(--green-text)' }} onClick={(e) => e.stopPropagation()}>
         <Check size={12} />
       </span>
     );
   }
   return (
-    <span className="font-mono text-[10px]" style={{ color: 'var(--sev-high)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
+    <span className="font-mono text-[10px]" style={{ color: 'var(--sev-high-text)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
       <X size={12} className="inline" />
     </span>
   );
@@ -437,7 +437,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
           </div>
           {feed.last_error && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high)' }}>
+              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
                 Last error
               </div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
@@ -549,7 +549,7 @@ function PullRow({ record }: { record: FeedPullRecord }) {
         <span style={{ color: 'var(--text-secondary)' }}>
           {record.records_ingested.toLocaleString()}
           {record.records_rejected > 0 && (
-            <span style={{ color: 'var(--sev-medium)' }}>
+            <span style={{ color: 'var(--sev-medium-text)' }}>
               {' '}/ {record.records_rejected.toLocaleString()} rej
             </span>
           )}
@@ -561,7 +561,7 @@ function PullRow({ record }: { record: FeedPullRecord }) {
       {!isSuccess && record.error_message && (
         <div
           className="font-mono text-[10px] mt-1 line-clamp-2"
-          style={{ color: 'var(--sev-high)' }}
+          style={{ color: 'var(--sev-high-text)' }}
           title={record.error_message}
         >
           {record.error_message}

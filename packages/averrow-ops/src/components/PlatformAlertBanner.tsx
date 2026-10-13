@@ -222,7 +222,7 @@ export function PlatformAlertBanner() {
         onClick={handleMarkRead}
         style={{
           fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
-          color: 'var(--amber)', textDecoration: 'none',
+          color: 'var(--amber-text)', textDecoration: 'none',
           letterSpacing: '0.06em', padding: '6px 10px',
           flexShrink: 0,
         }}

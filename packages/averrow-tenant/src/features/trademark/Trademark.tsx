@@ -142,7 +142,7 @@ function BrandCard({ brand: b }: { brand: TrademarkBrandSummary }) {
           <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
         </div>
         {noAssets ? (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-amber/80 flex-shrink-0">no assets uploaded</span>
+          <span className="text-[9px] uppercase tracking-widest font-mono text-amber flex-shrink-0">no assets uploaded</span>
         ) : (
           <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
             {b.assets_active} asset{b.assets_active === 1 ? '' : 's'} · {b.findings_total} finding{b.findings_total === 1 ? '' : 's'}

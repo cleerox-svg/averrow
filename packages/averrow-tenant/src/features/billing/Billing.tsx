@@ -69,7 +69,7 @@ export function Billing() {
       {checkoutResult === 'cancelled' && (
         <div className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4 flex items-start gap-3">
           <AlertTriangle className="text-amber flex-shrink-0 mt-0.5" size={18} />
-          <p className="text-sm text-amber/85">Checkout cancelled. No changes were made.</p>
+          <p className="text-sm text-amber">Checkout cancelled. No changes were made.</p>
         </div>
       )}
 
@@ -361,7 +361,7 @@ function AdjustmentsCard({ summary }: { summary: BillingSummary }) {
       <ul className="space-y-1.5">
         {summary.active_overrides.map((o) => (
           <li key={o.id} className="text-[12px] text-white/65">
-            <span className="font-mono text-amber/80">
+            <span className="font-mono text-amber">
               {o.override_type === 'discount_percent'
                 ? `${o.discount_pct}% off`
                 : formatCents(o.custom_price_cents ?? 0)}

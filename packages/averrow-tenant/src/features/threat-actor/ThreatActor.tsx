@@ -139,7 +139,7 @@ function ActorRow({ actor: a }: { actor: ThreatActorSummary }) {
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-base font-semibold text-white/95">{a.name}</span>
             {a.country_code && (
-              <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue/85 bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+              <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
                 {a.country_code}
               </span>
             )}
@@ -194,7 +194,7 @@ function ConfidencePill({ confidence }: { confidence: string }) {
   const tone =
     confidence === 'confirmed' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     confidence === 'high'      ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    confidence === 'medium'    ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
+    confidence === 'medium'    ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                                  'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -206,7 +206,7 @@ function ConfidencePill({ confidence }: { confidence: string }) {
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'active'    ? 'text-amber    bg-amber/[0.06]    border-amber/[0.15]' :
-    status === 'disrupted' ? 'text-green/85 bg-green/[0.06]    border-green/[0.15]' :
+    status === 'disrupted' ? 'text-green bg-green/[0.06]    border-green/[0.15]' :
     status === 'dormant'   ? 'text-white/55 bg-white/[0.04]    border-white/[0.08]' :
                              'text-white/55 bg-white/[0.04]    border-white/[0.08]';
   return (

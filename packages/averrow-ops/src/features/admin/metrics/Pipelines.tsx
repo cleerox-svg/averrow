@@ -241,7 +241,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
   if (isError) {
     return (
       <Card variant="elevated" className="p-5 col-span-full">
-        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load detail. Try again in a moment.
         </div>
       </Card>
@@ -584,7 +584,7 @@ function ReferenceDatasetBlock({
           background: 'var(--sev-low-bg)',
           border:     '1px solid var(--border-base)',
         }}>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-low)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-low-text)' }}>
             Refresh in flight
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -598,7 +598,7 @@ function ReferenceDatasetBlock({
 
       {last_refresh_status === 'failed' && last_refresh_error && (
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-critical)' }}>
+          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-critical-text)' }}>
             Last refresh failed
           </div>
           <div className="font-mono text-[11px] p-2 rounded" style={{

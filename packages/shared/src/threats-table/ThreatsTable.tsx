@@ -243,7 +243,7 @@ export function ThreatsTable(props: ThreatsTableProps) {
           </table>
         </div>
         {loading && <div className="tt-state">Loading threats…</div>}
-        {!loading && error && <div className="tt-state" style={{ color: 'var(--sev-critical)' }}>{error}</div>}
+        {!loading && error && <div className="tt-state" style={{ color: 'var(--sev-critical-text)' }}>{error}</div>}
         {!loading && !error && rows.length === 0 && <div className="tt-state">{emptyText}</div>}
       </div>
 

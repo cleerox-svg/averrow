@@ -59,7 +59,7 @@ export function AiSpend() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical)' }}>
+        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load AI spend. Try again in a moment.
         </p>
       </Card>

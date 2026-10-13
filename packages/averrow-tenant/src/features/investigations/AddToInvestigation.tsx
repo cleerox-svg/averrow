@@ -45,7 +45,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
 
   if (done) {
     return (
-      <div className="text-[11px] font-mono text-green/80 flex items-center gap-1.5">
+      <div className="text-[11px] font-mono text-green flex items-center gap-1.5">
         <Check size={12} /> Added to “{done}”.
       </div>
     );
@@ -82,7 +82,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
             ))}
           </div>
           <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/[0.06]">
-            <button type="button" onClick={() => setMode('new')} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber/80 hover:text-amber">
+            <button type="button" onClick={() => setMode('new')} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber hover:text-amber">
               <Plus size={11} /> New case
             </button>
             <button type="button" onClick={() => setOpen(false)} className="text-[11px] font-mono text-white/55 hover:text-white/70">Cancel</button>
