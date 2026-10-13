@@ -1069,15 +1069,17 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 /* ── Banner (ui/Banner.tsx) ──
    Tone vars are set per [data-tone]; two variants: `inline` (flat card with a
    3px tone edge) and `prominent` (tinted surface + gradient hairline, act-now
-   states only). No glow, no hex. Reduced motion: the global rule zeroes
-   transition-duration; the pulse ring is an inline `live-ping` (see above). */
+   states only). No glow, no hex. Grid tracks come from Banner.tsx as
+   --bn-cols/--bn-areas (wide) and --bn-cols-s/--bn-areas-s (narrow, and always
+   for prominent), so absent icon/actions/close leave no empty track.
+   Reduced motion: the global rule zeroes transition-duration; the pulse ring is
+   an inline `live-ping` (see above). */
 .ds-banner {
   --bn-edge: var(--border-strong); --bn-bg: var(--border-base); --bn-fg: var(--text-secondary); --bn-line: var(--border-strong);
   position: relative; box-sizing: border-box; min-width: 0; font-variant-numeric: tabular-nums;
   font-family: var(--font-sans); color: var(--text-primary);
   display: grid; align-items: start; column-gap: 12px; row-gap: 10px;
-  grid-template-columns: 28px minmax(0, 1fr) auto auto;
-  grid-template-areas: "icon main actions close";
+  grid-template-columns: var(--bn-cols); grid-template-areas: var(--bn-areas);
 }
 .ds-banner[data-tone="critical"] { --bn-edge: var(--sev-critical); --bn-bg: var(--sev-critical-bg); --bn-fg: var(--sev-critical-text); --bn-line: var(--sev-critical-border); }
 .ds-banner[data-tone="high"]     { --bn-edge: var(--sev-high);     --bn-bg: var(--sev-high-bg);     --bn-fg: var(--sev-high-text);     --bn-line: var(--sev-high-border); }
@@ -1091,6 +1093,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-banner[data-variant="prominent"] {
   padding: 16px 18px; border-radius: var(--card-radius);
   background: linear-gradient(var(--bn-bg), var(--bn-bg)), var(--bg-card);
+  grid-template-columns: var(--bn-cols-s); grid-template-areas: var(--bn-areas-s);
 }
 .ds-banner[data-variant="prominent"][data-tone="critical"] { background: var(--card-critical-bg); }
 .ds-banner[data-variant="prominent"]::before {
@@ -1101,33 +1104,36 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
   mask-composite: exclude;
 }
-.ds-banner[data-variant="prominent"] { grid-template-areas: "icon main close" ". actions actions"; grid-template-columns: 28px minmax(0, 1fr) auto; }
-.ds-banner-noicon { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "main actions close"; }
-.ds-banner-noicon[data-variant="prominent"] { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main close" "actions actions"; }
 .ds-banner-icon {
   grid-area: icon; position: relative; width: 28px; height: 28px; border-radius: 8px; flex: none;
   display: flex; align-items: center; justify-content: center; background: var(--bn-bg); color: var(--bn-fg);
 }
 .ds-banner-icon > svg { width: 16px; height: 16px; }
 .ds-banner-main { grid-area: main; min-width: 0; }
+.ds-banner-top { position: relative; }
 .ds-banner-eyebrow { display: block; margin: 0 0 2px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--bn-fg); }
-.ds-banner-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary); overflow-wrap: anywhere; }
+.ds-banner-title { display: block; margin: 0; font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary); overflow-wrap: anywhere; }
 .ds-banner[data-variant="prominent"] .ds-banner-title { font-size: 16px; }
 .ds-banner-msg { margin: 2px 0 0; font-size: 13px; line-height: 1.4; color: var(--text-secondary); overflow-wrap: anywhere; }
 .ds-banner-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+/* Header toggle: the button is the title row; its ::after stretches the hit
+   area over the message below it (.ds-banner-top is the positioning box). */
 .ds-banner-head {
-  all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; cursor: pointer; border-radius: 8px;
+  all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; cursor: pointer; border-radius: 8px;
 }
+.ds-banner-head::after { content: ''; position: absolute; inset: 0; }
 .ds-banner-head:focus-visible, .ds-banner-link:focus-visible, .ds-banner-x:focus-visible { outline: 2px solid var(--focus-ring, var(--amber)); outline-offset: 2px; }
+.ds-banner-head:focus-visible { outline-offset: -2px; }
 .ds-banner-headtext { flex: 1 1 auto; min-width: 0; }
 .ds-banner-chevron { flex: none; color: var(--text-tertiary); transition: transform 150ms ease; }
 .ds-banner-head[aria-expanded="true"] .ds-banner-chevron { transform: rotate(90deg); }
 .ds-banner-details { margin-top: 8px; font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); overflow-wrap: anywhere; }
 .ds-banner-details[hidden] { display: none; }
 .ds-banner-link {
-  background: none; border: 0; cursor: pointer; min-height: 36px; padding: 6px 8px; margin-left: -8px; border-radius: 8px;
-  font: inherit; font-size: 12.5px; color: var(--text-tertiary); display: inline-flex; align-items: center;
+  background: none; border: 0; cursor: pointer; min-height: 36px; padding: 6px 8px; border-radius: 8px;
+  font: inherit; font-size: 12.5px; color: var(--text-tertiary); text-decoration: none; display: inline-flex; align-items: center;
 }
+.ds-banner-main .ds-banner-link { margin-left: -8px; }
 .ds-banner-link:hover { color: var(--text-primary); }
 .ds-banner-actions { grid-area: actions; display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; min-width: 0; }
 .ds-banner-close { grid-area: close; }
@@ -1136,7 +1142,10 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   border-radius: 8px; cursor: pointer; color: var(--text-tertiary); display: flex; align-items: center; justify-content: center;
 }
 .ds-banner-x:hover { color: var(--text-primary); }
+@media (pointer: coarse) {
+  .ds-banner-x { min-width: 44px; min-height: 44px; }
+  .ds-banner-link, .ds-banner-head { min-height: 44px; }
+}
 @media (max-width: 640px) {
-  .ds-banner[data-variant="inline"] { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "icon main close" ". actions actions"; }
-  .ds-banner-noicon[data-variant="inline"] { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main close" "actions actions"; }
+  .ds-banner[data-variant="inline"] { grid-template-columns: var(--bn-cols-s); grid-template-areas: var(--bn-areas-s); }
 }

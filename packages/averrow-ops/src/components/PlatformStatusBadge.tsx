@@ -104,7 +104,6 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
           width: 8, height: 8, borderRadius: '50%',
           background: palette.dot,
           boxShadow: `0 0 8px ${palette.glow}`,
-          animation: status === 'operational' ? 'live-ping 2s ease-in-out infinite' : 'live-ping 1s ease-in-out infinite',
         }}
       />
       <span

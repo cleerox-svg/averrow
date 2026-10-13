@@ -468,7 +468,7 @@ describe('Alerts SLA banner', () => {
       list: [alert('c1', { severity: 'critical', created_at: bare })],
       stats: { total: 1, new_count: 1 },
     });
-    expect(await screen.findByRole('region', { name: /1 critical alert past the response deadline/ })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Critical alerts are past their response deadline' })).toBeInTheDocument();
     expect(screen.getByText('Based on the 1 most recent alerts loaded')).toBeInTheDocument();
   });
 

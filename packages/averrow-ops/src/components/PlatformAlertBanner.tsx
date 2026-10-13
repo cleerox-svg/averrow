@@ -5,8 +5,8 @@
 // silently dropped.
 //
 // This banner is the loudest channel in the in-app stack — it sits
-// pinned above the page content until the user explicitly dismisses
-// it, marks it read, or clicks through. Dismissal is per-device,
+// at the top of the page (not sticky) until the user dismisses it or
+// clicks through (View marks it read). Dismissal is per-device,
 // per-notification-id (localStorage) so a new platform_* notification
 // always re-surfaces even if the previous one was waved away.
 
@@ -57,7 +57,6 @@ const TONE: Record<Notification['severity'], BannerTone> = {
 
 // Same destination as the notification bell's "View all".
 const INBOX_ROUTE = '/notifications';
-const LONG_MESSAGE = 90;
 
 export function PlatformAlertBanner() {
   const location = useLocation();
@@ -70,7 +69,6 @@ export function PlatformAlertBanner() {
   const { data } = useNotifications(onTargetRoute);
   const markRead = useMarkRead();
   const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissed());
-  const [expanded, setExpanded] = useState(false);
 
   // Highest-severity unread platform_* notification the user hasn't
   // dismissed on this device (newer ties beat older), plus the count of
@@ -107,10 +105,6 @@ export function PlatformAlertBanner() {
     }
   }, [data, dismissed]);
 
-  // A different alert surfaces collapsed.
-  const alertId = alert?.id;
-  useEffect(() => { setExpanded(false); }, [alertId]);
-
   if (!onTargetRoute || !alert) return null;
 
   // Defensive: severity comes from API data; an unexpected value falls back
@@ -118,7 +112,6 @@ export function PlatformAlertBanner() {
   const tone = TONE[alert.severity] ?? 'info';
   const href = resolveNotificationLink(alert.link, INBOX_ROUTE);
   const hasExtra = Boolean(alert.reason_text || alert.recommended_action);
-  const canExpand = hasExtra || alert.message.length > LONG_MESSAGE || alert.title.length > LONG_MESSAGE;
 
   const handleDismiss = () => {
     const next = new Set(dismissed);
@@ -136,15 +129,17 @@ export function PlatformAlertBanner() {
 
   return (
     <Banner
+      // key resets the expanded state when a different alert surfaces.
+      key={alert.id}
       aria-label="Platform alert"
+      // Polite one-time announcement for new critical/high alerts (never role="alert").
+      role={tone === 'critical' || tone === 'high' ? 'status' : undefined}
       variant="inline"
       tone={tone}
       pulse={tone === 'critical'}
       title={alert.title}
+      headingLevel="none"
       detailsTrigger="button"
-      expandable={canExpand}
-      open={expanded}
-      onOpenChange={setExpanded}
       details={
         hasExtra ? (
           <>
@@ -162,7 +157,6 @@ export function PlatformAlertBanner() {
           <Button asChild size="sm" variant="secondary">
             <Link to={href} onClick={handleMarkRead}>View</Link>
           </Button>
-          <Button size="sm" variant="ghost" onClick={handleMarkRead}>Mark read</Button>
           {moreCount > 0 && (
             <Link to={INBOX_ROUTE} className="ds-banner-link">+{moreCount} more</Link>
           )}
@@ -170,8 +164,6 @@ export function PlatformAlertBanner() {
       }
       onDismiss={handleDismiss}
       dismissLabel="Dismiss platform alert"
-      // Sticky chrome: keep it above scrolling content with a blurred surface.
-      style={{ position: 'sticky', top: 0, zIndex: 50, margin: '0 0 12px', backdropFilter: 'blur(12px)' }}
     >
       {alert.message}
     </Banner>

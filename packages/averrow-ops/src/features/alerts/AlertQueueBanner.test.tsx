@@ -73,9 +73,9 @@ describe('AlertQueueBanner', () => {
     const { onShowCritical, onShowBreached } = setup({
       breached: 9, breachedCritical: 1, atRisk: 4, unreviewed: 30, oldestBreachMs: (3 * 24 + 4) * 3_600_000,
     });
-    expect(screen.getByRole('region', { name: /1 critical alert past the response deadline/ })).toBeInTheDocument();
-    expect(screen.getByRole('region')).toHaveTextContent('Oldest breach is 3d 4h past its deadline.');
-    expect(screen.getAllByText('3d 4h')).toHaveLength(2); // stats row + oldest-breach line
+    expect(screen.getByRole('region', { name: 'Critical alerts are past their response deadline' })).toBeInTheDocument();
+    expect(screen.getByRole('region')).toHaveTextContent('Clear these first.');
+    expect(screen.getAllByText('3d 4h')).toHaveLength(1); // stats row only; the heading repeats no number
     await user.click(screen.getByRole('button', { name: 'Show critical breaches' }));
     await user.click(screen.getByRole('button', { name: 'Show all breached' }));
     expect(onShowCritical).toHaveBeenCalledTimes(1);

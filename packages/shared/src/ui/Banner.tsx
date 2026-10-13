@@ -8,7 +8,7 @@
 // the root is a <section> only when it has an accessible name.
 // Details can be toggled by a text button or by the whole header row.
 
-import { useId, useState, type CSSProperties, type HTMLAttributes, type ReactNode, type Ref } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type CSSProperties, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import { cn } from './cn';
 import { AlertIcon, ChevronRightIcon, InfoIcon, CheckIcon, WarnIcon, XIcon } from './settings/icons';
 
@@ -19,6 +19,25 @@ const ICONS: Record<BannerTone, typeof InfoIcon> = {
   critical: AlertIcon, high: WarnIcon, medium: WarnIcon, low: InfoIcon, info: InfoIcon, success: CheckIcon,
 };
 
+type Slot = 'icon' | 'main' | 'actions' | 'close';
+
+// Grid columns/areas built from what is actually rendered, so an absent
+// icon/actions/close never leaves an empty track. `stacked` puts actions on a
+// second row under the text column (narrow screens and the prominent variant).
+function layout(has: Record<Exclude<Slot, 'main'>, boolean>, stacked: boolean): { cols: string; areas: string } {
+  const row: Slot[] = [];
+  const cols: string[] = [];
+  if (has.icon) { row.push('icon'); cols.push('28px'); }
+  row.push('main'); cols.push('minmax(0, 1fr)');
+  if (has.actions && !stacked) { row.push('actions'); cols.push('auto'); }
+  if (has.close) { row.push('close'); cols.push('auto'); }
+  const rows = [row.join(' ')];
+  if (has.actions && stacked) {
+    rows.push(row.map((n) => (n === 'icon' ? '.' : 'actions')).join(' '));
+  }
+  return { cols: cols.join(' '), areas: rows.map((r) => `"${r}"`).join(' ') };
+}
+
 function resolveTone(tone: string | undefined): BannerTone {
   return tone && Object.prototype.hasOwnProperty.call(ICONS, tone) ? (tone as BannerTone) : 'info';
 }
@@ -27,7 +46,7 @@ export interface BannerProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> 
   tone?: BannerTone;
   variant?: BannerVariant;
   title: ReactNode;
-  /** Message; clamped to 2 lines unless expanded. */
+  /** Message. Inline banners clamp title/message to 2 lines while collapsed, and offer "Show more" only when the text actually overflows. */
   children?: ReactNode;
   eyebrow?: ReactNode;
   /** Default: per-tone icon tile. `false` hides it. */
@@ -39,14 +58,13 @@ export interface BannerProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> 
   footer?: ReactNode;
   /** Expandable region. */
   details?: ReactNode;
-  /** Show the toggle (and unclamp the message) even without `details`. */
-  expandable?: boolean;
   detailsTrigger?: 'button' | 'header';
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onDismiss?: () => void;
   dismissLabel?: string;
+  /** Title element. Default 'none' (a span): the region label carries the semantics. */
   headingLevel?: 2 | 3 | 4 | 'none';
   /** Name the region after the title (renders a <section>). */
   labelFromTitle?: boolean;
@@ -56,8 +74,8 @@ export interface BannerProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> 
 
 export function Banner({
   tone, variant = 'inline', title, children, eyebrow, icon, pulse = false, actions, footer, details,
-  expandable = false, detailsTrigger = 'button', open, defaultOpen = false, onOpenChange, onDismiss,
-  dismissLabel = 'Dismiss', headingLevel = 3, labelFromTitle = false, headerRef, className, style, ...rest
+  detailsTrigger = 'button', open, defaultOpen = false, onOpenChange, onDismiss,
+  dismissLabel = 'Dismiss', headingLevel = 'none', labelFromTitle = false, headerRef, className, style, ...rest
 }: BannerProps) {
   const t = resolveTone(tone);
   const uid = useId();
@@ -71,15 +89,46 @@ export function Banner({
     onOpenChange?.(next);
   };
 
-  const hasToggle = details != null || expandable;
+  const headerToggle = details != null && detailsTrigger === 'header';
+  // Inline banners clamp while collapsed (and the clamp is measured); the
+  // header-toggle title lives in a button and is never clamped. Prominent
+  // banners never clamp.
+  const clampable = variant === 'inline';
+  const titleRef = useRef<HTMLElement | null>(null);
+  const msgRef = useRef<HTMLDivElement | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useLayoutEffect(() => {
+    if (!clampable || isOpen) return undefined; // keep the last measurement while open
+    const measure = () => {
+      const over = (el: HTMLElement | null) => !!el && el.scrollHeight > el.clientHeight + 1;
+      setOverflowing(over(headerToggle ? null : titleRef.current) || over(msgRef.current));
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    if (titleRef.current) ro.observe(titleRef.current);
+    if (msgRef.current) ro.observe(msgRef.current);
+    return () => ro.disconnect();
+  }, [clampable, isOpen, headerToggle, title, children]);
+
+  const hasDetails = details != null;
+  const hasToggle = hasDetails || (clampable && overflowing);
+  // Clamp whenever collapsed: it is a no-op for text that fits, and it is what
+  // makes overflow measurable. The toggle only appears on real overflow (or details).
+  const clamp = clampable && !isOpen;
   const named = Boolean(rest['aria-label'] || rest['aria-labelledby'] || labelFromTitle);
   const Root = named ? 'section' : 'div';
   const Heading = headingLevel === 'none' ? 'span' : (`h${headingLevel}` as 'h2' | 'h3' | 'h4');
   const showIcon = icon !== false;
   const Glyph = ICONS[t];
 
-  const toggleControls = { 'aria-expanded': isOpen, 'aria-controls': details != null ? detailsId : undefined };
-  const headerToggle = hasToggle && detailsTrigger === 'header';
+  const toggleControls = { 'aria-expanded': isOpen, 'aria-controls': hasDetails ? detailsId : undefined };
+  const stacked = variant === 'prominent';
+  const wide = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, stacked);
+  const narrow = layout({ icon: showIcon, actions: Boolean(actions), close: Boolean(onDismiss) }, true);
+  const gridVars = {
+    '--bn-cols': wide.cols, '--bn-areas': wide.areas, '--bn-cols-s': narrow.cols, '--bn-areas-s': narrow.areas,
+  } as CSSProperties;
   const titleNode = headerToggle ? (
     <button
       type="button" ref={headerRef as Ref<HTMLButtonElement>} className="ds-banner-head" onClick={toggle} {...toggleControls}
@@ -92,11 +141,11 @@ export function Banner({
   return (
     <Root
       {...rest}
-      aria-labelledby={labelFromTitle ? titleId : rest['aria-labelledby']}
+      aria-labelledby={rest['aria-labelledby'] ?? (labelFromTitle ? titleId : undefined)}
       data-tone={t}
       data-variant={variant}
-      className={cn('ds-banner', !showIcon && 'ds-banner-noicon', className)}
-      style={style as CSSProperties | undefined}
+      className={cn('ds-banner', className)}
+      style={{ ...gridVars, ...style }}
     >
       {showIcon && (
         <span className="ds-banner-icon" aria-hidden="true">
@@ -117,19 +166,25 @@ export function Banner({
 
       <div className="ds-banner-main">
         {eyebrow && <span className="ds-banner-eyebrow">{eyebrow}</span>}
-        <Heading id={titleId} className={cn('ds-banner-title', !isOpen && !headerToggle && 'ds-banner-clamp')}>
-          {titleNode}
-        </Heading>
-        {children != null && (
-          <div className={cn('ds-banner-msg', !isOpen && 'ds-banner-clamp')}>{children}</div>
-        )}
+        <div className="ds-banner-top">
+          <Heading
+            id={titleId}
+            ref={titleRef as Ref<HTMLHeadingElement>}
+            className={cn('ds-banner-title', clamp && !headerToggle && 'ds-banner-clamp')}
+          >
+            {titleNode}
+          </Heading>
+          {children != null && (
+            <div ref={msgRef} className={cn('ds-banner-msg', clamp && 'ds-banner-clamp')}>{children}</div>
+          )}
+        </div>
         {footer}
         {details != null && (
           <div id={detailsId} className="ds-banner-details" hidden={!isOpen}>{details}</div>
         )}
-        {hasToggle && detailsTrigger === 'button' && (
+        {hasToggle && !headerToggle && (
           <button type="button" className="ds-banner-link" onClick={toggle} {...toggleControls}>
-            {isOpen ? 'Hide details' : 'Details'}
+            {hasDetails ? 'Details' : isOpen ? 'Show less' : 'Show more'}
           </button>
         )}
       </div>

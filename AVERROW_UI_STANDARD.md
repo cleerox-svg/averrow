@@ -738,18 +738,30 @@ and pass `onRetry={refetch}`; if a refetch fails while data is on screen, keep t
 data and render `<PageState kind="error" layout="inline" />`. Stat tiles take
 `value={null}` while loading (never `'—'`, `'...'` or `0`) and `error` on failure.
 
-**Banner:** `Banner` (`@averrow/shared/ui`, re-exported from the ops barrel) is the
-one page-level notice primitive; `PlatformAlertBanner` and `AlertQueueBanner` are
-built on it. `tone` = `critical | high | medium | low | info | success` (unknown
-falls back to `info`); default icon tile per tone, `pulse` adds a `live-ping` ring.
-Use `variant="inline"` (flat card, 3px tone edge) by default. Use
-`variant="prominent"` (tinted surface + hairline) only for act-now states, with an
-`eyebrow`. One page-level banner per page. A banner must not repeat the number on
-a stat tile beside it: say what to do, not the count again. Details expand with
-`detailsTrigger="button"` ("Details") or `"header"` (the title row is the toggle,
-chevron). There is no static `role="alert"`: pass `aria-label` (or `labelFromTitle`)
-to make it a named region. Put sticky/blur positioning at the call site via
-`style`/`className`.
+**Banner** (`@averrow/shared/ui`, re-exported from the ops barrel; `PlatformAlertBanner` and `AlertQueueBanner` are built on it):
+
+| Variant | Use |
+|---|---|
+| `inline` (default) | Flat card with a 3px tone edge. Everyday notices. Title/message clamp to 2 lines and a "Show more" toggle appears only when the text really overflows. |
+| `prominent` | Tinted surface + hairline, with an `eyebrow`. Act-now states only. Never clamped; actions sit on their own row. |
+
+| Tone | Use |
+|---|---|
+| `critical` | Customer or platform impact now; needs action. `pulse` is for this tone only. |
+| `high` | Degraded or at risk; act soon. |
+| `medium` | Needs attention, not urgent. |
+| `low` | FYI with a possible follow-up. |
+| `info` | Neutral notice (unknown tones fall back to this). |
+| `success` | Confirmation that something resolved. |
+
+- One page-level banner per page, at the top of the page content. Not sticky.
+- Never repeat a stat tile's number; say what is wrong and what to do.
+- At most one primary action (shared-kit `Button`); secondary actions are `secondary`/`ghost` or text links.
+- `headingLevel` defaults to `'none'` (a span) and the region label carries the semantics; pass `2` only when the banner is the page's first heading level.
+- Name the region with `aria-label` (or `labelFromTitle`); a caller `aria-labelledby` wins.
+- No `role="alert"`. Use `role="status"` (polite) for a new critical/high platform alert.
+- Details: `detailsTrigger="button"` ("Details", static label, `aria-expanded`) or `"header"` (title and message are the toggle, with a chevron).
+- Dismissal persistence is the caller's job (`onDismiss`; the primitive keeps no storage).
 
 ---
 

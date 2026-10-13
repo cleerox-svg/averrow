@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Banner, type BannerTone } from '@averrow/shared/ui';
 
@@ -37,9 +37,9 @@ describe('shared Banner', () => {
   it('headingLevel picks the title element', () => {
     const { rerender } = render(<Banner title="T" headingLevel={2} />);
     expect(screen.getByRole('heading', { level: 2, name: 'T' })).toBeInTheDocument();
-    rerender(<Banner title="T" />);
+    rerender(<Banner title="T" headingLevel={3} />);
     expect(screen.getByRole('heading', { level: 3 })).toBeInTheDocument();
-    rerender(<Banner title="T" headingLevel="none" />);
+    rerender(<Banner title="T" />); // default: no heading, the region label carries semantics
     expect(screen.queryByRole('heading')).toBeNull();
   });
 
@@ -50,18 +50,51 @@ describe('shared Banner', () => {
     expect(screen.getByText('more')).not.toBeVisible();
     expect(container.querySelector('.ds-banner-msg')).toHaveClass('ds-banner-clamp');
     fireEvent.click(btn);
-    const hide = screen.getByRole('button', { name: 'Hide details' });
+    const hide = screen.getByRole('button', { name: 'Details' }); // label is static
     expect(hide).toHaveAttribute('aria-expanded', 'true');
     expect(hide.getAttribute('aria-controls')).toBe(screen.getByText('more').parentElement?.id);
     expect(screen.getByText('more')).toBeVisible();
     expect(container.querySelector('.ds-banner-msg')).not.toHaveClass('ds-banner-clamp');
   });
 
-  it('expandable shows the toggle without details; no toggle otherwise', () => {
-    const { rerender } = render(<Banner title="T" expandable>msg</Banner>);
-    expect(screen.getByRole('button', { name: 'Details' })).not.toHaveAttribute('aria-controls');
-    rerender(<Banner title="T">msg</Banner>);
-    expect(screen.queryByRole('button', { name: /details/i })).toBeNull();
+  it('shows Show more / Show less only when the text actually overflows', () => {
+    const { rerender } = render(<Banner title="T">msg</Banner>);
+    expect(screen.queryByRole('button')).toBeNull(); // jsdom: no layout, no overflow
+    rerender(<Banner title="T" variant="prominent" details={undefined}>msg</Banner>);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+
+  describe('overflow detection', () => {
+    const proto = HTMLElement.prototype;
+    const sh = Object.getOwnPropertyDescriptor(proto, 'scrollHeight');
+    const ch = Object.getOwnPropertyDescriptor(proto, 'clientHeight');
+    afterEach(() => {
+      if (sh) Object.defineProperty(proto, 'scrollHeight', sh); else delete (proto as unknown as Record<string, unknown>).scrollHeight;
+      if (ch) Object.defineProperty(proto, 'clientHeight', ch); else delete (proto as unknown as Record<string, unknown>).clientHeight;
+    });
+    function mockLayout(scroll: number, client: number) {
+      Object.defineProperty(proto, 'scrollHeight', { configurable: true, get: () => scroll });
+      Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => client });
+    }
+
+    it('adds a Show more toggle that unclamps the message when clamped text overflows', () => {
+      mockLayout(80, 40);
+      const { container } = render(<Banner title="T">a long message</Banner>);
+      const btn = screen.getByRole('button', { name: 'Show more' });
+      expect(btn).toHaveAttribute('aria-expanded', 'false');
+      expect(btn).not.toHaveAttribute('aria-controls');
+      expect(container.querySelector('.ds-banner-msg')).toHaveClass('ds-banner-clamp');
+      fireEvent.click(btn);
+      expect(screen.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+      expect(container.querySelector('.ds-banner-msg')).not.toHaveClass('ds-banner-clamp');
+    });
+
+    it('never clamps or offers Show more on prominent banners', () => {
+      mockLayout(80, 40);
+      const { container } = render(<Banner variant="prominent" title="T">msg</Banner>);
+      expect(screen.queryByRole('button')).toBeNull();
+      expect(container.querySelector('.ds-banner-clamp')).toBeNull();
+    });
   });
 
   it('header trigger makes the title a toggle button', () => {
@@ -79,17 +112,24 @@ describe('shared Banner', () => {
   it('uncontrolled calls onOpenChange; controlled follows the prop', () => {
     const onOpenChange = vi.fn();
     const { rerender } = render(<Banner title="T" defaultOpen details="d" onOpenChange={onOpenChange} />);
-    expect(screen.getByRole('button', { name: 'Hide details' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false');
 
     rerender(<Banner title="T" open={false} details="d" onOpenChange={onOpenChange} />);
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
-    expect(screen.getByRole('button', { name: 'Details' })).toBeInTheDocument(); // parent did not update
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false'); // parent did not update
     rerender(<Banner title="T" open details="d" onOpenChange={onOpenChange} />);
-    expect(screen.getByRole('button', { name: 'Hide details' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('caller aria-labelledby beats labelFromTitle; empty slots leave no grid track', () => {
+    const { container } = render(<><span id="x">Ext</span><Banner title="T" labelFromTitle aria-labelledby="x" icon={false} /></>);
+    expect(screen.getByRole('region', { name: 'Ext' })).toBeInTheDocument();
+    const root = container.querySelector('.ds-banner') as HTMLElement;
+    expect(root.style.getPropertyValue('--bn-cols')).toBe('minmax(0, 1fr)');
   });
 
   it('dismiss button calls onDismiss with the given label', () => {

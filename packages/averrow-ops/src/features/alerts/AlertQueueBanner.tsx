@@ -115,7 +115,7 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
         pulse
         labelFromTitle
         headingLevel={2}
-        title={<><span style={NUM}>{n(breachedCritical)}</span> critical {plural(breachedCritical, 'alert', 'alerts')} past the response deadline</>}
+        title="Critical alerts are past their response deadline"
         footer={
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: '12px 20px', marginTop: 12 }}>
@@ -148,7 +148,7 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
           </>
         }
       >
-        Oldest breach is <span style={MONO}>{formatSpan(oldestBreachMs)}</span> past its deadline.
+        Clear these first.
       </Banner>
     );
   }

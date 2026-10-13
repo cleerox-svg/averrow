@@ -152,14 +152,31 @@ describe('PlatformAlertBanner', () => {
     expect(localStorage.getItem('averrow:platform-alerts:dismissed-v1')).toContain('dismiss-me');
   });
 
-  it('mark read calls mutate with the id and dismisses', () => {
+  it('View marks the alert read (mutate) and dismisses; there is no separate Mark read button', () => {
     const mutate = vi.fn();
     (useMarkRead as ReturnType<typeof vi.fn>).mockReturnValue({ mutate });
     mockList([makeNotification({ id: 'read-me' })]);
-    const { container } = renderOnHome(<PlatformAlertBanner />);
-    fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+    renderOnHome(<PlatformAlertBanner />);
+    expect(screen.queryByRole('button', { name: 'Mark read' })).toBeNull();
+    fireEvent.click(screen.getByRole('link', { name: 'View' }));
     expect(mutate).toHaveBeenCalledWith('read-me');
-    expect(container.firstChild).toBeNull();
+    expect(localStorage.getItem('averrow:platform-alerts:dismissed-v1')).toContain('read-me');
+  });
+
+  it('announces critical/high politely with role=status, not lower severities', () => {
+    mockList([makeNotification({ severity: 'critical' })]);
+    const a = renderOnHome(<PlatformAlertBanner />);
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    a.unmount();
+    mockList([makeNotification({ severity: 'low' })]);
+    renderOnHome(<PlatformAlertBanner />);
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('is not sticky', () => {
+    mockList([makeNotification({ severity: 'low' })]);
+    renderOnHome(<PlatformAlertBanner />);
+    expect(screen.getByRole('region', { name: 'Platform alert' }).style.position).not.toBe('sticky');
   });
 
   it('details toggle reveals reason and recommended action', () => {
@@ -169,19 +186,19 @@ describe('PlatformAlertBanner', () => {
     const toggle = screen.getByRole('button', { name: 'Details' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(toggle);
-    expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(/Re-run the feed/)).toBeVisible();
     expect(screen.getByText(/No rows for 3h/)).toBeInTheDocument();
   });
 
   it('has no details toggle for a short alert without extras', () => {
-    mockList([makeNotification()]);
+    mockList([makeNotification({ severity: 'low' })]);
     renderOnHome(<PlatformAlertBanner />);
     expect(screen.queryByRole('button', { name: /details/i })).toBeNull();
   });
 
   it('is a labelled region, not role="alert"', () => {
-    mockList([makeNotification()]);
+    mockList([makeNotification({ severity: 'low' })]);
     renderOnHome(<PlatformAlertBanner />);
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByRole('region', { name: 'Platform alert' })).toBeInTheDocument();
