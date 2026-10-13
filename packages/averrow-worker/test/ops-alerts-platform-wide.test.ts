@@ -620,6 +620,57 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
     expect(data.dismissed).toBe(2);
     expect(data.auto_dismissed).toBe(1);
   });
+
+  describe("stats SLA fields (platform-wide, mirror ops slaFor)", () => {
+    async function stats(): Promise<Record<string, unknown>> {
+      const res = await call("admin", "/api/alerts/stats");
+      expect(res.status).toBe(200);
+      return (await res.json<{ data: Record<string, unknown> }>()).data;
+    }
+
+    it("fixture: only the 60-min-old open critical (15m window) is breached, 45 min over", async () => {
+      // a_crit_new_newest is 10/15 = 0.67 of window → ok, not at-risk.
+      expect(await stats()).toMatchObject({
+        sla_breached: 1,
+        sla_breached_critical: 1,
+        sla_at_risk: 0,
+        sla_oldest_breach_minutes: 45,
+      });
+    });
+
+    it("counts at-risk, ignores closed/investigating alerts, low gets 24h, accepts ISO created_at", async () => {
+      const iso = (minsAgo: number) => new Date(NOW_MS - minsAgo * 60_000).toISOString();
+      const ins = raw.prepare(
+        `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, created_at, updated_at)
+         VALUES (?, 'b1', 't_alice', 'phishing_detected', ?, 'x', 'summary', ?, ?, ?)`,
+      );
+      ins.run("s_high_warn_iso", "high", "acknowledged", iso(50), iso(50));       // 50/60 → at-risk
+      ins.run("s_med_breach_iso", "medium", "new", iso(300), iso(300));           // 300-240 = 60 over
+      ins.run("s_crit_resolved", "critical", "resolved", ts(1000), ts(1000));     // closed → no SLA
+      ins.run("s_crit_fp", "critical", "false_positive", ts(1000), ts(1000));     // closed → no SLA
+      ins.run("s_low_ok", "low", "new", ts(30), ts(30));                          // 24h window → ok
+      ins.run("s_crit_investigating", "critical", "investigating", ts(500), ts(500)); // not open per slaFor
+      expect(await stats()).toMatchObject({
+        sla_breached: 2,          // a_crit_new_old + s_med_breach_iso
+        sla_breached_critical: 1, // a_crit_new_old
+        sla_at_risk: 1,           // s_high_warn_iso
+        sla_oldest_breach_minutes: 60,
+      });
+    });
+
+    it("SUM/MAX over zero rows normalise to 0, never null", async () => {
+      raw.exec("DELETE FROM alerts");
+      const data = await stats();
+      for (const k of ["total", "sla_breached", "sla_breached_critical", "sla_at_risk", "sla_oldest_breach_minutes"]) {
+        expect(data[k], k).toBe(0);
+      }
+    });
+
+    it("no breach → oldest_breach_minutes is 0", async () => {
+      raw.exec("UPDATE alerts SET status = 'resolved' WHERE id = 'a_crit_new_old'");
+      expect(await stats()).toMatchObject({ sla_breached: 0, sla_breached_critical: 0, sla_oldest_breach_minutes: 0 });
+    });
+  });
 });
 
 // ─── Migration 0275: additive only, applies to the pre-0275 shape ─────

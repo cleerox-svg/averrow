@@ -50,6 +50,11 @@ export interface AlertStats {
   resolved: number;
   dismissed: number;
   auto_dismissed: number;
+  /** Platform-wide SLA counts (absent on older cached responses / pre-deploy workers). */
+  sla_breached?: number;
+  sla_breached_critical?: number;
+  sla_at_risk?: number;
+  sla_oldest_breach_minutes?: number;
   critical: number;
   high: number;
   medium: number;
@@ -119,7 +124,7 @@ export function useAlertStats() {
       return (res.data ?? {}) as AlertStats;
     },
     placeholderData: keepPreviousData,
-    refetchInterval: 300_000,
+    refetchInterval: 60_000, // worker caches the stats 60s; SLA counts are time-based
   });
 }
 

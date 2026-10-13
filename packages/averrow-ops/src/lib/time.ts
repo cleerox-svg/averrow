@@ -15,6 +15,15 @@ export function parseUtc(date: string | Date | number): Date {
   return new Date(trimmed);
 }
 
+/** Compact span: "3d 4h" / "5h 12m" / "38m". */
+export function formatSpan(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
 export function relativeTime(date: string | null): string {
   if (!date) return 'Never';
   const ms = Date.now() - parseUtc(date).getTime();
