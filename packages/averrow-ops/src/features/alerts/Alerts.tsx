@@ -130,13 +130,18 @@ function platformBadgeStyle(platform: string): React.CSSProperties {
     platform === 'LinkedIn'  ? '#0a8ab5' :
     platform === 'Instagram' ? '#ec4899' :
     platform === 'Facebook'  ? '#3b82f6' :
-    platform === 'X'         ? 'rgba(255,255,255,0.80)' :
+    platform === 'X'         ? 'var(--text-primary)' :
                                'var(--blue)'  // Social fallback
   );
+  // Raw brand hues fail AA as 11px text (badly so in light theme), so the
+  // text is pulled toward --text-primary — lighter on dark, darker on light —
+  // while the fill/border keep the brand hue. color-mix (not hex-alpha
+  // suffixes) so var() accents get their tint too.
+  const isBlue = accent === '#0a8ab5' || accent === 'var(--blue)';
   return {
-    background: `${accent}26`, // ~15% opacity
-    color: accent,
-    border: `1px solid ${accent}4d`, // ~30% opacity
+    background: `color-mix(in srgb, ${accent} 15%, transparent)`,
+    color: isBlue ? 'var(--blue-text)' : `color-mix(in srgb, ${accent} 55%, var(--text-primary))`,
+    border: `1px solid color-mix(in srgb, ${accent} 30%, transparent)`,
   };
 }
 
@@ -243,7 +248,7 @@ interface PillGroupProps {
 
 function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
       <span className="font-mono text-[11px] uppercase tracking-widest text-white/55 mr-1">{label}</span>
       {options.map(o => (
         <button
@@ -356,7 +361,7 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--amber-glow)]')}
+                  className={cn('flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5', isSelected && 'bg-[var(--amber-glow)]')}
                 >
                   {/* Severity dot — uses the shared design-system
                       primitive so the dot color + pulse semantics
@@ -375,7 +380,7 @@ function BrandGroupCard({
                     aria-expanded={isSelected}
                     aria-controls={`alert-detail-${alert.id}`}
                     onClick={e => { e.stopPropagation(); onSelectAlert(alert); }}
-                    className="ds-focusable flex-1 min-w-0 text-left rounded-sm"
+                    className="ds-focusable flex-1 min-w-0 basis-[calc(100%-1.25rem)] sm:basis-0 text-left rounded-sm"
                   >
                     <span className="block">
                       <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{handle}</span>

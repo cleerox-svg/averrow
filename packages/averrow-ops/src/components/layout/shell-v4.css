@@ -41,8 +41,9 @@
   min-height: 0;
 }
 .v4-brand { display: flex; align-items: center; gap: 11px; padding: 18px 18px 16px; border-bottom: 1px solid var(--border-base); }
+.v4-brand > div:not(.v4-drawer-close) { min-width: 0; }
 .v4-brand .name { font-weight: 800; letter-spacing: .14em; font-size: 13px; }
-.v4-brand .sub { font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .12em; color: var(--amber-text); margin-top: 2px; }
+.v4-brand .sub { font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .1em; color: var(--amber-text); margin-top: 2px; white-space: nowrap; }
 .v4-nav { padding: 12px 12px; overflow: auto; flex: 1; min-height: 0; }
 .v4-grp { font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: .12em; color: var(--text-muted); padding: 14px 10px 7px; }
 .v4-item {

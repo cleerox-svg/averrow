@@ -312,7 +312,7 @@ export function AdminAudit() {
           </div>
 
           {/* Outcome pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             {OUTCOME_PILLS.map((pill) => (
               <button
                 key={pill.key}

@@ -501,7 +501,7 @@ export function ObservatoryV3() {
       >
         <div className="flex items-center gap-4">
           {isBotMode ? (
-            <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
               <span style={{ color: 'var(--amber-text)' }}>24H</span>
               {' \u00b7 '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
@@ -510,7 +510,7 @@ export function ObservatoryV3() {
               )}
             </div>
           ) : (
-          <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="font-mono text-[11px] whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
             <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
             {' \u00b7 '}
             <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
@@ -521,7 +521,7 @@ export function ObservatoryV3() {
           </div>
           )}
         </div>
-        <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[11px] hidden sm:block whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
             <span style={{ color: 'var(--sev-info-text)' }}>GPU particles active</span>
           )}
