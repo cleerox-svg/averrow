@@ -186,8 +186,8 @@ function Stat({
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">{label}</span>
-        <Icon size={14} className={toneCls} />
+        <span className="min-w-0 truncate text-[11px] uppercase tracking-widest font-mono text-white/55">{label}</span>
+        <Icon size={14} className={`shrink-0 ${toneCls}`} />
       </div>
       <div className="flex items-baseline gap-1">
         <span className={`text-2xl font-bold tabular-nums ${toneCls}`}>

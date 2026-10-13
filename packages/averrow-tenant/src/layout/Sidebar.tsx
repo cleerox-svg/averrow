@@ -101,7 +101,12 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto overscroll-contain py-3 px-2 space-y-4">
+      {/* Route changes close the drawer (Shell); this also closes it when the
+          tapped link is the page you're already on. */}
+      <nav
+        className="flex-1 overflow-y-auto overscroll-contain py-3 px-2 space-y-4"
+        onClick={(e) => { if ((e.target as Element).closest('a')) onClose?.(); }}
+      >
         <Section label="Workspace">
           <NavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <LayoutDashboard size={16} />
