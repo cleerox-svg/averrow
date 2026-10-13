@@ -364,25 +364,25 @@ describe('Alerts staff ownership, notes and bulk batching', () => {
     await waitFor(() => expect(crit).toHaveClass('ds-stat--live'));
     expect(within(crit).getByText('2')).toBeInTheDocument();
     const queue = screen.getByText('Open queue').closest('.ds-stat') as HTMLElement;
-    await within(queue).findByLabelText('3 more new alerts than yesterday');
+    expect(await within(queue).findByText('7 new today · 7-day intake')).toBeInTheDocument();
     expect(within(queue).getByText('5')).toBeInTheDocument();
-    expect(within(queue).getByLabelText('3 more new alerts than yesterday')).toHaveTextContent('+3');
+    expect(within(queue).queryByRole('img')).not.toBeInTheDocument(); // no delta chip
     expect(within(queue).getByTestId('stat-trend')).toHaveAttribute('data-points', '7');
     const auto = screen.getByText('Auto-triaged').closest('.ds-stat') as HTMLElement;
     await within(auto).findByText('75%');
     expect(within(auto).getByText('75%')).toBeInTheDocument();
-    expect(within(auto).getByText('6 of 8 handled by rules and AI')).toBeInTheDocument();
+    expect(within(auto).getByText('6 of 8 closed automatically')).toBeInTheDocument();
     expect(screen.queryByText(/Auto-triage cleared/)).not.toBeInTheDocument();
     expect(screen.queryByText('Total alerts')).not.toBeInTheDocument();
   });
 
-  it('is not live when there are no open critical alerts, and uses a "fewer" delta when the queue shrank', async () => {
+  it('is not live when there are no open critical alerts', async () => {
     setup('analyst', '/console?tab=alerts', {
       list: [alert('a1')],
       stats: { ...BASE, open_critical: 0, open_total: 5, daily_new_7d: [1, 2, 1, 3, 2, 4, 1] },
     });
     const crit = (await screen.findByText('Critical open')).closest('.ds-stat') as HTMLElement;
-    expect(await screen.findByLabelText('3 fewer new alerts than yesterday')).toHaveTextContent('\u22123');
+    expect(await screen.findByText('1 new today · 7-day intake')).toBeInTheDocument();
     expect(crit).not.toHaveClass('ds-stat--live');
   });
 

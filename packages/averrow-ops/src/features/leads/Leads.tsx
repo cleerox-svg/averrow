@@ -30,6 +30,11 @@ import { ScoreBreakdownCard } from './components/ScoreBreakdownCard';
 
 const PIPELINE_STATUSES = ['new', 'researched', 'drafted', 'approved', 'sent', 'responded', 'meeting', 'converted'] as const;
 
+/** Sentence-case display label for StatTile (the tile no longer uppercases). */
+function statusLabel(s: string) {
+  return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
+}
+
 function columnLabel(s: string) {
   return s.replace(/_/g, ' ').toUpperCase();
 }
@@ -226,7 +231,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
         {PIPELINE_STATUSES.map(s => (
           <StatTile
             key={s}
-            label={s}
+            label={statusLabel(s)}
             value={stats ? getPipelineCount(stats.pipeline, s) : null}
             error={statsFailed}
           />

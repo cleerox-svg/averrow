@@ -1114,20 +1114,7 @@ export function Alerts() {
   const autoDismissed = stats?.auto_dismissed ?? 0;
   const autoTriagePct = stats?.total ? Math.round((autoDismissed / stats.total) * 100) : 0;
 
-  // Today vs yesterday from the 7-day created-per-day series (UTC days).
-  const newAlertsDelta = (() => {
-    const d = stats?.daily_new_7d;
-    if (!d || d.length < 2) return undefined;
-    const diff = d[d.length - 1]! - d[d.length - 2]!;
-    return {
-      value: diff > 0 ? `+${diff}` : diff < 0 ? `\u2212${Math.abs(diff)}` : '0',
-      tone: diff > 0 ? ('bad' as const) : diff < 0 ? ('good' as const) : ('neutral' as const),
-      label:
-        diff === 0
-          ? 'Same number of new alerts as yesterday'
-          : `${Math.abs(diff)} ${diff > 0 ? 'more' : 'fewer'} new alerts than yesterday`,
-    };
-  })();
+  const newToday = stats?.daily_new_7d?.length ? stats.daily_new_7d[stats.daily_new_7d.length - 1] : undefined;
 
   const listFailed = alertsError && (!alertsData || alertsPlaceholder);
   // Banner counts are platform-wide but the list only holds the loaded page:
@@ -1259,14 +1246,14 @@ export function Alerts() {
           error={statsError && !stats}
           accent="var(--sev-high)"
           trend={stats?.daily_new_7d}
-          delta={newAlertsDelta}
+          sub={newToday !== undefined ? `${newToday.toLocaleString()} new today · 7-day intake` : undefined}
         />
         <StatTile
           label="Auto-triaged"
           value={stats ? `${autoTriagePct}%` : statValue(undefined)}
           error={statsError && !stats}
           accent="var(--green)"
-          sub={stats ? `${autoDismissed.toLocaleString()} of ${(stats.total ?? 0).toLocaleString()} handled by rules and AI` : undefined}
+          sub={stats ? `${autoDismissed.toLocaleString()} of ${(stats.total ?? 0).toLocaleString()} closed automatically` : undefined}
         />
         <StatTile
           label="Resolved"

@@ -10,14 +10,16 @@
  */
 export const STAT_NEUTRAL = '#5a6a85';
 
+/** Numeric reading of a stat value ("1,234", "12%" -> number); NaN when not numeric or missing. */
+export function statNumeric(value: number | string | null | undefined): number {
+  if (value === null || value === undefined) return NaN;
+  return typeof value === 'number' ? value : Number(String(value).replace(/[\s,%]/g, ''));
+}
+
 export function resolveStatAccent(
   value: number | string | null | undefined,
   accent: string,
 ): string {
   if (value === null || value === undefined) return accent;
-  const numeric =
-    typeof value === 'number'
-      ? value
-      : Number(String(value).replace(/[\s,%]/g, ''));
-  return Number.isFinite(numeric) && numeric === 0 ? STAT_NEUTRAL : accent;
+  return statNumeric(value) === 0 ? STAT_NEUTRAL : accent;
 }

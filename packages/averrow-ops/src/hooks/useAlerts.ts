@@ -55,7 +55,7 @@ export interface AlertStats {
   sla_breached_critical?: number;
   sla_at_risk?: number;
   sla_oldest_breach_minutes?: number;
-  /** Open (new + acknowledged + investigating) alerts; absent on pre-deploy workers. */
+  /** Open alerts (status new + acknowledged, matching the SLA counts); absent on pre-deploy workers. */
   open_critical?: number;
   open_total?: number;
   /** 7 ints, oldest to newest: alerts created per UTC day. */

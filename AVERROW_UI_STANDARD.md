@@ -728,6 +728,16 @@ orb, no number text-shadow. Label is app sans 12px / 500 / `--text-secondary`,
 - `live?: boolean` animated conic hairline (`@property --ds-stat-angle`, static accent
   hairline under reduced motion); only applies when the value is > 0 and settled.
   **At most one `live` tile per page** — it marks the single thing that needs action.
+- Tone/accent is visible as the 6px label dot (hidden while loading/error, grey for a
+  zero value), the trend stroke and the `live` ring. There is no glow any more.
+- **Dynamic/enum labels must be formatted by the caller** (`label="Meeting"`, never a raw
+  `'meeting'`): the tile does no case transform.
+- **A delta must compare like-for-like periods** (full day vs full day, same window vs
+  previous window); never partial-today vs full-yesterday. If the number and the
+  delta/trend measure different things (backlog vs intake), say so in `sub` and drop
+  the delta.
+- Use `live` sparingly: at most one per page, and avoid it when a prominent banner
+  already flags the same thing. It runs 3 revolutions then rests as a static hairline.
 
 **Ops import path (PR6a):** `@/design-system/components` is the single ops barrel
 (`components/ui/index.ts` is gone). It re-exports Badge, Tabs, FilterBar, Sparkline

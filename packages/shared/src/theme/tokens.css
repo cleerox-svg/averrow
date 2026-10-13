@@ -122,6 +122,7 @@
   --card-rim:    inset 0 1px 0 var(--border-strong), inset 0 -1px 0 rgba(0, 0, 0, 0.40);
   --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.60);
   --card-radius: var(--radius-lg);
+  --card-highlight: rgba(255, 255, 255, 0.06);   /* StatTile inset top line */
 
   /* ── Card active-variant accent mix (S2.3 follow-up, MED) ──
      Card.tsx mixes the caller's `accent` into these three surfaces via
@@ -295,6 +296,7 @@
 
   --card-bg:     linear-gradient(160deg, var(--bg-card) 0%, var(--bg-card-deep) 100%);
   --card-rim:    inset 0 1px 0 rgba(255, 255, 255, 0.90), inset 0 -1px 0 rgba(15, 20, 35, 0.08);
+  --card-highlight: rgba(255, 255, 255, 0.90);
   --card-shadow: 0 6px 24px rgba(15, 20, 35, 0.10);
 
   /* ~1.56x boost, matching --border-base/--border-strong's light-mode
@@ -1098,7 +1100,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-banner[data-variant="prominent"][data-tone="critical"] { background: var(--card-critical-bg); }
 .ds-banner[data-variant="prominent"]::before {
   content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
-  background: linear-gradient(160deg, var(--bn-line), transparent 45%, var(--border-base));
+  background: linear-gradient(160deg, var(--bn-line), color-mix(in srgb, var(--border-base) 40%, transparent) 45%, var(--border-base));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
@@ -1162,13 +1164,13 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   position: relative; display: block; width: 100%; box-sizing: border-box; overflow: hidden;
   text-align: left; font-family: var(--font-sans); font-variant-numeric: tabular-nums;
   color: var(--text-primary); text-decoration: none;
-  padding: 18px 20px 16px; border: 0; border-radius: 18px;
+  padding: 18px 20px 16px; border: 0; border-radius: var(--card-radius);
   background: linear-gradient(160deg, var(--bg-card), var(--bg-card-deep));
-  box-shadow: var(--card-shadow), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent);
+  box-shadow: var(--card-shadow), inset 0 1px 0 var(--card-highlight);
 }
 .ds-stat::before {
   content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
-  background: linear-gradient(160deg, var(--border-strong), transparent 50%, var(--border-base));
+  background: linear-gradient(160deg, var(--border-strong), color-mix(in srgb, var(--border-base) 40%, transparent) 50%, var(--border-base));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
@@ -1179,12 +1181,21 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   cursor: pointer; padding-bottom: 24px;
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
-.ds-stat--interactive:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--card-shadow), inset 0 1px 0 color-mix(in srgb, var(--text-primary) 8%, transparent), 0 0 0 1px color-mix(in srgb, var(--amber) 22%, transparent);
+@media (hover: hover) {
+  .ds-stat--interactive:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--card-shadow), inset 0 1px 0 var(--card-highlight), 0 0 0 1px color-mix(in srgb, var(--st-accent) 22%, transparent);
+  }
 }
+.ds-stat--interactive:active { transform: none; }
 .ds-stat--interactive:focus-visible { outline: 2px solid var(--focus-ring, var(--amber)); outline-offset: 2px; }
 .ds-stat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 18px; }
+.ds-stat--crit .ds-stat-head { padding-right: 32px; }
+.ds-stat-label::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%;
+  vertical-align: 1px; background: var(--st-accent);
+}
+.ds-stat--idle .ds-stat-label::before { display: none; }
 .ds-stat-label { font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--text-secondary); min-width: 0; }
 .ds-stat-value { display: block; margin-top: 8px; font-size: 42px; font-weight: 600; line-height: 1.05; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--text-primary); }
 .ds-stat-value--muted { color: var(--text-tertiary); }
@@ -1192,7 +1203,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-stat-foot { display: block; margin-top: 12px; }
 .ds-stat-crit {
   position: absolute; right: 10px; top: 10px; padding: 2px 8px; border-radius: 999px;
-  font-family: var(--font-mono); font-size: 9px; font-weight: 800; color: #fff;
+  font-family: var(--font-mono); font-size: 10px; font-weight: 800; color: var(--text-on-accent, #fff);
   background: linear-gradient(135deg, var(--red), var(--red-dim)); border: 1px solid var(--sev-critical-border);
 }
 .ds-stat-delta {
@@ -1204,9 +1215,10 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-stat-delta--inline { margin-left: 6px; }
 .ds-stat-trend { display: block; width: 100%; height: 26px; margin-top: 10px; overflow: visible; }
 .ds-stat-trend-line { fill: none; stroke: var(--st-accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.ds-stat-trend-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--st-accent); transform: translate(-50%, -50%); }
+[data-theme="light"] .ds-stat-trend-line { stroke: color-mix(in srgb, var(--st-accent) 70%, var(--text-primary)); }
 .ds-stat-trend-area { fill: color-mix(in srgb, var(--st-accent) 12%, transparent); stroke: none; }
 .ds-stat-trend-flat { fill: none; stroke: var(--border-base); stroke-width: 1.5; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
-.ds-stat-trend-dot { fill: var(--st-accent); }
 .ds-stat-hint {
   position: absolute; bottom: 13px; right: 16px; font-size: 11px; color: var(--text-tertiary);
   opacity: 0; transition: opacity 150ms ease;
@@ -1214,8 +1226,9 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-stat:hover .ds-stat-hint, .ds-stat:focus-visible .ds-stat-hint { opacity: 1; }
 .ds-stat--live::before {
   padding: 1.5px;
-  background: conic-gradient(from var(--ds-stat-angle), var(--st-accent), transparent 40%, transparent 70%, var(--st-accent));
-  animation: ds-stat-spin 5s linear infinite;
+  background: conic-gradient(from var(--ds-stat-angle), var(--st-accent), transparent 25%, transparent 75%, var(--st-accent));
+  /* Draws the eye on load, then stops (fill-mode keeps the final static arc). */
+  animation: ds-stat-spin 8s linear 3 forwards;
 }
 @keyframes ds-stat-spin { to { --ds-stat-angle: 360deg; } }
 @media (prefers-reduced-motion: reduce) {
@@ -1224,10 +1237,18 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   .ds-stat--interactive:hover { transform: none; }
 }
 @media (max-width: 639px) {
-  .ds-stat { padding: 10px 14px; border-radius: 12px; }
+  .ds-stat { padding: 10px 14px; border-radius: var(--radius-md); }
   .ds-stat--interactive { padding-bottom: 10px; }
   .ds-stat-label { font-size: 11.5px; }
   .ds-stat-value { margin-top: 2px; font-size: 26px; }
   .ds-stat-sub { margin-top: 4px; }
   .ds-stat-hint { display: none; }
+}
+
+@media (forced-colors: active) {
+  .ds-stat { border: 1px solid CanvasText; }
+  .ds-stat::before { display: none; }
+  .ds-stat--live { border: 2px solid Highlight; }
+  .ds-banner[data-variant="prominent"] { border: 1px solid CanvasText; }
+  .ds-banner[data-variant="prominent"]::before { display: none; }
 }

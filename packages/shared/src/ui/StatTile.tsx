@@ -13,14 +13,14 @@
 //   onClick                   renders a real <button>
 //   asChild                   renders the single child element (e.g. a router
 //                             <Link>) as the tile root; no router import here.
-//   live                      animated conic hairline; only when value > 0 and
-//                             settled. At most ONE live tile per page.
+//   live                      animated conic hairline; only when value > 0.
+//                             At most ONE live tile per page.
 
 import type { CSSProperties, HTMLAttributes, MouseEventHandler, ReactNode } from 'react';
 import { Slot, Slottable } from '@radix-ui/react-slot';
 import { cn } from './cn';
 import { useCountUp } from './lib/useCountUp';
-import { resolveStatAccent, STAT_NEUTRAL } from './lib/stat-accent';
+import { resolveStatAccent, statNumeric, STAT_NEUTRAL } from './lib/stat-accent';
 
 export type StatTone = 'amber' | 'red' | 'blue' | 'green' | 'neutral';
 
@@ -68,11 +68,6 @@ export interface StatDelta {
   label?: string;
 }
 
-function numericValue(value: number | string | null): number {
-  if (value == null) return NaN;
-  return typeof value === 'number' ? value : Number(String(value).replace(/[\s,%]/g, ''));
-}
-
 const TREND_W = 100;
 const TREND_H = 26;
 const TREND_PAD = 3;
@@ -101,7 +96,7 @@ function Trend({ points }: { points: number[] }) {
       </svg>
       {!flat && (
         <span
-          className="ds-stat-trend-dot absolute h-[5px] w-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+          className="ds-stat-trend-dot absolute"
           style={{ left: '100%', top: `${(ys[ys.length - 1]! / TREND_H) * 100}%` }}
         />
       )}
@@ -139,9 +134,9 @@ export function StatTile({
   const critCount = critical ?? 0;
   const clickable = !!onClick || asChild;
 
-  const isLive = live && !isNull && numericValue(value) > 0;
+  const isLive = live && !isNull && statNumeric(value) > 0;
   const showTrend = !!trend && trend.length >= 2;
-  const deltaChip = delta ? (
+  const deltaChip = delta && !isNull ? (
     <span
       role="img"
       aria-label={delta.label ?? delta.value}
@@ -182,7 +177,7 @@ export function StatTile({
     </>
   );
 
-  const cls = cn('ds-stat', clickable && 'ds-stat--interactive', isLive && 'ds-stat--live', className);
+  const cls = cn('ds-stat', clickable && 'ds-stat--interactive', isLive && 'ds-stat--live', critCount > 0 && 'ds-stat--crit', isNull && 'ds-stat--idle', className);
   const styleProp = { ...(rest.style ?? {}), '--st-accent': accent } as CSSProperties;
   // The accessible name carries the state so it is announced on the tile
   // itself (no nested live region). Healthy tiles keep their content name.

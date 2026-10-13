@@ -174,6 +174,21 @@ describe('shared StatTile', () => {
     expect(screen.getByLabelText('0')).toHaveAttribute('data-tone', 'neutral');
   });
 
+  it('does not render the delta chip while loading or failed', () => {
+    const { rerender } = render(<StatTile label="Q" value={null} delta={{ value: '+1', label: 'one more' }} />);
+    expect(screen.queryByLabelText('one more')).not.toBeInTheDocument();
+    rerender(<StatTile label="Q" value={null} error delta={{ value: '+1', label: 'one more' }} />);
+    expect(screen.queryByLabelText('one more')).not.toBeInTheDocument();
+  });
+
+  it('marks critical and idle (loading/error) tiles with modifier classes', () => {
+    const { container, rerender } = render(<StatTile label="Q" value={3} critical={2} />);
+    expect(container.firstChild).toHaveClass('ds-stat--crit');
+    expect(container.firstChild).not.toHaveClass('ds-stat--idle');
+    rerender(<StatTile label="Q" value={null} />);
+    expect(container.firstChild).toHaveClass('ds-stat--idle');
+  });
+
   it('delta goes inline after the label when the critical pill is present', () => {
     render(<StatTile label="Queue" value={9} critical={2} delta={{ value: '+1', label: 'one more' }} />);
     const chip = screen.getByLabelText('one more');
@@ -188,6 +203,7 @@ describe('shared StatTile', () => {
     const d = trend.querySelector('.ds-stat-trend-line')!.getAttribute('d')!;
     expect(d.match(/[ML]/g)).toHaveLength(4);
     expect(trend.querySelector('.ds-stat-trend-dot')).not.toBeNull();
+    expect(trend.querySelector('.ds-stat-trend-dot')!.className).not.toMatch(/h-\[|w-\[/); // sized in CSS
   });
 
   it('renders a dashed baseline for a flat or all-zero series', () => {
