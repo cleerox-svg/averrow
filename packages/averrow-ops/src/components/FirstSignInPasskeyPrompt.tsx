@@ -234,7 +234,7 @@ export function FirstSignInPasskeyPrompt() {
           className="font-mono"
           style={{
             color: 'var(--text-tertiary)',
-            fontSize: 10,
+            fontSize: 11,
             lineHeight: 1.5,
             textAlign: 'center',
             letterSpacing: '0.02em',

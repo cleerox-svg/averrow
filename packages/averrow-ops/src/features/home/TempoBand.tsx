@@ -28,7 +28,7 @@ function Chip({ tempo }: { tempo: Tempo }) {
   return (
     <span
       data-tempo-state={tempo.state}
-      className="inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider"
+      className="inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] font-bold uppercase tracking-wider"
       style={{
         color: surge ? 'var(--sev-high-text)' : 'var(--text-secondary)',
         background: surge ? 'var(--sev-high-bg)' : 'var(--border-base)',

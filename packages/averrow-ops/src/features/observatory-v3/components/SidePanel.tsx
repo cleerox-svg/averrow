@@ -68,13 +68,13 @@ function WidgetHeader({ label, count }: { label: string; count?: number }) {
   return (
     <div className="flex items-center justify-between mb-2">
       <span
-        className="text-[9px] font-mono font-bold uppercase tracking-[0.20em]"
+        className="text-[11px] font-mono font-bold uppercase tracking-[0.12em]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {label}
       </span>
       {count !== undefined && (
-        <span className="text-[9px] font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
+        <span className="text-[11px] font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
           {count}
         </span>
       )}
@@ -112,7 +112,7 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
       <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
         {value != null ? value.toLocaleString() : '—'}
       </div>
-      <div className="text-[8px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-[11px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</div>
     </div>
   );
 
@@ -124,12 +124,12 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
           className="flex items-center justify-between gap-2 mb-2 px-2 py-1.5 rounded"
           style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
         >
-          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+          <span className="text-[11px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
             Summary failed to load
           </span>
           <button
             onClick={() => { if (statsError) refetchStats(); if (nodesError) refetchNodes(); }}
-            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            className="ds-focusable text-[11px] font-mono font-bold uppercase tracking-wide shrink-0"
             style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
           >
             Retry
@@ -148,7 +148,7 @@ const SummaryHeader = memo(function SummaryHeader({ period }: { period: string }
               <div key={s.k} style={{ width: `${(sev[s.k] / sevTotal) * 100}%`, background: s.color }} />
             ))}
           </div>
-          <div className="flex items-center gap-3 text-[8px] font-mono" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex items-center gap-3 text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
             {segs.map(s => sev[s.k] > 0 && (
               <span key={s.k} className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
@@ -178,7 +178,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({ period }: { period: st
     <div>
       <WidgetHeader label={`Top Threat Origins · ${fmtPeriod(period)}`} />
       {top.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No geolocated threats in this period</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No geolocated threats in this period</div>
       ) : (
         top.map(([code, count]) => (
           <div key={code} className="flex items-center gap-2.5 py-1">
@@ -212,7 +212,7 @@ function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worse
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
         {p.asn && (
-          <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>{p.asn}</div>
+          <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>{p.asn}</div>
         )}
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
@@ -220,7 +220,7 @@ function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worse
           {p.threat_count.toLocaleString()}
         </span>
         {trendPct != null && (
-          <span className="text-[10px] font-mono font-bold" style={{ color: trendColor }}>
+          <span className="text-[11px] font-mono font-bold" style={{ color: trendColor }}>
             {arrow} {Math.abs(Math.round(trendPct))}%
           </span>
         )}
@@ -238,7 +238,7 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
     <div>
       <WidgetHeader label={`Top Targeted Brands · ${fmtPeriod(period)}`} count={brands.length} />
       {brands.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No targeted brands in this period</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No targeted brands in this period</div>
       ) : (
         brands.map((brand) => (
           <div
@@ -256,7 +256,7 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
             />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{brand.name}</div>
-              <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>{brand.canonical_domain}</div>
+              <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>{brand.canonical_domain}</div>
             </div>
             <div className="flex-shrink-0">
               <span className="text-xs font-mono font-bold" style={{ color: 'var(--sev-critical-text)' }}>
@@ -281,10 +281,10 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div className="mb-2">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-critical)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical-text)' }}>Worsening</span>
+          <span className="text-[11px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical-text)' }}>Worsening</span>
         </div>
         {worsening.length === 0 ? (
-          <div className="text-[10px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No worsening providers</div>
+          <div className="text-[11px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No worsening providers</div>
         ) : (
           worsening.map((p) => <ProviderRow key={p.provider_id} p={p} direction="worsening" />)
         )}
@@ -292,10 +292,10 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div>
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-info)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info-text)' }}>Improving</span>
+          <span className="text-[11px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info-text)' }}>Improving</span>
         </div>
         {improving.length === 0 ? (
-          <div className="text-[10px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No improving providers</div>
+          <div className="text-[11px] font-mono py-1" style={{ color: 'var(--text-muted)' }}>No improving providers</div>
         ) : (
           improving.map((p) => <ProviderRow key={p.provider_id} p={p} direction="improving" />)
         )}
@@ -313,7 +313,7 @@ const OperationsWidget = memo(function OperationsWidget() {
     <div>
       <WidgetHeader label="Active Operations" count={operations.length} />
       {operations.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active operations</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active operations</div>
       ) : (
         operations.map((op) => {
           const countries = op.countries ? JSON.parse(op.countries) as string[] : [];
@@ -331,12 +331,12 @@ const OperationsWidget = memo(function OperationsWidget() {
                 </span>
                 {isAccelerating && <Badge severity="high" label="ACCEL" size="xs" />}
               </div>
-              <div className="flex items-center gap-3 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="flex items-center gap-3 text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 <span>{op.threat_count.toLocaleString()} threats</span>
                 {countries.length > 0 && <span>{countries.slice(0, 3).join(', ')}</span>}
               </div>
               {(asns.length > 0 || op.confidence_score != null) && (
-                <div className="flex items-center gap-3 text-[9px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-3 text-[11px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {asns.length > 0 && (
                     <span className="truncate">{asns.slice(0, 2).join(', ')}</span>
                   )}
@@ -371,7 +371,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
     <div>
       <WidgetHeader label="Geopolitical Campaigns · 30d" />
       {recent.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active campaigns</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No active campaigns</div>
       ) : (
         recent.map((c) => {
           const adversary = c.adversary_countries ? JSON.parse(c.adversary_countries) as string[] : [];
@@ -388,7 +388,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
                   {c.name}
                 </span>
               </div>
-              <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 {adversary.length > 0 && <span>{adversary.join(', ')}</span>}
                 {targets.length > 0 && <span> {'→'} {targets.slice(0, 2).join(', ')}</span>}
               </div>
@@ -421,28 +421,28 @@ const AgentIntelWidget = memo(function AgentIntelWidget() {
           className="flex items-center justify-between gap-2 mt-2 px-2 py-1.5 rounded"
           style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
         >
-          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+          <span className="text-[11px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
             Agent feed failed to load
           </span>
           <button
             onClick={() => refetch()}
-            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            className="ds-focusable text-[11px] font-mono font-bold uppercase tracking-wide shrink-0"
             style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
           >
             Retry
           </button>
         </div>
       ) : recentOutputs.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No recent agent output</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>No recent agent output</div>
       ) : (
         <div className="mt-2 space-y-1.5">
           {recentOutputs.map(agent => (
             <div key={agent.agent_id} className="flex items-center gap-2 py-0.5">
               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: agent.color }} />
-              <span className="text-[10px] font-mono font-bold uppercase truncate flex-1" style={{ color: agent.color }}>
+              <span className="text-[11px] font-mono font-bold uppercase truncate flex-1" style={{ color: agent.color }}>
                 {agent.display_name}
               </span>
-              <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
                 {agent.outputs_24h} out &middot; {relativeTime(agent.last_output_at)}
               </span>
             </div>
@@ -493,19 +493,19 @@ const LiveFeedWidget = memo(function LiveFeedWidget() {
           className="flex items-center justify-between gap-2 px-2 py-1.5 rounded"
           style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
         >
-          <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+          <span className="text-[11px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
             Live feed failed to load
           </span>
           <button
             onClick={() => refetch()}
-            className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+            className="ds-focusable text-[11px] font-mono font-bold uppercase tracking-wide shrink-0"
             style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
           >
             Retry
           </button>
         </div>
       ) : entries.length === 0 ? (
-        <div className="text-[10px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>Waiting for threats...</div>
+        <div className="text-[11px] font-mono py-2" style={{ color: 'var(--text-muted)' }}>Waiting for threats...</div>
       ) : (
         <div className="space-y-1">
           {entries.slice(0, 8).map(entry => (
@@ -516,13 +516,13 @@ const LiveFeedWidget = memo(function LiveFeedWidget() {
                 aria-label={entry.severity ?? 'unknown severity'}
                 title={entry.severity ?? undefined}
               />
-              <span className="text-[10px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>
+              <span className="text-[11px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>
                 {entry.threat_type?.replace(/_/g, ' ')}
               </span>
               {entry.country_code && (
-                <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
+                <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
               )}
-              <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
                 {relativeTime(entry.created_at)}
               </span>
             </div>

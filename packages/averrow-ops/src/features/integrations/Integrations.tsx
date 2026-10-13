@@ -98,7 +98,7 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
             <div style={{ fontSize: 22, fontWeight: 700, color: successColor(it.success_rate) }}>
               {it.success_rate === null ? '—' : `${it.success_rate}%`}
             </div>
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
               success
             </div>
           </div>

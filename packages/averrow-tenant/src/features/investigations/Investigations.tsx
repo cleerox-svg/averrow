@@ -33,7 +33,7 @@ export function Investigations() {
     <div className="max-w-4xl space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Workspace</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Workspace</div>
           <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Investigations</h1>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
             Group related signals, threats and takedowns into a case — work the whole campaign as one unit, with a shared status, owner and notes timeline.
@@ -109,7 +109,7 @@ function Row({ inv }: { inv: Investigation }) {
           </div>
           {inv.description && <p className="text-[12px] text-white/55 mt-1 line-clamp-2 leading-relaxed">{inv.description}</p>}
         </div>
-        <div className="text-right text-[10px] font-mono text-white/55 flex-shrink-0">
+        <div className="text-right text-[11px] font-mono text-white/55 flex-shrink-0">
           <div>{new Date(inv.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
           {inv.assigned_to_name && <div className="mt-0.5 text-white/55 truncate max-w-[120px]">{inv.assigned_to_name}</div>}
         </div>
@@ -167,7 +167,7 @@ function CreateForm({ onDone }: { onDone: () => void }) {
               type="button"
               onClick={() => setSeverity(s)}
               className={[
-                'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors',
+                'px-2 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors',
                 severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
               ].join(' ')}
             >

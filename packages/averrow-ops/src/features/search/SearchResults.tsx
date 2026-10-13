@@ -139,7 +139,7 @@ export function SearchResults() {
                       {group.heading}
                     </span>
                     <span
-                      className="font-mono text-[10px]"
+                      className="font-mono text-[11px]"
                       style={{ color: 'var(--text-muted)' }}
                     >
                       {rows.length}
@@ -147,7 +147,7 @@ export function SearchResults() {
                   </div>
                   <Link
                     to={group.viewAllTo(q)}
-                    className="font-mono text-[10px] font-bold uppercase tracking-wide"
+                    className="font-mono text-[11px] font-bold uppercase tracking-wide"
                     style={{ color: 'var(--amber-text)' }}
                   >
                     View all in {group.heading.toLowerCase()} →

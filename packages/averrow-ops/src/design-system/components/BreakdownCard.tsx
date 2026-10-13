@@ -33,7 +33,7 @@ export function BreakdownCard({
       className={cn('detail-stat-card', className)}
       style={{ containerType: 'inline-size', ...style }}
     >
-      <div className="mb-2.5 font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
+      <div className="mb-2.5 font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--text-tertiary)]">
         {title}
       </div>
 

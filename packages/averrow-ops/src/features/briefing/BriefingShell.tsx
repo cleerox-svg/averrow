@@ -73,7 +73,7 @@ export function BriefingShell({
             {title}
           </h2>
           {status === 'ready' && (generatedAt || meta) && (
-            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
               {generatedAt && (
                 <span>
                   Generated {parseUtc(generatedAt).toLocaleString('en-US', {

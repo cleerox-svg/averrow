@@ -102,13 +102,13 @@ function ClusterPanel({
 
   return (
     <div className="space-y-1.5">
-      <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+      <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
         Cluster Intelligence
       </div>
       {selectedClusterId && (
         <button
           onClick={() => onSelect(null)}
-          className="w-full text-left font-mono text-[10px] px-2 py-1 mb-1"
+          className="w-full text-left font-mono text-[11px] px-2 py-1 mb-1"
           style={{ color: 'var(--amber-text)' }}
         >
           Clear filter
@@ -145,11 +145,11 @@ function ClusterPanel({
               <Badge {...PROVIDER_STATUS_BADGE[status]} size="xs" />
             </div>
             <div className="flex items-center gap-2 mt-1">
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                 {cluster.threat_count.toLocaleString()} threats
               </span>
               {cluster.countries && (
-                <span className="font-mono text-[10px] text-white/55">
+                <span className="font-mono text-[11px] text-white/55">
                   {(() => {
                     try {
                       return (JSON.parse(cluster.countries) as string[]).map(countryFlag).join(' ');
@@ -229,7 +229,7 @@ function ProviderCard({
             {nexusLinked && <Badge context="nexus" size="xs" />}
             <Badge {...PROVIDER_STATUS_BADGE[status]} size="xs" />
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             {provider.asn || 'No ASN'}{provider.country ? ` · ${provider.country}` : ''}
           </div>
         </div>
@@ -237,7 +237,7 @@ function ProviderCard({
 
       {/* Metrics + top-right sparkline (mirrors Agents shell) */}
       <div className="flex items-end justify-between gap-3">
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono flex-1">
           <div>
             <div style={{ color: 'var(--text-muted)' }}>ACTIVE</div>
             <div className="text-base" style={{ color: 'var(--text-primary)' }}>
@@ -275,7 +275,7 @@ function ProviderCard({
               />
             </div>
             <div
-              className="font-mono text-[8px] tracking-[0.12em] uppercase"
+              className="font-mono text-[11px] tracking-[0.12em] uppercase"
               style={{ color: 'var(--text-muted)' }}
             >
               14d shape
@@ -286,18 +286,18 @@ function ProviderCard({
 
       {/* Status footer (only on problem states) */}
       {status === 'accelerating' && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {'↑'} Accelerating {'—'} activity up &gt;50% vs prior week
         </div>
       )}
       {coolingDelta !== null && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-info-text)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--sev-info-text)' }}>
           <span aria-hidden="true">{'↓'} </span>
           {formatCoolingDelta(coolingDelta)}
         </div>
       )}
       {status === 'pivot' && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {'→'} Pivot detected {'—'} went silent recently
         </div>
       )}
@@ -374,7 +374,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               }`}>
                 {detail.reputation_score}
               </div>
-              <div className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Reputation</div>
+              <div className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Reputation</div>
             </div>
           )}
         </div>
@@ -386,7 +386,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
       {detail.abuse_contact && (
         <div className="mb-6 pb-6" style={{ borderBottom: '1px solid var(--border-base)' }}>
           <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+            <div className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
               Abuse channel
             </div>
             <Badge size="xs">{detail.abuse_contact.provider_type.replace('_', ' ')}</Badge>
@@ -396,7 +396,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               <div className="flex items-start gap-2">
                 <Mail size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
                     Email
                   </div>
                   <a
@@ -414,7 +414,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               <div className="flex items-start gap-2">
                 <ExternalLink size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--text-muted)' }} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
                     Report URL
                   </div>
                   <a
@@ -434,7 +434,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               <div className="flex items-start gap-2">
                 <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber-text)' }} />
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
                     API {detail.abuse_contact.abuse_api_type ? `· ${detail.abuse_contact.abuse_api_type}` : ''}
                   </div>
                   <span className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>
@@ -448,7 +448,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
             <div className="grid grid-cols-2 gap-4 mt-3 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
               {detail.abuse_contact.avg_response_hours != null && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                     Avg response
                   </div>
                   <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
@@ -458,7 +458,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               )}
               {detail.abuse_contact.success_rate != null && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                     Success rate
                   </div>
                   <div className="text-base font-mono" style={{ color: 'var(--text-primary)' }}>
@@ -475,7 +475,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — Provider Info */}
         <div className="space-y-3">
-          <div className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
             Provider Details
           </div>
           <div className="space-y-2">
@@ -497,7 +497,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
 
         {/* Center — Timeline Chart */}
         <div>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
             Threat Timeline (30d)
           </div>
           {timelineLoading ? (
@@ -513,7 +513,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                 </defs>
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 9, fill: '#78A0C8', opacity: 0.8 }}
+                  tick={{ fontSize: 11, fill: '#78A0C8', opacity: 0.8 }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -547,7 +547,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
 
         {/* Right — Linked Clusters */}
         <div>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
             Linked Clusters
           </div>
           {clustersLoading ? (
@@ -566,7 +566,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                     </span>
                     <Badge {...PROVIDER_STATUS_BADGE[getClusterStatus(cluster)]} size="xs" />
                   </div>
-                  <div className="font-mono text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                  <div className="font-mono text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
                     {cluster.threat_count} threats
                     {cluster.agent_notes && (
                       <span className="block mt-0.5 truncate" style={{ color: 'var(--text-tertiary)' }}>{cluster.agent_notes}</span>
@@ -585,7 +585,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
 
       {/* Recent Threats Table */}
       <div className="mt-6">
-        <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+        <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
           Recent Threats
         </div>
         {threatsError && !threats ? (
@@ -598,7 +598,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   {['Type', 'Domain', 'Severity', 'First Seen'].map(h => (
-                    <Th key={h} className="p-0 font-mono text-[9px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
+                    <Th key={h} className="p-0 font-mono text-[11px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
                       {h}
                     </Th>
                   ))}
@@ -612,11 +612,11 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
                       {threat.malicious_domain || '—'}
                     </Td>
                     <Td className="p-0 py-1.5 px-2">
-                      <span className={`inline-flex font-mono text-[9px] font-bold uppercase px-2 py-0.5 rounded border ${severityBadge(threat.severity)}`}>
+                      <span className={`inline-flex font-mono text-[11px] font-bold uppercase px-2 py-0.5 rounded border ${severityBadge(threat.severity)}`}>
                         {threat.severity}
                       </span>
                     </Td>
-                    <Td className="p-0 font-mono text-[10px] text-white/55 py-1.5 px-2">
+                    <Td className="p-0 font-mono text-[11px] text-white/55 py-1.5 px-2">
                       {threat.first_seen ? new Date(threat.first_seen).toLocaleDateString() : '—'}
                     </Td>
                   </tr>
@@ -810,17 +810,17 @@ export function Providers() {
             actions={
               <div className="flex items-center gap-1.5 flex-wrap">
                 {isCooling ? (
-                  <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+                  <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
                     Sorted by weekly change
                   </span>
                 ) : (
                   <>
-                    <span className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Sort:</span>
+                    <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Sort:</span>
                     {SORT_OPTIONS.map(s => (
                       <button
                         key={s.id}
                         onClick={() => setSortBy(s.id)}
-                        className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
+                        className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded transition-all"
                         style={{
                           background: sortBy === s.id ? 'var(--border-base)' : 'transparent',
                           color: sortBy === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',

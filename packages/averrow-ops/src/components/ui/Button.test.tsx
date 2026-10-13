@@ -32,13 +32,19 @@ describe('Button', () => {
   it('applies size styles', () => {
     const { container } = render(<Button size="sm">Small</Button>);
     const el = container.firstChild as HTMLElement;
-    expect(el.style.fontSize).toBe('10px');
+    expect(el.style.fontSize).toBe('11px');
+    // sm/md share the 11px floor, so padding is what distinguishes them.
+    expect(el.style.padding).toBe('6px 14px');
   });
 
-  it('applies large size styles', () => {
+  it('applies medium and large size styles (padding differs; sm/md share the 11px floor)', () => {
+    const md = render(<Button size="md">Medium</Button>);
+    expect((md.container.firstChild as HTMLElement).style.padding).toBe('9px 20px');
+    md.unmount();
     const { container } = render(<Button size="lg">Large</Button>);
     const el = container.firstChild as HTMLElement;
     expect(el.style.fontSize).toBe('12px');
+    expect(el.style.padding).toBe('12px 28px');
   });
 
   it('renders all variants without error', () => {

@@ -11,7 +11,7 @@ const STATUS_TONE: Record<InvestigationStatus, string> = {
 export function StatusPill({ status }: { status: InvestigationStatus }) {
   const tone = STATUS_TONE[status] ?? 'text-white/55 bg-white/[0.04] border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status}
     </span>
   );

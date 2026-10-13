@@ -18,7 +18,7 @@ export function MarketingVisibility() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load marketing analytics. Try again in a moment.
         </p>
       </Card>
@@ -27,7 +27,7 @@ export function MarketingVisibility() {
   if (isLoading || !data) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading marketing analytics…
         </p>
       </Card>
@@ -45,7 +45,7 @@ export function MarketingVisibility() {
   if (allZero) {
     return (
       <Card variant="elevated" className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No marketing traffic recorded yet — beacon + edge logging may still be warming up.
         </p>
       </Card>
@@ -91,7 +91,7 @@ function Tile({
                           'var(--text-primary)';
   return (
     <Card variant="elevated" className="p-3">
-      <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
       <div className="font-display text-2xl font-bold" style={{ color }}>
@@ -108,14 +108,14 @@ function AiCrawlerBreakdown({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <Card variant="elevated" className="p-4">
-      <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
         AI crawler breakdown
       </div>
-      <div className="font-mono text-[10px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
         Which AI crawlers are indexing the marketing site
       </div>
       {rows.length === 0 ? (
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No AI crawler activity recorded in this window.
         </p>
       ) : (
@@ -150,14 +150,14 @@ function AiReferralBySource({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <Card variant="elevated" className="p-4">
-      <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
         AI referral sources
       </div>
-      <div className="font-mono text-[10px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
         Human sessions arriving from AI chat services
       </div>
       {rows.length === 0 ? (
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No AI-referred sessions recorded in this window.
         </p>
       ) : (
@@ -191,12 +191,12 @@ function TopPages({ data }: { data: MarketingVisibilityPayload }) {
 
   return (
     <div className="space-y-3">
-      <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
         Top pages
       </div>
       <Card variant="elevated" className="p-4">
         {rows.length === 0 ? (
-          <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
             No page-view data recorded in this window.
           </p>
         ) : (

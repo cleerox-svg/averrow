@@ -127,7 +127,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
           <h2 className="text-white/80 font-semibold text-sm">
             Intelligence Summary
           </h2>
-          <p className="text-white/55 text-[10px] font-mono mt-0.5">
+          <p className="text-white/55 text-[11px] font-mono mt-0.5">
             {period.toUpperCase()} period
           </p>
         </div>
@@ -148,7 +148,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
             <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--text-primary)' }}>
               {metrics.totalThreats.toLocaleString()}
             </p>
-            <p className="text-white/55 text-[10px]">Total Threats</p>
+            <p className="text-white/55 text-[11px]">Total Threats</p>
           </div>
           <div className="min-w-0">
             <p className={`font-mono font-bold text-base sm:text-lg break-words ${
@@ -156,20 +156,20 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
             }`}>
               {metrics.changePct > 0 ? '\u2191' : metrics.changePct < 0 ? '\u2193' : '\u2014'}{Math.abs(metrics.changePct)}%
             </p>
-            <p className="text-white/55 text-[10px]">Period Trend</p>
+            <p className="text-white/55 text-[11px]">Period Trend</p>
           </div>
           <div className="min-w-0">
             <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--amber-text)' }}>
               {metrics.topType.label}
             </p>
-            <p className="text-white/55 text-[10px]">Top Threat Type</p>
+            <p className="text-white/55 text-[11px]">Top Threat Type</p>
           </div>
           {topBrand && (
             <div className="min-w-0">
               <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--text-primary)' }}>
                 {topBrand.brand_name}
               </p>
-              <p className="text-white/55 text-[10px]">Most Targeted Brand</p>
+              <p className="text-white/55 text-[11px]">Most Targeted Brand</p>
             </div>
           )}
         </div>

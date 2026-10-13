@@ -94,18 +94,18 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
               className="w-1.5 h-1.5 rounded-full"
               style={{ backgroundColor: severityColor }}
             />
-            <span className="font-mono text-[10px] font-semibold uppercase" style={{ color: severityColor }}>
+            <span className="font-mono text-[11px] font-semibold uppercase" style={{ color: severityColor }}>
               {category}
             </span>
-            <span className="text-white/55 text-[10px]">·</span>
-            <span className="font-mono text-[10px] text-white/55 uppercase">{severity}</span>
+            <span className="text-white/55 text-[11px]">·</span>
+            <span className="font-mono text-[11px] text-white/55 uppercase">{severity}</span>
           </div>
-          <span className="font-mono text-[10px] text-white/55">{captureDate}</span>
+          <span className="font-mono text-[11px] text-white/55">{captureDate}</span>
         </div>
         <p className="text-[11px] text-white/70 truncate mb-1">
           &ldquo;{capture.subject ?? '(no subject)'}&rdquo;
         </p>
-        <div className="flex items-center gap-2 text-[10px] text-white/55 font-mono">
+        <div className="flex items-center gap-2 text-[11px] text-white/55 font-mono">
           <span>FROM {capture.from_address ?? '—'}</span>
           <span>→</span>
           <span>{capture.trap_address ?? '—'}</span>
@@ -114,9 +114,9 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
           <AuthBadge label="SPF" result={capture.spf_result} />
           <AuthBadge label="DKIM" result={capture.dkim_result} />
           <AuthBadge label="DMARC" result={capture.dmarc_result} />
-          <span className="text-white/55 text-[10px]">·</span>
-          <span className="font-mono text-[10px] text-white/55">{capture.url_count ?? 0} URLs</span>
-          <span className="ml-auto font-mono text-[10px] text-white/55">
+          <span className="text-white/55 text-[11px]">·</span>
+          <span className="font-mono text-[11px] text-white/55">{capture.url_count ?? 0} URLs</span>
+          <span className="ml-auto font-mono text-[11px] text-white/55">
             {expanded ? '[Collapse ▲]' : '[Expand ▼]'}
           </span>
         </div>
@@ -198,7 +198,7 @@ function ExpandedDetail({
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {/* LEFT — Email Intelligence */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Email Intelligence
         </div>
         <div className="space-y-1.5 text-[11px]">
@@ -213,7 +213,7 @@ function ExpandedDetail({
         </div>
         {detail.spoofed_domain && (
           <div className="mt-2">
-            <span className="text-[10px] text-white/55 font-mono">Brand spoofed: </span>
+            <span className="text-[11px] text-white/55 font-mono">Brand spoofed: </span>
             <span
               className={`text-[11px] font-mono font-semibold ${brandConfidence > 70 ? 'text-red-400' : 'text-white/70'}`}
               style={brandConfidence > 70 ? { textShadow: '0 0 8px rgba(248,113,113,0.5)' } : undefined}
@@ -226,7 +226,7 @@ function ExpandedDetail({
 
       {/* CENTER — URLs */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
           URLs
         </div>
         <div className="text-[32px] font-bold font-mono text-[var(--text-primary)] leading-none">
@@ -235,7 +235,7 @@ function ExpandedDetail({
         {urlsByDomain.length > 0 && (
           <div className="space-y-1">
             {urlsByDomain.map(([domain, count]) => (
-              <div key={domain} className="flex items-center justify-between text-[10px] font-mono">
+              <div key={domain} className="flex items-center justify-between text-[11px] font-mono">
                 <span className="text-white/60 truncate max-w-[160px]">{domain}</span>
                 <span className="text-white/55">{count}</span>
               </div>
@@ -245,7 +245,7 @@ function ExpandedDetail({
         {visibleUrls.length > 0 && (
           <div className="space-y-0.5">
             {visibleUrls.map((u, i) => (
-              <div key={i} className="text-[9px] font-mono text-white/55 truncate" title={u}>
+              <div key={i} className="text-[11px] font-mono text-white/55 truncate" title={u}>
                 {u.length > 50 ? u.slice(0, 50) + '…' : u}
               </div>
             ))}
@@ -254,7 +254,7 @@ function ExpandedDetail({
         {urls.length > 5 && (
           <button
             onClick={() => setShowAllUrls(!showAllUrls)}
-            className="text-[10px] font-mono text-[var(--amber-text)] hover:text-[#D49A28] transition-colors"
+            className="text-[11px] font-mono text-[var(--amber-text)] hover:text-[#D49A28] transition-colors"
           >
             {showAllUrls ? '[Show less]' : `[Show all ${urls.length}]`}
           </button>
@@ -263,7 +263,7 @@ function ExpandedDetail({
 
       {/* RIGHT — Actions */}
       <div className="space-y-3">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Actions
         </div>
         <button
@@ -274,12 +274,12 @@ function ExpandedDetail({
           {aiLoading ? 'Analyzing…' : 'Run AI Analysis'}
         </button>
         {aiResult && (
-          <div className="rounded-lg p-3 text-[10px] text-white/70 font-mono whitespace-pre-wrap" style={GLASS_CARD}>
+          <div className="rounded-lg p-3 text-[11px] text-white/70 font-mono whitespace-pre-wrap" style={GLASS_CARD}>
             {aiResult}
           </div>
         )}
         {aiError && (
-          <div className="text-[10px] text-red-400/80 font-mono">{aiError}</div>
+          <div className="text-[11px] text-red-400/80 font-mono">{aiError}</div>
         )}
         <button
           onClick={() => setShowHeaders(!showHeaders)}
@@ -288,7 +288,7 @@ function ExpandedDetail({
           {showHeaders ? 'Hide Raw Headers' : 'View Raw Headers'}
         </button>
         {showHeaders && (
-          <pre className="text-[9px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
+          <pre className="text-[11px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
             {detail.raw_headers ?? 'No headers available'}
           </pre>
         )}
@@ -299,7 +299,7 @@ function ExpandedDetail({
           {showBody ? 'Hide Body' : 'View Body'}
         </button>
         {showBody && (
-          <pre className="text-[9px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
+          <pre className="text-[11px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
             {detail.body_preview ?? 'No body available'}
           </pre>
         )}
@@ -328,7 +328,7 @@ export function CaptureForensicsPanel() {
 
   return (
     <div className="rounded-xl p-4 min-h-[400px]" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-4">
+      <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-4">
         Capture Forensics
       </div>
 

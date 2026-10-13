@@ -66,17 +66,17 @@ function OverviewCard({ title, metric, metricLabel, metricColor, children }: {
   const metricStyle: CSSProperties = { color: metricColor ?? 'var(--text-primary)' };
   return (
     <Card variant="flat" padding={16}>
-      <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={textSecondary}>{title}</div>
+      <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={textSecondary}>{title}</div>
       {/* Mobile: stacked layout, Desktop: side-by-side */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="text-center sm:text-left sm:hidden">
           <div className="text-[28px] font-bold leading-none" style={metricStyle}>{metric}</div>
-          <div className="text-[9px] uppercase mt-1" style={textTertiary}>{metricLabel}</div>
+          <div className="text-[11px] uppercase mt-1" style={textTertiary}>{metricLabel}</div>
         </div>
         <div className="flex-1 min-w-0">{children}</div>
         <div className="hidden sm:flex border-l pl-3 flex-col items-center gap-1" style={{ borderColor: 'var(--border-base)' }}>
           <div className="text-[28px] font-bold leading-none" style={metricStyle}>{metric}</div>
-          <div className="text-[9px] uppercase" style={textTertiary}>{metricLabel}</div>
+          <div className="text-[11px] uppercase" style={textTertiary}>{metricLabel}</div>
         </div>
       </div>
     </Card>
@@ -98,7 +98,7 @@ function DotRow({ color, label, count }: { color: string; label: string; count: 
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="font-mono text-[9px] uppercase tracking-widest" style={textSecondary}>{children}</div>
+    <div className="font-mono text-[11px] uppercase tracking-widest" style={textSecondary}>{children}</div>
   );
 }
 
@@ -109,7 +109,7 @@ function DataTable({ headers, children }: { headers: string[]; children: React.R
         <thead>
           <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
             {headers.map((h) => (
-              <Th key={h} className="p-0 text-left text-[9px] uppercase tracking-widest pb-2 pr-4 font-medium last:text-right" style={textSecondary}>
+              <Th key={h} className="p-0 text-left text-[11px] uppercase tracking-widest pb-2 pr-4 font-medium last:text-right" style={textSecondary}>
                 {h}
               </Th>
             ))}
@@ -129,7 +129,7 @@ function GenerateToast({ toast }: { toast: { type: 'success' | 'error'; message:
     <div
       role={toast.type === 'error' ? 'alert' : 'status'}
       aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
-      className="font-mono text-[10px]"
+      className="font-mono text-[11px]"
       style={{ color: toast.type === 'success' ? 'var(--green)' : 'var(--red)' }}
     >
       {toast.message}
@@ -257,7 +257,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.newThreats.notable.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Notable Critical/High</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>Notable Critical/High</div>
               <div className="space-y-1.5">
                 {briefing.newThreats.notable.slice(0, 5).map((t, i) => (
                   <div key={i} className="flex items-start gap-2 font-mono text-[11px]">
@@ -299,7 +299,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
         {/* FEED PRODUCTION */}
         <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Feed Production (12h)</SectionTitle>
-          <div className="font-mono text-[10px]" style={textSecondary}>
+          <div className="font-mono text-[11px]" style={textSecondary}>
             {(briefing.feedProduction ?? []).length} feeds &middot; {fmt(totalFeedRuns)} runs &middot; {fmt(totalIngested)} ingested
           </div>
           {(briefing.feedProduction ?? []).length > 0 && (
@@ -342,7 +342,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
               {briefing.feedHealth.degradedFeeds.map((f) => (
-                <div key={f.feed_name} className="font-mono text-[10px]" style={amberText}>
+                <div key={f.feed_name} className="font-mono text-[11px]" style={amberText}>
                   {'⚠'} {f.feed_name} — {f.last_error ?? 'unknown error'}
                 </div>
               ))}
@@ -352,7 +352,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
               {briefing.feedHealth.staleFeeds.map((f) => (
-                <div key={f.feed_name} className="font-mono text-[10px]" style={amberText}>
+                <div key={f.feed_name} className="font-mono text-[11px]" style={amberText}>
                   {'⚠'} {f.feed_name} — last run {f.last_successful_pull ?? 'never'} (stale)
                 </div>
               ))}
@@ -407,7 +407,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
               <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.darkweb_new)}</Td>
             </tr>
           </DataTable>
-          <div className="font-mono text-[10px]" style={textSecondary}>
+          <div className="font-mono text-[11px]" style={textSecondary}>
             CertStream captures: <span style={amberText}>{fmt(briefing.newCapabilities.certstream)}</span>
           </div>
         </Card>
@@ -423,7 +423,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
               {briefing.flightController.summary}
             </div>
           ) : (
-            <div className="font-mono text-[10px]" style={textMuted}>No diagnostic available</div>
+            <div className="font-mono text-[11px]" style={textMuted}>No diagnostic available</div>
           )}
         </Card>
 
@@ -443,7 +443,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
               ))}
             </DataTable>
           ) : (
-            <div className="font-mono text-[10px]" style={textMuted}>No agent activity</div>
+            <div className="font-mono text-[11px]" style={textMuted}>No agent activity</div>
           )}
         </Card>
       </div>
@@ -460,7 +460,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.spamTrap.seedingSources.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Seeding Sources</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>Seeding Sources</div>
               <DataTable headers={['Source', 'Seeds', 'Catches']}>
                 {briefing.spamTrap.seedingSources.map((s) => (
                   <tr key={s.seeded_location} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
@@ -475,7 +475,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.spamTrap.latestCaptures.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Latest Captures</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>Latest Captures</div>
               <div className="space-y-2">
                 {briefing.spamTrap.latestCaptures.map((c, i) => (
                   <div key={i} className="rounded-lg border p-2.5" style={{ borderColor: 'var(--border-base)' }}>
@@ -483,7 +483,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                       From: <span style={textSecondary}>{c.from_address}</span> &rarr; <span style={textSecondary}>{c.trap_address}</span>
                     </div>
                     <div className="font-mono text-[11px] mt-0.5" style={textPrimary}>Subject: &ldquo;{c.subject}&rdquo;</div>
-                    <div className="font-mono text-[10px] mt-0.5" style={textTertiary}>{c.category} &middot; {c.severity} &middot; {c.captured_at}</div>
+                    <div className="font-mono text-[11px] mt-0.5" style={textTertiary}>{c.category} &middot; {c.severity} &middot; {c.captured_at}</div>
                   </div>
                 ))}
               </div>
@@ -505,7 +505,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.honeypot.pageBreakdown.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>
                 {briefing.honeypot.pageBreakdownTotal > briefing.honeypot.pageBreakdown.length
                   ? `Top 20 of ${fmt(briefing.honeypot.pageBreakdownTotal)} pages`
                   : 'Pages'}
@@ -524,7 +524,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.honeypot.recentBots.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Recent Crawlers</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>Recent Crawlers</div>
               {briefing.honeypot.recentBots.map((b, i) => (
                 <div key={i} className="font-mono text-[11px]" style={textSecondary}>
                   &#9679; {b.bot_name || 'Unknown bot'} &middot; {b.country || '?'} &middot; {b.visited_at ? new Date(b.visited_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—'}
@@ -535,7 +535,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
           {briefing.honeypot.suspiciousHumans.length > 0 && (
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
-              <div className="font-mono text-[9px] uppercase tracking-widest mb-1" style={textSecondary}>Recon &amp; Bait Hits (7d)</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={textSecondary}>Recon &amp; Bait Hits (7d)</div>
               {briefing.honeypot.suspiciousHumans.map((h, i) => {
                 const label = h.reason === 'bait' ? 'Bait page hit' : 'Recon probe';
                 const time = h.visited_at ? new Date(h.visited_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—';

@@ -53,7 +53,7 @@ function formatThreatType(type: string): string {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h2 className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-tertiary)' }}>
+    <h2 className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-tertiary)' }}>
       {children}
     </h2>
   );
@@ -96,7 +96,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         return (
           <g key={tick}>
             <line x1={padX} x2={w - padX} y1={y} y2={y} stroke="var(--border-base)" />
-            <text x={padX - 6} y={y + 3} textAnchor="end" fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)">
+            <text x={padX - 6} y={y + 3} textAnchor="end" fill="var(--text-muted)" fontSize="11" fontFamily="var(--font-mono)">
               {tick}
             </text>
           </g>
@@ -116,7 +116,7 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
         const x = padX + (i / Math.max(labels.length - 1, 1)) * chartW;
         const short = label.slice(5); // strip year prefix, show MM-DD
         return (
-          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="var(--text-muted)" fontSize="7" fontFamily="var(--font-mono)">
+          <text key={i} x={x} y={h - 2} textAnchor="middle" fill="var(--text-muted)" fontSize="11" fontFamily="var(--font-mono)">
             {short}
           </text>
         );
@@ -166,7 +166,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
                   </span>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-[9px] font-mono text-[var(--text-tertiary)]">
+              <div className="flex items-center gap-2 text-[11px] font-mono text-[var(--text-tertiary)]">
                 {brand.sector && <span>{brand.sector}</span>}
                 {brand.critical_count > 0 && (
                   <span className="text-[#f87171]">{brand.critical_count} crit</span>
@@ -190,7 +190,7 @@ function BrandsHeatMap({ brands }: { brands: Array<{ name: string; threat_count:
           </p>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {vulnerable.map(b => (
-              <span key={b.name} className="text-[10px] text-red-300 font-mono">
+              <span key={b.name} className="text-[11px] text-red-300 font-mono">
                 {b.domain ?? b.name}
               </span>
             ))}
@@ -229,7 +229,7 @@ function AttackTypeBreakdown({ types }: { types: Array<{ threat_type: string; co
                 style={{ width: `${pct}%`, backgroundColor: color }}
               />
             </div>
-            <div className="flex gap-3 mt-1 text-[9px] font-mono text-[var(--text-tertiary)]">
+            <div className="flex gap-3 mt-1 text-[11px] font-mono text-[var(--text-tertiary)]">
               {type.critical > 0 && <span className="text-[#f87171]">{type.critical} critical</span>}
               {type.high > 0 && <span className="text-[#fb923c]">{type.high} high</span>}
               {type.medium > 0 && <span className="text-[#fbbf24]">{type.medium} medium</span>}
@@ -267,7 +267,7 @@ function AsnClusterTable({ asns }: { asns: Array<{ asn: string; provider_name: s
               <Td className="p-0 text-[11px] py-2 pr-4">
                 <span className="text-[var(--text-primary)]">{asn.asn}</span>
                 {asn.is_known_adversary && (
-                  <span className="ml-2 rounded bg-signal-red/20 px-1.5 py-0.5 text-[8px] text-red-400 border border-signal-red/30 uppercase">
+                  <span className="ml-2 rounded bg-signal-red/20 px-1.5 py-0.5 text-[11px] text-red-400 border border-signal-red/30 uppercase">
                     adversary
                   </span>
                 )}
@@ -316,7 +316,7 @@ function IocSourceBadges({ sources }: { sources: string[] }) {
       {sources.map(source => (
         <span
           key={source}
-          className="rounded-lg border border-wing-blue/30 bg-wing-blue/10 px-3 py-1.5 font-mono text-[10px] text-wing-blue"
+          className="rounded-lg border border-wing-blue/30 bg-wing-blue/10 px-3 py-1.5 font-mono text-[11px] text-wing-blue"
         >
           {source}
         </span>
@@ -409,7 +409,7 @@ function EscalationRules({ rules }: { rules: Record<string, string> }) {
           <span className="text-[11px] font-mono text-white/70">
             {signal.replace(/_/g, ' ')}
           </span>
-          <span className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-bold uppercase ${severityStyles[action] ?? 'text-[var(--text-tertiary)] bg-white/5 border-white/10'}`}>
+          <span className={`rounded-full border px-2 py-0.5 font-mono text-[11px] font-bold uppercase ${severityStyles[action] ?? 'text-[var(--text-tertiary)] bg-white/5 border-white/10'}`}>
             {action}
           </span>
         </div>
@@ -506,7 +506,7 @@ export function GeopoliticalCampaignDashboard() {
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-3 mb-2">
-              <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+              <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 font-mono text-[11px] font-bold uppercase ${
                 campaign.status === 'active'
                   ? 'bg-signal-red/20 text-red-400 border-signal-red/30 animate-pulse'
                   : campaign.status === 'dormant'
@@ -515,7 +515,7 @@ export function GeopoliticalCampaignDashboard() {
               }`}>
                 {campaign.status}
               </span>
-              <span className="font-mono text-[10px] text-[var(--text-tertiary)] uppercase tracking-widest">
+              <span className="font-mono text-[11px] text-[var(--text-tertiary)] uppercase tracking-widest">
                 Geopolitical Campaign
               </span>
             </div>
@@ -529,18 +529,18 @@ export function GeopoliticalCampaignDashboard() {
             )}
           </div>
           <div className="text-right">
-            <div className="text-[10px] text-[var(--text-tertiary)] font-mono">Active since</div>
+            <div className="text-[11px] text-[var(--text-tertiary)] font-mono">Active since</div>
             <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--amber-text)' }}>
               {formatDate(campaign.start_date)}
             </div>
-            <div className="text-[10px] text-[var(--text-tertiary)] font-mono mt-1">{daysActive} days</div>
+            <div className="text-[11px] text-[var(--text-tertiary)] font-mono mt-1">{daysActive} days</div>
           </div>
         </div>
 
         {/* Adversary / Target flags */}
         <div className="flex gap-6 mt-4">
           <div>
-            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Adversary</span>
+            <span className="text-[11px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Adversary</span>
             <div className="flex gap-1.5 mt-1">
               {adversaryCountries.map(c => (
                 <span key={c} className="text-lg" title={c}>{countryFlag(c)}</span>
@@ -548,7 +548,7 @@ export function GeopoliticalCampaignDashboard() {
             </div>
           </div>
           <div>
-            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Targets</span>
+            <span className="text-[11px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Targets</span>
             <div className="flex gap-1.5 mt-1">
               {targetCountries.map(c => (
                 <span key={c} className="text-lg" title={c}>{countryFlag(c)}</span>
@@ -556,10 +556,10 @@ export function GeopoliticalCampaignDashboard() {
             </div>
           </div>
           <div>
-            <span className="text-[9px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Known ASNs</span>
+            <span className="text-[11px] font-mono text-[var(--text-tertiary)] uppercase tracking-widest">Known ASNs</span>
             <div className="flex gap-1.5 mt-1">
               {adversaryAsns.map(a => (
-                <span key={a} className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-[var(--text-tertiary)] border border-white/10">
+                <span key={a} className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-tertiary)] border border-white/10">
                   {a}
                 </span>
               ))}
@@ -576,7 +576,7 @@ export function GeopoliticalCampaignDashboard() {
           <button
             onClick={handleRunAssessment}
             disabled={assessmentMutation.isPending}
-            className="rounded-lg border px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
+            className="rounded-lg border px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
             style={{ borderColor: 'rgba(229,168,50,0.30)', background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}
           >
             {assessmentMutation.isPending ? 'Analyzing...' : assessment ? 'Regenerate' : 'Run Assessment'}

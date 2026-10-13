@@ -126,23 +126,23 @@ function RowDetail({ entry, id }: { entry: AuditEntry; id: string }) {
         <Card variant="flat" padding={16} className="mb-3 mt-1 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Full Timestamp</span>
+              <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Full Timestamp</span>
               <p className="font-mono text-[12px] mt-0.5" style={{ color: 'var(--text-primary)' }}>{formatTimestamp(entry.timestamp)}</p>
             </div>
             <div>
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Event ID</span>
+              <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Event ID</span>
               <p className="font-mono text-[11px] mt-0.5 break-all" style={{ color: 'var(--text-secondary)' }}>{entry.id}</p>
             </div>
           </div>
 
           {entry.ip_address && (
             <div>
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>IP Address</span>
+              <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>IP Address</span>
               <p className="font-mono text-[12px] mt-0.5" style={{ color: 'var(--text-primary)' }}>
                 {entry.ip_address}
                 <button
                   onClick={copyIp}
-                  className="ml-2 text-[10px] transition-colors"
+                  className="ml-2 text-[11px] transition-colors"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   {copied ? 'copied' : 'copy'}
@@ -153,13 +153,13 @@ function RowDetail({ entry, id }: { entry: AuditEntry; id: string }) {
 
           {entry.user_agent && (
             <div className="hidden sm:block">
-              <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>User Agent</span>
+              <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>User Agent</span>
               <p className="font-mono text-[11px] mt-0.5 break-all" style={{ color: 'var(--text-secondary)' }}>{entry.user_agent}</p>
             </div>
           )}
 
           <div>
-            <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Details</span>
+            <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>Details</span>
             <pre className="font-mono text-[11px] mt-1 bg-white/[0.03] rounded-md p-3 overflow-x-auto whitespace-pre-wrap break-all" style={{ color: 'var(--text-primary)' }}>
               {formatJson(entry.details)}
             </pre>
@@ -312,12 +312,12 @@ export function AdminAudit() {
           </div>
 
           {/* Outcome pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             {OUTCOME_PILLS.map((pill) => (
               <button
                 key={pill.key}
                 onClick={() => { setOutcomeFilter(pill.key); setPage(1); }}
-                className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider whitespace-nowrap"
+                className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider whitespace-nowrap"
                 style={pillStyle(outcomeFilter === pill.key)}
               >
                 {pill.label}
@@ -330,7 +330,7 @@ export function AdminAudit() {
             <select
               value={actionFilter}
               onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
-              className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
+              className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider"
               style={{
                 background: 'var(--bg-input)',
                 border: '1px solid var(--border-base)',
@@ -351,7 +351,7 @@ export function AdminAudit() {
               <select
                 value={resourceTypeFilter}
                 onChange={(e) => { setResourceTypeFilter(e.target.value); setPage(1); }}
-                className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
+                className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider"
                 style={{
                   background: 'var(--bg-input)',
                   border: '1px solid var(--border-base)',
@@ -374,7 +374,7 @@ export function AdminAudit() {
               <button
                 key={pill.key}
                 onClick={() => { setWindowFilter(pill.key); setPage(1); }}
-                className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider whitespace-nowrap"
+                className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider whitespace-nowrap"
                 style={pillStyle(windowFilter === pill.key)}
               >
                 {pill.label}
@@ -515,7 +515,7 @@ function AuditRow({ entry, expanded, onToggle }: {
 
         {/* Action */}
         <Td className="px-3 py-2.5">
-          <span className="inline-block font-mono text-[10px] px-2 py-0.5 rounded border" style={outcomeBadgeStyle(entry.outcome)}>
+          <span className="inline-block font-mono text-[11px] px-2 py-0.5 rounded border" style={outcomeBadgeStyle(entry.outcome)}>
             {entry.action}
           </span>
         </Td>
@@ -524,7 +524,7 @@ function AuditRow({ entry, expanded, onToggle }: {
         <Td className="px-3 py-2.5">
           <span className="flex items-center gap-1.5">
             <span aria-hidden className={`w-2 h-2 rounded-full ${entry.outcome === 'success' ? 'animate-pulse' : ''}`} style={outcomeDotStyle(entry.outcome)} />
-            <span className="font-mono text-[10px]" style={outcomeTextStyle(entry.outcome)}>
+            <span className="font-mono text-[11px]" style={outcomeTextStyle(entry.outcome)}>
               {entry.outcome}
             </span>
           </span>

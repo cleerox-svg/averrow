@@ -21,17 +21,17 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
   if (!canTriage) {
     if (!assigneeName) return null;
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+      <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
         <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
       </span>
     );
   }
 
-  const chip = 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50';
+  const chip = 'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50';
   return (
     <div className="flex items-center gap-1.5">
       {assigneeName && (
-        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
         </span>
       )}
@@ -95,7 +95,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
   const actions = NEXT_ACTIONS[a.status] ?? [];
   if (actions.length === 0) {
     return (
-      <div className="mt-3 pt-2.5 border-t border-white/[0.06] text-[10px] font-mono uppercase tracking-widest text-white/55">
+      <div className="mt-3 pt-2.5 border-t border-white/[0.06] text-[11px] font-mono uppercase tracking-widest text-white/55">
         {a.status.replace(/_/g, ' ')}
         {a.resolution_notes && <span className="ml-2 normal-case tracking-normal text-white/55">· {a.resolution_notes}</span>}
       </div>
@@ -130,7 +130,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
               disabled={update.isPending}
               onClick={() => onClick(status)}
               className={cn(
-                'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50',
+                'inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50',
                 active
                   ? 'bg-amber/[0.12] text-amber border-amber/[0.35]'
                   : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90 hover:border-white/[0.18]',
@@ -158,7 +158,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
             type="button"
             disabled={update.isPending}
             onClick={() => run(pendingTerminal, note.trim() || undefined)}
-            className="px-3 py-1.5 rounded-md text-[10px] font-mono uppercase tracking-wider border bg-amber/[0.12] text-amber border-amber/[0.35] hover:bg-amber/[0.18] disabled:opacity-50"
+            className="px-3 py-1.5 rounded-md text-[11px] font-mono uppercase tracking-wider border bg-amber/[0.12] text-amber border-amber/[0.35] hover:bg-amber/[0.18] disabled:opacity-50"
           >
             Confirm
           </button>

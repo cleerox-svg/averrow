@@ -193,7 +193,7 @@ export function CampaignGraph({
         </span>
         <div className="flex items-center gap-3">
           {LEGEND.map(([t, label]) => (
-            <span key={t} className="flex items-center gap-1.5 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            <span key={t} className="flex items-center gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: COLORS[t] }} />
               {label}
             </span>
@@ -284,7 +284,7 @@ export function CampaignGraph({
                     textAnchor="middle"
                     style={{
                       fontFamily: 'var(--font-mono)',
-                      fontSize: n.type === 'campaign' ? 12 : 10,
+                      fontSize: n.type === 'campaign' ? 12 : 11,
                       fontWeight: n.type === 'campaign' ? 700 : 500,
                       fill: n.type === 'campaign' ? 'var(--text-primary)' : 'var(--text-secondary)',
                       pointerEvents: 'none',

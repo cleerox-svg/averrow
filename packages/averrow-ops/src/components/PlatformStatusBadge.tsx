@@ -32,7 +32,7 @@ const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
     label: 'ALL SYSTEMS OPERATIONAL',
     dot: '#22c55e',
     glow: 'rgba(34,197,94,0.9)',
-    text: '#4ade80',
+    text: 'var(--sev-info-text)',
   },
   degraded: {
     label: 'DEGRADED',
@@ -55,7 +55,7 @@ const PALETTE: Record<CategoryStatus | 'loading', PaletteEntry> = {
     label: 'CHECKING…',
     dot: '#9ca3af',
     glow: 'rgba(156,163,175,0.6)',
-    text: '#9ca3af',
+    text: 'var(--text-secondary)',
   },
 };
 
@@ -84,8 +84,8 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
           <div style={{ width: 8, height: 8, borderRadius: '50%', background: palette.dot, boxShadow: `0 0 8px ${palette.glow}` }} />
         </div>
         <span style={{
-          fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
-          letterSpacing: '0.14em', color: palette.text,
+          fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
+          letterSpacing: '0.12em', color: palette.text,
           textShadow: `0 0 10px ${palette.glow.replace('0.9', '0.5')}`,
         }}>
           {palette.label}
@@ -109,8 +109,8 @@ export function PlatformStatusBadge({ variant = 'compact' }: Props) {
       />
       <span
         style={{
-          fontSize: 10, fontFamily: 'var(--font-mono)',
-          color: palette.text, letterSpacing: '0.14em',
+          fontSize: 11, fontFamily: 'var(--font-mono)',
+          color: palette.text, letterSpacing: '0.12em',
           textTransform: 'uppercase',
         }}
       >

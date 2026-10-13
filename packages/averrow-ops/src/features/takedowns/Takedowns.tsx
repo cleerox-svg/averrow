@@ -201,7 +201,7 @@ function TakedownCard({
           }}>
             <span style={{ fontSize: 12 }}>{typeConf.icon}</span>
             <span style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)',
+              fontSize: 11, fontFamily: 'var(--font-mono)',
               fontWeight: 800, letterSpacing: '0.12em',
               color: accentText(typeConf.color), textTransform: 'uppercase',
             }}>
@@ -212,7 +212,7 @@ function TakedownCard({
           {/* Platform */}
           {platConf && (
             <span style={{
-              fontSize: 10, color: 'var(--text-muted)',
+              fontSize: 11, color: 'var(--text-muted)',
               fontFamily: 'var(--font-mono)',
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
@@ -223,8 +223,8 @@ function TakedownCard({
 
         {/* Status */}
         <div style={{
-          fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 800,
-          letterSpacing: '0.14em', textTransform: 'uppercase',
+          fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 800,
+          letterSpacing: '0.12em', textTransform: 'uppercase',
           color: accentText(statusConf.color),
           padding: '2px 8px', borderRadius: 4,
           background: `color-mix(in srgb, ${statusConf.color} 7%, transparent)`,
@@ -240,7 +240,7 @@ function TakedownCard({
         {/* Brand name — pivots to the brand (GM4) */}
         {takedown.brand_name && (
           <div style={{
-            fontSize: 10, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)', marginBottom: 4,
             letterSpacing: '0.10em', textTransform: 'uppercase',
           }}>
@@ -289,7 +289,7 @@ function TakedownCard({
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>
             <div style={{
-              fontSize: 8, color: 'var(--text-muted)',
+              fontSize: 11, color: 'var(--text-muted)',
               letterSpacing: '0.12em', marginBottom: 4,
             }}>
               PRIORITY {priority}/100
@@ -302,7 +302,7 @@ function TakedownCard({
             />
           </div>
           <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)', flexShrink: 0, textAlign: 'right',
             lineHeight: 1.4,
           }}>
@@ -444,13 +444,13 @@ function ProspectBrandCard({ group }: { group: ProspectGroup }) {
       {/* Priority + evidence rollup */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
         <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-mono)' }}>
-          <div style={{ fontSize: 8, color: 'var(--text-muted)', letterSpacing: '0.12em', marginBottom: 4 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', letterSpacing: '0.12em', marginBottom: 4 }}>
             PEAK PRIORITY {peakPriority}/100
           </div>
           <PriorityBar value={peakPriority} max={100} size="sm" color={isHigh ? 'red' : 'amber'} />
         </div>
         <div style={{
-          fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
+          fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
           flexShrink: 0, textAlign: 'right', lineHeight: 1.4,
         }}>
           <div>{evidenceTotal} evidence</div>
@@ -489,7 +489,7 @@ function ProspectBrandCard({ group }: { group: ProspectGroup }) {
             'inset 0 1px 0 rgba(255, 255, 255, 0.30)',
             'inset 0 -1px 0 rgba(0, 0, 0, 0.20)',
           ].join(', '),
-          fontSize:     10,
+          fontSize:     11,
           padding:      '6px 14px',
           borderRadius: 8,
         }}
@@ -587,7 +587,7 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
   return (
     <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border-base)', display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
-        <div className="font-mono text-[9px] uppercase tracking-wide mb-1" style={{ color: 'var(--text-secondary)' }}>
+        <div className="font-mono text-[11px] uppercase tracking-wide mb-1" style={{ color: 'var(--text-secondary)' }}>
           {TAKEDOWN_CUSTOMER_NOTE_LABEL}
         </div>
         {takedown.notes ? (
@@ -608,7 +608,7 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
       <div>
         <label
           htmlFor={fieldId}
-          className="block font-mono text-[9px] uppercase tracking-wide mb-1"
+          className="block font-mono text-[11px] uppercase tracking-wide mb-1"
           style={{ color: 'var(--text-secondary)' }}
         >
           {TAKEDOWN_INTERNAL_NOTES_LABEL}
@@ -893,7 +893,7 @@ export function Takedowns() {
         subtitle={isProspect
           ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
           : `${stats.total} total requests`}
-        meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
+        meta={<span className="font-mono text-[11px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
       />
 
       {/* ─── SCOPE TOGGLE ────────────────────────────── */}
@@ -1006,7 +1006,7 @@ export function Takedowns() {
             search={{ value: search, onChange: handleSearch, placeholder: 'Search by brand, handle, or URL...' }}
             actions={
               <select
-                className="rounded-md px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider"
+                className="rounded-md px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider"
                 style={{
                   background: 'var(--bg-input)',
                   border: '1px solid var(--border-base)',

@@ -24,7 +24,7 @@ function BrandRow({ row, onClick }: { row: TrademarkOverviewRow; onClick: () => 
     >
       <div className="flex-1 min-w-0">
         <div className="font-mono text-sm text-[var(--text-primary)] truncate">{row.brand_name}</div>
-        <div className="font-mono text-[10px] text-white/55 truncate">{row.domain ?? 'no domain'}</div>
+        <div className="font-mono text-[11px] text-white/55 truncate">{row.domain ?? 'no domain'}</div>
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
@@ -40,7 +40,7 @@ function BrandRow({ row, onClick }: { row: TrademarkOverviewRow; onClick: () => 
         {!hasFindings && <Badge variant="success">Clean</Badge>}
       </div>
 
-      <div className="w-28 flex-shrink-0 text-right font-mono text-[10px] text-white/55">
+      <div className="w-28 flex-shrink-0 text-right font-mono text-[11px] text-white/55">
         {row.assets_active} asset{row.assets_active === 1 ? '' : 's'}
       </div>
     </button>
@@ -103,7 +103,7 @@ export function Trademarks() {
       ) : (
         <Card>
           <div className="divide-y divide-white/[0.04]">
-            <div className="px-4 py-2 flex items-center gap-4 font-mono text-[9px] uppercase tracking-widest text-white/55 border-b border-white/10">
+            <div className="px-4 py-2 flex items-center gap-4 font-mono text-[11px] uppercase tracking-widest text-white/55 border-b border-white/10">
               <div className="flex-1">Brand</div>
               <div className="flex-shrink-0">Findings</div>
               <div className="w-28 flex-shrink-0 text-right">Assets</div>

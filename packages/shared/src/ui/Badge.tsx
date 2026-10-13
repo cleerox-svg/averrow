@@ -155,8 +155,8 @@ const LEGACY_MAP: Partial<Record<LegacyVariant, Severity>> = {
 };
 
 const SIZE: Record<BadgeSize, { fontSize: number; padding: string; radius: number }> = {
-  xs: { fontSize: 9,  padding: '2px 6px',  radius: 6 },
-  sm: { fontSize: 9,  padding: '3px 8px',  radius: 99 },
+  xs: { fontSize: 11,  padding: '2px 6px',  radius: 6 },
+  sm: { fontSize: 11,  padding: '3px 8px',  radius: 99 },
   // md is 11px (ACCOUNT_DESIGN_SPEC §6: badge text floor on the account surface).
   md: { fontSize: 11, padding: '4px 10px', radius: 99 },
 };

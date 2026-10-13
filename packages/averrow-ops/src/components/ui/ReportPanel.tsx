@@ -152,7 +152,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
             }} />
             <h2 style={{
               fontSize: 11, fontWeight: 800, color: 'var(--amber-text)',
-              fontFamily: 'var(--font-mono)', letterSpacing: '0.16em',
+              fontFamily: 'var(--font-mono)', letterSpacing: '0.12em',
               textTransform: 'uppercase', margin: 0,
             }}>
               {section.content}
@@ -190,7 +190,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
           {(section.items ?? []).map((item, i) => (
             <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <span style={{
-                color: 'var(--amber-text)', fontSize: 10, marginTop: 4,
+                color: 'var(--amber-text)', fontSize: 11, marginTop: 4,
                 flexShrink: 0, fontFamily: 'var(--font-mono)',
               }}>›</span>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>

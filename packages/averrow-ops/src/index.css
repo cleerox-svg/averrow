@@ -181,7 +181,7 @@
   gap: 4px;
   padding: 2px 8px;
   border-radius: 4px;
-  font-size: 0.65rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -354,7 +354,7 @@
 .section-label {
   font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--amber-text);
   font-family: var(--font-mono);
@@ -413,7 +413,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.65rem;
+  font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   color: var(--sev-info);
@@ -485,9 +485,9 @@
   background: var(--amber-glow);
   border-right: 1px solid rgba(229, 168, 50, 0.2);
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.12em;
   /* Theme-aware — the hardcoded hex was ~1.7:1 (washed-out gold-on-tan)
      against the light-theme --amber-glow badge background. --amber-text
      is --amber itself in dark (identical to before) and the AA-safe
@@ -525,7 +525,7 @@
   gap: 8px;
   padding: 0 24px;
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.6875rem;
   letter-spacing: 0.02em;
   color: rgba(255, 255, 255, 0.7);
   border-right: 1px solid rgba(255, 255, 255, 0.05);
@@ -562,13 +562,13 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-size: 0.55rem;
+  font-size: 0.6875rem;
   opacity: 0.7;
 }
 
 .ticker-bullet {
   color: rgba(229, 168, 50, 0.4);
-  font-size: 0.5rem;
+  font-size: 0.6875rem;
   padding: 0 4px;
 }
 [data-theme="light"] .ticker-bullet {

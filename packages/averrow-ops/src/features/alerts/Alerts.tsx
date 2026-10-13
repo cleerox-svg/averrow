@@ -130,13 +130,18 @@ function platformBadgeStyle(platform: string): React.CSSProperties {
     platform === 'LinkedIn'  ? '#0a8ab5' :
     platform === 'Instagram' ? '#ec4899' :
     platform === 'Facebook'  ? '#3b82f6' :
-    platform === 'X'         ? 'rgba(255,255,255,0.80)' :
+    platform === 'X'         ? 'var(--text-primary)' :
                                'var(--blue)'  // Social fallback
   );
+  // Raw brand hues fail AA as 11px text (badly so in light theme), so the
+  // text is pulled toward --text-primary — lighter on dark, darker on light —
+  // while the fill/border keep the brand hue. color-mix (not hex-alpha
+  // suffixes) so var() accents get their tint too.
+  const isBlue = accent === '#0a8ab5' || accent === 'var(--blue)';
   return {
-    background: `${accent}26`, // ~15% opacity
-    color: accent,
-    border: `1px solid ${accent}4d`, // ~30% opacity
+    background: `color-mix(in srgb, ${accent} 15%, transparent)`,
+    color: isBlue ? 'var(--blue-text)' : `color-mix(in srgb, ${accent} 55%, var(--text-primary))`,
+    border: `1px solid color-mix(in srgb, ${accent} 30%, transparent)`,
   };
 }
 
@@ -243,17 +248,17 @@ interface PillGroupProps {
 
 function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[9px] uppercase tracking-widest text-white/55 mr-1">{label}</span>
+    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+      <span className="font-mono text-[11px] uppercase tracking-widest text-white/55 mr-1">{label}</span>
       {options.map(o => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
+            'font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
             selected === o.value
               ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
-              : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
+              : 'bg-white/[0.03] text-[var(--text-secondary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-primary)]',
           )}
         >
           {o.label}
@@ -329,7 +334,7 @@ function BrandGroupCard({
             </span>
             <Badge variant="critical">{group.alerts.length} alerts</Badge>
           </div>
-          <div className="font-mono text-[10px] text-[var(--text-secondary)]">{group.brand_domain ?? ''}</div>
+          <div className="font-mono text-[11px] text-[var(--text-secondary)]">{group.brand_domain ?? ''}</div>
         </div>
         <svg
           className={cn('w-4 h-4 text-[var(--text-secondary)] transition-transform', expanded && 'rotate-180')}
@@ -356,7 +361,7 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--amber-glow)]')}
+                  className={cn('flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5', isSelected && 'bg-[var(--amber-glow)]')}
                 >
                   {/* Severity dot — uses the shared design-system
                       primitive so the dot color + pulse semantics
@@ -375,13 +380,13 @@ function BrandGroupCard({
                     aria-expanded={isSelected}
                     aria-controls={`alert-detail-${alert.id}`}
                     onClick={e => { e.stopPropagation(); onSelectAlert(alert); }}
-                    className="ds-focusable flex-1 min-w-0 text-left rounded-sm"
+                    className="ds-focusable flex-1 min-w-0 basis-[calc(100%-1.25rem)] sm:basis-0 text-left rounded-sm"
                   >
                     <span className="block">
                       <span className="font-mono text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
-                      <span className="font-mono text-[10px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>on</span>
+                      <span className="font-mono text-[11px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>on</span>
                       <span
-                        className="ml-1.5 inline-flex items-center font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                        className="ml-1.5 inline-flex items-center font-mono text-[11px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
                         style={platformBadgeStyle(platform)}
                       >
                         {platform}
@@ -391,7 +396,7 @@ function BrandGroupCard({
                       <span
                         className="block"
                         style={{
-                          fontSize:   9,
+                          fontSize:   11,
                           color:      'var(--text-muted)',
                           fontFamily: 'var(--font-mono)',
                           marginTop:  2,
@@ -427,7 +432,7 @@ function BrandGroupCard({
                     const s = AI_VERDICT_STYLE[v.verdict];
                     return (
                       <span
-                        className="font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
+                        className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
                         style={{ background: s.bg, color: s.color }}
                         title={`AI confidence ${v.confidence}%`}
                       >
@@ -453,7 +458,7 @@ function BrandGroupCard({
                   {/* Owner — who has claimed this signal (W9). */}
                   {alert.staff_assigned_to && (
                     <span
-                      className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+                      className="font-mono text-[11px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
                       style={{ background: 'rgba(124,138,255,0.14)', color: '#9aa6ff' }}
                       title={alert.staff_assigned_to === currentUserId
                         ? 'Assigned to you'
@@ -473,10 +478,10 @@ function BrandGroupCard({
                     const breach = sla.state === 'breach';
                     return (
                       <span
-                        className="font-mono text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
+                        className="font-mono text-[11px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded flex-shrink-0"
                         style={{
                           background: breach ? 'rgba(239,68,68,0.12)' : 'rgba(251,191,36,0.12)',
-                          color: breach ? '#f87171' : '#fbbf24',
+                          color: breach ? 'var(--sev-critical-text)' : 'var(--sev-medium-text)',
                         }}
                         title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
                       >
@@ -486,7 +491,7 @@ function BrandGroupCard({
                   })()}
 
                   {/* Time */}
-                  <span className="font-mono text-[10px] text-[var(--text-secondary)] tabular-nums w-14 text-right flex-shrink-0">
+                  <span className="font-mono text-[11px] text-[var(--text-secondary)] tabular-nums w-14 text-right flex-shrink-0">
                     {timeAgo(alert.created_at)}
                   </span>
                 </DataRow>
@@ -500,7 +505,7 @@ function BrandGroupCard({
               {remaining > 0 && !showAll && (
                 <button
                   onClick={() => setShowAll(true)}
-                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber-text)' }}
+                  className="font-mono text-[11px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber-text)' }}
                 >
                   + {remaining} more
                 </button>
@@ -508,7 +513,7 @@ function BrandGroupCard({
               {showAll && remaining > 0 && (
                 <button
                   onClick={() => setShowAll(false)}
-                  className="font-mono text-[10px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                  className="font-mono text-[11px] font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
                 >
                   Show less
                 </button>
@@ -519,7 +524,7 @@ function BrandGroupCard({
                 <span
                   role="note"
                   aria-label={READ_ONLY_COPY}
-                  className="font-mono text-[10px] uppercase tracking-wide text-[var(--text-secondary)]"
+                  className="font-mono text-[11px] uppercase tracking-wide text-[var(--text-secondary)]"
                 >
                   Read-only
                 </span>
@@ -528,7 +533,7 @@ function BrandGroupCard({
                 <button
                   onClick={onAcknowledgeAll}
                   disabled={bulkBusy}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
                   {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge All'}
                 </button>
@@ -537,7 +542,7 @@ function BrandGroupCard({
               <button
                 onClick={onCreateTakedowns}
                 disabled={bulkBusy}
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-accent hover:bg-accent/80 transition-all disabled:opacity-50" style={{ color: 'var(--text-primary)' }}
+                className="font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-accent hover:bg-accent/80 transition-all disabled:opacity-50 text-white"
               >
                 {bulk?.kind === 'takedown' ? bulk.text : 'Create Takedowns'}
               </button>
@@ -588,7 +593,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
         <div className="flex items-center gap-2">
           <Badge severity={severityToBadge(alert.severity)}>{alert.severity}</Badge>
           <span
-            className="font-mono text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
+            className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded"
             style={{
               background:
                 alert.status === 'new' ? 'var(--sev-high-bg)' :
@@ -617,7 +622,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* LEFT — Alert Details */}
         <div className="space-y-3">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Alert Details</div>
+          <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Alert Details</div>
 
           <Link
             to={`/brands/${alert.brand_id}`}
@@ -630,7 +635,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               className="w-4 h-4 rounded-sm"
             />
             <span className="font-display text-sm font-bold group-hover:text-[var(--amber-text)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
-            <span className="font-mono text-[10px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
+            <span className="font-mono text-[11px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
           </Link>
 
           {/* Outbound pivots — the detail used to be a dead-end (no links
@@ -640,23 +645,23 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             {alert.source_type === 'threat' && alert.source_id && (
               <Link
                 to={`/console?tab=threats&q=${encodeURIComponent(alert.source_id)}`}
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
+                className="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
               >
                 View source threat →
               </Link>
             )}
             <Link
               to={`/console?tab=threats&brand_id=${encodeURIComponent(alert.brand_id)}`}
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
+              className="inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
             >
               View brand's threats →
             </Link>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Platform</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Platform</div>
             <span
-              className="inline-flex items-center font-mono text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded"
+              className="inline-flex items-center font-mono text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded"
               style={platformBadgeStyle(platform)}
             >
               {platform}
@@ -664,13 +669,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Handle Detected</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Handle Detected</div>
             <span className="font-mono text-[13px] font-bold" style={{ color: 'var(--text-primary)' }}>{handle}</span>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Impersonation Score</div>
+              <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Impersonation Score</div>
               <div className="flex items-baseline gap-2">
                 <span
                   className="font-display text-[28px] font-extrabold tabular-nums leading-none"
@@ -685,12 +690,12 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           )}
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Detected</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Detected</div>
             <span className="font-mono text-[11px] text-[var(--text-secondary)]">{timeAgo(alert.created_at)}</span>
           </div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Source</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-0.5">Source</div>
             <span className="font-mono text-[11px] text-[var(--text-tertiary)]">
               {alert.source_type ? humanizeType(alert.source_type) : 'Social Monitor Agent'}
             </span>
@@ -699,16 +704,16 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
         {/* CENTER — Evidence & Assessment */}
         <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Evidence & Assessment</div>
+          <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Evidence & Assessment</div>
 
           <div>
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Summary</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Summary</div>
             <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.summary}</p>
           </div>
 
           {score !== null && (
             <div>
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Score</div>
+              <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Score</div>
               <div className="w-full h-2 rounded-full bg-white/[0.06] overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all"
@@ -722,13 +727,13 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           )}
 
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">AI Assessment</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">AI Assessment</div>
             {alert.ai_assessment ? (
               <div className="space-y-2">
                 <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">{alert.ai_assessment}</p>
                 {alert.ai_recommendations && (
                   <div>
-                    <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Recommendations</div>
+                    <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Recommendations</div>
                     <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">{alert.ai_recommendations}</p>
                   </div>
                 )}
@@ -741,7 +746,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
         {/* RIGHT — Actions */}
         <div className="space-y-3 md:border-l md:border-[var(--border-base)] md:pl-5">
-          <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
+          <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-muted)] mb-2">Actions</div>
 
           {!canEdit && (
             <p id={`alert-readonly-${alert.id}`} className="text-[11px] leading-relaxed text-[var(--text-secondary)]">
@@ -754,7 +759,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
           <div className="pb-2 mb-1 border-b border-[var(--border-base)] space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Averrow owner</div>
+                <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide">Averrow owner</div>
                 <div className="font-mono text-[11px] truncate" style={{ color: alert.staff_assigned_to ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                   {alert.staff_assigned_to
                     ? (alert.staff_assigned_to === currentUserId ? 'You' : (alert.staff_assigned_to_name || alert.staff_assigned_to_email || 'Assigned'))
@@ -765,7 +770,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onAssign(null)}
                   disabled={isAssigning}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
+                  className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50 flex-shrink-0"
                 >
                   Unassign
                 </button>
@@ -773,7 +778,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => currentUserId && onAssign(currentUserId)}
                   disabled={isAssigning || !currentUserId}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
+                  className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
                 >
                   {alert.staff_assigned_to ? 'Take over' : 'Assign to me'}
                 </button>
@@ -781,7 +786,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             </div>
             {alert.assigned_to && (
               <div className="min-w-0">
-                <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide">Customer assignee</div>
+                <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide">Customer assignee</div>
                 <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-primary)' }}>
                   {alert.assigned_to_name || alert.assigned_to_email || 'Assigned'}
                 </div>
@@ -795,14 +800,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onUpdate('acknowledged')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
                 >
                   Acknowledge
                 </button>
                 <button
                   onClick={() => onUpdate('false_positive')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
                 >
                   Dismiss
                 </button>
@@ -813,14 +818,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onUpdate('resolved')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md bg-[#28A050] text-white hover:bg-[#28A050]/80 transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md bg-[#28A050] text-white hover:bg-[#28A050]/80 transition-all disabled:opacity-50"
                 >
                   Mark Resolved
                 </button>
                 <button
                   onClick={() => onUpdate('new')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
                 >
                   Re-open
                 </button>
@@ -830,7 +835,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
               >
                 Re-open
               </button>
@@ -839,7 +844,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               <button
                 onClick={() => onUpdate('new')}
                 disabled={isUpdating}
-                className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
+                className="w-full font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-white/10 text-[var(--text-tertiary)] hover:bg-white/[0.04] transition-all disabled:opacity-50"
               >
                 Re-open
               </button>
@@ -848,7 +853,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
 
           {/* Notes */}
           <div className="pt-2">
-            <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Internal notes — not visible to customers</div>
+            <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">Internal notes — not visible to customers</div>
             {!canEdit && !(alert.staff_notes ?? '') ? (
               <p className="font-mono text-[11px] text-[var(--text-secondary)]">No notes</p>
             ) : (
@@ -867,7 +872,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               <button
                 onClick={() => onUpdate(alert.status, notes.trim() ? notes : null)}
                 disabled={isUpdating}
-                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber-text)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                className="mt-1.5 font-mono text-[11px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber-text)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
               >
                 Save Notes
               </button>
@@ -881,7 +886,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               auto-dismissed instead of it silently vanishing. */}
           {(alert.status === 'resolved' || alert.status === 'false_positive') && alert.resolution_notes && (
             <div className="pt-2">
-              <div className="font-mono text-[9px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">
+              <div className="font-mono text-[11px] text-[var(--text-secondary)] uppercase tracking-wide mb-1">
                 {alert.status === 'false_positive' ? 'Dismissal reason' : 'Resolution notes'}
                 {isAutoTriaged(alert.resolution_notes) && (
                   <span className="ml-1.5 text-[var(--text-muted)] normal-case">· auto-triaged</span>
@@ -1220,7 +1225,7 @@ export function Alerts() {
       {/* Auto-triage transparency (W5/W7) — how much noise rule + AI triage
           has cleared, so the auto-dismissals aren't a black box. */}
       {stats && stats.dismissed > 0 && (
-        <div className="font-mono text-[10px] text-[var(--text-muted)] -mt-2">
+        <div className="font-mono text-[11px] text-[var(--text-muted)] -mt-2">
           Auto-triage cleared {stats.auto_dismissed} of {stats.dismissed} dismissed signals
           {stats.dismissed > 0 ? ` (${Math.round((stats.auto_dismissed / stats.dismissed) * 100)}%)` : ''} — rule + AI judge
         </div>
@@ -1245,7 +1250,7 @@ export function Alerts() {
           </span>
           <button
             onClick={() => setSlaFilter('breached')}
-            className="ml-auto font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[var(--amber-text)] hover:bg-afterburner-muted transition-all"
+            className="ml-auto font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-afterburner-border text-[var(--amber-text)] hover:bg-afterburner-muted transition-all"
           >
             Show breached
           </button>
@@ -1258,7 +1263,7 @@ export function Alerts() {
 
       {/* Saved views (W6) — presets + user-pinned filter sets */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest text-white/55 mr-0.5">
+        <span className="flex items-center gap-1 font-mono text-[11px] uppercase tracking-widest text-white/55 mr-0.5">
           <Star size={11} /> Views
         </span>
         {allViews.map(v => {
@@ -1268,7 +1273,7 @@ export function Alerts() {
             <span
               key={v.id}
               className={cn(
-                'group inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
+                'group inline-flex items-center gap-1 font-mono text-[11px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
                 active
                   ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
                   : 'bg-white/[0.03] text-[var(--text-tertiary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-secondary)]',
@@ -1291,7 +1296,7 @@ export function Alerts() {
         <button
           onClick={onSaveView}
           disabled={viewIsEmpty(currentView)}
-          className="font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-white/25 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          className="font-mono text-[11px] font-semibold px-2.5 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:border-white/25 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
           title={viewIsEmpty(currentView) ? 'Apply some filters first' : 'Save current filters as a view'}
         >
           + Save current
@@ -1393,10 +1398,10 @@ export function Alerts() {
             onClick={() => setMineOnly(m => !m)}
             disabled={!currentUserId}
             className={cn(
-              'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
+              'font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
               mineOnly
                 ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
-                : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
+                : 'bg-white/[0.03] text-[var(--text-secondary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-primary)]',
             )}
             title="Show only signals assigned to me"
           >
@@ -1494,7 +1499,7 @@ export function Alerts() {
 
       {/* Total count */}
       {!alertsLoading && alertsData && (
-        <div className="text-center font-mono text-[10px] text-white/55 pb-4">
+        <div className="text-center font-mono text-[11px] text-white/55 pb-4">
           Showing {alerts.length} of {alertsData.total} alerts
         </div>
       )}

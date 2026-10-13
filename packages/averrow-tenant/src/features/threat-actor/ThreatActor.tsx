@@ -29,7 +29,7 @@ export function ThreatActor() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Threat-Actor Intelligence</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -50,7 +50,7 @@ export function ThreatActor() {
         <>
           <HeadlineMetrics totals={data.totals} />
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Actors targeting your brands</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-3">Actors targeting your brands</h2>
             {data.actors.length === 0 ? (
               <NoActors />
             ) : (
@@ -110,7 +110,7 @@ function HeadlineMetrics({ totals }: { totals: ThreatActorTotals }) {
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
@@ -139,12 +139,12 @@ function ActorRow({ actor: a }: { actor: ThreatActorSummary }) {
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-base font-semibold text-white/95">{a.name}</span>
             {a.country_code && (
-              <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+              <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
                 {a.country_code}
               </span>
             )}
             {a.capability && (
-              <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+              <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
                 {CAPABILITY_LABELS[a.capability] ?? a.capability}
               </span>
             )}
@@ -184,7 +184,7 @@ function Stat({ label, value, crit }: { label: string; value: number; crit?: boo
                   'text-white/85';
   return (
     <div className="text-right">
-      <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-2xl font-bold tabular-nums ${accent}`}>{value}</div>
     </div>
   );
@@ -197,7 +197,7 @@ function ConfidencePill({ confidence }: { confidence: string }) {
     confidence === 'medium'    ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                                  'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {confidence}
     </span>
   );
@@ -210,7 +210,7 @@ function StatusPill({ status }: { status: string }) {
     status === 'dormant'   ? 'text-white/55 bg-white/[0.04]    border-white/[0.08]' :
                              'text-white/55 bg-white/[0.04]    border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {STATUS_LABELS[status] ?? status}
     </span>
   );

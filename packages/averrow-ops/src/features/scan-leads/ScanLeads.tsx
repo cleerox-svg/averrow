@@ -193,14 +193,14 @@ function ScanLeadRow({ lead, onOpen }: { lead: ScanLead; onOpen: (id: string) =>
       </Td>
       <Td>
         <div className="font-mono text-xs text-[var(--text-primary,var(--text-primary))]">{lead.email}</div>
-        <div className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))]">
+        <div className="text-[11px] text-[var(--text-tertiary,var(--text-tertiary))]">
           {lead.name ? `${lead.name} · ` : ""}<span className="font-mono">#{shortId(lead.id)}</span>
         </div>
       </Td>
       <Td>
         <div className="font-mono text-xs">{lead.domain ?? "—"}</div>
         {lead.correlated_brand_id ? (
-          <div className="text-[10px] text-[var(--green,#3CB878)]">✓ correlated</div>
+          <div className="text-[11px] text-[var(--green,#3CB878)]">✓ correlated</div>
         ) : null}
       </Td>
       <Td className="text-xs">{lead.company ?? "—"}</Td>
@@ -234,7 +234,7 @@ function ScanLeadCard({ lead, onOpen }: { lead: ScanLead; onOpen: (id: string) =
     >
       <div className="flex items-center justify-between gap-2">
         <Badge severity={STATUS_BADGE[lead.status]}>{lead.status.replace("_", " ")}</Badge>
-        <span className="text-[10px] text-[var(--text-tertiary,var(--text-tertiary))] font-mono">
+        <span className="text-[11px] text-[var(--text-tertiary,var(--text-tertiary))] font-mono">
           {relativeTime(lead.created_at)}
         </span>
       </div>
@@ -270,7 +270,7 @@ function FunnelStateChips({ lead }: { lead: ScanLead }) {
 function Chip({ on, children }: { on: boolean; children: React.ReactNode }) {
   return (
     <span
-      className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm border"
+      className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded-sm border"
       style={
         on
           ? { background: "rgba(60,184,120,0.10)", color: "var(--green,#3CB878)", borderColor: "rgba(60,184,120,0.3)" }
@@ -891,7 +891,7 @@ function ScanLeadDetailBody({
 function Field({ label, value, mono }: { label: string; value: string | null; mono?: boolean }) {
   return (
     <div>
-      <dt className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-tertiary,#8A8F9C)]">
+      <dt className="text-[11px] font-mono uppercase tracking-wider text-[var(--text-tertiary,#8A8F9C)]">
         {label}
       </dt>
       <dd className={`text-[var(--text-primary,#fff)] ${mono ? "font-mono text-xs" : "text-sm"} break-all`}>

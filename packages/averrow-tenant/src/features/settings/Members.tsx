@@ -38,7 +38,7 @@ export function Members() {
 
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Settings</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Settings</div>
           <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Members</h1>
           <p className="mt-1 text-sm text-white/55 max-w-2xl">
             Anyone with access to {user?.organization?.name ?? 'this organization'}. Org admins and owners can invite, remove, and change roles.
@@ -277,12 +277,12 @@ function MemberRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-white/90 font-medium truncate">{member.user_name || member.email}</span>
           {member.role === 'owner' && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5" title="Org owner">
+            <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5" title="Org owner">
               <Crown size={10} /> Owner
             </span>
           )}
           {isSelf && (
-            <span className="text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
               You
             </span>
           )}
@@ -387,11 +387,11 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-white/85 truncate">{invite.email}</span>
             {isExpired ? (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.30] rounded px-1.5 py-0.5">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.30] rounded px-1.5 py-0.5">
                 Expired
               </span>
             ) : (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
                 Pending
               </span>
             )}
@@ -439,20 +439,20 @@ function InviteRow({ invite, canManage }: { invite: OrgInvite; canManage: boolea
             Email delivery unavailable — share this fresh link:
           </p>
           <div className="flex items-center gap-2">
-            <code className="flex-1 min-w-0 text-[10px] font-mono text-white/75 bg-bg-page border border-white/[0.06] rounded px-2 py-1 truncate">
+            <code className="flex-1 min-w-0 text-[11px] font-mono text-white/75 bg-bg-page border border-white/[0.06] rounded px-2 py-1 truncate">
               {resentUrl}
             </code>
             <button
               type="button"
               onClick={() => copyToClipboard(resentUrl)}
-              className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[10px] font-mono text-white/65 hover:text-white border border-white/[0.08] rounded hover:border-white/[0.20] transition-colors"
+              className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-mono text-white/65 hover:text-white border border-white/[0.08] rounded hover:border-white/[0.20] transition-colors"
             >
               <Copy size={11} /> Copy
             </button>
             <button
               type="button"
               onClick={() => setResentUrl(null)}
-              className="flex-shrink-0 text-[10px] font-mono text-white/55 hover:text-white/70 px-1"
+              className="flex-shrink-0 text-[11px] font-mono text-white/55 hover:text-white/70 px-1"
             >
               ✕
             </button>

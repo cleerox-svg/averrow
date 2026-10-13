@@ -68,14 +68,14 @@ export function IntegrationCard({
       </div>
 
       {isConnected && !isError && (
-        <div className="text-[10px] text-white/55 font-mono space-y-0.5">
+        <div className="text-[11px] text-white/55 font-mono space-y-0.5">
           {lastSync && <div>Last sync: {new Date(lastSync).toLocaleDateString()}</div>}
           <div>{eventsSent ?? 0} events sent</div>
         </div>
       )}
 
       {isError && lastError && (
-        <div className="text-[10px] text-accent/70 font-mono truncate">{lastError}</div>
+        <div className="text-[11px] text-accent/70 font-mono truncate">{lastError}</div>
       )}
 
       <div className="flex gap-2 mt-auto">

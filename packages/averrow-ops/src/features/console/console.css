@@ -3,7 +3,7 @@
 .console-v4 { padding: 22px 24px 44px; }
 
 .console-head { display: flex; align-items: flex-end; gap: 14px; }
-.console-crumb { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .18em; color: var(--text-muted); }
+.console-crumb { font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; color: var(--text-muted); }
 .console-title { font-size: 30px; font-weight: 800; letter-spacing: -.6px; margin: 4px 0 0; line-height: 1; }
 .console-live { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 4px; font-family: var(--font-mono); font-size: 11px; letter-spacing: .12em; color: var(--green-text); }
 .console-live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); animation: console-ping 1.8s ease-in-out infinite; }

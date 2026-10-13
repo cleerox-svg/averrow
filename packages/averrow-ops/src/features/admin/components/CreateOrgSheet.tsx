@@ -219,7 +219,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                   placeholder="acme-corporation"
                   className="flex-1"
                 />
-                <span className="text-[10px] text-white/55 font-mono shrink-0">.averrow.com</span>
+                <span className="text-[11px] text-white/55 font-mono shrink-0">.averrow.com</span>
               </div>
             </div>
             <div>
@@ -273,7 +273,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                         <span className="text-sm text-[color:var(--text-primary)]">{r.name}</span>
                         <span className="text-[11px] text-white/55 font-mono ml-2">{r.canonical_domain}</span>
                       </div>
-                      <span className="text-[10px] text-white/55">{r.threat_count} threats</span>
+                      <span className="text-[11px] text-white/55">{r.threat_count} threats</span>
                     </button>
                   ))}
                 </div>
@@ -296,7 +296,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                         <button
                           type="button"
                           onClick={() => setPrimaryBrand(b.id)}
-                          className="text-[10px] font-mono text-white/55 hover:text-[color:var(--amber)] transition-colors"
+                          className="text-[11px] font-mono text-white/55 hover:text-[color:var(--amber)] transition-colors"
                         >
                           Set Primary
                         </button>
@@ -304,7 +304,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                       <button
                         type="button"
                         onClick={() => removeBrand(b.id)}
-                        className="text-[10px] font-mono text-accent/60 hover:text-accent transition-colors"
+                        className="text-[11px] font-mono text-accent/60 hover:text-accent transition-colors"
                       >
                         &times;
                       </button>
@@ -389,7 +389,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
 
             {/* Summary */}
             <div className="mt-4 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] space-y-2">
-              <div className="font-mono text-[9px] uppercase tracking-widest text-[color:var(--text-secondary)]">Summary</div>
+              <div className="font-mono text-[11px] uppercase tracking-widest text-[color:var(--text-secondary)]">Summary</div>
               <div className="text-[11px] text-[color:var(--text-primary)]/70 space-y-1">
                 <div><span className="text-[color:var(--text-tertiary)]">Org:</span> {name}</div>
                 <div><span className="text-[color:var(--text-tertiary)]">Plan:</span> {plan} · {maxBrands} brands · {maxMembers} members</div>

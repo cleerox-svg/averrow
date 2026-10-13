@@ -30,7 +30,7 @@ export function MonitoringRules() {
   return (
     <div className="max-w-3xl space-y-6">
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Account</div>
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Account</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Monitoring Rules</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           Per-brand controls over what generates a signal — a watchlist of extra keywords, domains to suppress, the severity floor, and how you're notified.
@@ -115,7 +115,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
                 disabled={!canEdit}
                 onClick={() => toggleSeverity(s)}
                 className={[
-                  'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
+                  'px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
                   on ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                 ].join(' ')}
               >

@@ -94,12 +94,12 @@ export function FirmographicsCard({ lead, onRefresh, refreshing }: Firmographics
         <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
           {rows.map((row) => (
             <div key={row.label} className="contents">
-              <dt className="font-mono text-[10px] uppercase self-center" style={{ color: 'var(--text-tertiary)' }}>
+              <dt className="font-mono text-[11px] uppercase self-center" style={{ color: 'var(--text-tertiary)' }}>
                 {row.label}
               </dt>
               <dd className="text-sm">
                 {row.kind === 'badge' ? (
-                  <Badge variant={row.variant ?? 'default'} className="text-[10px]">{row.value}</Badge>
+                  <Badge variant={row.variant ?? 'default'} className="text-[11px]">{row.value}</Badge>
                 ) : row.kind === 'link' ? (
                   <a
                     href={row.href}

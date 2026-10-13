@@ -53,8 +53,8 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
       boxShadow:    '0 8px 32px rgba(0,0,0,0.30), inset 0 1px 0 var(--border-base)',
     }}>
       <div style={{
-        fontSize: 10, fontFamily: 'var(--font-mono)',
-        letterSpacing: '0.14em', color: 'var(--text-muted)',
+        fontSize: 11, fontFamily: 'var(--font-mono)',
+        letterSpacing: '0.12em', color: 'var(--text-muted)',
         marginBottom: 6, textTransform: 'uppercase',
       }}>
         {label}
@@ -125,7 +125,7 @@ export function ThreatAreaChart({
             <XAxis
               dataKey="label"
               tick={{
-                fontSize: 9,
+                fontSize: 11,
                 fontFamily: 'var(--font-mono)',
                 fill: 'var(--text-muted)',
                 letterSpacing: '0.05em',
@@ -139,7 +139,7 @@ export function ThreatAreaChart({
           {showYAxis && (
             <YAxis
               tick={{
-                fontSize: 9,
+                fontSize: 11,
                 fontFamily: 'var(--font-mono)',
                 fill: 'var(--text-muted)',
               }}

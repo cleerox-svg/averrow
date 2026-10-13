@@ -72,7 +72,7 @@ export function IntelligenceCard() {
           {alert.status !== 'resolved' && alert.status !== 'false_positive' && (
             <AgePill createdAt={alert.created_at} severity={alert.severity} />
           )}
-          <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">
+          <span className="text-[11px] font-mono text-white/55 uppercase tracking-wider">
             {alert.alert_type.replace(/_/g, ' ')}
           </span>
         </div>
@@ -118,7 +118,7 @@ export function IntelligenceCard() {
         {/* Right rail — actions */}
         <aside className="space-y-4 lg:sticky lg:top-4">
           <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-            <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Disposition</div>
+            <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-2.5">Disposition</div>
             <div className="flex items-center justify-between gap-2">
               <StatusPill status={alert.status} />
               <AssigneeControl alert={alert} canTriage={canTriage} />
@@ -136,7 +136,7 @@ export function IntelligenceCard() {
 
           {canTriage && (
             <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-              <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Investigation</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-2.5">Investigation</div>
               <AddToInvestigation itemType="alert" itemId={alert.id} defaultTitle={alert.title} />
             </section>
           )}
@@ -161,7 +161,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {recs.length > 0 && (
         <section className="rounded-xl border border-amber/[0.16] bg-amber/[0.04] p-4">
-          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-2 flex items-center gap-1.5">
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-amber mb-2 flex items-center gap-1.5">
             <Sparkles size={11} /> Recommended actions
           </div>
           <ul className="space-y-1.5">
@@ -176,7 +176,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {alert.resolution_notes && (alert.status === 'resolved' || alert.status === 'false_positive') && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">Disposition note</div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-1.5">Disposition note</div>
           <p className="text-[12px] text-white/70 italic">{alert.resolution_notes}</p>
         </section>
       )}
@@ -280,7 +280,7 @@ function ActivityTab({ alert }: { alert: Alert }) {
             <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
             <div className="min-w-0">
               <div className="text-[12px] text-white/80">{e.label}</div>
-              {e.at && <div className="text-[10px] font-mono text-white/55">{new Date(e.at).toLocaleString()}</div>}
+              {e.at && <div className="text-[11px] font-mono text-white/55">{new Date(e.at).toLocaleString()}</div>}
               {e.note && <div className="text-[11px] text-white/55 italic mt-0.5">{e.note}</div>}
             </div>
           </li>
@@ -307,7 +307,7 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {shown.map((it) => (
         <div key={it.label} className={`rounded-lg border px-2.5 py-2 ${it.bad ? 'border-sev-critical/[0.25] bg-sev-critical/[0.06]' : 'border-white/[0.08] bg-white/[0.02]'}`}>
-          <div className="text-[9px] uppercase tracking-wider font-mono text-white/55">{it.label}</div>
+          <div className="text-[11px] uppercase tracking-wider font-mono text-white/55">{it.label}</div>
           <div className={`text-[12px] font-medium mt-0.5 ${it.bad ? 'text-sev-critical' : 'text-white/75'}`}>{it.value}</div>
         </div>
       ))}
@@ -341,7 +341,7 @@ function DefList({ rows }: { rows: Array<[string, ReactNode]> }) {
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5">
       {rows.map(([k, v]) => (
         <div key={k} className="flex flex-col gap-0.5 min-w-0">
-          <dt className="text-[9px] uppercase tracking-wider font-mono text-white/55">{k}</dt>
+          <dt className="text-[11px] uppercase tracking-wider font-mono text-white/55">{k}</dt>
           <dd className="text-[12.5px] text-white/80 break-words font-mono">{present(v) ? v : '—'}</dd>
         </div>
       ))}
@@ -368,7 +368,7 @@ function SeverityPill({ level }: { level: AlertSeverity | string }) {
     sev === 'high'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
-  return <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>{sev}</span>;
+  return <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>{sev}</span>;
 }
 
 const STATUS_TONE: Record<string, string> = {
@@ -381,13 +381,13 @@ const STATUS_TONE: Record<string, string> = {
 
 function StatusPill({ status }: { status: string }) {
   const tone = STATUS_TONE[status] ?? 'text-white/55 bg-white/[0.04] border-white/[0.08]';
-  return <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>{status.replace(/_/g, ' ')}</span>;
+  return <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>{status.replace(/_/g, ' ')}</span>;
 }
 
 function ConfidencePill({ value }: { value: number | null }) {
   if (value == null) return null;
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 text-white/60 bg-white/[0.04] border-white/[0.08]">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 text-white/60 bg-white/[0.04] border-white/[0.08]">
       {value}% conf
     </span>
   );

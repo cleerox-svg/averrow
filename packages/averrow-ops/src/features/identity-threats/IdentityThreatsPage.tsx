@@ -19,7 +19,7 @@ const VECTOR_LABELS: Record<string, string> = {
   device_code: 'Device-code phishing',
 };
 
-const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.18em]';
+const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.12em]';
 
 function mitreUrl(id: string): string {
   return `https://attack.mitre.org/techniques/${id.replace('.', '/')}/`;

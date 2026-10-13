@@ -44,7 +44,7 @@ export function TakedownDetail() {
           {isStaff && <StaffTriageNote />}
           {canTriage && takedownActionsFor(data.takedown.status).length > 0 && (
             <section className="rounded-xl border border-amber/[0.20] bg-amber/[0.04] p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-amber mb-2">Your decision</div>
+              <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-amber mb-2">Your decision</div>
               <p className="text-[12px] text-white/60 mb-3">
                 Review the evidence below, then approve to submit this request to the provider, or withdraw to decline it.
               </p>
@@ -63,18 +63,18 @@ export function TakedownDetail() {
 function Header({ takedown: t }: { takedown: TakedownDetailRow }) {
   return (
     <header className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
-      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Takedown · {t.target_type}</div>
+      <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Takedown · {t.target_type}</div>
       <h1 className="text-[22px] font-bold text-[var(--text-primary)] tracking-tight mt-0.5 truncate font-mono">{t.target_value}</h1>
 
       <div className="flex items-center gap-2 flex-wrap mt-3">
         <SeverityPill level={t.severity} />
         <StatusPill status={t.status} />
         {t.module_key && <ModuleChip module_key={t.module_key} />}
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
+        <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">
           source: {t.source_type ?? 'manual'}
         </span>
         {t.priority_score > 0 && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">
             priority: {t.priority_score}
           </span>
         )}
@@ -108,7 +108,7 @@ function Header({ takedown: t }: { takedown: TakedownDetailRow }) {
 function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-[12px] text-white/85 truncate ${mono ? 'font-mono' : ''}`}>{value}</div>
     </div>
   );
@@ -118,7 +118,7 @@ function EvidenceSection({ takedown: t }: { takedown: TakedownDetailRow }) {
   if (!t.evidence_summary && !t.evidence_detail) return null;
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-2">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-2">
         <FileText size={11} /> Evidence
       </div>
       <p className="text-[13px] text-white/85 leading-relaxed">{t.evidence_summary}</p>
@@ -129,7 +129,7 @@ function EvidenceSection({ takedown: t }: { takedown: TakedownDetailRow }) {
       )}
       {t.response_notes && (
         <>
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mt-4 mb-1">Provider response</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mt-4 mb-1">Provider response</div>
           <p className="text-[12px] text-white/65">{t.response_notes}</p>
         </>
       )}
@@ -143,7 +143,7 @@ function NoteSection({ takedown: t }: { takedown: TakedownDetailRow }) {
   if (!t.notes) return null;
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4" aria-label="Your team's note">
-      <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-2">Your team's note</div>
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-2">Your team's note</div>
       <p className="text-[12px] text-white/75 whitespace-pre-wrap">{t.notes}</p>
     </section>
   );
@@ -152,7 +152,7 @@ function NoteSection({ takedown: t }: { takedown: TakedownDetailRow }) {
 function SubmissionsSection({ rows }: { rows: TakedownSubmissionAuditRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+      <h2 className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">
         Submission audit trail <span className="text-white/55">({rows.length})</span>
       </h2>
       {rows.length === 0 ? (
@@ -182,7 +182,7 @@ function SubmissionRow({ row: r }: { row: TakedownSubmissionAuditRow }) {
     <article className={`rounded-xl border bg-bg-card p-4 ${tone}`}>
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <OutcomePill outcome={r.outcome} />
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           {SUBMITTER_KIND_LABELS[r.submitter_kind] ?? r.submitter_kind}
         </span>
         {r.ticket_id && (
@@ -226,7 +226,7 @@ function OutcomePill({ outcome }: { outcome: string }) {
     || outcome === 'failed' ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
                               'text-white/55   bg-white/[0.04]   border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {outcome}
     </span>
   );
@@ -239,7 +239,7 @@ function StatusPill({ status }: { status: string }) {
     status === 'submitted' || status === 'pending_response' ? 'text-amber bg-amber/[0.10] border-amber/[0.20]' :
                                                  'text-white/55 bg-white/[0.04] border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {STATUS_LABELS[status] ?? status}
     </span>
   );
@@ -253,7 +253,7 @@ function SeverityPill({ level }: { level: string }) {
     norm === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );
@@ -261,7 +261,7 @@ function SeverityPill({ level }: { level: string }) {
 
 function ModuleChip({ module_key }: { module_key: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {MODULE_LABELS[module_key] ?? module_key}
     </span>
   );

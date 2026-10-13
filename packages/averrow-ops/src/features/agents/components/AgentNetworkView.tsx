@@ -45,11 +45,12 @@ import { AgentIcon } from '@/components/brand/AgentIcon';
 import { ZoomIn, ZoomOut, Maximize2, Minimize2, RotateCcw } from 'lucide-react';
 
 // Negative-X origin for the feeds cluster — keeps every existing
-// agent LAYOUT entry stable. The visible viewport spans x = -120
-// to (VIEWBOX_W - 120) so feeds at x = -100..-20 land in the
-// new left margin.
-const VIEWBOX_X = -120;
-const VIEWBOX_W = 1400;
+// agent LAYOUT entry stable. The visible viewport spans x = -260
+// to (VIEWBOX_W - 260) so the two feed columns (x = -150 / -30) and their
+// left-anchored 11-unit labels (<= 10 chars, ~70 units) fit in the margin
+// without overlapping the neighbouring column.
+const VIEWBOX_X = -260;
+const VIEWBOX_W = 1540; // right edge unchanged at x = 1280
 const VIEWBOX_H = 780;
 const NODE_R    = 22;
 const ICON_SIZE = 24;
@@ -142,7 +143,7 @@ const SUPERVISION_TARGETS: string[] = [
 
 // ─── Headers labelling each cluster region ────────────────────────
 const CLUSTER_HEADERS: Array<{ x: number; y: number; label: string }> = [
-  { x: -100, y: 150, label: 'Feeds' },
+  { x: -235, y: 150, label: 'Feeds' },
   { x:  100, y: 130, label: 'Intelligence' },
   { x:  100, y: 440, label: 'Surveillance' },
   { x:  920, y:  90, label: 'Platform Ops' },
@@ -209,7 +210,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
   const FEED_LAYOUT = useMemo(() => {
     const map: Record<string, NodePos> = {};
     const COLS = 2;
-    const COL_X = [-100, -50];
+    const COL_X = [-150, -30];
     const TOP_Y = 180;
     const ROW_H = 38;
     visibleFeeds.forEach((f, i) => {
@@ -510,7 +511,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           : 'absolute top-2 right-2 z-10 flex gap-1 items-center'}
       >
         <span
-          className="px-2 grid place-items-center font-mono text-[10px]"
+          className="px-2 grid place-items-center font-mono text-[11px]"
           style={{ color: 'var(--text-tertiary)' }}
         >
           {Math.round(zoom * 100)}%
@@ -576,10 +577,10 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
             x={h.x}
             y={h.y}
             fontFamily="var(--font-mono)"
-            fontSize={9}
+            fontSize={11}
             fontWeight={700}
             fill="var(--text-tertiary)"
-            style={{ letterSpacing: '0.20em' }}
+            style={{ letterSpacing: '0.12em' }}
           >
             {h.label.toUpperCase()}
           </text>
@@ -746,24 +747,24 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 textAnchor="middle"
                 dominantBaseline="central"
                 fontFamily="var(--font-mono)"
-                fontSize={9}
+                fontSize={11}
                 fontWeight={700}
                 fill={tint}
               >
                 {(feed.display_name || feed.feed_name).slice(0, 2).toUpperCase()}
               </text>
               {/* Feed name to the left so it doesn't clash with the
-                  sentinel label. Truncated at 12 chars. */}
+                  sentinel label. Truncated at 10 chars. */}
               <text
                 x={-(FEED_R + 4)}
                 y={3}
                 textAnchor="end"
                 fontFamily="var(--font-mono)"
-                fontSize={8}
+                fontSize={11}
                 fill="var(--text-tertiary)"
                 style={{ letterSpacing: '0.04em' }}
               >
-                {(feed.display_name || feed.feed_name).slice(0, 12)}
+                {(feed.display_name || feed.feed_name).slice(0, 10)}
               </text>
             </g>
           );
@@ -934,7 +935,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 y={NODE_R + 14}
                 textAnchor="middle"
                 fontFamily="var(--font-mono)"
-                fontSize={9}
+                fontSize={11}
                 fontWeight={isSel ? 700 : 500}
                 fill={isSel ? 'var(--text-primary)' : 'var(--text-secondary)'}
                 style={{ letterSpacing: '0.06em' }}
@@ -945,7 +946,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           );
         })}
       </svg>
-      <div className="flex items-center gap-4 mt-2 font-mono text-[9px] tracking-wide uppercase flex-wrap" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="flex items-center gap-4 mt-2 font-mono text-[11px] tracking-wide uppercase flex-wrap" style={{ color: 'var(--text-tertiary)' }}>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--amber)' }} />
           Supervisor

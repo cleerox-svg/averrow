@@ -81,7 +81,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
           {breach && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                   Last Disclosed Breach
                 </span>
                 <Badge variant={breach.variant}>{breach.label}</Badge>
@@ -95,7 +95,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
 
           {hasNews && (
             <div>
-              <div className="font-mono text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Recent Security News
               </div>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
@@ -119,7 +119,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
           {has10k && (
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                   10-K Cybersecurity Mentions
                 </span>
                 <Badge variant={lead.cyber_10k_mentions! >= 10 ? 'high' : lead.cyber_10k_mentions! >= 5 ? 'medium' : 'low'}>
@@ -135,7 +135,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
 
           {hasMaturity && (
             <div className="flex items-center justify-between">
-              <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+              <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                 Security Maturity (AI)
               </span>
               <Badge variant={maturityVariant(lead.security_maturity)}>
@@ -146,7 +146,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
 
           {hasCISO && (
             <div>
-              <div className="font-mono text-[10px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Security Leader
               </div>
               <div className="text-sm" style={{ color: 'var(--text-primary)' }}>

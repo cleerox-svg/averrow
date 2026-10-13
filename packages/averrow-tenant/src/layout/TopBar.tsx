@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, LogOut, UserCircle, Settings as SettingsIcon, UserPlus } from 'lucide-react';
+import { Menu, ChevronDown, LogOut, UserCircle, Settings as SettingsIcon, UserPlus } from 'lucide-react';
 import { parseInitials } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
 
@@ -15,7 +15,7 @@ import { useAuth } from '@/lib/auth';
 // SHARED_LOGIN_SPEC §3 rule. Initials only — never the Google
 // profile picture.
 
-export function TopBar() {
+export function TopBar({ navOpen = false, onToggleNav, hamburgerRef }: { navOpen?: boolean; onToggleNav?: () => void; hamburgerRef?: Ref<HTMLButtonElement> }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,13 +54,26 @@ export function TopBar() {
   };
 
   return (
-    <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-white/[0.05] bg-bg-page/80 backdrop-blur">
-      <div>
-        <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/55">Organization</div>
-        <div className="text-sm font-semibold text-white/90">{orgName}</div>
+    <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-white/[0.05] bg-bg-page/80 backdrop-blur">
+      {onToggleNav && (
+        <button
+          type="button"
+          ref={hamburgerRef}
+          onClick={onToggleNav}
+          aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+          aria-controls="tenant-sidebar"
+          aria-expanded={navOpen}
+          className="md:hidden shrink-0 p-2 -ml-2 rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors"
+        >
+          <Menu size={20} />
+        </button>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">Organization</div>
+        <div className="text-sm font-semibold text-white/90 truncate">{orgName}</div>
       </div>
 
-      <div className="relative" ref={popoverRef}>
+      <div className="relative shrink-0" ref={popoverRef}>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
@@ -97,7 +110,7 @@ export function TopBar() {
                 {user?.email}
               </div>
               {user?.organization && (
-                <div className="text-[10px] font-mono uppercase tracking-[0.16em] text-amber mt-1.5">
+                <div className="text-[11px] font-mono uppercase tracking-[0.12em] text-amber mt-1.5">
                   {user.organization.role} · {user.organization.plan}
                 </div>
               )}

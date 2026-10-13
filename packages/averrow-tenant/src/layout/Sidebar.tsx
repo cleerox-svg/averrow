@@ -5,8 +5,9 @@
 // "Unlock" section with an upsell pill (clicks → /settings/modules
 // once that lands in Phase B).
 
+import type { Ref } from 'react';
 import { NavLink } from 'react-router-dom';
-import { Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, LayoutDashboard, ListFilter, FolderSearch, UserCog, type LucideIcon } from 'lucide-react';
+import { X, Globe, Users, Smartphone, EyeOff, Inbox, Award, Crosshair, Settings, Bell, AlertTriangle, Send, Sun, Moon, Laptop, ShieldAlert, SlidersHorizontal, ScrollText, LayoutDashboard, ListFilter, FolderSearch, UserCog, type LucideIcon } from 'lucide-react';
 import { useTenantModules, MODULE_LABELS, type ModuleKey } from '@/lib/modules';
 import { useCanViewAudit } from '@/lib/auditLog';
 import { useTheme } from '@/lib/useTheme';
@@ -50,7 +51,7 @@ function themeLabelFor(theme: 'auto' | 'dark' | 'light'): string {
   return 'Theme: light — click for auto';
 }
 
-export function Sidebar() {
+export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; onClose?: () => void; closeRef?: Ref<HTMLButtonElement> }) {
   const { data, isLoading } = useTenantModules();
   const { theme, cycle: cycleTheme } = useTheme();
   const ThemeIcon = themeIconFor(theme);
@@ -60,9 +61,25 @@ export function Sidebar() {
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
 
   return (
-    <aside className="w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]">
+    <aside
+      id="tenant-sidebar"
+      {...(open ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Main navigation' } : {})}
+      className={cn(
+        // Below md the sidebar is an off-canvas drawer (a permanent 240px
+        // column left ~150px of content at 390px and made every page scroll
+        // horizontally). From md up it is the static column it always was.
+        'w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]',
+        'fixed inset-y-0 left-0 z-40 transition-[transform,visibility] duration-200 motion-reduce:transition-none md:static md:z-auto md:translate-x-0 md:visible',
+        // Opening flips visibility instantly (0s) so focus can move in on the same
+        // frame; closing keeps it visible for the 200ms slide-out, then hides it.
+        open
+          ? 'translate-x-0 visible [transition-duration:200ms,0s]'
+          : '-translate-x-full invisible [transition-duration:200ms,200ms]',
+      )}
+    >
       <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
         <AverrowLogo />
+        <div className="flex items-center gap-1">
         <button
           type="button"
           onClick={cycleTheme}
@@ -72,9 +89,19 @@ export function Sidebar() {
         >
           <ThemeIcon size={14} />
         </button>
+        <button
+          type="button"
+          ref={closeRef}
+          onClick={onClose}
+          aria-label="Close navigation"
+          className="md:hidden inline-flex h-11 w-11 -mr-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors"
+        >
+          <X size={20} />
+        </button>
+        </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+      <nav className="flex-1 overflow-y-auto overscroll-contain py-3 px-2 space-y-4">
         <Section label="Workspace">
           <NavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <LayoutDashboard size={16} />
@@ -120,9 +147,9 @@ export function Sidebar() {
                 className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}
               >
                 <Icon size={16} />
-                <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
+                <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
                 {m.status === 'trial' && (
-                  <span className="text-[9px] uppercase tracking-wider font-mono text-amber">trial</span>
+                  <span className="shrink-0 text-[11px] uppercase tracking-wider font-mono text-amber">trial</span>
                 )}
               </NavLink>
             );
@@ -140,8 +167,8 @@ export function Sidebar() {
                   className={cn(NAV_BASE, 'text-white/55 hover:text-white/75')}
                 >
                   <Icon size={16} className="opacity-50" />
-                  <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
-                  <span className="text-[9px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
+                  <span className="min-w-0 flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
+                  <span className="shrink-0 text-[11px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
                 </NavLink>
               );
             })}
@@ -174,7 +201,7 @@ export function Sidebar() {
         </Section>
       </nav>
       <div
-        className="px-3 py-2.5 border-t border-white/10 font-mono text-[10px] tracking-[0.08em] text-white/55"
+        className="px-3 py-2.5 border-t border-white/10 font-mono text-[11px] tracking-[0.08em] text-white/55"
         title={`${VERSION_LABEL} · ${BUILD_SHA}`}
       >
         {VERSION_LABEL} · {BUILD_SHA}
@@ -186,7 +213,7 @@ export function Sidebar() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="px-3 mb-1 text-[9px] uppercase tracking-[0.20em] font-mono text-white/55">{label}</div>
+      <div className="px-3 mb-1 text-[11px] uppercase tracking-[0.12em] font-mono text-white/55">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

@@ -57,7 +57,7 @@ export function InvestigationDetail() {
           <SeverityDot severity={inv.severity} />
           <StatusPill status={inv.status} />
           {inv.assigned_to_name && (
-            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+            <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
               <UserCheck size={10} /> {assignedToMe ? 'You' : inv.assigned_to_name}
             </span>
           )}
@@ -112,7 +112,7 @@ export function InvestigationDetail() {
                     disabled={!canEdit || update.isPending}
                     onClick={() => inv.severity !== s && update.mutate({ severity: s })}
                     className={[
-                      'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
+                      'px-2 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
                       inv.severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                     ].join(' ')}
                   >
@@ -181,13 +181,13 @@ function LinkedItems({ items, canEdit, investigationId }: {
                 <Icon size={14} className="text-white/55 flex-shrink-0" />
                 <SeverityDot severity={it.severity} />
                 <span className="text-[12.5px] text-white/80 truncate">{it.label ?? it.item_id}</span>
-                {it.item_status && <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider flex-shrink-0">{it.item_status.replace(/_/g, ' ')}</span>}
+                {it.item_status && <span className="text-[11px] font-mono text-white/55 uppercase tracking-wider flex-shrink-0">{it.item_status.replace(/_/g, ' ')}</span>}
               </div>
             );
             return (
               <li key={it.id} className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
                 {to ? <Link to={to} className="contents hover:opacity-90">{inner}</Link> : inner}
-                <span className="text-[9px] uppercase tracking-wider font-mono text-white/55 flex-shrink-0">{it.item_type}</span>
+                <span className="text-[11px] uppercase tracking-wider font-mono text-white/55 flex-shrink-0">{it.item_type}</span>
                 {canEdit && (
                   <button
                     type="button"
@@ -261,7 +261,7 @@ function Notes({ investigationId, notes, canEdit }: {
               <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
               <div className="min-w-0">
                 <div className="text-[12.5px] text-white/80 whitespace-pre-wrap break-words">{n.body}</div>
-                <div className="text-[10px] font-mono text-white/55 mt-0.5">
+                <div className="text-[11px] font-mono text-white/55 mt-0.5">
                   {n.author_name ?? 'Unknown'} · {new Date(n.created_at).toLocaleString()}
                 </div>
               </div>
@@ -285,5 +285,5 @@ function Back() {
 }
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">{children}</div>;
+  return <div className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 mb-1.5">{children}</div>;
 }

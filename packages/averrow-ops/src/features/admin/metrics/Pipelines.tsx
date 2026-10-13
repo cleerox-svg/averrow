@@ -146,7 +146,7 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
     >
       <div className="p-3">
         <div className="flex items-center justify-between gap-2 mb-1">
-          <span className="font-mono text-[10px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
+          <span className="font-mono text-[11px] font-bold truncate" style={{ color: 'var(--text-primary)' }}>
             {p.label}
           </span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -169,7 +169,7 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
 
         {p.description && (
           <div
-            className="font-mono text-[9px] leading-snug mb-2 line-clamp-2"
+            className="font-mono text-[11px] leading-snug mb-2 line-clamp-2"
             style={{ color: 'var(--text-tertiary)' }}
             title={p.description}
           >
@@ -212,14 +212,14 @@ function PipelineCardV3({ pipeline: p, agentStatus, isSelected, onSelect }: Pipe
         {/* Explicit reason — what the verdict means in numbers/time */}
         {reason && (
           <div
-            className="font-mono text-[9px] mb-1"
+            className="font-mono text-[11px] mb-1"
             style={{ color: 'var(--text-muted)' }}
           >
             {reason}
           </div>
         )}
 
-        <div className="font-mono text-[8px] space-y-0.5" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[11px] space-y-0.5" style={{ color: 'var(--text-muted)' }}>
           <div className="uppercase tracking-wider">{p.schedule}</div>
           {p.agent_last_run_at && (
             <div>
@@ -241,7 +241,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
   if (isError) {
     return (
       <Card variant="elevated" className="p-5 col-span-full">
-        <div className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load detail. Try again in a moment.
         </div>
       </Card>
@@ -250,7 +250,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
   if (isLoading || !detail) {
     return (
       <Card variant="elevated" className="p-5 col-span-full">
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading detail…
         </div>
       </Card>
@@ -268,7 +268,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
     <Card variant="elevated" className="p-5 col-span-full">
       {detail.description && (
         <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What this pipeline does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -288,7 +288,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
             />
           ) : (
           <div>
-            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Backlog · last 24h
             </div>
             {sparkData.length > 1 ? (
@@ -302,7 +302,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
                   </defs>
                   <XAxis
                     dataKey="t"
-                    tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+                    tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
                     axisLine={false}
                     tickLine={false}
                     interval="preserveStartEnd"
@@ -331,7 +331,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Not enough samples yet
               </div>
             )}
@@ -340,7 +340,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.drained_last_hour != null && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
                 Drained · last hour
               </div>
               <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>
@@ -351,7 +351,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.why_grows && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Why this grows
               </div>
               <p className="font-mono text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -365,7 +365,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
         <div className="space-y-4">
           {fr && fr.total > 0 && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Failure rate · 24h · {fr.total} runs
               </div>
               <div className="grid grid-cols-3 gap-3">
@@ -374,7 +374,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
                 <Stat label="Failed"  value={fr.failed.toString()}  tone={fr.failed  > 0 ? 'sev-high'   : undefined} />
               </div>
               <div
-                className="font-mono text-[10px] mt-1.5"
+                className="font-mono text-[11px] mt-1.5"
                 style={{ color: fr.pct >= 95 ? 'var(--green)' : fr.pct >= 80 ? 'var(--sev-medium)' : 'var(--sev-high)' }}
               >
                 {fr.pct}% success
@@ -384,7 +384,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {lr && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Last run
               </div>
               <div className="space-y-1 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -407,14 +407,14 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
 
           {detail.endpoints && detail.endpoints.length > 0 && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 External endpoints
               </div>
               <div className="flex flex-wrap gap-1">
                 {detail.endpoints.map(e => (
                   <span
                     key={e.url}
-                    className="px-2 py-0.5 rounded font-mono text-[9px]"
+                    className="px-2 py-0.5 rounded font-mono text-[11px]"
                     style={{
                       background: 'var(--bg-input)',
                       color:      'var(--text-secondary)',
@@ -516,7 +516,7 @@ function ReferenceDatasetBlock({
     <div className="space-y-4">
       <div>
         <div className="flex items-center justify-between mb-2">
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
             Reference dataset
           </div>
           {isAdmin && (
@@ -534,7 +534,7 @@ function ReferenceDatasetBlock({
           <div
             role="alert"
             aria-live="polite"
-            className="font-mono text-[9px] mb-2"
+            className="font-mono text-[11px] mb-2"
             style={{ color: 'var(--sev-critical-text)' }}
           >
             Trigger failed — retry
@@ -544,7 +544,7 @@ function ReferenceDatasetBlock({
         <div className="grid grid-cols-2 gap-3">
           <Stat label="Live rows" value={row_count.toLocaleString()} />
           <div>
-            <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
               Age
             </div>
             <div className="text-lg font-mono" style={{ color: ageColor }}>
@@ -555,7 +555,7 @@ function ReferenceDatasetBlock({
       </div>
 
       {!configured && (
-        <div className="font-mono text-[10px] p-2 rounded" style={{
+        <div className="font-mono text-[11px] p-2 rounded" style={{
           background: 'var(--sev-medium-bg)',
           color:      'var(--text-secondary)',
           border:     '1px solid var(--border-base)',
@@ -566,7 +566,7 @@ function ReferenceDatasetBlock({
 
       {source_version && (
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
             Source release
           </div>
           <div
@@ -584,7 +584,7 @@ function ReferenceDatasetBlock({
           background: 'var(--sev-low-bg)',
           border:     '1px solid var(--border-base)',
         }}>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-low-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-low-text)' }}>
             Refresh in flight
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -598,7 +598,7 @@ function ReferenceDatasetBlock({
 
       {last_refresh_status === 'failed' && last_refresh_error && (
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-critical-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--sev-critical-text)' }}>
             Last refresh failed
           </div>
           <div className="font-mono text-[11px] p-2 rounded" style={{
@@ -612,14 +612,14 @@ function ReferenceDatasetBlock({
       )}
 
       {!currently_running && last_refresh_status === 'success' && last_refresh_duration_ms != null && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
           Last import ran in {formatDuration(last_refresh_duration_ms)}.
         </div>
       )}
 
       {attempts.length > 0 && (
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Recent attempts
           </div>
           <div className="space-y-1">
@@ -632,7 +632,7 @@ function ReferenceDatasetBlock({
               return (
                 <div
                   key={a.id}
-                  className="flex items-center justify-between font-mono text-[10px]"
+                  className="flex items-center justify-between font-mono text-[11px]"
                   style={{ color: 'var(--text-secondary)' }}
                   title={a.error_message ?? undefined}
                 >
@@ -659,7 +659,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
                             'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-lg font-mono" style={{ color }}>{value}</div>
     </div>
   );
@@ -671,7 +671,7 @@ export function Pipelines({ agents }: { agents: Agent[] }) {
 
   if (pipelines.length === 0) {
     return (
-      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         No pipelines registered.
       </div>
     );

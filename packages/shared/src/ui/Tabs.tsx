@@ -122,14 +122,14 @@ export function Tabs({
     const count = tab.count !== undefined && (
       <span
         className="font-mono"
-        style={{ fontSize: md ? 12 : variant === 'underline' ? 10 : 9, color: active ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: active ? 0.8 : 1 }}
+        style={{ fontSize: md ? 12 : 11, color: active ? 'var(--amber-text)' : 'var(--text-secondary)' }}
       >
         {tab.count}
       </span>
     );
     const badge = tab.badge && (
       <span
-        className="rounded-full px-[5px] py-px text-[9px] font-black"
+        className="rounded-full px-[5px] py-px text-[11px] font-black"
         style={{ background: active ? 'var(--amber)' : 'var(--border-strong)', color: active ? 'var(--bg-page)' : 'var(--text-secondary)' }}
       >
         {tab.badge}
@@ -157,7 +157,7 @@ export function Tabs({
         <button
           key={tab.id}
           {...common}
-          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[10px] font-bold tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
+          className={cn('flex-1 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-2 py-[7px] font-mono text-[11px] font-bold tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
           style={{
             border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
             background: active ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
@@ -174,7 +174,7 @@ export function Tabs({
       <button
         key={tab.id}
         {...common}
-        className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-[14px] py-[5px] font-mono text-[10px] font-bold uppercase tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
+        className={cn('inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-[14px] py-[5px] font-mono text-[11px] font-bold uppercase tracking-[0.08em] cursor-pointer', md && 'min-h-[44px] text-[13px]', FOCUS_RING)}
         style={{
           border: `1px solid ${active ? 'var(--pill-active-border)' : 'var(--border-base)'}`,
           background: active ? 'linear-gradient(135deg, var(--pill-active-fill-1), var(--pill-active-fill-2))' : 'transparent',

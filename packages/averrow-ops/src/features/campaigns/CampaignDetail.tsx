@@ -182,7 +182,7 @@ export function CampaignDetail() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-2">
               <span
-                className="font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
+                className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
                 style={{ color: 'var(--text-muted)' }}
               >
                 Campaign
@@ -195,7 +195,7 @@ export function CampaignDetail() {
               />
               {attackType && (
                 <span
-                  className="font-mono text-[9px] font-bold uppercase tracking-[0.10em] px-2 py-0.5 rounded-full"
+                  className="font-mono text-[11px] font-bold uppercase tracking-[0.10em] px-2 py-0.5 rounded-full"
                   style={{
                     background: `${accent}15`,
                     border: `1px solid ${accent}40`,
@@ -235,7 +235,7 @@ export function CampaignDetail() {
             {threatTypes.map(t => (
               <span
                 key={t}
-                className="font-mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md"
+                className="font-mono text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md"
                 style={{
                   background: 'var(--border-base)',
                   border: '1px solid var(--border-base)',
@@ -311,7 +311,7 @@ export function CampaignDetail() {
                   <div className="min-w-0 flex-1">
                     <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{b.name}</div>
                     {b.sector && (
-                      <div className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-[11px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                         {b.sector}
                       </div>
                     )}
@@ -384,7 +384,7 @@ export function CampaignDetail() {
                     {ip.ip_address}
                   </span>
                 </div>
-                <span className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   {ip.domain_count} dom
                 </span>
               </div>
@@ -415,13 +415,13 @@ export function CampaignDetail() {
                   <div className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>
                     {t.malicious_domain || t.malicious_url || t.ip_address || t.id}
                   </div>
-                  <div className="font-mono text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+                  <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                     {t.threat_type.replace(/_/g, ' ')}
                     {t.brand_name && (<> {'·'} <span style={{ color: 'var(--text-tertiary)' }}>{t.brand_name}</span></>)}
                     {t.country_code && (<> {'·'} {countryFlag(t.country_code)}</>)}
                   </div>
                 </div>
-                <div className="font-mono text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
+                <div className="font-mono text-[11px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                   {formatDate(t.first_seen)}
                 </div>
                 <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />

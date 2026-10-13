@@ -69,21 +69,21 @@ function SourceChips({ briefing }: { briefing: IntelligenceBriefing }) {
   if (chips.length === 0) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5" aria-label="Sources">
-      <span className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+      <span className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
         Sources
       </span>
       {chips.map((c) => (
         <Link
           key={c.key}
           to={c.to}
-          className="rounded px-2 py-1 font-mono text-[10px] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
+          className="rounded px-2 py-1 font-mono text-[11px] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
           style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}
         >
           {c.label}
         </Link>
       ))}
       {more > 0 && (
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>+{more} more</span>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>+{more} more</span>
       )}
     </div>
   );
@@ -116,7 +116,7 @@ export function IntelligenceBriefingBody() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {sev && <Badge severity={sev} size="xs" />}
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
               {relativeTime(latest.created_at)}
             </span>
           </div>
@@ -130,7 +130,7 @@ export function IntelligenceBriefingBody() {
               </p>
               {body.length > BODY_PREVIEW && (
                 <details className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]" style={{ color: 'var(--amber-text)' }}>
+                  <summary className="cursor-pointer font-mono text-[11px] uppercase tracking-widest focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]" style={{ color: 'var(--amber-text)' }}>
                     Read full briefing
                   </summary>
                   <div className="mt-2 whitespace-pre-wrap leading-relaxed">{body}</div>
@@ -141,7 +141,7 @@ export function IntelligenceBriefingBody() {
           <SourceChips briefing={latest} />
           <Link
             to={tabUrl('trends')}
-            className="font-mono text-[10px] uppercase tracking-widest hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
+            className="font-mono text-[11px] uppercase tracking-widest hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
             style={{ color: 'var(--amber-text)' }}
           >
             View all briefings →

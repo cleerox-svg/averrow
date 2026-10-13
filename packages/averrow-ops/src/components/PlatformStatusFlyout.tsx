@@ -55,7 +55,7 @@ function CategoryRow({ rollup }: CategoryRowProps) {
           {CATEGORY_LABELS[rollup.category]}
         </div>
         <div style={{
-          fontSize: 10, color: 'var(--text-muted)',
+          fontSize: 11, color: 'var(--text-muted)',
           fontFamily: 'var(--font-mono)',
           marginTop: 1,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -64,14 +64,14 @@ function CategoryRow({ rollup }: CategoryRowProps) {
         </div>
       </div>
       <div style={{
-        fontSize: 10, fontFamily: 'var(--font-mono)',
+        fontSize: 11, fontFamily: 'var(--font-mono)',
         color: 'var(--text-tertiary)', flexShrink: 0, minWidth: 56,
         textAlign: 'right',
       }}>
         {rollup.uptime_30d_pct.toFixed(1)}%
       </div>
       <span style={{
-        fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
         letterSpacing: '0.08em', textTransform: 'uppercase',
         padding: '3px 8px', borderRadius: 100,
         background: PILL_BG[status],
@@ -172,14 +172,14 @@ export function PlatformStatusFlyout() {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <span style={{
-              fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
-              letterSpacing: '0.20em', color: 'var(--text-tertiary)',
+              fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
+              letterSpacing: '0.12em', color: 'var(--text-tertiary)',
               textTransform: 'uppercase',
             }}>
               Availability · Last 30 days
             </span>
             <span style={{
-              fontFamily: 'var(--font-mono)', fontSize: 10,
+              fontFamily: 'var(--font-mono)', fontSize: 11,
               color: 'var(--text-muted)',
             }}>
               {isLoading || !data ? 'checking…' : data.overall_note}
@@ -213,7 +213,7 @@ export function PlatformStatusFlyout() {
               display: 'block',
               padding: '10px 14px',
               borderTop: '1px solid var(--border-base)',
-              fontFamily: 'var(--font-mono)', fontSize: 10,
+              fontFamily: 'var(--font-mono)', fontSize: 11,
               fontWeight: 700, letterSpacing: '0.10em',
               color: 'var(--amber-text)', textDecoration: 'none',
               textTransform: 'uppercase', textAlign: 'center',

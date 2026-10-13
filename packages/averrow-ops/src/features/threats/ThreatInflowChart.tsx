@@ -112,8 +112,8 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
         <div>
           <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10,
-            color: 'var(--text-tertiary)', letterSpacing: '0.14em',
+            fontFamily: 'var(--font-mono)', fontSize: 11,
+            color: 'var(--text-tertiary)', letterSpacing: '0.12em',
             textTransform: 'uppercase',
           }}>
             Threat Inflow
@@ -126,7 +126,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
             {headline === null ? '—' : headline.toLocaleString()}
           </div>
           <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10,
+            fontFamily: 'var(--font-mono)', fontSize: 11,
             color: 'var(--text-tertiary)', letterSpacing: '0.06em',
           }}>
             new indicators · {window === '7d' ? 'last 7 days' : 'last 24h'}
@@ -160,7 +160,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
           <AreaChart data={chartData} margin={{ top: 14, right: 8, bottom: 16, left: 0 }}>
             <XAxis
               dataKey="bucket"
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
               axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
               tickFormatter={(v: string) => formatAxisTick(v, window)}
@@ -168,7 +168,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
               minTickGap={32}
             />
             <YAxis
-              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+              tick={{ fill: 'var(--text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               width={48}
@@ -219,7 +219,7 @@ export function ThreatInflowChart({ height, defaultWindow = '24h' }: Props = {})
             <div
               key={s.threat_type}
               className="flex items-center gap-1.5 max-md:px-1.5 max-md:py-1 max-md:border max-md:border-white/10 max-md:rounded-md"
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 10 }}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}
             >
               <span
                 style={{
@@ -298,7 +298,7 @@ function InflowTooltip({
         minWidth: 200,
       }}
     >
-      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>
         {formatBucketLabel(label, window)}
       </div>
       {nonZero.map((p) => (

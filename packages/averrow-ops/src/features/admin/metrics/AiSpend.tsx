@@ -59,7 +59,7 @@ export function AiSpend() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load AI spend. Try again in a moment.
         </p>
       </Card>
@@ -68,7 +68,7 @@ export function AiSpend() {
   if (isLoading || !data) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading AI spend…
         </p>
       </Card>
@@ -91,7 +91,7 @@ function Header({ windowSel, onWindowChange }: { windowSel: Window; onWindowChan
   return (
     <div className="flex items-center justify-between gap-3">
       <span
-        className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         Window
@@ -113,7 +113,7 @@ function Header({ windowSel, onWindowChange }: { windowSel: Window; onWindowChan
               role="radio"
               aria-checked={active}
               onClick={() => onWindowChange(w)}
-              className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase transition-colors"
+              className="px-2.5 py-1 font-mono text-[11px] tracking-[0.12em] uppercase transition-colors"
               style={{
                 background: active ? 'var(--amber)' : 'transparent',
                 color:      active ? '#0A0F1C' : 'var(--text-secondary)',
@@ -146,7 +146,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
   return (
     <Card variant="elevated" className="p-4">
       <div
-        className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {label}
@@ -173,7 +173,7 @@ function DailyChart({ data }: { data: AiSpendPayload }) {
     return (
       <Card variant="elevated" className="p-4">
         <SectionHeader title="Daily cost · last 30d" />
-        <p className="font-mono text-[10px] mt-2" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
           No spend recorded in the last 30 days.
         </p>
       </Card>
@@ -194,7 +194,7 @@ function DailyChart({ data }: { data: AiSpendPayload }) {
             </defs>
             <XAxis
               dataKey="day"
-              tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+              tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
@@ -264,7 +264,7 @@ function FocusAgentRatioStrip({ data, window }: { data: AiSpendPayload; window: 
         ))}
       </div>
       <p
-        className="font-mono text-[9px]"
+        className="font-mono text-[11px]"
         style={{ color: 'var(--text-muted)' }}
         title="Output tokens ÷ input tokens. Lower is more cost-efficient — Lever #1 (output-schema tightening) targets under 0.50."
       >
@@ -293,7 +293,7 @@ function FocusAgentRatioTile({ agent }: { agent: AiSpendByAgentWindowed }) {
         >
           {meta?.displayName ?? agent.agent_id}
         </span>
-        <span className="font-mono text-[8px] font-bold uppercase tracking-wide" style={{ color }}>
+        <span className="font-mono text-[11px] font-bold uppercase tracking-wide" style={{ color }}>
           {statusLabel}
         </span>
       </div>
@@ -302,7 +302,7 @@ function FocusAgentRatioTile({ agent }: { agent: AiSpendByAgentWindowed }) {
           {agent.out_in_ratio.toFixed(2)}
         </span>
         <span
-          className="font-mono text-[9px]"
+          className="font-mono text-[11px]"
           style={{ color: 'var(--text-muted)' }}
           title="Output ÷ input tokens — Lever #1 target"
         >
@@ -335,7 +335,7 @@ function PerAgentGrid({ data, window }: { data: AiSpendPayload; window: Window }
     return (
       <div className="space-y-2">
         <SectionHeader title={`Per agent · ${window} cost`} />
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No agent spend recorded in this window.
         </p>
       </div>
@@ -346,7 +346,7 @@ function PerAgentGrid({ data, window }: { data: AiSpendPayload; window: Window }
     <div className="space-y-3">
       <div>
         <SectionHeader title={`Per agent · ${window} cost`} count={agents.length} />
-        <p className="font-mono text-[9px] mt-1" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
           Top 20 by 30-day cost, shown for the selected window.
         </p>
       </div>
@@ -408,7 +408,7 @@ function AgentSpendCard({
       {/* Header: rank + icon + name + chevron */}
       <div className="flex items-center gap-2 mb-2">
         <span
-          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          className="font-mono text-[11px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
           style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
         >
           {rank}
@@ -442,7 +442,7 @@ function AgentSpendCard({
           ${agent.cost_usd.toFixed(2)}
         </span>
         <span
-          className="font-mono text-[10px] font-bold"
+          className="font-mono text-[11px] font-bold"
           style={{ color: barColor }}
         >
           {pctOfTotal.toFixed(0)}% of total
@@ -464,7 +464,7 @@ function AgentSpendCard({
       </div>
 
       {/* Mini-stats */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
+      <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
         <Mini label="CALLS"  value={agent.calls.toLocaleString()} />
         <Mini label="IN"     value={formatBig(agent.input_tokens)} />
         <Mini label="OUT"    value={formatBig(agent.output_tokens)} />
@@ -497,7 +497,7 @@ function AgentSpendDetail({ agent, pctOfTotal }: { agent: AiSpendByAgentWindowed
     <Card variant="elevated" className="p-4 col-span-full">
       {meta?.subtitle && (
         <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What it does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -564,7 +564,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
     return (
       <Card variant="elevated" className="p-4">
         <SectionHeader title="Cartographer · 30d trend" />
-        <p className="font-mono text-[10px] mt-2" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
           No cartographer spend recorded in the last 30 days.
         </p>
       </Card>
@@ -575,7 +575,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
     <Card variant="elevated" className="p-4">
       <SectionHeader title="Cartographer · 30d trend" />
       <div
-        className="font-mono text-[9px] mt-1 mb-3"
+        className="font-mono text-[11px] mt-1 mb-3"
         style={{ color: 'var(--text-muted)' }}
       >
         Watch <strong>out:in ratio</strong> drop as Lever&nbsp;#1 lands,
@@ -593,7 +593,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
           </defs>
           <XAxis
             dataKey="day"
-            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
             axisLine={false}
             tickLine={false}
             interval="preserveStartEnd"
@@ -601,7 +601,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
           />
           <YAxis
             yAxisId="left"
-            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
             axisLine={false}
             tickLine={false}
             width={40}
@@ -609,7 +609,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
           <YAxis
             yAxisId="right"
             orientation="right"
-            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
             axisLine={false}
             tickLine={false}
             width={32}
@@ -635,7 +635,7 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
             }}
           />
           <Legend
-            wrapperStyle={{ fontSize: 9, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}
+            wrapperStyle={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}
             iconSize={8}
           />
           <Bar  yAxisId="left"  dataKey="cost"   fill="url(#cart-cost-bar)" radius={[2, 2, 0, 0]} />
@@ -682,13 +682,13 @@ function LeverRoster({ levers }: { levers: CostLever[] }) {
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <span
-          className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
+          className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
           style={{ color: 'var(--text-primary)' }}
         >
           Lever roster
         </span>
         <span
-          className="font-mono text-[10px]"
+          className="font-mono text-[11px]"
           style={{ color: 'var(--text-secondary)' }}
         >
           {deployedCount}/{levers.length} deployed · est. ${totalSavings.toFixed(0)}/yr
@@ -731,7 +731,7 @@ function LeverCard({ lever }: { lever: CostLever }) {
         <Stat label="Est. savings" value={`$${lever.estimated_savings_usd_per_year}/yr`} />
       </div>
       <div
-        className="font-mono text-[9px] tracking-[0.15em] uppercase mb-1"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase mb-1"
         style={{ color: 'var(--text-muted)' }}
       >
         Indicator
@@ -741,7 +741,7 @@ function LeverCard({ lever }: { lever: CostLever }) {
       </p>
       {lever.deployed_at && (
         <div
-          className="font-mono text-[9px] mt-2"
+          className="font-mono text-[11px] mt-2"
           style={{ color: 'var(--text-tertiary)' }}
         >
           Deployed {lever.deployed_at.slice(0, 10)}
@@ -756,14 +756,14 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
   return (
     <div className="flex items-end justify-between gap-3">
       <span
-        className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.12em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
       </span>
       {count != null && (
         <span
-          className="font-mono text-[10px] px-2 py-0.5 rounded"
+          className="font-mono text-[11px] px-2 py-0.5 rounded"
           style={{
             background: 'var(--bg-input)',
             color:      'var(--text-secondary)',
@@ -780,7 +780,7 @@ function SectionHeader({ title, count }: { title: string; count?: number }) {
 function Stat({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-base font-mono" style={{ color: valueColor ?? 'var(--text-primary)' }}>{value}</div>
     </div>
   );

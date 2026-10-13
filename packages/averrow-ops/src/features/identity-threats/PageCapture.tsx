@@ -9,7 +9,7 @@ import { CaptureError, useCaptureNow } from './useIdentityThreats';
 import { downloadAuthedFile, useAuthedBlobUrl } from './useCaptureBlob';
 import type { IdentityDetectionDetail, PageCapture, PageCaptureStatus } from './types';
 
-const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.18em]';
+const LABEL_CLS = 'font-mono text-[11px] font-bold uppercase tracking-[0.12em]';
 const MUTED = { color: 'var(--text-secondary)' } as const;
 
 function hostOf(url: string | null | undefined): string | null {

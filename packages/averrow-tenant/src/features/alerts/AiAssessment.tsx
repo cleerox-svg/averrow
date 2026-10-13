@@ -34,7 +34,7 @@ export function VerdictChip({ raw }: { raw: string | null }) {
   if (!a) return null;
   const m = verdictMeta(a.verdict);
   return (
-    <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${m.tone}`}>
+    <span className={`inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${m.tone}`}>
       <Sparkles size={9} />{m.label} {a.confidence}%
     </span>
   );
@@ -49,13 +49,13 @@ export function AiAssessmentPanel({ raw }: { raw: string | null }) {
   return (
     <div className="mt-3 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2.5">
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 flex items-center gap-1">
+        <span className="text-[11px] uppercase tracking-[0.12em] font-mono text-white/55 flex items-center gap-1">
           <Sparkles size={10} /> AI assessment
         </span>
-        <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${m.tone}`}>
+        <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${m.tone}`}>
           {m.label}
         </span>
-        <span className="text-[10px] font-mono text-white/55">{a.confidence}% confidence</span>
+        <span className="text-[11px] font-mono text-white/55">{a.confidence}% confidence</span>
       </div>
       {a.reasoning && <p className="text-[12px] text-white/70 leading-relaxed">{a.reasoning}</p>}
       {why && (

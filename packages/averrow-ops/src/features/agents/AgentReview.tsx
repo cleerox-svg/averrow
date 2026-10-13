@@ -161,7 +161,7 @@ export function AgentReview() {
                   </span>
                   <Badge {...stateBadgeProps(approval.state)} size="xs" />
                   {meta?.category && (
-                    <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-secondary)' }}>
+                    <span className="font-mono text-[11px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-secondary)' }}>
                       {meta.category}
                     </span>
                   )}
@@ -282,7 +282,7 @@ export function AgentReview() {
               <div className="space-y-2">
                 {bundle.recent_outputs.map((out) => (
                   <div key={out.id} className="py-2 border-b last:border-b-0" style={{ borderColor: 'var(--border-base)' }}>
-                    <div className="flex items-center gap-2 font-mono text-[10px] mb-1" style={{ color: 'var(--text-tertiary)' }}>
+                    <div className="flex items-center gap-2 font-mono text-[11px] mb-1" style={{ color: 'var(--text-tertiary)' }}>
                       <span className="uppercase tracking-wider">{out.type}</span>
                       {out.severity && <span style={{ color: 'var(--text-secondary)' }}>· {out.severity}</span>}
                       <span>· {relativeTime(out.created_at)}</span>

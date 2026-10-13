@@ -22,6 +22,15 @@ const SEV_COLOR: Record<QueueSeverity, string> = {
   low: 'var(--sev-low)',
 };
 
+// Rank-number TEXT uses the theme-aware -text tokens (AA on light + dark);
+// the ring keeps the raw severity colour.
+const SEV_TEXT: Record<QueueSeverity, string> = {
+  critical: 'var(--sev-critical-text)',
+  high: 'var(--sev-high-text)',
+  medium: 'var(--sev-medium-text)',
+  low: 'var(--sev-low-text)',
+};
+
 const SOURCE_CHIP: Record<QueueSourceId, string> = {
   alerts: 'Alerts',
   critical_intel: 'Intel',
@@ -46,7 +55,7 @@ function QueueRow({ item, rank }: { item: QueueItem; rank: number }) {
         aria-hidden
         className="flex h-7 w-7 items-center justify-center rounded-full font-mono text-[11px] font-bold"
         style={{
-          color: SEV_COLOR[item.severity],
+          color: SEV_TEXT[item.severity],
           border: `1px solid ${SEV_COLOR[item.severity]}`,
         }}
       >
@@ -58,11 +67,11 @@ function QueueRow({ item, rank }: { item: QueueItem; rank: number }) {
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <Badge severity={item.severity} size="xs" />
-          <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+          <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
             {SOURCE_CHIP[item.source]}
           </span>
           {item.ts && (
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+            <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
               {relativeTime(item.ts)}
             </span>
           )}
@@ -115,13 +124,13 @@ export function NeedsYouNow({ queue, onRetry }: { queue: HomeQueue; onRetry: (id
       <div className="mb-2 flex items-center justify-between gap-3">
         <h2
           id="home-queue-title"
-          className="font-mono text-[10px] font-bold uppercase tracking-[0.18em]"
+          className="font-mono text-[11px] font-bold uppercase tracking-[0.12em]"
           style={{ color: 'var(--text-secondary)', margin: 0 }}
         >
           Needs you now
         </h2>
         {items.length > 0 && (
-          <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+          <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
             {visible.length} of {items.length} open
           </span>
         )}

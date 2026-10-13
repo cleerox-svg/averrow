@@ -47,11 +47,11 @@ export function TakedownActions({
               disabled={update.isPending}
               onClick={() => setPending((cur) => (cur === status ? null : status))}
               className={[
-                'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50',
+                'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50',
                 active
-                  ? 'bg-amber/[0.14] text-amber border-amber/[0.40]'
+                  ? 'bg-amber/[0.14] text-[var(--amber-text)] border-amber/[0.40]'
                   : primary
-                    ? 'bg-amber/[0.08] text-amber/90 border-amber/[0.25] hover:bg-amber/[0.14]'
+                    ? 'bg-amber/[0.08] text-[var(--amber-text)] border-amber/[0.25] hover:bg-amber/[0.14]'
                     : 'bg-white/[0.04] text-white/60 border-white/[0.08] hover:text-white/90 hover:border-white/[0.18]',
               ].join(' ')}
             >
@@ -78,7 +78,7 @@ export function TakedownActions({
             type="button"
             disabled={update.isPending}
             onClick={() => run(pending, note.trim() || undefined)}
-            className="px-3 py-1.5 rounded-md text-[10px] font-mono uppercase tracking-wider border bg-amber/[0.14] text-amber border-amber/[0.40] hover:bg-amber/[0.20] disabled:opacity-50 whitespace-nowrap"
+            className="px-3 py-1.5 rounded-md text-[11px] font-mono uppercase tracking-wider border bg-amber/[0.14] text-amber border-amber/[0.40] hover:bg-amber/[0.20] disabled:opacity-50 whitespace-nowrap"
           >
             Confirm {ACTION_META[pending].verb}
           </button>

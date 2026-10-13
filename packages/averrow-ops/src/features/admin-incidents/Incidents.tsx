@@ -125,7 +125,7 @@ export function AdminIncidents() {
               </div>
               <span
                 style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  fontFamily: 'var(--font-mono)', fontSize: 11,
                   fontWeight: 700, letterSpacing: '0.08em',
                   textTransform: 'uppercase',
                   padding: '4px 10px', borderRadius: 100,

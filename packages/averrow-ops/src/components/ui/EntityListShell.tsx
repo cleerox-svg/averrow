@@ -112,14 +112,14 @@ function SortControl({
 }) {
   return (
     <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[9px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+      <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>
         Sort:
       </span>
       {sorts.map(s => (
         <button
           key={s.id}
           onClick={() => onChange(s.id)}
-          className="font-mono text-[10px] font-semibold px-2 py-0.5 rounded transition-all"
+          className="font-mono text-[11px] font-semibold px-2 py-0.5 rounded transition-all"
           style={{
             background: activeId === s.id ? 'var(--border-base)' : 'transparent',
             color: activeId === s.id ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -275,25 +275,25 @@ export function EntityListShell<T>({
 
           {pageSize > 0 && pageCount > 1 && (
             <div className="flex items-center justify-between pt-1">
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                 Showing {safePage * pageSize + 1}–{Math.min((safePage + 1) * pageSize, total)} of {total}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setPage(p => Math.max(0, p - 1))}
                   disabled={safePage === 0}
-                  className="flex items-center gap-1 font-mono text-[10px] uppercase px-2 py-1 rounded transition-all disabled:opacity-30"
+                  className="flex items-center gap-1 font-mono text-[11px] uppercase px-2 py-1 rounded transition-all disabled:opacity-30"
                   style={{ border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
                 >
                   <ChevronLeft size={12} /> Prev
                 </button>
-                <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+                <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
                   {safePage + 1} / {pageCount}
                 </span>
                 <button
                   onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
                   disabled={safePage >= pageCount - 1}
-                  className="flex items-center gap-1 font-mono text-[10px] uppercase px-2 py-1 rounded transition-all disabled:opacity-30"
+                  className="flex items-center gap-1 font-mono text-[11px] uppercase px-2 py-1 rounded transition-all disabled:opacity-30"
                   style={{ border: '1px solid var(--border-base)', color: 'var(--text-secondary)' }}
                 >
                   Next <ChevronRight size={12} />

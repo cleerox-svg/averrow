@@ -51,9 +51,9 @@ function autoColor(pct: number): Exclude<PriorityBarColor, 'auto'> {
   return 'green';
 }
 
-const SIZE: Record<NonNullable<PriorityBarProps['size']>, { height: number; radius: number; labelSize: number }> = {
-  sm: { height: 4, radius: 99, labelSize: 9 },
-  md: { height: 6, radius: 99, labelSize: 10 },
+const SIZE: Record<NonNullable<PriorityBarProps['size']>, { height: number; radius: number }> = {
+  sm: { height: 4, radius: 99 },
+  md: { height: 6, radius: 99 },
 };
 
 export function PriorityBar({
@@ -77,7 +77,7 @@ export function PriorityBar({
       {showLabel && (
         <div
           style={{
-            fontSize: z.labelSize,
+            fontSize: 11,
             fontFamily: 'var(--font-mono)',
             letterSpacing: '0.10em',
             textTransform: 'uppercase',

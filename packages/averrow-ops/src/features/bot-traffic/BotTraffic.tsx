@@ -69,7 +69,7 @@ export function staleAsOf(
 function AsOfNote({ date }: { date: string }) {
   return (
     <span
-      className="inline-flex items-center gap-1.5 font-mono text-[10px]"
+      className="inline-flex items-center gap-1.5 font-mono text-[11px]"
       style={{ color: 'var(--text-secondary)' }}
       title={`This section was last updated ${fmtDate(date)}, earlier than the bot share figure`}
     >
@@ -207,7 +207,7 @@ function EmptyState({ err }: { err: string | null }) {
       />
       {err ? (
         <Card variant="critical">
-          <div className="font-mono text-[10px] uppercase tracking-widest mb-2" style={{ color: 'var(--sev-critical-text)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-2" style={{ color: 'var(--sev-critical-text)' }}>
             Last fetch error
           </div>
           <p className="text-sm break-words" style={{ color: 'var(--text-primary)' }}>{err}</p>
