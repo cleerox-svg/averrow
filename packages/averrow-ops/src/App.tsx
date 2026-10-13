@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { ShellV4 } from '@/components/layout/ShellV4';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
@@ -117,6 +117,14 @@ function RedirectToActorFocus() {
   return <Navigate to={tabUrl('actors', actorId ? { focus: actorId } : undefined)} replace />;
 }
 
+// abuse_mailbox_verdict notifications for brand-bound captures carry the
+// tenant-app link `/modules/abuse-mailbox#msg-<id>`; opted-in super_admins
+// see them here too. Forward to the ops page, keeping the #msg- anchor.
+export function RedirectToAdminAbuseMailbox() {
+  const { hash } = useLocation();
+  return <Navigate to={{ pathname: '/admin/abuse-mailbox', hash }} replace />;
+}
+
 export default function App() {
   const { isAuthenticated } = useAuth();
 
@@ -178,6 +186,7 @@ export default function App() {
         <Route path="admin/scan-leads" element={<Navigate to="/leads?view=scan" replace />} />
         <Route path="admin/spam-trap" element={lazyRoute(<SpamTrap />)} />
         <Route path="admin/abuse-mailbox" element={lazyRoute(<AdminAbuseMailbox />)} />
+        <Route path="modules/abuse-mailbox" element={<RedirectToAdminAbuseMailbox />} />
         <Route path="admin/users" element={lazyRoute(<UsersAccess />)} />
         {/* Customers page (renamed from Organizations in v3 D Stripe sprint 1).
             Keep /admin/organizations as an alias so saved bookmarks resolve. */}
