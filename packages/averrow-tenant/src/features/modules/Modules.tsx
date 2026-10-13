@@ -93,11 +93,11 @@ export function Modules() {
 
       {/* Modules section — secondary, but still part of the overview. */}
       <section>
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">Active modules</h2>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Active modules</h2>
         {active.length === 0 ? (
           <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
             <p className="text-white/55 text-sm">No modules active yet.</p>
-            <p className="text-white/35 text-xs mt-1">A super-admin needs to activate modules for your organization.</p>
+            <p className="text-white/55 text-xs mt-1">A super-admin needs to activate modules for your organization.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -110,7 +110,7 @@ export function Modules() {
 
       {locked.length > 0 && (
         <section>
-          <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">Available to add</h2>
+          <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Available to add</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {locked.map((m) => (
               <ModuleCard key={m.module_key} module={m} entitled={false} />
@@ -186,14 +186,14 @@ function Stat({
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">{label}</span>
+        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{label}</span>
         <Icon size={14} className={toneCls} />
       </div>
       <div className="flex items-baseline gap-1">
         <span className={`text-2xl font-bold tabular-nums ${toneCls}`}>
           {typeof value === 'number' ? value.toLocaleString() : value}
         </span>
-        {suffix && <span className="text-[11px] text-white/40 font-mono">{suffix}</span>}
+        {suffix && <span className="text-[11px] text-white/55 font-mono">{suffix}</span>}
       </div>
     </div>
   );
@@ -204,12 +204,12 @@ function Stat({
 function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
   return (
     <section>
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">
         Brands ({brands.length})
       </h2>
       <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
         <table className="w-full text-[12px]">
-          <thead className="text-[10px] uppercase tracking-wider font-mono text-white/40 border-b border-white/[0.06]">
+          <thead className="text-[10px] uppercase tracking-wider font-mono text-white/55 border-b border-white/[0.06]">
             <tr>
               <th className="text-left px-4 py-2.5">Brand</th>
               <th className="text-right px-4 py-2.5">Active threats</th>
@@ -232,7 +232,7 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] font-mono text-white/40 mt-0.5">{b.canonical_domain}</div>
+                  <div className="text-[11px] font-mono text-white/55 mt-0.5">{b.canonical_domain}</div>
                 </td>
                 <td className="text-right px-4 py-2.5">
                   <Link
@@ -261,7 +261,7 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
 }
 
 function ExposureScore({ score }: { score: number | null }) {
-  if (score == null) return <span className="text-white/35 font-mono text-[11px]">—</span>;
+  if (score == null) return <span className="text-white/55 font-mono text-[11px]">—</span>;
   const tone =
     score >= 70 ? 'text-sev-critical' :
     score >= 40 ? 'text-amber'        :
@@ -283,7 +283,7 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <div className="flex items-baseline justify-between mb-4">
         <h2 className="text-sm font-semibold text-white/90">7-day threat trend</h2>
-        <span className="text-[11px] font-mono text-white/45 tabular-nums">{total.toLocaleString()} total</span>
+        <span className="text-[11px] font-mono text-white/55 tabular-nums">{total.toLocaleString()} total</span>
       </div>
       <div className="flex items-end gap-2 h-24">
         {points.map((p) => {
@@ -294,12 +294,12 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
               className="flex-1 flex flex-col items-center gap-1"
               title={`${p.date} — ${p.count} threats`}
             >
-              <div className="text-[10px] font-mono text-white/45 tabular-nums">{p.count}</div>
+              <div className="text-[10px] font-mono text-white/55 tabular-nums">{p.count}</div>
               <div
                 className="w-full rounded-sm bg-amber/[0.40] hover:bg-amber/[0.60] transition-colors"
                 style={{ height: `${h}px` }}
               />
-              <div className="text-[9px] font-mono text-white/35 uppercase tracking-wider">
+              <div className="text-[9px] font-mono text-white/55 uppercase tracking-wider">
                 {new Date(p.date).toLocaleDateString('en-US', { weekday: 'short' })}
               </div>
             </div>
@@ -334,12 +334,12 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
                   <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${sevTone}`}>
                     {sev || 'unknown'}
                   </span>
-                  <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">{a.alert_type.replace(/_/g, ' ')}</span>
+                  <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">{a.alert_type.replace(/_/g, ' ')}</span>
                 </div>
                 <p className="text-[12px] text-white/85 truncate">{a.title}</p>
-                <p className="text-[11px] text-white/45 font-mono mt-0.5">{a.brand_name}</p>
+                <p className="text-[11px] text-white/55 font-mono mt-0.5">{a.brand_name}</p>
               </div>
-              <div className="text-[10px] font-mono text-white/40 flex-shrink-0">
+              <div className="text-[10px] font-mono text-white/55 flex-shrink-0">
                 {new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </div>
             </div>
@@ -369,7 +369,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <div className="text-sm font-semibold text-white/90">{MODULE_LABELS[m.module_key]}</div>
-          <p className="text-[11px] text-white/45 mt-1 leading-relaxed">{MODULE_DESCRIPTIONS[m.module_key]}</p>
+          <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{MODULE_DESCRIPTIONS[m.module_key]}</p>
         </div>
         {entitled ? (
           <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-amber">
@@ -377,7 +377,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
             {trial ? 'Trial' : 'Active'}
           </span>
         ) : (
-          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-white/35">
+          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-white/55">
             <Lock size={11} />
             Locked
           </span>
@@ -386,10 +386,10 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
 
       {entitled && m.metrics.length > 0 && (
         <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <div className="text-[9px] uppercase tracking-widest font-mono text-white/35 mb-1">This month</div>
+          <div className="text-[9px] uppercase tracking-widest font-mono text-white/55 mb-1">This month</div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white/90 tabular-nums">{totalUsage}</span>
-            <span className="text-[10px] text-white/45">across {m.metrics.length} metric{m.metrics.length === 1 ? '' : 's'}</span>
+            <span className="text-[10px] text-white/55">across {m.metrics.length} metric{m.metrics.length === 1 ? '' : 's'}</span>
           </div>
         </div>
       )}
@@ -430,7 +430,7 @@ function AuthorizationBadge({ data }: { data: { signed: boolean; modules_covered
 }
 
 function Loading() {
-  return <div className="text-white/40 text-sm font-mono py-12 text-center">Loading…</div>;
+  return <div className="text-white/55 text-sm font-mono py-12 text-center">Loading…</div>;
 }
 
 function NotAuthenticated() {

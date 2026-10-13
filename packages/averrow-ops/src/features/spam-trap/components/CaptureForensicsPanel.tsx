@@ -97,15 +97,15 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
             <span className="font-mono text-[10px] font-semibold uppercase" style={{ color: severityColor }}>
               {category}
             </span>
-            <span className="text-white/40 text-[10px]">·</span>
-            <span className="font-mono text-[10px] text-white/50 uppercase">{severity}</span>
+            <span className="text-white/55 text-[10px]">·</span>
+            <span className="font-mono text-[10px] text-white/55 uppercase">{severity}</span>
           </div>
-          <span className="font-mono text-[10px] text-white/50">{captureDate}</span>
+          <span className="font-mono text-[10px] text-white/55">{captureDate}</span>
         </div>
         <p className="text-[11px] text-white/70 truncate mb-1">
           &ldquo;{capture.subject ?? '(no subject)'}&rdquo;
         </p>
-        <div className="flex items-center gap-2 text-[10px] text-white/40 font-mono">
+        <div className="flex items-center gap-2 text-[10px] text-white/55 font-mono">
           <span>FROM {capture.from_address ?? '—'}</span>
           <span>→</span>
           <span>{capture.trap_address ?? '—'}</span>
@@ -114,9 +114,9 @@ function CaptureCard({ capture }: { capture: SpamTrapCapture }) {
           <AuthBadge label="SPF" result={capture.spf_result} />
           <AuthBadge label="DKIM" result={capture.dkim_result} />
           <AuthBadge label="DMARC" result={capture.dmarc_result} />
-          <span className="text-white/40 text-[10px]">·</span>
-          <span className="font-mono text-[10px] text-white/40">{capture.url_count ?? 0} URLs</span>
-          <span className="ml-auto font-mono text-[10px] text-white/50">
+          <span className="text-white/55 text-[10px]">·</span>
+          <span className="font-mono text-[10px] text-white/55">{capture.url_count ?? 0} URLs</span>
+          <span className="ml-auto font-mono text-[10px] text-white/55">
             {expanded ? '[Collapse ▲]' : '[Expand ▼]'}
           </span>
         </div>
@@ -213,7 +213,7 @@ function ExpandedDetail({
         </div>
         {detail.spoofed_domain && (
           <div className="mt-2">
-            <span className="text-[10px] text-white/40 font-mono">Brand spoofed: </span>
+            <span className="text-[10px] text-white/55 font-mono">Brand spoofed: </span>
             <span
               className={`text-[11px] font-mono font-semibold ${brandConfidence > 70 ? 'text-red-400' : 'text-white/70'}`}
               style={brandConfidence > 70 ? { textShadow: '0 0 8px rgba(248,113,113,0.5)' } : undefined}
@@ -237,7 +237,7 @@ function ExpandedDetail({
             {urlsByDomain.map(([domain, count]) => (
               <div key={domain} className="flex items-center justify-between text-[10px] font-mono">
                 <span className="text-white/60 truncate max-w-[160px]">{domain}</span>
-                <span className="text-white/50">{count}</span>
+                <span className="text-white/55">{count}</span>
               </div>
             ))}
           </div>
@@ -245,7 +245,7 @@ function ExpandedDetail({
         {visibleUrls.length > 0 && (
           <div className="space-y-0.5">
             {visibleUrls.map((u, i) => (
-              <div key={i} className="text-[9px] font-mono text-white/50 truncate" title={u}>
+              <div key={i} className="text-[9px] font-mono text-white/55 truncate" title={u}>
                 {u.length > 50 ? u.slice(0, 50) + '…' : u}
               </div>
             ))}
@@ -283,23 +283,23 @@ function ExpandedDetail({
         )}
         <button
           onClick={() => setShowHeaders(!showHeaders)}
-          className="w-full px-3 py-1.5 rounded-lg bg-white/5 text-white/50 text-[11px] font-mono hover:bg-white/10 transition-colors"
+          className="w-full px-3 py-1.5 rounded-lg bg-white/5 text-white/55 text-[11px] font-mono hover:bg-white/10 transition-colors"
         >
           {showHeaders ? 'Hide Raw Headers' : 'View Raw Headers'}
         </button>
         {showHeaders && (
-          <pre className="text-[9px] font-mono text-white/50 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
+          <pre className="text-[9px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
             {detail.raw_headers ?? 'No headers available'}
           </pre>
         )}
         <button
           onClick={() => setShowBody(!showBody)}
-          className="w-full px-3 py-1.5 rounded-lg bg-white/5 text-white/50 text-[11px] font-mono hover:bg-white/10 transition-colors"
+          className="w-full px-3 py-1.5 rounded-lg bg-white/5 text-white/55 text-[11px] font-mono hover:bg-white/10 transition-colors"
         >
           {showBody ? 'Hide Body' : 'View Body'}
         </button>
         {showBody && (
-          <pre className="text-[9px] font-mono text-white/50 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
+          <pre className="text-[9px] font-mono text-white/55 bg-black/30 rounded-lg p-3 max-h-[200px] overflow-auto whitespace-pre-wrap">
             {detail.body_preview ?? 'No body available'}
           </pre>
         )}
@@ -311,7 +311,7 @@ function ExpandedDetail({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <span className="text-white/40 font-mono w-[60px] shrink-0">{label}</span>
+      <span className="text-white/55 font-mono w-[60px] shrink-0">{label}</span>
       <span className="text-white/70 font-mono truncate" title={value}>{value}</span>
     </div>
   );
@@ -340,7 +340,7 @@ export function CaptureForensicsPanel() {
         </div>
       ) : (captures ?? []).length === 0 ? (
         <div className="flex items-center justify-center h-[300px]">
-          <span className="text-white/40 text-sm font-mono">
+          <span className="text-white/55 text-sm font-mono">
             No captures yet — honeypots are listening
           </span>
         </div>

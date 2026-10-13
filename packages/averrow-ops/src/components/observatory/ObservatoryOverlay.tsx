@@ -29,7 +29,7 @@ export function ObservatoryOverlay({
         <h3 className="text-[var(--text-primary)] font-semibold text-sm mb-1">
           Threat Landscape Clear
         </h3>
-        <p className="text-white/40 text-xs mb-5">
+        <p className="text-white/55 text-xs mb-5">
           No active threats in the {timeWindow} window
         </p>
 
@@ -39,7 +39,7 @@ export function ObservatoryOverlay({
             <p className="text-amber-400 font-mono font-bold text-lg tabular-nums">
               {historicalThreats.toLocaleString()}
             </p>
-            <p className="text-white/30 text-[10px] uppercase tracking-wider mt-0.5">
+            <p className="text-white/55 text-[10px] uppercase tracking-wider mt-0.5">
               Historical
             </p>
           </div>
@@ -48,7 +48,7 @@ export function ObservatoryOverlay({
             <p className="text-amber-400 font-mono font-bold text-lg tabular-nums">
               {historicalCountries}
             </p>
-            <p className="text-white/30 text-[10px] uppercase tracking-wider mt-0.5">
+            <p className="text-white/55 text-[10px] uppercase tracking-wider mt-0.5">
               Countries
             </p>
           </div>

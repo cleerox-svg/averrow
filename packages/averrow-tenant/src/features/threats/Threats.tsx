@@ -37,7 +37,7 @@ export function Threats() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         ← BACK TO OVERVIEW
       </Link>
 
@@ -85,7 +85,7 @@ function StatRow({ data }: { data: ThreatsResponse }) {
         const accent = c.tone === 'crit' ? 'text-sev-critical' : c.tone === 'warn' ? 'text-amber' : 'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value.toLocaleString()}</div>

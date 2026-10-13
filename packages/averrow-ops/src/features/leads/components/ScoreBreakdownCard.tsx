@@ -54,7 +54,7 @@ export function ScoreBreakdownCard({ breakdownJson, totalScore }: ScoreBreakdown
       </div>
 
       {factors.length === 0 ? (
-        <p className="text-sm text-white/40 italic">
+        <p className="text-sm text-white/55 italic">
           No factor breakdown available. Older leads created before the breakdown JSON column was populated will show empty here.
         </p>
       ) : (

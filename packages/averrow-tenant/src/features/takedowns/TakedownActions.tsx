@@ -59,7 +59,7 @@ export function TakedownActions({
             </button>
           );
         })}
-        {update.isPending && <Loader2 size={12} className="text-white/40 animate-spin ml-0.5" />}
+        {update.isPending && <Loader2 size={12} className="text-white/55 animate-spin ml-0.5" />}
       </div>
 
       {pending && (
@@ -70,7 +70,7 @@ export function TakedownActions({
             onChange={(e) => setNote(e.target.value)}
             maxLength={4000}
             placeholder={`Note (optional) — ${ACTION_META[pending].verb} this request`}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40]"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
             onKeyDown={(e) => { if (e.key === 'Enter') run(pending, note.trim() || undefined); }}
             autoFocus
           />

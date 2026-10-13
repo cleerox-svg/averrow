@@ -82,7 +82,7 @@ export function SortableTable<T>({
                       alignCls(col.align),
                       col.widthClassName ?? '',
                       sortable ? 'cursor-pointer hover:text-white/80' : '',
-                      active ? 'text-amber' : 'text-white/45',
+                      active ? 'text-amber' : 'text-white/55',
                     ].join(' ')}
                   >
                     <span className={`inline-flex items-center gap-1 ${col.align === 'right' ? 'flex-row-reverse' : ''}`}>

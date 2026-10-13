@@ -30,14 +30,14 @@ export function MonitoringRules() {
   return (
     <div className="max-w-3xl space-y-6">
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Account</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Account</div>
         <h1 className="text-[24px] font-bold text-[var(--text-primary)] tracking-tight">Monitoring Rules</h1>
         <p className="mt-1 text-sm text-white/55 max-w-2xl">
           Per-brand controls over what generates a signal — a watchlist of extra keywords, domains to suppress, the severity floor, and how you're notified.
         </p>
       </header>
 
-      {dash.isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading…</div>}
+      {dash.isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading…</div>}
 
       {!dash.isLoading && brands.length === 0 && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
@@ -82,7 +82,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
   useEffect(() => { if (data) setCfg(data); }, [data]);
 
   if (isLoading || !cfg) {
-    return <div className="text-white/40 text-sm font-mono py-8 text-center">Loading rules…</div>;
+    return <div className="text-white/55 text-sm font-mono py-8 text-center">Loading rules…</div>;
   }
   if (error) {
     return (
@@ -116,7 +116,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
                 onClick={() => toggleSeverity(s)}
                 className={[
                   'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
-                  on ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/40 border-white/[0.07]',
+                  on ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                 ].join(' ')}
               >
                 {s}
@@ -144,7 +144,7 @@ function BrandConfig({ brandId, canEdit }: { brandId: string; canEdit: boolean }
           onChange={(e) => set('auto_acknowledge_low_days', Math.max(0, Math.min(365, parseInt(e.target.value || '0', 10))))}
           className="w-24 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[13px] text-white/85 focus:outline-none focus:border-amber/[0.40] disabled:opacity-60"
         />
-        <span className="ml-2 text-[12px] text-white/45">days</span>
+        <span className="ml-2 text-[12px] text-white/55">days</span>
       </Card>
 
       <Card title="Notifications" sub="How this brand's signals reach you by email.">
@@ -195,7 +195,7 @@ function Card({ title, sub, children }: { title: string; sub: string; children: 
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <h3 className="text-sm font-semibold text-white/90">{title}</h3>
-      <p className="text-[12px] text-white/45 mt-0.5 mb-3">{sub}</p>
+      <p className="text-[12px] text-white/55 mt-0.5 mb-3">{sub}</p>
       {children}
     </section>
   );
@@ -226,12 +226,12 @@ function TagInput({ values, onChange, canEdit, placeholder }: {
   return (
     <div>
       <div className="flex flex-wrap gap-1.5 mb-2">
-        {values.length === 0 && <span className="text-[12px] text-white/30">None.</span>}
+        {values.length === 0 && <span className="text-[12px] text-white/55">None.</span>}
         {values.map((v) => (
           <span key={v} className="inline-flex items-center gap-1 text-[11px] font-mono text-white/75 bg-white/[0.05] border border-white/[0.10] rounded px-1.5 py-0.5">
             {v}
             {canEdit && (
-              <button type="button" onClick={() => remove(v)} className="text-white/40 hover:text-sev-critical" aria-label={`Remove ${v}`}>
+              <button type="button" onClick={() => remove(v)} className="text-white/55 hover:text-sev-critical" aria-label={`Remove ${v}`}>
                 <X size={10} />
               </button>
             )}
@@ -246,7 +246,7 @@ function TagInput({ values, onChange, canEdit, placeholder }: {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKey}
             placeholder={placeholder}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40]"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
           />
           <button type="button" onClick={add} disabled={!draft.trim()} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] hover:text-white/95 disabled:opacity-40">
             <Plus size={11} /> Add

@@ -214,9 +214,9 @@ were deleted as unused in UI consolidation Phase 1 PR3, 2026-10.)
 
 /* Text */
 --text-primary:   rgba(255,255,255,0.92)
---text-secondary: rgba(255,255,255,0.60)
---text-tertiary:  rgba(255,255,255,0.40)
---text-muted:     rgba(255,255,255,0.25)
+--text-secondary: rgba(255,255,255,0.72)
+--text-tertiary:  rgba(255,255,255,0.56)
+--text-muted:     rgba(255,255,255,0.47)
 
 /* Severity */
 --sev-critical:        #f87171

@@ -92,13 +92,13 @@ export function SpamTrap() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Spam Trap</h1>
-          <p className="text-white/50 text-sm font-mono mt-1">
+          <p className="text-white/55 text-sm font-mono mt-1">
             THREAT ACTOR INTELLIGENCE · HONEYPOT NETWORK
           </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="dot-pulse dot-pulse-green" />
-          <span className="text-xs font-mono text-white/50">HONEYPOT ACTIVE</span>
+          <span className="text-xs font-mono text-white/55">HONEYPOT ACTIVE</span>
         </div>
       </div>
 
@@ -125,7 +125,7 @@ export function SpamTrap() {
           }}
         >
           <div className="shrink-0">
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/40">
+            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55">
               Catches · 30 days
             </div>
             <div className="text-xl font-bold tabular-nums text-[var(--text-primary)] mt-1">
@@ -152,7 +152,7 @@ export function SpamTrap() {
             className={`px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors border-b-2 ${
               activeTab === t.key
                 ? 'text-[var(--text-primary)] border-[var(--amber)]'
-                : 'text-white/45 hover:text-white/75 border-transparent'
+                : 'text-white/55 hover:text-white/75 border-transparent'
             }`}
           >
             {t.label}

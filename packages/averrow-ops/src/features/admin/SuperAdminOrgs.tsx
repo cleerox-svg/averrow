@@ -764,7 +764,7 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
         <Button variant="danger" size="sm" onClick={handleDeactivate} disabled={org.status === 'suspended'}>
           {org.status === 'suspended' ? 'Organization Suspended' : 'Deactivate Organization'}
         </Button>
-        <p className="text-[10px] text-white/50 mt-2">
+        <p className="text-[10px] text-white/55 mt-2">
           This will suspend all access for organization members.
         </p>
       </Card>

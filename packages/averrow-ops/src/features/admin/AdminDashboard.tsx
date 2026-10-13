@@ -898,12 +898,12 @@ export function AdminDashboard() {
                             </defs>
                             <XAxis
                               dataKey="date"
-                              tick={{ fill: 'rgba(255,255,255,0.45)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
                               axisLine={false}
                               tickLine={false}
                             />
                             <YAxis
-                              tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
                               axisLine={false}
                               tickLine={false}
                               tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}

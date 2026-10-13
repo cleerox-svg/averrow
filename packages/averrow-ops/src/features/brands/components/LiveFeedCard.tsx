@@ -52,7 +52,7 @@ export function LiveFeedCard() {
       </div>
 
       {items.length === 0 ? (
-        <p className="text-[11px] text-white/40">No recent activity</p>
+        <p className="text-[11px] text-white/55">No recent activity</p>
       ) : (
         <div className="flex flex-col">
           {items.map((t) => {
@@ -76,11 +76,11 @@ export function LiveFeedCard() {
                   {identifier.length > 25 ? identifier.slice(0, 25) + '…' : identifier}
                 </span>
                 {t.country_code && (
-                  <span className="flex-shrink-0 font-mono text-[9px] text-white/40">
+                  <span className="flex-shrink-0 font-mono text-[9px] text-white/55">
                     {t.country_code}
                   </span>
                 )}
-                <span className="flex-shrink-0 font-mono text-[9px] text-white/50">
+                <span className="flex-shrink-0 font-mono text-[9px] text-white/55">
                   {timeAgo(t.created_at)}
                 </span>
               </div>

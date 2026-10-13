@@ -77,7 +77,7 @@ function WeeklyTrendCard({ weekly }: { weekly: SpamTrapInsightsTrendsWeek[] }) {
     <div className="rounded-xl p-4" style={GLASS_CARD}>
       <div className="flex items-center justify-between">
         <SectionLabel>Weekly captures · 8 weeks</SectionLabel>
-        <span className="text-[10px] font-mono text-white/40">
+        <span className="text-[10px] font-mono text-white/55">
           {totals.reduce((s, v) => s + v, 0)} total
         </span>
       </div>
@@ -89,9 +89,9 @@ function WeeklyTrendCard({ weekly }: { weekly: SpamTrapInsightsTrendsWeek[] }) {
       <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
         {weekly.slice(-4).map((w) => (
           <div key={w.week_start} className="rounded p-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-base)' }}>
-            <div className="text-white/40 text-[9px] uppercase tracking-wider">{w.week_start}</div>
+            <div className="text-white/55 text-[9px] uppercase tracking-wider">{w.week_start}</div>
             <div className="text-[var(--text-primary)] text-base font-bold tabular-nums mt-0.5">{w.total}</div>
-            <div className="text-white/40 text-[10px] mt-0.5">
+            <div className="text-white/55 text-[10px] mt-0.5">
               top: {pickTopChannel(w)}
             </div>
           </div>
@@ -178,10 +178,10 @@ function CohortsCard({ cohorts }: { cohorts: SpamTrapInsightsCohort[] }) {
       <Table className="mt-3 w-full text-left">
         <thead>
           <tr className="border-b border-white/[0.06]">
-            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5">Cohort</Th>
-            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Seeds</Th>
-            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Caught</Th>
-            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/45 pb-1.5 text-right">Avg days</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5">Cohort</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Seeds</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Caught</Th>
+            <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Avg days</Th>
           </tr>
         </thead>
         <tbody>
@@ -212,9 +212,9 @@ export function CorrelationsTab({ insights }: { insights: SpamTrapInsights | nul
     <div className="rounded-xl p-4" style={GLASS_CARD}>
       <div className="flex items-center justify-between">
         <SectionLabel>Abuse-mailbox ↔ honeypot correlations</SectionLabel>
-        <span className="text-[10px] font-mono text-white/40">{rows.length} recent</span>
+        <span className="text-[10px] font-mono text-white/55">{rows.length} recent</span>
       </div>
-      <p className="text-[11px] text-white/45 mt-2 leading-relaxed">
+      <p className="text-[11px] text-white/55 mt-2 leading-relaxed">
         For each public abuse-mailbox submission, counts how many seeded-honeypot captures share the same sender domain or sending IP. Non-zero values mean the submitter is on infrastructure we already see attacking other surfaces — strong signal.
       </p>
       {rows.length === 0
@@ -244,12 +244,12 @@ function CorrelationRow({ row }: { row: SpamTrapInsightsCorrelation }) {
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: sevColour, boxShadow: `0 0 6px ${sevColour}` }} />
           <span className="text-[12px] text-white/80 truncate">
-            {row.subject ?? <span className="italic text-white/40">(no subject)</span>}
+            {row.subject ?? <span className="italic text-white/55">(no subject)</span>}
           </span>
         </div>
-        <span className="text-[10px] font-mono text-white/40 shrink-0">{relativeTime(row.captured_at)}</span>
+        <span className="text-[10px] font-mono text-white/55 shrink-0">{relativeTime(row.captured_at)}</span>
       </div>
-      <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/45">
+      <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/55">
         {row.from_domain && <span>domain: <span className="text-white/65">{row.from_domain}</span></span>}
         {row.sending_ip && <span>ip: <span className="text-white/65">{row.sending_ip}</span></span>}
       </div>
@@ -327,10 +327,10 @@ function OutputRow({ output }: { output: SpamTrapInsightsStrategyOutput }) {
       }}
     >
       <div className="flex items-center justify-between mb-0.5">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/45">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/55">
           {output.type}
         </span>
-        <span className="text-[10px] font-mono text-white/40">{relativeTime(output.created_at)}</span>
+        <span className="text-[10px] font-mono text-white/55">{relativeTime(output.created_at)}</span>
       </div>
       <p className="text-[12px] text-white/75 leading-snug">{output.summary}</p>
     </div>
@@ -349,7 +349,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function EmptyTab({ message }: { message: string }) {
   return (
-    <div className="text-center text-white/40 text-sm font-mono py-12">
+    <div className="text-center text-white/55 text-sm font-mono py-12">
       {message}
     </div>
   );
@@ -357,6 +357,6 @@ function EmptyTab({ message }: { message: string }) {
 
 function EmptyInline({ message }: { message: string }) {
   return (
-    <p className="text-[11px] text-white/45 mt-3 leading-relaxed">{message}</p>
+    <p className="text-[11px] text-white/55 mt-3 leading-relaxed">{message}</p>
   );
 }

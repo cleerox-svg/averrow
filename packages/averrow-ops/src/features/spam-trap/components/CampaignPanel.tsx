@@ -41,7 +41,7 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
           size="xs"
         />
       </div>
-      <div className="flex items-center gap-4 text-[10px] font-mono text-white/40">
+      <div className="flex items-center gap-4 text-[10px] font-mono text-white/55">
         <span>{seedCount} seeds</span>
         <span>{targetBrands.length} brands</span>
         <span>{channels.join(', ')}</span>
@@ -52,18 +52,18 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
         <Table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/[0.06]">
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5">Channel</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Seeds</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Catches</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/50 pb-1.5 text-right">Rate</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5">Channel</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Seeds</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Catches</Th>
+              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Rate</Th>
             </tr>
           </thead>
           <tbody>
             {channels.map((ch) => (
               <tr key={ch} className="border-b border-white/[0.03]">
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-white/60">{ch}</Td>
-                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{seedCount}</Td>
-                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/50 text-right">{catches}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{seedCount}</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{catches}</Td>
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-[#E5A832] text-right">{catchRate}%</Td>
               </tr>
             ))}
@@ -199,7 +199,7 @@ export function CampaignPanel() {
         </div>
       ) : (campaigns ?? []).length === 0 ? (
         <div className="flex items-center justify-center h-[200px]">
-          <span className="text-white/40 text-sm font-mono">
+          <span className="text-white/55 text-sm font-mono">
             No campaigns configured
           </span>
         </div>

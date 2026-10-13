@@ -34,7 +34,7 @@ export function IntelligenceCard() {
   const [tab, setTab] = useState<TabKey>('overview');
 
   if (isLoading) {
-    return <div className="text-white/40 text-sm font-mono py-16 text-center">Loading signal…</div>;
+    return <div className="text-white/55 text-sm font-mono py-16 text-center">Loading signal…</div>;
   }
   if (error || !alert) {
     return (
@@ -72,12 +72,12 @@ export function IntelligenceCard() {
           {alert.status !== 'resolved' && alert.status !== 'false_positive' && (
             <AgePill createdAt={alert.created_at} severity={alert.severity} />
           )}
-          <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
+          <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">
             {alert.alert_type.replace(/_/g, ' ')}
           </span>
         </div>
         <h1 className="text-[22px] font-bold text-[var(--text-primary)] tracking-tight mt-2 leading-snug">{alert.title}</h1>
-        <div className="mt-1 text-[12px] text-white/45 font-mono flex items-center gap-2 flex-wrap">
+        <div className="mt-1 text-[12px] text-white/55 font-mono flex items-center gap-2 flex-wrap">
           <span className="text-white/65">{alert.brand_name}</span>
           {alert.brand_domain && <span>· {alert.brand_domain}</span>}
           <span>· opened {new Date(alert.created_at).toLocaleString()}</span>
@@ -118,7 +118,7 @@ export function IntelligenceCard() {
         {/* Right rail — actions */}
         <aside className="space-y-4 lg:sticky lg:top-4">
           <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-            <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/40 mb-2.5">Disposition</div>
+            <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Disposition</div>
             <div className="flex items-center justify-between gap-2">
               <StatusPill status={alert.status} />
               <AssigneeControl alert={alert} canTriage={canTriage} />
@@ -128,7 +128,7 @@ export function IntelligenceCard() {
             ) : isStaff ? (
               <StaffTriageNote className="mt-3 pt-2.5 border-t border-white/[0.06]" />
             ) : (
-              <p className="mt-3 pt-2.5 border-t border-white/[0.06] text-[11px] text-white/45 font-mono">
+              <p className="mt-3 pt-2.5 border-t border-white/[0.06] text-[11px] text-white/55 font-mono">
                 Analyst role required to act.
               </p>
             )}
@@ -136,7 +136,7 @@ export function IntelligenceCard() {
 
           {canTriage && (
             <section className="rounded-xl border border-white/[0.07] bg-bg-card p-4">
-              <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/40 mb-2.5">Investigation</div>
+              <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-2.5">Investigation</div>
               <AddToInvestigation itemType="alert" itemId={alert.id} defaultTitle={alert.title} />
             </section>
           )}
@@ -167,7 +167,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
           <ul className="space-y-1.5">
             {recs.map((r, i) => (
               <li key={i} className="flex gap-2 text-[12px] text-white/75 leading-relaxed">
-                <span className="text-amber/60 flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
+                <span className="text-amber/80 flex-shrink-0 mt-[2px]">▸</span><span>{r}</span>
               </li>
             ))}
           </ul>
@@ -176,7 +176,7 @@ function OverviewTab({ alert }: { alert: Alert }) {
 
       {alert.resolution_notes && (alert.status === 'resolved' || alert.status === 'false_positive') && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/40 mb-1.5">Disposition note</div>
+          <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">Disposition note</div>
           <p className="text-[12px] text-white/70 italic">{alert.resolution_notes}</p>
         </section>
       )}
@@ -280,7 +280,7 @@ function ActivityTab({ alert }: { alert: Alert }) {
             <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
             <div className="min-w-0">
               <div className="text-[12px] text-white/80">{e.label}</div>
-              {e.at && <div className="text-[10px] font-mono text-white/40">{new Date(e.at).toLocaleString()}</div>}
+              {e.at && <div className="text-[10px] font-mono text-white/55">{new Date(e.at).toLocaleString()}</div>}
               {e.note && <div className="text-[11px] text-white/55 italic mt-0.5">{e.note}</div>}
             </div>
           </li>
@@ -307,7 +307,7 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
       {shown.map((it) => (
         <div key={it.label} className={`rounded-lg border px-2.5 py-2 ${it.bad ? 'border-sev-critical/[0.25] bg-sev-critical/[0.06]' : 'border-white/[0.08] bg-white/[0.02]'}`}>
-          <div className="text-[9px] uppercase tracking-wider font-mono text-white/40">{it.label}</div>
+          <div className="text-[9px] uppercase tracking-wider font-mono text-white/55">{it.label}</div>
           <div className={`text-[12px] font-medium mt-0.5 ${it.bad ? 'text-sev-critical' : 'text-white/75'}`}>{it.value}</div>
         </div>
       ))}
@@ -319,7 +319,7 @@ function ReputationGrid({ threat: t }: { threat: ThreatRow }) {
 
 function BackLink() {
   return (
-    <Link to="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/50 hover:text-white/85 transition-colors">
+    <Link to="/alerts" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
       <ArrowLeft size={14} /> Alerts
     </Link>
   );
@@ -329,7 +329,7 @@ function Panel({ title, sub, children }: { title: string; sub?: string; children
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <h3 className="text-sm font-semibold text-white/90">{title}</h3>
-      {sub && <p className="text-[12px] text-white/45 mt-0.5 mb-3">{sub}</p>}
+      {sub && <p className="text-[12px] text-white/55 mt-0.5 mb-3">{sub}</p>}
       {!sub && <div className="mb-3" />}
       {children}
     </section>
@@ -341,7 +341,7 @@ function DefList({ rows }: { rows: Array<[string, ReactNode]> }) {
     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5">
       {rows.map(([k, v]) => (
         <div key={k} className="flex flex-col gap-0.5 min-w-0">
-          <dt className="text-[9px] uppercase tracking-wider font-mono text-white/40">{k}</dt>
+          <dt className="text-[9px] uppercase tracking-wider font-mono text-white/55">{k}</dt>
           <dd className="text-[12.5px] text-white/80 break-words font-mono">{present(v) ? v : '—'}</dd>
         </div>
       ))}
@@ -350,7 +350,7 @@ function DefList({ rows }: { rows: Array<[string, ReactNode]> }) {
 }
 
 function Empty({ children }: { children: ReactNode }) {
-  return <p className="text-[12px] text-white/35">{children}</p>;
+  return <p className="text-[12px] text-white/55">{children}</p>;
 }
 
 function PivotLink({ to, children }: { to: string; children: ReactNode }) {
@@ -376,7 +376,7 @@ const STATUS_TONE: Record<string, string> = {
   acknowledged:   'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
   investigating:  'text-amber      bg-amber/[0.08]       border-amber/[0.18]',
   resolved:       'text-green/85   bg-green/[0.06]       border-green/[0.15]',
-  false_positive: 'text-white/50   bg-white/[0.04]       border-white/[0.08]',
+  false_positive: 'text-white/55   bg-white/[0.04]       border-white/[0.08]',
 };
 
 function StatusPill({ status }: { status: string }) {

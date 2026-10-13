@@ -235,9 +235,9 @@ packages/averrow-ops/src/
 
   /* ── Text ── */
   --text-primary:   rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.60);
-  --text-tertiary:  rgba(255, 255, 255, 0.40);
-  --text-muted:     rgba(255, 255, 255, 0.25);
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-tertiary:  rgba(255, 255, 255, 0.56);
+  --text-muted:     rgba(255, 255, 255, 0.47);
   --text-accent:    var(--amber);
 
   /* ── Borders ── */
@@ -274,9 +274,9 @@ packages/averrow-ops/src/
   --bg-input:     rgba(255, 255, 255, 0.80);
 
   --text-primary:   rgba(15, 20, 35, 0.92);
-  --text-secondary: rgba(15, 20, 35, 0.60);
-  --text-tertiary:  rgba(15, 20, 35, 0.40);
-  --text-muted:     rgba(15, 20, 35, 0.25);
+  --text-secondary: rgba(15, 20, 35, 0.80);
+  --text-tertiary:  rgba(15, 20, 35, 0.70);
+  --text-muted:     rgba(15, 20, 35, 0.62);
 
   --border-base:    rgba(0, 0, 0, 0.08);
   --border-strong:  rgba(0, 0, 0, 0.14);

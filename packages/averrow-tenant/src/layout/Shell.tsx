@@ -25,7 +25,7 @@ export function Shell() {
   if (loading || !user) {
     return (
       <div className="h-full flex items-center justify-center bg-bg-page">
-        <div className="text-[12px] font-mono uppercase tracking-[0.18em] text-white/40">
+        <div className="text-[12px] font-mono uppercase tracking-[0.18em] text-white/55">
           {loading ? 'Loading…' : 'Redirecting to sign in…'}
         </div>
       </div>

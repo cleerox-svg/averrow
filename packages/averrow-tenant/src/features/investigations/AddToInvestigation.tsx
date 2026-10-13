@@ -68,7 +68,7 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
       {mode === 'pick' ? (
         <>
           <div className="max-h-44 overflow-y-auto space-y-1">
-            {cases.length === 0 && <p className="text-[11px] text-white/35 px-1 py-1.5">No open cases.</p>}
+            {cases.length === 0 && <p className="text-[11px] text-white/55 px-1 py-1.5">No open cases.</p>}
             {cases.map((c) => (
               <button
                 key={c.id}
@@ -85,9 +85,9 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
             <button type="button" onClick={() => setMode('new')} className="inline-flex items-center gap-1 text-[11px] font-mono text-amber/80 hover:text-amber">
               <Plus size={11} /> New case
             </button>
-            <button type="button" onClick={() => setOpen(false)} className="text-[11px] font-mono text-white/45 hover:text-white/70">Cancel</button>
+            <button type="button" onClick={() => setOpen(false)} className="text-[11px] font-mono text-white/55 hover:text-white/70">Cancel</button>
           </div>
-          {link.isPending && <Loader2 size={12} className="animate-spin text-white/40" />}
+          {link.isPending && <Loader2 size={12} className="animate-spin text-white/55" />}
           {link.isError && <p className="text-[11px] text-sev-critical">{link.error instanceof Error ? link.error.message : 'Failed to add'}</p>}
         </>
       ) : (
@@ -98,11 +98,11 @@ export function AddToInvestigation({ itemType, itemId, defaultTitle }: {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="New investigation title…"
             autoFocus
-            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40]"
+            className="w-full bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
             onKeyDown={(e) => { if (e.key === 'Enter') createAndLink(); }}
           />
           <div className="flex items-center justify-between gap-2">
-            <button type="button" onClick={() => setMode('pick')} className="text-[11px] font-mono text-white/45 hover:text-white/70">Back</button>
+            <button type="button" onClick={() => setMode('pick')} className="text-[11px] font-mono text-white/55 hover:text-white/70">Back</button>
             <button
               type="button"
               disabled={!title.trim() || create.isPending}

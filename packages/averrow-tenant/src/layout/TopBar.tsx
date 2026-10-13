@@ -56,7 +56,7 @@ export function TopBar() {
   return (
     <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-white/[0.05] bg-bg-page/80 backdrop-blur">
       <div>
-        <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/40">Organization</div>
+        <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/55">Organization</div>
         <div className="text-sm font-semibold text-white/90">{orgName}</div>
       </div>
 
@@ -80,7 +80,7 @@ export function TopBar() {
           >
             {initials || '?'}
           </span>
-          <ChevronDown size={14} className="text-white/40" />
+          <ChevronDown size={14} className="text-white/55" />
         </button>
 
         {open && (
@@ -93,7 +93,7 @@ export function TopBar() {
               <div className="text-sm font-semibold text-white/95 truncate">
                 {user?.display_name ?? user?.name ?? user?.email ?? 'Signed in'}
               </div>
-              <div className="text-[11px] font-mono text-white/45 truncate mt-0.5">
+              <div className="text-[11px] font-mono text-white/55 truncate mt-0.5">
                 {user?.email}
               </div>
               {user?.organization && (

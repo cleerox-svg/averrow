@@ -205,7 +205,7 @@ export function BrandDetailV3() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
-                activeTab === tab.id ? 'border-[var(--amber)] text-[var(--amber-text)]' : 'border-transparent text-white/40 hover:text-white/70'
+                activeTab === tab.id ? 'border-[var(--amber)] text-[var(--amber-text)]' : 'border-transparent text-white/55 hover:text-white/70'
               }`}
               style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
               title={tab.hint}

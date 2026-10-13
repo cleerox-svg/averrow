@@ -34,7 +34,7 @@ export function Takedowns() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
       </Link>
 
@@ -49,7 +49,7 @@ export function Takedowns() {
 
       {isStaff && <StaffTriageNote />}
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading takedowns…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading takedowns…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load takedowns</h3>
@@ -118,11 +118,11 @@ function HeadlineMetrics({ totals }: { totals: TakedownTotals }) {
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
-            <p className="text-[11px] text-white/40 mt-1 leading-relaxed">{c.sub}</p>
+            <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{c.sub}</p>
           </div>
         );
       })}
@@ -144,7 +144,7 @@ function FilterBar({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/30 mr-1">Status</span>
+        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55 mr-1">Status</span>
         <button type="button" className={pill(!filters.status)} onClick={() => update({ status: null })}>All</button>
         {(['draft', 'submitted', 'pending_response', 'taken_down', 'failed'] as const).map((s) => (
           <button
@@ -158,7 +158,7 @@ function FilterBar({
         ))}
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/30 mr-1">Module</span>
+        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55 mr-1">Module</span>
         <button type="button" className={pill(!filters.module)} onClick={() => update({ module: null })}>All</button>
         {(['domain', 'social', 'app_store', 'dark_web', 'trademark'] as const).map((m) => (
           <button
@@ -179,8 +179,8 @@ function TakedownsList({ rows, canTriage }: { rows: TakedownListRow[]; canTriage
   const pending = rows.filter((t) => t.status === 'draft').length;
   return (
     <section className="space-y-2">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Requests <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        Requests <span className="text-white/55">({rows.length})</span>
         {canTriage && pending > 0 && (
           <span className="ml-2 text-amber/80 normal-case tracking-normal">· {pending} awaiting your approval</span>
         )}
@@ -213,7 +213,7 @@ function TakedownRow({ takedown: t, canTriage }: { takedown: TakedownListRow; ca
             <AgePill createdAt={t.created_at} severity={t.severity} />
           )}
           {t.module_key && <ModuleChip module_key={t.module_key} />}
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/40">
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
             {t.target_type}
           </span>
           {t.submission_count > 0 && (
@@ -237,7 +237,7 @@ function TakedownRow({ takedown: t, canTriage }: { takedown: TakedownListRow; ca
           <p className="text-[12px] text-white/65 mt-2 line-clamp-2">{t.evidence_summary}</p>
         )}
 
-        <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/40">
+        <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/55">
           <span>created {formatDate(t.created_at)}</span>
           {t.submitted_at && <span>· submitted {formatDate(t.submitted_at)}</span>}
           {t.resolved_at  && <span>· resolved {formatDate(t.resolved_at)}</span>}
@@ -298,7 +298,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
       <p className="text-white/55 text-sm">
         {filtered ? 'No takedowns match the current filters.' : 'No takedowns issued for your org yet.'}
       </p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         {filtered
           ? 'Clear filters to see everything.'
           : 'Takedowns appear here as scanners detect threats and the platform issues requests on your behalf.'}

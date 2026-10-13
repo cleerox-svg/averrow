@@ -69,7 +69,7 @@ const opStatusBadge = (status: string): BadgeProps => {
 function AttackTypeBadge({ type }: { type: string | null }) {
   if (!type) return null;
   const t = type.toLowerCase();
-  let cls = 'border-white/10 bg-white/5 text-white/40';
+  let cls = 'border-white/10 bg-white/5 text-white/55';
   if (t.includes('phishing')) cls = 'border-[#C83C3C]/30 bg-[#C83C3C]/10 text-[#C83C3C]';
   else if (t.includes('malware')) cls = 'border-[#FB923C]/30 bg-[#FB923C]/10 text-[#FB923C]';
   else if (t === 'c2') cls = 'border-[#A78BFA]/30 bg-[#A78BFA]/10 text-[#A78BFA]';
@@ -375,7 +375,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-40 flex items-center justify-center font-mono text-[11px] text-white/40">
+            <div className="h-40 flex items-center justify-center font-mono text-[11px] text-white/55">
               No timeline data
             </div>
           )}
@@ -433,7 +433,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                         {String(threat.severity ?? '—')}
                       </span>
                     </Td>
-                    <Td className="p-0 font-mono text-[10px] text-white/50 py-1.5 px-2">
+                    <Td className="p-0 font-mono text-[10px] text-white/55 py-1.5 px-2">
                       {threat.first_seen ? new Date(String(threat.first_seen)).toLocaleDateString() : '—'}
                     </Td>
                   </tr>

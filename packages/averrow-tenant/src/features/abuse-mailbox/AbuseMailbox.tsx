@@ -43,7 +43,7 @@ export function AbuseMailbox() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
       </Link>
 
@@ -59,7 +59,7 @@ export function AbuseMailbox() {
         </p>
       </header>
 
-      {summaryQ.isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading mailbox…</div>}
+      {summaryQ.isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading mailbox…</div>}
       {summaryQ.error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load Abuse Mailbox</h3>
@@ -77,7 +77,7 @@ export function AbuseMailbox() {
           />
 
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">Per brand</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Per brand</h2>
             {summaryQ.data.brands.length === 0 ? (
               <NoBrands />
             ) : (
@@ -115,13 +115,13 @@ export function AbuseMailbox() {
               onSearchChange={setSearchText}
             />
 
-            {messagesQ.isLoading && <div className="text-white/40 text-sm font-mono py-8 text-center">Loading messages…</div>}
+            {messagesQ.isLoading && <div className="text-white/55 text-sm font-mono py-8 text-center">Loading messages…</div>}
             {messagesQ.data && (() => {
               const filtered = filterTenantMessages(messagesQ.data.messages, statusTab, classFilter, searchText);
               if (messagesQ.data.messages.length === 0) return <EmptyMessages />;
               if (filtered.length === 0) {
                 return (
-                  <div className="text-white/45 text-[12px] font-mono py-12 text-center">
+                  <div className="text-white/55 text-[12px] font-mono py-12 text-center">
                     No messages match the current filters.
                   </div>
                 );
@@ -176,7 +176,7 @@ function AliasCard({ alias }: { alias: AbuseAlias | null }) {
 
   return (
     <div className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/45 mb-2">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-2">
         <Mail size={11} /> Your forwarding alias
       </div>
       <div className="flex items-center gap-3 flex-wrap">
@@ -251,11 +251,11 @@ function HeadlineMetrics({
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
-            <p className="text-[11px] text-white/40 mt-1 leading-relaxed">{c.sub}</p>
+            <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{c.sub}</p>
           </div>
         );
       })}
@@ -284,10 +284,10 @@ function BrandCard({
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-white/90 truncate">{b.brand_name}</div>
-          <div className="text-[11px] text-white/45 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
+          <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
         </div>
         {b.messages_total === 0 ? (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-white/30 flex-shrink-0">no messages</span>
+          <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">no messages</span>
         ) : (
           <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
             {b.messages_total} message{b.messages_total === 1 ? '' : 's'}
@@ -311,13 +311,13 @@ function ClassChip({
   tone: 'crit' | 'warn' | 'neutral';
 }) {
   const accent =
-    count === 0     ? 'text-white/35'     :
+    count === 0     ? 'text-white/55'     :
     tone === 'crit' ? 'text-sev-critical' :
     tone === 'warn' ? 'text-amber'        :
                       'text-white/85';
   return (
     <div>
-      <div className="text-[8px] uppercase tracking-widest font-mono text-white/35 mb-0.5">{label}</div>
+      <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-lg font-bold tabular-nums ${accent}`}>{count}</div>
     </div>
   );
@@ -459,10 +459,10 @@ function MessageRow({ message: m, expanded, onToggle }: {
       {m.determination ? (
         <p className="text-[12px] text-white/75 mt-2 leading-snug line-clamp-2">{m.determination.lead}</p>
       ) : m.classification_reason && (
-        <p className="text-[11px] text-white/40 mt-2 italic">{m.classification_reason}</p>
+        <p className="text-[11px] text-white/55 mt-2 italic">{m.classification_reason}</p>
       )}
 
-      <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/40">
+      <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/55">
         <span>{formatTimestamp(m.received_at)}</span>
         {m.ai_action && m.ai_action !== 'safe' && (
           <span className={m.ai_action === 'escalate' ? 'text-sev-critical' : 'text-amber'}>
@@ -473,7 +473,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
           <TenantDeliveryTracker message={m} />
           <ChevronDown
             size={12}
-            className="text-white/45"
+            className="text-white/55"
             style={{ transition: 'transform 0.18s ease', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
           />
         </span>
@@ -494,7 +494,7 @@ function TenantMessageDetail({ message: m }: { message: AbuseInboxMessageRow }) 
       <div className="mb-4">
         <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
         <div className="text-[14px] text-white/95 font-medium">
-          {m.original_subject ?? <span className="italic text-white/45">(no subject)</span>}
+          {m.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
         </div>
       </div>
 
@@ -594,14 +594,14 @@ function TenantDeepAnalysisSection({
     abuse_report: 'text-amber border-amber/[0.30] bg-black/30',
     block:        'text-amber border-amber/[0.30] bg-black/30',
     monitor:      'text-white/70 border-white/[0.10] bg-black/30',
-    none:         'text-white/50 border-white/[0.08] bg-black/30',
+    none:         'text-white/55 border-white/[0.08] bg-black/30',
   };
   const tone = ACTION_TONE[d.recommended_action.category] ?? 'text-white/70 border-white/[0.10] bg-black/30';
   return (
     <div className="mb-4">
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">
         Investigator findings
-        <span className="ml-2 text-white/35">{d.model}</span>
+        <span className="ml-2 text-white/55">{d.model}</span>
       </div>
       <div className="rounded-lg p-4 bg-bg-card/60 border border-sev-critical/[0.20]">
         <p className="text-[13px] text-white/92 leading-relaxed">{d.internal_narrative}</p>
@@ -709,7 +709,7 @@ function TenantPlatformIntelSection({
 function TenantAuthPill({ label, verdict }: { label: string; verdict: string | null }) {
   if (!verdict) {
     return (
-      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/40">
+      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/55">
         {label}: —
       </span>
     );
@@ -759,7 +759,7 @@ function TenantRawCaptureSections({
         <TenantRawTabButton label="Headers"     count={counts.headers}     active={tab === 'headers'}     onClick={() => setTab('headers')} />
         <TenantRawTabButton label="Attachments" count={counts.attachments} active={tab === 'attachments'} onClick={() => setTab('attachments')} />
         {detailQ.isLoading && (
-          <span className="ml-auto text-[10px] font-mono text-white/45">loading…</span>
+          <span className="ml-auto text-[10px] font-mono text-white/55">loading…</span>
         )}
       </div>
 
@@ -785,7 +785,7 @@ function TenantRawTabButton({
       }`}
     >
       <span className="uppercase tracking-wider">{label}</span>
-      <span className="ml-1.5 text-white/45">{count}</span>
+      <span className="ml-1.5 text-white/55">{count}</span>
     </button>
   );
 }
@@ -796,7 +796,7 @@ function TenantBodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet
   return (
     <div>
       {!rawBody && snippet && (
-        <p className="text-[10px] text-white/45 mb-2 font-mono">
+        <p className="text-[10px] text-white/55 mb-2 font-mono">
           Raw body not captured for this message. Showing the 500-char snippet.
         </p>
       )}
@@ -824,7 +824,7 @@ function TenantUrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boo
               </span>
             )}
             {u.count > 1 && (
-              <span className="text-[9px] font-mono text-white/45 shrink-0">×{u.count}</span>
+              <span className="text-[9px] font-mono text-white/55 shrink-0">×{u.count}</span>
             )}
             <code className="text-[11px] text-white/85 font-mono break-all flex-1 min-w-0">{u.url}</code>
           </div>
@@ -887,7 +887,7 @@ function TenantAttachmentsPanel({ attachments, loading }: { attachments: Extract
 
 function TenantEmptyPanel({ text }: { text: string }) {
   return (
-    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono bg-black/20 border border-white/[0.04]">
+    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/55 font-mono bg-black/20 border border-white/[0.04]">
       {text}
     </div>
   );
@@ -895,7 +895,7 @@ function TenantEmptyPanel({ text }: { text: string }) {
 
 function TenantLoadingPanel() {
   return (
-    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/50 font-mono bg-black/20 border border-white/[0.04]">
+    <div className="rounded-lg px-4 py-6 text-center text-[12px] text-white/55 font-mono bg-black/20 border border-white/[0.04]">
       Loading…
     </div>
   );
@@ -935,12 +935,12 @@ function TenantStatusIcon({
   kind, sent, throttled,
 }: { kind: "ack" | "verdict"; sent: boolean; throttled: boolean }) {
   if (throttled) {
-    return <MailX size={13} className="text-amber/60" aria-label={`${kind} skipped — rate-limited`} />;
+    return <MailX size={13} className="text-amber/80" aria-label={`${kind} skipped — rate-limited`} />;
   }
   if (sent) {
     return <MailCheck size={13} className="text-green" aria-label={`${kind} sent`} />;
   }
-  return <Mail size={13} className="text-white/35" aria-label={`${kind} pending`} />;
+  return <Mail size={13} className="text-white/55" aria-label={`${kind} pending`} />;
 }
 
 function formatShortTs(ts: string | null | undefined): string {
@@ -971,7 +971,7 @@ function TenantDetailField({ label, value, mono, accent, uppercase }: {
       <div
         className={`text-[12px] break-all ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} ${accent ? 'text-amber' : 'text-white/92'}`}
       >
-        {value ?? <span className="text-white/35">—</span>}
+        {value ?? <span className="text-white/55">—</span>}
       </div>
     </div>
   );
@@ -1020,7 +1020,7 @@ function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'investigating' ? 'text-amber    bg-amber/[0.06]    border-amber/[0.15]' :
     status === 'resolved'      ? 'text-green/85 bg-green/[0.06]    border-green/[0.15]' :
-    status === 'dismissed'     ? 'text-white/40 bg-white/[0.04]    border-white/[0.08]' :
+    status === 'dismissed'     ? 'text-white/55 bg-white/[0.04]    border-white/[0.08]' :
                                  'text-white/65 bg-white/[0.04]    border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -1033,7 +1033,7 @@ function NoBrands() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
       </p>
     </div>
@@ -1079,7 +1079,7 @@ function TenantIntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
           Intel highlights
         </h2>
-        <span className="text-[10px] font-mono text-white/45">
+        <span className="text-[10px] font-mono text-white/55">
           {intel.analyzed_count_7d} analyzed / 7d · {intel.analyzed_count_30d} / 30d
         </span>
       </div>
@@ -1089,7 +1089,7 @@ function TenantIntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
             {intel.recent_takedowns.map((t) => (
               <div key={t.message_id} className="text-[11px] py-1 border-b border-white/[0.04] last:border-b-0">
                 <div className="text-white/85 truncate">
-                  {t.original_subject ?? <span className="italic text-white/45">(no subject)</span>}
+                  {t.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
                 </div>
                 <div className="text-white/55 font-mono mt-0.5 truncate">
                   → {t.target ?? t.hosting_provider ?? 'unknown target'}
@@ -1192,7 +1192,7 @@ function TenantInboxToolbar({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
           {activeBrand && activeBrandName ? `Filtered: ${activeBrandName}` : 'Inbox'}
-          <span className="text-white/40 ml-1">({messages.length})</span>
+          <span className="text-white/55 ml-1">({messages.length})</span>
         </h2>
         {activeBrand && (
           <button
@@ -1221,7 +1221,7 @@ function TenantInboxToolbar({
               }`}
             >
               <span className="uppercase tracking-wider">{t.label}</span>
-              <span className="ml-1.5 text-white/45">{count}</span>
+              <span className="ml-1.5 text-white/55">{count}</span>
             </button>
           );
         })}
@@ -1254,7 +1254,7 @@ function TenantInboxToolbar({
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
               }`}
             >
-              {c.label} <span className="ml-1 text-white/45">{count}</span>
+              {c.label} <span className="ml-1 text-white/55">{count}</span>
             </button>
           );
         })}
@@ -1263,7 +1263,7 @@ function TenantInboxToolbar({
           placeholder="Search subject / sender / alias…"
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/35 focus:outline-none focus:border-amber/[0.40] min-w-[200px]"
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-amber/[0.40] min-w-[200px]"
         />
       </div>
     </div>
@@ -1283,7 +1283,7 @@ export function TenantStatusActions({ message }: { message: AbuseInboxMessageRow
     return (
       <p className="text-[11px] font-mono text-white/55">
         <span className="uppercase tracking-wider text-white/80">{cur}</span>
-        <span className="ml-2 text-white/40">
+        <span className="ml-2 text-white/55">
           {isStaff ? 'Read-only — staff triage from the Averrow console.' : 'Read-only — requires the analyst role.'}
         </span>
       </p>
@@ -1323,7 +1323,7 @@ function EmptyMessages() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No forwarded messages yet.</p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         Forward suspicious mail to your alias above. Determinations and escalations land here.
       </p>
       <a

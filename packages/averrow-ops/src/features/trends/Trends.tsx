@@ -298,7 +298,7 @@ function IntelligenceBriefings() {
         </div>
       ) : !briefings?.length ? (
         <Card>
-          <p className="text-sm text-white/40">No intelligence briefings available</p>
+          <p className="text-sm text-white/55">No intelligence briefings available</p>
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -334,7 +334,7 @@ function ThreatVolumeChart({ window }: { window: string }) {
         {isLoading ? (
           <Skeleton className="h-[280px] lg:h-[280px] h-[200px] rounded-lg" />
         ) : !volume?.length ? (
-          <p className="text-sm text-white/40 py-8 text-center">No volume data</p>
+          <p className="text-sm text-white/55 py-8 text-center">No volume data</p>
         ) : (
           <ResponsiveContainer width="100%" height={280} className="max-md:!h-[200px]">
             <AreaChart data={volume}>
@@ -387,7 +387,7 @@ function BrandRiskMomentum() {
       {isLoading ? (
         <Skeleton className="h-48 rounded-lg" />
       ) : !brands?.length ? (
-        <p className="text-sm text-white/40">No brand data</p>
+        <p className="text-sm text-white/55">No brand data</p>
       ) : (
         <div className="overflow-x-auto">
           <Table className="w-full text-sm">
@@ -456,7 +456,7 @@ function ProviderMomentumPanel() {
         {provLoading ? (
           <Skeleton className="h-36 rounded-lg" />
         ) : !providers?.length ? (
-          <p className="text-sm text-white/40">No provider data</p>
+          <p className="text-sm text-white/55">No provider data</p>
         ) : (
           <div className="space-y-2">
             {providers.map((p) => {
@@ -492,7 +492,7 @@ function ProviderMomentumPanel() {
         {nexusLoading ? (
           <Skeleton className="h-24 rounded-lg" />
         ) : !clusters?.length ? (
-          <p className="text-sm text-white/40">No active clusters</p>
+          <p className="text-sm text-white/55">No active clusters</p>
         ) : (
           <div className="space-y-2">
             {clusters.map((c) => (

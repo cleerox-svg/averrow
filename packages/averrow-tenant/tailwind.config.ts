@@ -24,14 +24,16 @@ import type { Config } from 'tailwindcss';
 // parity shims that remap them:
 //
 //   [data-theme="light"] .text-sev-critical { color: var(--sev-critical-text); }
-//   [data-theme="light"] .text-white\/40    { color: rgba(15,20,35,0.48); }
+//   [data-theme="light"] .text-white\/40    { color: rgba(15,20,35,0.62); }
 //
 // So `text-sev-critical` already renders `#b91c1c` (6.47:1) under light,
-// and every one of the 17 `text-white/NN` opacities this package uses has
-// a matching override there. A sweep replacing them is not a fix — it
-// would change the DARK appearance (the theme all users see today) for no
-// contrast gain. This has been mis-filed as a finding twice; verify
-// against the generated CSS, not the literal, before acting.
+// and every `text-white/NN` opacity this package uses has a matching
+// override there (the dim 25-50 steps all map to 0.62 under light).
+// The DARK side was fixed by a 2026-10 contrast audit: the dim
+// `text-white/30|35|40|45` and `placeholder` steps were swept up to
+// `/55` (AA on the composited card surface), and the `--text-*` tokens
+// were raised. Don't reintroduce sub-/55 text utilities; use `/55` or a
+// `--text-*` var. Verify against the generated CSS, not the literal.
 //
 // The `sev-*-text` entries below exist for NEW code, following that
 // shim block's own stated direction: prefer a semantic var that flips on

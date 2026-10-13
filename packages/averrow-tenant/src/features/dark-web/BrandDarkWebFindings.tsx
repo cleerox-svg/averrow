@@ -24,17 +24,17 @@ export function BrandDarkWebFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/dark-web" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/modules/dark-web" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO DARK WEB
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Dark Web Monitoring · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Dark Web Monitoring · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading mentions…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading mentions…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load mentions</h3>
@@ -56,8 +56,8 @@ export function BrandDarkWebFindings() {
 function MentionsSection({ rows }: { rows: DarkWebMentionRow[] }) {
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Mentions <span className="text-white/30">({rows.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        Mentions <span className="text-white/55">({rows.length})</span>
       </h2>
       <div className="space-y-2">
         {rows.map((m) => <MentionRow key={m.id} mention={m} />)}
@@ -85,11 +85,11 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
 
       {m.source_channel && (
         <div className="text-[12px] text-white/65 mb-1">
-          <span className="text-white/40">in </span>
+          <span className="text-white/55">in </span>
           <span className="font-mono">{m.source_channel}</span>
           {m.source_author && (
             <>
-              <span className="text-white/40"> by </span>
+              <span className="text-white/55"> by </span>
               <span className="font-mono">{m.source_author}</span>
             </>
           )}
@@ -103,12 +103,12 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
       )}
 
       {m.classification_reason && (
-        <p className="text-[11px] text-white/40 mt-2 italic">{m.classification_reason}</p>
+        <p className="text-[11px] text-white/55 mt-2 italic">{m.classification_reason}</p>
       )}
 
       {matchedTerms.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap mt-2">
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/35">matched</span>
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">matched</span>
           {matchedTerms.map((t) => (
             <span key={t} className="text-[11px] font-mono text-amber/80 bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
               {t}
@@ -117,7 +117,7 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
         </div>
       )}
 
-      <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/40">
+      <div className="flex items-center gap-3 mt-3 text-[11px] font-mono text-white/55">
         <span>{formatPostedAt(postedAt)}</span>
         {m.ai_action && m.ai_action !== 'safe' && (
           <span className={m.ai_action === 'escalate' ? 'text-sev-critical' : 'text-amber'}>
@@ -190,7 +190,7 @@ function ClassificationPill({ classification }: { classification: string }) {
   const tone =
     classification === 'confirmed'      ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     classification === 'suspicious'     ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    classification === 'false_positive' ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
+    classification === 'false_positive' ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
@@ -204,7 +204,7 @@ function EmptyState() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No active dark web mentions for this brand.</p>
-      <p className="text-white/35 text-xs mt-1">Findings appear here as paste archives, Telegram channels, and breach feeds get scanned.</p>
+      <p className="text-white/55 text-xs mt-1">Findings appear here as paste archives, Telegram channels, and breach feeds get scanned.</p>
     </div>
   );
 }

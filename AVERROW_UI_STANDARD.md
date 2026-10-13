@@ -83,9 +83,9 @@ BORDER_CRITICAL = rgba(239,68,68,0.35)    // Critical state border
 
 // TEXT
 TEXT_PRIMARY   = rgba(255,255,255,0.92)  // Headings, names, key data
-TEXT_SECONDARY = rgba(255,255,255,0.60)  // Descriptions, subtitles
-TEXT_TERTIARY  = rgba(255,255,255,0.40)  // Labels, metadata, timestamps
-TEXT_MUTED     = rgba(255,255,255,0.25)  // Disabled, placeholders only
+TEXT_SECONDARY = rgba(255,255,255,0.72)  // Descriptions, subtitles
+TEXT_TERTIARY  = rgba(255,255,255,0.56)  // Labels, metadata, timestamps
+TEXT_MUTED     = rgba(255,255,255,0.47)  // Placeholders, quietest readable text (AA on composited surfaces)
 TEXT_ACCENT    = [accent color]          // Live numbers, CTAs, active states
 ```
 
@@ -633,7 +633,7 @@ export function LiveIndicator({
       </div>
       <span style={{
         fontSize:8, fontFamily:'monospace', letterSpacing:'0.18em',
-        color: active ? 'rgba(255,255,255,0.50)' : 'rgba(255,255,255,0.25)',
+        color: active ? 'var(--text-tertiary)' : 'var(--text-muted)',
         textTransform:'uppercase',
       }}>
         {label}
@@ -786,8 +786,10 @@ dark, `--amber-text` on light), `--scrim` (dialog/sheet backdrop), `--text-help`
 - Touch: every interactive element >= 44x44 CSS px on touch (hit area may extend
   past the visual), rows >= 56px, adjacent targets >= 8px apart; Input/Select 44px
   tall with 16px text below 768px (no iOS zoom).
-- Contrast: required text uses `--text-secondary` or higher; `--text-tertiary`
-  only for help/meta, `--text-muted` only decorative.
+- Contrast: every `--text-*` token is AA text (2026-10 audit; light values are
+  AA by construction). Required reading copy still prefers `--text-secondary`
+  or higher; `--text-tertiary` for help/meta, `--text-muted` for placeholders and
+  the quietest labels. Decorative glyphs are the only thing that may go dimmer.
 
 **Opt-in props added for this surface** (defaults leave every existing call site
 unchanged):

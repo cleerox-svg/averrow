@@ -72,7 +72,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
       </div>
 
       {!hasAny ? (
-        <p className="text-sm text-white/40 italic">
+        <p className="text-sm text-white/55 italic">
           No public buying signals yet. SEC 10-K parsing + news_watcher → brand mapping are scheduled to populate this in
           subsequent sessions; today's data comes from Pathfinder's AI research only.
         </p>

@@ -154,7 +154,7 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
             <div key={sev} className="flex items-center gap-2">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tw.dot}`} />
               <span className="font-mono text-[10px] text-[var(--text-muted)] flex-1 capitalize">{sev}</span>
-              <span className={`font-mono text-[10px] font-semibold ${c > 0 ? tw.text : 'text-white/[0.15]'}`}>
+              <span className={`font-mono text-[10px] font-semibold ${c > 0 ? tw.text : 'text-white/55'}`}>
                 {c}
               </span>
             </div>

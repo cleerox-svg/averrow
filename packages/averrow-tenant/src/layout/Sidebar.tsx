@@ -107,9 +107,9 @@ export function Sidebar() {
         </Section>
 
         <Section label="Modules">
-          {isLoading && <div className="px-3 py-2 text-[12px] text-white/40 font-mono">Loading…</div>}
+          {isLoading && <div className="px-3 py-2 text-[12px] text-white/55 font-mono">Loading…</div>}
           {!isLoading && active.length === 0 && (
-            <div className="px-3 py-2 text-[12px] text-white/40 font-mono">No modules entitled yet.</div>
+            <div className="px-3 py-2 text-[12px] text-white/55 font-mono">No modules entitled yet.</div>
           )}
           {active.map((m) => {
             const Icon = MODULE_ICONS[m.module_key];
@@ -137,11 +137,11 @@ export function Sidebar() {
                 <NavLink
                   key={m.module_key}
                   to={MODULE_PATHS[m.module_key]}
-                  className={cn(NAV_BASE, 'text-white/30 hover:text-white/55')}
+                  className={cn(NAV_BASE, 'text-white/55 hover:text-white/75')}
                 >
                   <Icon size={16} className="opacity-50" />
                   <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
-                  <span className="text-[9px] uppercase tracking-wider font-mono text-white/30">upgrade</span>
+                  <span className="text-[9px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
                 </NavLink>
               );
             })}
@@ -174,7 +174,7 @@ export function Sidebar() {
         </Section>
       </nav>
       <div
-        className="px-3 py-2.5 border-t border-white/10 font-mono text-[10px] tracking-[0.08em] text-white/30"
+        className="px-3 py-2.5 border-t border-white/10 font-mono text-[10px] tracking-[0.08em] text-white/55"
         title={`${VERSION_LABEL} · ${BUILD_SHA}`}
       >
         {VERSION_LABEL} · {BUILD_SHA}
@@ -186,7 +186,7 @@ export function Sidebar() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="px-3 mb-1 text-[9px] uppercase tracking-[0.20em] font-mono text-white/35">{label}</div>
+      <div className="px-3 mb-1 text-[9px] uppercase tracking-[0.20em] font-mono text-white/55">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

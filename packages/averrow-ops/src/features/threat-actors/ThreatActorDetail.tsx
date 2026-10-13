@@ -180,11 +180,11 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                 </span>
               ))}
               {sectors.length > 3 && (
-                <span className="text-[10px] text-white/40">+{sectors.length - 3}</span>
+                <span className="text-[10px] text-white/55">+{sectors.length - 3}</span>
               )}
             </div>
           ) : (
-            <span className="text-[11px] text-white/40">No sector data</span>
+            <span className="text-[11px] text-white/55">No sector data</span>
           )}
         </BreakdownCard>
         <BreakdownCard
@@ -227,7 +227,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--amber)] transition-colors">
                     {campaign.name}
                   </p>
-                  <span className="text-white/40 group-hover:text-[var(--amber)] transition-colors">&rarr;</span>
+                  <span className="text-white/55 group-hover:text-[var(--amber)] transition-colors">&rarr;</span>
                 </Link>
               ) : (
                 <div
@@ -289,7 +289,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                         {infra.confidence}
                       </span>
                     </Td>
-                    <Td className="p-0 text-[11px] py-2 text-white/50">{infra.notes ?? '—'}</Td>
+                    <Td className="p-0 text-[11px] py-2 text-white/55">{infra.notes ?? '—'}</Td>
                   </tr>
                 ))}
               </tbody>
@@ -331,7 +331,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             ))}
           </div>
           {actor.targets[0]?.context && (
-            <p className="text-[10px] text-white/40 mt-3 font-mono">
+            <p className="text-[10px] text-white/55 mt-3 font-mono">
               Context: {actor.targets[0].context}
             </p>
           )}
@@ -377,7 +377,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     <div className="text-[12px] text-white/85 truncate">
                       {att.source_pulse_name ?? att.actor_name_raw ?? `Threat ${att.threat_id.slice(0, 16)}…`}
                     </div>
-                    <div className="text-[10px] font-mono text-white/40 mt-0.5">
+                    <div className="text-[10px] font-mono text-white/55 mt-0.5">
                       {ago} · confidence {att.confidence}
                     </div>
                   </div>
@@ -419,11 +419,11 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     {m.title}
                   </div>
                   {m.excerpt && (
-                    <div className="text-[10px] text-white/40 mt-1 line-clamp-2 font-mono">
+                    <div className="text-[10px] text-white/55 mt-1 line-clamp-2 font-mono">
                       {m.excerpt}
                     </div>
                   )}
-                  <div className="text-[10px] font-mono text-white/30 mt-1.5">
+                  <div className="text-[10px] font-mono text-white/55 mt-1.5">
                     {relativeTime(m.published_at ?? m.ingested_at)}
                   </div>
                 </a>
@@ -442,7 +442,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
        (!actor.news_mentions || actor.news_mentions.length === 0) &&
        (!actor.infrastructure || actor.infrastructure.length === 0) && (
         <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.015] p-6 text-center">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-white/40 mb-2">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-2">
             No observations yet
           </div>
           <p className="text-[12px] text-white/55 max-w-md mx-auto">

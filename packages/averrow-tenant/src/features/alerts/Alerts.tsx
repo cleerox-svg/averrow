@@ -192,7 +192,7 @@ function BulkToolbar({
             <button type="button" disabled={bulk.isPending} onClick={() => run({ status: 'resolved' })} className={btn}><ShieldCheck size={11} /> Resolve</button>
             {me && <button type="button" disabled={bulk.isPending} onClick={() => run({ assignedTo: me })} className={btn}><UserPlus size={11} /> Assign to me</button>}
             <button type="button" disabled={bulk.isPending} onClick={onClear} className={btn}><X size={11} /> Clear</button>
-            {bulk.isPending && <Loader2 size={13} className="text-white/40 animate-spin" />}
+            {bulk.isPending && <Loader2 size={13} className="text-white/55 animate-spin" />}
           </div>
         </>
       )}
@@ -243,7 +243,7 @@ function RollupCard({
                       'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
         <Icon size={11} /><span>{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value}</div>
@@ -261,7 +261,7 @@ function FilterBar<T extends string>({
 }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-[10px] uppercase tracking-widest font-mono text-white/35 mr-1">{label}</span>
+      <span className="text-[10px] uppercase tracking-widest font-mono text-white/55 mr-1">{label}</span>
       {options.map((opt) => (
         <button
           key={opt.key}
@@ -324,13 +324,13 @@ function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
           {a.status !== 'resolved' && a.status !== 'false_positive' && (
             <AgePill createdAt={a.created_at} severity={a.severity} />
           )}
-          <span className="text-[10px] font-mono text-white/40 uppercase tracking-wider">
+          <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">
             {a.alert_type.replace(/_/g, ' ')}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <AssigneeControl alert={a} canTriage={canTriage} />
-          <div className="text-right text-[10px] font-mono text-white/40">
+          <div className="text-right text-[10px] font-mono text-white/55">
             <div>{new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
             <div className="mt-0.5 truncate max-w-[140px] text-white/55">{a.brand_name}</div>
           </div>
@@ -344,8 +344,8 @@ function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
       <AiAssessmentPanel raw={a.ai_assessment} />
       {recs.length > 0 && <Recommendations items={recs} />}
       {a.resolution_notes && (a.status === 'resolved' || a.status === 'false_positive') && (
-        <p className="text-[11px] text-white/45 mt-2 italic">
-          <span className="not-italic font-mono uppercase tracking-wider text-white/35">note · </span>
+        <p className="text-[11px] text-white/55 mt-2 italic">
+          <span className="not-italic font-mono uppercase tracking-wider text-white/55">note · </span>
           {a.resolution_notes}
         </p>
       )}
@@ -363,7 +363,7 @@ function Recommendations({ items }: { items: string[] }) {
       <ul className="space-y-1.5">
         {shown.map((r, i) => (
           <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">
-            <span className="text-amber/60 flex-shrink-0 mt-[2px]">▸</span>
+            <span className="text-amber/80 flex-shrink-0 mt-[2px]">▸</span>
             <span>{r}</span>
           </li>
         ))}
@@ -400,8 +400,8 @@ function StatusPill({ status }: { status: AlertStatus }) {
     status === 'new'           ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
     status === 'acknowledged'  ? 'text-white/70     bg-white/[0.06]        border-white/[0.10]'        :
     status === 'investigating' ? 'text-amber/70     bg-amber/[0.06]        border-amber/[0.10]'        :
-    status === 'resolved'      ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
-                                 'text-white/40     bg-white/[0.04]        border-white/[0.08]';
+    status === 'resolved'      ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
+                                 'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status.replace(/_/g, ' ')}
@@ -417,7 +417,7 @@ function ConfidencePill({ value }: { value: number | null }) {
   const tone =
     value >= 80 ? 'text-blue/90 bg-blue/[0.08] border-blue/[0.22]' :
     value >= 50 ? 'text-blue/70 bg-blue/[0.05] border-blue/[0.15]' :
-                  'text-white/50 bg-white/[0.04] border-white/[0.08]';
+                  'text-white/55 bg-white/[0.04] border-white/[0.08]';
   return (
     <span
       title="Detection confidence"
@@ -439,7 +439,7 @@ function Pager({
   const hasNext = end < total;
   if (!hasPrev && !hasNext) {
     return (
-      <p className="text-[11px] text-white/40 font-mono text-center pt-2">
+      <p className="text-[11px] text-white/55 font-mono text-center pt-2">
         {total} signal{total === 1 ? '' : 's'}
       </p>
     );
@@ -447,7 +447,7 @@ function Pager({
   const btn = 'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
   return (
     <div className="flex items-center justify-between pt-2">
-      <span className="text-[11px] text-white/40 font-mono">showing {start}–{end} of {total}</span>
+      <span className="text-[11px] text-white/55 font-mono">showing {start}–{end} of {total}</span>
       <div className="flex items-center gap-1.5">
         <button type="button" className={btn} disabled={!hasPrev} onClick={() => onPage(page - 1)}>Prev</button>
         <button type="button" className={btn} disabled={!hasNext} onClick={() => onPage(page + 1)}>Next</button>
@@ -460,11 +460,11 @@ function EmptyState({ status, severity }: { status: StatusFilter; severity: Seve
   const filtersOn = status !== 'new' || severity !== 'all';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-8 text-center">
-      <ShieldCheck size={28} className="mx-auto text-white/30 mb-2" />
+      <ShieldCheck size={28} className="mx-auto text-white/55 mb-2" />
       <p className="text-sm text-white/70">
         {filtersOn ? 'No signals match these filters.' : 'No new signals.'}
       </p>
-      <p className="text-[11px] text-white/40 mt-1">
+      <p className="text-[11px] text-white/55 mt-1">
         {filtersOn ? 'Try widening severity or status.' : 'You\'re caught up. New brand signals will land here.'}
       </p>
     </div>
@@ -472,7 +472,7 @@ function EmptyState({ status, severity }: { status: StatusFilter; severity: Seve
 }
 
 function Loading() {
-  return <div className="text-white/40 text-sm font-mono py-12 text-center">Loading signals…</div>;
+  return <div className="text-white/55 text-sm font-mono py-12 text-center">Loading signals…</div>;
 }
 
 function ErrorState({ error }: { error: string }) {

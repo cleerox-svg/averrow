@@ -102,13 +102,13 @@ export function AdminAbuseMailbox() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">Abuse Mailbox</h1>
-          <p className="text-white/50 text-sm font-mono mt-1">
+          <p className="text-white/55 text-sm font-mono mt-1">
             AVERROW SELF · MARKETING-FACING ABUSE INTAKE · COVERT SPAM TRAP
           </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="dot-pulse dot-pulse-green" />
-          <span className="text-xs font-mono text-white/50">LISTENING</span>
+          <span className="text-xs font-mono text-white/55">LISTENING</span>
         </div>
       </div>
 
@@ -130,7 +130,7 @@ export function AdminAbuseMailbox() {
 
       {/* Loading / error states */}
       {summaryQ.isLoading && (
-        <div className="text-white/40 text-sm font-mono py-12 text-center">Loading mailbox…</div>
+        <div className="text-white/55 text-sm font-mono py-12 text-center">Loading mailbox…</div>
       )}
       {summaryQ.error && (
         <div className="space-y-2">
@@ -192,7 +192,7 @@ export function AdminAbuseMailbox() {
               />
             )}
             {messagesKind === 'loading' && (
-              <div className="text-white/40 text-sm font-mono py-8 text-center">Loading messages…</div>
+              <div className="text-white/55 text-sm font-mono py-8 text-center">Loading messages…</div>
             )}
             {messagesKind === 'error' && (
               <PageState
@@ -207,7 +207,7 @@ export function AdminAbuseMailbox() {
               if (messagesQ.data.messages.length === 0) return <EmptyMessages />;
               if (filtered.length === 0) {
                 return (
-                  <div className="text-white/45 text-[12px] font-mono py-12 text-center">
+                  <div className="text-white/55 text-[12px] font-mono py-12 text-center">
                     No messages match the current filters.
                   </div>
                 );
@@ -246,13 +246,13 @@ export function AdminAbuseMailbox() {
                         <BulkBtn label="Dismiss"     color="var(--text-secondary)"  disabled={bulkUpdate.isPending} onClick={() => runBulk('dismissed', 'Dismiss')} />
                         <button
                           type="button"
-                          className="text-[10px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/50 hover:text-white/80"
+                          className="text-[10px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/55 hover:text-white/80"
                           onClick={() => setCheckedIds(new Set())}
                         >
                           Clear
                         </button>
                         {bulkUpdate.isPending && (
-                          <span className="text-[10px] font-mono text-white/50">Updating…</span>
+                          <span className="text-[10px] font-mono text-white/55">Updating…</span>
                         )}
                         {bulkUpdate.isError && (
                           <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical)' }}>
@@ -559,13 +559,13 @@ function MessageRow({ message, expanded, onToggle }: {
               {cls}
             </span>
           )}
-          <span className="text-white/40 text-[10px]">·</span>
+          <span className="text-white/55 text-[10px]">·</span>
           <span className="text-[10px] font-mono uppercase font-semibold" style={{ color: sevColor }}>
             {sev}
           </span>
           {message.ai_action && (
             <>
-              <span className="text-white/40 text-[10px]">·</span>
+              <span className="text-white/55 text-[10px]">·</span>
               <span className="text-[10px] font-mono uppercase text-white/75">
                 action: <span className="text-white/95">{message.ai_action}</span>
               </span>
@@ -593,7 +593,7 @@ function MessageRow({ message, expanded, onToggle }: {
         </div>
       </div>
       <div className="text-[13px] text-white/95 truncate font-medium">
-        {message.original_subject || <span className="italic text-white/45">(no subject)</span>}
+        {message.original_subject || <span className="italic text-white/55">(no subject)</span>}
       </div>
       <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/70 flex-wrap">
         <span>
@@ -601,21 +601,21 @@ function MessageRow({ message, expanded, onToggle }: {
         </span>
         {message.original_from && message.forwarded_by_email && message.original_from !== message.forwarded_by_email && (
           <>
-            <span className="text-white/35">·</span>
+            <span className="text-white/55">·</span>
             <span>fwd by <span className="text-white/85">{message.forwarded_by_email}</span></span>
           </>
         )}
-        <span className="text-white/35">·</span>
+        <span className="text-white/55">·</span>
         <span>via <span className="text-white/85">{message.inbound_alias ?? '—'}</span></span>
         {message.url_count > 0 && (
           <>
-            <span className="text-white/35">·</span>
+            <span className="text-white/55">·</span>
             <span>{message.url_count} URL{message.url_count === 1 ? '' : 's'}</span>
           </>
         )}
         {message.attachment_count > 0 && (
           <>
-            <span className="text-white/35">·</span>
+            <span className="text-white/55">·</span>
             <span>{message.attachment_count} attachment{message.attachment_count === 1 ? '' : 's'}</span>
           </>
         )}
@@ -626,7 +626,7 @@ function MessageRow({ message, expanded, onToggle }: {
       <div className="mt-1.5 flex items-center justify-end">
         <ChevronDown
           size={12}
-          className="text-white/45"
+          className="text-white/55"
           style={{ transition: 'transform 0.18s ease', transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
         />
       </div>
@@ -659,7 +659,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       <div className="mb-4">
         <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
         <div className="text-[14px] text-[var(--text-primary)] font-medium">
-          {message.original_subject || <span className="italic text-white/45">(no subject)</span>}
+          {message.original_subject || <span className="italic text-white/55">(no subject)</span>}
         </div>
       </div>
 
@@ -772,14 +772,14 @@ function DeepAnalysisSection({
     abuse_report: '#fb923c',
     block:        '#fbbf24',
     monitor:      '#60a5fa',
-    none:         'rgba(255,255,255,0.45)',
+    none:         'var(--text-tertiary)',
   };
   const actionColor = ACTION_COLORS[d.recommended_action.category] ?? 'rgba(255,255,255,0.65)';
   return (
     <div className="mb-4">
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">
         Investigator findings
-        <span className="ml-2 text-white/35">{d.model}</span>
+        <span className="ml-2 text-white/55">{d.model}</span>
       </div>
       <div
         className="rounded-lg p-4"
@@ -906,7 +906,7 @@ function PlatformIntelSection({
 function AuthPill({ label, verdict }: { label: string; verdict: string | null }) {
   if (!verdict) {
     return (
-      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/40">
+      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/55">
         {label}: —
       </span>
     );
@@ -961,7 +961,7 @@ function RawCaptureSections({
         <RawTabButton label="Headers"     count={counts.headers}     active={tab === 'headers'}     onClick={() => setTab('headers')} />
         <RawTabButton label="Attachments" count={counts.attachments} active={tab === 'attachments'} onClick={() => setTab('attachments')} />
         {detailQ.isLoading && (
-          <span className="ml-auto text-[10px] font-mono text-white/45">loading…</span>
+          <span className="ml-auto text-[10px] font-mono text-white/55">loading…</span>
         )}
       </div>
 
@@ -988,7 +988,7 @@ function RawTabButton({
       }}
     >
       <span className="uppercase tracking-wider">{label}</span>
-      <span className="ml-1.5 text-white/45">{count}</span>
+      <span className="ml-1.5 text-white/55">{count}</span>
     </button>
   );
 }
@@ -1001,7 +1001,7 @@ function BodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: stri
   return (
     <div>
       {!rawBody && snippet && (
-        <p className="text-[10px] text-white/45 mb-2 font-mono">
+        <p className="text-[10px] text-white/55 mb-2 font-mono">
           Raw body not captured for this message (pre-PR-AS). Showing the 500-char snippet.
         </p>
       )}
@@ -1036,7 +1036,7 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
               </span>
             )}
             {u.count > 1 && (
-              <span className="text-[9px] font-mono text-white/45 shrink-0">×{u.count}</span>
+              <span className="text-[9px] font-mono text-white/55 shrink-0">×{u.count}</span>
             )}
             <code className="text-[11px] text-white/85 font-mono break-all flex-1 min-w-0">
               {u.url}
@@ -1109,7 +1109,7 @@ function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAtta
 function EmptyPanel({ text }: { text: string }) {
   return (
     <div
-      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/45 font-mono bg-black/20"
+      className="rounded-lg px-4 py-6 text-center text-[12px] text-white/55 font-mono bg-black/20"
       style={{ border: '1px solid rgba(255,255,255,0.04)' }}
     >
       {text}
@@ -1179,7 +1179,7 @@ function StatusIcon({
   return (
     <Mail
       size={13}
-      style={{ color: 'rgba(255,255,255,0.35)' }}
+      style={{ color: 'var(--text-tertiary)' }}
       aria-label={`${kind} pending`}
     />
   );
@@ -1217,7 +1217,7 @@ function DetailField({
         className={`text-[12px] ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} break-all`}
         style={{ color: color ?? (accent ? 'var(--amber)' : 'rgba(255,255,255,0.92)') }}
       >
-        {value ?? <span className="text-white/35">—</span>}
+        {value ?? <span className="text-white/55">—</span>}
       </div>
     </div>
   );
@@ -1275,7 +1275,7 @@ function IntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
           Intel highlights
         </h2>
-        <span className="text-[10px] font-mono text-white/45">
+        <span className="text-[10px] font-mono text-white/55">
           {intel.analyzed_count_7d} analyzed / 7d · {intel.analyzed_count_30d} / 30d
         </span>
       </div>
@@ -1285,7 +1285,7 @@ function IntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
             {intel.recent_takedowns.map((t) => (
               <div key={t.message_id} className="text-[11px] py-1 border-b border-white/[0.04] last:border-b-0">
                 <div className="text-white/85 truncate">
-                  {t.original_subject ?? <span className="italic text-white/45">(no subject)</span>}
+                  {t.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
                 </div>
                 <div className="text-white/55 font-mono mt-0.5 truncate">
                   → {t.target ?? t.hosting_provider ?? 'unknown target'}
@@ -1392,7 +1392,7 @@ function InboxToolbar({
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
-          Inbox <span className="text-white/40 ml-1">({countsUnavailable ? '—' : messages.length})</span>
+          Inbox <span className="text-white/55 ml-1">({countsUnavailable ? '—' : messages.length})</span>
         </h2>
         {activeBrand && (
           <button
@@ -1423,7 +1423,7 @@ function InboxToolbar({
               }}
             >
               <span className="uppercase tracking-wider">{t.label}</span>
-              <span className="ml-1.5 text-white/45">{count}</span>
+              <span className="ml-1.5 text-white/55">{count}</span>
             </button>
           );
         })}
@@ -1457,7 +1457,7 @@ function InboxToolbar({
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
               }`}
             >
-              {c.label} <span className="ml-1 text-white/45">{count}</span>
+              {c.label} <span className="ml-1 text-white/55">{count}</span>
             </button>
           );
         })}
@@ -1466,7 +1466,7 @@ function InboxToolbar({
           placeholder="Search subject / sender / alias…"
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/35 focus:outline-none focus:border-[var(--amber-border)] min-w-[200px]"
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-[var(--amber-border)] min-w-[200px]"
         />
       </div>
     </div>

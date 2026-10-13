@@ -205,7 +205,7 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
       </div>
 
       {mutes.length === 0 ? (
-        <p className="text-sm text-white/40 italic text-center py-4">No active mutes.</p>
+        <p className="text-sm text-white/55 italic text-center py-4">No active mutes.</p>
       ) : (
         <Table>
           <thead>
@@ -222,7 +222,7 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
               <tr key={m.id} className="data-row">
                 <Td><span className="font-mono text-xs">{m.type}</span></Td>
                 <Td><span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{relativeTime(m.muted_until)}</span></Td>
-                <Td><span className="text-xs">{m.reason ?? <em className="text-white/40">—</em>}</span></Td>
+                <Td><span className="text-xs">{m.reason ?? <em className="text-white/55">—</em>}</span></Td>
                 <Td><span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{m.created_by.slice(0, 8)}…</span></Td>
                 <Td>
                   <Button variant="ghost" size="sm" onClick={() => handleRemove(m.type)} disabled={remove.isPending}>
@@ -271,9 +271,9 @@ function ActivityTable({
         </p>
       </div>
       {loading ? (
-        <div className="text-white/40 text-sm font-mono py-8 text-center">Loading…</div>
+        <div className="text-white/55 text-sm font-mono py-8 text-center">Loading…</div>
       ) : rows.length === 0 ? (
-        <div className="text-white/40 text-sm font-mono py-8 text-center">No notifications fired in this window.</div>
+        <div className="text-white/55 text-sm font-mono py-8 text-center">No notifications fired in this window.</div>
       ) : (
         <Table>
           <thead>

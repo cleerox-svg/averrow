@@ -33,7 +33,7 @@ export function InvestigationDetail() {
   const { data: inv, isLoading, error } = useInvestigation(investigationId);
   const update = useUpdateInvestigation(investigationId ?? '');
 
-  if (isLoading) return <div className="text-white/40 text-sm font-mono py-16 text-center">Loading case…</div>;
+  if (isLoading) return <div className="text-white/55 text-sm font-mono py-16 text-center">Loading case…</div>;
   if (error || !inv) {
     return (
       <div className="max-w-2xl">
@@ -64,7 +64,7 @@ export function InvestigationDetail() {
         </div>
         <h1 className="text-[22px] font-bold text-[var(--text-primary)] tracking-tight mt-2 leading-snug">{inv.title}</h1>
         {inv.description && <p className="text-[13px] text-white/60 mt-1 leading-relaxed">{inv.description}</p>}
-        <div className="mt-1 text-[11px] font-mono text-white/40">
+        <div className="mt-1 text-[11px] font-mono text-white/55">
           opened {new Date(inv.created_at).toLocaleString()}{inv.created_by_name ? ` · by ${inv.created_by_name}` : ''}
           {inv.closed_at ? ` · closed ${new Date(inv.closed_at).toLocaleDateString()}` : ''}
         </div>
@@ -113,7 +113,7 @@ export function InvestigationDetail() {
                     onClick={() => inv.severity !== s && update.mutate({ severity: s })}
                     className={[
                       'px-2 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-60',
-                      inv.severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/45 border-white/[0.07]',
+                      inv.severity === s ? 'bg-amber/[0.12] text-amber border-amber/[0.35]' : 'bg-white/[0.03] text-white/55 border-white/[0.07]',
                     ].join(' ')}
                   >
                     {s}
@@ -145,7 +145,7 @@ export function InvestigationDetail() {
                   </button>
                 )
               ) : (
-                <p className="text-[11px] text-white/45 font-mono">{inv.assigned_to_name ?? 'Unassigned'}</p>
+                <p className="text-[11px] text-white/55 font-mono">{inv.assigned_to_name ?? 'Unassigned'}</p>
               )}
             </div>
 
@@ -167,10 +167,10 @@ function LinkedItems({ items, canEdit, investigationId }: {
   const remove = useRemoveInvestigationItem(investigationId);
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <h3 className="text-sm font-semibold text-white/90">Linked items <span className="text-white/40 font-normal">· {items.length}</span></h3>
-      <p className="text-[12px] text-white/45 mt-0.5 mb-3">Signals, threats and takedowns grouped into this case. Add a signal from its Intelligence Card.</p>
+      <h3 className="text-sm font-semibold text-white/90">Linked items <span className="text-white/55 font-normal">· {items.length}</span></h3>
+      <p className="text-[12px] text-white/55 mt-0.5 mb-3">Signals, threats and takedowns grouped into this case. Add a signal from its Intelligence Card.</p>
       {items.length === 0 ? (
-        <p className="text-[12px] text-white/35">Nothing linked yet.</p>
+        <p className="text-[12px] text-white/55">Nothing linked yet.</p>
       ) : (
         <ul className="space-y-1.5">
           {items.map((it) => {
@@ -178,22 +178,22 @@ function LinkedItems({ items, canEdit, investigationId }: {
             const to = itemHref(it);
             const inner = (
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                <Icon size={14} className="text-white/45 flex-shrink-0" />
+                <Icon size={14} className="text-white/55 flex-shrink-0" />
                 <SeverityDot severity={it.severity} />
                 <span className="text-[12.5px] text-white/80 truncate">{it.label ?? it.item_id}</span>
-                {it.item_status && <span className="text-[10px] font-mono text-white/35 uppercase tracking-wider flex-shrink-0">{it.item_status.replace(/_/g, ' ')}</span>}
+                {it.item_status && <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider flex-shrink-0">{it.item_status.replace(/_/g, ' ')}</span>}
               </div>
             );
             return (
               <li key={it.id} className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2">
                 {to ? <Link to={to} className="contents hover:opacity-90">{inner}</Link> : inner}
-                <span className="text-[9px] uppercase tracking-wider font-mono text-white/30 flex-shrink-0">{it.item_type}</span>
+                <span className="text-[9px] uppercase tracking-wider font-mono text-white/55 flex-shrink-0">{it.item_type}</span>
                 {canEdit && (
                   <button
                     type="button"
                     disabled={remove.isPending}
                     onClick={() => remove.mutate(it.id)}
-                    className="text-white/30 hover:text-sev-critical transition-colors flex-shrink-0"
+                    className="text-white/55 hover:text-sev-critical transition-colors flex-shrink-0"
                     aria-label="Remove from case"
                   >
                     <Trash2 size={13} />
@@ -229,7 +229,7 @@ function Notes({ investigationId, notes, canEdit }: {
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <h3 className="text-sm font-semibold text-white/90 flex items-center gap-1.5">
-        <MessageSquare size={14} className="text-white/45" /> Notes <span className="text-white/40 font-normal">· {notes.length}</span>
+        <MessageSquare size={14} className="text-white/55" /> Notes <span className="text-white/55 font-normal">· {notes.length}</span>
       </h3>
 
       {canEdit && (
@@ -239,7 +239,7 @@ function Notes({ investigationId, notes, canEdit }: {
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Add a note to the case timeline…"
             rows={2}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40] resize-none"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-2 text-[12.5px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40] resize-none"
           />
           <button
             type="button"
@@ -253,7 +253,7 @@ function Notes({ investigationId, notes, canEdit }: {
       )}
 
       {notes.length === 0 ? (
-        <p className="text-[12px] text-white/35 mt-3">No notes yet.</p>
+        <p className="text-[12px] text-white/55 mt-3">No notes yet.</p>
       ) : (
         <ol className="mt-3 space-y-3">
           {notes.map((n) => (
@@ -261,7 +261,7 @@ function Notes({ investigationId, notes, canEdit }: {
               <div className="mt-1 w-1.5 h-1.5 rounded-full bg-amber/70 flex-shrink-0" />
               <div className="min-w-0">
                 <div className="text-[12.5px] text-white/80 whitespace-pre-wrap break-words">{n.body}</div>
-                <div className="text-[10px] font-mono text-white/40 mt-0.5">
+                <div className="text-[10px] font-mono text-white/55 mt-0.5">
                   {n.author_name ?? 'Unknown'} · {new Date(n.created_at).toLocaleString()}
                 </div>
               </div>
@@ -278,12 +278,12 @@ function Notes({ investigationId, notes, canEdit }: {
 
 function Back() {
   return (
-    <Link to="/investigations" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/50 hover:text-white/85 transition-colors">
+    <Link to="/investigations" className="inline-flex items-center gap-1.5 text-[12px] font-mono text-white/55 hover:text-white/85 transition-colors">
       <ArrowLeft size={14} /> Investigations
     </Link>
   );
 }
 
 function Label({ children }: { children: React.ReactNode }) {
-  return <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/40 mb-1.5">{children}</div>;
+  return <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 mb-1.5">{children}</div>;
 }

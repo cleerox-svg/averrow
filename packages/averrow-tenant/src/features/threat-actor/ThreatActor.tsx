@@ -22,7 +22,7 @@ export function ThreatActor() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO OVERVIEW
       </Link>
 
@@ -38,7 +38,7 @@ export function ThreatActor() {
         </p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading actors…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading actors…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load Threat-Actor Intelligence</h3>
@@ -50,7 +50,7 @@ export function ThreatActor() {
         <>
           <HeadlineMetrics totals={data.totals} />
           <section>
-            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45 mb-3">Actors targeting your brands</h2>
+            <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 mb-3">Actors targeting your brands</h2>
             {data.actors.length === 0 ? (
               <NoActors />
             ) : (
@@ -110,11 +110,11 @@ function HeadlineMetrics({ totals }: { totals: ThreatActorTotals }) {
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/40 mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
-            <p className="text-[11px] text-white/40 mt-1 leading-relaxed">{c.sub}</p>
+            <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{c.sub}</p>
           </div>
         );
       })}
@@ -153,7 +153,7 @@ function ActorRow({ actor: a }: { actor: ThreatActorSummary }) {
           </div>
 
           {aliases.length > 0 && (
-            <div className="text-[11px] text-white/45 font-mono mt-1">
+            <div className="text-[11px] text-white/55 font-mono mt-1">
               also known as: {aliases.slice(0, 5).join(', ')}{aliases.length > 5 ? ', …' : ''}
             </div>
           )}
@@ -169,7 +169,7 @@ function ActorRow({ actor: a }: { actor: ThreatActorSummary }) {
       </div>
 
       {a.last_seen_for_org && (
-        <div className="text-[11px] text-white/40 font-mono mt-3">
+        <div className="text-[11px] text-white/55 font-mono mt-3">
           last activity against your brands: {formatDate(a.last_seen_for_org)}
         </div>
       )}
@@ -179,12 +179,12 @@ function ActorRow({ actor: a }: { actor: ThreatActorSummary }) {
 
 function Stat({ label, value, crit }: { label: string; value: number; crit?: boolean }) {
   const accent =
-    value === 0 ? 'text-white/35'     :
+    value === 0 ? 'text-white/55'     :
     crit        ? 'text-sev-critical' :
                   'text-white/85';
   return (
     <div className="text-right">
-      <div className="text-[8px] uppercase tracking-widest font-mono text-white/35 mb-0.5">{label}</div>
+      <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-2xl font-bold tabular-nums ${accent}`}>{value}</div>
     </div>
   );
@@ -207,7 +207,7 @@ function StatusPill({ status }: { status: string }) {
   const tone =
     status === 'active'    ? 'text-amber    bg-amber/[0.06]    border-amber/[0.15]' :
     status === 'disrupted' ? 'text-green/85 bg-green/[0.06]    border-green/[0.15]' :
-    status === 'dormant'   ? 'text-white/40 bg-white/[0.04]    border-white/[0.08]' :
+    status === 'dormant'   ? 'text-white/55 bg-white/[0.04]    border-white/[0.08]' :
                              'text-white/55 bg-white/[0.04]    border-white/[0.08]';
   return (
     <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
@@ -226,7 +226,7 @@ function NoActors() {
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
       <p className="text-white/55 text-sm">No actors are currently attributed to attacks on your brands.</p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         Attributions land here as OTX advisories, infrastructure-clustering matches, and CISA / Mandiant / CrowdStrike feeds bind activity to specific actors.
       </p>
     </div>

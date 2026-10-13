@@ -892,7 +892,7 @@ export function Takedowns() {
         subtitle={isProspect
           ? `${stats.total} orgless drafts across ${prospectStats.brands} brands`
           : `${stats.total} total requests`}
-        meta={<span className="font-mono text-[10px] text-white/50 uppercase tracking-wider">Sparrow Queue</span>}
+        meta={<span className="font-mono text-[10px] text-white/55 uppercase tracking-wider">Sparrow Queue</span>}
       />
 
       {/* ─── SCOPE TOGGLE ────────────────────────────── */}

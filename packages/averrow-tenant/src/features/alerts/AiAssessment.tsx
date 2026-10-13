@@ -49,17 +49,17 @@ export function AiAssessmentPanel({ raw }: { raw: string | null }) {
   return (
     <div className="mt-3 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2.5">
       <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/45 flex items-center gap-1">
+        <span className="text-[9px] uppercase tracking-[0.18em] font-mono text-white/55 flex items-center gap-1">
           <Sparkles size={10} /> AI assessment
         </span>
         <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${m.tone}`}>
           {m.label}
         </span>
-        <span className="text-[10px] font-mono text-white/45">{a.confidence}% confidence</span>
+        <span className="text-[10px] font-mono text-white/55">{a.confidence}% confidence</span>
       </div>
       {a.reasoning && <p className="text-[12px] text-white/70 leading-relaxed">{a.reasoning}</p>}
       {why && (
-        <p className="text-[11px] text-white/45 mt-1.5 flex items-start gap-1.5">
+        <p className="text-[11px] text-white/55 mt-1.5 flex items-start gap-1.5">
           <Info size={11} className="mt-[2px] flex-shrink-0" />
           <span>{why}</span>
         </p>

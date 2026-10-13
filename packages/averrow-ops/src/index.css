@@ -1,12 +1,11 @@
 @import "@averrow/shared/theme.css";
 @import 'maplibre-gl/dist/maplibre-gl.css';
 
-/* Averrow Text Hierarchy — DO NOT use below these minimums on readable content:
-   Primary:   text-white/90+    (headings, metrics, brand names)
-   Secondary: text-white/60+    (sub-labels, domains, descriptions)
-   Tertiary:  text-white/50+    (metadata, captions, timestamps)
-   Section:   text-white/50+    (uppercase tracking headers)
-   Empty/Disabled ONLY: text-white/30 acceptable
+/* Averrow Text Hierarchy — WCAG AA (4.5:1) floor on readable content:
+   Primary:   text-white/90+   (or var(--text-primary))   headings, metrics, brand names
+   Secondary: text-white/70+   (or var(--text-secondary)) sub-labels, descriptions
+   Tertiary / section / placeholder: text-white/55 floor (or var(--text-tertiary))
+   Below /55 only for disabled controls and decorative glyphs.
 */
 
 @tailwind base;
@@ -353,15 +352,12 @@
 
 /* ── SECTION LABELS ──────────────────────────── */
 .section-label {
-  font-size: 0.6rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(229,168,50,0.55);
-  font-family: var(--font-mono);
-}
-[data-theme="light"] .section-label {
   color: var(--amber-text);
+  font-family: var(--font-mono);
 }
 
 /* ── PROGRESS BARS ───────────────────────────── */
@@ -438,10 +434,7 @@
 /* .glass-input is now defined in @layer utilities with new tokens.
    Placeholder styling kept here as it can't be expressed in @apply. */
 .glass-input::placeholder {
-  color: rgba(255,255,255,0.3);
-}
-[data-theme="light"] .glass-input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 /* ── SCROLLBAR ───────────────────────────────── */

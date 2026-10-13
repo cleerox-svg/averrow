@@ -124,12 +124,12 @@ export function Executives() {
         </section>
       )}
 
-      {dash.isLoading && <div className="text-white/40 text-sm font-mono py-8 text-center">Loading…</div>}
+      {dash.isLoading && <div className="text-white/55 text-sm font-mono py-8 text-center">Loading…</div>}
 
       {!dash.isLoading && brands.length === 0 && (
         <section className="rounded-xl border border-white/[0.06] bg-bg-card p-6 text-center">
           <p className="text-white/55 text-sm">No brands assigned to your organization yet.</p>
-          <p className="text-white/35 text-xs mt-1">
+          <p className="text-white/55 text-xs mt-1">
             Contact <a className="text-amber hover:underline" href="mailto:support@averrow.com">support@averrow.com</a> to add a brand.
           </p>
         </section>
@@ -180,12 +180,12 @@ export function Executives() {
           <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-white/90">Registered executives</h2>
-              <span className="text-[11px] font-mono text-white/45 tabular-nums">
+              <span className="text-[11px] font-mono text-white/55 tabular-nums">
                 {executives?.length ?? 0}
               </span>
             </div>
 
-            {isLoading && <p className="text-[12px] text-white/40 font-mono py-6 text-center">Loading…</p>}
+            {isLoading && <p className="text-[12px] text-white/55 font-mono py-6 text-center">Loading…</p>}
             {error && (
               <p className="text-[12px] text-sev-critical py-2">
                 {error instanceof Error ? error.message : 'Failed to load executives'}
@@ -273,10 +273,10 @@ function ExecutiveRow({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-white/90 font-medium truncate">{executive.full_name}</span>
             {executive.title && (
-              <span className="text-[11px] text-white/45 truncate">{executive.title}</span>
+              <span className="text-[11px] text-white/55 truncate">{executive.title}</span>
             )}
             {isPaused && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-white/45 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
                 Paused
               </span>
             )}
@@ -301,7 +301,7 @@ function ExecutiveRow({
           {alertCount !== null && (
             <Link
               to={`/alerts?brand=${executive.brand_id}&type=${EXEC_ALERT_TYPE}`}
-              className="inline-flex items-center gap-1 text-[11px] font-mono text-white/45 hover:text-amber mt-1.5 transition-colors"
+              className="inline-flex items-center gap-1 text-[11px] font-mono text-white/55 hover:text-amber mt-1.5 transition-colors"
               title={
                 alertCountApprox
                   ? "Opens this brand's executive-impersonation alerts. Count is approximate — this brand has more than 100 such alerts, so per-executive counts may undercount (not exec-specific either — the alerts API has no per-executive filter)"
@@ -320,7 +320,7 @@ function ExecutiveRow({
             <button
               type="button"
               onClick={onEdit}
-              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-amber hover:bg-amber/[0.10] transition-colors"
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-amber hover:bg-amber/[0.10] transition-colors"
               title="Edit executive"
               aria-label="Edit executive"
             >
@@ -330,7 +330,7 @@ function ExecutiveRow({
               type="button"
               onClick={handleDelete}
               disabled={remove.isPending}
-              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/45 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center justify-center w-7 h-7 rounded text-white/55 hover:text-sev-critical hover:bg-sev-critical/[0.10] disabled:opacity-55 disabled:cursor-not-allowed transition-colors"
               title="Remove executive"
               aria-label="Remove executive"
             >
@@ -436,7 +436,7 @@ function ExecutiveForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label htmlFor="exec-brand" className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+          <label htmlFor="exec-brand" className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
             Brand
           </label>
           <select
@@ -451,7 +451,7 @@ function ExecutiveForm({
           </select>
         </div>
         <div>
-          <label htmlFor="exec-status" className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+          <label htmlFor="exec-status" className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
             Status
           </label>
           <select
@@ -468,7 +468,7 @@ function ExecutiveForm({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label htmlFor="exec-name" className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
+          <label htmlFor="exec-name" className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
             Full name
           </label>
           <input
@@ -477,13 +477,13 @@ function ExecutiveForm({
             value={fullName}
             onChange={(e) => { setFullName(e.target.value); if (nameError) setNameError(null); }}
             placeholder="Jane Doe"
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
           />
           {nameError && <p className="text-[11px] text-sev-critical mt-1">{nameError}</p>}
         </div>
         <div>
-          <label htmlFor="exec-title" className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-1.5">
-            Title <span className="text-white/30 normal-case">(optional)</span>
+          <label htmlFor="exec-title" className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-1.5">
+            Title <span className="text-white/55 normal-case">(optional)</span>
           </label>
           <input
             id="exec-title"
@@ -491,14 +491,14 @@ function ExecutiveForm({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Chief Executive Officer"
-            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-amber focus:outline-none"
+            className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
           />
         </div>
       </div>
 
       <fieldset className="border-0 p-0 m-0">
-        <legend className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
-          Watch platforms <span className="text-white/30 normal-case">— where to look for impersonation</span>
+        <legend className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-2">
+          Watch platforms <span className="text-white/55 normal-case">— where to look for impersonation</span>
         </legend>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
           {SUPPORTED_EXEC_PLATFORMS.map((p) => {
@@ -520,20 +520,20 @@ function ExecutiveForm({
       </fieldset>
 
       <fieldset className="border-0 p-0 m-0">
-        <legend className="block text-[11px] uppercase tracking-wider font-mono text-white/45 mb-2">
-          Official handles <span className="text-white/30 normal-case">— the real accounts, so the detector allowlists them</span>
+        <legend className="block text-[11px] uppercase tracking-wider font-mono text-white/55 mb-2">
+          Official handles <span className="text-white/55 normal-case">— the real accounts, so the detector allowlists them</span>
         </legend>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {SUPPORTED_EXEC_PLATFORMS.map((p) => (
             <div key={p} className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-white/45 w-20 flex-shrink-0">{EXEC_PLATFORM_LABELS[p]}</span>
+              <span className="text-[11px] font-mono text-white/55 w-20 flex-shrink-0">{EXEC_PLATFORM_LABELS[p]}</span>
               <input
                 type="text"
                 value={handles[p] ?? ''}
                 onChange={(e) => setHandle(p, e.target.value)}
                 placeholder="@handle"
                 aria-label={`${EXEC_PLATFORM_LABELS[p]} official handle`}
-                className="flex-1 min-w-0 rounded-md border border-white/[0.08] bg-bg-page px-2.5 py-1.5 text-[12px] text-white/90 placeholder-white/25 focus:border-amber focus:outline-none"
+                className="flex-1 min-w-0 rounded-md border border-white/[0.08] bg-bg-page px-2.5 py-1.5 text-[12px] text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
               />
             </div>
           ))}

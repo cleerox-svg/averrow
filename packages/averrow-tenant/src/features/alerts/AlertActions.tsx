@@ -21,7 +21,7 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
   if (!canTriage) {
     if (!assigneeName) return null;
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/50 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
         <UserCheck size={10} /> {assignedToMe ? 'You' : assigneeName}
       </span>
     );
@@ -54,7 +54,7 @@ export function AssigneeControl({ alert: a, canTriage }: { alert: Alert; canTria
           <UserPlus size={10} /> {a.handled_by_averrow ? 'Take over' : assigneeName ? 'Reassign to me' : 'Assign to me'}
         </button>
       )}
-      {assign.isPending && <Loader2 size={11} className="text-white/40 animate-spin" />}
+      {assign.isPending && <Loader2 size={11} className="text-white/55 animate-spin" />}
     </div>
   );
 }
@@ -95,9 +95,9 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
   const actions = NEXT_ACTIONS[a.status] ?? [];
   if (actions.length === 0) {
     return (
-      <div className="mt-3 pt-2.5 border-t border-white/[0.06] text-[10px] font-mono uppercase tracking-widest text-white/30">
+      <div className="mt-3 pt-2.5 border-t border-white/[0.06] text-[10px] font-mono uppercase tracking-widest text-white/55">
         {a.status.replace(/_/g, ' ')}
-        {a.resolution_notes && <span className="ml-2 normal-case tracking-normal text-white/45">· {a.resolution_notes}</span>}
+        {a.resolution_notes && <span className="ml-2 normal-case tracking-normal text-white/55">· {a.resolution_notes}</span>}
       </div>
     );
   }
@@ -140,7 +140,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
             </button>
           );
         })}
-        {update.isPending && <Loader2 size={12} className="text-white/40 animate-spin ml-0.5" />}
+        {update.isPending && <Loader2 size={12} className="text-white/55 animate-spin ml-0.5" />}
       </div>
 
       {pendingTerminal && (
@@ -150,7 +150,7 @@ export function AlertActions({ alert: a }: { alert: Alert }) {
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder={`Disposition note (optional) — ${ACTION_META[pendingTerminal].label.toLowerCase()}`}
-            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/30 focus:outline-none focus:border-amber/[0.40]"
+            className="flex-1 bg-white/[0.04] border border-white/[0.10] rounded-md px-2.5 py-1.5 text-[12px] text-white/85 placeholder:text-white/55 focus:outline-none focus:border-amber/[0.40]"
             onKeyDown={(e) => { if (e.key === 'Enter') run(pendingTerminal, note.trim() || undefined); }}
             autoFocus
           />

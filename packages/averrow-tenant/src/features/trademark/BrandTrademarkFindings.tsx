@@ -33,17 +33,17 @@ export function BrandTrademarkFindings() {
 
   return (
     <div className="max-w-6xl space-y-6">
-      <Link to="/modules/trademark" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/40 hover:text-white/70">
+      <Link to="/modules/trademark" className="inline-flex items-center gap-1.5 text-[11px] font-mono text-white/55 hover:text-white/70">
         <ArrowLeft size={12} /> BACK TO TRADEMARK
       </Link>
 
       <header>
-        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/40">Trademark Infringement · Brand</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">Trademark Infringement · Brand</div>
         <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">{brand?.brand_name ?? brandId}</h1>
         <p className="mt-1 text-sm text-white/55 font-mono">{brand?.canonical_domain ?? ''}</p>
       </header>
 
-      {isLoading && <div className="text-white/40 text-sm font-mono py-12 text-center">Loading findings…</div>}
+      {isLoading && <div className="text-white/55 text-sm font-mono py-12 text-center">Loading findings…</div>}
       {error && (
         <div className="rounded-xl border border-sev-critical/[0.30] bg-sev-critical/[0.06] p-6">
           <h3 className="text-sm font-semibold text-white/90">Couldn't load findings</h3>
@@ -74,8 +74,8 @@ export function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-          Registered assets <span className="text-white/30">({assets.length})</span>
+        <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+          Registered assets <span className="text-white/55">({assets.length})</span>
         </h2>
       </div>
 
@@ -83,9 +83,9 @@ export function AssetsSection({ assets, brandId }: { assets: TrademarkAssetRow[]
 
       {assets.length === 0 ? (
         <div className="rounded-xl border border-white/[0.08] bg-bg-card p-6 text-center">
-          <ImageIcon className="inline text-white/40" size={20} />
+          <ImageIcon className="inline text-white/55" size={20} />
           <p className="text-white/55 text-sm mt-2">No assets registered yet.</p>
-          <p className="text-white/40 text-xs mt-1">{canManage ? 'Upload a logo or wordmark above.' : ''} Active logo-image scanning lands with Phase 2; today this registers the mark and stores it for matching.</p>
+          <p className="text-white/55 text-xs mt-1">{canManage ? 'Upload a logo or wordmark above.' : ''} Active logo-image scanning lands with Phase 2; today this registers the mark and stores it for matching.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -145,7 +145,7 @@ function AssetUploader({ brandId }: { brandId: string }) {
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Asset name (optional)"
-        className="flex-1 min-w-[140px] rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/30"
+        className="flex-1 min-w-[140px] rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-2.5 py-1.5 text-[12px] text-white/90 placeholder:text-white/55"
       />
       <input
         ref={fileRef}
@@ -184,7 +184,7 @@ function AssetCard({ asset: a, brandId, canManage }: { asset: TrademarkAssetRow;
                 onClick={() => del.mutate(a.id)}
                 disabled={del.isPending}
                 title="Remove asset"
-                className="ml-auto text-white/30 hover:text-sev-critical transition-colors disabled:opacity-40"
+                className="ml-auto text-white/55 hover:text-sev-critical transition-colors disabled:opacity-40"
               >
                 <Trash2 size={13} />
               </button>
@@ -192,13 +192,13 @@ function AssetCard({ asset: a, brandId, canManage }: { asset: TrademarkAssetRow;
           </div>
           <div className="text-sm font-semibold text-white/90 truncate">{a.asset_name ?? '(unnamed)'}</div>
           {(a.registration_country ?? a.registration_number) && (
-            <div className="text-[11px] text-white/45 font-mono mt-1">
+            <div className="text-[11px] text-white/55 font-mono mt-1">
               {a.registration_country && <span>{a.registration_country} </span>}
               {a.registration_number && <span>· {a.registration_number}</span>}
             </div>
           )}
           {a.phash && (
-            <div className="text-[10px] text-white/35 font-mono mt-1">phash {a.phash.slice(0, 8)}…</div>
+            <div className="text-[10px] text-white/55 font-mono mt-1">phash {a.phash.slice(0, 8)}…</div>
           )}
         </div>
       </div>
@@ -215,8 +215,8 @@ function FindingsSection({
   const assetById = new Map(assets.map((a) => [a.id, a]));
   return (
     <section className="space-y-3">
-      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/45">
-        Findings <span className="text-white/30">({findings.length})</span>
+      <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
+        Findings <span className="text-white/55">({findings.length})</span>
       </h2>
       <div className="space-y-2">
         {findings.map((f) => (
@@ -251,9 +251,9 @@ function FindingRow({
         <ClassificationPill classification={f.classification} />
         {f.found_context && <ContextChip context={f.found_context} />}
         {conf !== null && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/45">
+          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
             match {Math.round(conf * 100)}%
-            {dist !== null && <span className="text-white/30"> · dist {dist}</span>}
+            {dist !== null && <span className="text-white/55"> · dist {dist}</span>}
           </span>
         )}
       </div>
@@ -265,15 +265,15 @@ function FindingRow({
           <div className="text-sm font-semibold text-white/90 truncate">
             {a?.asset_name ?? 'Unmatched asset'}
           </div>
-          <div className="text-[11px] text-white/45 font-mono mt-0.5 truncate">
+          <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">
             <a href={f.found_url} target="_blank" rel="noopener noreferrer" className="hover:text-amber">
               {f.found_url}
             </a>
           </div>
           {f.classification_reason && (
-            <p className="text-[11px] text-white/40 mt-2 italic">{f.classification_reason}</p>
+            <p className="text-[11px] text-white/55 mt-2 italic">{f.classification_reason}</p>
           )}
-          <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-white/40">
+          <div className="flex items-center gap-3 mt-2 text-[11px] font-mono text-white/55">
             <span>{formatDate(f.last_seen ?? f.first_seen)}</span>
             {f.ai_action && f.ai_action !== 'safe' && (
               <span className={f.ai_action === 'escalate' ? 'text-sev-critical' : 'text-amber'}>
@@ -301,7 +301,7 @@ function ImagePair({ source, found }: { source: string | null; found: string | n
   return (
     <div className="flex items-center gap-1 flex-shrink-0">
       <AssetImage src={source} fallback="A" small />
-      <span className="text-white/30 text-xs font-mono">vs</span>
+      <span className="text-white/55 text-xs font-mono">vs</span>
       <AssetImage src={found} fallback="?" small />
     </div>
   );
@@ -379,7 +379,7 @@ function ClassificationPill({ classification }: { classification: string }) {
   const tone =
     classification === 'confirmed'      ? 'text-sev-critical bg-sev-critical/[0.10] border-sev-critical/[0.20]' :
     classification === 'likely'         ? 'text-amber        bg-amber/[0.10]        border-amber/[0.20]'        :
-    classification === 'false_positive' ? 'text-white/40     bg-white/[0.04]        border-white/[0.08]'        :
+    classification === 'false_positive' ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
@@ -395,7 +395,7 @@ function EmptyFindings({ hasAssets }: { hasAssets: boolean }) {
       <p className="text-white/55 text-sm">
         {hasAssets ? 'No active findings against your registered assets.' : 'Upload assets to start scanning.'}
       </p>
-      <p className="text-white/35 text-xs mt-1">
+      <p className="text-white/55 text-xs mt-1">
         {hasAssets
           ? 'The scanner sweeps third-party sites, social profile pictures, and app icons every few hours.'
           : 'Findings show up here as the image-hash crawler discovers lookalike uses.'}
