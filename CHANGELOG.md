@@ -4,6 +4,53 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.5.0] — 2026-10-12
+
+Internet bot-traffic intelligence release (PRs #1820, #1822, #1825, #1827,
+#1828, #1829). Tag `v4.5.0` is created by `tag-release.yml` on merge.
+
+### Feed: `cf_radar_bots` (Cloudflare Radar)
+- New daily feed `cf_radar_bots` writes to `bot_traffic_snapshots` (migration
+  `0290`): global HTTP bot vs human share (28-day backfill on first pull), top
+  bot-origin countries and ASNs, and the verified-bot category mix.
+- Never writes `threats`; returns `itemsNew = 0`, so it does not wake Sentinel.
+- `FeedResult.warning` added: partial-pull detail is persisted to
+  `feed_pull_history.error_message` on success rows.
+- Credentials: the feed prefers a dedicated read-only `CF_RADAR_API_TOKEN`
+  Worker secret and falls back to `CF_API_TOKEN` (#1822).
+- Layer-7 attack origins and targets (7d) and per-country bot density (#1825,
+  migration `0292`, table `radar_country_snapshots`). Density is derived from
+  Radar's bot and human top-100 location lists; countries present in only one
+  list get lower/upper bounds instead of a point estimate.
+
+### API
+- `GET /api/bot-traffic?days=7|30|90` (`requireStaff`, KV-cached). #1825 adds
+  `attack_origins`, `attack_targets`, `bot_density` (with bound) and
+  `bot_density_global_pct`.
+
+### Staff console
+- Coverage gains a **Bot Traffic** tab (trend, origin countries/ASNs, verified-bot
+  categories, attack origins/targets, bot-density table).
+- Observatory gains a **BOT DENSITY** view: country circles, colour = bot share,
+  size = traffic share, ring = above the global average. Uses static centroids
+  in `lib/country-centroids.ts`; fetches only while the view is active.
+- Observatory zoom control moved bottom-right, clear of the side panel (it
+  overlapped LIVE/refresh) (#1827).
+- Mobile: bot-density table fits phone widths (#1828); Trends Intelligence
+  Summary metrics fit phone widths (#1829).
+
+### Tests
+- Fixed a flaky free-scan test (#1820).
+
+### Deploy notes
+- Requires a Cloudflare Radar **Read** token (`CF_RADAR_API_TOKEN`, or the
+  existing `CF_API_TOKEN` with Radar read). Data appears after the first daily
+  pull. `deploy-radar.yml` applies `0290` and `0292` before the worker.
+- Open assumption: Radar `top/locations?botClass=` returns class-conditional
+  shares. To be confirmed against live data; the density figures depend on it.
+
+---
+
 ## [v4.4.0] — 2026-10-10
 
 Identity-provider (IdP) impersonation release. Plan:
