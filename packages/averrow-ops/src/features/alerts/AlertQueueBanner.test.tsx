@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { AlertQueueBanner, formatSpan, type AlertQueueBannerProps } from './AlertQueueBanner';
+import { AlertQueueBanner, type AlertQueueBannerProps } from './AlertQueueBanner';
+import { formatSpan } from '@/lib/time';
 
 function setup(over: Partial<AlertQueueBannerProps> = {}) {
-  const cb = { onShowBreached: vi.fn(), onShowApproaching: vi.fn(), onShowCritical: vi.fn() };
+  const cb = { onShowBreached: vi.fn(), onShowApproaching: vi.fn(), onShowCritical: vi.fn(), onAnnounce: vi.fn() };
   const props: AlertQueueBannerProps = {
     unreviewed: 12, breached: 0, breachedCritical: 0, atRisk: 0, oldestBreachMs: 0, ...cb, ...over,
   };
@@ -14,13 +15,6 @@ function setup(over: Partial<AlertQueueBannerProps> = {}) {
 
 beforeEach(() => { localStorage.clear(); });
 
-describe('formatSpan', () => {
-  it('formats minutes, hours and days', () => {
-    expect(formatSpan(38 * 60_000)).toBe('38m');
-    expect(formatSpan((5 * 60 + 12) * 60_000)).toBe('5h 12m');
-    expect(formatSpan((3 * 24 + 4) * 3_600_000)).toBe('3d 4h');
-  });
-});
 
 describe('AlertQueueBanner', () => {
   it('renders nothing when there is nothing to review or breach', () => {
@@ -79,31 +73,59 @@ describe('AlertQueueBanner', () => {
     const { onShowCritical, onShowBreached } = setup({
       breached: 9, breachedCritical: 1, atRisk: 4, unreviewed: 30, oldestBreachMs: (3 * 24 + 4) * 3_600_000,
     });
-    expect(screen.getByRole('region', { name: /1 critical alert past their response deadline/ })).toBeInTheDocument();
-    expect(screen.getByRole('region')).toHaveTextContent('9 alerts are past SLA in total, with 30 waiting for review.');
-    expect(screen.getByText('3d 4h')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /1 critical alert past the response deadline/ })).toBeInTheDocument();
+    expect(screen.getByRole('region')).toHaveTextContent('Oldest breach is 3d 4h past its deadline.');
+    expect(screen.getAllByText('3d 4h')).toHaveLength(2); // stats row + oldest-breach line
     await user.click(screen.getByRole('button', { name: 'Show critical breaches' }));
     await user.click(screen.getByRole('button', { name: 'Show all breached' }));
     expect(onShowCritical).toHaveBeenCalledTimes(1);
     expect(onShowBreached).toHaveBeenCalledTimes(1);
   });
 
-  it('snoozing falls back to the expandable banner and stores an expiry', async () => {
+  it('snoozing falls back to the banner, stores {until,count}, announces and moves focus', async () => {
     const user = userEvent.setup();
-    setup({ breached: 2, breachedCritical: 2, unreviewed: 5 });
+    const { onAnnounce } = setup({ breached: 2, breachedCritical: 2, unreviewed: 5 });
     await user.click(screen.getByRole('button', { name: 'Snooze 1 hour' }));
     expect(screen.queryByRole('region')).toBeNull();
     expect(screen.getByText(/alerts past SLA/)).toBeInTheDocument();
-    expect(Number(localStorage.getItem('alerts.incident_snoozed_until'))).toBeGreaterThan(Date.now());
+    const stored = JSON.parse(localStorage.getItem('alerts.incident_snoozed_until') ?? '{}') as { until: number; count: number };
+    expect(stored.until).toBeGreaterThan(Date.now());
+    expect(stored.count).toBe(2);
+    expect(onAnnounce).toHaveBeenCalledWith('Critical SLA card snoozed for 1 hour');
+    await waitFor(() => expect(document.activeElement?.tagName).toBe('SUMMARY'));
   });
 
-  it('honours an unexpired snooze on mount and ignores an expired one', () => {
-    localStorage.setItem('alerts.incident_snoozed_until', String(Date.now() + 60_000));
-    const { unmount } = setup({ breached: 2, breachedCritical: 2 });
+  it('honours a valid snooze and ignores expired / skewed / unparseable / legacy ones', () => {
+    const put = (v: string) => localStorage.setItem('alerts.incident_snoozed_until', v);
+    put(JSON.stringify({ until: Date.now() + 60_000, count: 2 }));
+    let r = setup({ breached: 2, breachedCritical: 2 });
     expect(screen.queryByRole('region')).toBeNull();
-    unmount();
-    localStorage.setItem('alerts.incident_snoozed_until', String(Date.now() - 1000));
-    setup({ breached: 2, breachedCritical: 2 });
+    r.unmount();
+    for (const bad of [
+      JSON.stringify({ until: Date.now() - 1000, count: 2 }),
+      JSON.stringify({ until: Date.now() + 5 * 3_600_000, count: 2 }),
+      'garbage',
+      String(Date.now() + 60_000),
+    ]) {
+      put(bad);
+      r = setup({ breached: 2, breachedCritical: 2 });
+      expect(screen.getByRole('region')).toBeInTheDocument();
+      r.unmount();
+    }
+  });
+
+  it('brings the card back when the incident worsens past the snoozed count', () => {
+    localStorage.setItem('alerts.incident_snoozed_until', JSON.stringify({ until: Date.now() + 60_000, count: 1 }));
+    const { rerender, ...cb } = setup({ breached: 1, breachedCritical: 1 });
+    expect(screen.queryByRole('region')).toBeNull();
+    rerender(<AlertQueueBanner unreviewed={12} breached={3} breachedCritical={3} atRisk={0} oldestBreachMs={0} {...cb} />);
     expect(screen.getByRole('region')).toBeInTheDocument();
+    expect(cb.onAnnounce).not.toHaveBeenCalled();
+  });
+
+  it('stays visible for approaching-only queues', () => {
+    setup({ unreviewed: 0, atRisk: 3 });
+    expect(screen.getByText(/alerts approaching SLA/)).toBeInTheDocument();
+    expect(screen.getByText('None past SLA')).toBeInTheDocument();
   });
 });

@@ -16,6 +16,7 @@ import {
 } from '@/design-system/components';
 import { SeverityDot } from '@/components/ui/DataRow';
 import { AlertQueueBanner } from './AlertQueueBanner';
+import { parseUtc, formatSpan } from '@/lib/time';
 import {
   useAlerts, useAlert, useAlertStats, useUpdateAlert, useAssignAlert, useBulkAcknowledge, useBulkTakedown,
   BULK_BATCH, type Alert, type AlertFilters, type BulkAckResult, type BulkTakedownResult,
@@ -68,18 +69,10 @@ function slaFor(alert: Alert): SlaInfo {
   const open = alert.status === 'new' || alert.status === 'acknowledged';
   if (!open) return { open: false, state: 'ok', remainingMs: 0, overdueMs: 0 };
   const slaMs = SLA_MINUTES[severityToBadge(alert.severity)] * 60_000;
-  const ageMs = Date.now() - new Date(alert.created_at).getTime();
+  const ageMs = Date.now() - parseUtc(alert.created_at).getTime();
   const pct = ageMs / slaMs;
   const state: SlaState = pct >= 1 ? 'breach' : pct >= 0.75 ? 'warn' : 'ok';
   return { open: true, state, remainingMs: slaMs - ageMs, overdueMs: ageMs - slaMs };
-}
-
-function fmtDuration(ms: number): string {
-  const m = Math.max(0, Math.floor(ms / 60_000));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
 }
 
 // Humanize an alert_type slug ("app_store_impersonation" → "App Store
@@ -481,7 +474,7 @@ function BrandGroupCard({
                         }}
                         title={`${alert.severity} SLA ${SLA_MINUTES[severityToBadge(alert.severity)]}m`}
                       >
-                        {breach ? `Overdue ${fmtDuration(sla.overdueMs)}` : `Due ${fmtDuration(sla.remainingMs)}`}
+                        {breach ? `Overdue ${formatSpan(sla.overdueMs)}` : `Due ${formatSpan(sla.remainingMs)}`}
                       </span>
                     );
                   })()}
@@ -1119,6 +1112,17 @@ export function Alerts() {
     stats ? (n ?? 0) : (statsLoading || statsError ? null : 0);
 
   const listFailed = alertsError && (!alertsData || alertsPlaceholder);
+  // Banner counts are platform-wide but the list only holds the loaded page:
+  // say so when an SLA filter hides part of what the banner counted.
+  const slaListNote = (() => {
+    if (slaFilter === 'all' || queueBanner.sampled) return null;
+    if (search || aiVerdictFilter !== 'all' || mineOnly || filters.severity || filters.status || filters.alert_type) return null;
+    const total = slaFilter === 'breached' ? queueBanner.breached : queueBanner.breached + queueBanner.atRisk;
+    if (alerts.length >= total) return null;
+    const word = slaFilter === 'breached' ? 'breached' : 'approaching';
+    return `Showing ${alerts.length.toLocaleString()} of ${total.toLocaleString()} ${word} alerts — the oldest may not be loaded. Narrow by severity or brand to see more.`;
+  })();
+
   const listKind = pageStateKind({
     isLoading: alertsLoading,
     isError: listFailed,
@@ -1255,6 +1259,7 @@ export function Alerts() {
           onShowBreached={() => setSlaFilter('breached')}
           onShowApproaching={() => setSlaFilter('atrisk')}
           onShowCritical={() => { setFilter('severity', 'critical'); setSlaFilter('breached'); }}
+          onAnnounce={setAnnouncement}
         />
       )}
 
@@ -1413,6 +1418,10 @@ export function Alerts() {
 
       {alertsError && !listFailed && (
         <PageState kind="error" layout="inline" title="Couldn't refresh alerts" description="Showing the last loaded list." onRetry={() => { void refetchAlerts(); }} />
+      )}
+
+      {slaListNote && (
+        <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>{slaListNote}</p>
       )}
 
       {listKind === 'loading' && <PageState kind="loading" layout="table" />}

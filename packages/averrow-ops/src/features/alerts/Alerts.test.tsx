@@ -451,3 +451,35 @@ describe('Alerts permissions', () => {
     await waitFor(() => expect(patch).toHaveBeenCalledWith('/api/alerts/a1', { status: 'acknowledged', notes: undefined }));
   });
 });
+
+describe('Alerts SLA banner', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    stubMatchMedia(true);
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  // D1 emits bare "YYYY-MM-DD HH:MM:SS" UTC; a 20-minute-old critical is past its
+  // 15-minute SLA whatever the viewer's timezone.
+  it('treats a bare UTC timestamp as UTC when computing the sampled fallback', async () => {
+    const bare = new Date(Date.now() - 20 * 60_000).toISOString().slice(0, 19).replace('T', ' ');
+    setup('analyst', '/console?tab=alerts', {
+      list: [alert('c1', { severity: 'critical', created_at: bare })],
+      stats: { total: 1, new_count: 1 },
+    });
+    expect(await screen.findByRole('region', { name: /1 critical alert past the response deadline/ })).toBeInTheDocument();
+    expect(screen.getByText('Based on the 1 most recent alerts loaded')).toBeInTheDocument();
+  });
+
+  it('notes a partial list when an SLA filter hides part of the platform-wide count', async () => {
+    const old = new Date(Date.now() - 3 * 3_600_000).toISOString();
+    setup('analyst', '/console?tab=alerts', {
+      list: [alert('h1', { severity: 'high', created_at: old })],
+      stats: { total: 1, new_count: 1, sla_breached: 500, sla_breached_critical: 0, sla_at_risk: 0, sla_oldest_breach_minutes: 120 },
+    });
+    await userEvent.click(await screen.findByText(/alerts past SLA/));
+    await userEvent.click(await screen.findByRole('button', { name: 'Show breached' }));
+    expect(await screen.findByText(/Showing 1 of 500 breached alerts/)).toBeInTheDocument();
+  });
+});

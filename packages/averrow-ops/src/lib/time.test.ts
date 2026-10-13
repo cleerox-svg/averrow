@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { relativeTime, formatDuration } from './time';
+import { relativeTime, formatDuration, formatSpan } from './time';
 
 describe('relativeTime', () => {
   it('returns "Never" for null', () => {
@@ -66,5 +66,13 @@ describe('formatDuration', () => {
   it('formats sub-second values', () => {
     expect(formatDuration(1)).toBe('1ms');
     expect(formatDuration(999)).toBe('999ms');
+  });
+});
+
+describe('formatSpan', () => {
+  it('formats minutes, hours and days', () => {
+    expect(formatSpan(38 * 60_000)).toBe('38m');
+    expect(formatSpan((5 * 60 + 12) * 60_000)).toBe('5h 12m');
+    expect(formatSpan((3 * 24 + 4) * 3_600_000)).toBe('3d 4h');
   });
 });

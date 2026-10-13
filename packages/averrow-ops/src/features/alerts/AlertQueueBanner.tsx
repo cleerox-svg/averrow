@@ -6,8 +6,11 @@
 // Pure presentational: counts in, callbacks out. Styling uses design-system
 // tokens only so both themes work.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+// Shared-kit Button on purpose: the ops barrel Button is mono/uppercase, which this design moves away from.
 import { Button } from '@averrow/shared/ui';
+import { formatSpan } from '@/lib/time';
+import './alert-queue-banner.css';
 
 export interface AlertQueueBannerProps {
   /** Alerts waiting for review (stats.new_count). */
@@ -28,20 +31,13 @@ export interface AlertQueueBannerProps {
   onShowApproaching: () => void;
   /** Sets severity=critical and SLA=breached. */
   onShowCritical: () => void;
+  /** Polite screen-reader announcement (e.g. the page's live region). */
+  onAnnounce?: (msg: string) => void;
 }
 
 export const QUEUE_BANNER_OPEN_KEY = 'alerts.queue_banner.open';
 export const INCIDENT_SNOOZE_KEY = 'alerts.incident_snoozed_until';
 const SNOOZE_MS = 60 * 60_000;
-
-/** "3d 4h" / "5h 12m" / "38m". */
-export function formatSpan(ms: number): string {
-  const m = Math.max(0, Math.floor(ms / 60_000));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ${m % 60}m`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
 
 const n = (v: number) => v.toLocaleString();
 const plural = (v: number, one: string, many: string) => (v === 1 ? one : many);
@@ -52,34 +48,20 @@ function readOpen(): boolean {
 function writeOpen(open: boolean) {
   try { localStorage.setItem(QUEUE_BANNER_OPEN_KEY, open ? '1' : '0'); } catch { /* storage unavailable */ }
 }
-function readSnooze(): number {
+interface Snooze { until: number; count: number }
+function readSnooze(): Snooze | null {
   try {
-    const v = Number(localStorage.getItem(INCIDENT_SNOOZE_KEY));
-    return Number.isFinite(v) ? v : 0;
-  } catch { return 0; }
+    const raw = localStorage.getItem(INCIDENT_SNOOZE_KEY);
+    if (!raw) return null;
+    const v: unknown = JSON.parse(raw);
+    if (typeof v !== 'object' || v === null) return null; // old numeric format = expired
+    const { until, count } = v as Record<string, unknown>;
+    return typeof until === 'number' && Number.isFinite(until) && typeof count === 'number' ? { until, count } : null;
+  } catch { return null; }
 }
-function writeSnooze(until: number) {
-  try { localStorage.setItem(INCIDENT_SNOOZE_KEY, String(until)); } catch { /* storage unavailable */ }
+function writeSnooze(s: Snooze) {
+  try { localStorage.setItem(INCIDENT_SNOOZE_KEY, JSON.stringify(s)); } catch { /* storage unavailable */ }
 }
-
-const CSS = `
-.aqb-hairline { position: relative; }
-.aqb-hairline::before {
-  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
-  background: linear-gradient(160deg, var(--sev-critical-border), transparent 45%, var(--border-base));
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-}
-.aqb-summary { list-style: none; cursor: pointer; }
-.aqb-summary::-webkit-details-marker { display: none; }
-.aqb-summary:focus-visible { outline: 2px solid var(--amber); outline-offset: -2px; border-radius: 12px; }
-.aqb-chevron { transition: transform 150ms ease; }
-details[open] > .aqb-summary .aqb-chevron { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { .aqb-chevron { transition: none; } }
-.aqb-snooze:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-`;
 
 const NUM: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
 const MONO: React.CSSProperties = { fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontVariantNumeric: 'tabular-nums' };
@@ -103,7 +85,7 @@ function PulseDot({ pulse }: { pulse: boolean }) {
 
 function SampledNote({ count }: { count?: number }) {
   return (
-    <p style={{ margin: 0, fontSize: 11, color: 'var(--text-tertiary)' }}>
+    <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
       Based on the {count !== undefined ? `${n(count)} ` : ''}most recent alerts loaded
     </p>
   );
@@ -112,29 +94,35 @@ function SampledNote({ count }: { count?: number }) {
 export function AlertQueueBanner(props: AlertQueueBannerProps) {
   const {
     unreviewed, breached, breachedCritical, atRisk, oldestBreachMs, sampled, sampledCount,
-    onShowBreached, onShowApproaching, onShowCritical,
+    onShowBreached, onShowApproaching, onShowCritical, onAnnounce,
   } = props;
 
   const [open, setOpen] = useState<boolean>(readOpen);
-  const [snoozedUntil, setSnoozedUntil] = useState<number>(readSnooze);
+  const [snooze, setSnooze] = useState<Snooze | null>(readSnooze);
   const [now, setNow] = useState<number>(() => Date.now());
+  const headingId = useId();
+  const summaryRef = useRef<HTMLElement | null>(null);
+
+  // Valid only while unexpired, not implausibly far in the future (clock
+  // skew / tampering), and the incident has not worsened since.
+  const t = Math.max(now, Date.now());
+  const snoozed = !!snooze && snooze.until > t && snooze.until <= t + SNOOZE_MS && breachedCritical <= snooze.count;
 
   // Re-check when a snooze expires so the incident card returns on its own.
   useEffect(() => {
-    if (snoozedUntil <= Date.now()) return undefined;
-    const t = setTimeout(() => setNow(Date.now()), snoozedUntil - Date.now() + 250);
-    return () => clearTimeout(t);
-  }, [snoozedUntil, now]);
+    if (!snooze) return undefined;
+    const delay = Math.min(snooze.until - Date.now(), SNOOZE_MS);
+    if (delay <= 0) return undefined;
+    const timer = setTimeout(() => setNow(Date.now()), delay + 250);
+    return () => clearTimeout(timer);
+  }, [snooze, now]);
 
-  if (unreviewed === 0 && breached === 0) return null;
-
-  const snoozed = snoozedUntil > Math.max(now, Date.now());
+  if (unreviewed === 0 && breached === 0 && atRisk === 0) return null;
 
   if (breachedCritical > 0 && !snoozed) {
-    const headingId = 'alert-incident-heading';
     const stat = (label: string, value: string, mono = false) => (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 64 }}>
-        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{label}</span>
         <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', ...(mono ? MONO : NUM) }}>{value}</span>
       </div>
     );
@@ -143,11 +131,10 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
         aria-labelledby={headingId}
         className="aqb-hairline"
         style={{
-          borderRadius: 14, padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12,
-          background: 'linear-gradient(160deg, color-mix(in srgb, var(--sev-critical) 8%, var(--bg-card)), var(--bg-card))',
+          borderRadius: 'var(--card-radius)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12,
+          background: 'var(--card-critical-bg)',
         }}
       >
-        <style>{CSS}</style>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <PulseDot pulse />
           <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--sev-critical-text)' }}>
@@ -156,14 +143,13 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
         </div>
         <div>
           <h2 id={headingId} style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
-            <span style={NUM}>{n(breachedCritical)}</span> critical {plural(breachedCritical, 'alert', 'alerts')} past their response deadline
+            <span style={NUM}>{n(breachedCritical)}</span> critical {plural(breachedCritical, 'alert', 'alerts')} past the response deadline
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-secondary)' }}>
-            <span style={NUM}>{n(breached)}</span> {plural(breached, 'alert is', 'alerts are')} past SLA in total, with{' '}
-            <span style={NUM}>{n(unreviewed)}</span> waiting for review.
+            Oldest breach is <span style={MONO}>{formatSpan(oldestBreachMs)}</span> past its deadline.
           </p>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 28px' }}>
+        <div className="aqb-stats">
           {stat('Breached', n(breached))}
           {stat('Critical', n(breachedCritical))}
           {stat('Approaching', n(atRisk))}
@@ -177,12 +163,14 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
             type="button"
             className="aqb-snooze"
             onClick={() => {
-              const until = Date.now() + SNOOZE_MS;
-              writeSnooze(until);
-              setSnoozedUntil(until);
+              const next = { until: Date.now() + SNOOZE_MS, count: breachedCritical };
+              writeSnooze(next);
+              setSnooze(next);
               setNow(Date.now());
+              onAnnounce?.('Critical SLA card snoozed for 1 hour');
+              requestAnimationFrame(() => summaryRef.current?.focus());
             }}
-            style={{ background: 'none', border: 0, cursor: 'pointer', padding: '6px 8px', fontSize: 12, color: 'var(--text-tertiary)', borderRadius: 8 }}
+            style={{ background: 'none', border: 0, cursor: 'pointer', minHeight: 36, padding: '8px 10px', fontSize: 12, color: 'var(--text-tertiary)', borderRadius: 8 }}
           >
             Snooze 1 hour
           </button>
@@ -195,10 +183,12 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
   const accent = critical ? 'var(--sev-critical)' : 'var(--sev-high)';
   const title = critical
     ? <><span style={NUM}>{n(breached)}</span> {plural(breached, 'alert', 'alerts')} past SLA</>
-    : <><span style={NUM}>{n(unreviewed)}</span> {plural(unreviewed, 'alert', 'alerts')} waiting for review</>;
+    : unreviewed > 0
+      ? <><span style={NUM}>{n(unreviewed)}</span> {plural(unreviewed, 'alert', 'alerts')} waiting for review</>
+      : <><span style={NUM}>{n(atRisk)}</span> {plural(atRisk, 'alert', 'alerts')} approaching SLA</>;
   const subtitle = critical
     ? <><span style={NUM}>{n(unreviewed)}</span> waiting for review in total</>
-    : atRisk > 0 ? <><span style={NUM}>{n(atRisk)}</span> approaching SLA</> : 'None past SLA';
+    : unreviewed > 0 && atRisk > 0 ? <><span style={NUM}>{n(atRisk)}</span> approaching SLA</> : 'None past SLA';
 
   const row = (label: string, value: React.ReactNode, mono = false) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '8px 0', borderTop: '1px dashed var(--border-base)', fontSize: 13 }}>
@@ -215,12 +205,11 @@ export function AlertQueueBanner(props: AlertQueueBannerProps) {
         if (next !== open) { setOpen(next); writeOpen(next); }
       }}
       style={{
-        borderRadius: 12, border: '1px solid var(--border-base)', background: 'var(--bg-card)',
+        borderRadius: 'var(--radius-md)', border: '1px solid var(--border-base)', background: 'var(--bg-card)',
         borderLeft: `3px solid ${accent}`,
       }}
     >
-      <style>{CSS}</style>
-      <summary className="aqb-summary" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+      <summary ref={summaryRef} className="aqb-summary" tabIndex={-1} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
         <PulseDot pulse={critical} />
         <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
           <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>

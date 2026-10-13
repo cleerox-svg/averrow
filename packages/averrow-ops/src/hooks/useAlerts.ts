@@ -124,7 +124,7 @@ export function useAlertStats() {
       return (res.data ?? {}) as AlertStats;
     },
     placeholderData: keepPreviousData,
-    refetchInterval: 300_000,
+    refetchInterval: 60_000, // worker caches the stats 60s; SLA counts are time-based
   });
 }
 
