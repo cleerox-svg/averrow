@@ -102,7 +102,7 @@ export function FilterBar<V extends string = string>({
                     'shrink-0 inline-flex items-center gap-[5px] rounded-full px-[14px] py-[5px] cursor-pointer',
                     md
                       ? 'min-h-[36px] font-sans text-[13px] font-semibold [@media(pointer:coarse)]:min-h-11'
-                      : 'font-mono text-[10px] font-bold uppercase tracking-[0.10em]',
+                      : 'font-mono text-[11px] font-bold uppercase tracking-[0.10em]',
                     FOCUS_RING,
                   )}
                   style={{
@@ -115,7 +115,7 @@ export function FilterBar<V extends string = string>({
                 >
                   {f.label}
                   {f.count !== undefined && (
-                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[9px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)', opacity: isActive ? 0.8 : 1 }}>
+                    <span aria-hidden="true" className={md ? 'font-mono text-[11px]' : 'text-[11px]'} style={{ color: isActive ? 'var(--amber-text)' : 'var(--text-secondary)' }}>
                       {f.count}
                     </span>
                   )}

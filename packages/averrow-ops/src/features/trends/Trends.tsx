@@ -137,7 +137,7 @@ function BriefingCard({
           <p className="text-sm leading-snug font-medium" style={{ color: 'var(--text-primary)' }}>
             {title}
           </p>
-          <div className="mt-2 font-mono text-[10px] flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="mt-2 font-mono text-[11px] flex items-center gap-2" style={{ color: 'var(--text-tertiary)' }}>
             <span>
               {new Date(briefing.created_at).toLocaleDateString('en-US', {
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -187,7 +187,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
             <Badge status="active" label="Observer" size="xs" />
             <Badge severity={sevBadge} size="xs" />
             {details?.category && (
-              <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)' }}>
+              <span className="font-mono text-[11px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ background: 'var(--border-base)', color: 'var(--text-tertiary)' }}>
                 {details.category.replace(/_/g, ' ')}
               </span>
             )}
@@ -195,7 +195,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
           <h3 className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
             {title}
           </h3>
-          <div className="font-mono text-[10px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
             Generated {new Date(briefing.created_at).toLocaleString('en-US', {
               month: 'short', day: 'numeric', year: 'numeric',
               hour: '2-digit', minute: '2-digit',
@@ -213,13 +213,13 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
       {/* Structured detail rows (counts, conflict, etc.) */}
       {extraEntries.length > 0 && (
         <div className="mb-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Signals
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {extraEntries.map(([k, v]) => (
               <div key={k} className="flex flex-col gap-0.5">
-                <span className="font-mono text-[9px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
                   {k.replace(/_/g, ' ')}
                 </span>
                 <span className="font-mono text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -234,7 +234,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
       {/* Recommendations list */}
       {details?.recommendations && details.recommendations.length > 0 && (
         <div className="mb-4 pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Recommended actions
           </div>
           <ul className="space-y-1.5">
@@ -251,27 +251,27 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
       {/* Related entity chips */}
       {(brandIds.length > 0 || providerIds.length > 0 || campaignId) && (
         <div className="pt-3" style={{ borderTop: '1px solid var(--border-base)' }}>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Related
           </div>
           <div className="flex flex-wrap gap-1.5">
             {brandIds.slice(0, 12).map(id => (
-              <Link key={`b-${id}`} to={`/brands/${id}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+              <Link key={`b-${id}`} to={`/brands/${id}`} className="font-mono text-[11px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
                 Brand · {id}
               </Link>
             ))}
             {brandIds.length > 12 && (
-              <span className="font-mono text-[10px] px-2 py-1" style={{ color: 'var(--text-muted)' }}>
+              <span className="font-mono text-[11px] px-2 py-1" style={{ color: 'var(--text-muted)' }}>
                 +{brandIds.length - 12} more
               </span>
             )}
             {providerIds.slice(0, 6).map(id => (
-              <Link key={`p-${id}`} to={tabUrl('providers', { focus: id })} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+              <Link key={`p-${id}`} to={tabUrl('providers', { focus: id })} className="font-mono text-[11px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
                 Provider · {id}
               </Link>
             ))}
             {campaignId && (
-              <Link to={`/campaigns/${campaignId}`} className="font-mono text-[10px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
+              <Link to={`/campaigns/${campaignId}`} className="font-mono text-[11px] px-2 py-1 rounded transition-colors hover:underline" style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}>
                 Campaign · {campaignId.slice(0, 8)}
               </Link>
             )}
@@ -340,12 +340,12 @@ function ThreatVolumeChart({ window }: { window: string }) {
             <AreaChart data={volume}>
               <XAxis
                 dataKey="date"
-                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                tick={{ fill: '#78A0C8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                 axisLine={{ stroke: 'var(--border-base)' }}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                tick={{ fill: '#78A0C8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -392,7 +392,7 @@ function BrandRiskMomentum() {
         <div className="overflow-x-auto">
           <Table className="w-full text-sm">
             <thead>
-              <tr className="text-left font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+              <tr className="text-left font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
                 <Th className="p-0 pb-2">Brand</Th>
                 <Th className="p-0 pb-2 text-right">This Week</Th>
                 <Th className="p-0 pb-2 text-right">Last Week</Th>
@@ -504,7 +504,7 @@ function ProviderMomentumPanel() {
                   />
                   <span className="text-xs truncate" style={{ color: 'var(--text-primary)' }}>{c.label}</span>
                 </div>
-                <span className="font-mono text-[10px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="font-mono text-[11px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>
                   {(c.threat_count ?? 0).toLocaleString()} threats
                 </span>
               </div>
@@ -535,7 +535,7 @@ function ThreatTypeTotals({ volume }: { volume: VolumePoint[] }) {
           <BarChart data={totals} layout="vertical" margin={{ left: 120, right: 20, top: 5, bottom: 5 }}>
             <XAxis
               type="number"
-              tick={{ fill: '#78A0C8', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+              tick={{ fill: '#78A0C8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
               axisLine={{ stroke: 'var(--border-base)' }}
               tickLine={false}
             />

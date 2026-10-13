@@ -195,7 +195,7 @@ function StatusCard({ summary }: { summary: BillingSummary }) {
     <section className="rounded-xl border border-white/[0.10] bg-bg-card p-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
             Effective monthly total
           </div>
           <div className="text-[36px] font-bold text-[var(--text-primary)] tabular-nums">
@@ -208,7 +208,7 @@ function StatusCard({ summary }: { summary: BillingSummary }) {
           )}
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
             Status
           </div>
           <div className={`inline-flex items-center gap-1.5 text-sm font-semibold ${tone}`}>
@@ -261,7 +261,7 @@ function PlanCard({ summary }: { summary: BillingSummary }) {
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
             Current plan
           </div>
           <h2 className="text-lg font-semibold text-white/95">{summary.plan.display_name}</h2>
@@ -270,7 +270,7 @@ function PlanCard({ summary }: { summary: BillingSummary }) {
           )}
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
             Monthly
           </div>
           <div className="tabular-nums font-mono">
@@ -295,7 +295,7 @@ function PlanCard({ summary }: { summary: BillingSummary }) {
 function PlanIncludedRow({ plan }: { plan: BillingPlan }) {
   return (
     <>
-      <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-2">
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-2">
         Included modules
       </div>
       {plan.included_modules.length === 0 ? (
@@ -320,7 +320,7 @@ function ModulesCard({ summary }: { summary: BillingSummary }) {
   const moduleOverrides = summary.active_overrides.filter((o) => o.override_type === 'module_price');
   return (
     <section className="rounded-xl border border-white/[0.06] bg-bg-card p-5">
-      <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-3">
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-3">
         À-la-carte modules
       </div>
       <div className="space-y-2">

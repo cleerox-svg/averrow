@@ -32,12 +32,12 @@ export function Digest() {
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2
           id="home-digest-title"
-          className="font-mono text-[10px] font-bold uppercase tracking-[0.18em]"
+          className="font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
           style={{ color: 'var(--text-secondary)', margin: 0 }}
         >
           Everything else
         </h2>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>no action needed</span>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>no action needed</span>
       </div>
       <nav aria-labelledby="home-digest-title" className="flex flex-wrap gap-2">
         {links.map((l) => (

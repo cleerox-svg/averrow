@@ -22,7 +22,7 @@ export function AgePill({ createdAt, severity }: { createdAt: string; severity: 
   return (
     <span
       title={TITLE[level]}
-      className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider border rounded px-1.5 py-0.5 ${TONE[level]}`}
+      className={`inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider border rounded px-1.5 py-0.5 ${TONE[level]}`}
     >
       <Clock size={9} />{label}
     </span>

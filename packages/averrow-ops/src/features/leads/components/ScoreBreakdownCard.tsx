@@ -64,7 +64,7 @@ export function ScoreBreakdownCard({ breakdownJson, totalScore }: ScoreBreakdown
               <span style={{ color: 'var(--text-secondary)' }}>
                 {FACTOR_LABELS[key] ?? key.replace(/_/g, ' ')}
               </span>
-              <Badge variant="info" className="font-mono text-[10px]">
+              <Badge variant="info" className="font-mono text-[11px]">
                 +{points}
               </Badge>
             </li>

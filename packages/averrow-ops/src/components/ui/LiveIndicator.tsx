@@ -17,7 +17,7 @@ export function LiveIndicator({
   size   = 'sm',
 }: LiveIndicatorProps) {
   const dotSize  = size === 'md' ? 10 : size === 'xs' ? 6 : 8;
-  const fontSize = size === 'md' ? 9  : size === 'xs' ? 8 : 8;
+  const fontSize = 11;
 
   return (
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>

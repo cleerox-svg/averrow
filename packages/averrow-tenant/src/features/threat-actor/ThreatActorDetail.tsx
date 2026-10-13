@@ -60,24 +60,24 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
 
       <div className="flex items-center gap-2 flex-wrap mt-3">
         {a.country_code && (
-          <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
             <Globe2 size={11} /> {a.country_code}
           </span>
         )}
         {a.affiliation && (
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] border border-amber/[0.20] rounded px-1.5 py-0.5">
             {a.affiliation}
           </span>
         )}
         {a.capability && (
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
             {CAPABILITY_LABELS[a.capability] ?? a.capability}
           </span>
         )}
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           status: {STATUS_LABELS[a.status] ?? a.status}
         </span>
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/65 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           attribution: {a.attribution_confidence}
         </span>
       </div>
@@ -95,7 +95,7 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
 
       {ttps.length > 0 && (
         <div className="mt-3">
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">primary TTPs</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">primary TTPs</div>
           <div className="flex flex-wrap gap-1.5">
             {ttps.map((t) => (
               <span key={t} className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
@@ -108,11 +108,11 @@ function ProfileHeader({ actor: a }: { actor: ThreatActorProfile }) {
 
       <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-white/[0.06]">
         <div>
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-0.5">First seen</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-0.5">First seen</div>
           <div className="text-[12px] text-white/75 font-mono">{formatDate(a.first_seen)}</div>
         </div>
         <div>
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55 mb-0.5">Last seen</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-0.5">Last seen</div>
           <div className="text-[12px] text-white/75 font-mono">{formatDate(a.last_seen)}</div>
         </div>
       </div>
@@ -173,10 +173,10 @@ function ThreatRow({ threat: t }: { threat: OrgThreatRow }) {
     <article className={`rounded-xl border bg-bg-card p-4 ${tone}`}>
       <div className="flex items-center gap-2 flex-wrap mb-1">
         <SeverityPill level={t.severity ?? 'low'} />
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           {t.threat_type}
         </span>
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55">
           attribution: {t.attribution_source} · {t.attribution_confidence}
         </span>
       </div>
@@ -220,12 +220,12 @@ function InfrastructureSection({ rows }: { rows: ActorInfrastructureRow[] }) {
         <table className="w-full text-[12px]">
           <thead className="bg-white/[0.02] border-b border-white/[0.06]">
             <tr className="text-left text-white/55 uppercase tracking-widest font-mono">
-              <th className="px-3 py-2 text-[10px]">ASN</th>
-              <th className="px-3 py-2 text-[10px]">Range / Domain</th>
-              <th className="px-3 py-2 text-[10px]">Provider</th>
-              <th className="px-3 py-2 text-[10px]">Country</th>
-              <th className="px-3 py-2 text-[10px]">Confidence</th>
-              <th className="px-3 py-2 text-[10px]">Last seen</th>
+              <th className="px-3 py-2 text-[11px]">ASN</th>
+              <th className="px-3 py-2 text-[11px]">Range / Domain</th>
+              <th className="px-3 py-2 text-[11px]">Provider</th>
+              <th className="px-3 py-2 text-[11px]">Country</th>
+              <th className="px-3 py-2 text-[11px]">Confidence</th>
+              <th className="px-3 py-2 text-[11px]">Last seen</th>
             </tr>
           </thead>
           <tbody>
@@ -268,7 +268,7 @@ function SeverityPill({ level }: { level: string }) {
     level === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                            'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );

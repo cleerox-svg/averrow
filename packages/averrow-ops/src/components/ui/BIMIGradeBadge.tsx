@@ -59,7 +59,7 @@ const gradeConfig: Record<NonNullable<BimiGrade>, {
 };
 
 const sizeClasses = {
-  sm: 'text-[10px] px-1.5 py-0.5 rounded',
+  sm: 'text-[11px] px-1.5 py-0.5 rounded',
   md: 'text-xs px-2 py-0.5 rounded-md',
   lg: 'text-sm px-3 py-1 rounded-lg',
 };
@@ -88,7 +88,7 @@ export function BIMIGradeBadge({
       ${config.bg} ${config.border} ${config.text} ${config.glow}
       border ${sizeClasses[size]}`}>
       {showLabel && (
-        <span className="mr-1 font-normal opacity-60 text-[9px] tracking-wider">
+        <span className="mr-1 font-normal opacity-60 text-[11px] tracking-wider">
           EMAIL
         </span>
       )}

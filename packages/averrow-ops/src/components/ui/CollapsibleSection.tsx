@@ -15,7 +15,7 @@ import { Card } from '@/design-system/components';
 
 const sectionEyebrow: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 9,
+  fontSize: 11,
   fontWeight: 700,
   letterSpacing: '0.22em',
   textTransform: 'uppercase',

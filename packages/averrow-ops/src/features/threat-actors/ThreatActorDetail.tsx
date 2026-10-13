@@ -131,7 +131,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-mono font-bold text-[var(--text-primary)]">{actor.name}</h1>
           <span className="text-lg">{countryFlag(actor.country)}</span>
-          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[10px] font-bold uppercase ${
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[11px] font-bold uppercase ${
             actor.status === 'active' ? 'bg-[var(--sev-critical)]/20 text-[var(--sev-critical-text)] border-[var(--sev-critical)]/30' : 'bg-white/5 text-[var(--text-tertiary)] border-white/10'
           }`}>
             {actor.status}
@@ -175,12 +175,12 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           {sectors.length > 0 ? (
             <div className="flex flex-wrap gap-1">
               {sectors.slice(0, 3).map(sector => (
-                <span key={sector} className="text-[10px] px-1.5 py-0.5 rounded-full bg-wing-blue/10 border border-wing-blue/20 text-wing-blue">
+                <span key={sector} className="text-[11px] px-1.5 py-0.5 rounded-full bg-wing-blue/10 border border-wing-blue/20 text-wing-blue">
                   {sector}
                 </span>
               ))}
               {sectors.length > 3 && (
-                <span className="text-[10px] text-white/55">+{sectors.length - 3}</span>
+                <span className="text-[11px] text-white/55">+{sectors.length - 3}</span>
               )}
             </div>
           ) : (
@@ -212,7 +212,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* Campaigns */}
       {campaigns.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3 flex items-center gap-2">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3 flex items-center gap-2">
             Active Campaigns
             <span className="flex-1 h-px bg-white/[0.06]" />
           </h2>
@@ -245,7 +245,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* TTPs */}
       {ttps.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Tactics, Techniques & Procedures
           </h2>
           <div className="flex flex-wrap gap-2">
@@ -261,7 +261,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* Infrastructure */}
       {actor.infrastructure && actor.infrastructure.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Known Infrastructure
           </h2>
           <div className="overflow-x-auto">
@@ -301,7 +301,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
       {/* Targeted Brands */}
       {actor.targets && actor.targets.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Targeted Brands ({actor.targets.length})
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -316,13 +316,13 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     {target.brand_name ?? target.sector ?? 'Unknown'}
                   </div>
                   {target.canonical_domain && (
-                    <div className="text-[10px] text-[var(--text-tertiary)]">{target.canonical_domain}</div>
+                    <div className="text-[11px] text-[var(--text-tertiary)]">{target.canonical_domain}</div>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   <BIMIGradeBadge grade={(target as any).bimi_grade ?? null} size="sm" tooltip />
                   {target.sector && (
-                    <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-[var(--text-tertiary)] border border-white/5">
+                    <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-[var(--text-tertiary)] border border-white/5">
                       {target.sector}
                     </span>
                   )}
@@ -331,7 +331,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
             ))}
           </div>
           {actor.targets[0]?.context && (
-            <p className="text-[10px] text-white/55 mt-3 font-mono">
+            <p className="text-[11px] text-white/55 mt-3 font-mono">
               Context: {actor.targets[0].context}
             </p>
           )}
@@ -345,7 +345,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           per actor. */}
       {actor.recent_attributions && actor.recent_attributions.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             Recent Activity ({actor.recent_attributions.length})
           </h2>
           <ul className="space-y-2">
@@ -362,7 +362,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   className="flex items-start gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-2.5"
                 >
                   <span
-                    className="mt-1 flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider"
+                    className="mt-1 flex-shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] font-bold uppercase tracking-wider"
                     style={{
                       color: sourceColor,
                       borderColor: sourceColor,
@@ -377,7 +377,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     <div className="text-[12px] text-white/85 truncate">
                       {att.source_pulse_name ?? att.actor_name_raw ?? `Threat ${att.threat_id.slice(0, 16)}…`}
                     </div>
-                    <div className="text-[10px] font-mono text-white/55 mt-0.5">
+                    <div className="text-[11px] font-mono text-white/55 mt-0.5">
                       {ago} · confidence {att.confidence}
                     </div>
                   </div>
@@ -393,7 +393,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
           items first; click opens the source article in a new tab. */}
       {actor.news_mentions && actor.news_mentions.length > 0 && (
         <div className="rounded-xl border border-white/10 bg-[var(--bg-card)] p-4">
-          <h2 className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+          <h2 className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
             News Mentions ({actor.news_mentions.length})
           </h2>
           <ul className="space-y-2">
@@ -406,11 +406,11 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-[var(--amber-border)] transition-all"
                 >
                   <div className="flex items-start justify-between gap-3 mb-1">
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--amber-text)]">
+                    <span className="font-mono text-[11px] uppercase tracking-widest text-[var(--amber-text)]">
                       {m.source_feed}
                     </span>
                     {m.is_geopolitical === 1 && (
-                      <span className="rounded bg-[var(--sev-critical)]/10 border border-[var(--sev-critical)]/30 px-1.5 py-0.5 font-mono text-[8px] uppercase text-[var(--sev-critical-text)]">
+                      <span className="rounded bg-[var(--sev-critical)]/10 border border-[var(--sev-critical)]/30 px-1.5 py-0.5 font-mono text-[11px] uppercase text-[var(--sev-critical-text)]">
                         Geopolitical
                       </span>
                     )}
@@ -419,11 +419,11 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                     {m.title}
                   </div>
                   {m.excerpt && (
-                    <div className="text-[10px] text-white/55 mt-1 line-clamp-2 font-mono">
+                    <div className="text-[11px] text-white/55 mt-1 line-clamp-2 font-mono">
                       {m.excerpt}
                     </div>
                   )}
-                  <div className="text-[10px] font-mono text-white/55 mt-1.5">
+                  <div className="text-[11px] font-mono text-white/55 mt-1.5">
                     {relativeTime(m.published_at ?? m.ingested_at)}
                   </div>
                 </a>
@@ -442,7 +442,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
        (!actor.news_mentions || actor.news_mentions.length === 0) &&
        (!actor.infrastructure || actor.infrastructure.length === 0) && (
         <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.015] p-6 text-center">
-          <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-2">
+          <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-2">
             No observations yet
           </div>
           <p className="text-[12px] text-white/55 max-w-md mx-auto">

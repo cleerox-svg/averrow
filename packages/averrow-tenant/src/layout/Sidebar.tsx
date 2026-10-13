@@ -50,7 +50,7 @@ function themeLabelFor(theme: 'auto' | 'dark' | 'light'): string {
   return 'Theme: light — click for auto';
 }
 
-export function Sidebar() {
+export function Sidebar({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const { data, isLoading } = useTenantModules();
   const { theme, cycle: cycleTheme } = useTheme();
   const ThemeIcon = themeIconFor(theme);
@@ -60,7 +60,17 @@ export function Sidebar() {
   const locked = (data?.modules ?? []).filter((m) => m.status === 'not_entitled' || m.status === 'suspended');
 
   return (
-    <aside className="w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]">
+    <aside
+      id="tenant-sidebar"
+      className={cn(
+        // Below md the sidebar is an off-canvas drawer (a permanent 240px
+        // column left ~150px of content at 390px and made every page scroll
+        // horizontally). From md up it is the static column it always was.
+        'w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]',
+        'fixed inset-y-0 left-0 z-40 transition-transform duration-200 md:static md:z-auto md:translate-x-0 md:visible',
+        open ? 'translate-x-0 visible' : '-translate-x-full invisible',
+      )}
+    >
       <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
         <AverrowLogo />
         <button
@@ -74,7 +84,7 @@ export function Sidebar() {
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4" onClick={onClose}>
         <Section label="Workspace">
           <NavLink to="/console" className={({ isActive }) => cn(NAV_BASE, isActive ? NAV_ACTIVE : NAV_INACTIVE)}>
             <LayoutDashboard size={16} />
@@ -122,7 +132,7 @@ export function Sidebar() {
                 <Icon size={16} />
                 <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
                 {m.status === 'trial' && (
-                  <span className="text-[9px] uppercase tracking-wider font-mono text-amber">trial</span>
+                  <span className="text-[11px] uppercase tracking-wider font-mono text-amber">trial</span>
                 )}
               </NavLink>
             );
@@ -141,7 +151,7 @@ export function Sidebar() {
                 >
                   <Icon size={16} className="opacity-50" />
                   <span className="flex-1 truncate">{MODULE_LABELS[m.module_key]}</span>
-                  <span className="text-[9px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
+                  <span className="text-[11px] uppercase tracking-wider font-mono text-white/55">upgrade</span>
                 </NavLink>
               );
             })}
@@ -174,7 +184,7 @@ export function Sidebar() {
         </Section>
       </nav>
       <div
-        className="px-3 py-2.5 border-t border-white/10 font-mono text-[10px] tracking-[0.08em] text-white/55"
+        className="px-3 py-2.5 border-t border-white/10 font-mono text-[11px] tracking-[0.08em] text-white/55"
         title={`${VERSION_LABEL} · ${BUILD_SHA}`}
       >
         {VERSION_LABEL} · {BUILD_SHA}
@@ -186,7 +196,7 @@ export function Sidebar() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="px-3 mb-1 text-[9px] uppercase tracking-[0.20em] font-mono text-white/55">{label}</div>
+      <div className="px-3 mb-1 text-[11px] uppercase tracking-[0.20em] font-mono text-white/55">{label}</div>
       <div className="space-y-0.5">{children}</div>
     </div>
   );

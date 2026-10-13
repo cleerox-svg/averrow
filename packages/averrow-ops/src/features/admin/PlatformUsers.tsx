@@ -281,7 +281,7 @@ function UserRow({
             </div>
             <div className="min-w-0">
               <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
-                {u.name ?? u.email}{isSelf && <span className="font-mono text-[10px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>(you)</span>}
+                {u.name ?? u.email}{isSelf && <span className="font-mono text-[11px] ml-1.5" style={{ color: 'var(--text-tertiary)' }}>(you)</span>}
               </div>
               <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-tertiary)' }}>{u.email}</div>
             </div>
@@ -357,7 +357,7 @@ function SessionsPanel({ userId }: { userId: string }) {
   }
   return (
     <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1.5">
-      <div className="font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
         Recent sessions
       </div>
       {sessions.map((s) => (
@@ -408,11 +408,11 @@ function InvitePanel({ onDone }: { onDone: () => void }) {
       <SectionLabel className="mb-3">Invite a user</SectionLabel>
       <div className="grid grid-cols-1 sm:grid-cols-[2fr_max-content_max-content] gap-2 items-end">
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>Email</label>
+          <label className="block font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>Email</label>
           <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="teammate@company.com" type="email" />
         </div>
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>Role</label>
+          <label className="block font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>Role</label>
           <Select value={role} onChange={(e) => setRole(e.target.value as PlatformUserRole)} options={options} />
         </div>
         <Button onClick={submit} disabled={create.isPending || !email.trim()}>

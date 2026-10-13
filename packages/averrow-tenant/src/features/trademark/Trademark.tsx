@@ -27,7 +27,7 @@ export function Trademark() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Trademark Infringement</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -113,7 +113,7 @@ function HeadlineMetrics({
                               'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} /><span className="truncate">{c.label}</span>
             </div>
             <div className={`text-3xl font-bold tabular-nums ${accent}`}>{c.value}</div>
@@ -142,9 +142,9 @@ function BrandCard({ brand: b }: { brand: TrademarkBrandSummary }) {
           <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
         </div>
         {noAssets ? (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-amber flex-shrink-0">no assets uploaded</span>
+          <span className="text-[11px] uppercase tracking-widest font-mono text-amber flex-shrink-0">no assets uploaded</span>
         ) : (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
             {b.assets_active} asset{b.assets_active === 1 ? '' : 's'} · {b.findings_total} finding{b.findings_total === 1 ? '' : 's'}
           </span>
         )}
@@ -178,7 +178,7 @@ function ClassChip({
                       'text-white/85';
   return (
     <div>
-      <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-0.5">{label}</div>
       <div className={`text-lg font-bold tabular-nums ${accent}`}>{count}</div>
     </div>
   );

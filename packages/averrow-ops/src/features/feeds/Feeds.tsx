@@ -239,20 +239,20 @@ function FeedActionButton({
   }
   if (a.state === 'loading') {
     return (
-      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color }} onClick={(e) => e.stopPropagation()}>
+      <span className="flex items-center gap-1 font-mono text-[11px]" style={{ color }} onClick={(e) => e.stopPropagation()}>
         <Loader2 size={12} className="animate-spin" />
       </span>
     );
   }
   if (a.state === 'success') {
     return (
-      <span className="flex items-center gap-1 font-mono text-[10px]" style={{ color: 'var(--green-text)' }} onClick={(e) => e.stopPropagation()}>
+      <span className="flex items-center gap-1 font-mono text-[11px]" style={{ color: 'var(--green-text)' }} onClick={(e) => e.stopPropagation()}>
         <Check size={12} />
       </span>
     );
   }
   return (
-    <span className="font-mono text-[10px]" style={{ color: 'var(--sev-high-text)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
+    <span className="font-mono text-[11px]" style={{ color: 'var(--sev-high-text)' }} onClick={(e) => e.stopPropagation()} title={a.error}>
       <X size={12} className="inline" />
     </span>
   );
@@ -310,7 +310,7 @@ function FeedCardV3({
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2 font-mono text-[10px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="flex items-center gap-2 font-mono text-[11px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
             <Clock size={10} />
             {humanCron(feed.schedule_cron)} · last {relativeTime(feed.last_completed)}
           </div>
@@ -328,7 +328,7 @@ function FeedCardV3({
 
       {/* Stats row + sparkline */}
       <div className="flex items-end justify-between gap-3">
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono flex-1">
           <div>
             <div style={{ color: 'var(--text-muted)' }}>PULLS</div>
             <div className="text-base" style={{ color: 'var(--text-primary)' }}>
@@ -361,7 +361,7 @@ function FeedCardV3({
               width={120}
               height={36}
             />
-            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
               24h · pulls · ingested
             </div>
           </div>
@@ -369,7 +369,7 @@ function FeedCardV3({
       </div>
 
       {pattern && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {pattern.reason}
         </div>
       )}
@@ -419,7 +419,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
         <div className="space-y-3">
           {feed.description && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 What it does
               </div>
               <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -427,7 +427,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
               </p>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3 font-mono text-[10px]">
+          <div className="grid grid-cols-2 gap-3 font-mono text-[11px]">
             <Row label="Cron"      value={feed.schedule_cron} />
             <Row label="Schedule"  value={humanCron(feed.schedule_cron)} />
             <Row label="Batch"     value={feed.batch_size?.toString() ?? '—'} />
@@ -437,7 +437,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
           </div>
           {feed.last_error && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
+              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
                 Last error
               </div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
@@ -463,7 +463,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
           </div>
           {feed.source_url && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Source
               </div>
               <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
@@ -472,7 +472,7 @@ function FeedDetailPanelV3({ feed }: { feed: FeedOverview }) {
             </div>
           )}
           <div>
-            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Recent pulls · last 20
             </div>
             <FeedHistorySection feedName={feed.feed_name} />
@@ -492,14 +492,14 @@ function FeedHistorySection({ feedName }: { feedName: string }) {
 
   if (isLoading) {
     return (
-      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         Loading history…
       </div>
     );
   }
   if (!history || history.length === 0) {
     return (
-      <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         No pull history yet
       </div>
     );
@@ -538,7 +538,7 @@ function PullRow({ record }: { record: FeedPullRecord }) {
         border:     `1px solid ${isSuccess ? 'var(--border-base)' : 'var(--sev-critical-border)'}`,
       }}
     >
-      <div className="flex items-center gap-2 font-mono text-[10px]">
+      <div className="flex items-center gap-2 font-mono text-[11px]">
         <span
           className="inline-block w-1.5 h-1.5 rounded-full flex-shrink-0"
           style={{ background: tone }}
@@ -560,7 +560,7 @@ function PullRow({ record }: { record: FeedPullRecord }) {
       </div>
       {!isSuccess && record.error_message && (
         <div
-          className="font-mono text-[10px] mt-1 line-clamp-2"
+          className="font-mono text-[11px] mt-1 line-clamp-2"
           style={{ color: 'var(--sev-high-text)' }}
           title={record.error_message}
         >
@@ -583,7 +583,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
   const color = tone === 'green' ? 'var(--green)' : tone === 'sev-high' ? 'var(--sev-high)' : 'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-lg font-mono" style={{ color }}>{value}</div>
     </div>
   );

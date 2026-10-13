@@ -79,7 +79,7 @@ function KanbanCard({ lead, onClick }: { lead: SalesLead; onClick: () => void })
             <div className="font-display font-semibold text-sm truncate" style={{ color: 'var(--text-primary)' }}>
               {lead.company_name ?? 'Unnamed Lead'}
             </div>
-            <div className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>
+            <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
               {lead.company_domain ?? '—'}
             </div>
           </div>
@@ -88,23 +88,23 @@ function KanbanCard({ lead, onClick }: { lead: SalesLead; onClick: () => void })
 
         <div className="flex flex-wrap items-center gap-1.5">
           {sizeChip && (
-            <Badge variant="info" className="!text-[9px]">{sizeChip}</Badge>
+            <Badge variant="info" className="!text-[11px]">{sizeChip}</Badge>
           )}
           {lead.is_public === 1 && lead.ticker && (
-            <Badge variant="success" className="!text-[9px]">{lead.ticker}</Badge>
+            <Badge variant="success" className="!text-[11px]">{lead.ticker}</Badge>
           )}
           {lead.email_security_grade && (
             <BIMIGradeBadge grade={lead.email_security_grade} size="sm" tooltip />
           )}
           {breach && (
-            <Badge variant="critical" className="!text-[9px]">
+            <Badge variant="critical" className="!text-[11px]">
               <AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />
               Breach
             </Badge>
           )}
         </div>
 
-        <div className="flex items-center justify-between text-[10px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="flex items-center justify-between text-[11px] font-mono" style={{ color: 'var(--text-tertiary)' }}>
           <span>{lead.threat_count_30d ?? 0} threats/30d</span>
           {lead.ai_enriched === 1 && <span className="text-positive/70">✓ Enriched</span>}
         </div>
@@ -147,7 +147,7 @@ function KanbanView({ leads, onSelect }: { leads: SalesLead[]; onSelect: (lead: 
             <div className="space-y-2">
               {inColumn.length === 0 ? (
                 <div
-                  className="text-center py-3 font-mono text-[10px]"
+                  className="text-center py-3 font-mono text-[11px]"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   —
@@ -238,7 +238,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Response Rate</span>
+                <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Response Rate</span>
                 <span className="font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{(stats.response_rate ?? 0).toFixed(1)}%</span>
               </div>
               <div className="w-full h-2 bg-white/5 rounded overflow-hidden">
@@ -247,7 +247,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
             </div>
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Conversion Rate</span>
+                <span className="font-mono text-[11px] uppercase" style={{ color: 'var(--text-tertiary)' }}>Conversion Rate</span>
                 <span className="font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{(stats.conversion_rate ?? 0).toFixed(1)}%</span>
               </div>
               <div className="w-full h-2 bg-white/5 rounded overflow-hidden">
@@ -362,7 +362,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
                     </Td>
                     <Td>
                       {lead.revenue_band ? (
-                        <Badge variant="info" className="text-[9px]">{lead.revenue_band}</Badge>
+                        <Badge variant="info" className="text-[11px]">{lead.revenue_band}</Badge>
                       ) : lead.company_size ? (
                         <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
                           {lead.company_size}
@@ -371,7 +371,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
                     </Td>
                     <Td>
                       {lead.is_public === 1 ? (
-                        <Badge variant="success" className="text-[9px]">
+                        <Badge variant="success" className="text-[11px]">
                           {lead.ticker ?? 'Public'}
                         </Badge>
                       ) : lead.is_public === 0 ? (
@@ -393,16 +393,16 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
                     <Td>
                       <div className="flex flex-wrap gap-1">
                         {breach && (
-                          <Badge variant="critical" className="text-[9px]">
+                          <Badge variant="critical" className="text-[11px]">
                             <AlertTriangle className="w-2.5 h-2.5 inline mr-0.5" />
                             Breach
                           </Badge>
                         )}
                         {lead.target_linkedin && (
-                          <Badge variant="info" className="text-[9px]">CISO</Badge>
+                          <Badge variant="info" className="text-[11px]">CISO</Badge>
                         )}
                         {lead.cyber_10k_mentions != null && lead.cyber_10k_mentions >= 5 && (
-                          <Badge variant="medium" className="text-[9px]">10-K</Badge>
+                          <Badge variant="medium" className="text-[11px]">10-K</Badge>
                         )}
                         {!breach && !lead.target_linkedin && !(lead.cyber_10k_mentions && lead.cyber_10k_mentions >= 5) && (
                           <span className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>—</span>
@@ -445,12 +445,12 @@ function OutreachEditor({
     <div className="space-y-3">
       {subject && (
         <div>
-          <span className="font-mono text-[10px] text-white/55 uppercase">Subject</span>
+          <span className="font-mono text-[11px] text-white/55 uppercase">Subject</span>
           <p className="text-sm font-semibold mt-1" style={{ color: 'var(--text-primary)' }}>{subject}</p>
         </div>
       )}
       <div>
-        <span className="font-mono text-[10px] text-white/55 uppercase">Body</span>
+        <span className="font-mono text-[11px] text-white/55 uppercase">Body</span>
         <textarea
           value={body}
           onChange={e => onChange(e.target.value)}
@@ -548,7 +548,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
             <>
               <span>·</span>
               <span>Grade: </span>
-              <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[8px] py-0 px-1.5">
+              <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[11px] py-0 px-1.5">
                 {lead.email_security_grade}
               </Badge>
             </>
@@ -653,24 +653,24 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
           {lead.target_name ? (
             <div className="space-y-2 text-sm">
               <div className="flex gap-2">
-                <span className="font-mono text-[10px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Name</span>
+                <span className="font-mono text-[11px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Name</span>
                 <span style={{ color: 'var(--text-primary)' }}>{lead.target_name}</span>
               </div>
               {lead.target_title && (
                 <div className="flex gap-2">
-                  <span className="font-mono text-[10px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Title</span>
+                  <span className="font-mono text-[11px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Title</span>
                   <span style={{ color: 'var(--text-secondary)' }}>{lead.target_title}</span>
                 </div>
               )}
               {lead.target_email && (
                 <div className="flex gap-2">
-                  <span className="font-mono text-[10px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Email</span>
+                  <span className="font-mono text-[11px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>Email</span>
                   <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{lead.target_email}</span>
                 </div>
               )}
               {lead.target_linkedin && (
                 <div className="flex gap-2">
-                  <span className="font-mono text-[10px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>LinkedIn</span>
+                  <span className="font-mono text-[11px] uppercase w-16" style={{ color: 'var(--text-tertiary)' }}>LinkedIn</span>
                   <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{lead.target_linkedin}</span>
                 </div>
               )}
@@ -743,7 +743,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
               </Button>
             )}
           </div>
-          <div className="mt-2 font-mono text-[10px] text-white/55">
+          <div className="mt-2 font-mono text-[11px] text-white/55">
             Created {relativeTime(lead.created_at)} · Updated {relativeTime(lead.updated_at)}
           </div>
         </Card>
@@ -803,7 +803,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber-text)' }}>{lead.prospect_score}</span>
                   {lead.email_security_grade && (
-                    <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[8px] py-0 px-1.5">
+                    <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[11px] py-0 px-1.5">
                       {lead.email_security_grade}
                     </Badge>
                   )}

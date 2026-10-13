@@ -175,7 +175,7 @@ function AssetCard({ asset: a, brandId, canManage }: { asset: TrademarkAssetRow;
         <AssetImage src={a.asset_url} fallback={a.asset_name?.[0] ?? '?'} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+            <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
               {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type}
             </span>
             {canManage && (
@@ -198,7 +198,7 @@ function AssetCard({ asset: a, brandId, canManage }: { asset: TrademarkAssetRow;
             </div>
           )}
           {a.phash && (
-            <div className="text-[10px] text-white/55 font-mono mt-1">phash {a.phash.slice(0, 8)}…</div>
+            <div className="text-[11px] text-white/55 font-mono mt-1">phash {a.phash.slice(0, 8)}…</div>
           )}
         </div>
       </div>
@@ -251,7 +251,7 @@ function FindingRow({
         <ClassificationPill classification={f.classification} />
         {f.found_context && <ContextChip context={f.found_context} />}
         {conf !== null && (
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">
             match {Math.round(conf * 100)}%
             {dist !== null && <span className="text-white/55"> · dist {dist}</span>}
           </span>
@@ -355,7 +355,7 @@ function formatDate(ts: string): string {
 
 function ContextChip({ context }: { context: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {CONTEXT_LABELS[context] ?? context}
     </span>
   );
@@ -369,7 +369,7 @@ function SeverityPill({ level }: { level: string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );
@@ -383,7 +383,7 @@ function ClassificationPill({ classification }: { classification: string }) {
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {classification}
     </span>
   );

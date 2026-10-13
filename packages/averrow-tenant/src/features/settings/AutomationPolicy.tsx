@@ -96,7 +96,7 @@ function PostureDial({ posture }: { posture: AutomationMode }) {
           <Icon size={20} className={meta.accent} />
         </div>
         <div className="flex-1">
-          <div className="text-[10px] uppercase tracking-widest font-mono text-white/55">Current posture</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55">Current posture</div>
           <div className={`text-lg font-bold ${meta.accent}`}>{meta.label}</div>
           <p className="text-[12px] text-white/60 mt-1 leading-relaxed">{meta.blurb}</p>
         </div>
@@ -110,7 +110,7 @@ function PostureDial({ posture }: { posture: AutomationMode }) {
             <div
               key={p}
               className={[
-                'flex-1 rounded-md border px-2 py-1.5 text-center text-[10px] font-mono uppercase tracking-wider transition-colors',
+                'flex-1 rounded-md border px-2 py-1.5 text-center text-[11px] font-mono uppercase tracking-wider transition-colors',
                 active
                   ? 'bg-amber/[0.12] text-amber border-amber/[0.35]'
                   : 'bg-white/[0.02] text-white/55 border-white/[0.06]',
@@ -273,7 +273,7 @@ function SectionTitle({ icon: Icon, title, subtitle }: { icon: LucideIcon; title
     <div className="flex items-center gap-2 mb-3">
       <Icon size={14} className="text-white/55" />
       <h3 className="text-sm font-semibold text-white/90">{title}</h3>
-      <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">· {subtitle}</span>
+      <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">· {subtitle}</span>
     </div>
   );
 }

@@ -32,7 +32,7 @@ describe('Button', () => {
   it('applies size styles', () => {
     const { container } = render(<Button size="sm">Small</Button>);
     const el = container.firstChild as HTMLElement;
-    expect(el.style.fontSize).toBe('10px');
+    expect(el.style.fontSize).toBe('11px');
   });
 
   it('applies large size styles', () => {

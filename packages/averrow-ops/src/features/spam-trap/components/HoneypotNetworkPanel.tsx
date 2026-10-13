@@ -265,7 +265,7 @@ export function HoneypotNetworkPanel() {
       }}
     >
       <div className="flex items-center justify-between mb-4">
-        <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
           Honeypot Network
         </div>
         <div className="flex gap-1">
@@ -273,7 +273,7 @@ export function HoneypotNetworkPanel() {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-2 py-0.5 rounded text-[9px] font-mono uppercase tracking-wider transition-colors ${
+              className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wider transition-colors ${
                 activeTab === tab
                   ? 'bg-white/10 text-white/80'
                   : 'text-white/55 hover:text-white/70'
@@ -297,12 +297,12 @@ export function HoneypotNetworkPanel() {
             </div>
           ) : (
             <div className="space-y-1.5 mb-4">
-              <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-1">
+              <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-1">
                 Seeds by Channel
               </div>
               {channelCounts.map(({ channel, seeded, productive }) => (
                 <div key={channel} className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] text-white/55 w-[100px] truncate">
+                  <span className="font-mono text-[11px] text-white/55 w-[100px] truncate">
                     {channel}
                   </span>
                   <div className="flex-1 h-4 bg-white/5 rounded-sm overflow-hidden relative">
@@ -316,7 +316,7 @@ export function HoneypotNetworkPanel() {
                     />
                   </div>
                   <span
-                    className="font-mono text-[10px] w-[44px] text-right tabular-nums"
+                    className="font-mono text-[11px] w-[44px] text-right tabular-nums"
                     style={{ color: productive > 0 ? '#4ADE80' : 'var(--text-muted)' }}
                     title={`${productive} of ${seeded} addresses on this channel have caught at least once`}
                   >
@@ -345,12 +345,12 @@ export function HoneypotNetworkPanel() {
         <div className="space-y-4">
           {/* Source type breakdown — productive_locations / total_locations */}
           <div className="space-y-1.5">
-            <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-1">
+            <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-1">
               Seeds by Source Type
             </div>
             {seedingGroups.map(([type, data]) => (
               <div key={type} className="flex items-center gap-2">
-                <span className="font-mono text-[10px] text-white/55 w-[80px] truncate capitalize">
+                <span className="font-mono text-[11px] text-white/55 w-[80px] truncate capitalize">
                   {type}
                 </span>
                 <div className="flex-1 h-4 bg-white/5 rounded-sm overflow-hidden">
@@ -364,7 +364,7 @@ export function HoneypotNetworkPanel() {
                   />
                 </div>
                 <span
-                  className="font-mono text-[10px] w-[44px] text-right tabular-nums"
+                  className="font-mono text-[11px] w-[44px] text-right tabular-nums"
                   style={{ color: data.productive_locations > 0 ? '#4ADE80' : 'var(--text-muted)' }}
                   title={`${data.productive_locations} of ${data.total_locations} locations on this source type have caught at least once`}
                 >
@@ -395,13 +395,13 @@ export function HoneypotNetworkPanel() {
                       {isOpen
                         ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
                         : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
-                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
+                      <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accentText(accent) }}>
+                      <span className="font-mono text-[11px] tabular-nums" style={{ color: accentText(accent) }}>
                         {items.length}
                       </span>
-                      <span className="font-mono text-[9px] text-white/55 truncate">
+                      <span className="font-mono text-[11px] text-white/55 truncate">
                         — locations {bucket === 'dead' ? 'with seeds older than 30d and zero catches' : BUCKET_DESCRIPTION[bucket]}
                       </span>
                     </button>
@@ -416,15 +416,15 @@ export function HoneypotNetworkPanel() {
                               className="flex items-center justify-between gap-3 px-3 py-1.5"
                               title={`Seeds: ${s.seeds} · Productive: ${s.productive_count} · First seeded: ${daysAgo(s.earliest_seed, Date.now())} · Last catch: ${daysAgo(s.last_catch_at, Date.now())}`}
                             >
-                              <span className="font-mono text-[10px] text-white/65 truncate flex-1">
+                              <span className="font-mono text-[11px] text-white/65 truncate flex-1">
                                 {s.location}
                               </span>
                               <div className="flex items-center gap-3 shrink-0 tabular-nums">
-                                <span className="font-mono text-[10px] text-white/55">
+                                <span className="font-mono text-[11px] text-white/55">
                                   {s.productive_count}/{s.seeds}
                                 </span>
                                 <span
-                                  className="font-mono text-[10px] w-12 text-right"
+                                  className="font-mono text-[11px] w-12 text-right"
                                   style={{
                                     color: s.catches > 0 ? '#f87171' : 'var(--border-strong)',
                                     fontWeight: s.catches > 0 ? 600 : 400,
@@ -432,10 +432,10 @@ export function HoneypotNetworkPanel() {
                                 >
                                   {s.catches > 0 ? `${s.catches} catch` : '—'}
                                 </span>
-                                <span className="font-mono text-[10px] w-10 text-right text-white/55">
+                                <span className="font-mono text-[11px] w-10 text-right text-white/55">
                                   {s.catches > 0 ? `${yieldPct}%` : '—'}
                                 </span>
-                                <span className="font-mono text-[10px] w-14 text-right text-white/55">
+                                <span className="font-mono text-[11px] w-14 text-right text-white/55">
                                   {daysAgo(s.last_catch_at, Date.now())}
                                 </span>
                               </div>
@@ -472,19 +472,19 @@ export function HoneypotNetworkPanel() {
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                   <div className="font-mono text-xl font-bold text-white/90">{seedingData.honeypot_visits.total}</div>
-                  <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Total Visits</div>
+                  <div className="font-mono text-[11px] text-white/55 uppercase tracking-wider mt-0.5">Total Visits</div>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                   <div className="font-mono text-xl font-bold text-red-400">{seedingData.honeypot_visits.bots}</div>
-                  <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Bot Visits</div>
+                  <div className="font-mono text-[11px] text-white/55 uppercase tracking-wider mt-0.5">Bot Visits</div>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                   <div className="font-mono text-xl font-bold text-[var(--amber-text)]">{seedingData.honeypot_visits.last_24h}</div>
-                  <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Last 24h</div>
+                  <div className="font-mono text-[11px] text-white/55 uppercase tracking-wider mt-0.5">Last 24h</div>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] p-3 text-center">
                   <div className="font-mono text-xl font-bold text-white/90">{seedingData.honeypot_visits.unique_bots}</div>
-                  <div className="font-mono text-[9px] text-white/55 uppercase tracking-wider mt-0.5">Unique Bots</div>
+                  <div className="font-mono text-[11px] text-white/55 uppercase tracking-wider mt-0.5">Unique Bots</div>
                 </div>
               </div>
 
@@ -497,15 +497,15 @@ export function HoneypotNetworkPanel() {
               {/* Visits by page */}
               {seedingData.honeypot_visits.by_page.length > 0 && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-2">
+                  <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-2">
                     Visits by Page
                   </div>
                   {seedingData.honeypot_visits.by_page.map((p) => (
                     <div key={p.page} className="flex items-center justify-between py-1.5 border-b border-white/[0.03]">
                       <span className="font-mono text-[11px] text-white/60">{p.page}</span>
                       <div className="flex items-center gap-3">
-                        <span className="font-mono text-[10px] text-white/55">{p.visits} visits</span>
-                        <span className="font-mono text-[10px] text-red-400">{p.bots} bots</span>
+                        <span className="font-mono text-[11px] text-white/55">{p.visits} visits</span>
+                        <span className="font-mono text-[11px] text-red-400">{p.bots} bots</span>
                       </div>
                     </div>
                   ))}
@@ -515,27 +515,27 @@ export function HoneypotNetworkPanel() {
               {/* Recent crawlers */}
               {seedingData.honeypot_visits.recent_crawlers.length > 0 && (
                 <div>
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-white/55 mb-2">
+                  <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-2">
                     Recent Crawlers
                   </div>
                   <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
                     {seedingData.honeypot_visits.recent_crawlers.map((c, i) => (
                       <div key={i} className="rounded-lg bg-white/[0.02] border border-white/[0.05] px-3 py-2">
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-[10px] text-red-400 font-semibold">
+                          <span className="font-mono text-[11px] text-red-400 font-semibold">
                             {c.bot_name || 'unknown'}
                           </span>
-                          <span className="font-mono text-[9px] text-white/55">
+                          <span className="font-mono text-[11px] text-white/55">
                             {c.visited_at ? new Date(c.visited_at + 'Z').toLocaleString() : '—'}
                           </span>
                         </div>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="font-mono text-[10px] text-white/55">{c.page}</span>
+                          <span className="font-mono text-[11px] text-white/55">{c.page}</span>
                           {c.visitor_ip && (
-                            <span className="font-mono text-[10px] text-white/55">{c.visitor_ip}</span>
+                            <span className="font-mono text-[11px] text-white/55">{c.visitor_ip}</span>
                           )}
                           {c.country && (
-                            <span className="font-mono text-[10px] text-white/55">{c.country}</span>
+                            <span className="font-mono text-[11px] text-white/55">{c.country}</span>
                           )}
                         </div>
                       </div>
@@ -594,14 +594,14 @@ export function HoneypotNetworkPanel() {
                       {isOpen
                         ? <ChevronDown className="w-3.5 h-3.5 text-white/55 shrink-0" />
                         : <ChevronRight className="w-3.5 h-3.5 text-white/55 shrink-0" />}
-                      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
+                      <span className="font-mono text-[11px] uppercase tracking-wider" style={{ color: accentText(accent) }}>
                         {BUCKET_LABEL[bucket]}
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums" style={{ color: accentText(accent) }}>
+                      <span className="font-mono text-[11px] tabular-nums" style={{ color: accentText(accent) }}>
                         {items.length}
                       </span>
                       <span
-                        className="font-mono text-[9px] text-white/55 truncate"
+                        className="font-mono text-[11px] text-white/55 truncate"
                         title={BUCKET_DESCRIPTION[bucket]}
                       >
                         — {BUCKET_DESCRIPTION[bucket]}
@@ -613,13 +613,13 @@ export function HoneypotNetworkPanel() {
                         <Table className="w-full text-left">
                           <thead>
                             <tr className="border-b border-white/[0.06]">
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pl-3 pb-1.5 pt-1.5 pr-2">Address</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Channel</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Location</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Catches</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Last catch</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Seeded</Th>
-                              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-3"></Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pl-3 pb-1.5 pt-1.5 pr-2">Address</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Channel</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Location</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Catches</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Last catch</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-2">Seeded</Th>
+                              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 pt-1.5 pr-3"></Th>
                             </tr>
                           </thead>
                           <tbody>
@@ -638,7 +638,7 @@ export function HoneypotNetworkPanel() {
                                   </Td>
                                   <Td className="p-0 py-1.5 pr-2">
                                     <span
-                                      className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                                      className="text-[11px] font-mono px-1.5 py-0.5 rounded"
                                       style={{
                                         background: 'var(--bg-input)',
                                         border: '1px solid var(--border-base)',
@@ -695,7 +695,7 @@ export function HoneypotNetworkPanel() {
                                           type="button"
                                           onClick={() => retireSeed.mutate(addr.id)}
                                           disabled={retireSeed.isPending}
-                                          className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-white/[0.10] text-white/55 hover:text-white/90 hover:border-white/[0.25] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                          className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded border border-white/[0.10] text-white/55 hover:text-white/90 hover:border-white/[0.25] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                           title="Retire this seed so the auto-seeder can replant"
                                         >
                                           REPLANT

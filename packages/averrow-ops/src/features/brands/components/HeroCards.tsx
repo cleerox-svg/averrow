@@ -93,7 +93,7 @@ export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any
     >
       <div className="space-y-2">
         {topTypes.length === 0 && (
-          <div className="font-mono text-[10px] text-[var(--text-secondary)]">No threats detected</div>
+          <div className="font-mono text-[11px] text-[var(--text-secondary)]">No threats detected</div>
         )}
         {topTypes.map(([type, count]) => {
           const tc = THREAT_TYPE_COLORS[type] || { bar: 'bg-[#78A0C8]', text: 'text-[var(--sev-low-text)]' };
@@ -101,10 +101,10 @@ export function ExposureIndexCard({ brand, threats }: { brand: any; threats: any
           return (
             <div key={type} className="space-y-0.5">
               <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-[var(--text-tertiary)] truncate">
+                <span className="font-mono text-[11px] text-[var(--text-tertiary)] truncate">
                   {type.replace(/_/g, ' ')}
                 </span>
-                <span className={`font-mono text-[10px] font-semibold ${tc.text}`}>
+                <span className={`font-mono text-[11px] font-semibold ${tc.text}`}>
                   {count}
                 </span>
               </div>
@@ -153,15 +153,15 @@ export function ActiveThreatsCard({ threats }: { threats: any[] }) {
           return (
             <div key={sev} className="flex items-center gap-2">
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tw.dot}`} />
-              <span className="font-mono text-[10px] text-[var(--text-muted)] flex-1 capitalize">{sev}</span>
-              <span className={`font-mono text-[10px] font-semibold ${c > 0 ? tw.text : 'text-white/55'}`}>
+              <span className="font-mono text-[11px] text-[var(--text-muted)] flex-1 capitalize">{sev}</span>
+              <span className={`font-mono text-[11px] font-semibold ${c > 0 ? tw.text : 'text-white/55'}`}>
                 {c}
               </span>
             </div>
           );
         })}
         <div className="border-t border-contrail/[0.08] pt-1.5 mt-1">
-          <span className="font-mono text-[9px] text-[var(--text-secondary)]">7-day window</span>
+          <span className="font-mono text-[11px] text-[var(--text-secondary)]">7-day window</span>
         </div>
       </div>
     </BreakdownCard>
@@ -284,7 +284,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
     >
       <div className="space-y-1">
         <div className="mb-3">
-          <div className="flex justify-between text-[10px] font-mono text-[var(--text-secondary)] mb-1">
+          <div className="flex justify-between text-[11px] font-mono text-[var(--text-secondary)] mb-1">
             <span>{passing} of {totalChecks} protocols passing</span>
           </div>
           <div className="h-1 bg-white/10 rounded-full overflow-hidden">
@@ -300,12 +300,12 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
           const cls = EMAIL_STATUS_CLASSES[status] || EMAIL_STATUS_CLASSES.MISSING;
           return (
             <div key={proto} className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-[var(--text-tertiary)] w-10 flex-shrink-0">{proto}</span>
-              <span className={`font-mono text-[9px] font-semibold uppercase px-1.5 py-0.5 rounded border leading-tight ${cls}`}>
+              <span className="font-mono text-[11px] text-[var(--text-tertiary)] w-10 flex-shrink-0">{proto}</span>
+              <span className={`font-mono text-[11px] font-semibold uppercase px-1.5 py-0.5 rounded border leading-tight ${cls}`}>
                 {status}
               </span>
               {hint && (
-                <span className="font-mono text-[9px] text-[var(--text-secondary)] truncate">{hint}</span>
+                <span className="font-mono text-[11px] text-[var(--text-secondary)] truncate">{hint}</span>
               )}
             </div>
           );
@@ -329,7 +329,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
         </div>
 
         <div className="mt-3 pt-3 border-t border-white/[0.06] flex items-center justify-between">
-          <span className="text-[var(--text-secondary)] text-[10px] font-mono uppercase tracking-wider">
+          <span className="text-[var(--text-secondary)] text-[11px] font-mono uppercase tracking-wider">
             BIMI/VMC sub-grade
           </span>
           <BIMIGradeBadge grade={bimiGrade} size="sm" tooltip />
@@ -337,7 +337,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
 
         {brand?.bimi_svg_url && (
           <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-[var(--text-secondary)] text-[10px] font-mono mb-2">BIMI LOGO</p>
+            <p className="text-[var(--text-secondary)] text-[11px] font-mono mb-2">BIMI LOGO</p>
             <div className="flex items-center gap-3">
               <img
                 src={brand.bimi_svg_url}
@@ -345,7 +345,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
                 className="w-8 h-8 rounded"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
               />
-              <p className="text-[var(--text-secondary)] text-[10px] font-mono truncate">
+              <p className="text-[var(--text-secondary)] text-[11px] font-mono truncate">
                 {brand.bimi_svg_url}
               </p>
             </div>
@@ -354,7 +354,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
 
         {bimiGrade && ['B', 'C', 'D', 'F'].includes(bimiGrade) && (
           <div className="mt-3 pt-3 border-t border-white/[0.06]">
-            <p className="text-[var(--text-secondary)] text-[10px]">
+            <p className="text-[var(--text-secondary)] text-[11px]">
               {bimiGrade === 'B'
                 ? '→ Publish a BIMI record to reach grade A'
                 : bimiGrade === 'C'
@@ -367,7 +367,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
         {onViewDetails && (
           <button
             onClick={onViewDetails}
-            className="mt-3 w-full text-center text-[10px] text-[var(--text-secondary)] transition-colors font-mono py-1 hover:[color:var(--amber)]"
+            className="mt-3 w-full text-center text-[11px] text-[var(--text-secondary)] transition-colors font-mono py-1 hover:[color:var(--amber)]"
           >
             View DNS Details &rarr;
           </button>
@@ -436,14 +436,14 @@ export function SocialRiskCard({
           </div>
         ))}
         <div className="border-t border-contrail/[0.08] pt-1.5 mt-1 space-y-1">
-          <span className="font-mono text-[9px] text-[var(--text-secondary)] block">
+          <span className="font-mono text-[11px] text-[var(--text-secondary)] block">
             {total} profiles tracked{scanDaysAgo !== null ? ` · scanned ${scanDaysAgo}d ago` : ''}
           </span>
           <div className="flex gap-3">
             <button
               onClick={onScan}
               disabled={scanPending}
-              className="font-mono text-[10px] transition-colors disabled:opacity-40"
+              className="font-mono text-[11px] transition-colors disabled:opacity-40"
               style={{ color: 'var(--text-secondary)' }}
             >
               {scanPending ? 'SCANNING...' : 'SCAN'}
@@ -451,7 +451,7 @@ export function SocialRiskCard({
             <button
               onClick={onDiscover}
               disabled={discoverPending}
-              className="font-mono text-[10px] transition-colors disabled:opacity-40"
+              className="font-mono text-[11px] transition-colors disabled:opacity-40"
               style={{ color: 'var(--text-secondary)' }}
             >
               {discoverPending ? 'DISCOVERING...' : 'DISCOVER NEW'}

@@ -275,7 +275,7 @@ export function ObservatoryV3() {
             <Card variant="elevated" style={{ marginTop: 4, padding: '8px 14px' }}>
               {/* VIEW group (map mode) */}
               <div style={{ padding: '6px 0' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>View</div>
+                <div className="text-[11px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>View</div>
                 <Tabs
                   tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
                   activeTab={mapMode}
@@ -292,7 +292,7 @@ export function ObservatoryV3() {
               {!isBotMode && (<>
               {/* TIME group */}
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
+                <div className="text-[11px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
                 <Tabs
                   tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
                   activeTab={period}
@@ -303,10 +303,10 @@ export function ObservatoryV3() {
 
               {/* COLOR group */}
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
+                <div className="text-[11px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
                 <button
                   onClick={() => handleFilterSelect(() => setColorBy(colorBy === 'severity' ? 'type' : 'severity'))}
-                  className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
+                  className="font-mono text-[11px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
                   style={{
                     background: 'var(--bg-card)',
                     border: '1px solid var(--border-base)',
@@ -320,7 +320,7 @@ export function ObservatoryV3() {
 
               {/* SOURCE group */}
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Source</div>
+                <div className="text-[11px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Source</div>
                 <Tabs
                   tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
                   activeTab={source}
@@ -347,7 +347,7 @@ export function ObservatoryV3() {
             variant="bar"
           />
           {isBotMode && (
-            <div className="font-mono text-[10px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
               Period, source and colour filters don&apos;t apply &mdash; daily Cloudflare Radar data.
             </div>
           )}
@@ -432,7 +432,7 @@ export function ObservatoryV3() {
         >
           <div className="flex items-center gap-2">
             <AlertTriangle size={13} style={{ color: 'var(--sev-critical-text)', flexShrink: 0 }} />
-            <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+            <span className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
               Observatory data failed to load
             </span>
           </div>
@@ -458,7 +458,7 @@ export function ObservatoryV3() {
             <button
               key={key}
               onClick={() => set(!active)}
-              className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
+              className="font-mono text-[11px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
               style={{
                 background: active ? 'rgba(229,168,50,0.15)' : 'var(--bg-card)',
                 border: `1px solid ${active ? 'rgba(229,168,50,0.30)' : 'var(--border-base)'}`,
@@ -501,7 +501,7 @@ export function ObservatoryV3() {
       >
         <div className="flex items-center gap-4">
           {isBotMode ? (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
               <span style={{ color: 'var(--amber-text)' }}>24H</span>
               {' \u00b7 '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
@@ -510,7 +510,7 @@ export function ObservatoryV3() {
               )}
             </div>
           ) : (
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
             <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
             {' \u00b7 '}
             <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
@@ -521,7 +521,7 @@ export function ObservatoryV3() {
           </div>
           )}
         </div>
-        <div className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
             <span style={{ color: 'var(--sev-info-text)' }}>GPU particles active</span>
           )}
@@ -586,7 +586,7 @@ export function ObservatoryV3() {
       {isMobile && hasSidePanel && (
         <button
           onClick={() => setShowMobilePanel(true)}
-          className="absolute flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+          className="absolute flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide"
           style={{
             bottom: 120,
             right: 16,
@@ -628,7 +628,7 @@ export function ObservatoryV3() {
               borderBottom: '1px solid var(--border-base)',
             }}
           >
-            <span className="font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
+            <span className="font-mono text-[11px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
               Intelligence
             </span>
             <button
@@ -660,7 +660,7 @@ export function ObservatoryV3() {
               x
             </button>
           </div>
-          <div className="space-y-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+          <div className="space-y-1 text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>
             <div>{clickedArc.arc.volume} threat{clickedArc.arc.volume > 1 ? 's' : ''}</div>
             {clickedArc.arc.brand_name && <div style={{ color: 'var(--amber-text)' }}>Target: {clickedArc.arc.brand_name}</div>}
             {clickedArc.arc.source_region && <div>From: {clickedArc.arc.source_region}</div>}

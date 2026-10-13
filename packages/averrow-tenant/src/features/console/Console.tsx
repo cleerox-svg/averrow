@@ -131,7 +131,7 @@ function DraftRow({ takedown: t, canTriage }: { takedown: TakedownListRow; canTr
           <SeverityPill level={t.severity} />
           <AgePill createdAt={t.created_at} severity={t.severity} />
           {t.module_key && <Chip>{t.module_key.replace(/_/g, ' ')}</Chip>}
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{t.target_type}</span>
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">{t.target_type}</span>
         </div>
         <div className="text-[13px] font-mono text-white/90 truncate">{t.target_value}</div>
         <div className="text-[11px] text-white/55 mt-0.5">{t.brand_name ?? t.brand_id}{t.provider_name ? ` · ${t.provider_name}` : ''}</div>
@@ -152,8 +152,8 @@ function SignalRow({ alert: a, canTriage }: { alert: Alert; canTriage: boolean }
         <AgePill createdAt={a.created_at} severity={a.severity} />
         {conf !== null && <Chip>{conf}% conf</Chip>}
         <VerdictChip raw={a.ai_assessment} />
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{a.alert_type.replace(/_/g, ' ')}</span>
-        <span className="ml-auto text-[10px] font-mono text-white/55">{a.brand_name}</span>
+        <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">{a.alert_type.replace(/_/g, ' ')}</span>
+        <span className="ml-auto text-[11px] font-mono text-white/55">{a.brand_name}</span>
       </div>
       <div className="text-[13.5px] font-semibold leading-snug">
         <Link to={`/alerts/${a.id}`} className="text-white/90 hover:text-amber transition-colors">{a.title}</Link>
@@ -186,7 +186,7 @@ function Kpi({ label, value, icon: Icon, tone }: { label: string; value: number 
   const accent = tone === 'warn' ? 'text-amber' : tone === 'ok' ? 'text-green' : 'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
         <Icon size={11} /><span className="truncate">{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value ?? '—'}</div>
@@ -207,7 +207,7 @@ function StreamHeader({ icon: Icon, title, subtitle, count }: { icon: LucideIcon
 }
 
 function SubLabel({ children }: { children: React.ReactNode }) {
-  return <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-white/55 pt-1">{children}</div>;
+  return <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55 pt-1">{children}</div>;
 }
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-white/55">{children}</span>;
@@ -223,7 +223,7 @@ function ViewAll({ to, label }: { to: string; label: string }) {
 
 function Chip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {children}
     </span>
   );
@@ -237,7 +237,7 @@ function SeverityPill({ level }: { level: string | AlertSeverity }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {sev}
     </span>
   );

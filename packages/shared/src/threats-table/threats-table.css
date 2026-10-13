@@ -25,7 +25,7 @@
 .tt-search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 12px; }
 .tt-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .tt-chip {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
   font-family: var(--font-mono); border-radius: 6px; padding: 4px 9px;
   border: 1px solid var(--border-base); background: rgba(255,255,255,0.03);
   color: var(--text-secondary); cursor: pointer; transition: all .12s;
@@ -41,7 +41,7 @@
 .tt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .tt-table thead tr { border-bottom: 1px solid var(--border-strong); background: rgba(255,255,255,0.025); }
 .tt-th {
-  padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 400;
+  padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 400;
   text-transform: uppercase; letter-spacing: 0.12em; font-family: var(--font-mono);
   color: var(--text-tertiary); user-select: none; white-space: nowrap;
 }
@@ -66,7 +66,7 @@
 
 /* Pills */
 .tt-pill {
-  display: inline-flex; align-items: center; font-size: 10px; text-transform: uppercase;
+  display: inline-flex; align-items: center; font-size: 11px; text-transform: uppercase;
   letter-spacing: 0.08em; font-family: var(--font-mono); border-radius: 5px;
   padding: 2px 6px; border: 1px solid; white-space: nowrap;
 }
@@ -81,7 +81,7 @@
 .tt-detail-td { padding: 0; background: rgba(0,0,0,0.18); }
 .tt-detail { padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .tt-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
-.tt-sect-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.18em; font-family: var(--font-mono); color: var(--text-tertiary); margin-bottom: 8px; }
+.tt-sect-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.18em; font-family: var(--font-mono); color: var(--text-tertiary); margin-bottom: 8px; }
 .tt-kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
 .tt-kv .k { color: var(--text-tertiary); font-family: var(--font-mono); }
 .tt-kv .v { color: var(--text-primary); text-align: right; }

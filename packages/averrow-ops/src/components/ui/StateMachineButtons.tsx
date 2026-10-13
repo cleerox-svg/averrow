@@ -46,8 +46,8 @@ export interface StateMachineButtonsProps<T extends string> {
 }
 
 const SIZE = {
-  sm: { fontSize: 9,  padding: '5px 10px', gap: 4 },
-  md: { fontSize: 10, padding: '7px 14px', gap: 6 },
+  sm: { fontSize: 11,  padding: '5px 10px', gap: 4 },
+  md: { fontSize: 11, padding: '7px 14px', gap: 6 },
 } as const;
 
 export function StateMachineButtons<T extends string>({

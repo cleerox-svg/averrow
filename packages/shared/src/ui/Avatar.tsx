@@ -66,6 +66,34 @@ const SEV_DOT: Record<string, string> = {
   info: 'var(--sev-info)',
 };
 
+// Raw values of the accent vars an Avatar `color` is usually given, so the
+// initial's ink can be chosen for contrast against the fill.
+const VAR_HEX: Record<string, string> = {
+  'var(--amber)': '#E5A832', 'var(--green)': '#3CB878', 'var(--blue)': '#0A8AB5',
+  'var(--red)': '#C83C3C', 'var(--violet)': '#8B7CF6',
+  'var(--sev-critical)': '#f87171', 'var(--sev-high)': '#fb923c',
+  'var(--sev-medium)': '#fbbf24', 'var(--sev-low)': '#60a5fa', 'var(--sev-info)': '#4ade80',
+};
+
+function relLuminance(color: string): number | null {
+  const raw = (VAR_HEX[color.trim().toLowerCase()] ?? color).trim();
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw);
+  if (!m) return null;
+  const h = m[1]!.length === 3 ? [...m[1]!].map((c) => c + c).join('') : m[1]!;
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Dark ink beats white once the fill is lighter than ~L=0.18 (contrast crossover). */
+const INK_DARK = '#0A0F1E';
+function lightFill(color: string): boolean {
+  const L = relLuminance(color);
+  return L !== null && (L + 0.05) / (0.0035 + 0.05) > 1.05 / (L + 0.05);
+}
+
 /** `color` at `pct`% opacity; works for hex and var() colours alike. */
 const mix = (color: string, pct: number) => `color-mix(in srgb, ${color} ${pct}%, transparent)`;
 
@@ -99,11 +127,13 @@ export function Avatar({
   const rawText = (initials ?? '').trim();
   const text = self ? [...rawText].slice(0, 2).join('') : rawText;
   const initialCount = [...text].length;
-  const fs = fontSize ?? Math.round(size * (neutral ? 0.37 : self && initialCount > 1 ? 0.36 : 0.375));
+  // 11px floor: small avatars used to render 8-9px initials.
+  const fs = Math.max(11, fontSize ?? Math.round(size * (neutral ? 0.37 : self && initialCount > 1 ? 0.36 : 0.375)));
+  const darkInk = !self && !neutral && lightFill(color);
   const dot = severity ? SEV_DOT[String(severity).toLowerCase()] : undefined;
   const dotSize = Math.round(size * 0.28);
   const initial = (text || ([...name.trim()][0] ?? '?')).toUpperCase();
-  const dim = dimColor ?? (self ? `color-mix(in srgb, ${color} var(--avatar-self-dim-pct, 50%), black)` : mix(color, 53));
+  const dim = dimColor ?? (self ? `color-mix(in srgb, ${color} var(--avatar-self-dim-pct, 50%), black)` : darkInk ? `color-mix(in srgb, ${color} 80%, white)` : mix(color, 53));
 
   const tileStyle: CSSProperties = self
     ? {
@@ -169,9 +199,9 @@ export function Avatar({
             style={{
               fontSize: fs,
               lineHeight: 1,
-              color: self ? 'var(--text-on-amber)' : neutral ? 'var(--text-secondary)' : '#fff',
+              color: self ? 'var(--text-on-amber)' : neutral ? 'var(--text-secondary)' : darkInk ? INK_DARK : '#fff',
               fontWeight: self ? 800 : undefined,
-              textShadow: neutral || self ? undefined : '0 1px 3px rgba(0,0,0,0.65)',
+              textShadow: neutral || self || darkInk ? undefined : '0 1px 3px rgba(0,0,0,0.65)',
             }}
           >
             {initial}

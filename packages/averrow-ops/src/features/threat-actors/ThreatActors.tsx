@@ -136,7 +136,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
             {flag || (
               <span
                 style={{
-                  color: accColor, fontSize: 10, fontWeight: 800,
+                  color: accColor, fontSize: 11, fontWeight: 800,
                   fontFamily: 'var(--font-mono)',
                 }}
               >
@@ -163,7 +163,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
             {actorStatusBadge(actor.status)}
           </div>
           <div
-            className="font-mono text-[10px] truncate"
+            className="font-mono text-[11px] truncate"
             style={{ color: 'var(--text-tertiary)' }}
           >
             {actor.attribution && (
@@ -181,7 +181,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
 
       {/* Metrics + top-right sparkline */}
       <div className="flex items-end justify-between gap-3">
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono flex-1">
           <div>
             <div style={{ color: 'var(--text-muted)' }}>ATTRIBUTIONS</div>
             <div
@@ -228,7 +228,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
               />
             </div>
             <div
-              className="font-mono text-[8px] tracking-[0.12em] uppercase"
+              className="font-mono text-[11px] tracking-[0.12em] uppercase"
               style={{ color: 'var(--text-muted)' }}
             >
               14d shape
@@ -247,7 +247,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
                 key={ttp}
                 className="font-mono font-bold tracking-[0.08em]"
                 style={{
-                  fontSize: 9,
+                  fontSize: 11,
                   padding: '3px 7px', borderRadius: 5,
                   background: `${color}10`, border: `1px solid ${color}30`,
                   color,
@@ -260,7 +260,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
           {ttps.length > 4 && (
             <span
               className="font-mono"
-              style={{ fontSize: 9, color: 'var(--text-muted)', padding: '3px 4px' }}
+              style={{ fontSize: 11, color: 'var(--text-muted)', padding: '3px 4px' }}
             >
               +{ttps.length - 4}
             </span>
@@ -282,7 +282,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
       {/* Footer: capability + last seen */}
       {(actor.capability || lastSeenStr) && (
         <div
-          className="font-mono text-[9px] tracking-[0.08em] uppercase flex items-center gap-2"
+          className="font-mono text-[11px] tracking-[0.08em] uppercase flex items-center gap-2"
           style={{
             color: 'var(--text-muted)',
             paddingTop: 6,

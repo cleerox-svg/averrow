@@ -52,8 +52,8 @@ function autoColor(pct: number): Exclude<PriorityBarColor, 'auto'> {
 }
 
 const SIZE: Record<NonNullable<PriorityBarProps['size']>, { height: number; radius: number; labelSize: number }> = {
-  sm: { height: 4, radius: 99, labelSize: 9 },
-  md: { height: 6, radius: 99, labelSize: 10 },
+  sm: { height: 4, radius: 99, labelSize: 11 },
+  md: { height: 6, radius: 99, labelSize: 11 },
 };
 
 export function PriorityBar({

@@ -108,7 +108,7 @@ function MentionRow({ mention: m }: { mention: DarkWebMentionRow }) {
 
       {matchedTerms.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap mt-2">
-          <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">matched</span>
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">matched</span>
           {matchedTerms.map((t) => (
             <span key={t} className="text-[11px] font-mono text-amber bg-amber/[0.06] border border-amber/[0.15] rounded px-1.5 py-0.5">
               {t}
@@ -158,7 +158,7 @@ function formatPostedAt(ts: string | null): string {
 
 function SourceChip({ source }: { source: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {SOURCE_LABELS[source] ?? source}
     </span>
   );
@@ -166,7 +166,7 @@ function SourceChip({ source }: { source: string }) {
 
 function MatchTypeChip({ matchType }: { matchType: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-blue bg-blue/[0.06] border border-blue/[0.15] rounded px-1.5 py-0.5">
       {MATCH_TYPE_LABELS[matchType] ?? matchType}
     </span>
   );
@@ -180,7 +180,7 @@ function SeverityPill({ level }: { level: string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );
@@ -194,7 +194,7 @@ function ClassificationPill({ classification }: { classification: string }) {
     classification === 'resolved'       ? 'text-white/55     bg-white/[0.06]        border-white/[0.10]'        :
                                           'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {classification}
     </span>
   );

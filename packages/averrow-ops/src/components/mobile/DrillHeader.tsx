@@ -22,7 +22,7 @@ export function DrillHeader({ title, badge, onBack }: DrillHeaderProps) {
         {title}
       </span>
       {badge && (
-        <span className="text-[9px] font-mono text-accent bg-accent/10 px-2 py-0.5 rounded-full">
+        <span className="text-[11px] font-mono text-accent bg-accent/10 px-2 py-0.5 rounded-full">
           {badge}
         </span>
       )}

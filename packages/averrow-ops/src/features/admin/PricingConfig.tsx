@@ -123,12 +123,12 @@ function PlanRow({ plan, canEdit }: { plan: PricingPlan; canEdit: boolean }) {
             <div className="text-lg font-bold tabular-nums text-[color:var(--text-primary)]">
               {formatCents(plan.monthly_price_cents)}
             </div>
-            <div className="text-[10px] uppercase tracking-widest font-mono text-[color:var(--text-tertiary)]">/ month</div>
+            <div className="text-[11px] uppercase tracking-widest font-mono text-[color:var(--text-tertiary)]">/ month</div>
             {canEdit && <Button variant="secondary" size="sm" onClick={() => setEditing(true)} className="mt-2">Edit</Button>}
           </div>
         </div>
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
-          <div className="text-[10px] uppercase tracking-widest font-mono text-[color:var(--text-tertiary)] mb-1.5">
+          <div className="text-[11px] uppercase tracking-widest font-mono text-[color:var(--text-tertiary)] mb-1.5">
             Included modules
           </div>
           <div className="flex flex-wrap gap-1.5">

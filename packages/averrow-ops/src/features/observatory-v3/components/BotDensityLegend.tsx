@@ -22,7 +22,7 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
   const css = (c: number[]) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
   const gradient = `linear-gradient(90deg, ${css(stops[0])}, ${css(stops[1])}, ${css(stops[2])})`;
 
-  const label = 'font-mono text-[10px] uppercase tracking-wider';
+  const label = 'font-mono text-[11px] uppercase tracking-wider';
 
   return (
     <Card variant="base" padding="10px 12px" role="group" aria-label="Bot density legend" style={{ position: 'absolute', width: 232, ...style }}>
@@ -34,22 +34,22 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
         aria-label={`Colour scale from ${formatPct(domain.minBot)} to ${formatPct(domain.maxBot)} bot share`}
         style={{ height: 8, borderRadius: 4, marginTop: 6, background: gradient }}
       />
-      <div className="flex justify-between font-mono text-[10px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+      <div className="flex justify-between font-mono text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
         <span>{formatPct(domain.minBot)}</span>
         <span>{formatPct(domain.maxBot)}</span>
       </div>
 
-      <div className="mt-2 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="mt-2 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
         Colour, circle size and ring each encode data:
       </div>
-      <div className="flex items-center gap-2 mt-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="flex items-center gap-2 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
         <span aria-hidden style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text-muted)' }} />
           <span style={{ width: 12, height: 12, borderRadius: '50%', background: 'var(--text-muted)' }} />
         </span>
         <span>Size = share of global traffic</span>
       </div>
-      <div className="flex items-center gap-2 mt-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="flex items-center gap-2 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
         {/* Dark chip: the map basemap is always dark, so the white ring must sit on dark in both themes. */}
         <span
           aria-hidden
@@ -64,7 +64,7 @@ export function BotDensityLegend({ domain, globalAvg, asOf, countries, style }: 
       </div>
 
       <div
-        className="mt-2 pt-2 font-mono text-[10px]"
+        className="mt-2 pt-2 font-mono text-[11px]"
         style={{ borderTop: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}
       >
         Source: Cloudflare Radar{asOf ? <> &middot; as of {asOf}</> : null} &middot; {countries} countries

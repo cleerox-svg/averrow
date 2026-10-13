@@ -23,11 +23,11 @@ export function BIMIStatusRow({ label, status, detail }: BIMIStatusRowProps) {
       </div>
       <div className="flex items-center gap-2">
         {detail && (
-          <span className="text-white/55 text-[10px] font-mono truncate max-w-[120px]">
+          <span className="text-white/55 text-[11px] font-mono truncate max-w-[120px]">
             {detail}
           </span>
         )}
-        <span className={`text-[10px] font-mono font-bold ${config.text}`}>
+        <span className={`text-[11px] font-mono font-bold ${config.text}`}>
           {config.label}
         </span>
       </div>

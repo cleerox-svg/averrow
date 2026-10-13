@@ -764,7 +764,7 @@ function ThreatMapV3Inner({
               {tooltip.threat.country_code && (
                 <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{tooltip.threat.country_code}</div>
               )}
-              <div className="mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 C:{tooltip.threat.critical} H:{tooltip.threat.high} M:{tooltip.threat.medium} L:{tooltip.threat.low}
               </div>
             </>

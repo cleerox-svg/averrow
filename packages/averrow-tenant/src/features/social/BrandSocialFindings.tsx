@@ -134,19 +134,19 @@ function ProfileRow({ profile: p }: { profile: SocialProfileRow }) {
             <span className={`text-lg font-bold tabular-nums ${p.impersonation_score >= 0.7 ? 'text-sev-critical' : 'text-amber'}`}>
               {Math.round(p.impersonation_score * 100)}%
             </span>
-            <div className="text-[8px] uppercase tracking-widest font-mono text-white/55 mt-0.5">match</div>
+            <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mt-0.5">match</div>
           </div>
         )}
         <div className="flex items-center gap-2 mt-0.5">
           {p.followers_count !== null && (
-            <span className="text-[10px] font-mono text-white/55">{formatFollowers(p.followers_count)}</span>
+            <span className="text-[11px] font-mono text-white/55">{formatFollowers(p.followers_count)}</span>
           )}
           {p.profile_url && (
             <a
               href={p.profile_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber hover:underline"
+              className="inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono text-amber hover:underline"
             >
               <ExternalLink size={10} /> open
             </a>
@@ -168,7 +168,7 @@ function Avatar({ src, fallback, verified }: { src: string | null; fallback: str
         </div>
       )}
       {verified && (
-        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-amber rounded-full flex items-center justify-center text-[10px] font-bold text-black border border-bg-card">
+        <div className="absolute -bottom-1.5 -right-1.5 min-w-5 h-5 px-1 bg-amber rounded-full flex items-center justify-center text-[11px] font-bold text-black border border-bg-card">
           ✓
         </div>
       )}
@@ -184,7 +184,7 @@ function formatFollowers(n: number): string {
 
 function PlatformChip({ platform }: { platform: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {platform}
     </span>
   );

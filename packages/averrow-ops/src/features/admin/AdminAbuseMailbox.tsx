@@ -247,16 +247,16 @@ export function AdminAbuseMailbox() {
                         <BulkBtn label="Dismiss"     color="var(--text-secondary)"  disabled={bulkUpdate.isPending} onClick={() => runBulk('dismissed', 'Dismiss')} />
                         <button
                           type="button"
-                          className="text-[10px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/55 hover:text-white/80"
+                          className="text-[11px] font-mono uppercase tracking-wider px-2 py-1.5 text-white/55 hover:text-white/80"
                           onClick={() => setCheckedIds(new Set())}
                         >
                           Clear
                         </button>
                         {bulkUpdate.isPending && (
-                          <span className="text-[10px] font-mono text-white/55">Updating…</span>
+                          <span className="text-[11px] font-mono text-white/55">Updating…</span>
                         )}
                         {bulkUpdate.isError && (
-                          <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
+                          <span className="text-[11px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>
                             {(bulkUpdate.error as Error).message}
                           </span>
                         )}
@@ -337,7 +337,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
         boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
       }}
     >
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/65 mb-3">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/65 mb-3">
         <Mail size={11} /> Public-facing aliases
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -351,7 +351,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
             }}
           >
             <div className="min-w-0">
-              <div className="text-[10px] font-mono text-white/65 uppercase tracking-wider">
+              <div className="text-[11px] font-mono text-white/65 uppercase tracking-wider">
                 {m.label}
               </div>
               <code className="text-[12px] font-mono text-[var(--amber-text)]">{m.addr}</code>
@@ -359,7 +359,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
             <button
               type="button"
               onClick={() => copy(m.addr)}
-              className="shrink-0 inline-flex items-center gap-1 text-[10px] font-mono text-white/60 hover:text-white/90 px-1.5 py-1 rounded"
+              className="shrink-0 inline-flex items-center gap-1 text-[11px] font-mono text-white/60 hover:text-white/90 px-1.5 py-1 rounded"
               style={{ border: '1px solid rgba(255,255,255,0.08)' }}
             >
               {copied === m.addr ? <Check size={11} /> : <Copy size={11} />}
@@ -405,7 +405,7 @@ function HeadlineMetrics({
             boxShadow: '0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)',
           }}
         >
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/65">
+          <div className="text-[11px] font-mono uppercase tracking-widest text-white/65">
             {t.label}
           </div>
           <div className="mt-1 text-2xl font-bold tabular-nums" style={{ color: accentText(t.accent) }}>
@@ -451,7 +451,7 @@ export function DeterminationBadge({ determination }: { determination: AbuseDete
   const c = determinationColors(determination);
   return (
     <span
-      className="inline-flex items-center text-[10px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
+      className="inline-flex items-center text-[11px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded"
       style={{ color: c.fg, background: c.bg, border: `1px solid ${c.border}` }}
       data-testid="determination-badge"
     >
@@ -471,7 +471,7 @@ export function DeterminationPanel({ determination, sentAt }: {
         style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-base)' }}
         data-testid="determination-panel"
       >
-        <div className="text-[9px] uppercase tracking-widest text-white/55 mb-1">Determination</div>
+        <div className="text-[11px] uppercase tracking-widest text-white/55 mb-1">Determination</div>
         Pending — no determination yet
       </div>
     );
@@ -485,28 +485,28 @@ export function DeterminationPanel({ determination, sentAt }: {
     >
       <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-[9px] font-mono uppercase tracking-widest text-white/55">Determination</span>
+          <span className="text-[11px] font-mono uppercase tracking-widest text-white/55">Determination</span>
           <DeterminationBadge determination={determination} />
         </div>
-        <span className="text-[10px] font-mono text-white/65">
+        <span className="text-[11px] font-mono text-white/65">
           Sent: {sentAt ?? 'Not sent yet'}
         </span>
       </div>
       <p className="text-[13px] text-[var(--text-primary)] leading-relaxed">{determination.lead}</p>
       <div className="mt-3">
-        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Analyst note</div>
+        <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Analyst note</div>
         <p className="text-[12px] text-white/85 leading-relaxed">{determination.analyst_note}</p>
       </div>
       {determination.next_steps.length > 0 && (
         <div className="mt-3">
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">What the reporter was told to do</div>
+          <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-0.5">What the reporter was told to do</div>
           <ul className="list-disc pl-5 text-[12px] text-white/85 leading-relaxed space-y-0.5">
             {determination.next_steps.map((step, i) => <li key={i}>{step}</li>)}
           </ul>
         </div>
       )}
       <div className="mt-3">
-        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Action taken</div>
+        <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-0.5">Action taken</div>
         <p className="text-[12px] text-white/85">{determination.action_label}</p>
       </div>
     </div>
@@ -551,30 +551,30 @@ function MessageRow({ message, expanded, onToggle }: {
           {message.determination ? (
             <>
               <DeterminationBadge determination={message.determination} />
-              <span className="text-[9px] font-mono uppercase text-white/55" title="Raw classification">
+              <span className="text-[11px] font-mono uppercase text-white/55" title="Raw classification">
                 {cls}
               </span>
             </>
           ) : (
-            <span className="text-[10px] font-mono font-semibold uppercase" style={{ color: clsColor }}>
+            <span className="text-[11px] font-mono font-semibold uppercase" style={{ color: clsColor }}>
               {cls}
             </span>
           )}
-          <span className="text-white/55 text-[10px]">·</span>
-          <span className="text-[10px] font-mono uppercase font-semibold" style={{ color: sevColor }}>
+          <span className="text-white/55 text-[11px]">·</span>
+          <span className="text-[11px] font-mono uppercase font-semibold" style={{ color: sevColor }}>
             {sev}
           </span>
           {message.ai_action && (
             <>
-              <span className="text-white/55 text-[10px]">·</span>
-              <span className="text-[10px] font-mono uppercase text-white/75">
+              <span className="text-white/55 text-[11px]">·</span>
+              <span className="text-[11px] font-mono uppercase text-white/75">
                 action: <span className="text-white/95">{message.ai_action}</span>
               </span>
             </>
           )}
           {message.throttled === 1 && (
             <span
-              className="text-[9px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ml-1"
+              className="text-[11px] font-mono font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ml-1"
               style={{
                 color: 'var(--sev-medium-text)',
                 background: 'rgba(229,168,50,0.10)',
@@ -588,7 +588,7 @@ function MessageRow({ message, expanded, onToggle }: {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <DeliveryTracker message={message} />
-          <span className="text-[10px] font-mono text-white/60">
+          <span className="text-[11px] font-mono text-white/60">
             {relativeTime(message.received_at)}
           </span>
         </div>
@@ -596,7 +596,7 @@ function MessageRow({ message, expanded, onToggle }: {
       <div className="text-[13px] text-white/95 truncate font-medium">
         {message.original_subject || <span className="italic text-white/55">(no subject)</span>}
       </div>
-      <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/70 flex-wrap">
+      <div className="flex items-center gap-3 mt-1 text-[11px] font-mono text-white/70 flex-wrap">
         <span>
           from <span className="text-[var(--amber-text)]">{message.original_from ?? message.forwarded_by_email ?? '—'}</span>
         </span>
@@ -658,7 +658,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
     >
       {/* Subject */}
       <div className="mb-4">
-        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
+        <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Subject</div>
         <div className="text-[14px] text-[var(--text-primary)] font-medium">
           {message.original_subject || <span className="italic text-white/55">(no subject)</span>}
         </div>
@@ -694,7 +694,7 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
       {/* AI reasoning */}
       {(message.classification_reason || message.ai_assessment) && (
         <div className="mb-4">
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Classifier reasoning (internal)</div>
+          <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Classifier reasoning (internal)</div>
           <p className="text-[12px] text-white/90 leading-relaxed">
             {message.classification_reason || message.ai_assessment}
           </p>
@@ -717,13 +717,13 @@ function MessageDetail({ message }: { message: AdminAbuseInboxMessage }) {
 
       {/* PR-BD — Status transitions */}
       <div className="mt-4 pt-3 border-t border-white/[0.06]">
-        <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Status</div>
+        <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-2">Status</div>
         <StatusActions message={message} />
       </div>
 
       {/* Reference id + admin actions */}
       <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 text-[10px] font-mono text-white/55">
+        <div className="flex items-center gap-2 text-[11px] font-mono text-white/55">
           <span>ref:</span>
           <code className="text-white/85">{message.id}</code>
         </div>
@@ -740,7 +740,7 @@ function UnthrottleButton({ messageId }: { messageId: string }) {
       type="button"
       onClick={() => mutate.mutate(messageId)}
       disabled={mutate.isPending}
-      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
+      className="text-[11px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-50"
       style={{
         color: 'var(--sev-medium-text)',
         background: 'rgba(229,168,50,0.10)',
@@ -778,7 +778,7 @@ function DeepAnalysisSection({
   const actionColor = ACTION_COLORS[d.recommended_action.category] ?? 'rgba(255,255,255,0.65)';
   return (
     <div className="mb-4">
-      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">
+      <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-2">
         Investigator findings
         <span className="ml-2 text-white/55">{d.model}</span>
       </div>
@@ -811,10 +811,10 @@ function DeepAnalysisSection({
         <div
           className="mt-4 pt-3 border-t border-white/[0.06]"
         >
-          <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Recommended action</div>
+          <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Recommended action</div>
           <div className="flex items-center gap-2 flex-wrap">
             <span
-              className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
+              className="text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
               style={{
                 color: actionColor,
                 background: 'rgba(0,0,0,0.30)',
@@ -860,14 +860,14 @@ function PlatformIntelSection({
 
   return (
     <div className="mb-4">
-      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">Platform intelligence</div>
+      <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-2">Platform intelligence</div>
       <div
         className="rounded-lg p-3 grid grid-cols-1 md:grid-cols-2 gap-3 bg-black/20"
         style={{ border: '1px solid rgba(255,255,255,0.05)' }}
       >
         {auth && (
           <div>
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Email auth</div>
+            <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Email auth</div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <AuthPill label="SPF"   verdict={auth.spf} />
               <AuthPill label="DKIM"  verdict={auth.dkim} />
@@ -877,13 +877,13 @@ function PlatformIntelSection({
         )}
         {senderIp && (
           <div>
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Sender IP</div>
+            <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Sender IP</div>
             <code className="text-[12px] font-mono text-white/90 break-all">{senderIp}</code>
           </div>
         )}
         {correlatedCount > 0 && (
           <div>
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
+            <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
             <div className="text-[12px] text-white/90">
               <span style={{ color: 'var(--sev-medium-text)', fontWeight: 600 }}>{correlatedCount}</span> URL/domain
               {correlatedCount === 1 ? '' : 's'} already in threat intel
@@ -892,7 +892,7 @@ function PlatformIntelSection({
         )}
         {promotedCount > 0 && (
           <div>
-            <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Promoted to platform</div>
+            <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-1">Promoted to platform</div>
             <div className="text-[12px] text-white/90">
               <span style={{ color: 'var(--green-text)', fontWeight: 600 }}>{promotedCount}</span> threat
               {promotedCount === 1 ? '' : 's'} written
@@ -907,7 +907,7 @@ function PlatformIntelSection({
 function AuthPill({ label, verdict }: { label: string; verdict: string | null }) {
   if (!verdict) {
     return (
-      <span className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/55">
+      <span className="text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-white/[0.08] text-white/55">
         {label}: —
       </span>
     );
@@ -919,7 +919,7 @@ function AuthPill({ label, verdict }: { label: string; verdict: string | null })
   const border = isPass ? 'rgba(60,184,120,0.30)' : isFail ? 'rgba(239,68,68,0.30)' : 'rgba(229,168,50,0.30)';
   return (
     <span
-      className="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
+      className="text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border"
       style={{ color, background: bg, borderColor: border }}
     >
       {label}: {verdict}
@@ -962,7 +962,7 @@ function RawCaptureSections({
         <RawTabButton label="Headers"     count={counts.headers}     active={tab === 'headers'}     onClick={() => setTab('headers')} />
         <RawTabButton label="Attachments" count={counts.attachments} active={tab === 'attachments'} onClick={() => setTab('attachments')} />
         {detailQ.isLoading && (
-          <span className="ml-auto text-[10px] font-mono text-white/55">loading…</span>
+          <span className="ml-auto text-[11px] font-mono text-white/55">loading…</span>
         )}
       </div>
 
@@ -1002,7 +1002,7 @@ function BodyPanel({ rawBody, snippet }: { rawBody: string | null; snippet: stri
   return (
     <div>
       {!rawBody && snippet && (
-        <p className="text-[10px] text-white/55 mb-2 font-mono">
+        <p className="text-[11px] text-white/55 mb-2 font-mono">
           Raw body not captured for this message (pre-PR-AS). Showing the 500-char snippet.
         </p>
       )}
@@ -1032,12 +1032,12 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
         {urls.map((u, i) => (
           <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
             {u.domain && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--amber-text)] min-w-0 shrink-0">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--amber-text)] min-w-0 shrink-0">
                 {u.domain}
               </span>
             )}
             {u.count > 1 && (
-              <span className="text-[9px] font-mono text-white/55 shrink-0">×{u.count}</span>
+              <span className="text-[11px] font-mono text-white/55 shrink-0">×{u.count}</span>
             )}
             <code className="text-[11px] text-white/85 font-mono break-all flex-1 min-w-0">
               {u.url}
@@ -1098,7 +1098,7 @@ function AttachmentsPanel({ attachments, loading }: { attachments: ExtractedAtta
           <div key={`${a.filename}-${i}`} className="px-3 py-2 flex items-center gap-3">
             <code className="text-[11px] text-white/90 font-mono break-all flex-1 min-w-0">{a.filename}</code>
             {a.mime_type && (
-              <span className="text-[10px] font-mono text-white/55 shrink-0">{a.mime_type}</span>
+              <span className="text-[11px] font-mono text-white/55 shrink-0">{a.mime_type}</span>
             )}
           </div>
         ))}
@@ -1213,7 +1213,7 @@ function DetailField({
 }) {
   return (
     <div>
-      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">{label}</div>
+      <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-0.5">{label}</div>
       <div
         className={`text-[12px] ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} break-all`}
         style={{ color: color ?? (accent ? 'var(--amber)' : 'rgba(255,255,255,0.92)') }}
@@ -1276,7 +1276,7 @@ function IntelHighlights({ intel }: { intel: AbuseMailboxIntel }) {
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/65">
           Intel highlights
         </h2>
-        <span className="text-[10px] font-mono text-white/55">
+        <span className="text-[11px] font-mono text-white/55">
           {intel.analyzed_count_7d} analyzed / 7d · {intel.analyzed_count_30d} / 30d
         </span>
       </div>
@@ -1336,7 +1336,7 @@ function IntelCard({
         borderLeft: `2px solid ${accent}`,
       }}
     >
-      <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-2">{title}</div>
+      <div className="text-[11px] font-mono uppercase tracking-widest text-white/55 mb-2">{title}</div>
       <div>{children}</div>
     </div>
   );
@@ -1435,7 +1435,7 @@ function InboxToolbar({
         <button
           type="button"
           onClick={() => onClassFilterChange(null)}
-          className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
+          className={`text-[11px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
             classFilter === null
               ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
               : 'border-white/[0.08] text-white/55 hover:text-white/85'
@@ -1452,7 +1452,7 @@ function InboxToolbar({
               key={c.key}
               type="button"
               onClick={() => onClassFilterChange(active ? null : c.key)}
-              className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
+              className={`text-[11px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
                 active
                   ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
@@ -1490,7 +1490,7 @@ function StatusActions({ message }: { message: AdminAbuseInboxMessage }) {
       type="button"
       onClick={() => next(target)}
       disabled={cur === target || mutate.isPending}
-      className={`text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default ${cur === target ? '' : 'bg-black/30'}`}
+      className={`text-[11px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default ${cur === target ? '' : 'bg-black/30'}`}
       style={{
         color,
         background:  cur === target ? `${color}22` : undefined,
@@ -1518,7 +1518,7 @@ function BulkBtn({ label, color, disabled, onClick }: {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="text-[10px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default bg-black/30"
+      className="text-[11px] font-mono uppercase tracking-wider px-3 py-1.5 rounded-md transition-colors disabled:opacity-40 disabled:cursor-default bg-black/30"
       style={{ color, border: `1px solid ${color}55` }}
     >
       {label}

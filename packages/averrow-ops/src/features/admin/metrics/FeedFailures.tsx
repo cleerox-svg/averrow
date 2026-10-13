@@ -36,7 +36,7 @@ export function FeedFailures() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load feed-failure data. Try again in a moment.
         </p>
       </Card>
@@ -45,7 +45,7 @@ export function FeedFailures() {
   if (isLoading || !data) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading feeds…
         </p>
       </Card>
@@ -100,7 +100,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
                             'var(--text-primary)';
   return (
     <Card variant="elevated" className="p-3">
-      <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
       <div className="font-display text-2xl font-bold" style={{ color }}>
@@ -156,10 +156,10 @@ function AtRiskGrid({
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
             {showAll ? 'All feeds' : 'At-risk feeds'}
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             {showAll
               ? `Showing all ${rows.length} feeds (${atRiskCount} at risk)`
               : `Filtered to feeds with failures, paused, or near auto-pause`}
@@ -168,7 +168,7 @@ function AtRiskGrid({
         <button
           type="button"
           onClick={onToggleShowAll}
-          className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase rounded transition-colors"
+          className="px-2.5 py-1 font-mono text-[11px] tracking-[0.18em] uppercase rounded transition-colors"
           style={{
             background: 'var(--bg-input)',
             border:     '1px solid var(--border-base)',
@@ -181,7 +181,7 @@ function AtRiskGrid({
 
       {filtered.length === 0 ? (
         <Card variant="elevated" className="p-4">
-          <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {showAll
               ? 'No feeds configured.'
               : 'No feeds at risk. Toggle "Show all" to see healthy feeds.'}
@@ -303,14 +303,14 @@ function FeedRiskCard({
               }}
             />
           </div>
-          <div className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+          <div className="font-mono text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
             {row.consecutive_failures} / {row.threshold} consecutive failures → auto-pause
           </div>
         </div>
       )}
 
       {/* Mini-stats */}
-      <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
+      <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
         <Mini label="PULLS"   value={row.pulls.toLocaleString()} />
         <Mini label="FAIL"    value={row.failed.toString()} tone={row.failed > 0 ? 'sev-high' : undefined} />
         <Mini label="RATE"    value={`${row.failure_rate_pct}%`} tone={row.failure_rate_pct >= 30 ? 'sev-high' : undefined} />
@@ -345,7 +345,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Last success
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -353,7 +353,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
           </div>
         </div>
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
+          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>
             Last failure
           </div>
           <div className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
@@ -364,7 +364,7 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
 
       <Link
         to="/admin/operations?tab=feeds"
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded font-mono text-[10px] tracking-[0.12em] uppercase transition-colors"
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded font-mono text-[11px] tracking-[0.12em] uppercase transition-colors"
         style={{
           background: 'var(--amber-glow)',
           color:      'var(--amber-text)',
@@ -391,10 +391,10 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
   if (errors.length === 0) {
     return (
       <div className="space-y-2">
-        <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Recent errors · 24h
         </div>
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No feed errors recorded in the last 24h.
         </p>
       </div>
@@ -405,15 +405,15 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
     <div className="space-y-3">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
             Recent errors · 24h
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             Chronological feed of failed-pull error messages across all feeds
           </div>
         </div>
         <span
-          className="font-mono text-[10px] px-2 py-0.5 rounded"
+          className="font-mono text-[11px] px-2 py-0.5 rounded"
           style={{
             background: 'var(--bg-input)',
             color:      'var(--text-secondary)',
@@ -432,13 +432,13 @@ function RecentErrorsStream({ data }: { data: FeedFailurePayload }) {
               style={{ borderColor: 'var(--border-base)' }}
             >
               <span
-                className="font-mono text-[10px] flex-shrink-0 mt-0.5"
+                className="font-mono text-[11px] flex-shrink-0 mt-0.5"
                 style={{ color: 'var(--text-tertiary)', minWidth: 64 }}
               >
                 {relativeTime(err.started_at)}
               </span>
               <span
-                className="font-mono text-[10px] font-bold flex-shrink-0 mt-0.5"
+                className="font-mono text-[11px] font-bold flex-shrink-0 mt-0.5"
                 style={{ color: 'var(--text-primary)', minWidth: 100 }}
                 title={err.feed_name}
               >
@@ -467,7 +467,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'gr
                             'var(--text-primary)';
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className="text-base font-mono" style={{ color }}>{value}</div>
     </div>
   );

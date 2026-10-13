@@ -186,7 +186,7 @@ function Stat({
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] uppercase tracking-widest font-mono text-white/55">{label}</span>
+        <span className="text-[11px] uppercase tracking-widest font-mono text-white/55">{label}</span>
         <Icon size={14} className={toneCls} />
       </div>
       <div className="flex items-baseline gap-1">
@@ -209,7 +209,7 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
       </h2>
       <div className="rounded-xl border border-white/[0.06] bg-bg-card overflow-hidden">
         <table className="w-full text-[12px]">
-          <thead className="text-[10px] uppercase tracking-wider font-mono text-white/55 border-b border-white/[0.06]">
+          <thead className="text-[11px] uppercase tracking-wider font-mono text-white/55 border-b border-white/[0.06]">
             <tr>
               <th className="text-left px-4 py-2.5">Brand</th>
               <th className="text-right px-4 py-2.5">Active threats</th>
@@ -227,7 +227,7 @@ function BrandRollup({ brands }: { brands: DashboardBrand[] }) {
                       {b.name}
                     </Link>
                     {b.is_primary === 1 && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
+                      <span className="text-[11px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
                         Primary
                       </span>
                     )}
@@ -294,12 +294,12 @@ function ThreatTrend({ points }: { points: DashboardTrendPoint[] }) {
               className="flex-1 flex flex-col items-center gap-1"
               title={`${p.date} — ${p.count} threats`}
             >
-              <div className="text-[10px] font-mono text-white/55 tabular-nums">{p.count}</div>
+              <div className="text-[11px] font-mono text-white/55 tabular-nums">{p.count}</div>
               <div
                 className="w-full rounded-sm bg-amber/[0.40] hover:bg-amber/[0.60] transition-colors"
                 style={{ height: `${h}px` }}
               />
-              <div className="text-[9px] font-mono text-white/55 uppercase tracking-wider">
+              <div className="text-[11px] font-mono text-white/55 uppercase tracking-wider">
                 {new Date(p.date).toLocaleDateString('en-US', { weekday: 'short' })}
               </div>
             </div>
@@ -331,15 +331,15 @@ function RecentAlerts({ alerts }: { alerts: DashboardRecentAlert[] }) {
             <div key={a.id} className="flex items-start justify-between gap-3 py-2 px-2 -mx-2 rounded-lg hover:bg-white/[0.02]">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                  <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${sevTone}`}>
+                  <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${sevTone}`}>
                     {sev || 'unknown'}
                   </span>
-                  <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">{a.alert_type.replace(/_/g, ' ')}</span>
+                  <span className="text-[11px] font-mono text-white/55 uppercase tracking-wider">{a.alert_type.replace(/_/g, ' ')}</span>
                 </div>
                 <p className="text-[12px] text-white/85 truncate">{a.title}</p>
                 <p className="text-[11px] text-white/55 font-mono mt-0.5">{a.brand_name}</p>
               </div>
-              <div className="text-[10px] font-mono text-white/55 flex-shrink-0">
+              <div className="text-[11px] font-mono text-white/55 flex-shrink-0">
                 {new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </div>
             </div>
@@ -372,12 +372,12 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
           <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{MODULE_DESCRIPTIONS[m.module_key]}</p>
         </div>
         {entitled ? (
-          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-amber">
+          <span className="flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono text-amber">
             <CheckCircle2 size={11} />
             {trial ? 'Trial' : 'Active'}
           </span>
         ) : (
-          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-white/55">
+          <span className="flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono text-white/55">
             <Lock size={11} />
             Locked
           </span>
@@ -386,10 +386,10 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
 
       {entitled && m.metrics.length > 0 && (
         <div className="mt-3 pt-3 border-t border-white/[0.04]">
-          <div className="text-[9px] uppercase tracking-widest font-mono text-white/55 mb-1">This month</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">This month</div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white/90 tabular-nums">{totalUsage}</span>
-            <span className="text-[10px] text-white/55">across {m.metrics.length} metric{m.metrics.length === 1 ? '' : 's'}</span>
+            <span className="text-[11px] text-white/55">across {m.metrics.length} metric{m.metrics.length === 1 ? '' : 's'}</span>
           </div>
         </div>
       )}

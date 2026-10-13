@@ -109,7 +109,7 @@ export function MaliciousDomainsSection({
       cellClassName: 'font-mono max-w-[280px] truncate',
       render: (r) => <span className="text-white/90" title={r.malicious_url ?? r.malicious_domain ?? ''}>{r.malicious_domain ?? r.malicious_url ?? '—'}</span> },
     { key: 'type', header: 'Type', sortAccessor: (r) => r.threat_type,
-      render: (r) => <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">{THREAT_TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}</span> },
+      render: (r) => <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">{THREAT_TYPE_LABELS[r.threat_type] ?? r.threat_type.replace(/_/g, ' ')}</span> },
     { key: 'severity', header: 'Severity', sortAccessor: (r) => SEVERITY_RANK[(r.severity ?? '').toLowerCase()] ?? 0,
       render: (r) => <SeverityPill severity={r.severity} /> },
     { key: 'source', header: 'Source', sortAccessor: (r) => r.source_feed, render: (r) => <SourceChip source={r.source_feed} /> },
@@ -117,7 +117,7 @@ export function MaliciousDomainsSection({
       render: (r) => (
         <span className="text-white/55">
           {r.hosting_provider ?? <span className="text-white/55">unknown</span>}
-          {r.country_code && <span className="ml-1.5 text-[10px] font-mono text-white/55">{r.country_code}</span>}
+          {r.country_code && <span className="ml-1.5 text-[11px] font-mono text-white/55">{r.country_code}</span>}
         </span>
       ) },
     { key: 'first_seen', header: 'First seen', align: 'right', sortAccessor: (r) => r.first_seen ?? '',
@@ -127,7 +127,7 @@ export function MaliciousDomainsSection({
         ? <TakedownStatusPill status={r.takedown_status} takedownId={r.takedown_id} />
         : !canTriage
           ? <span className="text-white/55 font-mono text-[11px]">—</span>
-        : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
+        : <button type="button" onClick={() => setConfirmRow(r)} className="inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.06] hover:bg-amber/[0.12] border border-amber/[0.20] hover:border-amber/[0.40] rounded px-2 py-1 transition-colors">Request takedown</button> },
   ];
 
   return (
@@ -136,7 +136,7 @@ export function MaliciousDomainsSection({
         <h2 className="text-[11px] uppercase tracking-[0.18em] font-mono text-white/55">
           Malicious Domains &amp; URLs <span className="text-white/55">({rows.length})</span>
         </h2>
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono">
           {criticalCount > 0 && (
             <span className="text-sev-critical">
               {criticalCount} critical
@@ -232,7 +232,7 @@ function RequestTakedownDialog({
           </div>
 
           <div>
-            <label htmlFor="td-summary" className="block text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1.5">
+            <label htmlFor="td-summary" className="block text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1.5">
               Evidence summary
             </label>
             <textarea
@@ -243,7 +243,7 @@ function RequestTakedownDialog({
               className="w-full rounded-lg bg-white/[0.03] border border-white/[0.08] focus:border-amber/[0.40] focus:outline-none px-3 py-2 text-[12px] text-white/90 font-mono placeholder:text-white/55"
               placeholder="Optional — auto-generated from threat intel if left blank"
             />
-            <p className="mt-1.5 text-[10px] font-mono text-white/55">
+            <p className="mt-1.5 text-[11px] font-mono text-white/55">
               Submitted to the hosting provider's abuse contact under your signed authorization.
               Track progress under Takedowns.
             </p>
@@ -282,7 +282,7 @@ function RequestTakedownDialog({
 function Field({ label, value, valueClass = 'text-white/80' }: { label: string; value: string; valueClass?: string }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-white/55">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest text-white/55">{label}</div>
       <div className={`mt-0.5 ${valueClass}`}>{value}</div>
     </div>
   );
@@ -297,7 +297,7 @@ function SourceChip({ source }: { source: string }) {
   if (source === 'abuse_mailbox') {
     return (
       <span
-        className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] border border-amber/[0.20] rounded px-1.5 py-0.5"
+        className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.08] border border-amber/[0.20] rounded px-1.5 py-0.5"
         title="Reported via abuse mailbox — community-submitted phishing capture"
       >
         community report
@@ -310,7 +310,7 @@ function SourceChip({ source }: { source: string }) {
               : source === 'nrd_hagezi'        ? 'NRD'
               : source.replace(/_/g, ' ');
   return (
-    <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {label}
     </span>
   );
@@ -324,7 +324,7 @@ function SeverityPill({ severity }: { severity: string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {sev}
     </span>
   );
@@ -339,7 +339,7 @@ function TakedownStatusPill({ status, takedownId }: { status: string; takedownId
                              'text-white/55 bg-white/[0.04] border-white/[0.08]';
   const label = status.replace(/_/g, ' ');
   const inner = (
-    <span className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {label}
       {takedownId && <ExternalLink size={9} className="opacity-60" />}
     </span>
@@ -509,7 +509,7 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
 
           {row.page_exfil_sink && (
             <div className="rounded-lg border border-sev-critical/[0.25] bg-sev-critical/[0.06] px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest font-mono text-sev-critical mb-1">
+              <div className="text-[11px] uppercase tracking-widest font-mono text-sev-critical mb-1">
                 Covert exfil sink
               </div>
               <div className="font-mono text-[12px] text-white/85">
@@ -520,7 +520,7 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
           )}
 
           <div>
-            <div className="text-[10px] uppercase tracking-widest font-mono text-white/60 mb-1.5">
+            <div className="text-[11px] uppercase tracking-widest font-mono text-white/60 mb-1.5">
               Scored signals
             </div>
             {liveSorted.length === 0 ? (
@@ -546,17 +546,17 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
                 {/* Small-text contrast: white/40 and below fail 4.5:1 on
                     --bg-page — white/60+ for anything that carries real
                     information (the "not scoring" disclaimer matters). */}
-                <span className="text-[10px] uppercase tracking-widest font-mono text-white/60">
+                <span className="text-[11px] uppercase tracking-widest font-mono text-white/60">
                   Shadow signals — not scoring
                 </span>
                 {/* No leading "+" — it reads as a scoring badge on a skim,
                     which is the exact misreading this group exists to
                     prevent. Mirrors ops SignalBreakdownCard. */}
                 {row.page_score_delta !== null && (
-                  <span className="font-mono text-[10px] text-white/60">{row.page_score_delta} pts if scored</span>
+                  <span className="font-mono text-[11px] text-white/60">{row.page_score_delta} pts if scored</span>
                 )}
               </div>
-              <p className="text-[10px] text-white/60 mb-1.5">
+              <p className="text-[11px] text-white/60 mb-1.5">
                 Computed and persisted for measurement only. None of these contribute to the
                 score above, to threat level, or to alert triage.
               </p>
@@ -564,7 +564,7 @@ function PageAnalysisDialog({ row, onClose }: { row: LookalikeRow; onClose: () =
                 {shadowSorted.map((key) => (
                   <li key={key} className="flex items-center justify-between text-[12px]">
                     <span className="text-white/70">{pageSignalLabel(key, SHADOW_SIGNAL_LABELS)}</span>
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-white/60 border border-white/10 rounded px-1.5 py-0.5">
+                    <span className="font-mono text-[11px] uppercase tracking-widest text-white/60 border border-white/10 rounded px-1.5 py-0.5">
                       shadow
                     </span>
                   </li>
@@ -630,7 +630,7 @@ function ThreatPill({ level }: { level: string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );
@@ -643,7 +643,7 @@ function StatusPill({ status }: { status: string }) {
     status === 'benign'           ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                     'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status.replace(/_/g, ' ')}
     </span>
   );
@@ -656,7 +656,7 @@ function CertStatusPill({ status }: { status: string }) {
     status === 'benign'    ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                              'text-white/60     bg-white/[0.06]        border-white/[0.10]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status}
     </span>
   );
@@ -664,7 +664,7 @@ function CertStatusPill({ status }: { status: string }) {
 
 function SignalChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {children}
     </span>
   );

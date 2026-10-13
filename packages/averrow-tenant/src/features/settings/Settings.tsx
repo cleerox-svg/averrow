@@ -85,11 +85,11 @@ export function Settings() {
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-white/90">Takedown authorization</h2>
             {auth ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-green bg-green/[0.08] border border-green/[0.25] rounded px-1.5 py-0.5">
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-green bg-green/[0.08] border border-green/[0.25] rounded px-1.5 py-0.5">
                 <CheckCircle2 size={10} /> Signed
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
+              <span className="inline-flex items-center gap-1 text-[11px] font-mono uppercase tracking-wider text-amber bg-amber/[0.08] border border-amber/[0.25] rounded px-1.5 py-0.5">
                 <AlertTriangle size={10} /> Not signed
               </span>
             )}
@@ -408,7 +408,7 @@ function SignAuthorizationForm() {
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-amber">{AGREEMENT_TITLE}</h2>
             <p className="text-[12px] text-white/70 mt-1 leading-relaxed">{AGREEMENT_SUMMARY}</p>
-            <p className="text-[10px] font-mono uppercase tracking-wider text-amber mt-2">
+            <p className="text-[11px] font-mono uppercase tracking-wider text-amber mt-2">
               Agreement {AGREEMENT_VERSION}
             </p>
           </div>
@@ -433,7 +433,7 @@ function SignAuthorizationForm() {
                 <p className="text-[12px] text-white/65 leading-relaxed">{s.body}</p>
               </div>
             ))}
-            <p className="text-[10px] text-white/55 italic pt-2 border-t border-white/[0.06]">
+            <p className="text-[11px] text-white/55 italic pt-2 border-t border-white/[0.06]">
               {AGREEMENT_VERSION.includes('draft')
                 ? 'This is a working-draft version of the agreement. Final legal copy will replace it before general availability; existing signed authorizations retain their original version stamp in the audit trail.'
                 : 'See your organization\'s MSA for the master agreement these terms incorporate.'}
@@ -488,7 +488,7 @@ function SignAuthorizationForm() {
               onChange={(e) => setCap(e.target.value)}
               className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
             />
-            <p className="text-[10px] text-white/55 mt-1">Leave blank for unlimited.</p>
+            <p className="text-[11px] text-white/55 mt-1">Leave blank for unlimited.</p>
           </div>
 
           <div>
@@ -503,7 +503,7 @@ function SignAuthorizationForm() {
               onChange={(e) => setAutoFollowup(e.target.value)}
               className="w-full rounded-lg border border-white/[0.08] bg-bg-page px-3 py-2 text-sm text-white/90 placeholder-white/55 focus:border-amber focus:outline-none"
             />
-            <p className="text-[10px] text-white/55 mt-1">Re-submit after provider misses SLA.</p>
+            <p className="text-[11px] text-white/55 mt-1">Re-submit after provider misses SLA.</p>
           </div>
         </div>
 
@@ -664,7 +664,7 @@ function ChipPicker({
           );
         })}
       </div>
-      <p className="text-[10px] text-white/55 mt-1">{hint}</p>
+      <p className="text-[11px] text-white/55 mt-1">{hint}</p>
     </div>
   );
 }

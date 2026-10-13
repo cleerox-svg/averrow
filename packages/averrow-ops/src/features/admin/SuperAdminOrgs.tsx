@@ -449,7 +449,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
                       <span className="text-sm text-[color:var(--text-primary)]">{r.name}</span>
                       <span className="text-[11px] text-white/55 font-mono ml-2">{r.canonical_domain}</span>
                     </div>
-                    <span className="text-[10px] text-white/55">{r.threat_count} threats</span>
+                    <span className="text-[11px] text-white/55">{r.threat_count} threats</span>
                   </button>
                 ))}
               </div>
@@ -606,12 +606,12 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
             <img src={previewLogo} width={30} height={30} alt="" style={{ display: 'block', width: 30, height: 30, borderRadius: 6 }} />
             <div>
               <div className="text-white font-bold text-[15px] leading-tight">{previewProduct}</div>
-              <div className="text-[9px] font-bold uppercase tracking-[0.18em] leading-none mt-0.5" style={{ color: previewAccent }}>{previewTagline}</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] leading-none mt-0.5" style={{ color: previewAccent }}>{previewTagline}</div>
             </div>
           </div>
           <div style={{ background: previewAccent }} className="h-1" />
           <div className="bg-white px-4 py-3">
-            <div className="text-[10px] uppercase tracking-wide text-slate font-semibold">Determination</div>
+            <div className="text-[11px] uppercase tracking-wide text-slate font-semibold">Determination</div>
             <div className="text-[15px] font-extrabold text-ink leading-tight">Phishing confirmed</div>
           </div>
         </div>
@@ -644,7 +644,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
                 placeholder={f.placeholder}
                 className="w-full"
               />
-              {f.hint && <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1 leading-snug">{f.hint}</p>}
+              {f.hint && <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1 leading-snug">{f.hint}</p>}
             </div>
           ))}
 
@@ -665,7 +665,7 @@ function DetailAbuseMailboxTab({ orgId }: { orgId: string }) {
                   className="w-full font-mono"
                 />
               </div>
-              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">Hex like #E5A832; blank = default.</p>
+              <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1">Hex like #E5A832; blank = default.</p>
             </div>
           ))}
         </div>
@@ -739,7 +739,7 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
                 }}
                 className="w-full"
               />
-              <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1.5 leading-snug">
+              <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1.5 leading-snug">
                 Saving auto-activates this plan's modules on the Modules tab.
               </p>
             </div>
@@ -764,7 +764,7 @@ function DetailSettingsTab({ orgId, org }: { orgId: string; org: AdminOrg }) {
         <Button variant="danger" size="sm" onClick={handleDeactivate} disabled={org.status === 'suspended'}>
           {org.status === 'suspended' ? 'Organization Suspended' : 'Deactivate Organization'}
         </Button>
-        <p className="text-[10px] text-white/55 mt-2">
+        <p className="text-[11px] text-white/55 mt-2">
           This will suspend all access for organization members.
         </p>
       </Card>
@@ -1018,7 +1018,7 @@ function OverrideRow({ override: o, orgId }: { override: OrgPricingOverride; org
           : formatCents(o.custom_price_cents ?? 0)}
       </div>
       <p className="text-[12px] text-[color:var(--text-secondary)] mt-1">{o.reason}</p>
-      <p className="text-[10px] text-[color:var(--text-tertiary)] font-mono mt-1">
+      <p className="text-[11px] text-[color:var(--text-tertiary)] font-mono mt-1">
         from {new Date(o.effective_from).toLocaleDateString()}
         {o.effective_until && ` until ${new Date(o.effective_until).toLocaleDateString()}`}
       </p>

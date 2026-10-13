@@ -123,7 +123,7 @@ function StatsPanel({
 function AudienceCount({ label, count }: { label: string; count: number }) {
   return (
     <div className="rounded-md border border-white/[0.06] bg-white/[0.02] p-3">
-      <div className="font-mono text-[10px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-tertiary)' }}>
         Audience: {label}
       </div>
       <div className="font-mono text-lg font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
@@ -174,7 +174,7 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_max-content_2fr_max-content] gap-2 items-end mb-4">
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <label className="block font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Event type
           </label>
           <Input
@@ -184,13 +184,13 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
           />
         </div>
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <label className="block font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Duration
           </label>
           <Select value={hours} options={MUTE_DURATION_OPTIONS} onChange={(e) => setHours(e.target.value)} />
         </div>
         <div>
-          <label className="block font-mono text-[10px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <label className="block font-mono text-[11px] uppercase tracking-widest mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Reason (optional)
           </label>
           <Input

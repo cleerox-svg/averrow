@@ -89,7 +89,7 @@ export function BrandsV3() {
             >
               {tab.label}
               {tab.adminOnly && (
-                <span className="ml-2 inline-block px-1.5 py-0.5 text-[8px] uppercase tracking-wider rounded bg-white/10 text-[var(--text-muted)]">
+                <span className="ml-2 inline-block px-1.5 py-0.5 text-[11px] uppercase tracking-wider rounded bg-white/10 text-[var(--text-muted)]">
                   Admin
                 </span>
               )}
@@ -337,7 +337,7 @@ function HeroStrip({ stats, loading, failed }: { stats: any; loading: boolean; f
           }} />
           <div style={{ position: 'relative', marginTop: 4 }}>
             <div style={{
-              fontSize: 9, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
+              fontSize: 11, fontFamily: 'var(--font-mono)', letterSpacing: '0.20em',
               color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: 8,
             }}>
               {t.label}
@@ -403,7 +403,7 @@ function SectorDonut({ breakdown, totalTracked, status }: {
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Sector mix</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(sumClassified)} classified
         </span>
       </div>
@@ -496,7 +496,7 @@ function ThreatTypeBreakdown({ stats, status }: { stats: any; status: AggStatus 
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Attack types</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(total)} signals
         </span>
       </div>
@@ -577,7 +577,7 @@ function CatalogStatusCard({ stats }: { stats: any }) {
         ))}
       </div>
       {stats?.total_tracked != null && (
-        <div className="mt-3 pt-2 border-t border-white/[0.04] text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-3 pt-2 border-t border-white/[0.04] text-[11px] font-mono text-[var(--text-muted)]">
           Auto-sweeps {formatNumber(stats.total_tracked)} brands continuously
         </div>
       )}
@@ -590,7 +590,7 @@ function CatalogStatusCard({ stats }: { stats: any }) {
 // Keeps the user oriented without an admin button.
 function CatalogStatusFooter() {
   return (
-    <div className="text-[10px] font-mono text-[var(--text-muted)] text-center pt-2">
+    <div className="text-[11px] font-mono text-[var(--text-muted)] text-center pt-2">
       Catalog data refreshes hourly; brand-health + exposure snapshots run nightly.
       Tranco rank refreshes daily.
     </div>
@@ -620,7 +620,7 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
       <div className="flex items-center justify-between">
         <SectionLabel>{title}</SectionLabel>
         {rows.length > 0 && (
-          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
             top {Math.min(5, rows.length)} of {rows.length}
           </span>
         )}
@@ -669,7 +669,7 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
                   <div className="text-sm font-bold" style={{ color: accentText(accent), textShadow: `0 0 6px ${accent}55` }}>
                     {b.delta_7d >= 0 ? '+' : ''}{b.delta_7d}
                   </div>
-                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                  <div className="text-[11px] font-mono text-[var(--text-muted)]">
                     {b.today_count} active
                   </div>
                 </div>
@@ -829,7 +829,7 @@ function ProspectsTab() {
             }`}
           >
             <span>{s}</span>
-            <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+            <span className={`px-1.5 py-0.5 rounded text-[11px] ${
               status === s ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.05] text-white/55'
             }`}>
               {counts[s]}
@@ -946,9 +946,9 @@ function ProspectGroup({ label, emoji, rows, tone = 'info', onPromote, onReject,
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-mono font-semibold text-[var(--text-primary)] truncate flex items-center gap-2">
                     {c.apex_domain}
-                    {isRecent && <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
+                    {isRecent && <span className="text-[11px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 uppercase tracking-wider">New</span>}
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] font-mono">
+                  <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] font-mono">
                     <span style={{ padding: '1px 6px', borderRadius: 3, background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}>
                       {c.cert_count} certs
                     </span>
@@ -986,13 +986,13 @@ function ReviewedRow({ c, onJumpBrand }: { c: BrandCandidate; onJumpBrand?: (bra
     }}>
       <div className="min-w-0 flex-1">
         <div className="text-sm font-mono text-[var(--text-primary)] truncate">{c.apex_domain}</div>
-        <div className="mt-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-0.5 text-[11px] font-mono text-[var(--text-muted)]">
           {c.cert_count} certs · {c.distinct_issuers} issuers
           {c.reviewed_at && <> · {c.status} {timeAgo(c.reviewed_at)}</>}
           {c.reviewed_by && <> by {c.reviewed_by}</>}
         </div>
         {c.notes && (
-          <div className="mt-1 text-[10px] text-[var(--text-tertiary)] italic">"{c.notes}"</div>
+          <div className="mt-1 text-[11px] text-[var(--text-tertiary)] italic">"{c.notes}"</div>
         )}
       </div>
       {c.status === 'promoted' && c.promoted_brand_id && onJumpBrand && (
@@ -1025,7 +1025,7 @@ function EmailGradeCard({ data, status }: { data: EmailSecurityAggregate | null 
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Email security grade</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(total)} graded
           {data.ungraded > 0 && ` · ${formatNumber(data.ungraded)} pending`}
         </span>
@@ -1071,7 +1071,7 @@ function DmarcEnforcementCard({ data, status }: { data: EmailSecurityAggregate |
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>DMARC enforcement</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(total)} scanned
         </span>
       </div>
@@ -1124,7 +1124,7 @@ function PressureLeaderboard({ title, rows, accent, subtitle, status }: {
   return (
     <Card style={{ minHeight: 200 }}>
       <SectionLabel>{title}</SectionLabel>
-      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">{subtitle}</div>
+      <div className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5">{subtitle}</div>
       <div className="mt-3 space-y-1.5">
         {top5.length === 0 && (
           <div className="text-xs text-[var(--text-tertiary)] py-3 text-center">No signal yet</div>
@@ -1173,18 +1173,18 @@ function CompositionMixCard({ data, status }: { data: CompositionAggregate | nul
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Catalog composition</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(data.total)} total
         </span>
       </div>
 
       <div className="mt-3">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tier</div>
+        <div className="text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tier</div>
         <StackedBar data={data.tier_mix.map(t => ({ key: t.tier, value: t.count, color: TIER_COLORS[t.tier] ?? '#78A0C8' }))} total={data.total} />
       </div>
 
       <div className="mt-4">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tranco rank</div>
+        <div className="text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Tranco rank</div>
         <div className="mt-1 space-y-1">
           {data.tranco_buckets.map(b => {
             const pct = data.total > 0 ? (b.count / data.total) * 100 : 0;
@@ -1201,13 +1201,13 @@ function CompositionMixCard({ data, status }: { data: CompositionAggregate | nul
       </div>
 
       <div className="mt-4">
-        <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Source</div>
+        <div className="text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Source</div>
         <div className="mt-1 flex flex-wrap gap-1.5">
           {data.source_mix.slice(0, 6).map(s => (
             <span key={s.source} style={{
               padding: '2px 8px', borderRadius: 3,
               background: 'rgba(255,255,255,0.04)',
-              fontSize: 10, fontFamily: 'var(--font-mono)',
+              fontSize: 11, fontFamily: 'var(--font-mono)',
               color: 'var(--text-tertiary)',
             }}>
               {s.source.replace(/_/g, ' ')} <span className="text-[var(--text-muted)]">{formatNumber(s.count)}</span>
@@ -1236,7 +1236,7 @@ function StackedBar({ data, total }: {
           );
         })}
       </div>
-      <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] font-mono">
+      <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] font-mono">
         {data.map(d => (
           <span key={d.key} className="flex items-center gap-1.5 text-[var(--text-tertiary)]">
             <span style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
@@ -1260,7 +1260,7 @@ function GeoDistributionCard({ data, status }: { data: CompositionAggregate | nu
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>Geographic distribution</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           top 10 of {data.hq_countries.length}{unknown > 0 ? ` · ${formatNumber(unknown)} unknown` : ''}
         </span>
       </div>
@@ -1320,11 +1320,11 @@ function ScoreBucketCard({ title, data, tone, subtitle, status }: {
     <Card>
       <div className="flex items-center justify-between">
         <SectionLabel>{title}</SectionLabel>
-        <span className="text-[10px] font-mono text-[var(--text-muted)]">
+        <span className="text-[11px] font-mono text-[var(--text-muted)]">
           {formatNumber(total)} scored
         </span>
       </div>
-      <div className="mt-1 text-[10px] font-mono text-[var(--text-muted)]">{subtitle}</div>
+      <div className="mt-1 text-[11px] font-mono text-[var(--text-muted)]">{subtitle}</div>
       <div className="mt-3 space-y-1.5">
         {data.map((row, i) => {
           if (row.bucket === 'unscored') return null;
@@ -1343,7 +1343,7 @@ function ScoreBucketCard({ title, data, tone, subtitle, status }: {
           );
         })}
         {data.find(r => r.bucket === 'unscored') && (
-          <div className="text-[10px] font-mono text-[var(--text-muted)] pt-1 border-t border-white/[0.04]">
+          <div className="text-[11px] font-mono text-[var(--text-muted)] pt-1 border-t border-white/[0.04]">
             {formatNumber(data.find(r => r.bucket === 'unscored')!.count)} not yet scored
           </div>
         )}
@@ -1368,7 +1368,7 @@ function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
   return (
     <Card>
       <SectionLabel>{title}</SectionLabel>
-      <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5">
+      <div className="text-[11px] font-mono text-[var(--text-muted)] mt-0.5">
         Brand-Health Δ vs 7 days ago
       </div>
       <div className="mt-3 space-y-1.5">
@@ -1387,7 +1387,7 @@ function PostureMoversCard({ title, rows, tone, emptyMsg, status }: {
               <BrandFavicon name={b.brand_name} domain={b.canonical_domain} logoUrl={b.logo_url} size={22} />
               <div className="min-w-0 flex-1">
                 <div className="text-xs font-semibold text-[var(--text-primary)] truncate">{b.brand_name}</div>
-                <div className="text-[10px] font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
+                <div className="text-[11px] font-mono text-[var(--text-tertiary)]">latest {b.latest}</div>
               </div>
               <span className="text-sm font-bold flex-shrink-0" style={{ color: accentText(accent) }}>
                 {b.delta > 0 ? '+' : ''}{b.delta}

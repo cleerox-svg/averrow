@@ -211,7 +211,7 @@ export function DataTable<T>({
                     scope="col"
                     aria-sort={sortable ? (dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none') : undefined}
                     style={{ width: col.width, color: active ? 'var(--amber)' : 'var(--text-secondary)' }}
-                    className={cn('font-mono text-[10px] uppercase tracking-[0.12em] font-normal select-none', ALIGN[col.align ?? 'left'], !sortable && pad)}
+                    className={cn('font-mono text-[11px] uppercase tracking-[0.12em] font-normal select-none', ALIGN[col.align ?? 'left'], !sortable && pad)}
                   >
                     {sortable ? (
                       <button

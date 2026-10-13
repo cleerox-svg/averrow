@@ -349,7 +349,7 @@
   --sev-critical-text: #b91c1c;
   --sev-high-text:     #9a3412;
   --sev-medium-text:   #92400e;
-  --sev-low-text:      #1d4ed8;
+  --sev-low-text:      #1e40af;
   --sev-info-text:     #166534;
   --cyan-text:         #155e75;
 
@@ -461,7 +461,7 @@
   text-shadow: 0 0 20px rgba(229, 168, 50, 0.40);
 }
 .detail-stat-metric-label {
-  font-size: 9px;
+  font-size: 11px;
   font-family: var(--font-mono);
   letter-spacing: 0.16em;
   /* Theme-aware and AA at 9px (the old 25% white failed contrast). */
@@ -1065,3 +1065,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: ds-vt-fade-in 120ms linear both; }
   .ds-sshell-bartitle { transition: none; }
 }
+
+/* StatTile value glow is a raw-accent halo; on light cards it tints the
+   backdrop behind the number and costs contrast. Inline style → !important. */
+[data-theme="light"] [data-stat-glow] { text-shadow: none !important; }

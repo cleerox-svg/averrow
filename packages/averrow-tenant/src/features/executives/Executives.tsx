@@ -276,7 +276,7 @@ function ExecutiveRow({
               <span className="text-[11px] text-white/55 truncate">{executive.title}</span>
             )}
             {isPaused && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
                 Paused
               </span>
             )}
@@ -291,7 +291,7 @@ function ExecutiveRow({
               {executive.watch_platforms.map((p) => (
                 <span
                   key={p}
-                  className="text-[10px] font-mono text-white/55 bg-white/[0.03] border border-white/[0.07] rounded px-1.5 py-0.5"
+                  className="text-[11px] font-mono text-white/55 bg-white/[0.03] border border-white/[0.07] rounded px-1.5 py-0.5"
                 >
                   {EXEC_PLATFORM_LABELS[p as ExecPlatform] ?? p}
                 </span>

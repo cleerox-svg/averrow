@@ -105,7 +105,7 @@ export function StatTile({
       {critCount > 0 && (
         <span
           aria-label={`${critCount} critical`}
-          className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 font-mono text-[9px] font-extrabold text-white"
+          className="absolute right-2.5 top-2.5 rounded-full px-2 py-0.5 font-mono text-[11px] font-extrabold text-white"
           style={{
             background: 'linear-gradient(135deg, var(--red), var(--red-dim))',
             border: '1px solid var(--sev-critical-border)',
@@ -114,7 +114,7 @@ export function StatTile({
           {critCount}
         </span>
       )}
-      <span className="relative block font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--text-secondary)] max-sm:text-[9.5px]">
+      <span className="relative block font-mono text-[11px] uppercase tracking-[0.18em] text-[var(--text-secondary)] max-sm:text-[11px]">
         {label}
       </span>
       <span
@@ -122,7 +122,11 @@ export function StatTile({
           'relative mt-2.5 block text-[42px] font-extrabold leading-[1.05] tracking-[-1.5px] tabular-nums max-sm:mt-0.5 max-sm:text-[26px] max-sm:tracking-[-1px]',
           loading || failed ? 'text-[var(--text-tertiary)]' : 'text-[var(--text-primary)]',
         )}
+        // The glow is a decorative raw-accent halo behind dark text: on a light
+        // card it tints the text's backdrop and drops measured contrast, so it
+        // is dark-theme only. The number itself stays --text-primary.
         style={loading || failed ? undefined : { textShadow: `0 0 28px color-mix(in srgb, ${accent} 48%, transparent)` }}
+        data-stat-glow
       >
         {display}
       </span>
@@ -131,13 +135,13 @@ export function StatTile({
           Couldn't load
         </span>
       ) : sub ? (
-        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1 max-sm:text-[10px]">{sub}</span>
+        <span className="relative mt-2 block font-mono text-[11px] leading-snug text-[var(--text-secondary)] max-sm:mt-1 max-sm:text-[11px]">{sub}</span>
       ) : null}
       {footer ? <span className="relative mt-3 block">{footer}</span> : null}
       {clickable && (
         <span
           aria-hidden
-          className="absolute bottom-[13px] right-4 font-mono text-[10.5px] tracking-[0.04em] text-[var(--text-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 max-sm:hidden motion-reduce:transition-none"
+          className="absolute bottom-[13px] right-4 font-mono text-[11px] tracking-[0.04em] text-[var(--text-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100 max-sm:hidden motion-reduce:transition-none"
         >
           View →
         </span>

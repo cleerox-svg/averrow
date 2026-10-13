@@ -202,12 +202,12 @@ describe('shared Tabs tab stop + focus', () => {
     expect(tab(/^One/).className).toContain('focus-visible:-outline-offset-2');
   });
 
-  it('inactive tab count and NEW badge use secondary text, badge >= 9px', () => {
+  it('inactive tab count and NEW badge use secondary text, badge >= 11px', () => {
     render(<Harness />);
     const count = tab(/^Three/).querySelector('span.font-mono') as HTMLElement;
     expect(count.style.color).toBe('var(--text-secondary)');
     const badge = tab(/^Two/).querySelector('span.font-black') as HTMLElement;
-    expect(badge.className).toContain('text-[9px]');
+    expect(badge.className).toContain('text-[11px]');
     expect(badge.style.color).toBe('var(--text-secondary)');
   });
 });

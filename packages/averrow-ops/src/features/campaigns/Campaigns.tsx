@@ -76,7 +76,7 @@ function AttackTypeBadge({ type }: { type: string | null }) {
   else if (t.includes('credential')) cls = 'border-[#F97316]/30 bg-[#F97316]/10 text-[#F97316]';
 
   return (
-    <span className={`inline-flex font-mono text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border ${cls}`}>
+    <span className={`inline-flex font-mono text-[11px] font-bold uppercase tracking-wide px-2 py-0.5 rounded border ${cls}`}>
       {type.replace(/_/g, ' ')}
     </span>
   );
@@ -149,7 +149,7 @@ function OperationCard({
       <div className="flex items-center gap-3">
         {primaryAsn && (
           <span
-            className="flex-shrink-0 font-mono text-[9px] font-bold uppercase tracking-[0.12em] px-1.5 py-1 rounded"
+            className="flex-shrink-0 font-mono text-[11px] font-bold uppercase tracking-[0.12em] px-1.5 py-1 rounded"
             style={{
               color: asnColor(primaryAsn),
               background: `${asnColor(primaryAsn)}15`,
@@ -172,7 +172,7 @@ function OperationCard({
               <Link
                 to={tabUrl('actors', { focus: operation.actor_id })}
                 onClick={(e) => e.stopPropagation()}
-                className="font-mono text-[9px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded transition-colors hover:underline"
+                className="font-mono text-[11px] font-bold uppercase tracking-[0.08em] px-1.5 py-0.5 rounded transition-colors hover:underline"
                 style={{
                   color: 'var(--blue-text)',
                   background: 'rgba(10, 138, 181, 0.10)',
@@ -184,7 +184,7 @@ function OperationCard({
               </Link>
             )}
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             {operation.first_detected
               ? `Since ${formatDate(operation.first_detected)}`
               : 'Detection date unknown'}
@@ -209,7 +209,7 @@ function OperationCard({
 
       {/* Metrics row + top-right sparkline */}
       <div className="flex items-end justify-between gap-3">
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono flex-1">
           <div>
             <div style={{ color: 'var(--text-muted)' }}>THREATS</div>
             <div className="text-base" style={{ color: 'var(--text-primary)' }}>
@@ -240,7 +240,7 @@ function OperationCard({
               />
             </div>
             <div
-              className="font-mono text-[8px] tracking-[0.12em] uppercase"
+              className="font-mono text-[11px] tracking-[0.12em] uppercase"
               style={{ color: 'var(--text-muted)' }}
             >
               14d shape
@@ -251,7 +251,7 @@ function OperationCard({
 
       {/* Status / notes footer */}
       {(operation.status === 'accelerating' || operation.status === 'pivot' || operation.agent_notes) && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {operation.status === 'accelerating' && '\u2191 Accelerating \u2014 activity up vs prior week'}
           {operation.status === 'pivot' && '\u2192 Pivot detected \u2014 infrastructure migration'}
           {operation.status !== 'accelerating' && operation.status !== 'pivot' && operation.agent_notes}
@@ -311,7 +311,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left — Cluster Info */}
         <div className="space-y-3">
-          <div className="font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
             Operation Details
           </div>
           <div className="space-y-2">
@@ -333,7 +333,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
 
         {/* Center — Timeline Chart */}
         <div>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
             Threat Timeline (30d)
           </div>
           {timelineLoading ? (
@@ -349,7 +349,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                 </defs>
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 9, fill: '#78A0C8', opacity: 0.5 }}
+                  tick={{ fontSize: 11, fill: '#78A0C8', opacity: 0.5 }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -383,7 +383,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
 
         {/* Right — Agent Notes */}
         <div>
-          <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+          <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
             NEXUS Intelligence
           </div>
           {operation.agent_notes ? (
@@ -402,7 +402,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
 
       {/* Recent Threats Table */}
       <div className="mt-6">
-        <div className="font-mono text-[9px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
+        <div className="font-mono text-[11px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-secondary)' }}>
           Recent Threats
         </div>
         {threatsError && !threats ? (
@@ -415,7 +415,7 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   {['Type', 'Domain', 'Severity', 'First Seen'].map(h => (
-                    <Th key={h} className="p-0 font-mono text-[9px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
+                    <Th key={h} className="p-0 font-mono text-[11px] uppercase tracking-wider text-left py-2 px-2" style={{ color: 'var(--text-tertiary)' }}>
                       {h}
                     </Th>
                   ))}
@@ -429,11 +429,11 @@ function OperationDetailPanel({ operationId, operation }: { operationId: string;
                       {String(threat.malicious_domain ?? '—')}
                     </Td>
                     <Td className="p-0 py-1.5 px-2">
-                      <span className={`inline-flex font-mono text-[9px] font-bold uppercase px-2 py-0.5 rounded border ${severityBadge(String(threat.severity ?? 'low'))}`}>
+                      <span className={`inline-flex font-mono text-[11px] font-bold uppercase px-2 py-0.5 rounded border ${severityBadge(String(threat.severity ?? 'low'))}`}>
                         {String(threat.severity ?? '—')}
                       </span>
                     </Td>
-                    <Td className="p-0 font-mono text-[10px] text-white/55 py-1.5 px-2">
+                    <Td className="p-0 font-mono text-[11px] text-white/55 py-1.5 px-2">
                       {threat.first_seen ? new Date(String(threat.first_seen)).toLocaleDateString() : '—'}
                     </Td>
                   </tr>
@@ -512,14 +512,14 @@ function CampaignCard({
               pulse={status === 'active'}
             />
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             Since {formatDate(campaign.first_seen)} {'\u00B7'} Last seen {formatDate(campaign.last_seen)}
           </div>
         </div>
       </div>
 
       {/* Metrics row (label-above-value, plain colors) */}
-      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+      <div className="grid grid-cols-3 gap-2 text-[11px] font-mono">
         <div>
           <div style={{ color: 'var(--text-muted)' }}>THREATS</div>
           <div className="text-base" style={{ color: 'var(--text-primary)' }}>
@@ -588,7 +588,7 @@ function GeoCampaignCard({
               pulse={status === 'active'}
             />
             <span
-              className="ml-auto font-mono text-[9px] font-bold uppercase tracking-[0.18em]"
+              className="ml-auto font-mono text-[11px] font-bold uppercase tracking-[0.18em]"
               style={{ color: 'var(--text-muted)' }}
             >
               Geopolitical
@@ -596,7 +596,7 @@ function GeoCampaignCard({
           </div>
           {campaign.description && (
             <div
-              className="font-mono text-[10px] mt-0.5 line-clamp-2"
+              className="font-mono text-[11px] mt-0.5 line-clamp-2"
               style={{ color: 'var(--text-tertiary)' }}
             >
               {campaign.description}
@@ -606,7 +606,7 @@ function GeoCampaignCard({
       </div>
 
       {/* Metrics row: adversary count / target count / actor count */}
-      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+      <div className="grid grid-cols-3 gap-2 text-[11px] font-mono">
         <div>
           <div style={{ color: 'var(--text-muted)' }}>ADVERSARY</div>
           <div className="text-base flex items-center gap-1" style={{ color: 'var(--text-primary)' }}>

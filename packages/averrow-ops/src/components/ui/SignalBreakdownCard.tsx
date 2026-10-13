@@ -178,7 +178,7 @@ export function SignalBreakdownCard({
                     </div>
                   )}
                 </div>
-                <Badge variant="info" className="font-mono text-[10px] shrink-0">
+                <Badge variant="info" className="font-mono text-[11px] shrink-0">
                   {weight !== undefined ? `+${weight}` : '—'}
                 </Badge>
               </li>
@@ -195,7 +195,7 @@ export function SignalBreakdownCard({
               uses --text-secondary (60%), which meets the bar. */}
           <div className="flex items-center justify-between mb-2">
             <span
-              className="text-[10px] uppercase tracking-widest font-mono font-bold"
+              className="text-[11px] uppercase tracking-widest font-mono font-bold"
               style={{ color: 'var(--text-secondary)' }}
             >
               Shadow signals — not scoring
@@ -236,7 +236,7 @@ export function SignalBreakdownCard({
                     )}
                   </div>
                   <span
-                    className="shrink-0 font-mono text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded"
+                    className="shrink-0 font-mono text-[11px] uppercase tracking-widest px-1.5 py-0.5 rounded"
                     style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }}
                     title={weight !== undefined ? `Would-be weight: ${weight} (not scored)` : 'Not scored'}
                   >

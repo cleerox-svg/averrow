@@ -138,7 +138,7 @@ function formatCount(n: number): string {
 
 function StoreChip({ store }: { store: string }) {
   return (
-    <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/55 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
       {STORE_LABELS[store] ?? store}
     </span>
   );
@@ -152,7 +152,7 @@ function SeverityPill({ level }: { level: string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {level}
     </span>
   );
@@ -166,7 +166,7 @@ function ClassificationPill({ classification }: { classification: string }) {
     classification === 'legitimate'    ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {classification}
     </span>
   );

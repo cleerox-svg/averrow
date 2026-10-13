@@ -122,7 +122,7 @@ function StatusPanel({
 
       {config.vapid_public_key && (
         <div className="mt-4 pt-4 border-t border-white/[0.06]">
-          <div className="font-mono text-[10px] uppercase tracking-wider text-white/55 mb-1">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-white/55 mb-1">
             VAPID public key
           </div>
           <code className="block break-all font-mono text-[11px] p-2 rounded" style={{
@@ -189,7 +189,7 @@ function BootstrapPanel({
 
       <div className="space-y-3">
         <div>
-          <label className="font-mono text-[10px] uppercase tracking-wider block mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <label className="font-mono text-[11px] uppercase tracking-wider block mb-1" style={{ color: 'var(--text-tertiary)' }}>
             Subject (mailto: or https://)
           </label>
           <Input
@@ -226,7 +226,7 @@ function BootstrapPanel({
             </div>
 
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-wider mb-1" style={{ color: 'var(--text-tertiary)' }}>
                 Private key
               </div>
               <code className="block break-all font-mono text-[11px] p-3 rounded" style={{
@@ -251,7 +251,7 @@ function BootstrapPanel({
             </div>
 
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Next steps
               </div>
               <ol className="text-xs space-y-1.5 pl-4 list-decimal" style={{ color: 'var(--text-secondary)' }}>

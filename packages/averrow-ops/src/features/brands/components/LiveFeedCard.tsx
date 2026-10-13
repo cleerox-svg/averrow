@@ -69,18 +69,18 @@ export function LiveFeedCard() {
                   className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
                   style={{ backgroundColor: dotColor }}
                 />
-                <span className="flex-shrink-0 font-mono text-[9px]" style={{ color: dotColor }}>
+                <span className="flex-shrink-0 font-mono text-[11px]" style={{ color: dotColor }}>
                   {displayType}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-white/60">
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-white/60">
                   {identifier.length > 25 ? identifier.slice(0, 25) + '…' : identifier}
                 </span>
                 {t.country_code && (
-                  <span className="flex-shrink-0 font-mono text-[9px] text-white/55">
+                  <span className="flex-shrink-0 font-mono text-[11px] text-white/55">
                     {t.country_code}
                   </span>
                 )}
-                <span className="flex-shrink-0 font-mono text-[9px] text-white/55">
+                <span className="flex-shrink-0 font-mono text-[11px] text-white/55">
                   {timeAgo(t.created_at)}
                 </span>
               </div>
@@ -91,7 +91,7 @@ export function LiveFeedCard() {
 
       <Link
         to="/contacts"
-        className="mt-3 block text-[10px] transition-colors hover:text-[var(--text-primary)]"
+        className="mt-3 block text-[11px] transition-colors hover:text-[var(--text-primary)]"
         style={{ color: 'var(--amber-text)' }}
       >
         View all in Observatory →

@@ -194,7 +194,7 @@ export function DarkWeb() {
           <FilterSelect label="Severity"       value={severity}       onChange={(v) => { setSeverity(v); setPage(0); }}       options={SEVERITY_OPTIONS} />
           <FilterSelect label="Classification" value={classification} onChange={(v) => { setClassification(v); setPage(0); }} options={CLASSIFICATION_OPTIONS} />
           <FilterSelect label="Status"         value={status}         onChange={(v) => { setStatus(v as DarkWebStatus); setPage(0); }} options={STATUS_OPTIONS} />
-          <div className="ml-auto font-mono text-[10px] text-white/55">
+          <div className="ml-auto font-mono text-[11px] text-white/55">
             {formatCount(total)} match{total === 1 ? '' : 'es'}
           </div>
         </div>
@@ -257,7 +257,7 @@ function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n:
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Source mix · all active</div>
+        <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-3">Source mix · all active</div>
         {data.length === 0 ? (
           <div className="text-white/55 text-xs">No mentions ingested yet.</div>
         ) : (
@@ -289,7 +289,7 @@ function SeverityMixCard({ data, totalActive }: { data: Array<{ severity: string
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Severity mix · all active</div>
+        <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-3">Severity mix · all active</div>
         {totalActive === 0 ? (
           <div className="text-white/55 text-xs">No mentions ingested yet.</div>
         ) : (
@@ -305,7 +305,7 @@ function SeverityMixCard({ data, totalActive }: { data: Array<{ severity: string
               return (
                 <div key={sev}>
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-white/85 uppercase tracking-wider font-mono text-[10px]">{sev}</span>
+                    <span className="text-white/85 uppercase tracking-wider font-mono text-[11px]">{sev}</span>
                     <span className="font-mono text-white/60 tabular-nums">{n.toLocaleString()} · {pct}%</span>
                   </div>
                   <div className="mt-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
@@ -332,7 +332,7 @@ function SearchAndScopeCard({
   return (
     <Card>
       <div className="p-4">
-        <div className="font-mono text-[10px] uppercase tracking-widest text-white/55 mb-3">Search & scope</div>
+        <div className="font-mono text-[11px] uppercase tracking-widest text-white/55 mb-3">Search & scope</div>
         <input
           type="text"
           value={q}
@@ -363,7 +363,7 @@ function FilterSelect({
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <label className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-widest text-white/55">
+    <label className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-white/55">
       <span>{label}</span>
       <select
         value={value}
@@ -397,7 +397,7 @@ function SortableTh({
         className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-[var(--amber-text)]' : ''}`}
       >
         <span>{label}</span>
-        {active && <span className="text-[9px]">{dir === 'asc' ? '↑' : '↓'}</span>}
+        {active && <span className="text-[11px]">{dir === 'asc' ? '↑' : '↓'}</span>}
       </button>
     </Th>
   );
@@ -408,7 +408,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
   return (
     <tr className="hover:bg-white/[0.02]">
       <Td>
-        <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-white/70 bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
           {SOURCE_LABELS[m.source] ?? m.source}
         </span>
       </Td>
@@ -432,7 +432,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             className="text-left hover:text-[var(--amber-text)]"
           >
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
-            {m.brand_domain && <div className="font-mono text-[10px] text-white/55">{m.brand_domain}</div>}
+            {m.brand_domain && <div className="font-mono text-[11px] text-white/55">{m.brand_domain}</div>}
           </button>
         ) : (
           <span className="text-white/55 text-xs">—</span>
@@ -447,7 +447,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
           <span className="text-white/55 text-xs">no snippet</span>
         )}
         {m.classification_reason && (
-          <div className="text-[10px] text-white/55 mt-1 italic line-clamp-1">{m.classification_reason}</div>
+          <div className="text-[11px] text-white/55 mt-1 italic line-clamp-1">{m.classification_reason}</div>
         )}
       </Td>
       <Td>
@@ -466,7 +466,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             href={m.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 mt-1 text-[10px] text-[var(--amber-text)] hover:underline"
+            className="inline-flex items-center gap-1 mt-1 text-[11px] text-[var(--amber-text)] hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             <ExternalLink size={10} /> source

@@ -60,7 +60,7 @@ const TILE_STYLE = {
 };
 
 const LABEL_STYLE = {
-  fontSize: 9,
+  fontSize: 11,
   fontFamily: 'var(--font-mono)',
   letterSpacing: '0.14em',
   color: 'var(--text-muted)',
@@ -141,7 +141,7 @@ export function MetricTile(props: MetricTileProps) {
             : numberProps.value}
         </span>
         {numberProps.suffix && (
-          <span style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
             {numberProps.suffix}
           </span>
         )}

@@ -37,7 +37,7 @@ export function GeoCoverage() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load geo coverage. Try again in a moment.
         </p>
       </Card>
@@ -46,7 +46,7 @@ export function GeoCoverage() {
   if (isLoading || !data) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading coverage…
         </p>
       </Card>
@@ -94,12 +94,12 @@ function WindowTile({ window: w }: { window: GeoCoverageWindow }) {
   return (
     <Card variant={variant} className="p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
           {w.window}
         </span>
         {verdict.sev && <Badge severity={verdict.sev}>{verdict.label}</Badge>}
         {!verdict.sev && (
-          <span className="font-mono text-[9px] tracking-wide uppercase" style={{ color: 'var(--green-text)' }}>
+          <span className="font-mono text-[11px] tracking-wide uppercase" style={{ color: 'var(--green-text)' }}>
             {verdict.label}
           </span>
         )}
@@ -108,7 +108,7 @@ function WindowTile({ window: w }: { window: GeoCoverageWindow }) {
         <span className="font-display text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>
           {w.coverage_pct != null ? `${w.coverage_pct}%` : '—'}
         </span>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
           {w.mapped.toLocaleString()} / {w.total.toLocaleString()}
         </span>
       </div>
@@ -125,7 +125,7 @@ function WindowTile({ window: w }: { window: GeoCoverageWindow }) {
           }}
         />
       </div>
-      <div className="flex items-center justify-between font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center justify-between font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span>{w.unmapped.toLocaleString()} unmapped</span>
         <span>target ≥ 80%</span>
       </div>
@@ -148,7 +148,7 @@ function DailyTrend({ data }: { data: GeoCoveragePayload }) {
     return (
       <Card variant="elevated" className="p-4">
         <SectionHeader title="Coverage trend · last 30d" />
-        <p className="font-mono text-[10px] mt-2" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px] mt-2" style={{ color: 'var(--text-muted)' }}>
           No daily coverage samples yet.
         </p>
       </Card>
@@ -169,7 +169,7 @@ function DailyTrend({ data }: { data: GeoCoveragePayload }) {
             </defs>
             <XAxis
               dataKey="day"
-              tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+              tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
@@ -177,7 +177,7 @@ function DailyTrend({ data }: { data: GeoCoveragePayload }) {
             />
             <YAxis
               domain={[0, 100]}
-              tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+              tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
               axisLine={false}
               tickLine={false}
               tickFormatter={(v) => `${v}%`}
@@ -203,7 +203,7 @@ function DailyTrend({ data }: { data: GeoCoveragePayload }) {
               stroke="var(--text-tertiary)"
               strokeDasharray="3 3"
               strokeWidth={1}
-              label={{ value: 'Target 80%', position: 'insideTopRight', fill: 'var(--text-tertiary)', fontSize: 9, fontFamily: 'var(--font-mono)' }}
+              label={{ value: 'Target 80%', position: 'insideTopRight', fill: 'var(--text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
             />
             <Area
               type="monotone"
@@ -230,7 +230,7 @@ function ExhaustedGrid({ data }: { data: GeoCoveragePayload }) {
     return (
       <div className="space-y-2">
         <SectionHeader title="Exhausted pile · cartographer skipped" />
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           No threats in the exhausted pile — cartographer is keeping up.
         </p>
       </div>
@@ -293,7 +293,7 @@ function ExhaustedCard({
     >
       <div className="flex items-center gap-2 mb-1.5">
         <span
-          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          className="font-mono text-[11px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
           style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
         >
           {rank}
@@ -301,7 +301,7 @@ function ExhaustedCard({
         <span className="font-display text-base font-bold flex-1" style={{ color: 'var(--text-primary)' }}>
           {row.n.toLocaleString()}
         </span>
-        <span className="font-mono text-[10px] font-bold flex-shrink-0" style={{ color: barColor }}>
+        <span className="font-mono text-[11px] font-bold flex-shrink-0" style={{ color: barColor }}>
           {pctOfTotal.toFixed(0)}%
         </span>
         <ChevronDown
@@ -325,10 +325,10 @@ function ExhaustedCard({
           }}
         />
       </div>
-      <div className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }}>
+      <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
         {row.source_feed}
       </div>
-      <div className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+      <div className="font-mono text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
         type: {row.threat_type}
       </div>
     </Card>
@@ -343,13 +343,13 @@ function ExhaustedDetail({ row, pctOfTotal }: { row: GeoCoverageExhaustedByFeed;
         <Stat label="% of total pile" value={`${pctOfTotal.toFixed(1)}%`} />
         <Stat label="Source feed"     value={row.source_feed} mono />
       </div>
-      <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         Threat type
       </div>
       <div className="font-mono text-[12px] mb-4" style={{ color: 'var(--text-primary)' }}>
         {row.threat_type}
       </div>
-      <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
         Why these are exhausted
       </div>
       <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -370,18 +370,18 @@ function SectionHeader({ title, subtitle, count }: { title: string; subtitle?: s
   return (
     <div className="flex items-end justify-between gap-3">
       <div>
-        <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           {title}
         </div>
         {subtitle && (
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             {subtitle}
           </div>
         )}
       </div>
       {count != null && (
         <span
-          className="font-mono text-[10px] px-2 py-0.5 rounded"
+          className="font-mono text-[11px] px-2 py-0.5 rounded"
           style={{
             background: 'var(--bg-input)',
             color:      'var(--text-secondary)',
@@ -398,7 +398,7 @@ function SectionHeader({ title, subtitle, count }: { title: string; subtitle?: s
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div className={mono ? 'text-sm font-mono' : 'text-base font-mono'} style={{ color: 'var(--text-primary)' }}>
         {value}
       </div>

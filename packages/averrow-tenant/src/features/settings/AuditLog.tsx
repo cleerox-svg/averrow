@@ -77,7 +77,7 @@ function Entry({ entry: e }: { entry: AuditEntry }) {
           <span className="text-[13px] text-white/90 font-medium">{auditActionLabel(e.action)}</span>
           {summary && <span className="text-[12px] text-white/55 font-mono truncate">{summary}</span>}
           {denied && (
-            <span className="text-[9px] uppercase tracking-widest font-mono text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.20] rounded px-1.5 py-0.5">
+            <span className="text-[11px] uppercase tracking-widest font-mono text-sev-critical bg-sev-critical/[0.10] border border-sev-critical/[0.20] rounded px-1.5 py-0.5">
               {e.outcome}
             </span>
           )}
@@ -97,7 +97,7 @@ function Pager({
 }) {
   const start = total === 0 ? 0 : page * pageSize + 1;
   const end = page * pageSize + shown;
-  const btn = 'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
+  const btn = 'px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
   return (
     <div className="flex items-center justify-between">
       <span className="text-[11px] text-white/55 font-mono">showing {start}–{end} of {total}</span>

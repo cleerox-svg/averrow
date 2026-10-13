@@ -41,7 +41,7 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
           size="xs"
         />
       </div>
-      <div className="flex items-center gap-4 text-[10px] font-mono text-white/55">
+      <div className="flex items-center gap-4 text-[11px] font-mono text-white/55">
         <span>{seedCount} seeds</span>
         <span>{targetBrands.length} brands</span>
         <span>{channels.join(', ')}</span>
@@ -52,10 +52,10 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
         <Table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/[0.06]">
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5">Channel</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Seeds</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Catches</Th>
-              <Th className="p-0 font-mono text-[9px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Rate</Th>
+              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5">Channel</Th>
+              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Seeds</Th>
+              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Catches</Th>
+              <Th className="p-0 font-mono text-[11px] uppercase tracking-wider text-white/55 pb-1.5 text-right">Rate</Th>
             </tr>
           </thead>
           <tbody>
@@ -95,7 +95,7 @@ function SeedStrategist() {
 
   return (
     <div className="rounded-xl p-4 space-y-3" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+      <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
         Seed Strategist
       </div>
       <button
@@ -106,10 +106,10 @@ function SeedStrategist() {
         {running ? 'Running…' : 'Run Seed Strategist'}
       </button>
       {result && (
-        <div className="text-[10px] font-mono text-white/60 whitespace-pre-wrap">{result}</div>
+        <div className="text-[11px] font-mono text-white/60 whitespace-pre-wrap">{result}</div>
       )}
       {error && (
-        <div className="text-[10px] font-mono text-red-400/80">{error}</div>
+        <div className="text-[11px] font-mono text-red-400/80">{error}</div>
       )}
     </div>
   );
@@ -137,7 +137,7 @@ function CaptureTimeline() {
 
   return (
     <div className="rounded-xl p-4" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
+      <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-3">
         Capture Timeline (30d)
       </div>
       <div className="h-[120px]">
@@ -145,14 +145,14 @@ function CaptureTimeline() {
           <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
             <XAxis
               dataKey="date"
-              tick={{ fontSize: 8, fill: 'var(--border-strong)' }}
+              tick={{ fontSize: 11, fill: 'var(--border-strong)' }}
               tickFormatter={(v: string) => v.slice(8)}
               axisLine={false}
               tickLine={false}
               interval="preserveStartEnd"
             />
             <YAxis
-              tick={{ fontSize: 8, fill: 'var(--border-strong)' }}
+              tick={{ fontSize: 11, fill: 'var(--border-strong)' }}
               axisLine={false}
               tickLine={false}
               allowDecimals={false}
@@ -162,7 +162,7 @@ function CaptureTimeline() {
                 backgroundColor: '#0C1525',
                 border: '1px solid rgba(0,212,255,0.2)',
                 borderRadius: 8,
-                fontSize: 10,
+                fontSize: 11,
                 fontFamily: 'var(--font-mono)',
               }}
               labelStyle={{ color: 'var(--text-tertiary)' }}
@@ -187,7 +187,7 @@ export function CampaignPanel() {
 
   return (
     <div className="rounded-xl p-4 min-h-[400px] space-y-4" style={GLASS_CARD}>
-      <div className="font-mono text-[9px] uppercase tracking-widest text-[var(--text-tertiary)]">
+      <div className="font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)]">
         Campaign Intelligence
       </div>
 

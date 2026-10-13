@@ -128,7 +128,7 @@ export function AdminIncidentDetail() {
         <Badge severity={SEVERITY_TO_BADGE[incident.severity]} />
         <span
           style={{
-            fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
+            fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
             letterSpacing: '0.08em', textTransform: 'uppercase',
             padding: '4px 10px', borderRadius: 100,
             background: STATUS_PILL_BG[incident.status],
@@ -138,7 +138,7 @@ export function AdminIncidentDetail() {
           {incident.status}
         </span>
         <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700,
+          fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 700,
           letterSpacing: '0.08em', textTransform: 'uppercase',
           color: incident.visibility === 'public' ? 'var(--amber)' : 'var(--text-tertiary)',
         }}>
@@ -165,7 +165,7 @@ export function AdminIncidentDetail() {
             ['Mitigation', incident.mitigation],
           ] as const).filter(([, v]) => !!v).map(([label, value], i) => (
             <div key={label} style={{ marginTop: i === 0 ? 0 : 12 }}>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
                 {label}
               </div>
               <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, whiteSpace: 'pre-wrap' }}>
@@ -187,7 +187,7 @@ export function AdminIncidentDetail() {
           the Severity Badge in the header, so we don't lose
           information — we gain platform-wide consistency. */}
       <Card style={{ padding: 14 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           Quick transition
         </div>
         <StateMachineButtons<IncidentStatus>
@@ -201,7 +201,7 @@ export function AdminIncidentDetail() {
 
       {/* Append-update form */}
       <Card style={{ padding: 14 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           Add update
         </div>
         <textarea
@@ -273,7 +273,7 @@ export function AdminIncidentDetail() {
 
       {/* Public promotion drawer */}
       <Card style={{ padding: 14 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           Public visibility
         </div>
         <input
@@ -346,14 +346,14 @@ export function AdminIncidentDetail() {
       {/* Timeline */}
       <Card style={{ padding: 14 }}>
         <div style={{
-          fontFamily: 'var(--font-mono)', fontSize: 10,
+          fontFamily: 'var(--font-mono)', fontSize: 11,
           color: 'var(--text-tertiary)', marginBottom: 12,
           letterSpacing: '0.08em', textTransform: 'uppercase',
           display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         }}>
           <span>Timeline ({updates.length})</span>
           {(data.telemetry_count ?? 0) > 0 && (
-            <span style={{ color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: '0.02em', fontSize: 10 }}>
+            <span style={{ color: 'var(--text-tertiary)', textTransform: 'none', letterSpacing: '0.02em', fontSize: 11 }}>
               {data.telemetry_count} live telemetry events
             </span>
           )}
@@ -394,7 +394,7 @@ export function AdminIncidentDetail() {
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  fontFamily: 'var(--font-mono)', fontSize: 11,
                   color: 'var(--text-tertiary)',
                   marginBottom: 2,
                   letterSpacing: '0.04em',
@@ -404,13 +404,13 @@ export function AdminIncidentDetail() {
                   {u.status && (
                     <span style={{
                       color: STATUS_PILL_TEXT[u.status], fontWeight: 700,
-                      textTransform: 'uppercase', fontSize: 9,
+                      textTransform: 'uppercase', fontSize: 11,
                     }}>
                       → {u.status}
                     </span>
                   )}
                   {u.visibility === 'public' && (
-                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em' }}>
+                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 11, letterSpacing: '0.08em' }}>
                       PUBLIC
                     </span>
                   )}
@@ -434,7 +434,7 @@ export function AdminIncidentDetail() {
                     color: 'var(--text-secondary)',
                     fontFamily: 'var(--font-mono)',
                   }}>
-                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
+                    <span style={{ color: 'var(--amber-text)', fontWeight: 700, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', marginRight: 6 }}>Public</span>
                     {u.public_message}
                   </div>
                 )}
@@ -509,7 +509,7 @@ export function AdminIncidentDetail() {
                           setEditingDraft(u.public_message ?? '');
                         }}
                         style={{
-                          fontFamily: 'var(--font-mono)', fontSize: 10,
+                          fontFamily: 'var(--font-mono)', fontSize: 11,
                           color: 'var(--text-tertiary)',
                           background: 'transparent', border: 'none',
                           cursor: 'pointer', padding: 0,

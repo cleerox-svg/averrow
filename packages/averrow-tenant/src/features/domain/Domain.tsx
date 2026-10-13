@@ -23,7 +23,7 @@ export function Domain() {
       <header>
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-[28px] font-bold text-[var(--text-primary)] tracking-tight">Domain Monitoring</h1>
-          <span className="inline-flex items-center text-[10px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-amber bg-amber/[0.10] border border-amber/[0.20] rounded px-2 py-1">
             Active
           </span>
         </div>
@@ -105,7 +105,7 @@ function HeadlineMetrics({
           'text-white/85';
         return (
           <div key={c.label} className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+            <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
               <Icon size={11} />
               <span className="truncate">{c.label}</span>
             </div>
@@ -138,9 +138,9 @@ function BrandCard({ brand: b }: { brand: DomainBrandSummary }) {
           <div className="text-[11px] text-white/55 font-mono mt-0.5 truncate">{b.canonical_domain}</div>
         </div>
         {totalFindings === 0 ? (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">clear</span>
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">clear</span>
         ) : (
-          <span className="text-[9px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
+          <span className="text-[11px] uppercase tracking-widest font-mono text-white/55 flex-shrink-0">
             {totalFindings} finding{totalFindings === 1 ? '' : 's'}
           </span>
         )}
@@ -148,22 +148,22 @@ function BrandCard({ brand: b }: { brand: DomainBrandSummary }) {
 
       <div className="grid grid-cols-3 gap-3 mt-3">
         <div>
-          <div className="text-[9px] uppercase tracking-widest font-mono text-white/55 mb-1">Malicious</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">Malicious</div>
           <div className="flex items-baseline gap-2">
             <span className={`text-xl font-bold tabular-nums ${b.malicious_threats_total > 0 ? 'text-sev-critical' : 'text-white/90'}`}>
               {b.malicious_threats_total.toLocaleString()}
             </span>
-            <span className="text-[10px] text-white/55">active</span>
+            <span className="text-[11px] text-white/55">active</span>
           </div>
-          <div className="text-[10px] text-white/55 mt-0.5">domains &amp; URLs</div>
+          <div className="text-[11px] text-white/55 mt-0.5">domains &amp; URLs</div>
         </div>
         <div>
-          <div className="text-[9px] uppercase tracking-widest font-mono text-white/55 mb-1">Lookalikes</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">Lookalikes</div>
           <div className="flex items-baseline gap-2">
             <span className="text-xl font-bold tabular-nums text-white/90">{b.lookalikes_registered}</span>
-            <span className="text-[10px] text-white/55">registered</span>
+            <span className="text-[11px] text-white/55">registered</span>
           </div>
-          <div className="text-[10px] text-white/55 mt-0.5">
+          <div className="text-[11px] text-white/55 mt-0.5">
             {b.lookalikes_critical > 0 && (
               <span className="text-sev-critical">{b.lookalikes_critical} critical · </span>
             )}
@@ -174,12 +174,12 @@ function BrandCard({ brand: b }: { brand: DomainBrandSummary }) {
           </div>
         </div>
         <div>
-          <div className="text-[9px] uppercase tracking-widest font-mono text-white/55 mb-1">CT certs</div>
+          <div className="text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">CT certs</div>
           <div className="flex items-baseline gap-2">
             <span className="text-xl font-bold tabular-nums text-white/90">{b.certs_suspicious}</span>
-            <span className="text-[10px] text-white/55">suspicious</span>
+            <span className="text-[11px] text-white/55">suspicious</span>
           </div>
-          <div className="text-[10px] text-white/55 mt-0.5">
+          <div className="text-[11px] text-white/55 mt-0.5">
             {b.certs_malicious > 0 && (
               <span className="text-sev-critical">{b.certs_malicious} malicious · </span>
             )}

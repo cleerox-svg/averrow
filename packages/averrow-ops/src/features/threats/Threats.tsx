@@ -244,14 +244,14 @@ export function Threats() {
               {actorId && <button className="tt-link" style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit' }} onClick={() => navigate(tabUrl('actors', { focus: actorId }))}>↗ Threat actor</button>}
               {transitions.length > 0 && (
                 <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Triage:</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>Triage:</span>
                   {transitions.map(t => (
                     <button
                       key={t.to}
                       onClick={() => updateThreat.mutate({ id: r.id, status: t.to })}
                       disabled={updateThreat.isPending}
                       style={{
-                        fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 600,
+                        fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 600,
                         textTransform: 'uppercase', letterSpacing: '0.06em',
                         padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
                         border: '1px solid var(--border-base)', background: 'transparent',
@@ -377,7 +377,7 @@ function Slicer({ label, value, onChange, options }: {
   options: Array<{ value: string; label: string }>;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider"
+    <label className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider"
       style={{ color: 'var(--text-muted)' }}>
       <span>{label}</span>
       <select
@@ -427,7 +427,7 @@ function ActiveFilterChips(props: {
     <div className="flex flex-wrap items-center gap-2">
       {chips.map(c => (
         <span key={c.label}
-          className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded"
+          className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded"
           style={{
             background: 'rgba(229,168,50,0.10)',
             color: 'var(--amber-text)',
@@ -443,7 +443,7 @@ function ActiveFilterChips(props: {
       ))}
       <button
         onClick={props.onClearAll}
-        className="text-[10px] font-mono uppercase tracking-wider hover:opacity-80 ml-2"
+        className="text-[11px] font-mono uppercase tracking-wider hover:opacity-80 ml-2"
         style={{ color: 'var(--text-tertiary)' }}
       >
         Clear all
@@ -514,7 +514,7 @@ function HeroStrip({ agg, failed }: { agg: ThreatAggregate | null | undefined; f
             <div style={{ position: 'relative' }}>
               <div className="flex items-center gap-2 mb-2">
                 <Icon size={14} style={{ color: accentText(t.accent) }} />
-                <span className="text-[9px] font-mono uppercase tracking-[0.20em]" style={{ color: 'var(--text-tertiary)' }}>
+                <span className="text-[11px] font-mono uppercase tracking-[0.20em]" style={{ color: 'var(--text-tertiary)' }}>
                   {t.label}
                 </span>
               </div>
@@ -629,7 +629,7 @@ function MultiBrandCard({ title, accent, rows, emptyMsg }: {
                 <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                   {r.name}
                 </div>
-                <div className="text-[10px] font-mono text-[var(--text-tertiary)]">
+                <div className="text-[11px] font-mono text-[var(--text-tertiary)]">
                   {r.brand_count} brands · {r.threat_count} threats{r.tag ? ` · ${r.tag}` : ''}
                 </div>
               </div>
@@ -691,7 +691,7 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
                   <span className="text-xs font-mono truncate" style={{ color: 'var(--text-primary)' }}>
                     {s.label.replace(/_/g, ' ')}
                   </span>
-                  <span className="text-[10px] font-mono text-[var(--text-muted)]">
+                  <span className="text-[11px] font-mono text-[var(--text-muted)]">
                     {s.kind}
                   </span>
                 </div>
@@ -699,7 +699,7 @@ function SurgingSignalsPanel({ agg, failed, onRetry }: { agg: ThreatAggregate | 
                   <div className="text-sm font-bold" style={{ color: accentText(accent) }}>
                     {isUp ? '+' : ''}{s.delta_pct}%
                   </div>
-                  <div className="text-[10px] font-mono text-[var(--text-tertiary)]">
+                  <div className="text-[11px] font-mono text-[var(--text-tertiary)]">
                     {s.current_7d} vs {s.previous_7d}
                   </div>
                 </div>
@@ -792,7 +792,7 @@ function Leaderboard({ title, accent, rows }: {
                     {r.label}
                   </div>
                   {r.sub && (
-                    <div className="text-[10px] font-mono text-[var(--text-tertiary)] truncate">{r.sub}</div>
+                    <div className="text-[11px] font-mono text-[var(--text-tertiary)] truncate">{r.sub}</div>
                   )}
                 </div>
                 <span className="text-xs font-bold flex-shrink-0" style={{ color: accentText(accent) }}>

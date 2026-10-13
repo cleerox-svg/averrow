@@ -294,7 +294,7 @@ function CardHealthChart({
 function ComplianceChip({ label, ok }: { label: string; ok: boolean }) {
   return (
     <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[9px] tracking-wide uppercase"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded font-mono text-[11px] tracking-wide uppercase"
       style={{
         background: ok ? 'rgba(60,184,120,0.10)' : 'rgba(255,255,255,0.04)',
         color:      ok ? 'var(--green)' : 'var(--text-muted)',
@@ -311,7 +311,7 @@ function ConnectivityChips({ agentName }: { agentName: string }) {
   if (!chain || (!chain.upstream && !chain.downstream)) return null;
 
   return (
-    <div className="flex items-center gap-2 flex-wrap font-mono text-[9px]" style={{ color: 'var(--text-tertiary)' }}>
+    <div className="flex items-center gap-2 flex-wrap font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
       {chain.upstream && chain.upstream.length > 0 && (
         <>
           <span style={{ color: 'var(--text-muted)' }}>←</span>
@@ -361,10 +361,10 @@ function NetworkSection({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <GitBranch size={14} style={{ color: 'var(--blue-text)' }} />
-        <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Network View
         </span>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           · trigger chain · click a node to spotlight its subgraph
         </span>
       </div>
@@ -424,7 +424,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
               </Badge>
             )}
           </div>
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
             Last run {lastRun}
           </div>
         </div>
@@ -440,7 +440,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
       </div>
 
       <div className="flex items-end justify-between gap-3">
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-mono flex-1">
+        <div className="grid grid-cols-3 gap-2 text-[11px] font-mono flex-1">
           <div>
             <div style={{ color: 'var(--text-muted)' }}>JOBS 24H</div>
             <div className="text-base" style={{ color: 'var(--text-primary)' }}>{agent.jobs_24h}</div>
@@ -476,7 +476,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
               ticks={agent.recent_ticks}
               fallbackActivity={agent.activity}
             />
-            <div className="font-mono text-[8px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
+            <div className="font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-muted)' }}>
               24h shape · 5h instances
             </div>
           </div>
@@ -486,7 +486,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
       <ConnectivityChips agentName={agent.name} />
 
       <div>
-        <div className="font-mono text-[9px] tracking-[0.15em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.15em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Compliance · {okCount}/{COMPLIANCE_AXES.length}
         </div>
         <div className="flex flex-wrap gap-1">
@@ -497,7 +497,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
       </div>
 
       {failurePattern && (
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           {failurePattern.reason}
         </div>
       )}
@@ -523,10 +523,10 @@ function HealthChart({ name }: { name: string }) {
   }, [data]);
 
   if (isLoading) {
-    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading 24h health…</div>;
+    return <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>Loading 24h health…</div>;
   }
   if (!data || chartData.length === 0) {
-    return <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No runs in last 24 hours</div>;
+    return <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>No runs in last 24 hours</div>;
   }
 
   return (
@@ -549,7 +549,7 @@ function HealthChart({ name }: { name: string }) {
           </defs>
           <XAxis
             dataKey="hour"
-            tick={{ fontSize: 9, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
+            tick={{ fontSize: 11, fill: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}
             axisLine={false}
             tickLine={false}
             interval="preserveStartEnd"
@@ -596,7 +596,7 @@ function HealthChart({ name }: { name: string }) {
           )}
         </AreaChart>
       </ResponsiveContainer>
-      <div className="flex items-center gap-3 mt-1 font-mono text-[9px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="flex items-center gap-3 mt-1 font-mono text-[11px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--amber)', opacity: 0.6 }} />
           Runs
@@ -628,7 +628,7 @@ function OutputRow({ output }: { output: AgentOutput }) {
       <span className="w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5" style={{ background: dotColor }} />
       <div className="min-w-0 flex-1">
         <div className="text-xs line-clamp-2" style={{ color: 'var(--text-primary)' }}>{output.summary}</div>
-        <div className="font-mono text-[9px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
           {output.type} · {relativeTime(output.created_at)}
         </div>
       </div>
@@ -651,7 +651,7 @@ function AgentControlBar({ agent }: { agent: Agent }) {
     <button
       onClick={onClick}
       disabled={busy}
-      className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md transition-all disabled:opacity-40"
+      className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md transition-all disabled:opacity-40"
       style={{ border: '1px solid var(--border-base)', background: 'transparent', color }}
     >
       {label}
@@ -660,13 +660,13 @@ function AgentControlBar({ agent }: { agent: Agent }) {
 
   return (
     <div className="mb-4 pb-4 border-b flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--border-base)' }}>
-      <span className="font-mono text-[9px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
+      <span className="font-mono text-[11px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
       {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--amber)', () => trigger.mutate(agent.name))}
       {isPaused
         ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
         : btn(toggle.isPending ? 'Pausing…' : 'Pause', 'var(--text-secondary)', () => toggle.mutate({ agentId: agent.name, enabled: false }))}
       {isTripped && btn(resetCircuit.isPending ? 'Resetting…' : 'Reset circuit', 'var(--sev-high)', () => resetCircuit.mutate(agent.name))}
-      {failed && <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>Action failed — retry</span>}
+      {failed && <span className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>Action failed — retry</span>}
     </div>
   );
 }
@@ -693,7 +693,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
       {isAdmin && <AgentControlBar agent={agent} />}
       {meta?.subtitle && (
         <div className="mb-5 pb-4 border-b" style={{ borderColor: 'var(--border-base)' }}>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--text-tertiary)' }}>
             What it does
           </div>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -704,7 +704,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-4">
           <div>
-            <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+            <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
               Health · 24h runs · outputs · errors
             </div>
             <HealthChart name={agent.name} />
@@ -712,15 +712,15 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
           {detail?.stats && (
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total runs</div>
+                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total runs</div>
                 <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{detail.stats.total_runs}</div>
               </div>
               <div>
-                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
+                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Successes</div>
                 <div className="text-lg font-mono" style={{ color: 'var(--green-text)' }}>{detail.stats.successes}</div>
               </div>
               <div>
-                <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
+                <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Failures</div>
                 <div className="text-lg font-mono" style={{ color: detail.stats.failures > 0 ? 'var(--sev-high)' : 'var(--text-primary)' }}>
                   {detail.stats.failures}
                 </div>
@@ -731,22 +731,22 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
               look. All-time per-agent from agent_runs.tokens_used. */}
           {tu && tu.total_tokens > 0 && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
                 Token usage · all-time
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
+                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
                   <div className="text-lg font-mono" style={{ color: 'var(--amber-text)' }}>{fmtTokens(tu.total_tokens)}</div>
                 </div>
                 <div>
-                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
+                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
                   <div className="text-sm font-mono pt-1" style={{ color: 'var(--text-secondary)' }}>
                     {fmtTokens(tu.total_input_tokens)} · {fmtTokens(tu.total_output_tokens)}
                   </div>
                 </div>
                 <div>
-                  <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Runs w/ AI</div>
+                  <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Runs w/ AI</div>
                   <div className="text-lg font-mono" style={{ color: 'var(--text-primary)' }}>{tu.runs_with_tokens.toLocaleString()}</div>
                 </div>
               </div>
@@ -754,7 +754,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
           )}
           {agent.last_run_error && (
             <div>
-              <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>Last error</div>
+              <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1" style={{ color: 'var(--sev-high-text)' }}>Last error</div>
               <div className="font-mono text-[11px] p-2 rounded" style={{
                 background: 'var(--sev-critical-bg)',
                 color:      'var(--text-primary)',
@@ -767,13 +767,13 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
         </div>
 
         <div>
-          <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
+          <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-2" style={{ color: 'var(--text-tertiary)' }}>
             Recent outputs · last 5
           </div>
           {isLoading ? (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>Loading…</div>
+            <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>Loading…</div>
           ) : recentOutputs.length === 0 ? (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>No outputs persisted yet</div>
+            <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>No outputs persisted yet</div>
           ) : (
             <div>{recentOutputs.map(o => <OutputRow key={o.id} output={o} />)}</div>
           )}
@@ -787,13 +787,13 @@ function GroupHeader({ label, description, count }: { label: string; description
   return (
     <div className="flex items-end justify-between gap-3 mb-3">
       <div>
-        <div className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           {label}
         </div>
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{description}</div>
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{description}</div>
       </div>
       <span
-        className="font-mono text-[10px] px-2 py-0.5 rounded"
+        className="font-mono text-[11px] px-2 py-0.5 rounded"
         style={{ background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-base)' }}
       >
         {count}
@@ -816,10 +816,10 @@ function SupervisorSection({
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Shield size={14} style={{ color: 'var(--amber-text)' }} />
-        <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Supervisors
         </span>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
           · agents managing other agents
         </span>
       </div>
@@ -877,7 +877,7 @@ function ViewModeToggle({ value, onChange }: { value: ViewMode; onChange: (v: Vi
             role="radio"
             aria-checked={active}
             onClick={() => onChange(opt.id)}
-            className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase transition-colors"
+            className="px-2.5 py-1 font-mono text-[11px] tracking-[0.18em] uppercase transition-colors"
             style={{
               background: active ? 'var(--blue)' : 'transparent',
               color:      active ? '#0A0F1C' : 'var(--text-secondary)',
@@ -976,7 +976,7 @@ export function Agents() {
             {isSuperAdmin && (
               <Link
                 to="/agents/approvals"
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
+                className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
                 style={{ borderColor: 'var(--border-base)', color: 'var(--text-secondary)' }}
               >
                 Approvals
@@ -985,7 +985,7 @@ export function Agents() {
             {isAdmin && (
               <Link
                 to="/agents/architect"
-                className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
+                className="font-mono text-[11px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all"
                 style={{ borderColor: 'var(--border-base)', color: 'var(--text-secondary)' }}
               >
                 Architect
@@ -1014,12 +1014,12 @@ export function Agents() {
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {stalled.slice(0, 8).map(r => (
-              <span key={r.id} className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+              <span key={r.id} className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                 {r.agent_id} <span style={{ color: 'var(--text-muted)' }}>· started {relativeTime(r.started_at)}</span>
               </span>
             ))}
             {stalled.length > 8 && (
-              <span className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>+{stalled.length - 8} more</span>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>+{stalled.length - 8} more</span>
             )}
           </div>
         </Card>

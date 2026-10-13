@@ -69,19 +69,19 @@ function ClusterRow({
         {cluster.threat_count.toLocaleString()}
       </Td>
       <Td
-        className="px-3 py-2 font-mono text-[10px]"
+        className="px-3 py-2 font-mono text-[11px]"
         style={{ color: 'var(--text-secondary)' }}
       >
         {cluster.asns ? cluster.asns.split(',').slice(0, 2).join(', ') : '—'}
       </Td>
       <Td
-        className="px-3 py-2 font-mono text-[10px]"
+        className="px-3 py-2 font-mono text-[11px]"
         style={{ color: 'var(--text-secondary)' }}
       >
         {cluster.countries ? cluster.countries.split(',').slice(0, 3).join(', ') : '—'}
       </Td>
       <Td
-        className="px-3 py-2 text-center font-mono text-[10px]"
+        className="px-3 py-2 text-center font-mono text-[11px]"
         style={{
           color: cluster.attribution_attempted_at
             ? 'var(--sev-high)'
@@ -91,13 +91,13 @@ function ClusterRow({
         {cluster.attribution_attempted_at ? 'AI: unknown' : 'never tried'}
       </Td>
       <Td
-        className="px-3 py-2 font-mono text-[10px]"
+        className="px-3 py-2 font-mono text-[11px]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {relTime(cluster.first_detected)}
       </Td>
       <Td
-        className="px-3 py-2 font-mono text-[10px]"
+        className="px-3 py-2 font-mono text-[11px]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {relTime(cluster.last_seen)}
@@ -110,7 +110,7 @@ function ClusterRow({
             aria-expanded={pickerOpen}
             aria-controls={`attribute-picker-${cluster.id}`}
             disabled={busy}
-            className="font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
+            className="font-mono text-[11px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
             style={{ color: 'var(--amber-text)', background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(229,168,50,0.35)' }}
           >
             {pickerOpen ? 'Close' : 'Attribute'}
@@ -119,7 +119,7 @@ function ClusterRow({
             type="button"
             onClick={onDismiss}
             disabled={busy}
-            className="font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
+            className="font-mono text-[11px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
             style={{ color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.30)', border: '1px solid var(--border-base)' }}
           >
             Dismiss
@@ -171,18 +171,18 @@ function AttributePickerRow({ cluster, onDone }: {
               className="max-w-xs"
               autoFocus
             />
-            {isFetching && <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>Searching…</span>}
-            {attribute.isPending && <span className="font-mono text-[10px]" style={{ color: 'var(--amber-text)' }}>Attributing…</span>}
+            {isFetching && <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>Searching…</span>}
+            {attribute.isPending && <span className="font-mono text-[11px]" style={{ color: 'var(--amber-text)' }}>Attributing…</span>}
             {attribute.isError && (
-              <span className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+              <span className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
                 {(attribute.error as Error).message}
               </span>
             )}
-            {result && <span className="font-mono text-[10px]" style={{ color: 'var(--green-text)' }}>{result}</span>}
+            {result && <span className="font-mono text-[11px]" style={{ color: 'var(--green-text)' }}>{result}</span>}
           </div>
           {q.trim().length >= 2 && !result && (
             actors.length === 0 && !isFetching ? (
-              <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 No actors match "{q}". Actors are created by the feeds/attributor — check the Explorer → Threat Actors tab.
               </div>
             ) : (
@@ -299,7 +299,7 @@ export function AttributionBacklog() {
       <Card padding={0} className="overflow-hidden">
         <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border-base)' }}>
           <div
-            className="font-mono text-[10px] uppercase tracking-widest"
+            className="font-mono text-[11px] uppercase tracking-widest"
             style={{ color: 'var(--text-secondary)' }}
           >
             Page {page} of {totalPages} · sorted by threat count
@@ -355,7 +355,7 @@ export function AttributionBacklog() {
         {/* Pagination — unattributed count drives the page total */}
         {(totals?.unattributed ?? 0) > BACKLOG_PAGE_SIZE && (
           <div className="flex items-center justify-between px-4 py-3 border-t" style={{ borderColor: 'var(--border-base)' }}>
-            <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+            <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
               {(totals?.unattributed ?? 0).toLocaleString()} unattributed clusters
             </span>
             <div className="flex gap-2">

@@ -82,7 +82,7 @@ const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
 
 const sectionEyebrow: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 9,
+  fontSize: 11,
   fontWeight: 700,
   letterSpacing: '0.22em',
   textTransform: 'uppercase',
@@ -114,7 +114,7 @@ function CustomTooltip({ active, payload, label }: { active?: boolean; payload?:
       className="rounded-lg border px-3 py-2 backdrop-blur-sm"
       style={{ background: 'var(--bg-card)', borderColor: 'var(--border-strong)' }}
     >
-      <div style={{ ...mono, fontSize: 10, ...textTertiary }}>{label}</div>
+      <div style={{ ...mono, fontSize: 11, ...textTertiary }}>{label}</div>
       <div style={{ ...mono, fontSize: 13, fontWeight: 700, ...textPrimary }}>{fmt(payload[0].value)} threats</div>
     </div>
   );
@@ -574,7 +574,7 @@ function MaintenanceSection() {
             <Cpu size={14} style={{ color: 'var(--amber-text)' }} />
             <div style={sectionEyebrow}>Maintenance Operations</div>
           </div>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--amber-text)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 11, color: 'var(--amber-text)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
             <AlertTriangle size={11} /> Super Admin
           </span>
         </div>
@@ -899,12 +899,12 @@ export function AdminDashboard() {
                             </defs>
                             <XAxis
                               dataKey="date"
-                              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              tick={{ fill: 'var(--text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                               axisLine={false}
                               tickLine={false}
                             />
                             <YAxis
-                              tick={{ fill: 'var(--text-tertiary)', fontSize: 10, fontFamily: 'var(--font-mono)' }}
+                              tick={{ fill: 'var(--text-tertiary)', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                               axisLine={false}
                               tickLine={false}
                               tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v))}
@@ -1228,7 +1228,7 @@ export function AdminDashboard() {
 }
 
 function BigStat({ value, label, tone }: { value: string; label: string; tone?: 'green' | 'red' }) {
-  const color = tone === 'green' ? 'var(--green)' : tone === 'red' ? 'var(--red)' : 'var(--text-primary)';
+  const color = tone === 'green' ? accentText('var(--green)') : tone === 'red' ? accentText('var(--red)') : 'var(--text-primary)';
   return (
     <div>
       <div style={{
@@ -1301,7 +1301,7 @@ function ComplianceItem({ ok, label, sub }: { ok: boolean; label: string; sub?: 
         flexShrink: 0, width: 18, height: 18, borderRadius: 999,
         display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1,
         background: ok ? 'rgba(60,184,120,0.15)' : 'rgba(248,113,113,0.15)',
-        color: ok ? 'var(--green)' : 'var(--red)',
+        color: ok ? 'var(--green-text)' : 'var(--red-text)',
         fontSize: 11, fontWeight: 700,
       }}>
         {ok ? '✓' : '!'}

@@ -99,7 +99,7 @@ export function AgentApprovals() {
                         <span className="font-display text-base font-bold" style={{ color: 'var(--text-primary)' }}>
                           {meta?.displayName ?? row.agent_id}
                         </span>
-                        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                        <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                           {row.agent_id}
                         </span>
                         <Badge severity={badge.severity} label={badge.label} size="xs" />
@@ -109,7 +109,7 @@ export function AgentApprovals() {
                           {meta.subtitle}
                         </div>
                       )}
-                      <div className="flex items-center gap-4 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                      <div className="flex items-center gap-4 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                         <span className="inline-flex items-center gap-1">
                           <Clock size={10} />
                           Requested {relativeTime(row.requested_at)}
@@ -132,7 +132,7 @@ export function AgentApprovals() {
                         )}
                       </div>
                     </div>
-                    <div className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                    <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                       {stateLabel(row.state)}
                     </div>
                   </div>

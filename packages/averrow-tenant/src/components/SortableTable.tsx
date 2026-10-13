@@ -78,7 +78,7 @@ export function SortableTable<T>({
                     key={col.key}
                     onClick={() => toggle(col)}
                     className={[
-                      'px-4 py-2.5 text-[10px] uppercase tracking-[0.12em] font-mono font-normal select-none',
+                      'px-4 py-2.5 text-[11px] uppercase tracking-[0.12em] font-mono font-normal select-none',
                       alignCls(col.align),
                       col.widthClassName ?? '',
                       sortable ? 'cursor-pointer hover:text-white/80' : '',
@@ -136,7 +136,7 @@ export function SeverityPill({ severity }: { severity: string | null }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.07]        border-amber/[0.15]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.10]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {sev || '—'}
     </span>
   );
@@ -150,7 +150,7 @@ export function Pill({ children, tone = 'neutral' }: { children: ReactNode; tone
     tone === 'info' ? 'text-blue      bg-blue/[0.08]         border-blue/[0.18]'         :
                       'text-white/60     bg-white/[0.04]        border-white/[0.10]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${cls}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${cls}`}>
       {children}
     </span>
   );

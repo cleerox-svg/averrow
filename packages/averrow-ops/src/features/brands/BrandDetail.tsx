@@ -425,7 +425,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
               return (
                 <span
                   key={t.name}
-                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md font-mono text-[10px]"
+                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md font-mono text-[11px]"
                   style={{
                     background: 'var(--bg-card-deep)',
                     border: `1px solid ${accent}40`,
@@ -587,14 +587,14 @@ function SignalFilterRow({
 }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-[10px] uppercase tracking-widest font-mono text-[var(--text-tertiary)] mr-1">
+      <span className="text-[11px] uppercase tracking-widest font-mono text-[var(--text-tertiary)] mr-1">
         {label}
       </span>
       {options.map((opt) => (
         <button
           key={opt.key}
           onClick={() => onChange(opt.key)}
-          className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors ${
+          className={`px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors ${
             value === opt.key
               ? 'bg-[var(--amber-glow)] text-[var(--amber-text)] border-[var(--amber-border)]'
               : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85'
@@ -797,7 +797,7 @@ function AttackInfraSection({ providers, campaigns }: {
       <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Hosting providers → /providers?focus=:id (inline auto-expand) */}
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
             Hosting providers <span className="text-[var(--text-muted)]">({providers.length})</span>
           </div>
           <div className="space-y-1">
@@ -812,7 +812,7 @@ function AttackInfraSection({ providers, campaigns }: {
                 <span className="min-w-0 flex-1 truncate text-sm text-[var(--text-primary)]">{p.name}</span>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {p.active_count > 0 && (
-                    <span className="font-mono text-[9px] uppercase tracking-wide text-[var(--sev-high-text)]">{p.active_count} active</span>
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-[var(--sev-high-text)]">{p.active_count} active</span>
                   )}
                   <span className="font-mono text-xs font-bold text-[var(--blue-text)]">{p.threat_count.toLocaleString()}</span>
                   <span className="text-[var(--text-muted)]">→</span>
@@ -824,7 +824,7 @@ function AttackInfraSection({ providers, campaigns }: {
 
         {/* Linked campaigns → /campaigns/:id */}
         <div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+          <div className="font-mono text-[11px] uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
             Linked campaigns <span className="text-[var(--text-muted)]">({campaigns.length})</span>
           </div>
           <div className="space-y-1">
@@ -882,7 +882,7 @@ function EmailSecurityHistoryStrip({ history }: { history: EmailSecurityHistoryP
     <Card>
       <div className="flex items-center justify-between mb-2">
         <SectionLabel>Email posture · {chrono.length}-scan history</SectionLabel>
-        <div className="font-mono text-[10px] text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] text-[var(--text-tertiary)]">
           {first.protocols_passing}/4 → {last.protocols_passing}/4
         </div>
       </div>
@@ -908,7 +908,7 @@ function EmailSecurityHistoryStrip({ history }: { history: EmailSecurityHistoryP
           );
         })}
       </div>
-      <div className="flex items-center justify-between mt-2 font-mono text-[10px] text-[var(--text-muted)]">
+      <div className="flex items-center justify-between mt-2 font-mono text-[11px] text-[var(--text-muted)]">
         <span>{first.scanned_at?.slice(0, 10) ?? ''}</span>
         <span>SPF · DKIM · DMARC · MX</span>
         <span>{last.scanned_at?.slice(0, 10) ?? ''}</span>
@@ -944,7 +944,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
             Narrator agent · what the platform thinks is happening to this brand
           </div>
         </div>
-        <div className="font-mono text-[10px] text-[var(--text-tertiary)]">
+        <div className="font-mono text-[11px] text-[var(--text-tertiary)]">
           {narratives.length} active
         </div>
       </div>
@@ -964,7 +964,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
             >
               <div className="flex items-start gap-3 mb-1.5">
                 <span
-                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded font-mono text-[9px] font-bold uppercase tracking-wider flex-shrink-0"
+                  className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded font-mono text-[11px] font-bold uppercase tracking-wider flex-shrink-0"
                   style={{ background: `color-mix(in srgb, ${sev.color} 13%, transparent)`, color: accentText(sev.color), border: `1px solid color-mix(in srgb, ${sev.color} 25%, transparent)` }}
                 >
                   <span style={{ width: 5, height: 5, borderRadius: 999, background: sev.color, boxShadow: `0 0 6px ${sev.color}` }} />
@@ -973,7 +973,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
                 <div className="text-[13px] font-semibold text-[var(--text-primary)] leading-tight flex-1">
                   {n.title}
                 </div>
-                <div className="font-mono text-[10px] text-[var(--text-tertiary)] flex-shrink-0">
+                <div className="font-mono text-[11px] text-[var(--text-tertiary)] flex-shrink-0">
                   {timeAgo(n.created_at)}
                 </div>
               </div>
@@ -985,7 +985,7 @@ function NarrativesPanel({ narratives }: { narratives: BrandNarrative[] }) {
                   {n.signal_types.slice(0, 6).map((s) => (
                     <span
                       key={s}
-                      className="px-1.5 py-0.5 rounded font-mono text-[9px] uppercase tracking-wider"
+                      className="px-1.5 py-0.5 rounded font-mono text-[11px] uppercase tracking-wider"
                       style={{
                         background: 'var(--bg-card)',
                         color: 'var(--text-tertiary)',
@@ -1046,7 +1046,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
       <div className="flex items-baseline justify-between">
         <SectionLabel>Typosquats <span className="text-[var(--text-muted)]">({rows.length})</span></SectionLabel>
         {(critical > 0 || high > 0) && (
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono">
             {critical > 0 && <span className="text-[var(--sev-critical-text)]">{critical} critical</span>}
             {high > 0 && <span className="text-[var(--amber-text)]">{high} high</span>}
           </div>
@@ -1073,13 +1073,13 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
                 <TsTd>
                   {r.source_feed === 'abuse_mailbox' ? (
                     <span
-                      className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--amber-text)] bg-[var(--amber-glow)] border border-[var(--amber-border)] rounded px-1.5 py-0.5"
+                      className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-[var(--amber-text)] bg-[var(--amber-glow)] border border-[var(--amber-border)] rounded px-1.5 py-0.5"
                       title="Reported via abuse mailbox — community-submitted phishing capture"
                     >
                       community report
                     </span>
                   ) : (
-                    <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
                       {tsShortSource(r.source_feed)}
                     </span>
                   )}
@@ -1087,7 +1087,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
                 <TsTd className="text-[var(--text-secondary)] truncate max-w-[180px]">
                   {r.hosting_provider ?? <span className="text-[var(--text-muted)]">unknown</span>}
                   {r.country_code && (
-                    <span className="ml-1.5 text-[10px] font-mono text-[var(--text-muted)]">{r.country_code}</span>
+                    <span className="ml-1.5 text-[11px] font-mono text-[var(--text-muted)]">{r.country_code}</span>
                   )}
                 </TsTd>
                 <TsTd className="text-[var(--text-muted)] font-mono text-[11px]">
@@ -1230,18 +1230,18 @@ function PageAnalysisRow({ row }: { row: LookalikeDomain }) {
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <span className="font-mono text-[13px] text-[var(--text-primary)]">{row.domain}</span>
         {row.page_anti_bot_wall && (
-          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--sev-medium-text)] bg-[var(--sev-medium-bg)] border border-[var(--sev-medium-border)] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-[var(--sev-medium-text)] bg-[var(--sev-medium-bg)] border border-[var(--sev-medium-border)] rounded px-1.5 py-0.5">
             {row.page_anti_bot_wall.replace(/_/g, ' ')}
           </span>
         )}
         {row.page_generator && (
-          <span className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
+          <span className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-[var(--text-secondary)] bg-white/[0.04] border border-white/[0.08] rounded px-1.5 py-0.5">
             {row.page_generator}
           </span>
         )}
         {row.page_exfil_sink && (
           <span
-            className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border border-[var(--sev-critical-border)] rounded px-1.5 py-0.5"
+            className="inline-flex items-center text-[11px] uppercase tracking-widest font-mono text-[var(--sev-critical-text)] bg-[var(--sev-critical-bg)] border border-[var(--sev-critical-border)] rounded px-1.5 py-0.5"
             title="Covert/relay exfil sink — host only. Never a live link."
           >
             sink: {defangExfilHost(row.page_exfil_sink)}
@@ -1249,7 +1249,7 @@ function PageAnalysisRow({ row }: { row: LookalikeDomain }) {
           </span>
         )}
         {row.page_fetched_at && (
-          <span className="text-[10px] font-mono text-[var(--text-secondary)]">
+          <span className="text-[11px] font-mono text-[var(--text-secondary)]">
             checked {timeAgo(row.page_fetched_at)}
           </span>
         )}
@@ -1276,7 +1276,7 @@ function tsShortSource(source: string | null | undefined): string {
 }
 
 function TsTh({ children }: { children: React.ReactNode }) {
-  return <Th className="text-[10px] tracking-widest font-normal">{children}</Th>;
+  return <Th className="text-[11px] tracking-widest font-normal">{children}</Th>;
 }
 
 function TsTd({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -1469,11 +1469,11 @@ function ScoreCard({
           <span style={{
             padding: '2px 8px', borderRadius: 4,
             background: 'rgba(60,184,120,0.10)', color: 'var(--green-text)',
-            fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700,
+            fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 700,
           }}>{grade}</span>
         )}
       </div>
-      <div className="mt-1 text-[10px] text-[var(--text-muted)] font-mono">{subtitle}</div>
+      <div className="mt-1 text-[11px] text-[var(--text-muted)] font-mono">{subtitle}</div>
 
       <div className="mt-3 flex items-end gap-3">
         <div style={{
@@ -1483,7 +1483,7 @@ function ScoreCard({
         }}>
           {empty ? '—' : score}
         </div>
-        <div className="text-[10px] text-[var(--text-tertiary)] font-mono">
+        <div className="text-[11px] text-[var(--text-tertiary)] font-mono">
           / 100
         </div>
       </div>
@@ -1495,14 +1495,14 @@ function ScoreCard({
             border: '1px dashed var(--border-base)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <span className="text-[10px] font-mono text-[var(--text-muted)]">
+            <span className="text-[11px] font-mono text-[var(--text-muted)]">
               {series.length === 0 ? 'no history' : '1 sample'}
             </span>
           </div>
         ) : (
           <Sparkline data={series} fill height={28} color={accent} animate={false} baseline="zero" />
         )}
-        <div className="mt-1 flex items-center justify-between text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-1 flex items-center justify-between text-[11px] font-mono text-[var(--text-muted)]">
           <span>{series.length > 0 ? `${series.length}d trend` : 'No trend yet'}</span>
           {updatedAt && <span>updated {timeAgo(updatedAt)}</span>}
         </div>
@@ -1570,10 +1570,10 @@ function HealthExposureQuadrant({
           )}
         </svg>
         {/* Axis labels */}
-        <div className="absolute bottom-0 right-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
+        <div className="absolute bottom-0 right-0 text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wider">
           → Exposure
         </div>
-        <div className="absolute top-0 left-0 text-[9px] font-mono text-[var(--text-muted)] uppercase tracking-wider"
+        <div className="absolute top-0 left-0 text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wider"
           style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' }}>
           ↑ Health
         </div>
@@ -1657,11 +1657,11 @@ function DomainRow({ domain, apex = false }: { domain: BrandDomain; apex?: boole
       <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--amber)' : 'var(--text-primary)' }}>
         {domain.domain}
       </code>
-      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+      <span className="text-[11px] font-mono px-1.5 py-0.5 rounded"
         style={{ background: 'var(--bg-card)', color: 'var(--text-tertiary)' }}>
         {DOMAIN_TYPE_LABEL[domain.domain_type] ?? domain.domain_type}
       </span>
-      <span className="text-[10px] font-mono text-[var(--text-muted)]">
+      <span className="text-[11px] font-mono text-[var(--text-muted)]">
         {domain.source}
       </span>
     </div>
@@ -1693,7 +1693,7 @@ function FirmographicBlock({
       <div className="flex items-center justify-between mb-3">
         <SectionLabel>Who you are</SectionLabel>
         {firmographics?.source && (
-          <span className="text-[10px] font-mono text-[var(--text-muted)]">
+          <span className="text-[11px] font-mono text-[var(--text-muted)]">
             via {firmographics.source.replace(/_/g, ' ')}
           </span>
         )}
@@ -1744,7 +1744,7 @@ function FootprintTile({
         background: 'var(--bg-input)',
       }}
     >
-      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
       <div className={`mt-1 text-sm ${mono ? 'font-mono' : 'font-semibold'} text-[var(--text-primary)]`}>{value}</div>
       {sub && <div className="mt-1 text-[11px] text-[var(--text-tertiary)]">{sub}</div>}
     </div>
@@ -1763,7 +1763,7 @@ function RollupTile({
       className={onClick ? 'cursor-pointer hover:bg-white/[0.02] transition-colors' : ''}
       style={{ padding: 12, borderRadius: 8, border: '1px solid var(--border-base)', background: 'var(--bg-input)' }}
     >
-      <div className="text-[10px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
+      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-[var(--text-muted)]">{label}</div>
       <div className="mt-1 text-2xl font-bold" style={{ color }}>{count}</div>
     </div>
   );
@@ -1786,7 +1786,7 @@ function TakedownRow({ takedown, breached = false }: { takedown: any; breached?:
         <div className="text-xs font-mono text-[var(--text-primary)] truncate">
           {takedown.target_value}
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-[var(--text-muted)]">
+        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] font-mono text-[var(--text-muted)]">
           <span>{takedown.target_type}</span>
           <span>·</span>
           <span>{takedown.provider_name || 'no provider'}</span>
@@ -1822,7 +1822,7 @@ function AlertRow({ alert }: { alert: any }) {
     }}>
       <div className="min-w-0 flex-1">
         <div className="text-xs text-[var(--text-primary)] truncate">{alert.title || alert.alert_type}</div>
-        <div className="text-[10px] text-[var(--text-muted)] mt-0.5">
+        <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
           {alert.alert_type} · {alert.severity}
         </div>
       </div>

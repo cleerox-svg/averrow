@@ -100,11 +100,11 @@ function NotificationRow({ notification: n }: { notification: Notification }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             {isUnread && <span className="w-1.5 h-1.5 rounded-full bg-amber" aria-label="unread" />}
-            <span className="text-[10px] font-mono uppercase tracking-wider text-white/55">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-white/55">
               {n.type.replace(/_/g, ' ')}
             </span>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-white/55">·</span>
-            <span className="text-[10px] font-mono uppercase tracking-wider text-white/55">{n.severity}</span>
+            <span className="text-[11px] font-mono uppercase tracking-wider text-white/55">·</span>
+            <span className="text-[11px] font-mono uppercase tracking-wider text-white/55">{n.severity}</span>
           </div>
           <h3 className="text-sm font-semibold text-white/90">{n.title}</h3>
           <p className="text-[12px] text-white/55 mt-1 leading-relaxed">{n.message}</p>
@@ -112,7 +112,7 @@ function NotificationRow({ notification: n }: { notification: Notification }) {
             <p className="text-[11px] text-amber mt-2 font-mono">→ {n.recommended_action}</p>
           )}
         </div>
-        <span className="text-[10px] font-mono text-white/55 flex-shrink-0">
+        <span className="text-[11px] font-mono text-white/55 flex-shrink-0">
           {relativeTime(n.created_at)}
         </span>
       </div>
@@ -142,7 +142,7 @@ function RollupCard({
   const accent = tone === 'warn' ? 'text-amber' : 'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
         <Icon size={11} /><span>{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value}</div>

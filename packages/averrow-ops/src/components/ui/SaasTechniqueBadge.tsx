@@ -67,7 +67,7 @@ export function SaasTechniqueBadge({
       />
       <span
         style={{
-          fontSize:      size === "xs" ? 8 : 10,
+          fontSize:      11,
           fontFamily:    "var(--font-mono)",
           fontWeight:    700,
           letterSpacing: "0.08em",
@@ -79,7 +79,7 @@ export function SaasTechniqueBadge({
       </span>
       <span
         style={{
-          fontSize:      size === "xs" ? 7 : 9,
+          fontSize:      11,
           color:         "var(--text-muted)",
           fontFamily:    "var(--font-mono)",
           letterSpacing: "0.06em",

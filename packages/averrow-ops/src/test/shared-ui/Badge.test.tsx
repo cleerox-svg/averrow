@@ -195,12 +195,12 @@ describe('shared Badge', () => {
       expect(styleOf('parked').style.color).toBe('var(--text-secondary)');
     });
 
-    it('md size text is 11px (account-surface legibility floor); sm stays 9px', () => {
+    it('md size text is 11px (account-surface legibility floor); sm is also 11px (global 11px floor)', () => {
       const { unmount } = render(<Badge severity="high" size="md" />);
       expect(styleOf('High').style.fontSize).toBe('11px');
       unmount();
       render(<Badge severity="high" size="sm" />);
-      expect(styleOf('High').style.fontSize).toBe('9px');
+      expect(styleOf('High').style.fontSize).toBe('11px');
     });
 
     it('xs size is at least 9px', () => {

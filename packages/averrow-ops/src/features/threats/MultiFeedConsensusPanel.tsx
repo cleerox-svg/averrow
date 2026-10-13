@@ -32,7 +32,7 @@ export function MultiFeedConsensusPanel() {
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-controls="multi-feed-consensus-body"
-          className="ds-focusable w-full flex items-center justify-between gap-2 text-left font-mono text-[10px] font-bold uppercase tracking-[0.2em]"
+          className="ds-focusable w-full flex items-center justify-between gap-2 text-left font-mono text-[11px] font-bold uppercase tracking-[0.2em]"
           style={{ background: 'none', border: 0, cursor: 'pointer', padding: 0, color: 'var(--text-secondary)' }}
         >
           <span>Multi-feed consensus{data ? ` (${rows.length})` : ''}</span>
@@ -83,13 +83,13 @@ export function MultiFeedConsensusPanel() {
                       <span className="text-xs font-mono font-semibold break-all" style={{ color: 'var(--text-primary)' }}>
                         {r.ip_address}
                       </span>
-                      <span className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="text-[11px] font-mono" style={{ color: 'var(--text-secondary)' }}>
                         {plural(r.threat_count, 'threat')} · {plural(r.brand_count, 'brand')} · {r.last_seen ? `newest threat ${relativeTime(r.last_seen)}` : 'newest threat —'}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center gap-1 flex-wrap">
                       <span
-                        className="text-[10px] font-mono font-bold mr-1"
+                        className="text-[11px] font-mono font-bold mr-1"
                         style={{ color: 'var(--amber-text)' }}
                       >
                         {plural(r.feed_count, 'feed')}
@@ -109,7 +109,7 @@ export function MultiFeedConsensusPanel() {
               onClick={() => setShowAll((v) => !v)}
               aria-expanded={showAll}
               aria-controls="multi-feed-consensus-list"
-              className="ds-focusable mt-2 py-1.5 min-h-[24px] font-mono text-[10px] font-bold uppercase tracking-wider"
+              className="ds-focusable mt-2 py-1.5 min-h-[24px] font-mono text-[11px] font-bold uppercase tracking-wider"
               style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--amber-text)' }}
             >
               {showAll ? 'Show fewer' : `Show all (${rows.length})`}

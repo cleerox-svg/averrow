@@ -69,7 +69,7 @@ const VARIANT_STYLES: Record<ButtonVariant, React.CSSProperties> = {
 };
 
 const SIZE_STYLES: Record<ButtonSize, React.CSSProperties & { fontSize: number }> = {
-  sm: { fontSize: 10, padding: '6px 14px',  borderRadius: 8  },
+  sm: { fontSize: 11, padding: '6px 14px',  borderRadius: 8  },
   md: { fontSize: 11, padding: '9px 20px',  borderRadius: 10 },
   lg: { fontSize: 12, padding: '12px 28px', borderRadius: 12 },
 };

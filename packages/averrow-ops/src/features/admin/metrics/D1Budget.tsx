@@ -32,7 +32,7 @@ export function D1Budget() {
   if (isError) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--sev-critical-text)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--sev-critical-text)' }}>
           Failed to load D1 budget. Try again in a moment.
         </p>
       </Card>
@@ -41,7 +41,7 @@ export function D1Budget() {
   if (isLoading || !data) {
     return (
       <Card className="p-4">
-        <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           Loading D1 budget…
         </p>
       </Card>
@@ -167,7 +167,7 @@ function DatabaseCard({ rank, db, pctOfTotal }: { rank: number; db: D1DatabaseUs
     <Card variant={variant} className="p-3">
       <div className="flex items-center gap-2 mb-1.5">
         <span
-          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          className="font-mono text-[11px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
           style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
         >
           {rank}
@@ -175,17 +175,17 @@ function DatabaseCard({ rank, db, pctOfTotal }: { rank: number; db: D1DatabaseUs
         <span className="font-display text-base font-bold flex-1" style={{ color: 'var(--text-primary)' }}>
           {formatBig(db.rows_read)}
         </span>
-        <span className="font-mono text-[10px] font-bold flex-shrink-0" style={{ color: barColor }}>
+        <span className="font-mono text-[11px] font-bold flex-shrink-0" style={{ color: barColor }}>
           {pctOfTotal.toFixed(0)}%
         </span>
       </div>
       <div className="rounded-full overflow-hidden mb-2" style={{ height: 3, background: 'var(--border-base)' }}>
         <div style={{ height: '100%', width: `${Math.min(100, pctOfTotal)}%`, background: barColor }} />
       </div>
-      <div className="font-mono text-[10px] truncate" style={{ color: 'var(--text-secondary)' }} title={db.database_id}>
+      <div className="font-mono text-[11px] truncate" style={{ color: 'var(--text-secondary)' }} title={db.database_id}>
         {name}
       </div>
-      <div className="flex items-center gap-3 mt-1.5 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-3 mt-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span>{formatBig(db.rows_written)} writes</span>
         <span>·</span>
         <span>{db.read_queries.toLocaleString()} read queries</span>
@@ -249,7 +249,7 @@ function Meter({
   return (
     <Card variant={variant} className="p-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="font-mono text-[9px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
+        <span className="font-mono text-[11px] tracking-[0.18em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
           {label}
         </span>
         {badge && <Badge severity={badge.sev}>{badge.label}</Badge>}
@@ -258,7 +258,7 @@ function Meter({
         <span className="font-display text-3xl font-bold" style={{ color: 'var(--text-primary)' }}>
           {primary}
         </span>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }}>
           {sublabel}
         </span>
       </div>
@@ -276,7 +276,7 @@ function Meter({
         />
       </div>
       {footnote && (
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {footnote}
         </span>
       )}
@@ -351,7 +351,7 @@ function QueryCard({
     >
       <div className="flex items-center gap-2 mb-1.5">
         <span
-          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          className="font-mono text-[11px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
           style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
         >
           {rank}
@@ -363,7 +363,7 @@ function QueryCard({
           {formatBig(query.rows_read)}
         </span>
         <span
-          className="font-mono text-[10px] font-bold flex-shrink-0"
+          className="font-mono text-[11px] font-bold flex-shrink-0"
           style={{ color: barColor }}
         >
           {pctOfTotal.toFixed(0)}%
@@ -393,7 +393,7 @@ function QueryCard({
       </div>
 
       <div
-        className="font-mono text-[10px] line-clamp-2"
+        className="font-mono text-[11px] line-clamp-2"
         style={{ color: 'var(--text-secondary)' }}
         title={query.query_sample}
       >
@@ -405,7 +405,7 @@ function QueryCard({
           account DBs in the same top-queries leaderboard. */}
       {query.database_id && (
         <div
-          className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono"
+          className="mt-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono"
           style={{
             background: 'var(--bg-input)',
             color:      'var(--text-secondary)',
@@ -419,7 +419,7 @@ function QueryCard({
         </div>
       )}
 
-      <div className="flex items-center gap-3 mt-1.5 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-3 mt-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span>{query.query_count.toLocaleString()} runs</span>
         <span>·</span>
         <span>{formatBig(query.avg_rows_per_query)} rows/run avg</span>
@@ -453,7 +453,7 @@ function QueryDetail({ query, pctOfTotal }: { query: D1TopQuery; pctOfTotal: num
         />
       </div>
       <div>
-        <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Full SQL
         </div>
         <pre
@@ -552,7 +552,7 @@ function EndpointCard({
     >
       <div className="flex items-center gap-2 mb-1.5">
         <span
-          className="font-mono text-[10px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
+          className="font-mono text-[11px] font-bold w-5 h-5 rounded grid place-items-center flex-shrink-0"
           style={{ background: 'var(--bg-input)', color: 'var(--text-tertiary)' }}
         >
           {rank}
@@ -564,7 +564,7 @@ function EndpointCard({
           {formatBig(endpoint.total_rows_read)}
         </span>
         <span
-          className="font-mono text-[10px] font-bold flex-shrink-0"
+          className="font-mono text-[11px] font-bold flex-shrink-0"
           style={{ color: barColor }}
         >
           {pctOfTotal.toFixed(0)}%
@@ -591,13 +591,13 @@ function EndpointCard({
         />
       </div>
       <div
-        className="font-mono text-[10px] truncate"
+        className="font-mono text-[11px] truncate"
         style={{ color: 'var(--text-secondary)' }}
         title={endpoint.endpoint}
       >
         {endpoint.endpoint}
       </div>
-      <div className="flex items-center gap-3 mt-1.5 font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-3 mt-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span>{endpoint.request_count} requests</span>
         <span>·</span>
         <span>{formatBig(endpoint.avg_rows_per_request)} rows/req avg</span>
@@ -616,7 +616,7 @@ function EndpointDetail({ endpoint, pctOfTotal }: { endpoint: D1EndpointAttribut
         <Stat label="Avg rows / req" value={formatBig(endpoint.avg_rows_per_request)} />
       </div>
       <div>
-        <div className="font-mono text-[9px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+        <div className="font-mono text-[11px] tracking-[0.18em] uppercase mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
           Full endpoint
         </div>
         <div
@@ -639,13 +639,13 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <div className="flex items-end justify-between gap-3">
       <span
-        className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
       </span>
       <span
-        className="font-mono text-[10px] px-2 py-0.5 rounded"
+        className="font-mono text-[11px] px-2 py-0.5 rounded"
         style={{
           background: 'var(--bg-input)',
           color:      'var(--text-secondary)',
@@ -662,12 +662,12 @@ function SectionEmpty({ title, message }: { title: string; message: string }) {
   return (
     <div className="space-y-2">
       <div
-        className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold"
+        className="font-mono text-[11px] tracking-[0.20em] uppercase font-bold"
         style={{ color: 'var(--text-primary)' }}
       >
         {title}
       </div>
-      <p className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+      <p className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
         {message}
       </p>
     </div>
@@ -677,7 +677,7 @@ function SectionEmpty({ title, message }: { title: string; message: string }) {
 function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
-      <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="font-mono text-[11px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>{label}</div>
       <div
         className={mono ? 'text-sm font-mono' : 'text-lg font-mono'}
         style={{ color: 'var(--text-primary)' }}

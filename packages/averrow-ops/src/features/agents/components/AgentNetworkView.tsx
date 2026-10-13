@@ -510,7 +510,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           : 'absolute top-2 right-2 z-10 flex gap-1 items-center'}
       >
         <span
-          className="px-2 grid place-items-center font-mono text-[10px]"
+          className="px-2 grid place-items-center font-mono text-[11px]"
           style={{ color: 'var(--text-tertiary)' }}
         >
           {Math.round(zoom * 100)}%
@@ -576,7 +576,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
             x={h.x}
             y={h.y}
             fontFamily="var(--font-mono)"
-            fontSize={9}
+            fontSize={11}
             fontWeight={700}
             fill="var(--text-tertiary)"
             style={{ letterSpacing: '0.20em' }}
@@ -746,7 +746,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 textAnchor="middle"
                 dominantBaseline="central"
                 fontFamily="var(--font-mono)"
-                fontSize={9}
+                fontSize={11}
                 fontWeight={700}
                 fill={tint}
               >
@@ -759,7 +759,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 y={3}
                 textAnchor="end"
                 fontFamily="var(--font-mono)"
-                fontSize={8}
+                fontSize={11}
                 fill="var(--text-tertiary)"
                 style={{ letterSpacing: '0.04em' }}
               >
@@ -934,7 +934,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 y={NODE_R + 14}
                 textAnchor="middle"
                 fontFamily="var(--font-mono)"
-                fontSize={9}
+                fontSize={11}
                 fontWeight={isSel ? 700 : 500}
                 fill={isSel ? 'var(--text-primary)' : 'var(--text-secondary)'}
                 style={{ letterSpacing: '0.06em' }}
@@ -945,7 +945,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           );
         })}
       </svg>
-      <div className="flex items-center gap-4 mt-2 font-mono text-[9px] tracking-wide uppercase flex-wrap" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="flex items-center gap-4 mt-2 font-mono text-[11px] tracking-wide uppercase flex-wrap" style={{ color: 'var(--text-tertiary)' }}>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--amber)' }} />
           Supervisor

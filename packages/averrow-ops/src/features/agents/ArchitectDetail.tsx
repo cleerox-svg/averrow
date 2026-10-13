@@ -238,7 +238,7 @@ export function ArchitectDetail() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div
-              className="font-mono text-[10px] uppercase tracking-[0.18em]"
+              className="font-mono text-[11px] uppercase tracking-[0.18em]"
               style={{ color: 'var(--amber-text)' }}
             >
               Run Audit
@@ -296,13 +296,13 @@ export function ArchitectDetail() {
           style={{ borderBottom: '1px solid var(--border-base)' }}
         >
           <div
-            className="font-mono text-[10px] uppercase tracking-[0.18em]"
+            className="font-mono text-[11px] uppercase tracking-[0.18em]"
             style={{ color: 'var(--amber-text)' }}
           >
             Latest Audit
           </div>
           <div
-            className="font-mono text-[10px]"
+            className="font-mono text-[11px]"
             style={{ color: 'var(--text-tertiary)' }}
           >
             {polling ? 'Polling every 5s…' : '—'}
@@ -322,7 +322,7 @@ export function ArchitectDetail() {
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <div>
                 <div
-                  className="font-mono text-[9px] uppercase tracking-wider"
+                  className="font-mono text-[11px] uppercase tracking-wider"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   Completed
@@ -337,7 +337,7 @@ export function ArchitectDetail() {
               </div>
               <div>
                 <div
-                  className="font-mono text-[9px] uppercase tracking-wider"
+                  className="font-mono text-[11px] uppercase tracking-wider"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   Severity
@@ -356,7 +356,7 @@ export function ArchitectDetail() {
               </div>
               <div>
                 <div
-                  className="font-mono text-[9px] uppercase tracking-wider"
+                  className="font-mono text-[11px] uppercase tracking-wider"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   Cost
@@ -370,7 +370,7 @@ export function ArchitectDetail() {
               </div>
               <div>
                 <div
-                  className="font-mono text-[9px] uppercase tracking-wider"
+                  className="font-mono text-[11px] uppercase tracking-wider"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
                   Run ID
@@ -399,7 +399,7 @@ export function ArchitectDetail() {
             {/* Scorecard mini table */}
             <div>
               <div
-                className="mb-2 font-mono text-[9px] uppercase tracking-widest"
+                className="mb-2 font-mono text-[11px] uppercase tracking-widest"
                 style={{ color: 'var(--text-tertiary)' }}
               >
                 Scorecard
@@ -422,7 +422,7 @@ export function ArchitectDetail() {
                     }}
                   >
                     <div
-                      className="font-mono text-[10px] uppercase tracking-wider"
+                      className="font-mono text-[11px] uppercase tracking-wider"
                       style={{ color: 'var(--text-tertiary)' }}
                     >
                       {label}

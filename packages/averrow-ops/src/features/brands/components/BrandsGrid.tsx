@@ -102,18 +102,18 @@ function threatTypePill(type: string | null) {
   const key = type.toLowerCase().replace(/[_\s]/g, '');
   const style = THREAT_TYPE_STYLES[key] ?? 'text-white/55 border-white/20';
   return (
-    <span className={cn('text-[10px] font-mono px-2 py-0.5 rounded border', style)}>
+    <span className={cn('text-[11px] font-mono px-2 py-0.5 rounded border', style)}>
       {type.replace(/_/g, ' ')}
     </span>
   );
 }
 
 function gradeBadge(grade: string | null) {
-  if (!grade) return <span className="text-white/20 font-mono text-[10px]">&mdash;</span>;
+  if (!grade) return <span className="text-white/20 font-mono text-[11px]">&mdash;</span>;
   const g = grade.toUpperCase();
   const style = GRADE_STYLES[g] ?? GRADE_STYLES['F'];
   return (
-    <span className={cn('text-[10px] font-mono font-bold px-2 py-0.5 rounded border', style)}>
+    <span className={cn('text-[11px] font-mono font-bold px-2 py-0.5 rounded border', style)}>
       {g}
     </span>
   );
@@ -125,7 +125,7 @@ function rankBadge(rank: number) {
   else if (rank === 2) style = 'border-[var(--border-strong)] text-[var(--text-secondary)]';
   else if (rank === 3) style = 'border-amber-600 text-amber-600';
   return (
-    <span className={cn('w-6 h-6 rounded-full border text-[10px] font-mono flex items-center justify-center flex-shrink-0', style)}>
+    <span className={cn('w-6 h-6 rounded-full border text-[11px] font-mono flex items-center justify-center flex-shrink-0', style)}>
       {rank}
     </span>
   );
@@ -247,7 +247,7 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
     color: 'var(--text-primary)',
     outline: 'none',
   };
-  const labelClass = 'block font-mono text-[10px] uppercase tracking-widest text-[var(--text-tertiary)] mb-1.5';
+  const labelClass = 'block font-mono text-[11px] uppercase tracking-widest text-[var(--text-tertiary)] mb-1.5';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -265,7 +265,7 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
             />
-            {error && <p className="mt-1 font-mono text-[10px] text-red-400">{error}</p>}
+            {error && <p className="mt-1 font-mono text-[11px] text-red-400">{error}</p>}
           </div>
 
           <div>
@@ -460,7 +460,7 @@ function BrandCard({
             {tc.toLocaleString()}
           </div>
           <div style={{
-            fontSize:    9,
+            fontSize:    11,
             color:       'var(--text-muted)',
             fontFamily:  'var(--font-mono)',
             letterSpacing: '0.10em',
@@ -485,7 +485,7 @@ function BrandCard({
           border: '1px solid var(--border-base)',
         }}>
           <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             letterSpacing: '0.14em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
@@ -524,7 +524,7 @@ function BrandCard({
           border: '1px solid var(--border-base)',
         }}>
           <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             letterSpacing: '0.14em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
@@ -555,7 +555,7 @@ function BrandCard({
           border: '1px solid var(--border-base)',
         }}>
           <div style={{
-            fontSize: 9, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             letterSpacing: '0.14em', color: 'var(--text-muted)',
             textTransform: 'uppercase', marginBottom: 5,
           }}>
@@ -590,7 +590,7 @@ function BrandCard({
           />
           <span style={{
             position: 'absolute', bottom: 2, right: 4,
-            fontSize: 8, fontFamily: 'var(--font-mono)',
+            fontSize: 11, fontFamily: 'var(--font-mono)',
             color: 'var(--text-muted)', letterSpacing: '0.10em',
             opacity: 0.6,
           }}>14d</span>
@@ -604,7 +604,7 @@ function BrandCard({
           alignItems: 'center',
           justifyContent: 'center',
         }}>
-          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
             no trend data
           </span>
         </div>
@@ -746,7 +746,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                       key={tab}
                       onClick={() => { setActiveTab(tab); setPage(1); }}
                       className={cn(
-                        'px-3 py-1.5 text-[10px] font-mono tracking-wider capitalize rounded-lg border transition-colors whitespace-nowrap',
+                        'px-3 py-1.5 text-[11px] font-mono tracking-wider capitalize rounded-lg border transition-colors whitespace-nowrap',
                         activeTab === tab
                           ? 'text-[var(--amber-text)] border-afterburner-border bg-afterburner-muted'
                           : 'text-white/55 border-white/10 hover:text-white/70'

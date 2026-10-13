@@ -176,7 +176,7 @@ function BulkToolbar({
   const run = (args: { status?: 'acknowledged' | 'resolved'; assignedTo?: string }) =>
     bulk.mutate({ alertIds: selectedIds, ...args }, { onSuccess: onClear });
 
-  const btn = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50 bg-white/[0.04] text-white/65 border-white/[0.08] hover:text-white/95 hover:border-white/[0.18]';
+  const btn = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-50 bg-white/[0.04] text-white/65 border-white/[0.08] hover:text-white/95 hover:border-white/[0.18]';
 
   return (
     <div className="flex items-center gap-2 flex-wrap rounded-lg border border-white/[0.07] bg-bg-card px-3 py-2">
@@ -243,7 +243,7 @@ function RollupCard({
                       'text-white/85';
   return (
     <div className="rounded-xl border border-white/[0.06] bg-bg-card p-4">
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-mono text-white/55 mb-1">
+      <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest font-mono text-white/55 mb-1">
         <Icon size={11} /><span>{label}</span>
       </div>
       <div className={`text-3xl font-bold tabular-nums ${accent}`}>{value}</div>
@@ -261,13 +261,13 @@ function FilterBar<T extends string>({
 }) {
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-[10px] uppercase tracking-widest font-mono text-white/55 mr-1">{label}</span>
+      <span className="text-[11px] uppercase tracking-widest font-mono text-white/55 mr-1">{label}</span>
       {options.map((opt) => (
         <button
           key={opt.key}
           onClick={() => onChange(opt.key)}
           className={cn(
-            'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors',
+            'px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors',
             value === opt.key
               ? 'bg-amber/[0.10] text-amber border-amber/[0.30]'
               : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85',
@@ -324,13 +324,13 @@ function AlertRow({ alert: a, canTriage, selected, onToggleSelect }: {
           {a.status !== 'resolved' && a.status !== 'false_positive' && (
             <AgePill createdAt={a.created_at} severity={a.severity} />
           )}
-          <span className="text-[10px] font-mono text-white/55 uppercase tracking-wider">
+          <span className="text-[11px] font-mono text-white/55 uppercase tracking-wider">
             {a.alert_type.replace(/_/g, ' ')}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <AssigneeControl alert={a} canTriage={canTriage} />
-          <div className="text-right text-[10px] font-mono text-white/55">
+          <div className="text-right text-[11px] font-mono text-white/55">
             <div>{new Date(a.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
             <div className="mt-0.5 truncate max-w-[140px] text-white/55">{a.brand_name}</div>
           </div>
@@ -359,7 +359,7 @@ function Recommendations({ items }: { items: string[] }) {
   const shown = open ? items : items.slice(0, 2);
   return (
     <div className="mt-3 rounded-lg border border-amber/[0.16] bg-amber/[0.04] px-3 py-2.5">
-      <div className="text-[9px] uppercase tracking-[0.18em] font-mono text-amber mb-1.5">Recommended actions</div>
+      <div className="text-[11px] uppercase tracking-[0.18em] font-mono text-amber mb-1.5">Recommended actions</div>
       <ul className="space-y-1.5">
         {shown.map((r, i) => (
           <li key={i} className="flex gap-2 text-[11.5px] text-white/70 leading-relaxed">
@@ -372,7 +372,7 @@ function Recommendations({ items }: { items: string[] }) {
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="mt-2 text-[10px] font-mono uppercase tracking-widest text-amber hover:text-amber"
+          className="mt-2 text-[11px] font-mono uppercase tracking-widest text-amber hover:text-amber"
         >
           {open ? 'show less' : `+${items.length - 2} more`}
         </button>
@@ -389,7 +389,7 @@ function SeverityPill({ level }: { level: AlertSeverity | string }) {
     sev === 'medium'   ? 'text-amber     bg-amber/[0.06]        border-amber/[0.10]'        :
                          'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {sev}
     </span>
   );
@@ -403,7 +403,7 @@ function StatusPill({ status }: { status: AlertStatus }) {
     status === 'resolved'      ? 'text-white/55     bg-white/[0.04]        border-white/[0.08]'        :
                                  'text-white/55     bg-white/[0.04]        border-white/[0.08]';
   return (
-    <span className={`inline-flex items-center text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
+    <span className={`inline-flex items-center text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}>
       {status.replace(/_/g, ' ')}
     </span>
   );
@@ -421,7 +421,7 @@ function ConfidencePill({ value }: { value: number | null }) {
   return (
     <span
       title="Detection confidence"
-      className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}
+      className={`inline-flex items-center gap-1 text-[11px] uppercase tracking-widest font-mono border rounded px-1.5 py-0.5 ${tone}`}
     >
       {value}% conf
     </span>
@@ -444,7 +444,7 @@ function Pager({
       </p>
     );
   }
-  const btn = 'px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
+  const btn = 'px-2.5 py-1 rounded-md text-[11px] font-mono uppercase tracking-wider border transition-colors disabled:opacity-40 disabled:cursor-default bg-white/[0.04] text-white/60 border-white/[0.08] enabled:hover:text-white/90 enabled:hover:border-white/[0.18]';
   return (
     <div className="flex items-center justify-between pt-2">
       <span className="text-[11px] text-white/55 font-mono">showing {start}–{end} of {total}</span>

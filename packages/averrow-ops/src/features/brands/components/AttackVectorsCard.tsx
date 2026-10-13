@@ -22,7 +22,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
 
   return (
     <div className="p-4" style={{ background:'var(--bg-card)', backdropFilter:'blur(12px)', WebkitBackdropFilter:'blur(12px)', border:'1px solid var(--border-base)', borderRadius:'0.75rem', boxShadow:'0 4px 24px rgba(0,0,0,0.4), inset 0 1px 0 var(--border-base)' }}>
-      <div className="mb-3 font-mono text-[9px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
+      <div className="mb-3 font-mono text-[11px] uppercase tracking-widest" style={{ color: 'var(--text-secondary)' }}>
         Attack Vectors
       </div>
 
@@ -35,7 +35,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
             const widthPct = max > 0 ? (count / max) * 100 : 0;
             return (
               <div key={type} className="flex items-center gap-2">
-                <span className="w-20 flex-shrink-0 font-mono text-[10px] text-white/60">
+                <span className="w-20 flex-shrink-0 font-mono text-[11px] text-white/60">
                   {type}
                 </span>
                 <div className="flex-1">
@@ -44,7 +44,7 @@ export function AttackVectorsCard({ brands }: AttackVectorsCardProps) {
                     style={{ width: `${widthPct}%`, backgroundColor: color }}
                   />
                 </div>
-                <span className="w-12 flex-shrink-0 text-right font-mono text-[10px] text-white/55">
+                <span className="w-12 flex-shrink-0 text-right font-mono text-[11px] text-white/55">
                   {count}
                 </span>
               </div>

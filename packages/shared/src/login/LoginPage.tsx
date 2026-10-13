@@ -383,7 +383,7 @@ export function LoginPage(props: LoginPageProps) {
             className="mt-2 font-mono uppercase"
             style={{
               color: 'var(--amber-text)',
-              fontSize: 9,
+              fontSize: 11,
               letterSpacing: '0.24em',
               fontWeight: 700,
             }}
@@ -398,7 +398,7 @@ export function LoginPage(props: LoginPageProps) {
             className="mt-6 font-mono uppercase"
             style={{
               color: 'var(--text-tertiary)',
-              fontSize: 9,
+              fontSize: 11,
               letterSpacing: '0.18em',
               fontWeight: 600,
             }}
@@ -433,7 +433,7 @@ export function LoginPage(props: LoginPageProps) {
               background: 'transparent',
               border: 'none',
               color: 'var(--text-tertiary)',
-              fontSize: 10,
+              fontSize: 11,
               letterSpacing: '0.18em',
               fontWeight: 600,
               padding: 0,
@@ -447,7 +447,7 @@ export function LoginPage(props: LoginPageProps) {
         {/* Divider */}
         <div className="mt-6 flex items-center gap-3" style={{ color: 'var(--text-tertiary)' }}>
           <span style={{ flex: 1, height: 1, background: 'var(--border-base)' }} />
-          <span className="font-mono uppercase" style={{ fontSize: 9, letterSpacing: '0.18em' }}>or</span>
+          <span className="font-mono uppercase" style={{ fontSize: 11, letterSpacing: '0.18em' }}>or</span>
           <span style={{ flex: 1, height: 1, background: 'var(--border-base)' }} />
         </div>
 
@@ -458,7 +458,7 @@ export function LoginPage(props: LoginPageProps) {
             className="block font-mono uppercase"
             style={{
               color: 'var(--text-tertiary)',
-              fontSize: 9,
+              fontSize: 11,
               letterSpacing: '0.18em',
               marginBottom: 6,
             }}
@@ -495,7 +495,7 @@ export function LoginPage(props: LoginPageProps) {
                   background: 'transparent',
                   border: 'none',
                   color: 'var(--amber-text)',
-                  fontSize: 10,
+                  fontSize: 11,
                   letterSpacing: '0.14em',
                   fontWeight: 700,
                   padding: 0,
@@ -594,7 +594,7 @@ export function LoginPage(props: LoginPageProps) {
           className="mt-8 font-mono uppercase"
           style={{
             color: 'var(--text-muted)',
-            fontSize: 10,
+            fontSize: 11,
             letterSpacing: '0.22em',
             fontWeight: 700,
           }}
