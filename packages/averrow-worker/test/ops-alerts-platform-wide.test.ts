@@ -671,6 +671,85 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
       expect(await stats()).toMatchObject({ sla_breached: 0, sla_breached_critical: 0, sla_oldest_breach_minutes: 0 });
     });
   });
+
+  describe("stats tile fields (open_* + 7-day series)", () => {
+    async function stats(): Promise<Record<string, unknown>> {
+      const res = await call("admin", "/api/alerts/stats");
+      expect(res.status).toBe(200);
+      return (await res.json<{ data: Record<string, unknown> }>()).data;
+    }
+    const DAY_MS = 86_400_000;
+    const utcDay = (ms: number) => Math.floor(ms / DAY_MS);
+    // Index into the oldest→newest 7-slot series for an instant `minsAgo` before NOW_MS.
+    const slot = (minsAgo: number) => 6 - (utcDay(NOW_MS) - utcDay(NOW_MS - minsAgo * 60_000));
+    function expectedSeries(rows: Array<{ minsAgo: number; count?: boolean }>): number[] {
+      const out = [0, 0, 0, 0, 0, 0, 0];
+      for (const r of rows) {
+        const i = slot(r.minsAgo);
+        if (i >= 0 && i <= 6 && r.count !== false) out[i]! += 1;
+      }
+      return out;
+    }
+
+    it("open_total / open_critical count only new + acknowledged", async () => {
+      // Fixture: 4 new + 1 acknowledged open; 2 open criticals.
+      raw.exec(`UPDATE alerts SET status = 'investigating' WHERE id = 'a_low_new'`);
+      raw.exec(
+        `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, created_at, updated_at)
+         VALUES ('o_crit_ack', 'b2', 't_bob', 'phishing_detected', 'critical', 'x', 'summary', 'acknowledged', '${ts(5)}', '${ts(5)}'),
+                ('o_crit_fp',  'b2', 't_bob', 'phishing_detected', 'critical', 'x', 'summary', 'false_positive', '${ts(5)}', '${ts(5)}')`,
+      );
+      expect(await stats()).toMatchObject({ open_total: 5, open_critical: 3 });
+    });
+
+    it("daily_new_7d: 7 slots oldest→newest, zero-filled, ISO rows bucketed, >6-day-old rows excluded", async () => {
+      const iso = (minsAgo: number) => new Date(NOW_MS - minsAgo * 60_000).toISOString();
+      const ins = raw.prepare(
+        `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, resolution_notes, created_at, updated_at)
+         VALUES (?, 'b1', 't_alice', 'phishing_detected', 'low', 'x', 'summary', ?, ?, ?, ?)`,
+      );
+      const D2 = 2 * 1440 + 30;   // two days ago
+      const D6 = 6 * 1440;        // six days ago — oldest slot (window starts at 00:00 UTC six days back)
+      const D8 = 8 * 1440;        // eight days ago — excluded
+      ins.run("d_iso_2d", "new", null, iso(D2), iso(D2));
+      ins.run("d_auto_2d", "false_positive", "auto: clean enrichment", ts(D2), ts(D2));
+      ins.run("d_manual_fp_2d", "false_positive", "customer says benign", ts(D2), ts(D2));
+      ins.run("d_6d", "new", null, ts(D6), ts(D6));
+      ins.run("d_8d", "new", null, ts(D8), ts(D8));
+      ins.run("d_8d_iso", "new", null, iso(D8), iso(D8));
+
+      const data = await stats();
+      const allRows = [...ALERTS.map((a) => ({ minsAgo: a.minsAgo })),
+        { minsAgo: D2 }, { minsAgo: D2 }, { minsAgo: D2 }, { minsAgo: D6 }, { minsAgo: D8 }, { minsAgo: D8 }];
+      const series = data.daily_new_7d as number[];
+      expect(series).toHaveLength(7);
+      expect(series).toEqual(expectedSeries(allRows));
+      // Explicit spot checks independent of the helper.
+      expect(series[slot(D2)]).toBe(3);
+      expect(series.reduce((s, n) => s + n, 0)).toBe(ALERTS.length + 4);
+      // Only the auto:-stamped false positive counts, on its created day.
+      const auto = data.daily_auto_dismissed_7d as number[];
+      expect(auto).toHaveLength(7);
+      expect(auto).toEqual(expectedSeries([{ minsAgo: D2 }]));
+    });
+
+    it("empty table → all-zero series and zero open counts, never null", async () => {
+      raw.exec("DELETE FROM alerts");
+      expect(await stats()).toMatchObject({
+        open_total: 0,
+        open_critical: 0,
+        daily_new_7d: [0, 0, 0, 0, 0, 0, 0],
+        daily_auto_dismissed_7d: [0, 0, 0, 0, 0, 0, 0],
+      });
+    });
+
+    it("the series is cached with the rest of the stats object", async () => {
+      await stats();
+      const cached = JSON.parse(kv.store.get("alerts_stats:global")!) as Record<string, unknown>;
+      expect(cached.daily_new_7d).toHaveLength(7);
+      expect(cached).toHaveProperty("open_total", 5);
+    });
+  });
 });
 
 // ─── Migration 0275: additive only, applies to the pre-0275 shape ─────
