@@ -219,12 +219,20 @@ describe("owner credit on attacker-controlled tenant / subdomain labels (2026-10
   });
   it("the product word must be a whole token or glued only to lures / vendor tokens (review M1)", () => {
     for (const host of ["paypal-delivery.outlook-x.com", "olive-outlook.com", "deliveryoutlook-help.com",
-      "paypal-delivery.rnicrosoft-support.com", "livenation-outlook.com", "officemax-outlook.com"]) {
+      "paypal-delivery.rnicrosoft-support.com", "livenation-outlook.com", "officemax-outlook.com",
+      "postoffice-outlook.com", "boxoffice-outlook.com", "soundcloud-outlook.com", "cloudflare-outlook.com"]) {
       for (const c of ["live.com", "office.com"]) expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toBeNull();
     }
     for (const [host, c] of [["livelogin-outlook.com", "live.com"], ["liveoutlook-verify.com", "live.com"],
       ["hotmaillive.com", "live.com"], ["myoffice-microsoft.com", "office.com"], ["office358-outlook.net", "office.com"]] as const) {
       expect(genericBrandOwnerCredit(host, c), host).toEqual({ parentBrandId: "brand_microsoft_com" });
+    }
+  });
+  it("glued Microsoft lures that credited Microsoft on master still do (review M2)", () => {
+    for (const [host, c] of [["msoffice-outlook.com", "office.com"], ["officeonline-outlook.com", "office.com"],
+      ["liveoffice-outlook.com", "live.com"], ["liveoffice-outlook.com", "office.com"], ["mslive-outlook.com", "live.com"],
+      ["rnicrosoftlive.com", "live.com"]] as const) {
+      expect(genericBrandOwnerCredit(host, c), `${host} x ${c}`).toEqual({ parentBrandId: "brand_microsoft_com" });
     }
   });
   it("IdP tenant hosts: the tenant label is attacker-chosen, the vendor's own subdomain is not (review L1)", () => {

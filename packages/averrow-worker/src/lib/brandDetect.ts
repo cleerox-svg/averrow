@@ -524,12 +524,37 @@ function ownerCreditSpec(ctx: HostCtx, spec: GenericSpec): { parentBrandId: stri
   return null;
 }
 
+/** Per parent brand: the vendor's own tokens + glued names, for the
+ *  product-word adjacency checks (built once). */
+const OWNER_NAMES: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, [...new Set([...v.tokens, ...v.glued])]]),
+);
+
+/** Per parent brand: its homoglyph names, pre-folded (ownerFold). */
+const OWNER_FOLDED_NAMES: ReadonlyMap<string, readonly string[]> = new Map(
+  Object.entries(OWNER_VENDORS).map(([id, v]) => [id, v.homoglyph.map(ownerFold)]),
+);
+
+/** Product words of the vendor-product generic brands per parent
+ *  ("live", "office", "cloud" → Microsoft), from GENERIC_BRAND_OWNERS. */
+const OWNER_PRODUCT_WORDS: ReadonlyMap<string, readonly string[]> = (() => {
+  const m = new Map<string, string[]>();
+  for (const [canonical, { parentBrandId }] of Object.entries(GENERIC_BRAND_OWNERS)) {
+    const word = (canonical.split(".")[0] ?? "").replace(/-/g, "");
+    if (word) m.set(parentBrandId, [...(m.get(parentBrandId) ?? []), word]);
+  }
+  return m;
+})();
+
 /** Per parent brand: what may be glued onto the product word inside one
- *  token — credential lures, glue words, digits and the vendor's own tokens
- *  ("livelogin", "office358", "myoffice365", "hotmaillive"). */
+ *  token — credential lures, glue words, digits, the vendor's own tokens,
+ *  its sibling product words and its short prefixes ("livelogin",
+ *  "office358", "myoffice365", "hotmaillive", "msoffice", "officeonline",
+ *  "liveoffice", "mslive"). */
 const OWNER_GLUE_VOCAB: ReadonlyMap<string, ReadonlySet<string>> = new Map(
   Object.entries(OWNER_VENDORS).map(([id, v]) => [id, new Set([
     ...CREDENTIAL_LURE_WORDS, ...LURE_GLUE_WORDS, ...v.tokens, ...v.glued,
+    ...(OWNER_PRODUCT_WORDS.get(id) ?? []), "ms", "online",
   ])]),
 );
 
@@ -540,22 +565,29 @@ const OWNER_GLUE_VOCAB: ReadonlyMap<string, ReadonlySet<string>> = new Map(
  *   - IS the word ("outlook-live-login"), or
  *   - is the word glued only to lures / glue / digits / vendor tokens
  *     ("livelogin", "office358", "office365"), or
- *   - has a vendor token directly beside the word
- *     ("outlookliveprotectionaccess", "liveoutlook"), or
+ *   - has a vendor token (or the homoglyph-spelled vendor name) directly
+ *     beside the word ("outlookliveprotectionaccess", "liveoutlook",
+ *     "rnicrosoftlive"), or
  *   - holds the word inside a vendor token ("segoffice365", "windowslive").
  */
 function productWordIn(t: string, word: string, parentBrandId: string): boolean {
   if (t === word) return true;
-  const vendor = OWNER_VENDORS[parentBrandId];
   const vocab = OWNER_GLUE_VOCAB.get(parentBrandId);
-  if (!vendor || !vocab) return false;
-  const names = [...vendor.tokens, ...vendor.glued];
+  const names = OWNER_NAMES.get(parentBrandId);
+  if (!vocab || !names) return false;
   if (names.some((g) => g !== word && g.includes(word) && t.includes(g))) return true;
+  const folded = OWNER_FOLDED_NAMES.get(parentBrandId) ?? [];
   for (let i = t.indexOf(word); i >= 0; i = t.indexOf(word, i + 1)) {
     const pre = t.slice(0, i);
     const post = t.slice(i + word.length);
     if ((pre === "" || segmentsInto(pre, vocab)) && (post === "" || segmentsInto(post, vocab))) return true;
     if (names.some((g) => (pre !== "" && pre.endsWith(g)) || (post !== "" && post.startsWith(g)))) return true;
+    // The vendor NAME homoglyph-spelled beside the word ("rnicrosoftlive").
+    if (folded.length > 0) {
+      const fp = pre === "" ? "" : ownerFold(pre);
+      const fq = post === "" ? "" : ownerFold(post);
+      if (folded.some((f) => (fp !== "" && fp.endsWith(f)) || (fq !== "" && fq.startsWith(f)))) return true;
+    }
   }
   return false;
 }
