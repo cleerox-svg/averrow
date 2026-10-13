@@ -11,12 +11,13 @@
 // any staff caller, so before PR-C (`a.user_id = ?` pin) every staff read was
 // empty and every mutation 404'd / updated 0 rows.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { registerDashboardRoutes } from "../src/routes/dashboard";
+import { dailyAlertDayKeys } from "../src/handlers/alerts";
 import { handleTenantAlerts, handleTenantAlertDetail, AVERROW_SOC_LABEL } from "../src/handlers/tenantData";
 import type { AuthContext } from "../src/middleware/auth";
 import { deriveSchema, splitStatements } from "./migration-schema";
@@ -748,6 +749,40 @@ describe.skipIf(!hasSqlite())("PR-C: ops alerts are platform-wide for staff", ()
       const cached = JSON.parse(kv.store.get("alerts_stats:global")!) as Record<string, unknown>;
       expect(cached.daily_new_7d).toHaveLength(7);
       expect(cached).toHaveProperty("open_total", 5);
+    });
+
+    it("dailyAlertDayKeys: 7 UTC keys oldest→newest, crossing a month end", () => {
+      expect(dailyAlertDayKeys(Date.parse("2025-03-01T00:00:05Z"))).toEqual([
+        "2025-02-23", "2025-02-24", "2025-02-25", "2025-02-26", "2025-02-27", "2025-02-28", "2025-03-01",
+      ]);
+    });
+
+    it("just after 00:00 UTC: SQL window and day keys share one clock (Date.now pinned)", async () => {
+      // Pinned far from the real date so a window still derived from SQLite
+      // date('now') would miss every seeded row and fail loudly.
+      const pinned = Date.parse("2025-03-01T00:00:05Z");
+      const spy = vi.spyOn(Date, "now").mockReturnValue(pinned);
+      try {
+        raw.exec("DELETE FROM alerts");
+        const ins = raw.prepare(
+          `INSERT INTO alerts (id, brand_id, user_id, alert_type, severity, title, summary, status, resolution_notes, created_at, updated_at)
+           VALUES (?, 'b1', 't_alice', 'phishing_detected', 'low', 'x', 'summary', ?, ?, ?, ?)`,
+        );
+        const row = (id: string, at: string, status = "new", notes: string | null = null) => ins.run(id, status, notes, at, at);
+        row("m_today", "2025-03-01 00:00:01");                    // slot 6
+        row("m_today_iso", "2025-03-01T00:00:03.000Z");           // slot 6
+        row("m_yesterday", "2025-02-28 23:59:58");                // slot 5
+        row("m_yesterday_auto", "2025-02-28 12:00:00", "false_positive", "auto: clean"); // slot 5
+        row("m_oldest", "2025-02-23 00:00:00");                   // slot 0 (window boundary, inclusive)
+        row("m_oldest_iso", "2025-02-23T00:00:00Z");              // slot 0
+        row("m_out", "2025-02-22 23:59:59");                      // before window
+        row("m_out_iso", "2025-02-22T23:59:59.999Z");             // before window
+        const data = await stats();
+        expect(data.daily_new_7d).toEqual([2, 0, 0, 0, 0, 2, 2]);
+        expect(data.daily_auto_dismissed_7d).toEqual([0, 0, 0, 0, 0, 1, 0]);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

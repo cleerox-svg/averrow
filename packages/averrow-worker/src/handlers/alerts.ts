@@ -480,6 +480,18 @@ const DAILY_WINDOW_DAYS = 7;
 
 interface DailyAlertRow { d: string | null; n: number | null; auto_n: number | null }
 
+/** UTC 'YYYY-MM-DD' keys for the window ending at `nowMs`, oldest → newest. */
+export function dailyAlertDayKeys(nowMs: number): string[] {
+  const keys: string[] = [];
+  for (let i = DAILY_WINDOW_DAYS - 1; i >= 0; i--) {
+    keys.push(new Date(nowMs - i * 86_400_000).toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+// `nowMs` MUST be the same instant whose oldest key bounded the SQL window
+// (handleAlertStats reads Date.now() once), so a request straddling 00:00 UTC
+// can't query one window and label another.
 export function fillDailyAlertBuckets(
   rows: DailyAlertRow[],
   nowMs: number,
@@ -488,8 +500,7 @@ export function fillDailyAlertBuckets(
   for (const r of rows) if (r.d) byDay.set(r.d, r);
   const daily_new_7d: number[] = [];
   const daily_auto_dismissed_7d: number[] = [];
-  for (let i = DAILY_WINDOW_DAYS - 1; i >= 0; i--) {
-    const day = new Date(nowMs - i * 86_400_000).toISOString().slice(0, 10);
+  for (const day of dailyAlertDayKeys(nowMs)) {
     const r = byDay.get(day);
     daily_new_7d.push(r?.n ?? 0);
     daily_auto_dismissed_7d.push(r?.auto_n ?? 0);
@@ -509,6 +520,8 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
     }
 
     const tally = newTally();
+    // One clock read for both the SQL window bound and the JS day keys.
+    const nowMs = Date.now();
     let stats: Record<string, number | null> | null = null;
     let dailyRows: DailyAlertRow[] = [];
     if (scopeFilter) {
@@ -534,27 +547,29 @@ export async function handleAlertStats(request: Request, env: Env, scope?: OrgSc
           CAST(MAX(CASE WHEN ${SLA_BREACH_SQL}
                         THEN ${SLA_AGE_MINUTES_SQL} - ${SLA_WINDOW_MINUTES_SQL} END) AS INTEGER) as sla_oldest_breach_minutes
          FROM alerts a WHERE ${scopeFilter.where}`
-      ).bind(...scopeFilter.params).first<Record<string, number | null>>();
+      ).bind(...scopeFilter.params).all<Record<string, number | null>>();
       // Range-scans idx_alerts_created. date() normalises both created_at
       // spellings ('YYYY-MM-DD HH:MM:SS' default and ISO '…T…Z') to the UTC
       // day; the >= string compare against the bare 'YYYY-MM-DD' bound is
-      // correct for both because each starts with the same date prefix.
+      // correct for both because each starts with the same date prefix. The
+      // bound is the oldest JS day key (not SQLite date('now')) so window and
+      // labels share one clock.
       const dailyQuery = env.DB.prepare(
         `SELECT date(a.created_at) AS d,
                 COUNT(*) AS n,
                 SUM(CASE WHEN a.status='false_positive' AND a.resolution_notes LIKE 'auto%' THEN 1 ELSE 0 END) AS auto_n
            FROM alerts a
-          WHERE ${scopeFilter.where} AND a.created_at >= date('now', ?)
+          WHERE ${scopeFilter.where} AND a.created_at >= ?
           GROUP BY d`
-      ).bind(...scopeFilter.params, `-${DAILY_WINDOW_DAYS - 1} days`).all<DailyAlertRow>();
-      const [statsRow, dailyRes] = await Promise.all([statsQuery, dailyQuery]);
-      stats = statsRow;
-      // .first() doesn't expose meta — count the query without rows.
-      tally.queries += 1;
+      ).bind(...scopeFilter.params, dailyAlertDayKeys(nowMs)[0]).all<DailyAlertRow>();
+      const [statsRes, dailyRes] = await Promise.all([statsQuery, dailyQuery]);
+      // Aggregate SELECT always yields exactly one row.
+      stats = statsRes.results?.[0] ?? null;
+      addToTally(tally, statsRes.meta);
       addToTally(tally, dailyRes.meta);
       dailyRows = dailyRes.results ?? [];
     }
-    const { daily_new_7d, daily_auto_dismissed_7d } = fillDailyAlertBuckets(dailyRows, Date.now());
+    const { daily_new_7d, daily_auto_dismissed_7d } = fillDailyAlertBuckets(dailyRows, nowMs);
 
     // SUM over zero rows is NULL — normalise every field to a number.
     const n = (k: string): number => stats?.[k] ?? 0;
