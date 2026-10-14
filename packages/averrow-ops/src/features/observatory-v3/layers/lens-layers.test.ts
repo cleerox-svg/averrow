@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { HALO_MIN_SCALE } from '../lib/halo';
 import type { OperationGeo, ProviderGeo, CampaignGeo, Movement, ActorDetail } from '@/hooks/useObservatoryLenses';
 import { lensPreset, noLayers, type LayerToggles } from '../lib/lenses';
 import { buildOperationsModel } from '../lib/lens/operations';
@@ -12,7 +13,7 @@ import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_SMALL_C
 import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { getSeverityColor } from '../lib/map-colors';
 import {
-  buildLensLayers, buildLensBaseLayers, haloPx, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
+  buildLensLayers, buildLensBaseLayers, haloPx, MIN_HALO_GAP_PX, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
 } from './lens-layers';
 import { NO_LABELS, type PlacedLabels } from './lens-labels';
 import { buildBotShareModel } from '../lib/lens/bot-share';
@@ -662,10 +663,21 @@ describe('halo scale (blooms and provider rings shrink toward the world view)', 
     const ring = full.hosting!.rings.find(r => r.bulletproof)!;
     expect(radius(small, 'hosting-rings', ring)).toBe(radius(full, 'hosting-rings', ring));
     expect(radius(full, 'hosting-bulletproof-halo', ring) - radius(full, 'hosting-rings', ring)).toBeCloseTo(7, 6);
-    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
+    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(6, 6); // track (3, the floor) + gap (3)
     expect(radius(small, 'hosting-takedown-track', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6); // the floor
     expect(radius(small, 'hosting-takedown-arc', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6);
     expect((props(find(small, 'hosting-bulletproof-halo')).updateTriggers as Props).getRadius).toBe(0.5);
+  });
+
+  it('hosting: the bulletproof halo sits at least 2px outside the takedown track at every zoom scale', () => {
+    for (const haloScale of [HALO_MIN_SCALE, 0.7, 1]) {
+      const i = input({ hosting: true }, { haloScale });
+      const ring = i.hosting!.rings.find(r => r.bulletproof)!;
+      const gap = radius(i, 'hosting-bulletproof-halo', ring) - radius(i, 'hosting-takedown-track', ring);
+      expect(gap).toBeGreaterThanOrEqual(2);
+      expect(gap).toBeGreaterThanOrEqual(MIN_HALO_GAP_PX);
+      expect(radius(i, 'hosting-takedown-arc', ring)).toBe(radius(i, 'hosting-takedown-track', ring));
+    }
   });
 
   it('the floor never enlarges a radius that is already under it', () => {

@@ -79,9 +79,9 @@ export interface StatDelta {
   label?: string;
 }
 
-/** Average glyph advance, in em, of the tile's tabular numerals / of a text value (uppercase letters run wider than digits). */
+/** Average glyph advance, in em, of a tabular numeral or punctuation mark (digits, '%', '.', ',') / of a letter (uppercase runs wider). */
 const EM_PER_DIGIT = 0.62;
-const EM_PER_TEXT_CHAR = 0.76;
+const EM_PER_LETTER = 0.76;
 
 /**
  * Width, in em, a settled value needs: its length times the glyph advance (never under 3 digits: a one-digit tile keeps
@@ -91,7 +91,9 @@ const EM_PER_TEXT_CHAR = 0.76;
 export function statFitEm(value: number | string, compact = true): number {
   const isNum = typeof value === 'number';
   const text = isNum ? (compact && Math.abs(value) >= COMPACT_FROM ? formatCompact(value) : formatFull(value)) : value;
-  return Math.max(3 * EM_PER_DIGIT, text.length * (isNum ? EM_PER_DIGIT : EM_PER_TEXT_CHAR));
+  let em = 0;
+  for (const ch of text) em += /\p{L}/u.test(ch) ? EM_PER_LETTER : EM_PER_DIGIT;
+  return Math.max(3 * EM_PER_DIGIT, em);
 }
 
 const TREND_W = 100;

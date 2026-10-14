@@ -142,6 +142,13 @@ export const haloPx = (px: number, scale: number | undefined): number => {
   return Math.max(MIN_HALO_PX, px * scale);
 };
 
+/** Smallest radial gap (px) between the takedown track and the bulletproof halo outside it, at any zoom scale. */
+export const MIN_HALO_GAP_PX = 2.5;
+/** Offset (px) of the takedown track / arc from a provider ring. */
+export const takedownTrackPx = (scale: number | undefined): number => haloPx(3.5, scale);
+/** Offset (px) of the bulletproof halo from a provider ring: always at least `MIN_HALO_GAP_PX` outside the takedown track. */
+export const bulletproofHaloPx = (scale: number | undefined): number => takedownTrackPx(scale) + Math.max(MIN_HALO_GAP_PX, haloPx(3.5, scale));
+
 export interface LensFrame {
   /** Monotonic animation seconds (pulses, dashes, spins). */
   seconds: number;
@@ -656,7 +663,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       data: bullet,
       getPosition: posNode,
       radiusUnits: 'pixels',
-      getRadius: (r: ProviderRing) => ringPx(r) + haloPx(7, hs),
+      getRadius: (r: ProviderRing) => ringPx(r) + bulletproofHaloPx(hs),
       filled: false,
       stroked: true,
       getLineColor: BULLETPROOF_COLOR,
@@ -679,7 +686,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => ringPx(r) + haloPx(3.5, hs),
+        getRadius: (r: ProviderRing) => ringPx(r) + takedownTrackPx(hs),
         filled: false, stroked: true,
         getLineColor: TRACK_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,
@@ -690,7 +697,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => ringPx(r) + haloPx(3.5, hs),
+        getRadius: (r: ProviderRing) => ringPx(r) + takedownTrackPx(hs),
         filled: false, stroked: true,
         getLineColor: TAKEDOWN_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,

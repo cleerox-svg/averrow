@@ -173,11 +173,12 @@ describe('globeStartCamera: where the globe opens', () => {
   it('shows the Americas, the Atlantic, Europe and Africa together, not Europe alone', () => {
     const [lng, lat] = GLOBE_START_CENTER;
     // The centre of the disc is over the Atlantic: the eastern Americas (west of it) and Europe / Africa (east) all sit
-    // inside the 74 degree radius where labels still draw, the three big regions each well inside the 52 degree no-fade one.
+    // inside the 74 degree radius where labels still draw. North America, Europe and Africa are inside the 52 degree
+    // no-fade zone; South America sits in the fade band beyond it (but well inside the 62 degrees checked below).
     const angle = (a: [number, number], b: [number, number]) => centreAngleDeg(a, b);
     expect(lng).toBeLessThan(0);
     expect(angle([lng, lat], [-74, 40.7])).toBeLessThan(52);    // New York
-    expect(angle([lng, lat], [-46.6, -23.5])).toBeLessThan(74); // Sao Paulo: south-west of the retuned centre, still drawn with labels
+    expect(angle([lng, lat], [-46.6, -23.5])).toBeLessThan(62); // Sao Paulo: south-west of the retuned centre, still drawn with labels
     expect(angle([lng, lat], [2.35, 48.85])).toBeLessThan(52);  // Paris
     expect(angle([lng, lat], [3.4, 6.5])).toBeLessThan(52);     // Lagos
     expect(angle([lng, lat], [-122.4, 37.8])).toBeLessThan(90); // San Francisco is on the near side, at the limb

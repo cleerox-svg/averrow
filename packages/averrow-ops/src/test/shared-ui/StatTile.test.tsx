@@ -276,6 +276,10 @@ describe('shared StatTile', () => {
     expect(Number(em(c.container))).toBe(Number(em(a.container)));
     expect(statFitEm('MEDIUM')).toBeGreaterThan(6 * 0.62); // uppercase runs wider than the numeral estimate
     expect(statFitEm(5)).toBe(statFitEm(123)); // never under 3 digits
+    expect(statFitEm('MEDIUM')).toBeCloseTo(6 * 0.76, 6);
+    expect(statFitEm('60%')).toBeCloseTo(3 * 0.62, 6); // digits and punctuation at the numeral width
+    expect(statFitEm('1.5K')).toBeCloseTo(3 * 0.62 + 0.76, 6); // mixed: per-character widths
+    expect(statFitEm('12.5%')).toBeCloseTo(5 * 0.62, 6);
   });
 
   it('reserves bottom space for the "View" hint only when clickable', () => {

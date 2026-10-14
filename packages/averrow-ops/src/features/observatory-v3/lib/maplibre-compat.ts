@@ -75,7 +75,7 @@ export function installTransformAlias(map: unknown): boolean {
   return true;
 }
 
-/** Whether `@deck.gl/mapbox` can read this map's transform (native on MapLibre 5, or aliased on 6): the precondition for the interleaved globe overlay. */
+/** Whether `@deck.gl/mapbox` can read this map's transform (native on MapLibre 5, or aliased on 6 by `installTransformAlias`, which must have run): exactly what deck.gl reads, `map.transform`: the precondition for the interleaved globe overlay. */
 export function canInterleave(map: unknown): boolean {
-  return mapTransform(map) != null;
+  return (map as TransformHolder | null | undefined)?.transform != null;
 }
