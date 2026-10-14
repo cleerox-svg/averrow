@@ -4,6 +4,46 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.7.0] — 2026-10-14
+
+Observatory phase C (PR #1848). Staff-only surface: no tenant changelog entry.
+
+### Globe and map
+- MapLibre 4.7 → 5.24. Flat | Globe toggle (`proj=globe`) in the zoom cluster;
+  deck.gl 9.2 interleaved overlay on the globe, non-interleaved on flat, each
+  created once per map and parked (no GL-context leak). Globe animation capped
+  at 30 fps; idle spin only on untouched (wall-screen) sessions; labels hidden
+  behind the planet via `isLocationOccluded`. Heat view stays flat.
+- Static OpenStreetMap / CARTO attribution in the stats bar (the HTML
+  attribution control stays off — maplibre-gl ≤6.4.0 attribution XSS,
+  GHSA-jrc7-96c5-q579; guarded by a test). MapLibre 6.4.1+ upgrade is a
+  follow-up.
+
+### Operations lens (fixes the production "rope bundle" view)
+- `/api/observatory/operations-geo` reads only stable `cluster_*` ids by
+  primary-key range (skips ~70K legacy random-id duplicate rows), ranks by
+  evidence tier (cert → IP → subnet → registrar → ASN), and by default hides
+  low-evidence clusters: ASN-only clusters on shared CDN/cloud ASNs
+  (`lib/shared-infra-asns.ts`), hub IPs (>150 brands) and scanning /
+  malicious_ip groups. `include_shared=1` adds them (capped, ranked last);
+  `meta.excluded` / `shared_returned` reconcile. Cache key `operations_geo.v3`.
+- Map: one node per country (min–max size scale, top-country labels), one arc
+  per country pair weighted by shared operations, links only for the top 5 or
+  the selected / hovered operation, arcs drawn in the primary world copy only,
+  camera framing in the same −180..180 space, label halos.
+
+### New views
+- Threats → Fast weaponization (`/velocity-nodes`, `/timeline?velocity=`).
+- Takedowns measure on Baseline (by country) and Hosting (by provider), gated on
+  `manage_takedowns`; refused links rewritten to the lens default.
+
+### Fixes
+- Globe clicks route through MapLibre picking; takedown choropleth ≥3:1
+  contrast; timeline Retry reachable by assistive tech; phone min-zoom clamp;
+  peek-sheet snap kept across rotation.
+
+---
+
 ## [v4.6.0] — 2026-10-14
 
 Observatory overhaul (PRs #1843, #1847). Tag `v4.6.0` is created by
