@@ -35,7 +35,13 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads, type D1Tally } from "../lib/analytics";
 import { cachedValue } from "../lib/cached-value";
-import { classifyClusterKind, isBridgeKind, type ClusterKind } from "../lib/cluster-components";
+import {
+  classifyClusterKind,
+  isBridgeKind,
+  DEFAULT_HUB_FANOUT_THRESHOLD,
+  type ClusterKind,
+} from "../lib/cluster-components";
+import { isSharedInfraAsn } from "../lib/shared-infra-asns";
 import {
   OBSERVATORY_PERIODS,
   type ObservatoryPeriod,
@@ -243,17 +249,45 @@ function severitySums(severityCol: string, countExpr: string): string {
 
 // ── 1. GET /api/observatory/operations-geo ────────────────────────────────────
 //
-//   status  active (default) | all      — anything else → 400
-//   limit   1..50, default 25
+//   status          active (default) | all   — anything else → 400
+//   limit           1..50, default 25
+//   include_shared  0 (default) | 1          — anything else → 400
 //
-// Operations are the top-N infrastructure_clusters by threat_count:
-// status=active walks idx_clusters_status_threat_count (status, threat_count
-// DESC, id — migration 0301), status=all walks idx_clusters_threat_count
-// (threat_count DESC, id — migration 0298). Either way the read stops at
-// LIMIT; a status-only index would sort every active row (~71K) per miss.
-// The ORDER BY must stay `threat_count DESC, id` to match both indexes.
-// Components group the RETURNED
-// operations by component_id (S2.4 connected-components label).
+// Population: ONLY stable-id clusters (`cluster_*` — cluster_asn_,
+// cluster_subnet_, cluster_cert_, cluster_registrar_, cluster_ip_,
+// cluster_dev_, cluster_actor_), read as a PRIMARY KEY RANGE
+// (`c.id >= 'cluster_' AND c.id < 'cluster\`'`, backtick = '_' + 1). Before
+// 2026-09-11 the NEXUS workflow's ASN lane minted a fresh random-UUID row
+// per (ASN, threat_type) group per run, so prod holds ~70K ACTIVE frozen
+// UUID copies (~768 per group) that swamp any `ORDER BY threat_count` —
+// the whole top-12 was copies of one AS13335 malware cluster. Those legacy
+// rows are never returned (status=all included). The status predicate is
+// written `+c.status` so the planner can't take idx_clusters_status /
+// idx_clusters_status_threat_count (migration 0301, now unused here) and
+// walk tens of thousands of legacy rows; the PK range reads the ~780-row
+// stable population instead (pinned in test/observatory-lens-plans.test.ts).
+// There is no SQL ORDER BY: the whole range (≤ OPERATIONS_GEO_SCAN_CAP rows)
+// is classified and ranked in JS, then `limit` is applied AFTER filtering.
+//
+// Classification (classifyOperation, pure):
+//   evidence_tier  cert (serial/SAN) → ip → subnet → registrar → asn →
+//                  residue. cert/ip clusters below
+//                  OPERATIONS_GEO_MIN_SPECIFIC_THREATS threats rank in
+//                  residue, as do app_store / dark_web / other kinds.
+//   shared_infra   asn kind on a SHARED_INFRA_ASNS network (lib/shared-infra-asns.ts)
+//                  — landlord, not operator, evidence.
+//   hub            per_ip with brand fan-out > DEFAULT_HUB_FANOUT_THRESHOLD
+//                  (the same 150-brand line the component layer refuses to
+//                  bridge through).
+//   ip_reputation  asn kind whose primary attack type is scanning /
+//                  malicious_ip (IP-reputation feed noise, not an operation).
+// Default excludes all three (counted once each in meta.excluded, first
+// match of shared_asn → hub_ip → ip_reputation); include_shared=1 keeps them.
+// Rank: evidence tier, then threat_count DESC, then id.
+//
+// Components group the RETURNED operations by component_id (S2.4
+// connected-components label); a component member that is a legacy row is
+// simply absent.
 //
 // Edges: the component layer stores only the label, not the union-find
 // edges, so edges are drawn as a STAR from the component's hub — its
@@ -269,14 +303,40 @@ function severitySums(severityCol: string, countExpr: string): string {
 // ASN, /24 and registrar clusters never bridge (lib/cluster-components.ts).
 export const OPERATIONS_GEO_DEFAULT_LIMIT = 25;
 export const OPERATIONS_GEO_MAX_LIMIT = 50;
+/** Safety cap on the stable-id range read (~780 rows in prod, 2026-10). */
+export const OPERATIONS_GEO_SCAN_CAP = 5000;
+/** cert / per-IP clusters need this many threats to rank in their own tier. */
+export const OPERATIONS_GEO_MIN_SPECIFIC_THREATS = 10;
+/** Stable-id PK range: every deterministic NEXUS id starts with `cluster_`. */
+export const STABLE_CLUSTER_ID_LO = "cluster_";
+export const STABLE_CLUSTER_ID_HI = "cluster`";
+/** ASN-lane attack types that are IP-reputation noise, not an operation. */
+export const IP_REPUTATION_TYPES: ReadonlySet<string> = new Set(["scanning", "malicious_ip"]);
 
 type BridgeKind = "cert_serial" | "cert_san" | "per_ip";
+
+export type EvidenceTier = "cert" | "ip" | "subnet" | "registrar" | "asn" | "residue";
+
+export const EVIDENCE_TIER_RANK: Readonly<Record<EvidenceTier, number>> = {
+  cert: 0,
+  ip: 1,
+  subnet: 2,
+  registrar: 3,
+  asn: 4,
+  residue: 5,
+};
 
 export interface OperationGeo {
   id: string;
   name: string | null;
   component_id: string | null;
   kind: ClusterKind;
+  evidence_tier: EvidenceTier;
+  /** Distinct brands in the cluster (length of brand_ids; 0 when unreadable). */
+  brand_fanout: number;
+  shared_infra: boolean;
+  hub: boolean;
+  ip_reputation: boolean;
   status: string | null;
   confidence_score: number | null;
   threat_count: number;
@@ -285,6 +345,12 @@ export interface OperationGeo {
   asns: string[];
   last_seen: string | null;
   last_movement_pivot_at: string | null;
+}
+
+export interface OperationExclusions {
+  shared_asn: number;
+  hub_ip: number;
+  ip_reputation: number;
 }
 
 export interface ComponentEdge {
@@ -314,6 +380,9 @@ interface OperationRow {
   last_seen: string | null;
   last_movement_pivot_at: string | null;
   cluster_type: string | null;
+  brand_fanout: number | null;
+  primary_asn: unknown;
+  primary_type: unknown;
   actor_id: string | null;
   actor_name: string | null;
 }
@@ -321,6 +390,97 @@ interface OperationRow {
 /** Cluster kind from id + the (already-extracted) cert cluster_type. */
 function kindOf(id: string, clusterType: string | null): ClusterKind {
   return classifyClusterKind(id, clusterType ? JSON.stringify({ cluster_type: clusterType }) : null);
+}
+
+export interface OperationClassInput {
+  id: string;
+  /** agent_notes.cluster_type (cert clusters only; null otherwise). */
+  cluster_type: string | null;
+  threat_count: number;
+  brand_fanout: number;
+  /** asns[0] as stored (any ASN form, e.g. "AS13335 Cloudflare, Inc."). */
+  primary_asn: unknown;
+  /** attack_types[0] as stored. */
+  primary_type: unknown;
+}
+
+export interface OperationClass {
+  kind: ClusterKind;
+  evidence_tier: EvidenceTier;
+  shared_infra: boolean;
+  hub: boolean;
+  ip_reputation: boolean;
+}
+
+/** Pure: kind, evidence tier and the three exclusion flags of one cluster. */
+export function classifyOperation(input: OperationClassInput): OperationClass {
+  const kind = kindOf(input.id, input.cluster_type);
+  const specificEnough = input.threat_count >= OPERATIONS_GEO_MIN_SPECIFIC_THREATS;
+  let evidence_tier: EvidenceTier;
+  switch (kind) {
+    case "cert_serial":
+    case "cert_san":
+      evidence_tier = specificEnough ? "cert" : "residue";
+      break;
+    case "per_ip":
+      evidence_tier = specificEnough ? "ip" : "residue";
+      break;
+    case "subnet":
+      evidence_tier = "subnet";
+      break;
+    case "registrar":
+      evidence_tier = "registrar";
+      break;
+    case "asn":
+      evidence_tier = "asn";
+      break;
+    default:
+      evidence_tier = "residue";
+  }
+  const primaryType = typeof input.primary_type === "string" ? input.primary_type.trim().toLowerCase() : "";
+  return {
+    kind,
+    evidence_tier,
+    shared_infra: kind === "asn" && isSharedInfraAsn(input.primary_asn),
+    hub: kind === "per_ip" && input.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD,
+    ip_reputation: kind === "asn" && IP_REPUTATION_TYPES.has(primaryType),
+  };
+}
+
+/** The exclusion bucket an operation falls in by default, or null (kept). */
+export function exclusionOf(op: Pick<OperationGeo, "shared_infra" | "hub" | "ip_reputation">): keyof OperationExclusions | null {
+  if (op.shared_infra) return "shared_asn";
+  if (op.hub) return "hub_ip";
+  if (op.ip_reputation) return "ip_reputation";
+  return null;
+}
+
+/** Rank order: evidence tier, then threat_count DESC, then id. */
+export function compareOperations(a: OperationGeo, b: OperationGeo): number {
+  const t = EVIDENCE_TIER_RANK[a.evidence_tier] - EVIDENCE_TIER_RANK[b.evidence_tier];
+  if (t !== 0) return t;
+  if (a.threat_count !== b.threat_count) return b.threat_count - a.threat_count;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Pure: filter (unless includeShared), rank, then cut to `limit`.
+ * `excluded` counts every filtered operation once (all zero when
+ * includeShared — nothing is filtered).
+ */
+export function selectOperations(
+  ops: readonly OperationGeo[],
+  opts: { includeShared: boolean; limit: number },
+): { operations: OperationGeo[]; excluded: OperationExclusions } {
+  const excluded: OperationExclusions = { shared_asn: 0, hub_ip: 0, ip_reputation: 0 };
+  const kept: OperationGeo[] = [];
+  for (const op of ops) {
+    const bucket = opts.includeShared ? null : exclusionOf(op);
+    if (bucket) excluded[bucket]++;
+    else kept.push(op);
+  }
+  kept.sort(compareOperations);
+  return { operations: kept.slice(0, Math.max(0, opts.limit)), excluded };
 }
 
 function asBridgeKind(kind: ClusterKind): BridgeKind | null {
@@ -410,14 +570,29 @@ export function unresolvedCertReps(ops: readonly OperationGeo[]): string[] {
 }
 
 function shapeOperation(r: OperationRow): OperationGeo {
+  const threatCount = num(r.threat_count);
+  const brandFanout = num(r.brand_fanout);
+  const cls = classifyOperation({
+    id: r.id,
+    cluster_type: r.cluster_type,
+    threat_count: threatCount,
+    brand_fanout: brandFanout,
+    primary_asn: r.primary_asn,
+    primary_type: r.primary_type,
+  });
   return {
     id: r.id,
     name: r.cluster_name ?? null,
     component_id: r.component_id ?? null,
-    kind: kindOf(r.id, r.cluster_type),
+    kind: cls.kind,
+    evidence_tier: cls.evidence_tier,
+    brand_fanout: brandFanout,
+    shared_infra: cls.shared_infra,
+    hub: cls.hub,
+    ip_reputation: cls.ip_reputation,
     status: r.status ?? null,
     confidence_score: r.confidence_score ?? null,
-    threat_count: num(r.threat_count),
+    threat_count: threatCount,
     actor: r.actor_id && r.actor_name ? { id: r.actor_id, name: r.actor_name } : null,
     countries: countryList(parseJsonStringArray(r.countries, Number.MAX_SAFE_INTEGER)),
     asns: asnList(parseJsonStringArray(r.asns, Number.MAX_SAFE_INTEGER)),
@@ -431,26 +606,40 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
   const rawStatus = url.searchParams.get("status");
   const status = rawStatus === null || rawStatus === "" ? "active" : rawStatus;
   if (status !== "active" && status !== "all") return badRequest(request, "status must be active or all");
+  const rawShared = url.searchParams.get("include_shared");
+  const sharedFlag = rawShared === null || rawShared === "" ? "0" : rawShared;
+  if (sharedFlag !== "0" && sharedFlag !== "1") return badRequest(request, "include_shared must be 0 or 1");
+  const includeShared = sharedFlag === "1";
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), OPERATIONS_GEO_DEFAULT_LIMIT, OPERATIONS_GEO_MAX_LIMIT);
 
+  // `.v2` — the stable-id / classified shape; pre-v2 keys
+  // (`operations_geo:<status>:<limit>`) are never read again and expire.
   return serveLens(request, env, "observatory_operations_geo",
-    `${CACHE_NS}.operations_geo:${status}:${limit}`, LENS_TTL_S.operationsGeo, undefined,
+    `${CACHE_NS}.operations_geo.v2:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
     async (session, tally) => {
-      const where = status === "active" ? "WHERE c.status = 'active'" : "";
+      // `+c.status`: keep the planner on the PK range (see block comment).
+      const statusFilter = status === "active" ? "AND +c.status = 'active'" : "";
       const rows = await session.prepare(`
         SELECT c.id, c.cluster_name, c.component_id, c.status, c.confidence_score,
                c.threat_count, c.countries, c.asns, c.last_seen, c.last_movement_pivot_at,
                CASE WHEN c.id LIKE 'cluster_cert_%' AND json_valid(c.agent_notes)
                     THEN json_extract(c.agent_notes, '$.cluster_type') END AS cluster_type,
+               CASE WHEN json_valid(c.brand_ids) AND json_type(c.brand_ids) = 'array'
+                    THEN json_array_length(c.brand_ids) ELSE 0 END AS brand_fanout,
+               CASE WHEN json_valid(c.asns) AND json_type(c.asns) = 'array'
+                    THEN json_extract(c.asns, '$[0]') END AS primary_asn,
+               CASE WHEN json_valid(c.attack_types) AND json_type(c.attack_types) = 'array'
+                    THEN json_extract(c.attack_types, '$[0]') END AS primary_type,
                c.actor_id, a.name AS actor_name
         FROM infrastructure_clusters c
         LEFT JOIN threat_actors a ON a.id = c.actor_id
-        ${where}
-        ORDER BY c.threat_count DESC, c.id
+        WHERE c.id >= ? AND c.id < ?
+          ${statusFilter}
         LIMIT ?
-      `).bind(limit).all<OperationRow>();
+      `).bind(STABLE_CLUSTER_ID_LO, STABLE_CLUSTER_ID_HI, OPERATIONS_GEO_SCAN_CAP).all<OperationRow>();
       addToTally(tally, rows.meta);
-      const operations = (rows.results ?? []).map(shapeOperation);
+      const scanned = (rows.results ?? []).map(shapeOperation);
+      const { operations, excluded } = selectOperations(scanned, { includeShared, limit });
       // Resolve cert representatives outside the returned set by PK (at
       // most one per component, ≤50 → one statement in practice).
       const repKinds = new Map<string, ClusterKind>();
@@ -470,7 +659,15 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
           }
         }
       }
-      return { data: { operations, components: buildComponents(operations, repKinds) } };
+      return {
+        data: { operations, components: buildComponents(operations, repKinds) },
+        meta: {
+          include_shared: includeShared,
+          excluded,
+          scanned: scanned.length,
+          truncated: scanned.length >= OPERATIONS_GEO_SCAN_CAP,
+        },
+      };
     });
 }
 
