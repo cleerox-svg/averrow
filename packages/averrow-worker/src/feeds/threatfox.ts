@@ -21,7 +21,8 @@ export const threatfox: FeedModule = {
     const rawText = await res.text();
     let data: { query_status: string; data?: Array<{
       id: number; ioc: string; ioc_type: string; threat_type: string;
-      malware?: string; confidence_level?: number; tags?: string[];
+      malware?: string | null; malware_printable?: string | null;
+      malware_alias?: string | null; confidence_level?: number; tags?: string[] | null;
     }> };
     try {
       data = JSON.parse(rawText);
@@ -70,6 +71,7 @@ export const threatfox: FeedModule = {
         ioc_value: ioc.ioc,
         severity: confidenceToSeverity(confidence),
         confidence_score: confidence,
+        malware_family: malwareFamily(ioc.malware_printable, ioc.malware),
       });
     }
 
@@ -80,6 +82,28 @@ export const threatfox: FeedModule = {
     return { itemsFetched: rows.length, itemsNew, itemsDuplicate, itemsError };
   },
 };
+
+/**
+ * Malware family for the threats row: ThreatFox's display name
+ * (`malware_printable`, e.g. "Cobalt Strike") first, its malpedia key
+ * (`malware`, e.g. "win.cobalt_strike") as the fallback. abuse.ch reports an
+ * unattributed IOC as "Unknown malware" (key "unknown") — stored as NULL so
+ * a later attributed report can still fill the row.
+ */
+export function malwareFamily(
+  printable: string | null | undefined,
+  key: string | null | undefined,
+): string | null {
+  for (const v of [printable, key]) {
+    if (typeof v !== "string") continue;
+    const t = v.trim();
+    if (!t) continue;
+    const lower = t.toLowerCase();
+    if (lower === "unknown malware" || lower === "unknown") continue;
+    return t.slice(0, 200);
+  }
+  return null;
+}
 
 function mapThreatType(t: string): ThreatRow["threat_type"] {
   if (t === "botnet_cc") return "c2";
