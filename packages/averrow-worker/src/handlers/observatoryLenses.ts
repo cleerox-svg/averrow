@@ -476,8 +476,8 @@ export const OPERATIONS_GEO_SHARED_CAP = 50;
  * the scanned population once, whether or not include_shared is set, so the
  * "N hidden" figure is the same number the toggle then reveals up to the cap.
  * With includeShared the excluded rows (ranked by threat_count DESC, then id —
- * their tiers are all the lowest, so the usual tier rank would bury them) are
- * appended after the normal top-N, up to `sharedCap`; they stay marked by their
+ * not by tier: their tiers are mixed, e.g. a hub row is tier `ip`, so a tier
+ * rank would interleave them with the kept rows) are appended after the normal top-N, up to `sharedCap`; they stay marked by their
  * own shared_infra / hub / ip_reputation flags. `shared_returned` is how many
  * were appended (0 without includeShared).
  */

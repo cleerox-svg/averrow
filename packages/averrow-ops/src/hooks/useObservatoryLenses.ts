@@ -41,6 +41,7 @@ export interface OperationGeo {
   brand_fanout?: number | null;
   shared_infra?: boolean;
   hub?: boolean;
+  ip_reputation?: boolean;
 }
 
 export interface ComponentEdge {

@@ -277,3 +277,22 @@ describe('ASN evidence only lists ASNs when the pair\'s evidence is the ASN', ()
     expect(edgeShortLabel('residue', [])).toBe('· weak');
   });
 });
+
+describe('low-evidence rows (include_shared) rank after every kept row', () => {
+  const kept = op({ id: 'kept', evidence_tier: 'subnet', kind: 'subnet', threat_count: 1, countries: ['US', 'DE'] });
+  const hub = op({ id: 'hub', evidence_tier: 'ip', kind: 'per_ip', hub: true, threat_count: 500, countries: ['US', 'FR'] });
+  const shared = op({ id: 'shared', evidence_tier: 'asn', kind: 'asn', shared_infra: true, threat_count: 900, countries: ['US', 'NL'] });
+  const rep = op({ id: 'rep', evidence_tier: 'asn', kind: 'asn', ip_reputation: true, threat_count: 700, countries: ['US', 'BR'] });
+
+  it('a hub row (tier ip) does not outrank a kept subnet operation; low rows order by threats then id', () => {
+    const sorted = [hub, rep, shared, kept].sort(compareOperations).map(o => o.id);
+    expect(sorted).toEqual(['kept', 'shared', 'rep', 'hub']);
+  });
+  it('topOpIds and the default linked set stay the kept operations', () => {
+    const keptOps = Array.from({ length: TOP_OPERATIONS }, (_, i) =>
+      op({ id: `k${String(i).padStart(2, '0')}`, evidence_tier: 'registrar', kind: 'registrar', threat_count: 5, countries: ['US', 'DE'] }));
+    const m = buildOperationsModel([hub, shared, rep, ...keptOps], []);
+    expect(m.topOpIds).toEqual(keptOps.map(o => o.id));
+    expect(m.byId.has('hub')).toBe(true); // still selectable by deep link
+  });
+});

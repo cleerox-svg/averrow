@@ -29,6 +29,15 @@ describe('lens-aware panel rows', () => {
     expect(s.rows[0]).toMatchObject({ badge: 'same ASN', secondary: '2 countries · 80% conf · APT' });
     expect(operationRows(undefined).rows).toEqual([]);
   });
+  it('Operations with include_shared: low-evidence rows (hub tier ip, shared, scanning) sit after every kept row and do not displace the top 12', () => {
+    const mk = (id: string, tier: string, n: number, flags: Partial<OperationGeo> = {}): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', evidence_tier: tier, status: 'active', confidence_score: 80, threat_count: n, actor: null, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null, ...flags });
+    const kept = Array.from({ length: PANEL_ROWS }, (_, i) => mk(`k${String(i).padStart(2, '0')}`, 'subnet', 10 - i));
+    const s = operationRows([mk('hub', 'ip', 9000, { hub: true }), mk('rep', 'asn', 8000, { ip_reputation: true }), mk('sh', 'asn', 7000, { shared_infra: true }), ...kept]);
+    expect(s.rows.map(r => r.key)).toEqual(kept.map(o => o.id));
+    expect(s.more).toBe(3);
+    const only = operationRows([mk('hub', 'ip', 9000, { hub: true }), mk('sh', 'asn', 7000, { shared_infra: true }), mk('k', 'residue', 1)]);
+    expect(only.rows.map(r => r.key)).toEqual(['k', 'hub', 'sh']);
+  });
   it('Operations keep the server order (tier, then threats), mark linked rows and count what the cap hides', () => {
     const mk = (id: string, tier: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', evidence_tier: tier, status: 'active', confidence_score: 80, threat_count: n, actor: null, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
     const s = operationRows([mk('weak-huge', 'residue', 9999), mk('cert-small', 'cert', 3), mk('asn-big', 'asn', 500), ...Array.from({ length: 12 }, (_, i) => mk(`p${i}`, 'asn', 400 - i))], new Set(['cert-small']));

@@ -160,9 +160,20 @@ const TIER_RANK: Record<string, number> = {
 };
 export const tierRank = (o: Pick<OperationGeo, 'evidence_tier' | 'kind'>): number => TIER_RANK[o.evidence_tier ?? o.kind] ?? 6;
 
-/** The server's operation order: evidence tier, then threat count (largest first), then id. Without tiers: threats, id. */
+/** An operation the default view hides (shared hosting, hub IP, scanning): it only arrives with include_shared. */
+export const isLowEvidence = (o: Pick<OperationGeo, 'shared_infra' | 'hub' | 'ip_reputation'>): boolean =>
+  !!(o.shared_infra || o.hub || o.ip_reputation);
+
+/**
+ * The server's operation order: kept operations by evidence tier, then threat count (largest first), then id.
+ * Low-evidence rows (appended by include_shared) rank after every kept row, by threat count then id, exactly as the
+ * server appends them: a hub row has tier `ip` and would otherwise outrank real operations. Without tiers: threats, id.
+ */
 export function compareOperations(a: OperationGeo, b: OperationGeo): number {
-  const t = a.evidence_tier != null && b.evidence_tier != null ? tierRank(a) - tierRank(b) : 0;
+  const la = isLowEvidence(a);
+  const lb = isLowEvidence(b);
+  if (la !== lb) return la ? 1 : -1;
+  const t = !la && a.evidence_tier != null && b.evidence_tier != null ? tierRank(a) - tierRank(b) : 0;
   return t || b.threat_count - a.threat_count || a.id.localeCompare(b.id);
 }
 
