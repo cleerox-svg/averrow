@@ -250,6 +250,22 @@ describe('shared StatTile', () => {
     expect(btn).toHaveAccessibleName(/Open alerts/);
   });
 
+  it('compact: shows 76.7K for a 5-digit count, with the full value as the title and the accessible text', () => {
+    const { container } = render(<StatTile label="Threats" value={76712} compact />);
+    expect(screen.getByText('76.7K')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('.ds-stat-value')).toHaveAttribute('title', '76,712');
+    expect(container.querySelector('.sr-only')).toHaveTextContent('76,712');
+  });
+
+  it('compact: leaves a 4-digit count, a text value and the default (non-compact) tile alone', () => {
+    const { rerender } = render(<StatTile label="Threats" value={9876} compact />);
+    expect(screen.getByText('9,876')).toBeInTheDocument();
+    rerender(<StatTile label="Threats" value="CRITICAL" compact />);
+    expect(screen.getByText('CRITICAL')).toBeInTheDocument();
+    rerender(<StatTile label="Threats" value={76712} />);
+    expect(screen.getByText('76,712')).toBeInTheDocument();
+  });
+
   it('reserves bottom space for the "View" hint only when clickable', () => {
     const { container, rerender } = render(<StatTile label="A" value={1} sub="a long wrapped sub line" onClick={() => {}} />);
     expect((container.firstChild as HTMLElement).className).toContain('ds-stat--interactive');

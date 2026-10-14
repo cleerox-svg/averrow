@@ -21,6 +21,7 @@ import { Slot, Slottable } from '@radix-ui/react-slot';
 import { cn } from './cn';
 import { useCountUp } from './lib/useCountUp';
 import { resolveStatAccent, statNumeric, STAT_NEUTRAL } from './lib/stat-accent';
+import { COMPACT_FROM, formatCompact, formatFull } from './lib/compact-number';
 
 export type StatTone = 'amber' | 'red' | 'blue' | 'green' | 'neutral';
 
@@ -59,6 +60,11 @@ export interface StatTileProps
   trend?: number[];
   /** Animated hairline for the one tile that needs action. Ignored unless value > 0. */
   live?: boolean;
+  /**
+   * Show a numeric value >= 10,000 in compact form ("76.7K") so it never clips in a narrow tile. The full value
+   * stays available: `title` on hover and a screen-reader-only copy. Text values and smaller numbers are unchanged.
+   */
+  compact?: boolean;
 }
 
 export interface StatDelta {
@@ -66,6 +72,12 @@ export interface StatDelta {
   tone?: 'good' | 'bad' | 'neutral';
   /** e.g. "412 more than yesterday" (aria-label). */
   label?: string;
+}
+
+/** Characters the settled value is shown with (never fewer than 3: a one-digit tile keeps the full size). */
+function fitChars(value: number | string, compacted: boolean): number {
+  const text = typeof value === 'number' ? (compacted ? formatCompact(value) : formatFull(value)) : value;
+  return Math.max(3, text.length);
 }
 
 const TREND_W = 100;
@@ -119,6 +131,7 @@ export function StatTile({
   delta,
   trend,
   live = false,
+  compact = false,
   className,
   ...rest
 }: StatTileProps) {
@@ -128,9 +141,10 @@ export function StatTile({
   const accent = resolveStatAccent(value, accentProp ?? TONE_COLOR[tone]);
   // Hooks run unconditionally regardless of loading state.
   const counted = useCountUp(typeof value === 'number' ? value : 0);
+  const isCompact = compact && typeof value === 'number' && Math.abs(value) >= COMPACT_FROM;
   const display = isNull
     ? '—'
-    : typeof value === 'number' ? counted.toLocaleString('en-US') : value;
+    : typeof value === 'number' ? (isCompact ? formatCompact(counted) : formatFull(counted)) : value;
   const critCount = critical ?? 0;
   const clickable = !!onClick || asChild;
 
@@ -161,7 +175,22 @@ export function StatTile({
         </span>
         {critCount > 0 ? null : deltaChip}
       </span>
-      <span className={cn('ds-stat-value', (loading || failed) && 'ds-stat-value--muted')}>{display}</span>
+      {compact && !isNull ? (
+        // The value scales to the tile (container query, sized by its final length so it does not jump while counting
+        // up): a 6-character count in a 140px tile shrinks instead of clipping.
+        <span className="ds-stat-fit">
+          <span
+            className="ds-stat-value ds-stat-value--fit"
+            title={isCompact ? formatFull(value) : undefined}
+            style={{ '--ds-stat-chars': fitChars(value, isCompact) } as CSSProperties}
+          >
+            <span aria-hidden={isCompact || undefined}>{display}</span>
+            {isCompact ? <span className="sr-only">{formatFull(value)}</span> : null}
+          </span>
+        </span>
+      ) : (
+        <span className={cn('ds-stat-value', (loading || failed) && 'ds-stat-value--muted')}>{display}</span>
+      )}
       {showTrend && !loading && !failed ? <Trend points={trend} /> : null}
       {failed ? (
         <span className="ds-stat-sub">Couldn't load</span>

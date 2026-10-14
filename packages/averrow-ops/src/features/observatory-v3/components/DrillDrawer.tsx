@@ -180,7 +180,7 @@ function Hero({ tiles, badges, cta }: { tiles: [HeroTile, HeroTile]; badges?: Re
   return (
     <div className="flex flex-col gap-2.5" data-hero>
       <div className="grid grid-cols-2 gap-2">
-        {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} />)}
+        {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} compact />)}
       </div>
       {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
       {cta && (cta.to

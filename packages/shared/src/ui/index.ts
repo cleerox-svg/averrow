@@ -26,6 +26,7 @@ export {
 } from './Badge';
 export { Banner, type BannerProps, type BannerTone, type BannerVariant, type BannerDensity } from './Banner';
 export { StatTile, type StatTileProps, type StatTone } from './StatTile';
+export { formatCompact, formatFull, COMPACT_FROM } from './lib/compact-number';
 export {
   PageState, pageStateKind,
   type PageStateProps, type PageStateKind, type PageStateLayout,
