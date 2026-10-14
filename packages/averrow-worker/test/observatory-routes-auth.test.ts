@@ -52,6 +52,7 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/campaigns-geo",
   "/api/observatory/timeline?period=24h",
   "/api/observatory/actors",
+  "/api/observatory/actors?actor_id=ta_apt28",
   "/api/observatory/takedowns-geo?period=30d&by=country",
   "/api/observatory/velocity-nodes?period=7d&flag=very_fast",
 ] as const;
@@ -144,7 +145,7 @@ async function call(path: string, env: Env, auth?: string): Promise<Response> {
 
 describe("/api/observatory/* — staff-only", () => {
   for (const path of OBSERVATORY_PATHS) {
-    it(`${path.split("?")[0]} rejects anonymous callers 401 without running the handler`, async () => {
+    it(`${path} rejects anonymous callers 401 without running the handler`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env);
       expect(res.status).toBe(401);
@@ -156,7 +157,7 @@ describe("/api/observatory/* — staff-only", () => {
       expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
-    it(`${path.split("?")[0]} rejects a tenant client JWT 403 without running the handler`, async () => {
+    it(`${path} rejects a tenant client JWT 403 without running the handler`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env, await bearer("client"));
       expect(res.status).toBe(403);
@@ -165,7 +166,7 @@ describe("/api/observatory/* — staff-only", () => {
       expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
-    it(`${path.split("?")[0]} rejects a forged/invalid token 401`, async () => {
+    it(`${path} rejects a forged/invalid token 401`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env, "Bearer not-a-real-jwt");
       expect(res.status).toBe(401);
@@ -176,7 +177,7 @@ describe("/api/observatory/* — staff-only", () => {
       ? ["analyst", "admin", "super_admin"]
       : ["analyst", "auditor", "super_admin"];
     for (const role of staffRoles) {
-      it(`${path.split("?")[0]} lets staff role '${role}' through to the handler`, async () => {
+      it(`${path} lets staff role '${role}' through to the handler`, async () => {
         const h = makeHarness();
         const res = await call(path, h.env, await bearer(role));
         expect(res.status).toBe(200);
@@ -223,7 +224,7 @@ describe("/api/observatory/* — staff-only", () => {
   it("registers exactly the sixteen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const registered = [...src.matchAll(/"(\/api\/observatory\/[a-z-]+)"/g)].map((m) => m[1]).sort();
-    expect(registered).toEqual(OBSERVATORY_PATHS.map((p) => p.split("?")[0]).sort());
+    expect(registered).toEqual([...new Set(OBSERVATORY_PATHS.map((p) => p.split("?")[0]))].sort());
     // No observatory route may be registered directly against a handler
     // (the pre-fix `router.get("/api/observatory/...", (req, env) => handle…)`).
     expect(src).not.toMatch(/router\.get\(\s*"\/api\/observatory\//);

@@ -457,6 +457,10 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
 
     expect((await handleObservatoryTimeline(req("/api/observatory/timeline?period=1y"), env)).status).toBe(400);
     expect((await handleObservatoryTimeline(req("/api/observatory/timeline?country=USA"), env)).status).toBe(400);
+    // Syntactically ISO-2 but no centroid, and the 'XX' unknown sentinel → 400, no key minted.
+    for (const c of ["QQ", "XX", "xx", "ZZ"]) {
+      expect((await handleObservatoryTimeline(req(`/api/observatory/timeline?period=24h&country=${c}`), env)).status).toBe(400);
+    }
     expect(lensKeys(kv).sort()).toEqual([
       "cv:observatory_lens.timeline:24h:all:US",
       "cv:observatory_lens.timeline:24h:all:all",
@@ -501,7 +505,15 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     expect(missing.status).toBe(404);
     expect((await missing.json() as { success: boolean }).success).toBe(false);
     expect((await handleObservatoryActors(req(`/api/observatory/actors?actor_id=${"x".repeat(129)}`), env)).status).toBe(400);
-    expect(lensKeys(kv).sort()).toEqual(["cv:observatory_lens.actors:list", "cv:observatory_lens.actors:ta_1"]);
+    for (const bad of ["a b", "ta_1;drop", "ta/1", "ta%00", "<script>", "é"]) {
+      expect((await handleObservatoryActors(req(`/api/observatory/actors?actor_id=${encodeURIComponent(bad)}`), env)).status).toBe(400);
+    }
+    // 128 chars of the allowed alphabet is fine (404 here — unknown — never cached).
+    expect((await handleObservatoryActors(req(`/api/observatory/actors?actor_id=${"a.b:c-d_".repeat(16)}`), env)).status).toBe(404);
+    // `actor_id=list` is a detail lookup in its own namespace — never the list payload.
+    const listAsId = await handleObservatoryActors(req("/api/observatory/actors?actor_id=list"), env);
+    expect(listAsId.status).toBe(404);
+    expect(lensKeys(kv).sort()).toEqual(["cv:observatory_lens.actors:detail:ta_1", "cv:observatory_lens.actors:list"]);
   });
 
   it("cache hits serve without touching D1", async () => {

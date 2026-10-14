@@ -842,7 +842,8 @@ export async function handleObservatoryCampaignsGeo(request: Request, env: Env):
 //
 //   period       24h | 7d (default) | 30d | 90d → else 400
 //   source_feed  same canonicalisation as Phase A (absent / '' / all → all)
-//   country      optional ISO-2 (case-insensitive) → else 400
+//   country      optional ISO-2 (case-insensitive) with a known centroid
+//                (lib/country-centroids.ts) → else 400; 'XX' (unknown) → 400
 //   velocity     optional very_fast | fast | all → else 400 (B5). When set
 //                the series comes from threat_cube_velocity instead: `total`
 //                = fast-weaponized active threats, plus `very_fast` / `fast`
@@ -932,7 +933,12 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
   let country: string | null = null;
   if (rawCountry !== null && rawCountry !== "") {
     const c = rawCountry.trim().toUpperCase();
-    if (!/^[A-Z]{2}$/.test(c)) return badRequest(request, "country must be an ISO-3166 alpha-2 code");
+    // normalizeCountry rejects non-ISO-2 and the 'XX' sentinel; the centroid
+    // check rejects syntactically valid but unknown codes, so a garbage
+    // code can't mint its own cache key.
+    if (normalizeCountry(c) === null || getCountryCentroid(c) === null) {
+      return badRequest(request, "country must be a known ISO-3166 alpha-2 code");
+    }
     country = c;
   }
   const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
@@ -1003,14 +1009,18 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
 //   (no actor_id)  → list [{id,name,cluster_count,infra_count}], ≤500 rows,
 //                    cluster_count DESC, infra_count DESC, name
 //   actor_id=<id>  → detail {actor, infrastructure[], clusters[], attributions}
-//                    400 if >128 chars; 404 unknown (never cached)
+//                    400 unless ^[A-Za-z0-9_.:-]{1,128}$; 404 unknown (never
+//                    cached). Detail keys are `actors:detail:<id>`, a separate
+//                    namespace from the list key `actors:list`, so
+//                    `actor_id=list` can never collide with the list.
 //
 // Every per-actor read is index-backed: idx_clusters_actor,
 // idx_tai_actor, idx_attribution_actor (all present in prod).
 export const ACTORS_LIST_LIMIT = 500;
 export const ACTOR_INFRA_LIMIT = 200;
 export const ACTOR_CLUSTERS_LIMIT = 100;
-const ACTOR_ID_MAX_LEN = 128;
+/** Actor ids are slug / prefixed-id shaped; anything else is rejected. */
+export const ACTOR_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 interface ActorRow {
   id: string;
@@ -1057,10 +1067,10 @@ export async function handleObservatoryActors(request: Request, env: Env): Promi
       });
   }
 
-  if (actorId.length > ACTOR_ID_MAX_LEN) return badRequest(request, "actor_id too long");
+  if (!ACTOR_ID_RE.test(actorId)) return badRequest(request, "invalid actor_id");
 
   return serveLens(request, env, "observatory_actor_detail",
-    `${CACHE_NS}.actors:${actorId}`, LENS_TTL_S.actors, undefined,
+    `${CACHE_NS}.actors:detail:${actorId}`, LENS_TTL_S.actors, undefined,
     async (session, tally) => {
       tally.queries += 1; // .first() exposes no meta
       const actor = await session.prepare(`
