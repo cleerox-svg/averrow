@@ -22,7 +22,8 @@
 // These functions are intentionally thin: they take a single hour_bucket, run
 // one batch, and return a structured result. They do NOT log to agent_runs.
 // The caller (Navigator refresh, admin backfill endpoint) owns logging and
-// orchestration. cube_healer reuses cubeStaleSweepSQL() for its window heal.
+// orchestration. cube_healer reuses cubeStaleSweepSQL() for its day-chunked
+// window heal.
 //
 // NOTE on hour_bucket format: callers must pass 'YYYY-MM-DD HH:00:00'. The
 // window computed downstream is [hour_bucket, hour_bucket + 1 hour), which
@@ -164,8 +165,9 @@ export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
  * DELETE the cube rows in [?1, ?2) whose full key is absent from the source
  * threats in the same window. Binds: ?1 = window start, ?2 = window end
  * (both 'YYYY-MM-DD HH:00:00'). Works for a single hour (builders) and for
- * a multi-day window (cube_healer) because the hour key is derived from
- * created_at exactly as the upserts derive it.
+ * a day-sized window (cube_healer heals its 2/14-day window one day per
+ * batch — see healCube) because the hour key is derived from created_at
+ * exactly as the upserts derive it.
  *
  * The subquery is uncorrelated, so SQLite evaluates it once into an
  * ephemeral index: reads = source rows in the window + cube rows in the

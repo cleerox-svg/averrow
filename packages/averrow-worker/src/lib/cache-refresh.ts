@@ -8,7 +8,9 @@
 //
 // A handler that honours `isCacheRefresh(request)` treats the warm as a
 // refresh-ahead: it recomputes and rewrites the key once the entry is
-// close to expiry (see `refreshAfterSeconds`).
+// close to expiry (see `refreshAfterSeconds`). Navigator marks warms only
+// while the D1 read budget is under its soft-cap; over it, warms are plain
+// fill-on-miss requests and never force a recompute.
 //
 // Spoofing: the marker is a module-private WeakSet keyed on the Request
 // OBJECT, not a header or query param. Only Worker code that imports this
@@ -33,16 +35,30 @@ export function isCacheRefresh(request: Request): boolean {
 }
 
 /**
- * Refresh-ahead margin. A warm recomputes a key once it is within this many
- * seconds of expiry — two 15-minute warm slots, so a single skipped warm
- * (budget soft-cap, CPU cap) still leaves one more chance before the key
- * lapses. Keys whose TTL is at or below the margin recompute on every warm.
+ * Upper bound on the refresh-ahead margin: two 15-minute warm slots, so a
+ * single skipped warm (CPU cap) still leaves one more chance before a long
+ * key lapses.
  */
 export const CACHE_REFRESH_MARGIN_S = 1800;
 
+/**
+ * Refresh-ahead margin for a key with `ttlSeconds`: min(1800, ttl/2). A warm
+ * recomputes only once the key's REMAINING TTL drops below this margin.
+ *
+ * The margin is relative so a short key is not recomputed on every warm: a
+ * fixed 1800s margin on a 900s key made every warm a recompute (worse than
+ * the old fill-on-miss). With ttl/2, a key warmed every W seconds recomputes
+ * on roughly every other warm when ttl ≈ 3W (e.g. 1800s TTL on the 10-min
+ * Phase A warm: hit at age 600s, refresh at age 1200s, never lapses), and
+ * long keys (arcs, 7200s) still get the full 1800s safety margin.
+ */
+export function refreshMarginSeconds(ttlSeconds: number): number {
+  return Math.min(CACHE_REFRESH_MARGIN_S, ttlSeconds / 2);
+}
+
 /** Minimum entry age (s) at which a refresh warm recomputes a key with `ttlSeconds`. */
 export function refreshAfterSeconds(ttlSeconds: number): number {
-  return Math.max(0, ttlSeconds - CACHE_REFRESH_MARGIN_S);
+  return Math.max(0, ttlSeconds - refreshMarginSeconds(ttlSeconds));
 }
 
 /** Metadata stored alongside a refreshable KV entry. */

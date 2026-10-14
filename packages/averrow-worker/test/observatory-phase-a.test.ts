@@ -24,7 +24,9 @@ import {
   handleObservatoryHeatmap,
   handleObservatoryBrandArcs,
   handleObservatoryLive,
+  handleObservatoryOperations,
   OBSERVATORY_TTL_S,
+  BRAND_ID_PATTERN,
   type ArcRow,
 } from "../src/handlers/observatory";
 import {
@@ -32,6 +34,7 @@ import {
   isCacheRefresh,
   readRefreshableCache,
   refreshAfterSeconds,
+  refreshMarginSeconds,
   CACHE_REFRESH_MARGIN_S,
 } from "../src/lib/cache-refresh";
 import { hasSqlite, openDerivedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
@@ -203,16 +206,53 @@ describe("cache refresh marker", () => {
     const live = new Request("https://x/");
     const warm = markCacheRefresh(new Request("https://x/"));
     const cache = kv as unknown as KVNamespace;
-    // TTL 7200 → refresh after 5400s
+    // TTL 7200 → margin min(1800, 3600) = 1800 → refresh after 5400s
     expect(refreshAfterSeconds(7200)).toBe(7200 - CACHE_REFRESH_MARGIN_S);
     expect(await readRefreshableCache(warm, cache, "k", 7200, now)).toBe("v");
     expect(await readRefreshableCache(warm, cache, "k", 7200, now + 5_400_000)).toBeNull();
     expect(await readRefreshableCache(live, cache, "k", 7200, now + 5_400_000)).toBe("v");
-    // TTL ≤ margin → every warm recomputes
-    expect(await readRefreshableCache(warm, cache, "k", 900, now)).toBeNull();
+    // A short key is NOT recomputed on every warm: 900s → margin 450s.
+    expect(await readRefreshableCache(warm, cache, "k", 900, now)).toBe("v");
+    expect(await readRefreshableCache(warm, cache, "k", 900, now + 430_000)).toBe("v"); // age 440s
+    expect(await readRefreshableCache(warm, cache, "k", 900, now + 445_000)).toBeNull(); // age 455s
     // Unstamped legacy entries refresh
     await kv.put("legacy", "v");
     expect(await readRefreshableCache(warm, cache, "legacy", 7200, now)).toBeNull();
+  });
+});
+
+describe("refresh margin is relative to the TTL", () => {
+  it("margin = min(1800, ttl/2); never refreshes a fresh key, never lets one lapse", () => {
+    expect(refreshMarginSeconds(7200)).toBe(1800);
+    expect(refreshMarginSeconds(3600)).toBe(1800);
+    expect(refreshMarginSeconds(1800)).toBe(900);
+    expect(refreshMarginSeconds(900)).toBe(450);
+    expect(refreshMarginSeconds(60)).toBe(30);
+    for (const ttl of [60, 300, 900, 1800, 3600, 7200, 86_400]) {
+      const after = refreshAfterSeconds(ttl);
+      expect(after).toBeGreaterThan(0);   // a just-written key is served
+      expect(after).toBeLessThan(ttl);    // refresh happens before expiry
+    }
+  });
+
+  it("Phase A cadence (600s) on a 1800s key recomputes every OTHER warm and never lapses", () => {
+    const ttl = OBSERVATORY_TTL_S.nodes;
+    expect(ttl).toBe(1800);
+    // Simulate warms every 600s starting from a fresh write at t=0.
+    let writtenAt = 0;
+    const recomputes: number[] = [];
+    for (let t = 600; t <= 6000; t += 600) {
+      const age = t - writtenAt;
+      expect(age).toBeLessThan(ttl); // the live path never sees a lapsed key
+      if (age >= refreshAfterSeconds(ttl)) { recomputes.push(t); writtenAt = t; }
+    }
+    expect(recomputes).toEqual([1200, 2400, 3600, 4800, 6000]);
+  });
+
+  it("A2 cadence (900s) on a 1800s key refreshes before expiry", () => {
+    expect(OBSERVATORY_TTL_S.heatmap).toBe(1800);
+    expect(OBSERVATORY_TTL_S.stats).toBe(1800);
+    expect(900).toBeGreaterThanOrEqual(refreshAfterSeconds(1800));
   });
 });
 
@@ -355,12 +395,68 @@ describe.skipIf(!hasSqlite())("observatory handlers — real SQLite", () => {
     expect(ok.target_precision).toBe("country");
     expect(ok.data).toHaveLength(2);
     expect(ok.data[0]).toMatchObject({ country_code: "RU", volume: 3, target_precision: "country", severity: "high" });
-    expect(kv.store.has("observatory_brand_arcs:b1:7d:all")).toBe(true);
-    expect(kv.store.get("observatory_brand_arcs:b1:7d:all")?.ttl).toBe(OBSERVATORY_TTL_S.brandArcs);
+    expect(kv.store.has("observatory_brand_arcs:7d:all:b1")).toBe(true);
+    expect(kv.store.get("observatory_brand_arcs:7d:all:b1")?.ttl).toBe(OBSERVATORY_TTL_S.brandArcs);
 
     const spam = await body<{ data: unknown[] }>(await handleObservatoryBrandArcs(req("/api/observatory/brand-arcs?brand_id=b1&source_feed=spam_trap"), env));
     expect(spam.data).toHaveLength(1);
-    expect(kv.store.has("observatory_brand_arcs:b1:7d:spam_trap")).toBe(true);
+    expect(kv.store.has("observatory_brand_arcs:7d:spam_trap:b1")).toBe(true);
+  });
+
+  it("brand-arcs: a malformed brand_id or unknown source_feed is a 400 before any KV read or query", async () => {
+    const raw = openDerivedDb(TABLES);
+    brand(raw, { id: "b1", name: "Acme", domain: "acme.example", hq_country: "CA" });
+    const { env, kv, log } = makeEnv(raw);
+    const reads: string[] = [];
+    const get = kv.get;
+    const getWithMetadata = kv.getWithMetadata;
+    kv.get = async (k: string) => { reads.push(k); return get(k); };
+    kv.getWithMetadata = async (k: string) => { reads.push(k); return getWithMetadata(k); };
+    const bad = ["b1:7d", "b1%20", "b1'", "../b1", "%E2%9C%93", "a".repeat(129), "b1;DROP"];
+    for (const id of bad) {
+      const res = await handleObservatoryBrandArcs(req(`/api/observatory/brand-arcs?brand_id=${id}`), env);
+      expect(res.status, id).toBe(400);
+      expect(await res.json()).toMatchObject({ success: false });
+    }
+    const badSource = await handleObservatoryBrandArcs(req("/api/observatory/brand-arcs?brand_id=b1&source_feed=urlhaus"), env);
+    expect(badSource.status).toBe(400);
+    expect(reads).toEqual([]);
+    expect(log).toEqual([]);
+    expect(kv.store.size).toBe(0);
+    // Every id shape the platform mints passes.
+    for (const id of ["brand_acme_com", "b_0123456789abcdef", "brand-x", "a".repeat(128)]) {
+      expect(BRAND_ID_PATTERN.test(id), id).toBe(true);
+    }
+  });
+
+  it("operations: status=all is unfiltered (one key); known status filters; unknown is 400", async () => {
+    const raw = openDerivedDb([...TABLES, "infrastructure_clusters"]);
+    raw.prepare(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c1', 'one', 5, 'active')`).run();
+    raw.prepare(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c2', 'two', 3, 'dormant')`).run();
+    const { env, kv, log } = makeEnv(raw);
+
+    const all = await body<{ data: Array<{ id: string }> }>(await handleObservatoryOperations(req("/api/observatory/operations?status=all"), env));
+    expect(all.data.map((r) => r.id).sort()).toEqual(["c1", "c2"]);
+    expect([...kv.store.keys()]).toEqual(["observatory_operations:all:5"]);
+    // Absent / empty status read the same key — served from cache.
+    const n = log.length;
+    for (const q of ["", "?status=", "?status=all"]) {
+      const r = await body<{ data: unknown[] }>(await handleObservatoryOperations(req(`/api/observatory/operations${q}`), env));
+      expect(r.data).toHaveLength(2);
+    }
+    expect(log.length).toBe(n);
+
+    const dormant = await body<{ data: Array<{ id: string }> }>(await handleObservatoryOperations(req("/api/observatory/operations?status=dormant"), env));
+    expect(dormant.data.map((r) => r.id)).toEqual(["c2"]);
+    expect(kv.store.has("observatory_operations:dormant:5")).toBe(true);
+
+    const before = log.length;
+    for (const bad of ["ALL", "nope", "active'"]) {
+      const res = await handleObservatoryOperations(req(`/api/observatory/operations?status=${encodeURIComponent(bad)}`), env);
+      expect(res.status, bad).toBe(400);
+    }
+    expect(log.length).toBe(before);
+    expect(kv.store.size).toBe(2);
   });
 
   it("live: negative limit clamps to 1, TTL 60s", async () => {
@@ -371,16 +467,36 @@ describe.skipIf(!hasSqlite())("observatory handlers — real SQLite", () => {
     expect(kv.store.get("observatory_live:all:1")?.ttl).toBe(60);
   });
 
-  it("refresh-warm recomputes a key the live path would serve from cache", async () => {
+  it("refresh-warm serves a fresh key, and recomputes it only once inside the margin", async () => {
     const raw = openDerivedDb(TABLES);
     geo(raw, { lat: 1, lng: 1, cc: "US", sev: "high", n: 1 });
     const { env, kv, log } = makeEnv(raw);
+    const KEY = "observatory_stats:7d:all";
     await handleObservatoryStats(req("/api/observatory/stats?period=7d"), env);
+    expect(kv.store.get(KEY)?.ttl).toBe(1800);
     const n = log.length;
     await handleObservatoryStats(req("/api/observatory/stats?period=7d"), env);
     expect(log.length).toBe(n); // live hit
+    // A fresh key: the warm does NOT recompute (the old fixed 1800s margin did).
     await handleObservatoryStats(markCacheRefresh(req("/api/observatory/stats?period=7d")), env);
-    expect(log.length).toBeGreaterThan(n); // stats TTL ≤ margin → warm recomputes
-    expect((kv.store.get("observatory_stats:7d:all")?.metadata as { cachedAt: number }).cachedAt).toBeGreaterThan(0);
+    expect(log.length).toBe(n);
+    // Age the entry 600s (one Phase A slot): still outside the 900s margin.
+    const age = (s: number) => {
+      const e = kv.store.get(KEY)!;
+      kv.store.set(KEY, { ...e, metadata: { cachedAt: Date.now() - s * 1000 } });
+    };
+    age(600);
+    await handleObservatoryStats(markCacheRefresh(req("/api/observatory/stats?period=7d")), env);
+    expect(log.length).toBe(n);
+    // Age 1200s: remaining 600s < 900s margin → the warm recomputes and restamps.
+    age(1200);
+    await handleObservatoryStats(markCacheRefresh(req("/api/observatory/stats?period=7d")), env);
+    expect(log.length).toBeGreaterThan(n);
+    expect(Date.now() - (kv.store.get(KEY)?.metadata as { cachedAt: number }).cachedAt).toBeLessThan(5_000);
+    // A live request at the same age never recomputes.
+    age(1200);
+    const m = log.length;
+    await handleObservatoryStats(req("/api/observatory/stats?period=7d"), env);
+    expect(log.length).toBe(m);
   });
 });

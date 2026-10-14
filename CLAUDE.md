@@ -1103,7 +1103,7 @@ as `averrow`) did rename — see §2.
 - **threat_cube_status** — status aggregates by hour (threat_type, severity, source_feed, status)
 - **threat_cube_arcs** — country × brand arc corridors by hour (country_code, target_brand_id, threat_type, severity, source_feed) with source_lat/source_lng centroid + first_seen/last_seen aggregates. Powers `/api/observatory/arcs` + `/api/observatory/brand-arcs`. Added in PR-Z.
 - For aggregate counts (by country, provider, brand, severity, type) **always query cubes instead of raw threats table**
-- Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and healed by cube-healer every 6 hours (2-day window; 14 days on the 00:12 UTC run)
+- Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and healed by cube-healer every 6 hours (2-day window; 14 days on the 00:12 UTC run), one atomic `[stale sweep, upsert]` batch per DAY per cube (`healCube` / `healDayChunks`) so a D1 limit rolls back one day, not the whole window
 - Each rebuild (the `build*CubeForHour` builders and cube-healer) is one atomic `db.batch()` of a stale-row sweep (`cubeStaleSweepSQL`, `lib/cube-builder.ts`) plus the guarded upsert, so groups that vanished from the source (threats went inactive or moved group) are deleted instead of keeping their last count. The cube-healer window is hour-snapped (`healWindow`, `agents/cube-healer.ts`): `[top of hour − N days, top of current hour)`.
 - Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`, `buildStatusCubeForHour()`, `buildArcsCubeForHour()`
 
@@ -1267,8 +1267,8 @@ behind a feature flag.
 - Navigator pre-warms 22 page-load requests across 4 minute-gated phases. The
   list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
   consumer; pinned by `test/navigator-warm-targets.test.ts`):
-  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + heatmap + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
-  - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats
+  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
+  - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats + 7d heatmap
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
   - A2/B/C are skipped when the D1 read budget is over the soft-cap
@@ -1276,8 +1276,8 @@ behind a feature flag.
 - **A warm must hit the exact KV key the live client request produces.** Warm
   the client's literal query string, and normalise "no filter" spellings in the
   handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key
-  segment via `sourceFeedCacheSegment`). A warm on a key nothing reads is pure D1 spend.
-- **Observatory warms refresh keys near expiry, not just fill misses.** Navigator marks each synthetic request with `markCacheRefresh` (`lib/cache-refresh.ts`); observatory handlers read via `readRefreshableCache` and recompute once an entry is within `CACHE_REFRESH_MARGIN_S` (1800s) of expiry, rewriting it with `writeRefreshableCache` (stamps `cachedAt` in KV metadata). The marker is a module-private `WeakSet` on the Request object — not a header or query param — so an HTTP caller can't force a recompute.
+  segment via `sourceFeedCacheSegment`; any value outside `feeds`/`spam_trap` is a 400 that mints no key). A warm on a key nothing reads is pure D1 spend.
+- **Observatory warms refresh keys near expiry, not just fill misses.** Navigator marks each synthetic request with `markCacheRefresh` (`lib/cache-refresh.ts`); observatory handlers read via `readRefreshableCache` and recompute once an entry's remaining TTL drops below `refreshMarginSeconds(ttl)` = `min(1800s, ttl/2)` — relative, so a fresh short key is never recomputed on every warm — rewriting it with `writeRefreshableCache` (stamps `cachedAt` in KV metadata). Navigator marks warms only while the D1 read budget is under the soft-cap; over it Phase A runs unmarked (fill-on-miss). The marker is a module-private `WeakSet` on the Request object — not a header or query param — so an HTTP caller can't force a recompute.
 - Cache keys must encode all query parameters for correctness
 - **Org-scoped keys must use `scopeCacheSegment(scope)`** (`lib/scope-cache-key.ts`) for the scope segment — `global` for a null scope, else `org:<org_id>:<digest of the full sorted brand set>`. Never key on a slice/prefix of `scope.brand_ids` (the old `slice(0, 3)` key leaked cached data across orgs sharing their first 3 brands).
 - Default page loads (no search/filter, page 1) use reduced-dimension cache keys for higher hit rate

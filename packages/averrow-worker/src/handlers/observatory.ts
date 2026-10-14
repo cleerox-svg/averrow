@@ -20,8 +20,13 @@
 //
 // Query params are canonicalised BEFORE any cache key is built:
 //   period      — allow-list 24h | 7d | 30d | 90d; anything else → 7d
-//   source_feed — absent / '' / 'all' → one `all` key segment, no filter
+//   source_feed — absent / '' / 'all' → one `all` key segment, no filter;
+//                 'feeds' / 'spam_trap' → their own segment; anything else
+//                 → 400 (parseObservatorySourceFeed)
 //   limit       — integer, clamped per endpoint; NaN / missing → default
+//   status      — (operations) absent / '' / 'all' → no filter; a known
+//                 infrastructure_clusters status; anything else → 400
+//   brand_id    — (brand-arcs) /^[A-Za-z0-9_-]{1,128}$/ or 400
 // so a garbage param can never mint a fresh cache key or an unbounded scan.
 
 import { json } from "../lib/cors";
@@ -30,6 +35,7 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedValue } from "../lib/cached-value";
 import { readRefreshableCache, writeRefreshableCache } from "../lib/cache-refresh";
 import { getCountryCentroid } from "../lib/country-centroids";
+import { OPERATION_STATUSES } from "./operations";
 import type { Env } from "../types";
 
 /** TTL for the stats tile's distinct-brands count over the brand cube. */
@@ -206,38 +212,52 @@ interface SourceFilter {
 }
 
 /**
- * Canonical `source_feed` filter value: `null` means "every source".
- *
- * The ops client sends `source_feed=` (EMPTY string) for its "All Sources"
- * tab (averrow-ops `hooks/useObservatory.ts` — `source === 'all' ? '' :
- * source`), while Navigator's pre-warm and the MCP probe omit the param.
- * Building the KV key from the raw value split those into `…:` and
- * `…:all`, so every warm landed on a key the UI never read. Empty, absent
- * and a literal `all` therefore all collapse to `null` here, and both the
- * SQL filter and the cache-key segment derive from this one value.
- *
- * (`all` is included because it is the UI's own id for "every source"; left
- * raw it filtered `source_feed = 'all'` — zero rows — and cached that empty
- * payload under the very key the unfiltered landing page reads.)
+ * The `source_feed` filters the Observatory accepts (besides "every source").
+ * Every caller was audited: the ops client sends only these (its
+ * `SOURCE_IDS` are all / feeds / spam_trap, and 'all' is sent as an omitted
+ * param); Navigator, the MCP probe and the tests send none or these. No
+ * caller sends a raw feed id, so none is accepted — an arbitrary value used
+ * to be bound into the cube query AND minted its own KV key.
  */
-export function normalizeSourceFeed(raw: string | null): string | null {
-  if (raw === null || raw === "" || raw === "all") return null;
-  return raw;
+export const OBSERVATORY_SOURCE_FEEDS = ["feeds", "spam_trap"] as const;
+export type ObservatorySourceFeed = (typeof OBSERVATORY_SOURCE_FEEDS)[number];
+
+export type SourceFeedParse =
+  | { ok: true; feed: ObservatorySourceFeed | null }
+  | { ok: false };
+
+/**
+ * Canonical `source_feed`: `feed: null` means "every source".
+ *
+ * Empty, absent and a literal `all` all collapse to `null` — the ops client
+ * historically sent `source_feed=` for "All Sources" while Navigator and the
+ * MCP probe omit it, and `all` is the UI's own id (left raw it filtered
+ * `source_feed = 'all'` — zero rows — and cached that under the unfiltered
+ * key). Any value outside OBSERVATORY_SOURCE_FEEDS is `{ ok: false }`; the
+ * handlers answer 400 BEFORE building a key or touching D1.
+ */
+export function parseObservatorySourceFeed(raw: string | null): SourceFeedParse {
+  if (raw === null || raw === "" || raw === "all") return { ok: true, feed: null };
+  if ((OBSERVATORY_SOURCE_FEEDS as readonly string[]).includes(raw)) {
+    return { ok: true, feed: raw as ObservatorySourceFeed };
+  }
+  return { ok: false };
 }
 
-/** KV-key segment for a source filter — `all` when unfiltered. */
-export function sourceFeedCacheSegment(raw: string | null): string {
-  return normalizeSourceFeed(raw) ?? "all";
+/** KV-key segment for a canonical source filter — `all` when unfiltered. */
+export function sourceFeedCacheSegment(feed: ObservatorySourceFeed | null): string {
+  return feed ?? "all";
 }
 
-function buildSourceFilter(rawSourceFeed: string | null, alias?: string): SourceFilter {
-  const sourceFeed = normalizeSourceFeed(rawSourceFeed);
-  if (!sourceFeed) return { sql: "", params: [] };
+/** SQL filter for a canonical source. Allow-listed, so nothing is bound. */
+function buildSourceFilter(feed: ObservatorySourceFeed | null, alias?: string): SourceFilter {
+  if (!feed) return { sql: "", params: [] };
   const col = alias ? `${alias}.source_feed` : "source_feed";
-  if (sourceFeed === "feeds") return { sql: ` AND ${col} != 'spam_trap'`, params: [] };
-  if (sourceFeed === "spam_trap") return { sql: ` AND ${col} = 'spam_trap'`, params: [] };
-  return { sql: ` AND ${col} = ?`, params: [sourceFeed] };
+  if (feed === "feeds") return { sql: ` AND ${col} != 'spam_trap'`, params: [] };
+  return { sql: ` AND ${col} = 'spam_trap'`, params: [] };
 }
+
+const INVALID_SOURCE_FEED_ERROR = "Invalid source_feed (expected all, feeds or spam_trap)";
 
 // ── Severity ranking ──────────────────────────────────────────────────────────
 // MAX(severity) picked alphabetically: 'unknown' > 'medium' > 'low' > 'high'
@@ -331,15 +351,22 @@ export function resolveBrandTarget(brand: BrandTargetInput): ResolvedTarget | nu
 
 // ── Response caching ──────────────────────────────────────────────────────────
 
-/** Response TTLs (seconds). Navigator refresh-warms ahead of expiry. */
+/**
+ * Response TTLs (seconds). Navigator refresh-warms ahead of expiry: a warm
+ * recomputes once the remaining TTL < min(1800, ttl/2) (lib/cache-refresh.ts
+ * refreshMarginSeconds). nodes/stats/heatmap are 1800s so the 10-min Phase A
+ * warm recomputes every OTHER tick (age 1200s) and the 15-min A2 warm once a
+ * tick (age 900s) — neither lets the key lapse. At 900s the relative margin
+ * (450s) would have made every Phase A warm a recompute.
+ */
 export const OBSERVATORY_TTL_S = {
-  nodes: 900,
+  nodes: 1800,
   arcs: 7200,
   arcsFallback: 300,
   live: 60,
   brandArcs: 900,
-  stats: 900,
-  heatmap: 900,
+  stats: 1800,
+  heatmap: 1800,
   operations: 900,
 } as const;
 
@@ -367,14 +394,17 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
   const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), NODES_MAX_LIMIT, NODES_MAX_LIMIT);
   const windowStart = snappedWindowStart(period);
-  const rawSource = url.searchParams.get("source_feed");
-  const sourceFilter = buildSourceFilter(rawSource);
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
+  }
+  const sourceFilter = buildSourceFilter(source.feed);
 
   try {
-    // KV cache, 15 min. The geo cube's current + previous hour are rebuilt
+    // KV cache, 30 min (refresh-warmed ahead of expiry). The geo cube's current + previous hour are rebuilt
     // by Navigator every 5 min; the 6-hourly cube_healer reconciles older
     // hours, so a 15-min-old 7-day aggregate is visually indistinguishable.
-    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.nodes);
     if (cached) {
       // Cache hit — record zero D1 reads so attribution still shows
@@ -576,11 +606,14 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
   const url = new URL(request.url);
   const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
-  const rawSource = url.searchParams.get("source_feed");
-  const cubeSourceFilter = buildSourceFilter(rawSource, "c");
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
+  }
+  const cubeSourceFilter = buildSourceFilter(source.feed, "c");
 
   try {
-    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(rawSource)}`;
+    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(source.feed)}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.arcs);
     if (cached) {
       recordD1Reads(env, "observatory_arcs", newTally());
@@ -622,7 +655,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     let cacheTtlSeconds: number = OBSERVATORY_TTL_S.arcs;
     let usedFallback = false;
 
-    if (resultRows.length === 0 && normalizeSourceFeed(rawSource) === null) {
+    if (resultRows.length === 0 && source.feed === null) {
       usedFallback = true;
       cacheTtlSeconds = OBSERVATORY_TTL_S.arcsFallback;
       const fallback = await session.prepare(`
@@ -681,12 +714,15 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-  const rawSource = url.searchParams.get("source_feed");
-  const sourceFilter = buildSourceFilter(rawSource, "t");
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
+  }
+  const sourceFilter = buildSourceFilter(source.feed, "t");
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), 20, 50);
 
   try {
-    const cacheKey = `observatory_live:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cacheKey = `observatory_live:${sourceFeedCacheSegment(source.feed)}:${limit}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.live);
     if (cached) {
       recordD1Reads(env, "observatory_live", newTally());
@@ -734,14 +770,16 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
 // Returns arcs targeting one brand (≤40 corridors, grouped per attacking
 // country × threat type from threat_cube_arcs).
 //
-//   brand_id     required (400 when missing or >128 chars); 404 when unknown
+//   brand_id     required, /^[A-Za-z0-9_-]{1,128}$/ (400 otherwise, before
+//                any key or query); 404 when unknown
 //   period       allow-listed (see parseObservatoryPeriod)
-//   source_feed  same canonicalisation as the other endpoints
+//   source_feed  same allow-list as the other endpoints (400 otherwise)
 //
-// KV-cached 15 min under `observatory_brand_arcs:<brand_id>:<period>:<source>`
+// KV-cached 15 min under `observatory_brand_arcs:<period>:<source>:<brand_id>`
 // — staff-global like every observatory key (requireStaff route, no org
-// scope). Unknown brand ids 404 BEFORE any cache write, so they never mint
-// keys.
+// scope). brand_id is the LAST segment and cannot contain ':', and period /
+// source are fixed allow-listed tokens, so the key is unambiguous. Unknown
+// brand ids 404 BEFORE any cache write, so they never mint keys.
 //
 // Target placement — resolveBrandTarget(); if the brand cannot be placed the
 // response carries `data: []`, `target_precision: null` and the corridor count
@@ -751,7 +789,8 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
 // (country, threat type) grain as the cube path, over the same snapped
 // window. Bounded by idx_threats_brand_created (one brand × window), LIMIT 40.
 export const BRAND_ARCS_ROW_LIMIT = 40;
-const BRAND_ID_MAX_LEN = 128;
+/** Shape of every brand id the platform mints (`brand_<slug>`, `b_<hex>`). */
+export const BRAND_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 export async function handleObservatoryBrandArcs(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -761,14 +800,20 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
   const brandId = url.searchParams.get("brand_id");
   const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
-  const rawSource = url.searchParams.get("source_feed");
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
 
-  if (!brandId || brandId.length > BRAND_ID_MAX_LEN) {
+  if (!brandId) {
     return attachBookmark(json({ success: false, error: "brand_id required" }, 400, origin), session);
+  }
+  if (!BRAND_ID_PATTERN.test(brandId)) {
+    return attachBookmark(json({ success: false, error: "Invalid brand_id" }, 400, origin), session);
+  }
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
   }
 
   try {
-    const cacheKey = `observatory_brand_arcs:${brandId}:${period}:${sourceFeedCacheSegment(rawSource)}`;
+    const cacheKey = `observatory_brand_arcs:${period}:${sourceFeedCacheSegment(source.feed)}:${brandId}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.brandArcs);
     if (cached) {
       recordD1Reads(env, "observatory_brand_arcs", newTally());
@@ -789,7 +834,7 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
       return attachBookmark(json({ success: false, error: "Brand not found" }, 404, origin), session);
     }
 
-    const sourceFilter = buildSourceFilter(rawSource);
+    const sourceFilter = buildSourceFilter(source.feed);
     const rows = await session.prepare(`
       SELECT
         ROUND(SUM(source_lat * threat_count) / SUM(CASE WHEN source_lat IS NOT NULL THEN threat_count END), 1) AS source_lat,
@@ -813,7 +858,7 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
     let usedFallback = false;
     let ttl: number = OBSERVATORY_TTL_S.brandArcs;
 
-    if (resultRows.length === 0 && normalizeSourceFeed(rawSource) === null) {
+    if (resultRows.length === 0 && source.feed === null) {
       usedFallback = true;
       ttl = OBSERVATORY_TTL_S.arcsFallback;
       const fallback = await session.prepare(`
@@ -910,12 +955,15 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
   const url = new URL(request.url);
   const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
-  const sourceFeed = url.searchParams.get("source_feed");
-  const sf = buildSourceFilter(sourceFeed);
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
+  }
+  const sf = buildSourceFilter(source.feed);
 
   try {
-    // KV cache, 15 min (stats move only when feeds/cubes move).
-    const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(sourceFeed)}`;
+    // KV cache, 30 min, refresh-warmed (stats move only when feeds/cubes move).
+    const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(source.feed)}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.stats);
     if (cached) {
       recordD1Reads(env, "observatory_stats", newTally());
@@ -948,7 +996,7 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       // query filters on source_feed, so the segment must be in the key).
       cachedValue<{ n: number } | null>(
         env,
-        `observatory.brands_distinct:${periodToHours(period)}h:${sourceFeedCacheSegment(sourceFeed)}`,
+        `observatory.brands_distinct:${periodToHours(period)}h:${sourceFeedCacheSegment(source.feed)}`,
         OBSERVATORY_BRANDS_DISTINCT_TTL_S,
         () => {
           brandsDistinctQueried = true;
@@ -1011,13 +1059,16 @@ export async function handleObservatoryHeatmap(request: Request, env: Env): Prom
   const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), HEATMAP_MAX_LIMIT, HEATMAP_MAX_LIMIT);
   const windowStart = snappedWindowStart(period);
-  const rawSource = url.searchParams.get("source_feed");
-  const sf = buildSourceFilter(rawSource);
+  const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
+  if (!source.ok) {
+    return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
+  }
+  const sf = buildSourceFilter(source.feed);
 
   try {
     // Key built from the CANONICAL period, source segment and clamped limit
     // so out-of-range params can't amplify cache misses.
-    const cacheKey = `observatory_heatmap:${period}:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cacheKey = `observatory_heatmap:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.heatmap);
     if (cached) {
       recordD1Reads(env, "observatory_heatmap", newTally());
@@ -1060,13 +1111,23 @@ export function HEATMAP_SQL(sourceSql: string): string {
 // ── GET /api/observatory/operations ─────────────────────────────────────────
 // Lightweight operations list for the Observatory sidebar (staff-only, like
 // every route here). `limit` 1..10 (default 5).
+//
+// `status`: absent / '' / 'all' → no filter (one `all` key segment); one of
+// OPERATION_STATUSES (handlers/operations.ts — the states NEXUS writes plus
+// the CASE ordering's) → that filter and its own segment; anything else →
+// 400. `status=all` used to bind `ic.status = 'all'` (zero rows) and cache
+// that empty list under the unfiltered `…:all:` key.
 export async function handleObservatoryOperations(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   try {
     const url = new URL(request.url);
-    const status = url.searchParams.get("status");
+    const rawStatus = url.searchParams.get("status");
+    const status = rawStatus === null || rawStatus === "" || rawStatus === "all" ? null : rawStatus;
+    if (status !== null && !OPERATION_STATUSES.has(status)) {
+      return attachBookmark(json({ success: false, error: "Invalid status" }, 400, origin), session);
+    }
     const limit = parseObservatoryLimit(url.searchParams.get("limit"), 5, 10);
 
     const conditions: string[] = [];

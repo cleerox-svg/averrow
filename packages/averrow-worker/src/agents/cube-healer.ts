@@ -4,10 +4,12 @@
  * Runs 6-hourly via the "12 *\/6 * * *" cron. Performs a bulk rebuild of
  * threat_cube_geo, threat_cube_provider, threat_cube_brand,
  * threat_cube_status, and threat_cube_arcs over an hour-snapped window.
- * Per cube, one atomic db.batch() of [stale-row sweep, guarded upsert]:
- * the sweep (cubeStaleSweepSQL, lib/cube-builder.ts) deletes window rows
- * whose key vanished from the source (threats went inactive or moved
- * group); the upsert rewrites only the groups whose aggregate changed.
+ * Per cube and per DAY of the window, one atomic db.batch() of [stale-row
+ * sweep, guarded upsert] (healCube / healDayChunks): a D1 limit on one day
+ * rolls back that day only, and the other days still commit. The sweep
+ * (cubeStaleSweepSQL, lib/cube-builder.ts) deletes window rows whose key
+ * vanished from the source (threats went inactive or moved group); the
+ * upsert rewrites only the groups whose aggregate changed.
  * Together they make every healed hour exactly equal to the source,
  * bounding drift from cartographer's retroactive enrichment AND from
  * status changes within that window.
@@ -267,20 +269,81 @@ export function healSQLForTest(table: CubeName): string {
 }
 
 /**
- * Heal one cube over [start, end): one atomic batch of the stale-row sweep
- * and the guarded upsert, both bound to the same window. Returns rows written.
- * Exported for unit testing.
+ * Split an hour-snapped heal window into day-sized [start, end) chunks,
+ * oldest first. Every chunk boundary stays hour-snapped (the window start
+ * is, and each chunk is exactly 24h); the last chunk is shorter when the
+ * window is not a whole number of days. Exported for unit testing.
+ */
+export function healDayChunks(window: { start: string; end: string }): Array<{ start: string; end: string }> {
+  const toMs = (s: string) => Date.parse(s.replace(' ', 'T') + 'Z');
+  const fmt = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const startMs = toMs(window.start);
+  const endMs = toMs(window.end);
+  const chunks: Array<{ start: string; end: string }> = [];
+  for (let ms = startMs; ms < endMs; ms += DAY_MS) {
+    chunks.push({ start: fmt(ms), end: fmt(Math.min(ms + DAY_MS, endMs)) });
+  }
+  return chunks;
+}
+
+export interface HealChunkFailure {
+  start: string;
+  end: string;
+  error: string;
+}
+
+export interface HealCubeResult {
+  rowsWritten: number;
+  /** Day chunks attempted. */
+  chunks: number;
+  /** Day chunks whose batch failed (rolled back); the others committed. */
+  failures: HealChunkFailure[];
+}
+
+/**
+ * Heal one cube over [start, end), one DAY at a time. Each day is its own
+ * atomic batch of [stale-row sweep, guarded upsert] bound to that day, so a
+ * D1 statement/duration limit on a large window rolls back one day, not the
+ * whole 14-day heal (the former single-batch shape lost every upsert when
+ * the sweep or upsert over 14 days hit a limit). A failed day is recorded
+ * and the remaining days still run. Never throws. Exported for unit testing.
  */
 export async function healCube(
   db: D1Database,
   table: CubeName,
   window: { start: string; end: string },
-): Promise<number> {
-  const results = await db.batch([
-    db.prepare(cubeStaleSweepSQL(table)).bind(window.start, window.end),
-    db.prepare(healSQL(table)).bind(window.start, window.end),
-  ]);
-  return results.reduce((sum, r) => sum + (r?.meta?.changes ?? 0), 0);
+): Promise<HealCubeResult> {
+  const chunks = healDayChunks(window);
+  const result: HealCubeResult = { rowsWritten: 0, chunks: chunks.length, failures: [] };
+  for (const chunk of chunks) {
+    try {
+      const results = await db.batch([
+        db.prepare(cubeStaleSweepSQL(table)).bind(chunk.start, chunk.end),
+        db.prepare(healSQL(table)).bind(chunk.start, chunk.end),
+      ]);
+      result.rowsWritten += results.reduce((sum, r) => sum + (r?.meta?.changes ?? 0), 0);
+    } catch (err) {
+      result.failures.push({ ...chunk, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Diagnostic for a cube heal that lost one or more day chunks. */
+export function healFailureOutput(table: CubeName, r: HealCubeResult, rowsLanded: number): AgentOutputEntry {
+  return {
+    type: 'diagnostic',
+    summary: `cube_healer ${table} heal failed for ${r.failures.length}/${r.chunks} day(s) (${rowsLanded} rows so far)`,
+    severity: 'high',
+    details: {
+      error: r.failures[0]?.error ?? null,
+      stage: table,
+      rowsLanded,
+      failedDays: r.failures,
+      daysAttempted: r.chunks,
+    },
+  };
 }
 
 // ─── Agent module ────────────────────────────────────────────────
@@ -335,78 +398,21 @@ export const cubeHealerAgent: AgentModule = {
     // cron tick) so the upper bound always excludes the current partial hour.
     const window = healWindow(new Date(), windowDays);
 
-    // ── Geo heal ────────────────────────────────────────────────
-    // If geo throws here we let it propagate up to executeAgent(),
-    // which marks status='failed' — matching the legacy "first query
-    // throws → status: 'failed'" contract.
-    const geoRows = await healCube(env.DB, 'geo', window);
-    rowsWritten += geoRows;
-
-    // ── Provider heal ───────────────────────────────────────────
-    // If provider throws after geo succeeded, capture as partial-failure
-    // diagnostic. Don't propagate — the rest of the chain still has work
-    // to do and the geo cube is already healed. (executeAgent will mark
-    // status='success' but the diagnostic agent_output row carries the
-    // error for forensic visibility.)
-    try {
-      const providerRows = await healCube(env.DB, 'provider', window);
-      rowsWritten += providerRows;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer provider heal failed (geo succeeded, ${rowsWritten} rows landed)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'provider', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Brand heal ──────────────────────────────────────────────
-    try {
-      const brandRows = await healCube(env.DB, 'brand', window);
-      rowsWritten += brandRows;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer brand heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'brand', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Status heal ─────────────────────────────────────────────
-    // Status cube has no dimension filter and no status filter, so
-    // this is the only path that reconciles status mutations
-    // (active → down → remediated) for older hour buckets.
-    try {
-      const statusRows = await healCube(env.DB, 'status', window);
-      rowsWritten += statusRows;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer status heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'status', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Arcs heal (PR-Z) ────────────────────────────────────────
-    // Country × brand × type × severity slice for the Observatory
-    // globe arcs. Same partial-failure handling as the others —
-    // arcs failure doesn't kill the whole heal cycle.
-    try {
-      const arcsRows = await healCube(env.DB, 'arcs', window);
-      rowsWritten += arcsRows;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer arcs heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'arcs', rowsLanded: rowsWritten },
-      });
+    // ── Cube heals (geo, provider, brand, status, arcs) ─────────
+    // Each cube heals day by day (healCube). A failed day becomes a
+    // partial-failure diagnostic and the remaining days and cubes still
+    // run. Geo keeps its legacy "catastrophic" contract: when EVERY geo day
+    // fails, throw up to executeAgent() (→ status='failed'). Status is the
+    // only path that reconciles status mutations (active → down →
+    // remediated) for older hour buckets; arcs feeds the Observatory globe.
+    for (const table of ['geo', 'provider', 'brand', 'status', 'arcs'] as const) {
+      const r = await healCube(env.DB, table, window);
+      rowsWritten += r.rowsWritten;
+      if (r.failures.length === 0) continue;
+      if (table === 'geo' && r.failures.length === r.chunks) {
+        throw new Error(`cube_healer geo heal failed for every day: ${r.failures[0]?.error ?? "unknown error"}`);
+      }
+      partialFailures.push(healFailureOutput(table, r, rowsWritten));
     }
 
     // ── Dark web + app store brand summaries ───────────────────

@@ -10,8 +10,9 @@
 // What this pins:
 //   1. The exact warm list (phase + path + query string).
 //   2. Observatory handlers collapse absent / empty / `all` source_feed to
-//      one cache key and treat it as "no filter" in SQL; a real feed value
-//      gets its own key and a filter.
+//      one cache key and treat it as "no filter" in SQL; `feeds` /
+//      `spam_trap` get their own key and filter; any other value is a 400
+//      that reads no KV key and runs no SQL.
 //   3. For every warm whose consumer sends query params, the KV key the
 //      warm reads/writes equals the key the consumer's request reads.
 //      The client query strings are duplicated as LITERALS below (no
@@ -28,14 +29,15 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { NAVIGATOR_WARM_TARGETS } from "../src/cron/navigator";
+import { NAVIGATOR_WARM_TARGETS, warmRequest } from "../src/cron/navigator";
+import { isCacheRefresh } from "../src/lib/cache-refresh";
 import {
   handleObservatoryNodes,
   handleObservatoryArcs,
   handleObservatoryStats,
   handleObservatoryLive,
   handleObservatoryHeatmap,
-  normalizeSourceFeed,
+  parseObservatorySourceFeed,
 } from "../src/handlers/observatory";
 import { handleListOperations } from "../src/handlers/operations";
 import { handleListBrands } from "../src/handlers/brands";
@@ -122,8 +124,8 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "A /api/observatory/arcs?period=7d",
       "A /api/observatory/stats?period=7d",
       "A /api/observatory/live?limit=8",
-      "A /api/observatory/heatmap?period=7d",
       "A /api/v1/operations?limit=4&offset=0&status=active",
+      "A2 /api/observatory/heatmap?period=7d",
       "A2 /api/observatory/nodes?period=24h",
       "A2 /api/observatory/arcs?period=24h",
       "A2 /api/observatory/stats?period=24h",
@@ -149,6 +151,18 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     expect(paths.some((p) => p.startsWith("/api/dashboard/top-brands"))).toBe(false);
   });
 
+  it("heatmap is not a Phase A (un-budget-gated) warm", () => {
+    const heat = NAVIGATOR_WARM_TARGETS.filter((t) => t.path.startsWith("/api/observatory/heatmap"));
+    expect(heat.map((t) => t.phase)).toEqual(["A2"]);
+  });
+
+  it("warm requests are refresh-marked only while under the D1 budget soft-cap", () => {
+    expect(isCacheRefresh(warmRequest("/api/observatory/nodes?period=7d", false))).toBe(true);
+    // Over budget → plain fill-on-miss request, no forced recompute.
+    expect(isCacheRefresh(warmRequest("/api/observatory/nodes?period=7d", true))).toBe(false);
+    expect(warmRequest("/api/observatory/nodes?period=7d", true).url).toBe("https://averrow.com/api/observatory/nodes?period=7d");
+  });
+
   it("every target names its consumer and paths are unique", () => {
     for (const t of NAVIGATOR_WARM_TARGETS) expect(t.consumer.length).toBeGreaterThan(0);
     const paths = NAVIGATOR_WARM_TARGETS.map((t) => t.path);
@@ -158,14 +172,17 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
 
 // ─── 2. Observatory source_feed normalisation ───────────────────────
 
-describe("normalizeSourceFeed", () => {
-  it("collapses absent, empty and 'all' to null; keeps real feeds", () => {
-    expect(normalizeSourceFeed(null)).toBeNull();
-    expect(normalizeSourceFeed("")).toBeNull();
-    expect(normalizeSourceFeed("all")).toBeNull();
-    expect(normalizeSourceFeed("spam_trap")).toBe("spam_trap");
-    expect(normalizeSourceFeed("feeds")).toBe("feeds");
-    expect(normalizeSourceFeed("urlhaus")).toBe("urlhaus");
+describe("parseObservatorySourceFeed", () => {
+  it("collapses absent, empty and 'all' to null; keeps feeds / spam_trap; rejects everything else", () => {
+    expect(parseObservatorySourceFeed(null)).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("")).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("all")).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("spam_trap")).toEqual({ ok: true, feed: "spam_trap" });
+    expect(parseObservatorySourceFeed("feeds")).toEqual({ ok: true, feed: "feeds" });
+    // No caller sends a raw feed id — it is rejected, not bound.
+    for (const bad of ["urlhaus", "ALL", "Feeds", " spam_trap", "spam_trap ", "x".repeat(41), "a:b", "'; DROP"]) {
+      expect(parseObservatorySourceFeed(bad), bad).toEqual({ ok: false });
+    }
   });
 });
 
@@ -196,16 +213,36 @@ describe("observatory handlers — source_feed cache key", () => {
       expect(spam).toContain("spam_trap");
     });
 
-    it(`${name}: empty source_feed applies no SQL filter; a real feed does`, async () => {
+    it(`${name}: empty source_feed applies no SQL filter; feeds / spam_trap do, unbound`, async () => {
       const empty = makeHarness(false);
       await handler(req(`${base}&source_feed=`), empty.env);
       expect(empty.sql.length).toBeGreaterThan(0);
       expect(empty.sql.some((s) => /source_feed\s*(=|!=)/.test(s))).toBe(false);
 
-      const real = makeHarness(false);
-      await handler(req(`${base}&source_feed=urlhaus`), real.env);
-      expect(real.sql.some((s) => /source_feed\s*=\s*\?/.test(s))).toBe(true);
-      expect(real.binds.some((b) => b.includes("urlhaus"))).toBe(true);
+      const spam = makeHarness(false);
+      await handler(req(`${base}&source_feed=spam_trap`), spam.env);
+      expect(spam.sql.some((s) => /source_feed\s*=\s*'spam_trap'/.test(s))).toBe(true);
+
+      const feeds = makeHarness(false);
+      await handler(req(`${base}&source_feed=feeds`), feeds.env);
+      expect(feeds.sql.some((s) => /source_feed\s*!=\s*'spam_trap'/.test(s))).toBe(true);
+      // The filter is a literal — the source value is never a bind.
+      for (const h of [spam, feeds]) {
+        expect(h.binds.some((b) => b.includes("spam_trap") || b.includes("feeds"))).toBe(false);
+      }
+    });
+
+    it(`${name}: an unknown source_feed is a 400 — no KV key read, no SQL`, async () => {
+      for (const bad of ["urlhaus", "nope", "ALL"]) {
+        const hit = makeHarness(true);
+        const res = await handler(req(`${base}&source_feed=${encodeURIComponent(bad)}`), hit.env);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toMatchObject({ success: false });
+        expect(hit.cacheReads).toEqual([]);
+        const miss = makeHarness(false);
+        await handler(req(`${base}&source_feed=${encodeURIComponent(bad)}`), miss.env);
+        expect(miss.sql).toEqual([]);
+      }
     });
   }
 });
