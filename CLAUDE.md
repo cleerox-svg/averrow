@@ -440,6 +440,8 @@ Telemetry only (target_agent=NULL):
   Sentinel        → [feed_pulled]         — operator sees "new items found"
   Cartographer    → [threats_enriched]    — operator sees enrichment progress
   Nexus           → [nexus_complete]      — operator sees workflow completion
+  cube_healer     → [cubes_healed]        — operator sees the cube heal ran (scope,
+                     rows written, degraded cubes, velocity stamped, takedown cells)
   daily_briefing  → [briefing_generated]  — operator sees the daily platform
                      ops briefing ran (handler-dispatched writer, not an
                      AgentModule — see below)

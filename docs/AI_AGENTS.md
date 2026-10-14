@@ -512,7 +512,7 @@ The Cube Healer heals the hour-bucketed OLAP cubes (`threat_cube_geo`, `_provide
 - **Takedown outcome rollup (Observatory Phase B)** — on the cold (UTC hour 0) tick only, rebuilds `takedown_outcome_daily` (rolling 90 days, `lib/takedown-outcome-rollup.ts`). Hour-only gate.
 - **Also** — dark-web / app-store brand summaries, `brands.threat_count` / `active_threat_count` reconciliation, weekly `ANALYZE`.
 - **Status semantics** — clean → `success`; a few failed cube days / a failed side step → `success` + `high`/`medium` diagnostic `agent_outputs`; **more than half of any cube's days failed → `AgentResult.degraded` → `partial`**; every geo day failed → throws → `failed`.
-- **agent_runs lifecycle** — owned by `executeAgent` (start row, completion with `completed_at` + `records_processed`, telemetry `agent_events`).
+- **agent_runs lifecycle** — owned by `executeAgent` (start row, completion with `completed_at` + `records_processed`). The agent itself emits a telemetry `agent_events` row (`cubes_healed`, `target_agent=NULL`) after its work.
 
 **Inputs:** `threats` (heal windows, flagged-row index for velocity), `takedown_requests` (cold tick)
 **Outputs:** the six cube tables, `threats.weaponization_*`, `takedown_outcome_daily`, brand summaries / counters
