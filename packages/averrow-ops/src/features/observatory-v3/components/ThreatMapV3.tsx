@@ -150,6 +150,12 @@ export interface MapFocus {
   points: ReadonlyArray<LngLat>;
   /** Skip the animation (initial URL restore). */
   instant?: boolean;
+  /**
+   * Frame the plain min/max longitude box inside -180..180 instead of the smallest box on the circle: for the
+   * Operations lens, whose flat arcs are drawn in the primary copy only (so JP to US runs west across Europe).
+   * Ignored on the globe, which draws great circles.
+   */
+  noWrap?: boolean;
 }
 
 export { FLY_MS as FLY_DURATION_MS } from '../lib/camera';
@@ -1258,7 +1264,7 @@ function ThreatMapV3Inner({
     // On the inset globe the canvas already excludes the left / right chrome: only top and bottom remain as insets.
     const ci = latest.current.cameraInsets;
     const insetCanvas = projectionRef.current === 'globe' && !bleedRef.current;
-    const plan = planCamera(focus.points, latest.current.canvas, insetCanvas ? { ...ci, left: 0, right: 0 } : ci);
+    const plan = planCamera(focus.points, latest.current.canvas, insetCanvas ? { ...ci, left: 0, right: 0 } : ci, { noWrap: !!focus.noWrap && projectionRef.current !== 'globe' });
     if (!plan) return; // nothing placeable: select without moving the camera
     const cam = map.cameraForBounds(
       [[plan.box.west, plan.box.south], [plan.box.east, plan.box.north]],

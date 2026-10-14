@@ -91,12 +91,18 @@ export function wrapLng(lng: number): number {
  * the box spans the whole circle EXCEPT its largest gap, so Fiji + Alaska is a
  * 40-degree box across the date line (west 175, east 215), not a 350-degree one.
  */
-export function boundsOf(points: ReadonlyArray<readonly [number, number]>): LngLatBox | null {
+export function boundsOf(points: ReadonlyArray<readonly [number, number]>, opts: { noWrap?: boolean } = {}): LngLatBox | null {
   const pts = points.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
   if (pts.length === 0) return null;
   let south = Infinity;
   let north = -Infinity;
   for (const p of pts) { south = Math.min(south, p[1]); north = Math.max(north, p[1]); }
+  if (opts.noWrap) {
+    // The flat Operations arcs are drawn inside -180..180 (JP to US runs west across Europe), so frame the same
+    // space: the plain min/max box, never the shorter way across the date line.
+    const xs = pts.map(p => Math.max(-180, Math.min(180, p[0])));
+    return { west: Math.min(...xs), south, east: Math.max(...xs), north };
+  }
   const lngs = pts.map(p => wrapLng(p[0])).sort((a, b) => a - b);
   let gap = -1;
   let gapAfter = 0; // index whose successor starts the box
@@ -138,9 +144,9 @@ export function planCamera(
   points: ReadonlyArray<readonly [number, number]>,
   canvas: { width: number; height: number },
   insets: Insets,
-  opts: { maxZoom?: number; pointZoom?: number } = {},
+  opts: { maxZoom?: number; pointZoom?: number; noWrap?: boolean } = {},
 ): CameraPlan | null {
-  const box = boundsOf(points);
+  const box = boundsOf(points, { noWrap: opts.noWrap });
   if (!box) return null;
   const padding = clampInsets(
     { top: insets.top + FRAME_MARGIN, right: insets.right + FRAME_MARGIN, bottom: insets.bottom + FRAME_MARGIN, left: insets.left + FRAME_MARGIN },

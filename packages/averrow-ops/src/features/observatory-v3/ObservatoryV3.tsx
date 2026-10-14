@@ -356,10 +356,10 @@ export function ObservatoryV3() {
   );
   const [focus, setFocus] = useState<MapFocus | null>(null);
   const focusSeq = useRef(0);
-  const focusPoints = useCallback((points: readonly LngLat[], opts: { instant?: boolean } = {}) => {
+  const focusPoints = useCallback((points: readonly LngLat[], opts: { instant?: boolean; noWrap?: boolean } = {}) => {
     if (points.length === 0) return; // unplaceable: select without moving the camera
     focusSeq.current += 1;
-    setFocus({ id: focusSeq.current, points, instant: opts.instant ?? false });
+    setFocus({ id: focusSeq.current, points, instant: opts.instant ?? false, noWrap: opts.noWrap ?? false });
   }, []);
 
   // What opened the drawer, so focus can come back to a control that still exists (see DrillDrawer).
@@ -377,7 +377,7 @@ export function ObservatoryV3() {
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
     update(targetPatch(target, layers));
-    focusPoints(drillPoints(target, focusModels));
+    focusPoints(drillPoints(target, focusModels), { noWrap: target.kind === 'operation' });
     setShowMobilePanel(false);
   }, [update, layers, focusPoints, focusModels]);
 
@@ -415,7 +415,7 @@ export function ObservatoryV3() {
     // A pending target (its query hasn't returned) has no position yet: wait for it.
     if (pts.length === 0 && isPending(drill)) return;
     restoredRef.current = true;
-    focusPoints(pts, { instant: true });
+    focusPoints(pts, { instant: true, noWrap: drill.kind === 'operation' });
   }, [drill, focusPoints, focusModels]);
 
   // Entering a lens with nothing selected frames what the lens draws, once: the fixed overview (Eurasia at zoom 2.2)
@@ -432,7 +432,7 @@ export function ObservatoryV3() {
     const pts = lensFitPoints(lens, focusModels);
     if (pts.length === 0) return; // no data yet: wait for it
     f.done = true;
-    focusPoints(pts, { instant: true });
+    focusPoints(pts, { instant: true, noWrap: lens === 'operations' });
   }, [lens, mapMode, hasSelection, focusModels, focusPoints]);
 
   // An actor has no single point: frame ALL of its attributed countries once its infrastructure loads.
