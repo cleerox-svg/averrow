@@ -30,6 +30,8 @@ export interface DataNeeds {
   timeline: boolean;
   /** Live sonar pings. */
   live: boolean;
+  /** Fast-weaponization nodes (Threats lens, Fast view). */
+  velocity: boolean;
 }
 
 export interface NeedsOptions {
@@ -42,18 +44,37 @@ export interface NeedsOptions {
   selection?: 'node' | 'arc' | SelKind | null;
   /** The search box has been focused: load the lens lists it searches. */
   searching?: boolean;
+  /**
+   * The Threats lens' Fast weaponization view: its own picture (like the heatmap), drawn from the velocity cube.
+   * Only a country selection keeps other data loaded. The replay bar shows the velocity series.
+   */
+  velocity?: boolean;
 }
 
 const NONE: DataNeeds = {
   nodes: false, arcs: false, heatmap: false, stats: false, bot: false,
   operations: false, movements: false, providers: false, overindex: false, campaigns: false,
-  actors: false, geometry: false, timeline: false, live: false,
+  actors: false, geometry: false, timeline: false, live: false, velocity: false,
 };
 
 export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOptions = {}): DataNeeds {
   switch (mode) {
     case 'global': {
       const sel = opts.selection ?? null;
+      if (opts.velocity) {
+        // Layers are all off in this scene; a country drawer (the only selection a velocity node opens) loads its own data.
+        const country = sel === 'country';
+        return {
+          ...NONE,
+          velocity: true,
+          timeline: true,
+          nodes: country,
+          arcs: country,
+          operations: country,
+          providers: country,
+          overindex: country,
+        };
+      }
       const country = sel === 'country';
       const searching = !!opts.searching;
       return {
@@ -88,7 +109,7 @@ export type QueryErrors<E> = Partial<Record<NeedKey, E | null>>;
 
 /** Order failures are reported in. */
 const FAILURE_KEYS: readonly NeedKey[] = [
-  'nodes', 'arcs', 'heatmap', 'stats', 'operations', 'movements', 'providers', 'overindex', 'campaigns', 'actors', 'timeline',
+  'nodes', 'arcs', 'heatmap', 'stats', 'operations', 'movements', 'providers', 'overindex', 'campaigns', 'actors', 'timeline', 'velocity',
 ];
 
 /** Names of the failed queries that matter for this view (disabled queries can retain stale errors). */

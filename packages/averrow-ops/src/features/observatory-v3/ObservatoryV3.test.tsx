@@ -328,6 +328,93 @@ describe('ObservatoryV3 Threats lens Points | Heat', () => {
   });
 });
 
+describe('ObservatoryV3 Threats lens: Fast weaponization view', () => {
+  const vnode = { lat: 52, lng: 5, threat_count: 9, country_code: 'NL', very_fast: 6, fast: 3, precision: 'country' };
+  const tl = { bucket: '1h', points: [{ t: '2026-10-14T00:00:00Z', total: 9, critical: 0, high: 0, medium: 0, low: 0, very_fast: 6, fast: 3 }] };
+
+  it('fetches velocity nodes + the velocity timeline, with NO source, and none of the threat queries', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast&source=spam_trap&period=30d');
+    await waitFor(() => expect(called('/api/observatory/velocity-nodes')).toBe(true));
+    expect(urls().find(u => u.startsWith('/api/observatory/velocity-nodes'))).toBe('/api/observatory/velocity-nodes?period=30d&flag=all');
+    await waitFor(() => expect(called('/api/observatory/timeline')).toBe(true));
+    expect(urls().find(u => u.startsWith('/api/observatory/timeline'))).toBe('/api/observatory/timeline?period=30d&velocity=all');
+    expect(urls().some(u => u.includes('source_feed'))).toBe(false);
+    for (const p of ['nodes', 'arcs', 'heatmap', 'stats', 'live']) expect(called(`/api/observatory/${p}`)).toBe(false);
+  });
+
+  it('the source select reads All sources and is disabled (the URL source is kept for the other views)', async () => {
+    renderAt('/observatory?view=fast&source=spam_trap');
+    const select = await screen.findByRole('combobox', { name: 'Source' });
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue('all');
+    expect(search).toContain('source=spam_trap');
+  });
+
+  it('the map gets the velocity model, no threat layers, and the selection stays a country', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    await waitFor(() => {
+      const p = mapProps.mock.calls.at(-1)![0];
+      expect(p.lens.velocity?.points).toHaveLength(1);
+    });
+    const p = mapProps.mock.calls.at(-1)![0];
+    expect(p).toMatchObject({ mapMode: 'global', showNodes: false, showParticles: false, showBeams: false });
+    expect(p.sceneKey).toBe('threats|fast|index');
+    // the Points view hands the map no velocity model
+    await userEvent.click(screen.getByRole('button', { name: 'Points' }));
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.velocity).toBeNull());
+  });
+
+  it('keeps the model identity stable between renders with unchanged data (no per-poll layer rebuilds)', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.velocity).not.toBeNull());
+    const a = mapProps.mock.calls.at(-1)![0].lens.velocity;
+    await act(async () => { await userEvent.click(screen.getByRole('radio', { name: '7D' })); });
+    await new Promise(r => setTimeout(r, 30));
+    expect(mapProps.mock.calls.at(-1)![0].lens.velocity).toBe(a);
+  });
+
+  it('the replay bar is the still velocity chart, and the panel ranks countries; a node opens the country drawer', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    expect(await screen.findByRole('group', { name: 'Fast weaponization timeline' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Fastest to weaponize' })).toBeInTheDocument();
+    expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('region', { name: 'Fastest to weaponize' })).getByRole('button', { name: /Netherlands/ }));
+    await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+  });
+
+  it('an empty answer reads as coverage still filling in the legend chip and the panel', async () => {
+    route({ '/api/observatory/velocity-nodes': [], '/api/observatory/timeline': { bucket: '1h', points: [] } });
+    renderAt('/observatory?view=fast');
+    expect(await screen.findByRole('button', { name: /Legend.*coverage filling/ })).toBeInTheDocument();
+    // the panel's empty state (the legend carries the same words, collapsed)
+    expect((await screen.findAllByText(/Velocity coverage is still filling/)).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/no fast-weaponized threats\b/i)).not.toBeInTheDocument();
+  });
+
+  it('a velocity failure raises the banner here and not in the Points view', async () => {
+    route({ '/api/observatory/velocity-nodes': new Error('cube down') });
+    const { unmount } = renderAt('/observatory?view=fast');
+    expect(await screen.findByTestId('observatory-load-error')).toBeInTheDocument();
+    unmount();
+    renderAt('/observatory');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    expect(screen.queryByTestId('observatory-load-error')).not.toBeInTheDocument();
+  });
+
+  it('choosing Fast on the rail writes view=fast; the number keys do not toggle layers in it', async () => {
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: 'Fast weaponization' }));
+    await waitFor(() => expect(search).toContain('view=fast'));
+    const before = search;
+    await userEvent.keyboard('3');
+    expect(search).toBe(before);
+  });
+});
+
 describe('ObservatoryV3 country shapes load only for a visible choropleth', () => {
   const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'NL', properties: { n: 'Netherlands' }, geometry: { type: 'Polygon', coordinates: [] } }] };
   it('not for Hosting + a country drawer, yes for Baseline', async () => {

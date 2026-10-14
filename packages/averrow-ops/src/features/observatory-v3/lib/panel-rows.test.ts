@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { OperationGeo, ProviderGeo, CampaignGeo, Movement, ActorListItem, OverindexRow } from '@/hooks/useObservatoryLenses';
 import {
-  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, PANEL_ROWS, MIN_RANKED_COUNT,
+  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, PANEL_ROWS, MIN_RANKED_COUNT,
 } from './panel-rows';
+import { buildVelocityModel } from './lens/velocity';
 
 const prov = (id: string, active: number, over: Partial<ProviderGeo> = {}): ProviderGeo => ({
   id, name: `Host ${id}`, asn: 'AS1', country: 'NL', active_threat_count: active, total_threat_count: active, trend_7d: 0, trend_30d: 0,
@@ -62,6 +63,23 @@ describe('lens-aware panel rows', () => {
     for (const s of [hostingRows([]), operationRows([]), baselineRows('index', [], undefined), campaignRows([]), movementRows([]), actorRows([])]) {
       expect(s.rows).toEqual([]);
       expect(s.empty.length).toBeGreaterThan(5);
+    }
+  });
+});
+
+describe('velocityRows (Threats lens, Fast view)', () => {
+  const n = (cc: string, vf: number, f: number) => ({ lat: 1, lng: 2, threat_count: vf + f, country_code: cc, very_fast: vf, fast: f, precision: 'country' as const });
+  it('ranks countries by fast-weaponized threats and opens the country drawer', () => {
+    const s = velocityRows(buildVelocityModel([n('DE', 1, 1), n('NL', 5, 5), n('US', 0, 4)]));
+    expect(s.rows.map(r => r.key)).toEqual(['NL', 'US', 'DE']);
+    expect(s.rows[0]).toMatchObject({ primary: 'Netherlands', secondary: '5 very fast · 5 fast', trailing: '10', target: { kind: 'country', code: 'NL' } });
+  });
+  it('caps the list and, when empty, says coverage is still filling (not "none")', () => {
+    const many = velocityRows(buildVelocityModel(Array.from({ length: 30 }, (_, i) => n(`${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + ((i * 7) % 26))}`, 1, i))));
+    expect(many.rows.length).toBeLessThanOrEqual(PANEL_ROWS);
+    for (const empty of [velocityRows(null), velocityRows(buildVelocityModel([]))]) {
+      expect(empty.rows).toEqual([]);
+      expect(empty.empty).toMatch(/still filling/i);
     }
   });
 });

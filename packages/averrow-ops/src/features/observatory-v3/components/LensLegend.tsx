@@ -23,6 +23,8 @@ import { formatPct } from '../lib/bot-density';
 import { Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { CampaignsModel } from '../lib/lens/campaigns';
+import type { VelocityModel } from '../lib/lens/velocity';
+import { VELOCITY_FILLING, VELOCITY_RGB } from '../lib/lens/velocity';
 import type { ActorModel } from '../lib/lens/actors';
 import type { ActorListItem } from '@/hooks/useObservatoryLenses';
 import { rgbCss, type Rgba } from '../lib/map-colors';
@@ -43,6 +45,7 @@ export interface LegendSectionProps {
     bot: { model: BotShareModel | null; q: QueryState };
   };
   campaigns: { model: CampaignsModel | null; q: QueryState };
+  velocity: { model: VelocityModel | null; q: QueryState };
   actors: { model: ActorModel | null; list: ActorListItem[]; listQ: QueryState; detailQ: QueryState | null; selectedId: string | null };
   onPickActor: (id: string | null) => void;
 }
@@ -238,6 +241,29 @@ function botGradient(m: BotShareModel): string {
   const mid = pick(Math.floor(sorted.length / 2));
   const hi = pick(sorted.length - 1);
   return `linear-gradient(90deg, ${css(lo)}, ${css(mid)}, ${css(hi)})`;
+}
+
+export function VelocitySection({ s }: { s: LegendSectionProps['velocity'] }) {
+  const m = s.model;
+  return (
+    <Section title="Fast weaponization" id="lg-fast">
+      <Status q={s.q} what="fast weaponization" empty={!!m && m.points.length === 0} emptyText={VELOCITY_FILLING} />
+      {m && m.points.length > 0 && (
+        <>
+          <ul className="list-none p-0 m-0 flex flex-col gap-1">
+            <Row swatch={<Swatch color={VELOCITY_RGB} />}>Very fast: live within 24h of registration. These pulse.</Row>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px rgba(0,0,0,0.3)' }} />}>Fast: live within 72h. Still.</Row>
+          </ul>
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Node size = very fast + fast threats · {m.points.length} countries · {m.total.toLocaleString()} threats.
+            Evidence about how an operator works, not a severity. Always all sources.
+            {m.dropped > 0 && ` ${m.dropped.toLocaleString()} without a placeable country not shown.`}
+            {' '}Coverage fills as the cube healer runs, so recent threats may be missing.
+          </div>
+        </>
+      )}
+    </Section>
+  );
 }
 
 export function CampaignsSection({ s }: { s: LegendSectionProps['campaigns'] }) {

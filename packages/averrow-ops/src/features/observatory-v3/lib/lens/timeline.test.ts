@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { TimelineData } from '@/hooks/useObservatoryLenses';
 import {
   buildHistogram, fracToClock, clockToFrac, fracToTime, pointerFrac, bucketIndexAt, nudgePlayhead, stackedPaths,
-  formatPlayheadTime, MAX_PLAYHEAD, barIndexAt, windowBuckets,
+  formatPlayheadTime, MAX_PLAYHEAD, barIndexAt, windowBuckets, velocityPaths,
 } from './timeline';
 import { CYCLE_LENGTH } from '../trips';
 
@@ -143,5 +143,40 @@ describe('replay window alignment (the bars share the particles\' window)', () =
     expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 3_600_000)).toBe('13 Oct 14:00 UTC');
     expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 3_600_000, true)).toBe('13 Oct 14:00');
     expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 86_400_000, true)).toBe('13 Oct');
+  });
+});
+
+describe('velocity series', () => {
+  const vpt = (t: string, veryFast: number, fast: number) => ({ t, total: veryFast + fast, critical: 0, high: 0, medium: 0, low: 0, very_fast: veryFast, fast });
+  const vdata: TimelineData = {
+    bucket: '1h',
+    points: [vpt('2026-10-14T00:00:00Z', 2, 3), vpt('2026-10-14T01:00:00Z', 0, 0), vpt('2026-10-14T02:00:00Z', 6, 0), pt('2026-10-14T03:00:00Z', 9)],
+  };
+  it('bars carry the fast counts and total/max are very_fast + fast (the severity fields are always 0 here)', () => {
+    const h = buildHistogram(vdata, null, 'velocity')!;
+    expect(h.series).toBe('velocity');
+    expect(h.bars.map(b => [b.veryFast, b.fast, b.total])).toEqual([[2, 3, 5], [0, 0, 0], [6, 0, 6], [0, 0, 0]]);
+    expect(h.max).toBe(6);
+    expect(h.total).toBe(11);
+  });
+  it('the severity histogram ignores the fast fields', () => {
+    const h = buildHistogram(vdata)!;
+    expect(h.series).toBe('severity');
+    expect(h.bars.every(b => b.veryFast === 0 && b.fast === 0)).toBe(true);
+    expect(h.total).toBe(5 + 0 + 6 + 9);
+  });
+  it('velocityPaths stacks very fast under fast and scales to the tallest bar', () => {
+    const h = buildHistogram(vdata, null, 'velocity')!;
+    const p = velocityPaths(h, 400, 31);
+    // 2 very fast + 3 fast in a 6-high scale: 30px / 6 = 5px per unit
+    expect(p.veryFast).toContain('v10h');   // bar 0: 2 units
+    expect(p.veryFast).toContain('v30h');   // bar 2: 6 units
+    expect(p.fast).toContain('v15h');       // bar 0: 3 units on top
+    expect(p.fast.match(/M/g)).toHaveLength(1);
+  });
+  it('draws nothing for an empty or degenerate chart', () => {
+    const h = buildHistogram({ bucket: '1h', points: [vpt('2026-10-14T00:00:00Z', 0, 0)] }, null, 'velocity')!;
+    expect(velocityPaths(h, 400, 31)).toEqual({ veryFast: '', fast: '' });
+    expect(velocityPaths(buildHistogram(vdata, null, 'velocity')!, 0, 31)).toEqual({ veryFast: '', fast: '' });
   });
 });

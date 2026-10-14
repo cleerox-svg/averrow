@@ -34,8 +34,12 @@ export type Source = (typeof SOURCE_IDS)[number];
 export const MAP_MODE_IDS = ['global', 'heatmap', 'bot_density'] as const;
 export type MapMode = (typeof MAP_MODE_IDS)[number];
 
-export const THREAT_VIEW_IDS = ['points', 'heat'] as const;
-/** Threats lens option: individual origin nodes, or the density heatmap. */
+export const THREAT_VIEW_IDS = ['points', 'heat', 'fast'] as const;
+/**
+ * Threats lens option: individual origin nodes, the density heatmap, or the fast-weaponization view
+ * (countries whose domains went live within days of registration; has no source split, so `source` is
+ * ignored while it is on).
+ */
 export type ThreatView = (typeof THREAT_VIEW_IDS)[number];
 
 export const COLOR_BY_IDS = ['severity', 'type'] as const;
@@ -70,7 +74,7 @@ export function selValue(kind: SelKind, id: string): string {
 export interface ObservatoryUrlState {
   /** Which question the map answers (global mode only). */
   lens: LensId;
-  /** Threats lens option (`heat` = density heatmap). Always `points` on other lenses. */
+  /** Threats lens option (`heat` = density heatmap, `fast` = fast weaponization). Always `points` on other lenses. */
   view: ThreatView;
   period: Period;
   source: Source;
@@ -171,7 +175,9 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     : null;
   const rawLens = sp.get('lens');
   const lens: LensId = legacy ? legacy.lens : isLensId(rawLens) ? rawLens : 'threats';
-  const view: ThreatView = lens === 'threats' && (legacy?.view === 'heat' || sp.get('view') === 'heat') ? 'heat' : 'points';
+  const view: ThreatView = lens === 'threats'
+    ? (legacy?.view === 'heat' ? 'heat' : pick(THREAT_VIEW_IDS, sp.get('view'), DEFAULT_STATE.view))
+    : DEFAULT_STATE.view;
   const measure: Measure = lens === 'baseline'
     ? pick(MEASURE_IDS, legacy ? legacy.measure : sp.get('measure'), DEFAULT_STATE.measure)
     : DEFAULT_STATE.measure;

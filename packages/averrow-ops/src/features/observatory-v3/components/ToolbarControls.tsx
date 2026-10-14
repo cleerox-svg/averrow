@@ -67,20 +67,26 @@ export function PeriodSegment({ period, onChange, touch = false, className }: { 
   );
 }
 
-export function SourceSelect({ source, onChange, touch = false, className }: { source: Source; onChange: (s: Source) => void; touch?: boolean; className?: string }) {
+/** `disabledReason`: the view has no source split, so the select shows "All sources" and says why it can't change. */
+export function SourceSelect({ source, onChange, touch = false, className, disabledReason }: { source: Source; onChange: (s: Source) => void; touch?: boolean; className?: string; disabledReason?: string }) {
+  const disabled = !!disabledReason;
+  const reasonId = useId();
   return (
-    <label className={cn('relative inline-flex items-center', className)} style={{ ...GLASS, borderRadius: 12, height: touch ? 48 : 40 }}>
+    <label className={cn('relative inline-flex items-center', className)} style={{ ...GLASS, borderRadius: 12, height: touch ? 48 : 40, opacity: disabled ? 0.65 : 1 }} title={disabledReason}>
       <span className="sr-only">Source</span>
       <select
         aria-label="Source"
-        value={source}
+        value={disabled ? 'all' : source}
+        disabled={disabled}
+        aria-describedby={disabled ? reasonId : undefined}
         onChange={e => onChange(e.target.value as Source)}
-        className="ds-focusable appearance-none bg-transparent font-mono text-[11px] font-bold cursor-pointer h-full pl-3 pr-8 rounded-xl [color-scheme:inherit]"
+        className={cn('ds-focusable appearance-none bg-transparent font-mono text-[11px] font-bold h-full pl-3 pr-8 rounded-xl [color-scheme:inherit]', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}
         style={{ color: 'var(--text-secondary)', border: 'none', minWidth: touch ? 120 : 104 }}
       >
         {SOURCE_IDS.map(id => <option key={id} value={id}>{SOURCE_LABELS[id]}</option>)}
       </select>
       <ChevronDown size={13} aria-hidden className="pointer-events-none absolute right-2.5" style={{ color: 'var(--text-tertiary)' }} />
+      {disabled && <span id={reasonId} className="sr-only">{disabledReason}</span>}
     </label>
   );
 }

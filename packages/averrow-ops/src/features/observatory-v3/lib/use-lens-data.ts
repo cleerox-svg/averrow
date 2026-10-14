@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import {
   useActorDetail, useActorList, useCampaignsGeo, useMovements, useObservatoryTimeline, useOperationsGeo,
-  useOverindex, useProvidersGeo,
+  useOverindex, useProvidersGeo, useVelocityNodes,
   type ActorListItem, type CampaignGeo, type Movement, type OperationGeo, type ProviderGeo, type OverindexRow,
 } from '@/hooks/useObservatoryLenses';
 import { periodToMs } from './trips';
@@ -19,6 +19,7 @@ import { buildBaselineModel } from './lens/baseline';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildActorModel } from './lens/actors';
 import { buildMovementModel } from './lens/movement';
+import { buildVelocityModel } from './lens/velocity';
 import { useCountryGeometry } from './country-geometry';
 
 const NO_OPS: OperationGeo[] = [];
@@ -43,7 +44,11 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
   const campaignsQ = useCampaignsGeo({ enabled: needs.campaigns });
   const actorsQ = useActorList({ enabled: needs.actors });
   const actorDetailQ = useActorDetail(actorId, { enabled: needs.actors });
-  const timelineQ = useObservatoryTimeline({ enabled: needs.timeline, period, source, country: timelineCountry });
+  // The Fast view's replay bar is the velocity series (no source split: the server 400s velocity + a source).
+  const timelineQ = useObservatoryTimeline({
+    enabled: needs.timeline, period, source, country: timelineCountry, velocity: needs.velocity ? 'all' : null,
+  });
+  const velocityQ = useVelocityNodes({ enabled: needs.velocity, period });
   // Shapes load only while a choropleth is visible, never for a country drawer or a lens that draws no shapes.
   const geometry = useCountryGeometry(needs.geometry);
 
@@ -69,17 +74,24 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
   const campaigns: readonly CampaignGeo[] | undefined = campaignsQ.data?.data;
   const campaignsModel = useMemo(() => (campaigns ? buildCampaignsModel(campaigns) : null), [campaigns]);
 
+  const velocityNodes = velocityQ.data?.data;
+  const velocityDropped = velocityQ.data?.meta.dropped_no_centroid ?? 0;
+  const velocityModel = useMemo(
+    () => (velocityNodes ? buildVelocityModel(velocityNodes, velocityDropped) : null),
+    [velocityNodes, velocityDropped],
+  );
+
   const actorDetail = actorId ? actorDetailQ.data?.data : undefined;
   const actorModel = useMemo(() => (actorDetail ? buildActorModel(actorDetail) : null), [actorDetail]);
   const actorList: readonly ActorListItem[] | undefined = actorsQ.data?.data;
 
   return {
-    operationsQ, movementsQ, providersQ, overindexQ, campaignsQ, actorsQ, actorDetailQ, timelineQ,
+    operationsQ, movementsQ, providersQ, overindexQ, campaignsQ, actorsQ, actorDetailQ, timelineQ, velocityQ,
     geometry,
     operations: operations ?? NO_OPS,
     operationsLoaded: operations !== undefined,
     movements, providers, overindex, campaigns, actorList,
-    operationsModel, movementModel, hostingModel, baselineModel, campaignsModel, actorModel,
+    operationsModel, movementModel, hostingModel, baselineModel, campaignsModel, actorModel, velocityModel,
   };
 }
 

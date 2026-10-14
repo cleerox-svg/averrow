@@ -21,6 +21,8 @@ import { trendClass } from './lens/hosting';
 import { normalizeConfidence } from './lens/operations';
 import { isActiveCampaign } from './lens/campaigns';
 import { iso2 } from './lens/placement';
+import type { VelocityModel } from './lens/velocity';
+import { VELOCITY_FILLING } from './lens/velocity';
 import { parseUtc, relativeTime } from '@/lib/time';
 
 export interface PanelRow {
@@ -157,4 +159,15 @@ export function actorRows(actors: readonly ActorListItem[] | undefined): PanelSe
       target: { kind: 'actor', id: a.id, name: a.name },
     }));
   return { title: 'Known actors', empty: 'No actors are on file.', rows };
+}
+
+/** Fast weaponization (Threats lens, Fast view): countries ranked by fast-weaponized threats. */
+export function velocityRows(model: VelocityModel | null): PanelSection {
+  const rows = (model?.points ?? []).slice(0, PANEL_ROWS).map((p): PanelRow => ({
+    key: p.cc, primary: countryName(p.cc) || p.cc,
+    secondary: `${p.veryFast.toLocaleString()} very fast · ${p.fast.toLocaleString()} fast`,
+    trailing: p.count.toLocaleString(),
+    target: { kind: 'country', code: p.cc },
+  }));
+  return { title: 'Fastest to weaponize', empty: VELOCITY_FILLING, rows };
 }

@@ -96,3 +96,29 @@ describe('relevantFailures', () => {
     expect(relevantFailures(dataNeeds('heatmap', DEFAULT_LAYERS), { heatmap: err })).toEqual(['heatmap']);
   });
 });
+
+describe('dataNeeds: the Fast weaponization view', () => {
+  const fast = dataNeeds('global', layers({ nodes: true, particles: true }), { velocity: true });
+  it('loads the velocity nodes and the (velocity) replay series and nothing else', () => {
+    expect(fast).toMatchObject({ velocity: true, timeline: true });
+    expect(fast).toMatchObject({
+      nodes: false, arcs: false, heatmap: false, stats: false, bot: false, live: false, geometry: false,
+      operations: false, movements: false, providers: false, overindex: false, campaigns: false, actors: false,
+    });
+  });
+  it('other views never ask for velocity', () => {
+    expect(dataNeeds('global', DEFAULT_LAYERS).velocity).toBe(false);
+    expect(dataNeeds('heatmap', DEFAULT_LAYERS).velocity).toBe(false);
+    expect(dataNeeds('global', lensPreset('hosting')).velocity).toBe(false);
+  });
+  it('a country selection (what a velocity node opens) loads what the country drawer reads', () => {
+    expect(dataNeeds('global', layers({}), { velocity: true, selection: 'country' })).toMatchObject({
+      velocity: true, nodes: true, arcs: true, operations: true, providers: true, overindex: true, geometry: false,
+    });
+  });
+  it('a velocity failure only raises the banner in that view', () => {
+    const err = new Error('x');
+    expect(relevantFailures(fast, { velocity: err })).toEqual(['velocity']);
+    expect(relevantFailures(dataNeeds('global', DEFAULT_LAYERS), { velocity: err })).toEqual([]);
+  });
+});

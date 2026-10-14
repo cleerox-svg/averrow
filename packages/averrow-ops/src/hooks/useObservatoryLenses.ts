@@ -11,6 +11,8 @@
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import {
   POLL, buildObservatoryUrl, clampLimit, observatoryKeys, shape, sourceParam,
   type ObservatoryQueryResult,
@@ -170,6 +172,42 @@ export interface ActorDetail {
   attributions: { by_confidence: Record<string, number>; by_source: Record<string, number> };
 }
 
+/** Fast-weaponization flag filter (`/velocity-nodes?flag=`, `/timeline?velocity=`). */
+export type VelocityFilter = 'very_fast' | 'fast' | 'all';
+
+/** One country of `/velocity-nodes`: the `/nodes` shape (severity fields are always empty) plus the flag counts. */
+export interface VelocityNode {
+  lat: number;
+  lng: number;
+  /** very_fast + fast for `flag=all`. */
+  threat_count: number;
+  country_code: string;
+  very_fast: number;
+  fast: number;
+  precision: 'country';
+}
+
+export type TakedownBy = 'country' | 'provider';
+export type TakedownPeriod = '30d' | '90d';
+
+/** One row of `/takedowns-geo` (requires `manage_takedowns`). */
+export interface TakedownGeoRow {
+  /** ISO-2 | hosting_providers.id | 'unknown'. */
+  key: string;
+  label: string;
+  country: string | null;
+  lat: number | null;
+  lng: number | null;
+  submitted: number;
+  taken_down: number;
+  refused: number;
+  expired: number;
+  pending: number;
+  /** taken_down / (taken_down + refused + expired); null when nothing resolved. */
+  share: number | null;
+  median_hours: number | null;
+}
+
 export interface LensMeta {
   generated_at: string | null;
   period: string | null;
@@ -177,6 +215,8 @@ export interface LensMeta {
   radar_snapshot_date: string | null;
   source_feed: string | null;
   country: string | null;
+  /** velocity-nodes only: countries' fast counts dropped for lacking a centroid. */
+  dropped_no_centroid: number | null;
 }
 
 export interface LensPayload<T> {
@@ -196,6 +236,7 @@ export function readLensMeta(raw: unknown): LensMeta {
     radar_snapshot_date: str(m.radar_snapshot_date),
     source_feed: str(m.source_feed),
     country: str(m.country),
+    dropped_no_centroid: typeof m.dropped_no_centroid === 'number' ? m.dropped_no_centroid : null,
   };
 }
 
@@ -277,19 +318,75 @@ export function useCampaignsGeo(opts: Opts = {}): ObservatoryQueryResult<LensPay
 }
 
 export function useObservatoryTimeline(
-  opts: Opts & { period?: string; source?: string; country?: string | null } = {},
+  opts: Opts & { period?: string; source?: string; country?: string | null; velocity?: VelocityFilter | null } = {},
 ): ObservatoryQueryResult<LensPayload<TimelineData>> {
-  const { enabled = true, period = '7d', source = 'all', country = null } = opts;
+  const { enabled = true, period = '7d', source = 'all', country = null, velocity = null } = opts;
+  // The velocity cube has no source dimension (the server answers 400 for velocity + a source): never send both.
+  const src = velocity ? 'all' : source;
   return shape(useQuery({
-    queryKey: observatoryKeys.lens('timeline', { period, source, country }),
+    queryKey: observatoryKeys.lens('timeline', { period, source: src, country, velocity }),
     queryFn: ({ signal }) => fetchLens<TimelineData>(
-      buildObservatoryUrl('/api/observatory/timeline', { period, source_feed: sourceParam(source), country: country ?? undefined }),
+      buildObservatoryUrl('/api/observatory/timeline', {
+        period, source_feed: sourceParam(src), country: country ?? undefined, velocity: velocity ?? undefined,
+      }),
       signal,
     ),
     enabled,
     ...LENS_POLL,
     refetchInterval: 300_000,
+    // Keep the previous PERIOD on screen while a new one loads, but never carry a severity series into the
+    // velocity view (or back): they are different charts.
+    placeholderData: (prev, prevQuery) => (prevQuery && timelineSeries(prevQuery.queryKey) === (velocity ?? null) ? prev : undefined),
+  }));
+}
+
+/** The `velocity` param a timeline query key was built with. */
+function timelineSeries(key: readonly unknown[]): string | null {
+  const params = key[3];
+  const v = params && typeof params === 'object' ? (params as Record<string, unknown>).velocity : null;
+  return typeof v === 'string' ? v : null;
+}
+
+/**
+ * Fast-weaponization nodes (one per country). The velocity cube is heal-only, so an empty answer means
+ * "coverage still filling", not "none" — callers word it that way.
+ */
+export function useVelocityNodes(opts: Opts & { period?: string; flag?: VelocityFilter } = {}): ObservatoryQueryResult<LensPayload<VelocityNode[]>> {
+  const { enabled = true, period = '7d', flag = 'all' } = opts;
+  return shape(useQuery({
+    queryKey: observatoryKeys.lens('velocity-nodes', { period, flag }),
+    queryFn: ({ signal }) => fetchLens<VelocityNode[]>(buildObservatoryUrl('/api/observatory/velocity-nodes', { period, flag }), signal),
+    enabled,
+    ...LENS_POLL,
     placeholderData: keepPreviousData,
+  }));
+}
+
+/** takedowns-geo only has 30d / 90d: map the page period onto the nearest window. */
+export function takedownPeriod(period: string): TakedownPeriod {
+  return period === '90d' ? '90d' : '30d';
+}
+
+/** True when the signed-in role holds `manage_takedowns` (the same gate as the worker's route). */
+export function useCanManageTakedowns(): boolean {
+  const { user } = useAuth();
+  return roleHasPermission(user?.role, 'manage_takedowns');
+}
+
+/**
+ * Takedown outcomes by country or provider. Requires `manage_takedowns`: the request is NEVER sent for any
+ * other role (the server would answer 403), whatever `enabled` says.
+ */
+export function useTakedownsGeo(opts: Opts & { period?: string; by?: TakedownBy } = {}): ObservatoryQueryResult<LensPayload<TakedownGeoRow[]>> {
+  const { enabled = true, period = '30d', by = 'country' } = opts;
+  const permitted = useCanManageTakedowns();
+  const p = takedownPeriod(period);
+  return shape(useQuery({
+    queryKey: observatoryKeys.lens('takedowns-geo', { period: p, by }),
+    queryFn: ({ signal }) => fetchLens<TakedownGeoRow[]>(buildObservatoryUrl('/api/observatory/takedowns-geo', { period: p, by }), signal),
+    enabled: enabled && permitted,
+    ...LENS_POLL,
+    refetchInterval: 1_800_000,
   }));
 }
 

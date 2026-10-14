@@ -7,6 +7,8 @@ import { buildBaselineModel } from '../lib/lens/baseline';
 import { buildCampaignsModel } from '../lib/lens/campaigns';
 import { buildActorModel } from '../lib/lens/actors';
 import { buildMovementModel } from '../lib/lens/movement';
+import { buildVelocityModel, VELOCITY_COLOR } from '../lib/lens/velocity';
+import { getSeverityColor } from '../lib/map-colors';
 import {
   buildLensLayers, buildLensBaseLayers, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
 } from './lens-layers';
@@ -40,6 +42,7 @@ function input(layers: Partial<LayerToggles>, extra: Partial<LensLayerInput> = {
     campaigns: buildCampaignsModel([camp]),
     actors: buildActorModel(actor),
     movement: buildMovementModel([mv], { nowMs: Date.parse('2026-10-14T00:00:00Z'), periodMs: 7 * 86_400_000 }),
+    velocity: null,
     sel: NO_SELECTION,
     reducedMotion: false,
     isMobile: false,
@@ -325,5 +328,73 @@ describe('the loop idles when nothing animates', () => {
     expect(lensNeedsFrame(trailsOnly, { clockPlaying: false })).toBe(false);
     const withPulse = input({ movement: true }, { movement: buildMovementModel([{ ...mv, from: { asns: [], countries: [] } }], { nowMs: Date.parse('2026-10-14T00:00:00Z'), periodMs: 7 * 86_400_000 }) });
     expect(lensNeedsFrame(withPulse, { clockPlaying: false })).toBe(true);
+  });
+});
+
+describe('Fast weaponization (velocity) layers', () => {
+  const vnode = (cc: string, veryFast: number, fast: number) => {
+    const c = countryCenter(cc)!;
+    return { lat: c[1], lng: c[0], threat_count: veryFast + fast, country_code: cc, very_fast: veryFast, fast, precision: 'country' as const };
+  };
+  const model = () => buildVelocityModel([vnode('NL', 6, 4), vnode('US', 0, 3)]);
+  const fastInput = (extra: Partial<LensLayerInput> = {}) => input({}, { velocity: model(), ...extra });
+
+  it('draws bloom + core only while the Fast view hands the map a model; nothing without one', () => {
+    expect(ids(fastInput())).toEqual(['velocity-bloom', 'velocity-core']);
+    expect(ids(input({}))).toEqual([]);
+    expect(ids(fastInput({ velocity: buildVelocityModel([]) }))).toEqual([]);
+  });
+  it('node size follows very_fast + fast and the colour is not a severity colour', () => {
+    const i = fastInput();
+    const core = props(find(i, 'velocity-core'));
+    const pts = i.velocity!.points;
+    const radius = core.getRadius as (p: unknown) => number;
+    expect(radius(pts[0]!)).toBeGreaterThan(radius(pts[1]!));
+    const fill = core.getFillColor as (p: unknown) => number[];
+    expect(fill(pts[0]!).slice(0, 3)).toEqual([...VELOCITY_COLOR.slice(0, 3)]);
+    for (const sev of ['critical', 'high', 'medium', 'low']) expect(fill(pts[0]!).slice(0, 3)).not.toEqual([...getSeverityColor(sev).slice(0, 3)]);
+  });
+  it('pulses through PulseExtension: only very-fast nodes breathe, none under reduced motion', () => {
+    const i = fastInput();
+    const core = props(find(i, 'velocity-core'));
+    expect(core.extensions).toBeTruthy();
+    const amp = core.getPulseAmp as (p: unknown) => number;
+    const [hot, still] = i.velocity!.points;
+    expect(amp(hot!)).toBeGreaterThan(0);
+    expect(amp(still!)).toBe(0);
+    const rm = fastInput({ reducedMotion: true });
+    expect((props(find(rm, 'velocity-core')).getPulseAmp as (p: unknown) => number)(hot!)).toBe(0);
+    expect(props(find(rm, 'velocity-core')).animTime).toBe(0);
+    expect(props(find(rm, 'velocity-core')).transitions).toBeUndefined();
+  });
+  it('the loop is needed only while a very-fast node pulses', () => {
+    expect(lensNeedsFrame(fastInput())).toBe(true);
+    expect(lensNeedsFrame(fastInput({ velocity: buildVelocityModel([vnode('US', 0, 3)]) }))).toBe(false);
+    expect(lensNeedsFrame(input({}))).toBe(false);
+  });
+  it('data identity is the model\'s own array on every frame (uniform-only per-frame change)', () => {
+    const i = fastInput();
+    const a = props(find(i, 'velocity-core', { seconds: 1, t: 1 })).data;
+    const b = props(find(i, 'velocity-core', { seconds: 9, t: 99 })).data;
+    expect(a).toBe(b);
+    expect(a).toBe(i.velocity!.points);
+  });
+  it('a click picks the country (opens the country drawer); hover names the counts', () => {
+    const i = fastInput();
+    const core = props(find(i, 'velocity-core'));
+    const object = i.velocity!.points[0]!;
+    (core.onClick as (info: unknown) => boolean)({ object });
+    expect(i.pick.click).toHaveBeenCalledWith({ kind: 'country', id: 'NL' });
+    (core.onHover as (info: unknown) => void)({ object, x: 1, y: 2 });
+    expect(i.pick.hover).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Netherlands', lines: expect.arrayContaining(['10 fast-weaponized']) }));
+    (core.onHover as (info: unknown) => void)({ object: null });
+    expect(i.pick.hover).toHaveBeenLastCalledWith(null);
+  });
+  it('the selected country is outlined in amber', () => {
+    const i = fastInput({ sel: { ...NO_SELECTION, country: 'NL' } });
+    const line = props(find(i, 'velocity-core')).getLineColor as (p: unknown) => number[];
+    const [nl, us] = [i.velocity!.byCc.get('NL')!, i.velocity!.byCc.get('US')!];
+    expect(line(nl)).toEqual([229, 168, 50, 255]);
+    expect(line(us).slice(0, 3)).toEqual([...VELOCITY_COLOR.slice(0, 3)]);
   });
 });

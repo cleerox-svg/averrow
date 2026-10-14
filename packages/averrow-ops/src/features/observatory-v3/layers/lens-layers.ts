@@ -39,6 +39,8 @@ import { botHover } from '../lib/lens/bot-share';
 import type { CampaignsModel, CampaignArc } from '../lib/lens/campaigns';
 import type { ActorModel, ActorCountry, ActorEdge } from '../lib/lens/actors';
 import { actorNodePx, confidenceBand } from '../lib/lens/actors';
+import type { VelocityModel, VelocityPoint } from '../lib/lens/velocity';
+import { VELOCITY_COLOR } from '../lib/lens/velocity';
 import type { MovementModel, MovementHop, MovementPulse } from '../lib/lens/movement';
 import { HOP_UNITS, hopLabel } from '../lib/lens/movement';
 import { countryCenter } from '../lib/lens/placement';
@@ -101,6 +103,8 @@ export interface LensLayerInput {
   campaigns: CampaignsModel | null;
   actors: ActorModel | null;
   movement: MovementModel | null;
+  /** Fast-weaponization nodes: non-null only while the Threats lens' Fast view is on. */
+  velocity: VelocityModel | null;
   sel: LensSelection;
   /** Labels that fit at the current camera (placed by the map when it settles). */
   labels: PlacedLabels;
@@ -768,6 +772,62 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   return out;
 }
 
+// ─── Fast weaponization (Threats lens, Fast view) ───────────
+
+const VELOCITY_HOT_AMP = 0.26;
+
+function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
+  const m = input.velocity;
+  if (!m || m.points.length === 0) return [];
+  const { sel, reducedMotion, pick } = input;
+  const animTime = reducedMotion ? 0 : frame.seconds;
+  const selected = (p: VelocityPoint): boolean => p.cc === sel.country;
+  const shared = {
+    data: m.points,
+    getPosition: (p: VelocityPoint): [number, number] => p.position,
+    radiusUnits: 'pixels' as const,
+    // Registered -> live inside a day: those breathe, fast-only nodes are still.
+    getPulsePhase: (p: VelocityPoint) => p.phase,
+    getPulseRate: () => 3,
+    getPulseAmp: (p: VelocityPoint) => (reducedMotion || !p.hot ? 0 : VELOCITY_HOT_AMP),
+    updateTriggers: { getPulseAmp: reducedMotion },
+    extensions: PULSE_EXT,
+    animTime,
+  };
+  return [
+    new ScatterplotLayer<VelocityPoint, PulseExtensionProps<VelocityPoint>>({
+      ...shared,
+      id: 'velocity-bloom',
+      getRadius: (p: VelocityPoint) => p.radiusPx * 2.1,
+      getFillColor: (p: VelocityPoint) => withAlpha(VELOCITY_COLOR, p.hot ? 40 : 22),
+    }),
+    new ScatterplotLayer<VelocityPoint, PulseExtensionProps<VelocityPoint>>({
+      ...shared,
+      id: 'velocity-core',
+      getRadius: (p: VelocityPoint) => p.radiusPx,
+      // Very-fast nodes are solid, fast-only ones lighter, so the two classes read without a legend lookup.
+      getFillColor: (p: VelocityPoint) => withAlpha(VELOCITY_COLOR, p.hot ? 200 : 105),
+      stroked: true,
+      getLineColor: (p: VelocityPoint) => (selected(p) ? AMBER : withAlpha(VELOCITY_COLOR, 255)),
+      getLineWidth: (p: VelocityPoint) => (selected(p) ? 2.5 : 1.2),
+      lineWidthUnits: 'pixels',
+      pickable: true,
+      transitions: reducedMotion ? undefined : TR_DOT,
+      updateTriggers: { ...shared.updateTriggers, getLineColor: sel.country, getLineWidth: sel.country },
+      onHover: (info: PickInfo<VelocityPoint>) => pick.hover(info.object
+        ? {
+          x: info.x, y: info.y, title: countryName(info.object.cc),
+          lines: [
+            `${info.object.count.toLocaleString()} fast-weaponized`,
+            `${info.object.veryFast.toLocaleString()} very fast (≤ 24h) · ${info.object.fast.toLocaleString()} fast (≤ 72h)`,
+          ],
+        }
+        : null),
+      onClick: (info: PickInfo<VelocityPoint>) => (info.object ? pick.click({ kind: 'country', id: info.object.cc }) : false),
+    }),
+  ];
+}
+
 // ─── Public ─────────────────────────────────────────────────
 
 /** Animated lens layers, drawn above the threat layers. */
@@ -779,6 +839,7 @@ export function buildLensLayers(input: LensLayerInput, frame: LensFrame): Layer[
   if (layers.operations) out.push(...opLayers(input, frame));
   if (layers.actors) out.push(...actorLayers(input, frame));
   if (layers.movement) out.push(...movementLayers(input, frame));
+  if (input.velocity) out.push(...velocityLayers(input, frame));
   return out;
 }
 
@@ -788,7 +849,7 @@ export function buildLensLayers(input: LensLayerInput, frame: LensFrame): Layer[
  * halo, the trails of a paused replay) need no frames at all.
  */
 export function lensNeedsFrame(
-  input: Pick<LensLayerInput, 'layers' | 'operations' | 'hosting' | 'campaigns' | 'actors' | 'movement'>,
+  input: Pick<LensLayerInput, 'layers' | 'operations' | 'hosting' | 'campaigns' | 'actors' | 'movement' | 'velocity'>,
   opts: { clockPlaying?: boolean } = {},
 ): boolean {
   const { layers } = input;
@@ -798,11 +859,13 @@ export function lensNeedsFrame(
     (layers.hosting && input.hosting && input.hosting.rings.some(r => r.bulletproof)) ||
     (layers.campaigns && input.campaigns && input.campaigns.arcs.length > 0) ||
     (layers.actors && input.actors && !input.actors.empty) ||
-    (layers.movement && input.movement && (input.movement.pulses.length > 0 || (playing && input.movement.hops.length > 0)))
+    (layers.movement && input.movement && (input.movement.pulses.length > 0 || (playing && input.movement.hops.length > 0))) ||
+    // Only very-fast nodes pulse: a fast-only scene is a still picture.
+    (input.velocity && input.velocity.points.some(p => p.hot))
   );
 }
 
 /** Layer ids that can be picked (kept for tests / docs). */
 export const LENS_PICKABLE_IDS = [
-  'baseline-countries', 'ops-edges', 'ops-core', 'hosting-rings', 'campaign-arcs', 'actor-core', 'movement-paths', 'movement-pulses',
+  'baseline-countries', 'ops-edges', 'ops-core', 'hosting-rings', 'campaign-arcs', 'actor-core', 'movement-paths', 'movement-pulses', 'velocity-core',
 ] as const;

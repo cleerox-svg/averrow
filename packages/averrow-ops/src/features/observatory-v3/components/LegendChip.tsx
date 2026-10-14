@@ -11,20 +11,21 @@ import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LensId, LayerToggles } from '../lib/lenses';
+import type { ThreatView } from '../lib/url-state';
 import { LENS_DEFS } from '../lib/lenses';
 import type { ColorBy } from '../lib/map-colors';
 import {
   SEVERITY_COLORS, SEVERITY_ORDER, THREAT_TYPE_COLORS, TYPE_ORDER, HEATMAP_COLOR_RANGE, rgbCss, typeLabel,
 } from '../lib/map-colors';
 import {
-  ActorsSection, BaselineSection, CampaignsSection, HostingSection, MovementSection, OperationsSection,
+  ActorsSection, BaselineSection, CampaignsSection, HostingSection, MovementSection, OperationsSection, VelocitySection,
   type LegendSectionProps,
 } from './LensLegend';
 
 export interface LegendChipProps extends LegendSectionProps {
   lens: LensId;
   layers: LayerToggles;
-  view: 'points' | 'heat';
+  view: ThreatView;
   colorBy: ColorBy;
   /** One-line state shown on the closed chip. */
   summary: { text: string; tone: 'ok' | 'loading' | 'error' | 'empty' };
@@ -98,6 +99,7 @@ export function LegendChip(props: LegendChipProps) {
   const threatTraffic = layers.nodes || layers.particles || layers.beams;
   const sections: ReactNode[] = [];
   if (lens === 'threats' && view === 'heat') sections.push(<HeatKey key="heat" />);
+  else if (lens === 'threats' && view === 'fast') sections.push(<VelocitySection key="fast" s={props.velocity} />);
   else {
     if (threatTraffic) sections.push(<ThreatKey key="threat" colorBy={colorBy} reducedMotion={reducedMotion} />);
     if (layers.operations) sections.push(<OperationsSection key="ops" s={props.operations} />);

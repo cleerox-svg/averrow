@@ -260,3 +260,37 @@ describe('useObservatoryUrlState', () => {
     expect(loc.search).toBe('?view=heat');
   });
 });
+
+describe('Threats view=fast (fast weaponization)', () => {
+  it('parses, and stays on the interactive global scene', () => {
+    const s = parse('view=fast');
+    expect(s).toMatchObject({ lens: 'threats', view: 'fast' });
+    expect(mapModeOf(s)).toBe('global');
+  });
+  it('round-trips as ?view=fast, and the default view writes nothing', () => {
+    const s = parse('view=fast&period=30d');
+    expect(applyObservatoryState(new URLSearchParams(), s).toString()).toBe('period=30d&view=fast');
+    expect(applyObservatoryState(new URLSearchParams(), DEFAULT_STATE).toString()).toBe('');
+  });
+  it('back-compat: view=heat, mode=heatmap and junk views still mean what they did', () => {
+    expect(parse('view=heat').view).toBe('heat');
+    expect(parse('mode=heatmap').view).toBe('heat');
+    expect(parse('mode=heatmap&view=fast').view).toBe('heat');
+    expect(parse('view=nope').view).toBe('points');
+    expect(parse('view=points').view).toBe('points');
+  });
+  it('view only exists on the Threats lens', () => {
+    expect(parse('lens=hosting&view=fast').view).toBe('points');
+    const next = mergeObservatoryState(parse('view=fast'), { lens: 'hosting' });
+    expect(next.view).toBe('points');
+    expect(applyObservatoryState(new URLSearchParams(), next).get('view')).toBeNull();
+  });
+  it('switching view clears the selection (it belongs to the old picture); the source in the URL is kept for when it returns', () => {
+    const prev = parse('source=feeds&sel=country:NL');
+    const next = mergeObservatoryState(prev, { view: 'fast' });
+    expect(next.view).toBe('fast');
+    expect(next.sel).toBeNull();
+    expect(next.source).toBe('feeds');
+    expect(mergeObservatoryState(next, { sel: 'country:NL' }).sel).toBe('country:NL');
+  });
+});

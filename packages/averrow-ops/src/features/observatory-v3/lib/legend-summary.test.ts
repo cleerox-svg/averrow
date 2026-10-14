@@ -3,7 +3,7 @@ import { legendSummary, type SummaryInput } from './legend-summary';
 
 const ok = { isLoading: false, error: null };
 const base: SummaryInput = {
-  lens: 'threats', view: 'points', measure: 'index', nodes: 12, threats: ok,
+  lens: 'threats', view: 'points', measure: 'index', nodes: 12, threats: ok, velocity: { ...ok, count: null },
   operations: { ...ok, count: null }, movement: { ...ok, count: null, events: 0 }, hosting: { ...ok, count: null },
   baseline: { ...ok, count: null }, bot: { ...ok, count: null }, campaigns: { ...ok, count: null },
   actors: { ...ok, selected: false, countries: null, empty: false },
@@ -36,5 +36,21 @@ describe('legendSummary: the closed chip tells the truth', () => {
     expect(legendSummary({ ...base, lens: 'actors', actors: { isLoading: false, error: new Error('x'), ...sel } }).tone).toBe('error');
     expect(legendSummary({ ...base, lens: 'actors', actors: { ...ok, selected: true, countries: 0, empty: true } }).text).toBe('no attributed infra');
     expect(legendSummary({ ...base, lens: 'actors', actors: { ...ok, selected: true, countries: 3, empty: false } }).text).toBe('3 countries');
+  });
+});
+
+describe('legendSummary: Fast weaponization view', () => {
+  const fast = { ...base, view: 'fast' as const };
+  it('counts countries; empty reads as coverage still filling, never as "none"', () => {
+    expect(legendSummary({ ...fast, velocity: { ...ok, count: 7 } })).toEqual({ text: '7 countries', tone: 'ok' });
+    expect(legendSummary({ ...fast, velocity: { ...ok, count: 1 } })).toEqual({ text: '1 country', tone: 'ok' });
+    expect(legendSummary({ ...fast, velocity: { ...ok, count: 0 } })).toEqual({ text: 'coverage filling', tone: 'empty' });
+  });
+  it('loading and failure states', () => {
+    expect(legendSummary({ ...fast, velocity: { isLoading: true, error: null, count: null } })).toEqual({ text: 'loading…', tone: 'loading' });
+    expect(legendSummary({ ...fast, velocity: { isLoading: false, error: new Error('x'), count: null } })).toEqual({ text: 'failed to load', tone: 'error' });
+  });
+  it('the Points view still reads the nodes, not the velocity query', () => {
+    expect(legendSummary({ ...base, velocity: { ...ok, count: 9 } })).toEqual({ text: '12 nodes', tone: 'ok' });
   });
 });

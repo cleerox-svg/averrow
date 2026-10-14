@@ -2,7 +2,7 @@
  * Control rail: the console's secondary controls in a slim 44px column, replacing
  * the old nine-row layer list.
  *
- *   VIEW      the active lens's option  (Threats: Points | Heat,
+ *   VIEW      the active lens's option  (Threats: Points | Heat | Fast,
  *                                         Baseline: Over-index | Raw | Bot share)
  *   TRAFFIC   threat traffic underneath: Off | Nodes | Nodes + Flow
  *   Beams     static attack corridors
@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useId, useState, type ReactNode } from 'react';
-import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart } from 'lucide-react';
+import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart, Zap } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LayerToggles, LensId } from '../lib/lenses';
 import type { ColorBy, Measure, ThreatView } from '../lib/url-state';
@@ -140,6 +140,7 @@ export function ControlRail({
       ? [
         { id: 'view-points', label: 'Points', hint: 'Origin nodes, one per place', icon: icon(<ScatterChart size={16} />), pressed: view === 'points', onPress: () => { onView('points'); say('Threats view: points'); } },
         { id: 'view-heat', label: 'Heat', hint: 'Density of geolocated threats', icon: icon(<Flame size={16} />), pressed: view === 'heat', onPress: () => { onView('heat'); say('Threats view: heat'); } },
+        { id: 'view-fast', label: 'Fast weaponization', hint: 'Countries where domains went live within days of registration (all sources)', icon: icon(<Zap size={16} />), pressed: view === 'fast', onPress: () => { onView('fast'); say('Threats view: fast weaponization'); } },
       ]
       : lens === 'baseline'
         ? [
@@ -149,8 +150,8 @@ export function ControlRail({
         ]
         : [];
 
-  // The heat view and the bot-share scene are their own pictures: traffic context does not apply.
-  const traffickable = !(lens === 'threats' && view === 'heat') && !(lens === 'baseline' && measure === 'bot');
+  // The heat and fast views and the bot-share scene are their own pictures: traffic context does not apply.
+  const traffickable = !(lens === 'threats' && (view === 'heat' || view === 'fast')) && !(lens === 'baseline' && measure === 'bot');
 
   const panel = layout === 'panel';
   return (

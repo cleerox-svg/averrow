@@ -8,7 +8,7 @@ vi.mock('@/lib/api', () => ({ api: { fetch: (...a: unknown[]) => fetchMock(...a)
 
 import {
   useOperationsGeo, useMovements, useProvidersGeo, useOverindex, useCampaignsGeo, useObservatoryTimeline,
-  useActorList, useActorDetail, overindexPeriod, readLensMeta,
+  useActorList, useActorDetail, overindexPeriod, readLensMeta, useVelocityNodes,
 } from './useObservatoryLenses';
 
 function wrapper() {
@@ -33,6 +33,9 @@ describe('lens hooks request the right endpoint with the right params', () => {
     ['campaigns-geo', () => useCampaignsGeo(), '/api/observatory/campaigns-geo'],
     ['timeline', () => useObservatoryTimeline({ period: '24h', source: 'feeds', country: 'NL' }), '/api/observatory/timeline?period=24h&source_feed=feeds&country=NL'],
     ['timeline (all sources, no country)', () => useObservatoryTimeline({ period: '7d' }), '/api/observatory/timeline?period=7d'],
+    ['velocity nodes (all flags by default)', () => useVelocityNodes(), '/api/observatory/velocity-nodes?period=7d&flag=all'],
+    ['velocity nodes, one flag', () => useVelocityNodes({ period: '30d', flag: 'very_fast' }), '/api/observatory/velocity-nodes?period=30d&flag=very_fast'],
+    ['timeline with velocity', () => useObservatoryTimeline({ period: '30d', velocity: 'all' }), '/api/observatory/timeline?period=30d&velocity=all'],
     ['actors list', () => useActorList(), '/api/observatory/actors'],
     ['actor detail', () => useActorDetail('apt 1'), '/api/observatory/actors?actor_id=apt+1'],
   ])('%s', async (_name, hook, url) => {
@@ -46,7 +49,7 @@ describe('gating', () => {
     renderHook(() => ({
       a: useOperationsGeo({ enabled: false }), b: useMovements({ enabled: false }), c: useProvidersGeo({ enabled: false }),
       d: useOverindex({ enabled: false }), e: useCampaignsGeo({ enabled: false }), f: useObservatoryTimeline({ enabled: false }),
-      g: useActorList({ enabled: false }), h: useActorDetail(null),
+      g: useActorList({ enabled: false }), h: useActorDetail(null), i: useVelocityNodes({ enabled: false }),
     }), { wrapper: wrapper() });
     await new Promise(r => setTimeout(r, 30));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -97,6 +100,38 @@ describe('results', () => {
   });
 });
 
+describe('velocity', () => {
+  it('never sends a source with velocity (the server answers 400 for both)', async () => {
+    renderHook(() => useObservatoryTimeline({ period: '7d', source: 'spam_trap', velocity: 'all', country: 'NL' }), { wrapper: wrapper() });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(urls()).toEqual(['/api/observatory/timeline?period=7d&country=NL&velocity=all']);
+  });
+  it('a severity timeline is never shown as the velocity series (or the reverse) while the other loads', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: { bucket: '1h', points: [{ t: url.includes('velocity') ? 'v' : 's' }] } }));
+    const { result, rerender } = renderHook(({ v }) => useObservatoryTimeline({ period: '7d', velocity: v }), { wrapper: wrapper(), initialProps: { v: null as 'all' | null } });
+    await waitFor(() => expect(result.current.data?.data.points[0]).toEqual({ t: 's' }));
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    rerender({ v: 'all' });
+    expect(result.current.data).toBeUndefined();
+  });
+  it('still keeps the previous period of the SAME series on screen', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: { bucket: '1h', points: [{ t: url.includes('24h') ? 'a' : 'b' }] } }));
+    const { result, rerender } = renderHook(({ p }) => useObservatoryTimeline({ period: p, velocity: 'all' }), { wrapper: wrapper(), initialProps: { p: '7d' } });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    rerender({ p: '24h' });
+    expect(result.current.data).toBeDefined();
+    expect(result.current.isUpdating).toBe(true);
+  });
+  it('velocity-nodes exposes dropped_no_centroid from the envelope', async () => {
+    fetchMock.mockResolvedValue({ success: true, data: [], meta: { flag: 'all', dropped_no_centroid: 4 } });
+    const { result } = renderHook(() => useVelocityNodes(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.meta.dropped_no_centroid).toBe(4);
+    expect(result.current.data?.data).toEqual([]); // empty is a valid answer: the UI words it as "coverage still filling"
+  });
+});
+
 describe('helpers', () => {
   it('overindexPeriod maps the page period onto the two the endpoint supports', () => {
     expect(overindexPeriod('24h')).toBe('7d');
@@ -105,7 +140,7 @@ describe('helpers', () => {
     expect(overindexPeriod('90d')).toBe('30d');
   });
   it('readLensMeta tolerates anything', () => {
-    expect(readLensMeta(undefined)).toEqual({ generated_at: null, period: null, radar_snapshot_date: null, source_feed: null, country: null });
+    expect(readLensMeta(undefined)).toEqual({ generated_at: null, period: null, radar_snapshot_date: null, source_feed: null, country: null, dropped_no_centroid: null });
     expect(readLensMeta({ generated_at: 5, period: '7d' })).toMatchObject({ generated_at: null, period: '7d' });
   });
 });

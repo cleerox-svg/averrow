@@ -5,16 +5,19 @@
  */
 
 import type { LensId } from './lenses';
+import type { ThreatView } from './url-state';
 
 export interface QueryLike { isLoading: boolean; error: Error | null }
 
 export interface SummaryInput {
   lens: LensId;
-  view: 'points' | 'heat';
+  view: ThreatView;
   measure: 'index' | 'raw' | 'bot';
   /** Nodes drawn on the Threats lens (null = not loaded). */
   nodes: number | null;
   threats: QueryLike;
+  /** Fast view: countries drawn (null = not loaded). */
+  velocity: QueryLike & { count: number | null };
   operations: QueryLike & { count: number | null };
   movement: QueryLike & { count: number | null; events: number };
   hosting: QueryLike & { count: number | null };
@@ -41,6 +44,7 @@ export function legendSummary(i: SummaryInput): Summary {
   switch (i.lens) {
     case 'threats':
       if (i.view === 'heat') return { text: 'density', tone: 'ok' };
+      if (i.view === 'fast') return from(i.velocity, i.velocity.count, ['country', 'countries'], 'coverage filling');
       return from(i.threats, i.nodes, ['node'], 'nothing mapped');
     case 'operations': return from(i.operations, i.operations.count, ['operation'], 'none placeable');
     case 'movement': {

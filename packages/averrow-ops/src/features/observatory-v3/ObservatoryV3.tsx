@@ -74,7 +74,7 @@ import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
 import { drillPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
-import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows } from './lib/panel-rows';
+import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows } from './lib/panel-rows';
 import { lensFootnote } from './lib/footnote';
 import type { LngLat } from '@/lib/country-centroids';
 
@@ -83,6 +83,8 @@ const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
 const BOT_LAYERS = { ...noLayers(), baseline: true } as LayerToggles;
+/** The Fast view is its own picture (like the heatmap and bot share): no threat traffic or lens layer under it. */
+const FAST_LAYERS = noLayers();
 
 // Explicit stacking order for this view's overlay chrome — replaces raw
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
@@ -94,6 +96,8 @@ const Z_TOOLBAR = 22;  // toolbar row: ABOVE the panel / drawer, so its filters 
 const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
 
 type SheetKey = 'drill' | 'panel';
+
+const FAST_SOURCE_NOTE = 'Fast weaponization is always all sources';
 
 const PICK_TO_SEL: Record<LensPick['kind'], 'op' | 'provider' | 'country' | 'campaign' | 'move' | 'actor'> = {
   operation: 'op', provider: 'provider', country: 'country', campaign: 'campaign', movement: 'move', actor: 'actor',
@@ -109,8 +113,13 @@ export function ObservatoryV3() {
   const canSeeTakedowns = useCanSeeTakedowns();
   const { resolvedTheme } = useTheme();
   const { state, update } = useObservatoryUrlState();
-  const { period, source, colorBy, layers, lens, view, measure } = state;
+  const { period, colorBy, layers, lens, view, measure } = state;
   const mapMode = mapModeOf(state);
+  /** Threats lens, Fast weaponization view: drawn from the velocity cube. */
+  const fast = lens === 'threats' && view === 'fast';
+  // The velocity cube has no source dimension (the server 400s velocity + a source), so the Fast view is always
+  // "all sources" whatever the URL says; the select shows that and is disabled.
+  const source: Source = fast ? 'all' : state.source;
   const sel = useMemo(() => parseSel(state.sel), [state.sel]);
 
   // ─── Layout: the MAP's width decides, and it reacts to every resize ──
@@ -150,13 +159,13 @@ export function ObservatoryV3() {
   const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
 
   // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
-  const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : layers;
+  const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : fast ? FAST_LAYERS : layers;
 
   // ─── Data — each query is enabled only for the views that render it ──
   const selectionKind = state.node ? 'node' : state.arc ? 'arc' : sel?.kind ?? null;
   const needs = useMemo(
-    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching }),
-    [mapMode, mapLayers, selectionKind, searching],
+    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching, velocity: fast }),
+    [mapMode, mapLayers, selectionKind, searching, fast],
   );
   const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
   const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
@@ -203,7 +212,7 @@ export function ObservatoryV3() {
     nodes: threatsQ.error, arcs: arcsQ.error, heatmap: heatmapQ.error, stats: statsQ.error,
     operations: L.operationsQ.error, movements: L.movementsQ.error, providers: L.providersQ.error,
     overindex: L.overindexQ.error, campaigns: L.campaignsQ.error, actors: L.actorsQ.error,
-    timeline: L.timelineQ.error,
+    timeline: L.timelineQ.error, velocity: L.velocityQ.error,
   });
   const loadError = failures.length > 0 || (isBotMode && !!botError);
   const retryFailed = useCallback(() => {
@@ -218,12 +227,14 @@ export function ObservatoryV3() {
     if (failures.includes('campaigns')) void L.campaignsQ.refetch();
     if (failures.includes('actors')) void L.actorsQ.refetch();
     if (failures.includes('timeline')) void L.timelineQ.refetch();
+    if (failures.includes('velocity')) void L.velocityQ.refetch();
     if (isBotMode && botError) void refetchBot();
-  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, isBotMode, botError, refetchBot]);
+  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, L.velocityQ, isBotMode, botError, refetchBot]);
 
   // "Updating" = showing the previous period/source's data while the new one loads.
   const activeQueries = [
     needs.nodes ? threatsQ : null, needs.stats ? statsQ : null, needs.arcs ? arcsQ : null, needs.heatmap ? heatmapQ : null,
+    needs.velocity ? L.velocityQ : null,
   ].filter((q): q is typeof threatsQ => q !== null);
   const isUpdating = activeQueries.some(q => q.isUpdating);
   // The footer's threats / countries come from the stats query alone: its label
@@ -462,8 +473,9 @@ export function ObservatoryV3() {
     campaigns: L.campaignsModel,
     actors: L.actorModel,
     movement: L.movementModel,
+    velocity: fast ? L.velocityModel : null,
     sel: lensSel,
-  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, lensSel]);
+  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, fast, L.velocityModel, lensSel]);
   const sceneKey = `${lens}|${view}|${measure}`;
 
   // ─── Search ──
@@ -482,7 +494,7 @@ export function ObservatoryV3() {
   const onShortcut = useLayerShortcuts(useCallback((id: LayerId) => {
     update({ layers: { [id]: !layers[id] } });
     setAnnounceToggle(`${id} ${layers[id] ? 'off' : 'on'}`);
-  }, [update, layers]), mapMode === 'global');
+  }, [update, layers]), mapMode === 'global' && !fast);
 
   const onPickActor = useCallback((id: string | null) => {
     if (!id) { update(drillToPatch(null)); return; }
@@ -499,7 +511,8 @@ export function ObservatoryV3() {
   const controlRightInset = rightSlot ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0;
   const threatLayersOn = mapLayers.nodes || mapLayers.particles || mapLayers.beams;
   const countryLabel = sel?.kind === 'country' ? countryName(sel.id) : null;
-  const motionOn = !reducedMotion && (mapLayers.particles || (mapMode === 'global' && (mapLayers.operations || mapLayers.hosting || mapLayers.campaigns || mapLayers.actors || mapLayers.movement)));
+  const fastPulses = fast && !!L.velocityModel && L.velocityModel.points.some(p => p.hot);
+  const motionOn = !reducedMotion && (mapLayers.particles || fastPulses || (mapMode === 'global' && (mapLayers.operations || mapLayers.hosting || mapLayers.campaigns || mapLayers.actors || mapLayers.movement)));
 
   // ─── Legend chip content ──
   const legendProps = {
@@ -514,6 +527,7 @@ export function ObservatoryV3() {
       bot: { model: botModel, q: { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } },
     },
     campaigns: { model: L.campaignsModel, q: qState(L.campaignsQ) },
+    velocity: { model: L.velocityModel, q: qState(L.velocityQ) },
     actors: {
       model: L.actorModel, list: L.actorList ? [...L.actorList] : [], listQ: qState(L.actorsQ),
       detailQ: actorId ? qState(L.actorDetailQ) : null, selectedId: actorId,
@@ -524,6 +538,7 @@ export function ObservatoryV3() {
     lens, view, measure,
     nodes: threatsQ.data ? threatsQ.data.length : null,
     threats: threatsQ,
+    velocity: { ...L.velocityQ, count: L.velocityModel ? L.velocityModel.points.length : null },
     operations: { ...L.operationsQ, count: L.operationsModel ? L.operationsModel.placedOps.size : null },
     movement: { ...L.movementsQ, count: L.movementModel ? L.movementModel.hops.filter(h => !h.id.endsWith(':w')).length + L.movementModel.pulses.length : null, events: L.movements?.length ?? 0 },
     hosting: { ...L.providersQ, count: L.hostingModel ? L.hostingModel.rings.length : null },
@@ -542,15 +557,16 @@ export function ObservatoryV3() {
       case 'campaigns': return campaignRows(L.campaigns);
       case 'movement': return movementRows(L.movements);
       case 'actors': return actorRows(L.actorList);
+      case 'threats': return fast ? velocityRows(L.velocityModel) : null;
       default: return null;
     }
-  }, [lens, measure, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
+  }, [lens, fast, L.velocityModel, measure, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
   const panelQuery = lens === 'hosting' ? L.providersQ
     : lens === 'operations' ? L.operationsQ
       : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : L.overindexQ)
         : lens === 'campaigns' ? L.campaignsQ
           : lens === 'movement' ? L.movementsQ
-            : lens === 'actors' ? L.actorsQ : null;
+            : lens === 'actors' ? L.actorsQ : fast ? L.velocityQ : null;
   // The Actors lens needs its list for the panel even before the legend asks for it.
   const lensPanel = (placement: 'dock' | 'overlay' | 'sheet') => (
     panelSection && panelQuery ? (
@@ -583,7 +599,7 @@ export function ObservatoryV3() {
       </div>
       <div className="flex flex-col gap-1.5">
         <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
-        <SourceSelect source={source} onChange={setSource} touch={phone} />
+        <SourceSelect source={source} onChange={setSource} touch={phone} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
       </div>
       {isBotMode && (
         <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -740,7 +756,7 @@ export function ObservatoryV3() {
             ) : (
               <>
                 <PeriodSegment period={period} onChange={setPeriod} />
-                <SourceSelect source={source} onChange={setSource} />
+                <SourceSelect source={source} onChange={setSource} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
               </>
             )}
             <RefreshButton onClick={handleRefresh} busy={isFetching} />
@@ -794,6 +810,7 @@ export function ObservatoryV3() {
           reducedMotion={reducedMotion}
           periodLabel={periodLabel}
           countryLabel={countryLabel}
+          series={fast ? 'velocity' : 'severity'}
           isMobile={phone}
           style={{ position: 'absolute', left: 12, right: phone ? 12 : rightClear + 44, bottom: timelineBottom, height: TIMELINE_H, zIndex: Z_CHROME }}
         />
@@ -815,7 +832,15 @@ export function ObservatoryV3() {
         }}
       >
         <div className="flex items-center gap-4">
-          {isBotMode ? (
+          {fast ? (
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
+            </div>
+          ) : isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
               <span style={{ color: 'var(--amber-text)' }}>7D</span>
@@ -842,8 +867,8 @@ export function ObservatoryV3() {
           )}
         </div>
         <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {lensFootnote({ lens, reducedMotion, motionOn }) && (
-            <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn })}</span>
+          {lensFootnote({ lens, reducedMotion, motionOn, fast }) && (
+            <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn, fast })}</span>
           )}
         </div>
       </div>
