@@ -40,7 +40,7 @@ import { LensLegend } from './components/LensLegend';
 import { ReplayTimeline, usePlayheadBus } from './components/ReplayTimeline';
 import { buildBotDensityPoints, botDensityDomain, resolveGlobalAvg } from './lib/bot-density';
 import {
-  useObservatoryUrlState, parseSel,
+  useObservatoryUrlState, parseSel, mapModeOf,
   PERIOD_IDS, SOURCE_IDS, MAP_MODE_IDS, COLOR_BY_IDS,
   type MapMode, type Period, type Source, type ColorBy, type LayerId, type LensId,
 } from './lib/url-state';
@@ -126,7 +126,8 @@ export function ObservatoryV3() {
   const reducedMotion = usePrefersReducedMotion();
   const canSeeTakedowns = useCanSeeTakedowns();
   const { state, update } = useObservatoryUrlState();
-  const { period, source, mode: mapMode, colorBy, layers, lens, measure } = state;
+  const { period, source, colorBy, layers, lens, measure } = state;
+  const mapMode = mapModeOf(state);
   const showNodes = layers.nodes;
   const showParticles = layers.particles;
   const showBeams = layers.beams;

@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { noLayers, lensPreset } from './lenses';
 import {
   parseSel, selValue,
-  parseObservatoryParams, applyObservatoryState, mergeObservatoryState, DEFAULT_STATE,
+  parseObservatoryParams, applyObservatoryState, mergeObservatoryState, DEFAULT_STATE, mapModeOf,
   nodeKey, arcKey, useObservatoryUrlState,
 } from './url-state';
 
@@ -17,8 +17,9 @@ describe('parseObservatoryParams', () => {
   });
 
   it('reads valid params', () => {
-    const s = parse('period=30d&source=feeds&mode=heatmap&colorBy=type&layers=nodes,beams');
-    expect(s).toMatchObject({ period: '30d', source: 'feeds', mode: 'heatmap', colorBy: 'type' });
+    const s = parse('period=30d&source=feeds&view=heat&colorBy=type&layers=nodes,beams');
+    expect(s).toMatchObject({ period: '30d', source: 'feeds', lens: 'threats', view: 'heat', colorBy: 'type' });
+    expect(mapModeOf(s)).toBe('heatmap');
     expect(s.layers).toEqual({ ...noLayers(), nodes: true, beams: true });
   });
 
@@ -57,8 +58,8 @@ describe('lens, sel and measure params', () => {
     expect(parse('lens=operations&layers=nodes,operations').layers).toMatchObject({ nodes: true, operations: true, hosting: false });
     expect(parse('lens=nope').lens).toBe('threats');
   });
-  it('lens only exists in global mode', () => {
-    expect(parse('mode=heatmap&lens=hosting').lens).toBe('threats');
+  it('an old mode= link wins over lens= and names a lens + option', () => {
+    expect(parse('mode=heatmap&lens=hosting')).toMatchObject({ lens: 'threats', view: 'heat' });
   });
   it('validates sel (kind, country code shape) and keeps it global-only', () => {
     expect(parse('sel=country:US').sel).toBe('country:US');
@@ -94,12 +95,49 @@ describe('lens, sel and measure params', () => {
   });
 });
 
+describe('lens options and legacy mode links', () => {
+  it('mode=heatmap is the Threats lens with the Heat view', () => {
+    const s = parse('mode=heatmap&period=30d');
+    expect(s).toMatchObject({ lens: 'threats', view: 'heat', measure: 'index' });
+    expect(mapModeOf(s)).toBe('heatmap');
+  });
+  it('mode=bot_density is the Baseline lens with the Bot share measure and its layer preset', () => {
+    const s = parse('mode=bot_density');
+    expect(s).toMatchObject({ lens: 'baseline', view: 'points', measure: 'bot' });
+    expect(s.layers).toEqual(lensPreset('baseline'));
+    expect(mapModeOf(s)).toBe('bot_density');
+  });
+  it('mode=global is a no-op', () => {
+    expect(parse('mode=global&lens=hosting').lens).toBe('hosting');
+  });
+  it('view only exists on Threats and measure only on Baseline', () => {
+    expect(parse('lens=hosting&view=heat').view).toBe('points');
+    expect(parse('lens=hosting&measure=bot').measure).toBe('index');
+    expect(parse('lens=baseline&measure=bot').measure).toBe('bot');
+    expect(parse('lens=baseline&measure=nope').measure).toBe('index');
+  });
+  it('writes the canonical option params (never mode=) and round-trips', () => {
+    const heat = applyObservatoryState(new URLSearchParams('mode=heatmap'), parse('mode=heatmap'));
+    expect(heat.toString()).toBe('view=heat');
+    expect(parseObservatoryParams(heat)).toEqual(parse('mode=heatmap'));
+    const bot = applyObservatoryState(new URLSearchParams(), parse('mode=bot_density'));
+    expect(bot.toString()).toBe('lens=baseline&measure=bot');
+    expect(parseObservatoryParams(bot)).toEqual(parse('mode=bot_density'));
+  });
+  it('selection is dropped on the heat and bot-share scenes', () => {
+    expect(parse('view=heat&sel=country:US').sel).toBeNull();
+    expect(parse('lens=baseline&measure=bot&sel=country:US').sel).toBeNull();
+    expect(parse('lens=baseline&measure=raw&sel=country:US').sel).toBe('country:US');
+  });
+});
+
 describe('applyObservatoryState', () => {
   it('writes only non-default values and round-trips', () => {
     const state = parse('period=90d&source=spam_trap&colorBy=type&layers=nodes&arc=a|b|1.0,2.0|low');
     const out = applyObservatoryState(new URLSearchParams(), state);
     expect(out.get('period')).toBe('90d');
     expect(out.has('mode')).toBe(false);
+    expect(out.has('view')).toBe(false);
     expect(parseObservatoryParams(out)).toEqual(state);
   });
 
@@ -119,6 +157,7 @@ describe('mergeObservatoryState', () => {
   it('clears the selection when period, source or mode changes', () => {
     expect(mergeObservatoryState(selected, { period: '24h' }).node).toBeNull();
     expect(mergeObservatoryState(selected, { source: 'feeds' }).node).toBeNull();
+    expect(mergeObservatoryState(selected, { view: 'heat' }).node).toBeNull();
     expect(mergeObservatoryState(selected, { mode: 'heatmap' }).node).toBeNull();
   });
 
@@ -139,9 +178,19 @@ describe('mergeObservatoryState', () => {
     });
   });
 
-  it('a lens pick from another map mode returns to the global map; leaving global drops the lens', () => {
-    expect(mergeObservatoryState({ ...DEFAULT_STATE, mode: 'heatmap' }, { lens: 'actors' })).toMatchObject({ mode: 'global', lens: 'actors' });
-    expect(mergeObservatoryState({ ...DEFAULT_STATE, lens: 'hosting' }, { mode: 'bot_density' }).lens).toBe('threats');
+  it('choosing a lens resets the previous lens option; an option only exists on its lens', () => {
+    const heat = { ...DEFAULT_STATE, view: 'heat' as const };
+    expect(mergeObservatoryState(heat, { lens: 'actors' })).toMatchObject({ lens: 'actors', view: 'points' });
+    const bot = { ...DEFAULT_STATE, lens: 'baseline' as const, measure: 'bot' as const, layers: lensPreset('baseline') };
+    expect(mergeObservatoryState(bot, { lens: 'threats' })).toMatchObject({ lens: 'threats', measure: 'index' });
+    expect(mergeObservatoryState(DEFAULT_STATE, { lens: 'hosting', view: 'heat' }).view).toBe('points');
+    expect(mergeObservatoryState(DEFAULT_STATE, { lens: 'baseline', measure: 'raw' })).toMatchObject({ lens: 'baseline', measure: 'raw' });
+  });
+  it('the legacy mode shorthand maps to lens + option; heat and bot-share scenes drop the selection', () => {
+    expect(mergeObservatoryState(DEFAULT_STATE, { mode: 'bot_density' })).toMatchObject({ lens: 'baseline', measure: 'bot' });
+    expect(mergeObservatoryState(DEFAULT_STATE, { mode: 'heatmap' })).toMatchObject({ lens: 'threats', view: 'heat' });
+    expect(mergeObservatoryState({ ...DEFAULT_STATE, view: 'heat' }, { mode: 'global' })).toMatchObject({ lens: 'threats', view: 'points' });
+    expect(mergeObservatoryState({ ...DEFAULT_STATE, sel: 'country:US' }, { view: 'heat', sel: 'country:DE' }).sel).toBeNull();
   });
 
   it('selecting one kind of object clears the others', () => {
@@ -196,6 +245,6 @@ describe('useObservatoryUrlState', () => {
 
   it('canonicalises a garbage URL on mount', () => {
     const { loc } = setup('?period=bogus&mode=heatmap');
-    expect(loc.search).toBe('?mode=heatmap');
+    expect(loc.search).toBe('?view=heat');
   });
 });
