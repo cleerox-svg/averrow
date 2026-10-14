@@ -275,6 +275,62 @@ describe('ObservatoryV3 disabled controls explain themselves in text', () => {
   });
 });
 
+describe('ObservatoryV3: entering a lens frames what it draws, once', () => {
+  const opsData = [
+    { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    { id: 'o2', name: 'Beta', component_id: null, kind: 'asn', status: 'active', confidence_score: 60, threat_count: 20, actor: null, countries: ['AU', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null },
+  ];
+  const routeOps = () => fetchMock.mockImplementation((url: string) => {
+    if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null } });
+    if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+    return Promise.resolve({ success: true, data: [] });
+  });
+  const focusCalls = () => mapProps.mock.calls.map(c => c[0].focus).filter(Boolean);
+
+  it('fits every operation node instantly when the lens opens with nothing selected', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(focusCalls().length).toBeGreaterThan(0));
+    const f = focusCalls()[0] as { points: number[][]; instant: boolean; id: number };
+    expect(f.instant).toBe(true);
+    expect(f.points).toHaveLength(4); // US, JP, AU, DE: the whole footprint, not the default overview
+    expect(new Set(focusCalls().map(x => (x as { id: number }).id)).size).toBe(1);
+  });
+
+  it('does not re-fit when the data refreshes', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(focusCalls().length).toBeGreaterThan(0));
+    const opsCalls = () => fetchMock.mock.calls.filter(c => (c[0] as string).startsWith('/api/observatory/operations-geo')).length;
+    const before = opsCalls();
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh Observatory data' }));
+    await waitFor(() => expect(opsCalls()).toBeGreaterThan(before));
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(new Set(focusCalls().map(x => (x as { id: number }).id)).size).toBe(1);
+  });
+
+  it('leaves the camera alone once the person has moved it, even before the data lands', async () => {
+    let release: (v: unknown) => void = () => {};
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) return new Promise(res => { release = res; });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(mapProps).toHaveBeenCalled());
+    act(() => { (mapProps.mock.calls.at(-1)![0].onUserCamera as () => void)(); });
+    release({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null } });
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.operations?.nodes).toHaveLength(4));
+    expect(focusCalls()).toHaveLength(0);
+  });
+
+  it('a lens with no geographic content of its own (Threats) is left on the default view', async () => {
+    renderAt('/observatory');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    expect(focusCalls()).toHaveLength(0);
+  });
+});
+
 describe('ObservatoryV3 Operations: shared infrastructure and row previews', () => {
   const opsData = [
     { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null },

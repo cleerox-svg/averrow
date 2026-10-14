@@ -216,6 +216,29 @@ export function drillPoints(t: DrillTarget, m: FocusModels): LngLat[] {
   }
 }
 
+/**
+ * Every placeable position a LENS draws, for the first framing when it is entered with nothing selected (the fixed
+ * overview opens on Eurasia and can leave the content off screen). Empty while the lens has no data yet, and for the
+ * lenses where the whole world IS the picture (Threats, Baseline) or that frame themselves (Actors, by selection).
+ */
+export function lensFitPoints(lens: string, m: FocusModels): LngLat[] {
+  switch (lens) {
+    case 'operations':
+      return m.operations?.nodes.map(n => n.position) ?? [];
+    case 'hosting':
+      return m.hosting?.rings.map(r => r.position) ?? [];
+    case 'campaigns':
+      return present((m.campaigns?.arcs ?? []).flatMap(a => [countryCenter(a.from), countryCenter(a.to)]));
+    case 'movement':
+      return [
+        ...(m.movement?.hops.filter(h => !h.id.endsWith(':w')).flatMap(h => [h.from, h.to]) ?? []),
+        ...(m.movement?.pulses.map(p => p.position) ?? []),
+      ];
+    default:
+      return [];
+  }
+}
+
 /** The slice of MapLibre 5's transform that holds the latitude range (private: there is no public setter that keeps lngRange null). */
 interface LatRangeHolder {
   _helper?: { _latRange?: [number, number] | null };

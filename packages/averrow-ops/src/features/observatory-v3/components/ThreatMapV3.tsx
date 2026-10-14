@@ -79,6 +79,7 @@ import {
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { visibleEdges } from '../lib/lens/operations';
+import { primaryCopyFilter } from '../lib/world-copies';
 import { opCountRange, opNodePx } from '../lib/lens/operations-draw';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
@@ -209,6 +210,8 @@ export interface ThreatMapV3Props {
   /** Bump to repaint once after a seek while the loop is not running (reduced motion / hidden tab / paused). */
   seekVersion?: number;
   focus?: MapFocus | null;
+  /** The person moved the camera (drag / wheel / pinch / keys): not a programmatic fly, a fit or the idle spin. */
+  onUserCamera?: () => void;
   /** Notified when the map enters / leaves the fatal fallback (so the page can hide map-dependent overlays). */
   onFatalChange?: (fatal: boolean) => void;
 }
@@ -325,7 +328,7 @@ function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
   mapMode, projection: requestedProjection = 'flat', onProjection, spinHold = false, spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
   controlRightInset = 0, cameraInsets = NO_INSETS,
-  selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null,
+  selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null, onUserCamera,
   lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -389,8 +392,8 @@ function ThreatMapV3Inner({
 
   // Stable handler bag: layers close over THIS, never over props, so a parent
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
-  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: { width: 0, height: 0 }, root: { width: 0, height: 0 } });
-  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: canvasSize, root: size };
+  const latest = useRef({ onSelect, onUserCamera, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: { width: 0, height: 0 }, root: { width: 0, height: 0 } });
+  latest.current = { onSelect, onUserCamera, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: canvasSize, root: size };
   /** A click deck.gl delivered itself while the interleaved (globe) overlay is up: dropped, `onMapClick` owns clicks there. */
   const deckNativeClick = useCallback(() => overlayInterleavedRef.current && !dispatchingClickRef.current, []);
   const handlers = useMemo(() => ({
@@ -555,6 +558,8 @@ function ThreatMapV3Inner({
       }
     });
     map.on('idle', () => { if (!disposed) setTileIssue(false); });
+    // Only gestures carry an `originalEvent`: a fly, a fit and the idle spin do not.
+    map.on('movestart', (e) => { if (!disposed && (e as { originalEvent?: unknown }).originalEvent) latest.current.onUserCamera?.(); });
 
     const canvas = map.getCanvas();
     const onContextLost = (e: Event) => {
@@ -1091,15 +1096,13 @@ function ThreatMapV3Inner({
     map.once('idle', () => recomputeLabelsRef.current());
   }, [projection, mapLoaded]);
 
-  // The Operations lens draws links between countries: each arc is ONE polyline in the primary world copy, but deck
-  // repeats every layer in each visible world copy, so at the map's edges every arc showed twice. With the copies off
-  // (this lens only) the basemap does not repeat either, and nothing is drawn twice. Other lenses keep the wrap.
-  const worldCopies = !(lens?.layers.operations && mapMode === 'global');
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoaded || typeof map.setRenderWorldCopies !== 'function') return;
-    map.setRenderWorldCopies(worldCopies);
-  }, [mapLoaded, worldCopies]);
+  // Flat Operations arcs are one polyline in the primary world copy, and deck repeats every layer in each visible
+  // copy: a deck `layerFilter` draws those arcs (and their labels) in the primary copy only. The map's world copies
+  // stay ON (turning them off clamps the longitude: no panning across the Pacific, see lib/world-copies.ts).
+  const layerFilter = useMemo(() => primaryCopyFilter(() => ({
+    flat: projectionRef.current === 'flat',
+    renderWorldCopies: mapRef.current?.getRenderWorldCopies?.() ?? false,
+  })), []);
 
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
@@ -1117,13 +1120,13 @@ function ThreatMapV3Inner({
     }
     let overlay = slots[kind];
     if (overlay) {
-      overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius });
+      overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius, layerFilter });
     } else if (layers.length > 0) {
       const interleaved = kind === 'globe';
       overlay = new MapboxOverlay({
         interleaved,
         ...(interleaved ? globeOverlayProps() : {}),
-        layers, onClick: handlers.clickEmpty, pickingRadius });
+        layers, onClick: handlers.clickEmpty, pickingRadius, layerFilter });
       map.addControl(overlay as unknown as maplibregl.IControl);
       slots[kind] = overlay;
     }

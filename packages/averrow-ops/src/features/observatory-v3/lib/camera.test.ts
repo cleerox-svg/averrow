@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, phoneMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -163,5 +163,29 @@ describe('drillPoints: every placeable position of the target', () => {
   it('a country is its centroid', () => {
     expect(drillPoints({ kind: 'country', code: 'NL' }, EMPTY)).toHaveLength(1);
     expect(drillPoints({ kind: 'country', code: 'ZZ' }, EMPTY)).toEqual([]);
+  });
+});
+
+describe('lensFitPoints: what a lens occupies when it is entered with nothing selected', () => {
+  const models = (over: Partial<FocusModels>): FocusModels => ({ operations: null, hosting: null, campaigns: null, movement: null, actors: null, ...over });
+  it('is empty until the lens has data, and for lenses that do not frame themselves', () => {
+    expect(lensFitPoints('operations', models({}))).toEqual([]);
+    expect(lensFitPoints('threats', models({}))).toEqual([]);
+    expect(lensFitPoints('baseline', models({}))).toEqual([]);
+    expect(lensFitPoints('actors', models({}))).toEqual([]);
+  });
+  it('operations: every country node', () => {
+    const m = buildOperationsModel([
+      { id: 'a', name: 'a', component_id: null, kind: 'asn', status: 'active', confidence_score: 1, threat_count: 1, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    ], []);
+    expect(lensFitPoints('operations', models({ operations: m }))).toEqual(m.nodes.map(n => n.position));
+    expect(lensFitPoints('operations', models({ operations: m }))).toHaveLength(2);
+  });
+  it('a fit across the Pacific is a short box over the date line, not a world-wide one', () => {
+    const m = buildOperationsModel([
+      { id: 'a', name: 'a', component_id: null, kind: 'asn', status: 'active', confidence_score: 1, threat_count: 1, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    ], []);
+    const box = boundsOf(lensFitPoints('operations', models({ operations: m })))!;
+    expect(box.east - box.west).toBeLessThan(240);
   });
 });

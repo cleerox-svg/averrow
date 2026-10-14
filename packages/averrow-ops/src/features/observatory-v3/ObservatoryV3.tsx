@@ -73,7 +73,7 @@ import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, initialSheet
 import { useElementSize } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
-import { drillPoints, type FocusModels } from './lib/camera';
+import { drillPoints, lensFitPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
 import { linkedOperationIds } from './lib/lens/operations';
 import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
@@ -407,6 +407,23 @@ export function ObservatoryV3() {
     focusPoints(pts, { instant: true });
   }, [drill, focusPoints, focusModels]);
 
+  // Entering a lens with nothing selected frames what the lens draws, once: the fixed overview (Eurasia at zoom 2.2)
+  // can leave the Pacific / the Americas off screen. Reset per lens; never after the person has moved the camera or
+  // selected something (their view wins), and not again when the data refreshes.
+  const fitRef = useRef<{ lens: LensId | null; done: boolean; moved: boolean }>({ lens: null, done: false, moved: false });
+  if (fitRef.current.lens !== lens) fitRef.current = { lens, done: false, moved: false };
+  const onUserCamera = useCallback(() => { fitRef.current.moved = true; }, []);
+  const hasSelection = !!(drill || state.node || state.arc || state.sel);
+  useEffect(() => {
+    const f = fitRef.current;
+    if (f.done || mapMode !== 'global') return;
+    if (f.moved || hasSelection) { f.done = true; return; } // a selection frames itself; a moved camera is theirs
+    const pts = lensFitPoints(lens, focusModels);
+    if (pts.length === 0) return; // no data yet: wait for it
+    f.done = true;
+    focusPoints(pts, { instant: true });
+  }, [lens, mapMode, hasSelection, focusModels, focusPoints]);
+
   // An actor has no single point: frame ALL of its attributed countries once its infrastructure loads.
   const actorFocused = useRef<string | null>(null);
   useEffect(() => {
@@ -716,6 +733,7 @@ export function ObservatoryV3() {
           mapMode={mapMode}
           projection={state.proj}
           onProjection={setProjection}
+          onUserCamera={onUserCamera}
           spinHold={legendOpen}
           period={period}
           heatmapData={heatmapData}

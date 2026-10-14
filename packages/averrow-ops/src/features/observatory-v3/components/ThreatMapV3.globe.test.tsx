@@ -727,17 +727,29 @@ describe('ThreatMapV3 globe: inset only while the whole planet fits', () => {
   });
 });
 
-describe('ThreatMapV3: the Operations lens draws each arc once (no repeated world copies)', () => {
+describe('ThreatMapV3: the Operations lens keeps the world copies and draws each arc once', () => {
   const lens = (operations: boolean) => ({
     layers: { ...noLayers(), operations },
     operations: null, hosting: null, baseline: null, measure: 'index' as const, bot: null, countries: null, campaigns: null, velocity: null,
     takedownCountries: null, takedownProviders: null, actors: null, movement: null, sel: NO_SELECTION,
   });
-  it('turns the world copies off while the lens is on, and back on elsewhere', () => {
+  it('never switches the world copies off (that clamps the longitude: no Pacific panning, a force-zoomed wide canvas)', () => {
     const { rerender } = render(<ThreatMapV3 {...base} lens={lens(true) as never} />);
     ready();
-    expect(lastMap().setRenderWorldCopies).toHaveBeenLastCalledWith(false);
     rerender(<ThreatMapV3 {...base} lens={lens(false) as never} />);
-    expect(lastMap().setRenderWorldCopies).toHaveBeenLastCalledWith(true);
+    rerender(<ThreatMapV3 {...base} lens={lens(true) as never} />);
+    expect(lastMap().setRenderWorldCopies).not.toHaveBeenCalled();
+  });
+  it('hands deck a layerFilter that skips the arc layers in every copy but the primary one (flat map)', () => {
+    render(<ThreatMapV3 {...base} lens={lens(true) as never} />);
+    ready();
+    const map = lastMap() as unknown as { getRenderWorldCopies?: () => boolean };
+    map.getRenderWorldCopies = () => true;
+    const filter = overlays.at(-1)!.props.layerFilter as (c: { layer: { id: string }; viewport: { subViewports: unknown } }) => boolean;
+    expect(typeof filter).toBe('function');
+    const offsetCopy = { subViewports: null };
+    expect(filter({ layer: { id: 'ops-edges' }, viewport: offsetCopy })).toBe(false);
+    expect(filter({ layer: { id: 'ops-edges' }, viewport: { subViewports: [] } })).toBe(true);
+    expect(filter({ layer: { id: 'ops-core' }, viewport: offsetCopy })).toBe(true);
   });
 });
