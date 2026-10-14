@@ -23,7 +23,6 @@ import { Card, Tabs, Button } from '@/design-system/components';
 import { ObservatoryLoadError } from './components/ObservatoryLoadError';
 import { EventTicker } from '@/components/observatory/EventTicker';
 import { cn } from '@/lib/cn';
-import { LiveIndicator } from '@/components/ui/LiveIndicator';
 import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, ChevronDown } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -53,6 +52,7 @@ const SOURCES = SOURCE_IDS.map(id => ({ id, label: SOURCE_LABELS[id] }));
 const COLOR_BY_LABELS: Record<ColorBy, string> = { severity: 'Severity', type: 'Type' };
 const COLOR_BY_TABS = COLOR_BY_IDS.map(id => ({ id, label: COLOR_BY_LABELS[id] }));
 
+const PANEL_OPEN_MIN_WIDTH = 1280;
 const LAYER_LABELS: Record<LayerId, string> = { nodes: 'Nodes', particles: 'Particles', beams: 'Beams' };
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
@@ -75,7 +75,7 @@ function RefreshButton({ onClick, busy, className }: { onClick: () => void; busy
       onClick={onClick}
       aria-label="Refresh Observatory data"
       aria-busy={busy}
-      className={cn('ds-focusable p-1.5 rounded-md transition-colors', className)}
+      className={cn('ds-focusable inline-flex items-center justify-center p-1.5 min-w-[28px] min-h-[28px] max-[899px]:min-w-[44px] max-[899px]:min-h-[44px] rounded-md transition-colors motion-reduce:transition-none', className)}
       style={{
         background: 'var(--bg-card)',
         border: '1px solid var(--border-base)',
@@ -88,8 +88,58 @@ function RefreshButton({ onClick, busy, className }: { onClick: () => void; busy
   );
 }
 
+/**
+ * Nodes / Particles / Beams toggles. Shared by the desktop bottom-left overlay and
+ * the mobile filter drawer. Under reduced motion the particle layer is paused by
+ * the map regardless of the URL layer state, so the toggle is shown disabled with
+ * a hint (aria-disabled, not `disabled`, so the hint stays reachable by keyboard)
+ * and never rewrites the URL state.
+ */
+function LayerToggleGroup({
+  layers, reducedMotion, onToggle, touch,
+}: {
+  layers: Record<LayerId, boolean>;
+  reducedMotion: boolean;
+  onToggle: (id: LayerId, next: boolean) => void;
+  touch?: boolean;
+}) {
+  return (
+    <div role="group" aria-label="Map layers" className="flex gap-2 flex-wrap">
+      {LAYER_IDS.map(id => {
+        const active = layers[id];
+        const paused = id === 'particles' && reducedMotion;
+        return (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={active}
+            aria-disabled={paused || undefined}
+            title={paused ? 'Paused: reduced motion' : undefined}
+            onClick={() => { if (!paused) onToggle(id, !active); }}
+            className={cn(
+              'ds-focusable font-mono text-[10px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all motion-reduce:transition-none',
+              touch ? 'min-h-[44px] flex-1' : 'min-h-[24px]',
+            )}
+            style={{
+              background: active && !paused ? 'color-mix(in srgb, var(--amber) 15%, transparent)' : 'var(--bg-card)',
+              border: `1px solid ${active && !paused ? 'var(--amber-border)' : 'var(--border-base)'}`,
+              color: paused ? 'var(--text-muted)' : active ? 'var(--amber-text)' : 'var(--text-muted)',
+              opacity: paused ? 0.55 : 1,
+              backdropFilter: 'blur(12px)',
+              cursor: paused ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {LAYER_LABELS[id]}
+            {paused && <span className="sr-only"> (Paused: reduced motion)</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ObservatoryV3() {
-  const { isMobile } = useBreakpoint();
+  const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
   const { state, update } = useObservatoryUrlState();
   const { period, source, mode: mapMode, colorBy, layers } = state;
@@ -97,7 +147,10 @@ export function ObservatoryV3() {
   const showParticles = layers.particles;
   const showBeams = layers.beams;
 
-  const [showPanel, setShowPanel] = useState(!isMobile);
+  // The docked panel is 320px: only start open where the map keeps a usable width beside
+  // the filter card (>= 1280). Narrower desktops start closed; the toggle opens it.
+  const [showPanel, setShowPanel] = useState(() => viewportWidth >= PANEL_OPEN_MIN_WIDTH);
+  const [mapFatal, setMapFatal] = useState(false);
   // C1 — mobile-only: the 3 control rows (mode/period/source) collapse
   // behind a single summary toggle so they don't crowd the map.
   const [filtersExpanded, setFiltersExpanded] = useState(false);
@@ -193,6 +246,12 @@ export function ObservatoryV3() {
     });
   }, [update]);
 
+  // Keyboard / SR path to node selection: the side panel's Top Threat Origins rows.
+  const handleSelectNodeFromPanel = useCallback((node: ThreatPoint) => {
+    handleSelect({ kind: 'node', node });
+    setShowMobilePanel(false);
+  }, [handleSelect]);
+
   // A shared link may point at a node/arc that no longer exists in the fresh
   // data: once the relevant query has settled, drop the dead key from the URL.
   const nodesSettled = !threatsQ.isFetching && threatsQ.data !== undefined;
@@ -204,7 +263,7 @@ export function ObservatoryV3() {
   }, [selection, state.node, state.arc, nodesSettled, arcsSettled, update]);
 
   // "Threat Landscape Clear" — only when verified for THIS view.
-  const overlayKind = clearOverlayKind({
+  const overlayKind = mapFatal ? null : clearOverlayKind({
     mode: mapMode,
     nodesReady: needs.nodes && threatsQ.data !== undefined && !threatsQ.error && !threatsQ.isUpdating,
     nodeCount: threats.length,
@@ -214,8 +273,12 @@ export function ObservatoryV3() {
   });
 
   const periodLabel = PERIOD_LABELS[period];
+  // While the new period loads, the numbers still belong to the previous one: keep
+  // labelling them with it (the "Updating to X" pill announces the switch).
+  const settledPeriod = useRef(period);
+  if (!isUpdating) settledPeriod.current = period;
+  const footerPeriodLabel = PERIOD_LABELS[isUpdating ? settledPeriod.current : period];
   const panelInset = !isMobile && showPanel && hasSidePanel ? 320 : 0;
-  const layerToggles: Array<{ id: LayerId; active: boolean }> = LAYER_IDS.map(id => ({ id, active: layers[id] }));
 
   // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
   // it tracks the real topbar + safe-area + platform-alert-banner height.
@@ -242,6 +305,7 @@ export function ObservatoryV3() {
           controlRightInset={panelInset}
           selection={selection}
           onSelect={handleSelect}
+          onFatalChange={setMapFatal}
         />
         {overlayKind && (
           <ObservatoryOverlay
@@ -296,9 +360,8 @@ export function ObservatoryV3() {
       {isMobile ? (
         /* R10 mobile chrome (C1): fold Mode + Period + Source behind a
            single collapsible summary toggle so 3 stacked rows don't sit
-           on top of the map. The LiveIndicator + Refresh subset rides
-           in-flow beside the summary toggle (no absolute-position overlap
-           possible at any width). */
+           on top of the map. Refresh rides in-flow beside the summary
+           toggle (no absolute-position overlap possible at any width). */
         <div className="absolute top-3 left-0 right-0 flex flex-col gap-1.5 px-4" style={{ zIndex: Z_CHROME }}>
           <div className="flex items-center gap-2">
             <button
@@ -335,21 +398,20 @@ export function ObservatoryV3() {
                 )}
               </span>
               <ChevronDown
-                className={cn('w-3.5 h-3.5 transition-transform duration-300 shrink-0', filtersExpanded && 'rotate-180')}
+                className={cn('w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none shrink-0', filtersExpanded && 'rotate-180')}
                 style={{ color: 'var(--text-tertiary)' }}
               />
             </button>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <LiveIndicator />
-              <RefreshButton onClick={handleRefresh} busy={isFetching} />
-            </div>
+            <RefreshButton onClick={handleRefresh} busy={isFetching} className="shrink-0" />
           </div>
 
           <div
             id="observatory-mobile-filters"
+            // Collapsed = out of the tab order and the a11y tree (`inert`, not typed in React 18).
+            {...(filtersExpanded ? {} : ({ inert: '' } as Record<string, string>))}
             className={cn(
-              'overflow-hidden transition-all duration-300 ease-in-out',
-              filtersExpanded ? 'max-h-[420px] opacity-100' : 'max-h-0 opacity-0',
+              'overflow-hidden transition-all duration-300 ease-in-out motion-reduce:transition-none',
+              filtersExpanded ? 'max-h-[560px] opacity-100' : 'max-h-0 opacity-0 invisible',
             )}
           >
             <Card variant="elevated" style={{ marginTop: 4, padding: '8px 14px' }}>
@@ -405,6 +467,19 @@ export function ObservatoryV3() {
                 />
               </div>
               </>)}
+
+              {/* LAYERS group (global map only — below 900px the overlay toggles are not rendered) */}
+              {mapMode === 'global' && (
+                <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
+                  <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Layers</div>
+                  <LayerToggleGroup
+                    layers={layers}
+                    reducedMotion={reducedMotion}
+                    onToggle={(id, next) => update({ layers: { [id]: next } })}
+                    touch
+                  />
+                </div>
+              )}
             </Card>
           </div>
         </div>
@@ -436,15 +511,14 @@ export function ObservatoryV3() {
         </Card>
       )}
 
-      {/* ─── Top-right: Status + controls (desktop) ────────────────
-          Gated to desktop; mobile gets a minimal LiveIndicator + Refresh
-          subset laid out in-flow next to the summary toggle instead. */}
+      {/* ─── Top-right: Refresh (desktop) ──────────────────────────
+          The page-level LIVE badge lives in the shell top bar (ShellV4), so it is not
+          repeated here. Mobile gets Refresh in-flow next to the summary toggle. */}
       {!isMobile && (
         <div
           className="absolute top-3 flex items-center gap-2"
           style={{ right: showPanel && hasSidePanel ? 336 : 16, zIndex: Z_CHROME }}
         >
-          <LiveIndicator />
           <RefreshButton onClick={handleRefresh} busy={isFetching} />
         </div>
       )}
@@ -463,32 +537,14 @@ export function ObservatoryV3() {
         />
       )}
 
-      {/* ─── Bottom-left: Layer toggles ───────────────────────── */}
+      {/* ─── Bottom-left: Layer toggles (>= 900px; mobile has them in the filter drawer) ── */}
       {!isMobile && mapMode === 'global' && (
-        <div
-          role="group"
-          aria-label="Map layers"
-          className="absolute bottom-[96px] left-4 flex gap-2"
-          style={{ zIndex: Z_CHROME }}
-        >
-          {layerToggles.map(({ id, active }) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={active}
-              onClick={() => update({ layers: { [id]: !active } })}
-              className="ds-focusable font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
-              style={{
-                background: active ? 'color-mix(in srgb, var(--amber) 15%, transparent)' : 'var(--bg-card)',
-                border: `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
-                color: active ? 'var(--amber-text)' : 'var(--text-muted)',
-                backdropFilter: 'blur(12px)',
-                cursor: 'pointer',
-              }}
-            >
-              {LAYER_LABELS[id]}
-            </button>
-          ))}
+        <div className="absolute bottom-[96px] left-4" style={{ zIndex: Z_CHROME }}>
+          <LayerToggleGroup
+            layers={layers}
+            reducedMotion={reducedMotion}
+            onToggle={(id, next) => update({ layers: { [id]: next } })}
+          />
         </div>
       )}
 
@@ -546,8 +602,8 @@ export function ObservatoryV3() {
               )}
             </div>
           ) : (
-            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)', opacity: isUpdating ? 0.6 : 1 }}>
-              <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+            <div className="font-mono text-[10px]" aria-busy={isUpdating} style={{ color: 'var(--text-muted)', opacity: isUpdating ? 0.6 : 1 }}>
+              <span style={{ color: 'var(--amber-text)' }}>{footerPeriodLabel}</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
               {' · '}
@@ -561,7 +617,7 @@ export function ObservatoryV3() {
             </div>
           )}
         </div>
-        <div className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
             reducedMotion
               ? <span>Motion reduced</span>
@@ -589,7 +645,7 @@ export function ObservatoryV3() {
 
       {/* ─── Right panel (desktop) ────────────────────────────── */}
       {!isMobile && (
-        <SidePanel period={period} source={source} visible={showPanel && hasSidePanel} />
+        <SidePanel period={period} source={source} visible={showPanel && hasSidePanel} onSelectNode={handleSelectNodeFromPanel} />
       )}
 
       {/* Panel toggle */}
@@ -606,7 +662,7 @@ export function ObservatoryV3() {
             backdropFilter: 'blur(20px)',
             border: '1px solid var(--border-base)',
             borderRadius: '8px 0 0 8px',
-            padding: '12px 4px',
+            padding: '12px 6px',
             color: 'var(--text-tertiary)',
             cursor: 'pointer',
             zIndex: Z_TOGGLE,
@@ -659,20 +715,20 @@ export function ObservatoryV3() {
               borderBottom: '1px solid var(--border-base)',
             }}
           >
-            <span className="font-mono text-[9px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
               Intelligence
             </span>
             <button
               type="button"
               onClick={() => setShowMobilePanel(false)}
               aria-label="Close intelligence panel"
-              className="ds-focusable"
-              style={{ padding: 4, background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+              className="ds-focusable inline-flex items-center justify-center min-w-[44px] min-h-[44px]"
+              style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
             >
               <PanelRightClose size={14} />
             </button>
           </div>
-          <SidePanel period={period} source={source} visible mobile />
+          <SidePanel period={period} source={source} visible mobile onSelectNode={handleSelectNodeFromPanel} />
         </BottomSheet>
       )}
     </div>

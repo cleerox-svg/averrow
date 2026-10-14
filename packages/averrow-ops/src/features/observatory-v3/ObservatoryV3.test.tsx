@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -13,7 +13,17 @@ const mapProps = vi.fn();
 vi.mock('./components/ThreatMapV3', () => ({
   ThreatMapV3: (p: Record<string, unknown>) => { mapProps(p); return <div data-testid="map" data-mode={String(p.mapMode)} />; },
 }));
-vi.mock('./components/SidePanel', () => ({ SidePanel: () => null }));
+const panelProps = vi.fn();
+vi.mock('./components/SidePanel', () => ({
+  SidePanel: (p: { visible: boolean; mobile?: boolean; onSelectNode?: (n: unknown) => void }) => {
+    panelProps(p);
+    return (
+      <div data-testid={p.mobile ? 'side-panel-mobile' : 'side-panel'} data-visible={String(p.visible)}>
+        <button type="button" onClick={() => p.onSelectNode?.(node)}>pick-origin</button>
+      </div>
+    );
+  },
+}));
 vi.mock('@/components/observatory/EventTicker', () => ({ EventTicker: () => null }));
 
 import { ObservatoryV3 } from './ObservatoryV3';
@@ -54,6 +64,8 @@ beforeEach(() => {
   fetchMock.mockReset();
   getMock.mockReset();
   mapProps.mockClear();
+  panelProps.mockClear();
+  window.innerWidth = 1440;
   stubMatchMedia(false);
   route({ '/api/observatory/stats': okStats });
 });
@@ -179,5 +191,113 @@ describe('ObservatoryV3 bot density', () => {
     expect(screen.getByText('7D')).toBeInTheDocument();
     expect(screen.queryByText('24H')).not.toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ObservatoryV3 reduced motion', () => {
+  it('shows the Particles toggle disabled with a hint and never rewrites the layer URL state', async () => {
+    stubMatchMedia(true);
+    renderAt('/observatory');
+    const group = await screen.findByRole('group', { name: 'Map layers' });
+    const particles = within(group).getByRole('button', { name: /Particles/ });
+    expect(particles).toHaveAttribute('aria-disabled', 'true');
+    expect(particles).toHaveAttribute('title', 'Paused: reduced motion');
+    expect(particles).toHaveAccessibleName(/Paused: reduced motion/);
+    expect(particles).toHaveAttribute('aria-pressed', 'true'); // URL layer state unchanged
+    await userEvent.click(particles);
+    expect(search).not.toContain('layers=');
+    expect(particles).toHaveAttribute('aria-pressed', 'true');
+    // other toggles stay live
+    expect(within(group).getByRole('button', { name: 'Beams' })).not.toHaveAttribute('aria-disabled');
+  });
+});
+
+describe('ObservatoryV3 chrome', () => {
+  it('does not render a second LIVE badge (the shell top bar owns it)', async () => {
+    renderAt('/observatory');
+    await screen.findByRole('group', { name: 'Map layers' });
+    expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
+  });
+
+  it('opens the docked panel by default only at >= 1280px', async () => {
+    window.innerWidth = 1440;
+    const wide = renderAt('/observatory');
+    expect((await screen.findByTestId('side-panel')).dataset.visible).toBe('true');
+    wide.unmount();
+    window.innerWidth = 1100;
+    renderAt('/observatory');
+    expect((await screen.findByTestId('side-panel')).dataset.visible).toBe('false');
+  });
+
+  it('hides "Threat Landscape Clear" when the map is in its fatal fallback', async () => {
+    route({ '/api/observatory/nodes': [], '/api/observatory/stats': okStats });
+    renderAt('/observatory');
+    expect(await screen.findByText('Threat Landscape Clear')).toBeInTheDocument();
+    act(() => mapProps.mock.calls.at(-1)![0].onFatalChange(true));
+    expect(screen.queryByText('Threat Landscape Clear')).not.toBeInTheDocument();
+    act(() => mapProps.mock.calls.at(-1)![0].onFatalChange(false));
+    expect(await screen.findByText('Threat Landscape Clear')).toBeInTheDocument();
+  });
+
+  it('keeps labelling the footer numbers with the previous period until the new data arrives', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/stats') && url.includes('period=30d')) {
+        return gate.then(() => ({ success: true, data: { ...okStats, threats_mapped: 999, period: '30d' } }));
+      }
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: { ...okStats, threats_mapped: 5 } });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory');
+    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    await waitFor(() => expect(footer().textContent).toContain('5'));
+    expect(footer().textContent).toMatch(/^7D/);
+
+    await userEvent.click(screen.getByRole('tab', { name: '30D' }));
+    await screen.findByText(/Updating to 30D/);
+    expect(footer().textContent).toMatch(/^7D/);
+    expect(footer().getAttribute('aria-busy')).toBe('true');
+
+    await act(async () => { release(); await gate; });
+    await waitFor(() => expect(footer().textContent).toMatch(/^30D/));
+  });
+});
+
+describe('ObservatoryV3 keyboard selection path', () => {
+  it('selecting a side-panel origin writes the node to the URL (and passes it as the selection)', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
+    renderAt('/observatory');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].threats).toHaveLength(1));
+    await userEvent.click(screen.getByRole('button', { name: 'pick-origin' }));
+    await waitFor(() => expect(search).toContain('node=10.00%2C20.00'));
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].selection).toMatchObject({ kind: 'node' }));
+  });
+});
+
+describe('ObservatoryV3 mobile (< 900px)', () => {
+  beforeEach(() => { window.innerWidth = 400; });
+
+  it('keeps the collapsed filter drawer out of the tab order (inert) and opens it on demand', async () => {
+    renderAt('/observatory');
+    const drawer = await waitFor(() => {
+      const el = document.getElementById('observatory-mobile-filters');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    expect(drawer).toHaveAttribute('inert');
+    await userEvent.click(screen.getByRole('button', { name: 'Map filters' }));
+    expect(drawer).not.toHaveAttribute('inert');
+  });
+
+  it('offers the layer toggles inside the filter drawer (the desktop overlay is not rendered)', async () => {
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: 'Map filters' }));
+    const drawer = document.getElementById('observatory-mobile-filters') as HTMLElement;
+    const group = within(drawer).getByRole('group', { name: 'Map layers' });
+    const beams = within(group).getByRole('button', { name: 'Beams' });
+    await userEvent.click(beams);
+    await waitFor(() => expect(search).toContain('beams'));
+    expect(screen.getAllByRole('group', { name: 'Map layers' })).toHaveLength(1);
   });
 });

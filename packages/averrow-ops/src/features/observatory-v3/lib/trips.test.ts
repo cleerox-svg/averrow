@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ArcData } from '@/hooks/useObservatory';
 import {
-  buildTripData, getArcPath, CYCLE_LENGTH, TRIP_SPAN, trailLengthFor, MOBILE_MAX_PARTICLES, periodToMs,
+  buildTripData, computeLifeWindow, getArcPath, CYCLE_LENGTH, TRIP_SPAN, trailLengthFor, MOBILE_MAX_PARTICLES, periodToMs,
 } from './trips';
 
 const arc = (over: Partial<ArcData> = {}): ArcData => ({
@@ -65,5 +65,24 @@ describe('buildTripData', () => {
 
   it('survives garbage timestamps', () => {
     expect(() => buildTripData([arc({ first_seen: 'nope', last_seen: 'nah' })], 'severity', false, 1000, now)).not.toThrow();
+  });
+});
+
+describe('computeLifeWindow timestamps (D1 UTC strings)', () => {
+  const windowEnd = Date.UTC(2026, 9, 14, 12, 0, 0);
+  const windowStart = windowEnd - periodToMs('24h');
+
+  it('parses zone-less "YYYY-MM-DD HH:MM:SS" as UTC regardless of the local timezone', () => {
+    const bare = arc({ first_seen: '2026-10-14 02:00:00', last_seen: '2026-10-14 04:00:00' });
+    const zoned = arc({ first_seen: '2026-10-14T02:00:00Z', last_seen: '2026-10-14T04:00:00Z' });
+    const prevTz = process.env.TZ;
+    try {
+      for (const tz of ['America/Toronto', 'Asia/Tokyo', 'UTC']) {
+        process.env.TZ = tz;
+        expect(computeLifeWindow(bare, windowStart, windowEnd)).toEqual(computeLifeWindow(zoned, windowStart, windowEnd));
+      }
+    } finally {
+      if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz;
+    }
   });
 });

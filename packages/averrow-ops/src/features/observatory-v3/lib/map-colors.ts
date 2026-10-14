@@ -17,20 +17,20 @@ export const SEVERITY_COLORS: Record<string, Rgba> = {
 };
 
 export const THREAT_TYPE_COLORS: Record<string, Rgba> = {
-  phishing:               [200, 60,  60,  220],
-  credential_harvesting:  [251, 146, 60,  220],
-  malware_distribution:   [167, 139, 250, 220],
-  c2:                     [239, 68,  68,  255],
-  malicious_ip:           [120, 160, 200, 180],
-  web_attack:             [251, 113, 133, 200],
-  brute_force:            [250, 204, 21,  200],
-  spam_botnet_c2:         [34,  211, 238, 220],
-  typosquatting:          [220, 170, 50,  200],
-  scanning:               [120, 160, 200, 180],
-  impersonation:          [232, 146, 60,  220],
+  phishing:               [220, 60,  60,  220],  // red
+  credential_harvesting:  [251, 146, 60,  220],  // orange
+  malware_distribution:   [167, 139, 250, 220],  // violet
+  c2:                     [192, 38,  211, 255],  // magenta
+  malicious_ip:           [96,  165, 250, 200],  // blue
+  web_attack:             [163, 230, 53,  200],  // lime
+  brute_force:            [250, 204, 21,  200],  // yellow
+  spam_botnet_c2:         [34,  211, 238, 220],  // cyan
+  typosquatting:          [52,  211, 153, 200],  // emerald
+  scanning:               [148, 163, 184, 200],  // slate
+  impersonation:          [249, 168, 212, 220],  // pink
 };
 
-const TYPE_FALLBACK: Rgba = [120, 160, 200, 180];
+const TYPE_FALLBACK: Rgba = [120, 130, 145, 180];
 
 /** Legend order. */
 export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'] as const;

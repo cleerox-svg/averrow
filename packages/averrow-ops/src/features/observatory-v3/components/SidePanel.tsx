@@ -25,7 +25,7 @@
 
 import { memo, useMemo, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useObservatoryThreats, useObservatoryStats, useObservatoryLive } from '@/hooks/useObservatory';
+import { useObservatoryThreats, useObservatoryStats, useObservatoryLive, type ThreatPoint } from '@/hooks/useObservatory';
 import { useBrands } from '@/hooks/useBrands';
 import { useDashboardProviders } from '@/hooks/useProviders';
 import type { DashboardProvider } from '@/hooks/useProviders';
@@ -64,19 +64,19 @@ function WidgetHeader({ label, count, updating }: { label: string; count?: numbe
   return (
     <div className="flex items-center justify-between mb-2">
       <span
-        className="text-[9px] font-mono font-bold uppercase tracking-[0.20em]"
+        className="text-[10px] font-mono font-bold uppercase tracking-[0.20em]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         {label}
       </span>
       <span className="flex items-center gap-2">
         {updating && (
-          <span role="status" className="text-[8px] font-mono uppercase tracking-wider" style={{ color: 'var(--amber-text)' }}>
+          <span role="status" className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--amber-text)' }}>
             Updating&hellip;
           </span>
         )}
         {count !== undefined && (
-          <span className="text-[9px] font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[10px] font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
             {count}
           </span>
         )}
@@ -92,11 +92,11 @@ function InlineError({ message, onRetry }: { message: string; onRetry: () => voi
       className="flex items-center justify-between gap-2 px-2 py-1.5 rounded"
       style={{ background: 'var(--sev-critical-bg)', border: '1px solid var(--sev-critical-border)' }}
     >
-      <span className="text-[9px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>{message}</span>
+      <span className="text-[10px] font-mono" style={{ color: 'var(--sev-critical-text)' }}>{message}</span>
       <button
         type="button"
         onClick={onRetry}
-        className="ds-focusable text-[9px] font-mono font-bold uppercase tracking-wide shrink-0"
+        className="ds-focusable text-[10px] font-mono font-bold uppercase tracking-wide shrink-0"
         style={{ color: 'var(--sev-critical-text)', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', padding: 0 }}
       >
         Retry
@@ -145,7 +145,7 @@ function Stat({ label, value, loading }: { label: string; value: number | null |
       <div className="text-sm font-mono font-bold" style={{ color: 'var(--text-primary)' }}>
         {value != null ? value.toLocaleString() : loading ? '…' : '—'}
       </div>
-      <div className="text-[8px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</div>
+      <div className="text-[10px] font-mono uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{label}</div>
     </div>
   );
 }
@@ -198,7 +198,7 @@ const SummaryHeader = memo(function SummaryHeader({ period, source }: { period: 
               <div key={s.k} style={{ width: `${(sev[s.k] / sevTotal) * 100}%`, background: s.color }} />
             ))}
           </div>
-          <div className="flex items-center gap-3 text-[8px] font-mono" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex items-center gap-3 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
             {segs.map(s => sev[s.k] > 0 && (
               <span key={s.k} className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
@@ -213,15 +213,24 @@ const SummaryHeader = memo(function SummaryHeader({ period, source }: { period: 
 });
 
 // ─── Top Threat Origins ─────────────────────────────────────
-const TopOriginsWidget = memo(function TopOriginsWidget({ period, source }: { period: string; source: string }) {
+const TopOriginsWidget = memo(function TopOriginsWidget({
+  period, source, onSelectNode,
+}: { period: string; source: string; onSelectNode?: (node: ThreatPoint) => void }) {
   const q = useObservatoryThreats({ period, source });
 
   const top = useMemo(() => {
-    const byCountry = new Map<string, number>();
+    // Per country: total volume + its busiest node (the keyboard path to selecting it on the map).
+    const byCountry = new Map<string, { count: number; node: ThreatPoint }>();
     for (const n of q.data ?? []) {
-      if (n.country_code) byCountry.set(n.country_code, (byCountry.get(n.country_code) ?? 0) + n.threat_count);
+      if (!n.country_code) continue;
+      const cur = byCountry.get(n.country_code);
+      if (!cur) byCountry.set(n.country_code, { count: n.threat_count, node: n });
+      else {
+        cur.count += n.threat_count;
+        if (n.threat_count > cur.node.threat_count) cur.node = n;
+      }
     }
-    return [...byCountry.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    return [...byCountry.entries()].map(([code, v]) => [code, v.count, v.node] as const).sort((a, b) => b[1] - a[1]).slice(0, 6);
   }, [q.data]);
   const max = top[0]?.[1] ?? 1;
 
@@ -236,8 +245,9 @@ const TopOriginsWidget = memo(function TopOriginsWidget({ period, source }: { pe
         errorText="Origins failed to load"
         emptyText="No geolocated threats in this period"
       >
-        {top.map(([code, count]) => (
-          <div key={code} className="flex items-center gap-2.5 py-1">
+        {top.map(([code, count, node]) => {
+          const row = (
+            <>
             <span className="text-sm shrink-0" aria-hidden>{countryFlag(code)}</span>
             <span className="text-xs font-mono shrink-0 w-6" style={{ color: 'var(--text-secondary)' }}>{code}</span>
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'color-mix(in srgb, var(--text-primary) 10%, transparent)' }}>
@@ -246,8 +256,23 @@ const TopOriginsWidget = memo(function TopOriginsWidget({ period, source }: { pe
             <span className="text-xs font-mono font-bold tabular-nums shrink-0" style={{ color: 'var(--text-primary)' }}>
               {count.toLocaleString()}
             </span>
-          </div>
-        ))}
+            </>
+          );
+          return onSelectNode ? (
+            <button
+              key={code}
+              type="button"
+              onClick={() => onSelectNode(node)}
+              aria-label={`${code}: ${count.toLocaleString()} threats. Show busiest node on map`}
+              className={`${ROW_LINK} flex items-center gap-2.5 py-1 w-full text-left min-h-[24px]`}
+              style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+              {row}
+            </button>
+          ) : (
+            <div key={code} className="flex items-center gap-2.5 py-1">{row}</div>
+          );
+        })}
       </WidgetBody>
     </div>
   );
@@ -267,7 +292,7 @@ function ProviderRow({ p, direction }: { p: DashboardProvider; direction: 'worse
       <div className="min-w-0 flex-1">
         <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
         {p.asn && (
-          <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>{p.asn}</div>
+          <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{p.asn}</div>
         )}
       </div>
       <div className="flex items-center gap-2 flex-shrink-0 ml-2">
@@ -301,7 +326,7 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
         emptyText="No targeted brands in this period"
       >
         {brands.map((brand) => (
-          <Link key={brand.id} to={`/brands/${brand.id}`} className={`${ROW_LINK} flex items-center gap-2.5 py-1.5`}>
+          <Link key={brand.id} to={`/brands/${encodeURIComponent(String(brand.id))}`} className={`${ROW_LINK} flex items-center gap-2.5 py-1.5`}>
             <Avatar
               name={brand.name}
               color="var(--amber)"
@@ -312,7 +337,7 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
             />
             <div className="min-w-0 flex-1">
               <div className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{brand.name}</div>
-              <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>{brand.canonical_domain}</div>
+              <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{brand.canonical_domain}</div>
             </div>
             <div className="flex-shrink-0">
               <span className="text-xs font-mono font-bold" style={{ color: 'var(--sev-critical-text)' }}>
@@ -339,7 +364,7 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div className="mb-2">
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-critical)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical-text)' }}>Worsening</span>
+          <span className="text-[10px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-critical-text)' }}>Worsening</span>
         </div>
         <WidgetBody
           hasData={worsening.length > 0}
@@ -355,7 +380,7 @@ const ProvidersWidget = memo(function ProvidersWidget() {
       <div>
         <div className="flex items-center gap-1.5 mb-1">
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--sev-info)' }} />
-          <span className="text-[8px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info-text)' }}>Improving</span>
+          <span className="text-[10px] font-mono tracking-wider uppercase" style={{ color: 'var(--sev-info-text)' }}>Improving</span>
         </div>
         <WidgetBody
           hasData={improving.length > 0}
@@ -393,19 +418,19 @@ const OperationsWidget = memo(function OperationsWidget() {
           const asns = parseStringArray(op.asns);
           const isAccelerating = op.agent_notes?.includes('ACCELERATING');
           return (
-            <Link key={op.id} to={`/campaigns/${op.id}`} className={`${ROW_LINK} py-2`}>
+            <Link key={op.id} to={`/campaigns/${encodeURIComponent(String(op.id))}`} className={`${ROW_LINK} py-2`}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
                   {op.cluster_name || 'Unnamed Cluster'}
                 </span>
                 {isAccelerating && <Badge severity="high" label="ACCEL" size="xs" />}
               </div>
-              <div className="flex items-center gap-3 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="flex items-center gap-3 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 <span>{op.threat_count.toLocaleString()} threats</span>
                 {countries.length > 0 && <span>{countries.slice(0, 3).join(', ')}</span>}
               </div>
               {(asns.length > 0 || op.confidence_score != null) && (
-                <div className="flex items-center gap-3 text-[9px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                <div className="flex items-center gap-3 text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-muted)' }}>
                   {asns.length > 0 && (
                     <span className="truncate">{asns.slice(0, 2).join(', ')}</span>
                   )}
@@ -455,7 +480,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
           return (
             <Link
               key={c.id}
-              to={`/campaigns/geo/${c.name.toLowerCase().replace(/\s+/g, '-')}`}
+              to={`/campaigns/geo/${encodeURIComponent(c.name.toLowerCase().replace(/\s+/g, '-'))}`}
               className={`${ROW_LINK} py-2`}
             >
               <div className="flex items-center gap-2 mb-1">
@@ -464,7 +489,7 @@ const GeoCampaignsWidget = memo(function GeoCampaignsWidget() {
                   {c.name}
                 </span>
               </div>
-              <div className="text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
                 {adversary.length > 0 && <span>{adversary.join(', ')}</span>}
                 {targets.length > 0 && <span> {'→'} {targets.slice(0, 2).join(', ')}</span>}
               </div>
@@ -508,7 +533,7 @@ const AgentIntelWidget = memo(function AgentIntelWidget() {
                 <span className="text-[10px] font-mono font-bold uppercase truncate flex-1" style={{ color: agent.color }}>
                   {agent.display_name}
                 </span>
-                <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
                   {agent.outputs_24h} out &middot; {relativeTime(agent.last_output_at)}
                 </span>
               </div>
@@ -557,9 +582,9 @@ const LiveFeedWidget = memo(function LiveFeedWidget({ source }: { source: string
                 {entry.threat_type?.replace(/_/g, ' ')}
               </span>
               {entry.country_code && (
-                <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
+                <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-secondary)' }}>{entry.country_code}</span>
               )}
-              <span className="text-[9px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
                 {relativeTime(entry.created_at)}
               </span>
             </div>
@@ -576,6 +601,8 @@ interface SidePanelProps {
   /** Map source filter. Applied to the widgets whose data supports it (overview, origins, live feed). */
   source?: string;
   visible: boolean;
+  /** Selects a node on the map (keyboard path from the Top Threat Origins rows). */
+  onSelectNode?: (node: ThreatPoint) => void;
   /**
    * R10 mobile chrome (C2): when true, renders full-width and in-flow
    * (no fixed w-80 / absolute right-dock chrome) so the SAME widget set
@@ -587,7 +614,7 @@ interface SidePanelProps {
   mobile?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mobile = false, onSelectNode }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -597,10 +624,12 @@ export function SidePanel({ period, source = 'all', visible, mobile = false }: S
   // single scroll container for its content — a second one here would
   // double-scroll.
   const widgets = (
-    <div className={mobile ? 'flex flex-col gap-3 p-3' : 'flex flex-col gap-3 p-3 flex-1 overflow-y-auto'}>
+    <div // Cards are `overflow:hidden`, so as flex items they would shrink to fit and clip their
+    // content instead of letting the container scroll — `[&>*]:shrink-0` keeps natural height.
+    className={mobile ? 'flex flex-col gap-3 p-3 [&>*]:shrink-0' : 'flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-y-auto [&>*]:shrink-0'}>
       {filtered && (
         <div
-          className="px-2 py-1.5 rounded text-[9px] font-mono"
+          className="px-2 py-1.5 rounded text-[10px] font-mono"
           style={{ background: 'var(--amber-glow)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)' }}
         >
           Source: {SOURCE_LABELS[source] ?? source}. Applies to overview, origins and live feed;
@@ -613,7 +642,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false }: S
       </Card>
 
       <Card variant="base" padding="16px">
-        <TopOriginsWidget period={period} source={source} />
+        <TopOriginsWidget period={period} source={source} onSelectNode={onSelectNode} />
       </Card>
 
       <Card variant="base" padding="16px">
@@ -661,7 +690,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false }: S
         backdropFilter: 'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
         borderLeft: '1px solid var(--border-base)',
-        boxShadow: '-8px 0 40px rgba(0,0,0,0.5), inset 1px 0 0 var(--border-base)',
+        boxShadow: 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
       <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>

@@ -9,6 +9,7 @@
  */
 
 import type { ArcData } from '@/hooks/useObservatory';
+import { parseUtc } from '@/lib/time';
 import { getArcColor, type ColorBy, type Rgba } from './map-colors';
 
 /** One full replay of the selected period, in timeline units (60 u/s => 60s). */
@@ -88,8 +89,9 @@ export function computeLifeWindow(
   const duration = lifeRatio * CYCLE_LENGTH;
 
   if (arc.first_seen && arc.last_seen && windowEndMs > windowStartMs) {
-    const firstMs = new Date(arc.first_seen).getTime();
-    const lastMs = new Date(arc.last_seen).getTime();
+    // D1 timestamps are UTC without a zone suffix; parseUtc avoids the local-time misparse.
+    const firstMs = parseUtc(arc.first_seen).getTime();
+    const lastMs = parseUtc(arc.last_seen).getTime();
     if (Number.isFinite(firstMs) && Number.isFinite(lastMs)) {
       const spanMs = windowEndMs - windowStartMs;
       const startFrac = Math.max(0, Math.min(1, (firstMs - windowStartMs) / spanMs));

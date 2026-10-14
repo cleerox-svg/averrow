@@ -40,6 +40,7 @@ import {
 } from '../lib/trips';
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
+import { hasValidPoint, hasValidArc } from '../lib/geo';
 import { usePrefersReducedMotion, usePageVisible, useInView } from '../lib/use-motion';
 import {
   selectionKey, selectionLngLat, type MapSelection,
@@ -61,6 +62,9 @@ interface TooltipInfo {
 type Pick<T> = PickingInfo<T>;
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+/** Pointer-pick tolerance in px: nodes render as 1.5-9px dots, far below a usable hit target. */
+const PICK_RADIUS_FINE = 8;
+const PICK_RADIUS_TOUCH = 16;
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
@@ -95,6 +99,8 @@ export interface ThreatMapV3Props {
    * passes its own to drive play / pause / speed / seek.
    */
   clock?: AnimationClock;
+  /** Notified when the map enters / leaves the fatal fallback (so the page can hide map-dependent overlays). */
+  onFatalChange?: (fatal: boolean) => void;
 }
 
 // ─── Error boundary ─────────────────────────────────────────
@@ -144,7 +150,7 @@ function MapFallback({ message, onRetry }: { message: string; onRetry?: () => vo
 }
 
 // ─── Main component ─────────────────────────────────────────
-export function ThreatMapV3(props: ThreatMapV3Props) {
+export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
   // `fatal` is set only for unrecoverable failures. Retrying bumps `initKey`,
   // which remounts the inner component and builds a brand-new map instance
   // (the old one was already torn down by the inner cleanup on unmount).
@@ -154,6 +160,7 @@ export function ThreatMapV3(props: ThreatMapV3Props) {
     setFatal(null);
     setInitKey(k => k + 1);
   }, []);
+  useEffect(() => { onFatalChange?.(fatal !== null); }, [fatal, onFatalChange]);
 
   if (fatal) return <MapFallback message={fatal} onRetry={retry} />;
 
@@ -165,8 +172,8 @@ export function ThreatMapV3(props: ThreatMapV3Props) {
 }
 
 function ThreatMapV3Inner({
-  threats = EMPTY_THREATS, arcs = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
-  mapMode, period, heatmapData = EMPTY_HEAT,
+  threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
+  mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT,
   botDensity, botGlobalAvg = null, controlRightInset = 0,
   selection = null, onSelect, clock: clockProp, onFatal,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
@@ -279,30 +286,47 @@ function ThreatMapV3Inner({
     }
     mapRef.current = map;
 
+    // Set on cleanup. Under React StrictMode (dev) the effect is mounted,
+    // cleaned up and mounted again; `map.remove()` in that first cleanup
+    // dispatches `webglcontextlost` on the OLD canvas. Events from a disposed
+    // instance must never reach onFatal or they replace the healthy second map.
+    let disposed = false;
+
     map.on('error', (e) => {
-      const verdict = classifyMapError(e as unknown as MapErrorLike, { styleLoaded: styleLoadedRef.current });
+      if (disposed) return;
+      const verdict = classifyMapError(e as unknown as MapErrorLike, {
+        styleLoaded: styleLoadedRef.current,
+        styleUrl: MAP_STYLE,
+      });
       if (verdict === 'fatal') {
         onFatal(`Map initialization failed: ${e.error?.message || 'base map style unavailable'}`);
       } else {
         setTileIssue(true);
       }
     });
-    map.on('idle', () => setTileIssue(false));
+    map.on('idle', () => { if (!disposed) setTileIssue(false); });
 
+    const canvas = map.getCanvas();
     const onContextLost = (e: Event) => {
+      if (disposed) return;
       e.preventDefault();
       onFatal('WebGL context was lost. This can happen on mobile with large datasets.');
     };
-    map.getCanvas().addEventListener('webglcontextlost', onContextLost);
+    canvas.addEventListener('webglcontextlost', onContextLost);
 
+    // `style.load`, not `load`: `load` also waits for sprite / tiles, so a
+    // recoverable sprite 404 would leave the map "not loaded" forever.
     const markLoaded = () => {
+      if (disposed) return;
       styleLoadedRef.current = true;
       setMapLoaded(true);
     };
-    if (map.loaded()) markLoaded();
-    else map.once('load', markLoaded);
+    if (map.isStyleLoaded()) markLoaded();
+    else map.once('style.load', markLoaded);
 
     return () => {
+      disposed = true;
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       // Runs on unmount AND on the fatal path (onFatal swaps this component
       // for the fallback), so the WebGL context and deck resources are always released.
       setMapLoaded(false);
@@ -354,19 +378,22 @@ function ThreatMapV3Inner({
   }, []);
 
   // ─── Derived, identity-memoised data ──────────────────────
-  const geoThreats = useMemo(() => threats.filter(t => t.lat && t.lng), [threats]);
+  // 0 is a valid coordinate: exclude only non-finite values and null island (0,0).
+  const geoThreats = useMemo(() => threats.filter(hasValidPoint), [threats]);
+  const geoArcs = useMemo(() => arcsIn.filter(hasValidArc), [arcsIn]);
+  const geoHeat = useMemo(() => heatmapIn.filter(hasValidPoint), [heatmapIn]);
   const targetNodes = useMemo(() => {
     const byPos = new Map<string, ArcData>();
-    for (const a of arcs) {
+    for (const a of geoArcs) {
       const k = a.targetPosition.join(',');
       if (!byPos.has(k)) byPos.set(k, a);
     }
     return Array.from(byPos.values());
-  }, [arcs]);
+  }, [geoArcs]);
 
   const tripData = useMemo(
-    () => buildTripData(arcs, colorBy, isMobile, periodToMs(period)),
-    [arcs, colorBy, isMobile, period],
+    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period)),
+    [geoArcs, colorBy, isMobile, period],
   );
 
   const selectedNode = selection?.kind === 'node' ? selection.node : null;
@@ -412,12 +439,12 @@ function ThreatMapV3Inner({
         );
       }
 
-      if (showBeams && arcs.length > 0) {
+      if (showBeams && geoArcs.length > 0) {
         const beamWidth = isMobile ? 2.5 : 1;
         layers.push(
           new PathLayer<ArcData>({
             id: 'beam-glow',
-            data: arcs,
+            data: geoArcs,
             getPath: getArcPath,
             getColor: d => getArcColor(d, colorBy, 51),
             getWidth: beamWidth,
@@ -428,7 +455,7 @@ function ThreatMapV3Inner({
           }),
           new PathLayer<ArcData>({
             id: 'beam-core',
-            data: arcs,
+            data: geoArcs,
             getPath: getArcPath,
             getColor: d => getArcColor(d, colorBy, 76),
             getWidth: beamWidth,
@@ -443,7 +470,7 @@ function ThreatMapV3Inner({
         );
       }
 
-      if (arcs.length > 0 && (showBeams || showNodes)) {
+      if (geoArcs.length > 0 && (showBeams || showNodes)) {
         // Country-precision targets are only approximate: draw them fainter.
         const approx = (d: ArcData) => d.target_precision === 'country';
         layers.push(
@@ -491,10 +518,10 @@ function ThreatMapV3Inner({
       }
     }
 
-    if (mapMode === 'heatmap' && heatmapData.length > 0) {
+    if (mapMode === 'heatmap' && geoHeat.length > 0) {
       layers.push(new HeatmapLayer<HeatmapPoint>({
         id: 'heatmap-layer',
-        data: heatmapData,
+        data: geoHeat,
         getPosition: d => [d.lng, d.lat],
         getWeight: heatmapWeight,
         radiusPixels: 80, intensity: 2, threshold: 0.05, aggregation: 'SUM',
@@ -534,7 +561,7 @@ function ThreatMapV3Inner({
     // selectedNode/selectedArc are keyed by id so a data refetch that returns
     // an equal object doesn't rebuild.
   }, [
-    geoThreats, arcs, targetNodes, showBeams, showNodes, colorBy, mapMode, heatmapData,
+    geoThreats, geoArcs, targetNodes, showBeams, showNodes, colorBy, mapMode, geoHeat,
     botDensity, botGlobalAvg, botStops, botStopsKey, isMobile, handlers, selectedNodeId, selectedArcId,
   ]);
 
@@ -567,9 +594,9 @@ function ThreatMapV3Inner({
     if (!mapLoaded || !map) return;
     const layers = particlesOn ? [...staticLayers, makeTrips(clock.currentTime)] : staticLayers;
     if (deckRef.current) {
-      deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? 12 : 5 });
+      deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
     } else if (layers.length > 0) {
-      const overlay = new MapboxOverlay({ interleaved: false, layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? 12 : 5 });
+      const overlay = new MapboxOverlay({ interleaved: false, layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
       map.addControl(overlay as unknown as maplibregl.IControl);
       deckRef.current = overlay;
     }
@@ -618,7 +645,6 @@ function ThreatMapV3Inner({
 
       {tooltip && !selection && (
         <div
-          aria-live="polite"
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
             left: Math.max(4, Math.min(tooltip.x + 10, size.width - 260)),
@@ -647,10 +673,10 @@ function ThreatMapV3Inner({
               {tooltip.threat.country_code && (
                 <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{tooltip.threat.country_code}</div>
               )}
-              <div className="mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 C:{tooltip.threat.critical} H:{tooltip.threat.high} M:{tooltip.threat.medium} L:{tooltip.threat.low}
               </div>
-              <div className="mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
+              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
             </>
           )}
           {tooltip.bot && (

@@ -24,7 +24,9 @@ interface MapLegendProps {
 const label = 'font-mono text-[10px] uppercase tracking-wider';
 
 function Swatch({ color }: { color: string }) {
-  // The basemap is always dark; a hairline ring keeps dim colours visible on the light-theme card.
+  // The basemap is always dark, so swatches use the fixed layer colours (not theme tokens). The
+  // literal black hairline ring is intentionally theme-independent: it keeps dim colours visible
+  // against the light-theme card and has no visual role in dark mode.
   return (
     <span
       aria-hidden
@@ -51,11 +53,15 @@ export function MapLegend({ mode, colorBy, defaultCollapsed = false, style }: Ma
         type="button"
         onClick={() => setCollapsed(c => !c)}
         aria-expanded={!collapsed}
-        className={`ds-focusable ${label} flex items-center justify-between w-full`}
+        className={`ds-focusable ${label} flex items-center justify-between w-full min-h-[24px] max-[899px]:min-h-[44px]`}
         style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-tertiary)' }}
       >
         <span>{title}</span>
-        <ChevronDown size={12} style={{ transform: collapsed ? 'rotate(-90deg)' : undefined, transition: 'transform 150ms' }} />
+        <ChevronDown
+          size={12}
+          className="transition-transform duration-150 motion-reduce:transition-none"
+          style={{ transform: collapsed ? 'rotate(-90deg)' : undefined }}
+        />
       </button>
 
       {!collapsed && mode === 'global' && (
@@ -90,7 +96,7 @@ export function MapLegend({ mode, colorBy, defaultCollapsed = false, style }: Ma
           <div
             role="img"
             aria-label="Colour scale from low to high threat density"
-            style={{ height: 8, borderRadius: 4, marginTop: 8, background: gradient, backgroundColor: '#0b1220' }}
+            style={{ height: 8, borderRadius: 4, marginTop: 8, background: gradient, backgroundColor: '#0b1220' /* basemap-fixed: the always-dark map background the ramp's transparent end sits on */ }}
           />
           <div className="flex justify-between font-mono text-[10px] mt-1" style={{ color: 'var(--text-secondary)' }}>
             <span>Low</span>
