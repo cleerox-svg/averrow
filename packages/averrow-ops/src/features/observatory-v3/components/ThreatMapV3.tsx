@@ -55,7 +55,7 @@ import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
-  effectiveProjection, globeCanvasBox, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
+  effectiveProjection, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
   FLAT_SKY, GLOBE_BACKDROP, GLOBE_SKY, type OcclusionProbe, type Projection,
 } from '../lib/projection';
 import { useIdleSpin, SPIN_EVENT_KEY } from '../lib/use-idle-spin';
@@ -162,6 +162,8 @@ export interface ThreatMapV3Props {
    * the density heatmap has no globe variant and stays flat.
    */
   projection?: Projection;
+  /** The page is showing something the viewer is reading (the legend is open): the globe holds still. */
+  spinHold?: boolean;
   /** Quiet time (ms) before the globe starts to drift; defaults to SPIN_IDLE_MS (tests and kiosks override it). */
   spinIdleMs?: number;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
@@ -306,7 +308,7 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
-  mapMode, projection: requestedProjection = 'flat', spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
+  mapMode, projection: requestedProjection = 'flat', spinHold = false, spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
   controlRightInset = 0, cameraInsets = NO_INSETS,
   selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null,
   lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
@@ -837,9 +839,11 @@ function ThreatMapV3Inner({
     return { edges, hosts, actors: actorLabels, nodes };
   }, [lens, mapMode]);
 
+  /** The idle spin is turning the globe: labels (placed for a still camera) stay hidden until it stops. */
+  const spinningRef = useRef(false);
   const recomputeLabels = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !labelInputs || canvasSize.width === 0) {
+    if (!map || !labelInputs || canvasSize.width === 0 || spinningRef.current) {
       setLabels(prev => (prev === NO_LABELS ? prev : NO_LABELS));
       return;
     }
@@ -1060,9 +1064,14 @@ function ThreatMapV3Inner({
 
   // Idle spin (globe only): drifts when nobody is interacting; stops on any input. Held while anything is selected.
   const lensSelected = !!lens && Object.values(lens.sel).some(Boolean);
+  const onSpinChange = useCallback((spinning: boolean) => {
+    // Labels are placed for a still camera: hide them while the globe turns, place them again where it stops.
+    spinningRef.current = spinning;
+    recomputeLabelsRef.current();
+  }, []);
   const { poke: pokeSpin } = useIdleSpin({
     mapRef, targetRef: rootRef, projection, ready: mapLoaded, reducedMotion,
-    held: selection !== null || lensSelected, idleMs: spinIdleMs, onDrift: recomputeLabels,
+    held: selection !== null || lensSelected || spinHold, idleMs: spinIdleMs, onSpinChange,
   });
 
   // The loop is held open for a while after anything that spawns rings, so they can finish expanding
@@ -1132,7 +1141,7 @@ function ThreatMapV3Inner({
   const needsLoop = loopNeeded({
     particles: particlesOn, movementRings: movementOn, clockPlaying, breathing: pulseOn, lensMotion: lensAnimating, fading, hold,
   });
-  useDeckFrame(clock, mapLoaded && needsLoop, onFrame, { targetRef: rootRef });
+  useDeckFrame(clock, mapLoaded && needsLoop, onFrame, { targetRef: rootRef, maxFps: isGlobe ? GLOBE_ANIMATION_FPS : undefined });
 
   // ─── Camera: frame ALL of the target in the area the overlays leave free ──
   const focusId = focus?.id ?? null;

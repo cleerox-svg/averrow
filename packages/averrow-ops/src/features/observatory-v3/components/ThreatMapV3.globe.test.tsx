@@ -85,6 +85,7 @@ vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
 import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
 import { buildHostingModel } from '../lib/lens/hosting';
+import { resetSpinSession } from '../lib/use-idle-spin';
 import { noLayers } from '../lib/lenses';
 import { NO_SELECTION } from '../layers/lens-layers';
 
@@ -290,6 +291,7 @@ describe('ThreatMapV3 projection: idle spin wiring', () => {
   let queue: Array<(ts: number) => void>;
   let nowMs: number;
   beforeEach(() => {
+    resetSpinSession();
     queue = [];
     nowMs = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
@@ -327,6 +329,48 @@ describe('ThreatMapV3 projection: idle spin wiring', () => {
     ready();
     frame(100); frame(5000); frame(5100);
     expect(spinMoves()).toHaveLength(0);
+  });
+
+  it('the page can hold it (the legend is open)', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} projection="globe" spinIdleMs={500} spinHold />);
+    ready();
+    frame(100); frame(5000); frame(5100);
+    expect(spinMoves()).toHaveLength(0);
+    rerender(<ThreatMapV3 {...base} projection="globe" spinIdleMs={500} />);
+    frame(5200); frame(5300);
+    expect(spinMoves().length).toBeGreaterThan(0);
+  });
+
+  it('a press ends the drift for the session', () => {
+    render(<ThreatMapV3 {...base} projection="globe" spinIdleMs={500} />);
+    ready();
+    act(() => { window.dispatchEvent(new Event('pointerdown')); });
+    frame(100); frame(5000); frame(60_000); frame(60_100);
+    expect(spinMoves()).toHaveLength(0);
+  });
+
+  it('lens labels are hidden while the globe drifts and placed again where it stops', () => {
+    const provider = (id: string, country: string) => ({
+      id, name: id, asn: 'AS1', country, active_threat_count: 10, total_threat_count: 10, trend_7d: 1, trend_30d: 1,
+      is_bulletproof: false, reputation_score: null, takedown: null,
+    });
+    const lens = {
+      layers: { ...noLayers(), hosting: true }, operations: null, hosting: buildHostingModel([provider('nl', 'NL')]),
+      baseline: null, measure: 'index' as const, bot: null, countries: null, campaigns: null, velocity: null,
+      takedownCountries: null, takedownProviders: null, actors: null, movement: null, sel: NO_SELECTION,
+    };
+    const hostLabels = () => layerOf(overlays.at(-1)!, 'hosting-labels');
+    render(<ThreatMapV3 {...base} projection="globe" spinIdleMs={500} lens={lens as never} />);
+    lastMap().project = (([lng, lat]: [number, number]) => ({ x: 600 + lng * 3, y: 350 - lat * 3 })) as never;
+    ready();
+    expect(hostLabels()).toBeDefined();
+    frame(100); frame(700); frame(800);
+    expect(spinMoves().length).toBeGreaterThan(0);
+    expect(hostLabels()).toBeUndefined();
+    nowMs = 900;
+    act(() => { window.dispatchEvent(new Event('pointermove')); });
+    frame(1000);
+    expect(hostLabels()).toBeDefined();
   });
 });
 
@@ -499,5 +543,39 @@ describe('ThreatMapV3 globe: label placement asks MapLibre whether a point is be
     ready();
     expect(placed()).toEqual(['nl', 'us']);
     expect((lastMap().transform as unknown as { isLocationOccluded: ReturnType<typeof vi.fn> }).isLocationOccluded).not.toHaveBeenCalled();
+  });
+});
+
+describe('ThreatMapV3 globe: animation frame cap', () => {
+  let queue: Array<(ts: number) => void>;
+  beforeEach(() => {
+    queue = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: (ts: number) => void) => { queue.push(cb); return queue.length; });
+    vi.stubGlobal('cancelAnimationFrame', () => { queue = []; });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  /** Overlay layer pushes made by the animation loop over ~1 s of 60 Hz display frames. */
+  const framesDrawn = (projection: 'flat' | 'globe'): number => {
+    render(<ThreatMapV3 {...base} showParticles projection={projection} spinIdleMs={1e9} />);
+    ready();
+    const overlay = overlays.at(-1)!;
+    const setProps = vi.spyOn(overlay, 'setProps');
+    let ts = 1000;
+    for (let i = 0; i < 61; i++) {
+      ts += 16.7;
+      const run = queue; queue = [];
+      act(() => run.forEach(cb => cb(ts)));
+    }
+    return setProps.mock.calls.filter(c => 'layers' in (c[0] as object)).length;
+  };
+
+  it('the globe redraws about 30 frames per second', () => {
+    const n = framesDrawn('globe');
+    expect(n).toBeGreaterThanOrEqual(26);
+    expect(n).toBeLessThanOrEqual(34);
+  });
+  it('the flat map still draws every display frame', () => {
+    expect(framesDrawn('flat')).toBeGreaterThanOrEqual(55);
   });
 });

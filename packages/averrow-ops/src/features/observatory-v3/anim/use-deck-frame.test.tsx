@@ -227,4 +227,39 @@ describe('useDeckFrame', () => {
     unmount();
     expect(pending()).toBe(0);
   });
+
+  describe('maxFps', () => {
+    const run = (maxFps: number | undefined, frames: number, dtMs: number) => {
+      const clock = newClock();
+      const onFrame = vi.fn();
+      renderHook(() => useDeckFrame(clock, true, onFrame, { maxFps }));
+      for (let i = 0; i < frames; i++) pumpFrame(dtMs);
+      return onFrame;
+    };
+
+    it('without a cap every display frame draws', () => {
+      expect(run(undefined, 31, 16.7).mock.calls.length).toBe(31);
+    });
+    it('30 fps on a 60 Hz display draws every second frame', () => {
+      const calls = run(30, 61, 16.7).mock.calls.length;
+      expect(calls).toBeGreaterThanOrEqual(28);
+      expect(calls).toBeLessThanOrEqual(32);
+    });
+    it('30 fps on a 144 Hz display still draws about 30 per second', () => {
+      const calls = run(30, 145, 6.94).mock.calls.length; // ~1 s
+      expect(calls).toBeGreaterThanOrEqual(28);
+      expect(calls).toBeLessThanOrEqual(32);
+    });
+    it('a display slower than the cap is not slowed further', () => {
+      expect(run(30, 21, 50).mock.calls.length).toBe(21);
+    });
+    it('animation seconds still advance in real time while frames are skipped (no slow motion)', () => {
+      const clock = newClock();
+      let seconds = 0;
+      renderHook(() => useDeckFrame(clock, true, (_t, f) => { seconds = f.seconds; }, { maxFps: 30 }));
+      for (let i = 0; i < 61; i++) pumpFrame(16.7);
+      expect(seconds).toBeGreaterThan(0.9);
+      expect(seconds).toBeLessThan(1.1);
+    });
+  });
 });

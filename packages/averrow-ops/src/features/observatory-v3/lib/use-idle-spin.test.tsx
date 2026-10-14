@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type maplibregl from 'maplibre-gl';
-import { useIdleSpin, DRIFT_REFRESH_MS, SPIN_EVENT_KEY, type UseIdleSpinOptions } from './use-idle-spin';
+import { useIdleSpin, resetSpinSession, hasInteractedThisSession, SPIN_EVENT_KEY, type UseIdleSpinOptions } from './use-idle-spin';
 import { SPIN_DEG_PER_S } from './spin';
 
 // A manual frame clock: rAF callbacks queue up and `frame(ts)` runs them at that timestamp.
@@ -34,14 +34,15 @@ function setup(over: Partial<UseIdleSpinOptions> = {}, mapOpts: { moving?: boole
   const m = fakeMap(mapOpts);
   const mapRef = { current: m.map };
   const targetRef = { current: document.createElement('div') };
-  const onDrift = vi.fn();
+  const onSpinChange = vi.fn();
   const hook = renderHook((p: Partial<UseIdleSpinOptions>) => useIdleSpin({
-    mapRef, targetRef, projection: 'globe', ready: true, reducedMotion: false, held: false, idleMs: IDLE, onDrift, ...p,
+    mapRef, targetRef, projection: 'globe', ready: true, reducedMotion: false, held: false, idleMs: IDLE, onSpinChange, ...p,
   }), { initialProps: over });
-  return { ...m, onDrift, hook };
+  return { ...m, onSpinChange, targetRef, hook };
 }
 
 beforeEach(() => {
+  resetSpinSession();
   queue = [];
   now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
@@ -70,7 +71,7 @@ describe('useIdleSpin', () => {
     expect(s.jumpTo.mock.calls[0]![0].center[1]).toBe(20); // latitude is never touched
   });
 
-  it('any input stops it at once and it waits the full idle time again', () => {
+  it('plain pointer movement stops it at once and it waits the full idle time again (it does not end the wall-screen behaviour)', () => {
     const s = setup();
     frame(100); frame(1100); frame(1200);
     const spun = s.jumpTo.mock.calls.length;
@@ -86,13 +87,71 @@ describe('useIdleSpin', () => {
     expect(s.jumpTo.mock.calls.length).toBeGreaterThan(spun); // resumed
   });
 
-  it.each(['pointerdown', 'wheel', 'keydown', 'touchstart'])('%s counts as an interaction', ev => {
+  it.each(['pointerdown', 'wheel', 'keydown', 'touchstart'])('%s counts as an interaction: the drift is over for the session', ev => {
     const s = setup();
     frame(100); frame(900);
     now = 950;
     act(() => { window.dispatchEvent(new Event(ev)); });
-    frame(1100); frame(1300); // 150 / 350 ms after the input: still inside the idle time
+    expect(hasInteractedThisSession()).toBe(true);
+    frame(1100); frame(1300);
     expect(s.jumpTo).not.toHaveBeenCalled();
+    frame(60_000); frame(60_100);
+    expect(s.jumpTo).not.toHaveBeenCalled(); // however long it is left
+    expect(queue).toHaveLength(0); // and the loop has stopped rather than polling for nothing
+  });
+
+  it('an interaction that happens before the globe is showing (choosing it) ends the drift too', () => {
+    const s = setup({ projection: 'flat' });
+    act(() => { window.dispatchEvent(new Event('pointerdown')); });
+    s.hook.rerender({ projection: 'globe' });
+    frame(100); frame(5000); frame(5100);
+    expect(s.jumpTo).not.toHaveBeenCalled();
+    expect(queue).toHaveLength(0);
+  });
+
+  it('a later mount in the same session does not drift either', () => {
+    act(() => { window.dispatchEvent(new Event('pointerdown')); }); // before any hook (page load interaction)
+    const first = setup();
+    first.hook.unmount();
+    resetSpinSession();
+    const fresh = setup();
+    frame(100); frame(5000); frame(5100);
+    expect(fresh.jumpTo).toHaveBeenCalled();
+  });
+
+  it('holds while the pointer is over the page\'s chrome, and resumes after the idle time once it is back over the map', () => {
+    const s = setup();
+    document.body.appendChild(s.targetRef.current);
+    const chrome = document.createElement('div');
+    document.body.appendChild(chrome);
+    frame(100); frame(1100); frame(1200);
+    expect(s.jumpTo).toHaveBeenCalled();
+    now = 1250;
+    act(() => { chrome.dispatchEvent(new Event('pointermove', { bubbles: true })); });
+    s.jumpTo.mockClear();
+    frame(5000); frame(9000);
+    expect(s.jumpTo).not.toHaveBeenCalled(); // parked on the chrome, however long
+    now = 9100;
+    act(() => { s.targetRef.current.dispatchEvent(new Event('pointermove', { bubbles: true })); });
+    frame(9500);
+    expect(s.jumpTo).not.toHaveBeenCalled(); // back over the map: the idle time starts again
+    frame(10_200); frame(10_300);
+    expect(s.jumpTo).toHaveBeenCalled();
+    chrome.remove();
+    s.targetRef.current.remove();
+  });
+
+  it('a pointer that leaves the window is not "over chrome"', () => {
+    const s = setup();
+    const chrome = document.createElement('div');
+    document.body.appendChild(chrome);
+    frame(100);
+    now = 200;
+    act(() => { chrome.dispatchEvent(new Event('pointermove', { bubbles: true })); });
+    act(() => { document.documentElement.dispatchEvent(new Event('mouseleave')); });
+    frame(2000); frame(2100);
+    expect(s.jumpTo).toHaveBeenCalled();
+    chrome.remove();
   });
 
   it('never spins on the flat map (no loop at all)', () => {
@@ -113,7 +172,7 @@ describe('useIdleSpin', () => {
     frame(100); frame(5000); frame(5100);
     expect(s.jumpTo).not.toHaveBeenCalled();
     s.hook.rerender({ held: false });
-    frame(5200);
+    frame(5200); frame(5300);
     expect(s.jumpTo).toHaveBeenCalled(); // the idle time has long passed
   });
 
@@ -141,18 +200,43 @@ describe('useIdleSpin', () => {
     expect(s.jumpTo).not.toHaveBeenCalled();
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
     act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-    frame(1400);
+    frame(1400); frame(1500);
     expect(s.jumpTo).toHaveBeenCalled();
   });
 
-  it('lets the caller refresh screen-space labels, throttled (never per frame)', () => {
+  it('tells the caller when it starts and stops drifting (so labels can hide and be placed again)', () => {
     const s = setup();
-    frame(100); frame(1100);
-    expect(s.onDrift).toHaveBeenCalledTimes(1);
-    for (let t = 1200; t < 1100 + DRIFT_REFRESH_MS; t += 100) frame(t);
-    expect(s.onDrift).toHaveBeenCalledTimes(1);
-    frame(1100 + DRIFT_REFRESH_MS);
-    expect(s.onDrift).toHaveBeenCalledTimes(2);
+    frame(100); frame(900);
+    expect(s.onSpinChange).not.toHaveBeenCalled();
+    frame(1100);
+    expect(s.onSpinChange).toHaveBeenCalledTimes(1);
+    expect(s.onSpinChange).toHaveBeenLastCalledWith(true);
+    frame(1200); frame(1300);
+    expect(s.onSpinChange).toHaveBeenCalledTimes(1); // once per start, never per frame
+    now = 1350;
+    act(() => { window.dispatchEvent(new Event('pointermove')); });
+    frame(1400);
+    expect(s.onSpinChange).toHaveBeenLastCalledWith(false);
+    expect(s.onSpinChange).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports the stop when the loop is torn down mid-drift (held, unmount)', () => {
+    const s = setup();
+    frame(100); frame(1100); frame(1200);
+    s.hook.rerender({ held: true });
+    expect(s.onSpinChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it('does not run a loop it cannot use: reduced motion, held, flat, hidden tab', () => {
+    expect(setup({ reducedMotion: true }).hook.unmount()).toBeUndefined();
+    expect(queue).toHaveLength(0);
+    setup({ held: true });
+    expect(queue).toHaveLength(0);
+    queue = [];
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    setup();
+    expect(queue).toHaveLength(0);
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
   });
 
   it('stops its loop and its listeners on unmount', () => {

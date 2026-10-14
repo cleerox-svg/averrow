@@ -7,9 +7,11 @@
  *   - the projection is the globe (never the flat map);
  *   - motion is allowed (not prefers-reduced-motion);
  *   - the tab is visible and the map is on screen;
- *   - nothing is selected (an open drawer means someone is reading);
+ *   - nothing is selected or open (an open drawer or legend means someone is reading);
+ *   - nobody has used the console this session (the drift is for wall screens: once somebody has, it does not resume);
+ *   - the pointer is not over the page's chrome (panel, drawer, legend, toolbar);
  *   - the camera is not otherwise moving (a flyTo, a drag, a zoom);
- *   - there has been no interaction for `SPIN_IDLE_MS`.
+ *   - there has been no input for `SPIN_IDLE_MS`.
  */
 
 import type { Projection } from './projection';
@@ -30,6 +32,10 @@ export interface SpinInputs {
   held: boolean;
   /** The camera is moving for another reason (user drag/zoom, a fly-to). */
   cameraBusy: boolean;
+  /** The pointer is over the page's chrome rather than the map. */
+  pointerOverChrome?: boolean;
+  /** Somebody has used the console this session. */
+  interacted?: boolean;
   nowMs: number;
   lastInteractionMs: number;
   idleMs?: number;
@@ -39,7 +45,7 @@ export interface SpinInputs {
 export function spinAllowed(i: SpinInputs): boolean {
   if (i.projection !== 'globe') return false;
   if (i.reducedMotion || !i.pageVisible || !i.inView) return false;
-  if (i.held || i.cameraBusy) return false;
+  if (i.held || i.cameraBusy || i.pointerOverChrome || i.interacted) return false;
   return i.nowMs - i.lastInteractionMs >= (i.idleMs ?? SPIN_IDLE_MS);
 }
 

@@ -79,6 +79,14 @@ export function globeCanvasBox(insets: { left: number; right: number }, projecti
   return projection === 'globe' ? { left: Math.max(0, insets.left), right: Math.max(0, insets.right) } : { left: 0, right: 0 };
 }
 
+/**
+ * Animation frame cap on the globe. The interleaved overlay draws into MapLibre's own GL context, so every animated
+ * frame repaints the WHOLE basemap (globe tiles, atmosphere, borders) as well as the layers; the flat map's separate
+ * overlay canvas redraws only itself. Half the frames is indistinguishable for trails, pulses and rings and roughly
+ * halves the GPU / CPU cost of a running globe. The camera (drag, zoom, spin) is MapLibre's and is not capped.
+ */
+export const GLOBE_ANIMATION_FPS = 30;
+
 /** Backdrop behind the planet: deep space, whatever the page theme. */
 export const GLOBE_BACKDROP = '#04070f';
 

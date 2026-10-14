@@ -513,6 +513,8 @@ export function ObservatoryV3() {
   }, [selectTarget]);
   const activateSearch = useCallback(() => setSearching(true), []);
 
+  /** The legend is open: someone is reading, so the globe holds still. */
+  const [legendOpen, setLegendOpen] = useState(false);
   const [announceToggle, setAnnounceToggle] = useState('');
   const onShortcut = useLayerShortcuts(useCallback((id: LayerId) => {
     update({ layers: { [id]: !layers[id] } });
@@ -678,6 +680,7 @@ export function ObservatoryV3() {
           colorBy={colorBy}
           mapMode={mapMode}
           projection={state.proj}
+          spinHold={legendOpen}
           period={period}
           heatmapData={heatmapData}
           replayNowMs={replayNowMs}
@@ -823,6 +826,7 @@ export function ObservatoryV3() {
         {...legendProps}
         summary={summary}
         maxPanelHeight={legendMaxPanel}
+        onOpenChange={setLegendOpen}
         style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
       />}
 

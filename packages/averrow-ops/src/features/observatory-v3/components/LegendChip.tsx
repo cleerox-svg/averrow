@@ -35,6 +35,8 @@ export interface LegendChipProps extends LegendSectionProps {
   reducedMotion: boolean;
   /** Tallest the expanded panel may grow (px), so it never reaches the top chrome on a short viewport. */
   maxPanelHeight?: number;
+  /** The panel opened / closed (the map holds the globe still while someone reads it). */
+  onOpenChange?: (open: boolean) => void;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -93,11 +95,15 @@ function HeatKey() {
 }
 
 export function LegendChip(props: LegendChipProps) {
-  const { lens, layers, view, measure, colorBy, summary, reducedMotion, maxPanelHeight, className, style } = props;
+  const { lens, layers, view, measure, colorBy, summary, reducedMotion, maxPanelHeight, onOpenChange, className, style } = props;
   const id = useId();
   // The Actors lens starts open: its legend holds the "choose an actor" control.
   const [open, setOpen] = useState(() => lens === 'actors' && !props.actors.selectedId);
   useEffect(() => { if (lens === 'actors' && !props.actors.selectedId) setOpen(true); }, [lens, props.actors.selectedId]);
+  useEffect(() => {
+    onOpenChange?.(open);
+    return () => onOpenChange?.(false);
+  }, [open, onOpenChange]);
 
   const threatTraffic = layers.nodes || layers.particles || layers.beams;
   const sections: ReactNode[] = [];

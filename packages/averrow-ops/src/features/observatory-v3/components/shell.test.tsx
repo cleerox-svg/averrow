@@ -5,6 +5,7 @@ import { ControlRail, type ControlRailProps } from './ControlRail';
 import { LensStrip } from './LensStrip';
 import { ObservatorySearch } from './ObservatorySearch';
 import { ReplayTimeline } from './ReplayTimeline';
+import { LegendChip, type LegendChipProps } from './LegendChip';
 import { lensPreset } from '../lib/lenses';
 import { AnimationClock } from '../lib/animation-clock';
 import { CYCLE_LENGTH } from '../lib/trips';
@@ -324,5 +325,29 @@ describe('ReplayTimeline: window alignment and the phone readout', () => {
     expect(onScrubChange).toHaveBeenLastCalledWith(true);
     fireEvent.pointerUp(slider, { clientX: 50, pointerId: 1 });
     expect(onScrubChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('LegendChip: open state is reported (the map holds the globe still while it is read)', () => {
+  const chip = (onOpenChange: (o: boolean) => void) => (
+    <LegendChip
+      {...({
+        lens: 'threats', layers: lensPreset('threats'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
+        summary: { text: 'ok', tone: 'ok' }, actors: { selectedId: null },
+      } as unknown as LegendChipProps)}
+      onOpenChange={onOpenChange}
+    />
+  );
+  it('reports closed, then open / closed as it is toggled, and closed again on unmount', async () => {
+    const onOpenChange = vi.fn();
+    const { unmount } = render(chip(onOpenChange));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    unmount();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
   });
 });

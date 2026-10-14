@@ -34,6 +34,14 @@ describe('spinAllowed: the globe drifts only when nobody is using it', () => {
     expect(spinAllowed(w({ held: true }))).toBe(false);
     expect(spinAllowed(w({ cameraBusy: true }))).toBe(false);
   });
+  it('holds while the pointer is over the page\'s chrome (panel, drawer, legend, toolbar)', () => {
+    expect(spinAllowed(w({ pointerOverChrome: true }))).toBe(false);
+    expect(spinAllowed(w({ pointerOverChrome: false }))).toBe(true);
+  });
+  it('once anybody has used the console this session it does not resume, however long it is left', () => {
+    expect(spinAllowed(w({ interacted: true, lastInteractionMs: 0 }))).toBe(false);
+    expect(spinAllowed(w({ interacted: false, lastInteractionMs: 0 }))).toBe(true);
+  });
 });
 
 describe('spinStep', () => {
