@@ -6,9 +6,12 @@
 -- convention — name-derived ('hp_03ai_ltd', ~25.4K rows / 2,602 ids) and
 -- UUIDs (~9.4K rows / 1,233 ids) — whose provider rows were deleted long
 -- ago. Unlike the spaced 'hp_AS<N> <name>' rows merged by 0296 they carry
--- no ASN, so they cannot be mapped to a current provider; nothing reads
--- them (src readers only touch today's / yesterday's rows). Owner approved
--- deleting them on 2026-10-14.
+-- no ASN. A normalised-name match would map ~19.2K rows (2,042 ids) to
+-- exactly one current provider (~3.1K rows ambiguous, ~12.5K incl. all
+-- UUIDs unmatched), but nothing reads provider history older than
+-- yesterday (src readers only touch today's / yesterday's rows), so the
+-- owner chose on 2026-10-14 to delete all of them rather than merge by a
+-- name heuristic.
 --
 -- Prod audit 2026-10-14 (read-only): the predicate below matches exactly
 -- 34,875 rows; 0 orphaned provider rows exist on or after 2026-05-01.
