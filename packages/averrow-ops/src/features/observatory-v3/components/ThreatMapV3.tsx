@@ -9,8 +9,12 @@
  *   - Layers are memoised on DATA IDENTITY. TanStack Query's structural sharing
  *     keeps arrays referentially stable across no-change refetches, and click
  *     handlers go through refs, so neither re-creates the layer set.
- *   - The rAF loop only runs while particles are visible, the tab is visible,
- *     the map is on screen, and the user hasn't asked for reduced motion.
+ *   - ONE rAF loop (anim/use-deck-frame.ts) drives everything animated: particle
+ *     trails (TripsLayer currentTime), node heartbeats (PulseExtension) and
+ *     impact rings (RingExtension). Per frame only uniforms change; attributes
+ *     are re-read only when data changes or a ring is spawned. It runs only
+ *     while something is animating, the tab is visible, the map is on screen,
+ *     and the user hasn't asked for reduced motion (then: static, no rings).
  *   - Only FATAL errors (base style failed, WebGL context lost) replace the
  *     map; tile/source hiccups leave it up. Retry re-initialises the map.
  */
@@ -41,7 +45,12 @@ import {
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc } from '../lib/geo';
-import { usePrefersReducedMotion, usePageVisible, useInView } from '../lib/use-motion';
+import { usePrefersReducedMotion } from '../lib/use-motion';
+import {
+  useDeckFrame, PulseExtension, RingExtension, RingBuffer, ringBufferLayerProps, ImpactRingSpawner,
+  ArrivalScheduler, buildArrivalEvents, phaseForKey, pulseRateForSeverity, pulseAmpForSeverity,
+  type PulseExtensionProps, type RingExtensionProps, type ArrivalEvent,
+} from '../anim';
 import {
   selectionKey, selectionLngLat, type MapSelection,
 } from '../lib/selection';
@@ -68,6 +77,22 @@ const PICK_RADIUS_TOUCH = 16;
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
+
+// Extensions are stateless; share one instance so deck's extension diff is trivially equal.
+const PULSE_EXT = [new PulseExtension()];
+const RING_EXT = [new RingExtension()];
+
+// Node heartbeat accessors (module-level => stable identity across the per-frame layer rebuild).
+// Nodes in the same country + threat type share a phase: a synchronised heartbeat per "operation".
+const nodePhase = (d: ThreatPoint) => phaseForKey(`${d.country_code ?? ''}|${d.top_threat_type ?? ''}`);
+const nodeRate = (d: ThreatPoint) => pulseRateForSeverity(d.top_severity);
+const nodeAmp = (d: ThreatPoint) => pulseAmpForSeverity(d.top_severity);
+const noAmp = () => 0;
+const bloomRadius = (d: ThreatPoint) => Math.sqrt(Math.max(1, d.threat_count)) * 5400;
+const glowRadius = (d: ThreatPoint) => Math.sqrt(Math.max(1, d.threat_count)) * 2900;
+const bloomColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 6);
+const glowColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 12);
+const nodePosition = (d: ThreatPoint): [number, number] => [d.lng, d.lat];
 
 // ─── Props ──────────────────────────────────────────────────
 export interface ThreatMapV3Props {
@@ -409,22 +434,6 @@ function ThreatMapV3Inner({
       if (showNodes && geoThreats.length > 0) {
         layers.push(
           new ScatterplotLayer<ThreatPoint>({
-            id: 'nodes-bloom',
-            data: geoThreats,
-            getPosition: d => [d.lng, d.lat],
-            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 5400,
-            getFillColor: d => getSeverityColor(d.top_severity || 'low', 6),
-            radiusMinPixels: 3, radiusMaxPixels: 24,
-          }),
-          new ScatterplotLayer<ThreatPoint>({
-            id: 'nodes-glow',
-            data: geoThreats,
-            getPosition: d => [d.lng, d.lat],
-            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 2900,
-            getFillColor: d => getSeverityColor(d.top_severity || 'low', 12),
-            radiusMinPixels: 2, radiusMaxPixels: 14,
-          }),
-          new ScatterplotLayer<ThreatPoint>({
             id: 'nodes-core',
             data: geoThreats,
             getPosition: d => [d.lng, d.lat],
@@ -568,12 +577,12 @@ function ThreatMapV3Inner({
   // Drop any stale hover tooltip when the mode changes (the hovered layer is gone).
   useEffect(() => { pinnedRef.current = null; setTooltip(null); }, [mapMode]);
 
-  // ─── Animation gating ─────────────────────────────────────
+  // ─── Animation ────────────────────────────────────────────
   const reducedMotion = usePrefersReducedMotion();
-  const pageVisible = usePageVisible();
-  const inView = useInView(rootRef);
   const particlesOn = showParticles && mapMode === 'global' && tripData.length > 0 && !reducedMotion;
-  const running = particlesOn && pageVisible && inView && mapLoaded;
+  /** Impact rings follow the particles: same toggle, same reduced-motion rule. */
+  const ringsOn = particlesOn;
+  const pulseOn = mapMode === 'global' && showNodes && geoThreats.length > 0 && !reducedMotion;
 
   const makeTrips = useCallback((currentTime: number) => new TripsLayer({
     id: 'particle-trails',
@@ -588,11 +597,73 @@ function ThreatMapV3Inner({
     capRounded: true,
   }), [tripData, isMobile]);
 
+  // Node bloom + glow breathe via PulseExtension: severity sets rate/amplitude,
+  // `animTime` (seconds) is the only per-frame input. Reduced motion => amp 0 (static).
+  const makeGlow = useCallback((animTime: number): Layer[] => {
+    if (mapMode !== 'global' || !showNodes || geoThreats.length === 0) return [];
+    const shared = {
+      data: geoThreats,
+      getPosition: nodePosition,
+      getPulsePhase: nodePhase,
+      getPulseRate: nodeRate,
+      getPulseAmp: reducedMotion ? noAmp : nodeAmp,
+      updateTriggers: { getPulseAmp: reducedMotion },
+      extensions: PULSE_EXT,
+      animTime,
+    };
+    return [
+      new ScatterplotLayer<ThreatPoint, PulseExtensionProps<ThreatPoint>>({
+        ...shared, id: 'nodes-bloom', getRadius: bloomRadius, getFillColor: bloomColor,
+        radiusMinPixels: 3, radiusMaxPixels: 24,
+      }),
+      new ScatterplotLayer<ThreatPoint, PulseExtensionProps<ThreatPoint>>({
+        ...shared, id: 'nodes-glow', getRadius: glowRadius, getFillColor: glowColor,
+        radiusMinPixels: 2, radiusMaxPixels: 14,
+      }),
+    ];
+  }, [mapMode, showNodes, geoThreats, reducedMotion]);
+
+  // Impact rings: a fixed 256-slot pool (typed arrays) behind ONE layer; arrivals
+  // overwrite the oldest slot and bump `version`, so nothing is reallocated.
+  const [ringBuffer] = useState(() => new RingBuffer());
+  const spawner = useMemo(() => new ImpactRingSpawner(ringBuffer), [ringBuffer]);
+  const scheduler = useMemo(
+    () => new ArrivalScheduler(buildArrivalEvents(tripData, CYCLE_LENGTH), CYCLE_LENGTH),
+    [tripData],
+  );
+  // A new data set invalidates old rings (their targets may be gone).
+  useEffect(() => { ringBuffer.clear(); spawner.reset(); }, [scheduler, ringBuffer, spawner]);
+
+  const makeRings = useCallback((animTime: number) => new ScatterplotLayer<number, RingExtensionProps<number>>({
+    id: 'impact-rings',
+    ...ringBufferLayerProps(ringBuffer),
+    getRadius: isMobile ? 16 : 22,
+    radiusUnits: 'pixels',
+    stroked: true,
+    filled: false,
+    lineWidthUnits: 'pixels',
+    getLineWidth: 1.5,
+    pickable: false,
+    extensions: RING_EXT,
+    ringFrom: 0.12,
+    ringTo: 1,
+    animTime,
+  }), [ringBuffer, isMobile]);
+
+  /** Latest animation seconds, so non-frame pushes (data changes) stay in phase. */
+  const animSecondsRef = useRef(0);
+  const compose = useCallback((seconds: number, t: number): Layer[] => {
+    const layers: Layer[] = [...makeGlow(seconds), ...staticLayers];
+    if (particlesOn) layers.push(makeTrips(t));
+    if (ringsOn) layers.push(makeRings(seconds));
+    return layers;
+  }, [makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings]);
+
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
     const map = mapRef.current;
     if (!mapLoaded || !map) return;
-    const layers = particlesOn ? [...staticLayers, makeTrips(clock.currentTime)] : staticLayers;
+    const layers = compose(animSecondsRef.current, clock.currentTime);
     if (deckRef.current) {
       deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
     } else if (layers.length > 0) {
@@ -600,21 +671,29 @@ function ThreatMapV3Inner({
       map.addControl(overlay as unknown as maplibregl.IControl);
       deckRef.current = overlay;
     }
-  }, [mapLoaded, staticLayers, particlesOn, makeTrips, clock, handlers, isMobile]);
+  }, [mapLoaded, compose, clock, handlers, isMobile]);
 
-  // ─── Particle animation loop ──────────────────────────────
-  useEffect(() => {
-    if (!running) return;
-    clock.resync(); // don't count the time we were paused / hidden / offscreen
-    let raf = 0;
-    const frame = (ts: number) => {
-      const t = clock.tick(ts); // wall-clock delta based, frame-rate independent
-      deckRef.current?.setProps({ layers: [...staticLayers, makeTrips(t)] });
-      raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [running, clock, staticLayers, makeTrips]);
+  // ─── The one animation loop ───────────────────────────────
+  const prevPlayheadRef = useRef<number | null>(null);
+  const arrivalsScratch = useRef<ArrivalEvent[]>([]);
+  const onFrame = useCallback((t: number, frame: { seconds: number; dt: number }) => {
+    animSecondsRef.current = frame.seconds;
+    const overlay = deckRef.current;
+    if (!overlay) return;
+    if (ringsOn) {
+      const prev = frame.dt > 0 ? prevPlayheadRef.current : null; // first frame after (re)start has no baseline
+      prevPlayheadRef.current = t;
+      if (prev !== null) {
+        const arrivals = arrivalsScratch.current;
+        arrivals.length = 0;
+        scheduler.collect(prev, t, arrivals);
+        if (arrivals.length > 0) spawner.spawn(arrivals, frame.seconds);
+      }
+    }
+    overlay.setProps({ layers: compose(frame.seconds, t) });
+  }, [ringsOn, scheduler, spawner, compose]);
+
+  useDeckFrame(clock, mapLoaded && (particlesOn || pulseOn), onFrame, { targetRef: rootRef });
 
   // ─── Detail-card anchor: use the click point, else project the selection ──
   const selKey = selection ? selectionKey(selection) : null;
