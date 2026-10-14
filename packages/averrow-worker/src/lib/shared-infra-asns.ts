@@ -5,22 +5,25 @@
 // on the evidence key:
 //
 //   MULTI_TENANT_ASNS — networks where a SINGLE IP serves many unrelated
-//     tenants: CDN / anycast front-ends (Cloudflare, Akamai, Fastly, Google
-//     Cloud LB, Azure Front Door), site builders (Wix, Weebly, Squarespace),
-//     free / mass shared hosting (InfinityFree, Hostinger, IONOS, Strato,
-//     Gandi, Render), parking (Sedo, Above / Trellian, Network Solutions),
-//     registrar hosting (Namecheap, Tucows), WordPress.com, Sucuri's WAF and
-//     IPFS gateways. On these an IP is not an operator, so they are excluded
-//     from EVERY NEXUS lane keyed on IP / subnet / ASN.
+//     tenants: CDN / anycast front-ends (Cloudflare, Akamai, Fastly, Azure
+//     Front Door), Google's front-end network (Sites, Forms, Blogger,
+//     appspot, Firebase Hosting, Cloud Run *.run.app), Amazon's primary
+//     ASN (CloudFront, S3 website endpoints, Amplify), site builders (Wix,
+//     Weebly, Squarespace), free / mass shared hosting (InfinityFree,
+//     Hostinger, IONOS, Strato, Gandi, Render), parking (Sedo, Above /
+//     Trellian, Network Solutions), registrar hosting (Namecheap, Tucows),
+//     WordPress.com, Sucuri's WAF and IPFS gateways. On these an IP is not
+//     an operator, so they are excluded from EVERY NEXUS lane keyed on IP /
+//     subnet / ASN.
 //
-//   SINGLE_TENANT_IAAS_ASNS — hyperscalers and VPS providers (AWS, Google,
-//     DigitalOcean, OVH, Hetzner, Vultr, Linode, Alibaba, Tencent, Oracle,
-//     UCloud). The whole ASN is a landlord — grouping by it, or by a /24 of
-//     it, groups strangers — but an individual IP is normally ONE customer's
-//     VM, so one IP hosting several brands' impersonations IS operator
-//     evidence. Excluded from the ASN and /24 lanes ONLY; the per-IP lane
-//     keeps them and relies on its <= hub-threshold brand cap to drop the
-//     few genuinely shared IPs (e.g. AWS Global Accelerator parking).
+//   SINGLE_TENANT_IAAS_ASNS — hyperscalers and VPS providers (AWS EC2,
+//     Google Cloud, DigitalOcean, OVH, Hetzner, Vultr, Linode, Alibaba,
+//     Tencent, Oracle, UCloud). The whole ASN is a landlord — grouping by
+//     it, or by a /24 of it, groups strangers — but an individual IP is
+//     normally ONE customer's VM, so one IP hosting several brands'
+//     impersonations IS operator evidence. Excluded from the ASN and /24
+//     lanes ONLY; the per-IP lane keeps them and relies on its <=
+//     hub-threshold brand cap to drop the few genuinely shared IPs.
 //
 // SHARED_INFRA_ASNS is their union ("not usable as an ASN- or subnet-level
 // key") and keeps its old meaning for existing callers.
@@ -49,8 +52,16 @@ export const MULTI_TENANT_ASNS: ReadonlySet<string> = new Set<string>([
   "AS16625", "AS20940",
   // Fastly
   "AS54113",
-  // Google Cloud load balancing; Google's Firebase / App Engine front-ends
-  "AS396982", "AS19527",
+  // Google front-end network: AS15169 serves Sites, Forms, Blogger,
+  // appspot / App Engine, Firebase Hosting, Cloud Run *.run.app and
+  // storage.googleapis.com from shared GFE IPs — one IP, thousands of
+  // tenants. AS19527 carries further Google front-ends.
+  // (AS396982, Google Cloud, is NOT here — see SINGLE_TENANT_IAAS_ASNS.)
+  "AS15169", "AS19527",
+  // Amazon's primary ASN: besides EC2 it announces CloudFront, S3 website
+  // endpoints and Amplify Hosting front-ends, all multi-tenant per IP. The
+  // EC2-only ASNs AS14618 / AS8987 stay in SINGLE_TENANT_IAAS_ASNS.
+  "AS16509",
   // Microsoft (Azure Front Door / shared front-ends)
   "AS8075",
   // Site builders: Weebly, Wix, Squarespace
@@ -71,10 +82,17 @@ export const MULTI_TENANT_ASNS: ReadonlySet<string> = new Set<string>([
 
 /** Whole-ASN landlord, but one IP is normally one customer. */
 export const SINGLE_TENANT_IAAS_ASNS: ReadonlySet<string> = new Set<string>([
-  // Amazon (AWS, us-east, EU)
-  "AS16509", "AS14618", "AS8987",
-  // Google (Compute)
-  "AS15169",
+  // Amazon EC2 (us-east-1, EU) — AS16509 is multi-tenant, see above
+  "AS14618", "AS8987",
+  // Google Cloud (AS396982, 34.x / 35.x). Classified IaaS on purpose:
+  // the bulk of it is GCE VM external IPs, one customer each. Google Cloud
+  // load balancers also announce here, but an external LB address is
+  // allocated to ONE customer project's forwarding rule, so it is still one
+  // customer per IP. Google's genuinely shared front-ends (Firebase Hosting,
+  // App Engine, Cloud Run default URLs, Sites) answer from AS15169, which
+  // is in MULTI_TENANT_ASNS. The per-IP lane's hub cap remains the backstop
+  // for any shared GCP address.
+  "AS396982",
   // DigitalOcean
   "AS14061",
   // OVH
@@ -117,7 +135,7 @@ const sqlList = (s: ReadonlySet<string>): string => [...s].map((a) => `'${a}'`).
 export const SHARED_INFRA_ASNS_SQL_LIST: string = sqlList(SHARED_INFRA_ASNS);
 /** `'AS13335', …` (multi-tenant only) — for `NOT IN (…)` in the per-IP lane. */
 export const MULTI_TENANT_ASNS_SQL_LIST: string = sqlList(MULTI_TENANT_ASNS);
-/** `'AS16509', …` (IaaS only). */
+/** `'AS14618', …` (IaaS only). */
 export const SINGLE_TENANT_IAAS_ASNS_SQL_LIST: string = sqlList(SINGLE_TENANT_IAAS_ASNS);
 
 /**

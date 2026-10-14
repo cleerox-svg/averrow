@@ -11,6 +11,7 @@ import {
   legacyClusterReport,
   runClusterRetirementBatch,
   parseRetirementParams,
+  REPOINT_UPDATE_SQL,
 } from "../src/lib/cluster-retirement";
 import {
   notRetiredClusterSql,
@@ -44,7 +45,7 @@ describe("legacyTargetClusterId", () => {
     expect(legacyTargetClusterId("[4837]", '["phishing"]'))
       .toEqual({ target: "cluster_asn_as4837_phishing", reason: "mapped" });
     expect(legacyTargetClusterId("[13335]", '["phishing"]').reason).toBe("shared_infra");
-    expect(legacyTargetClusterId('["AS16509"]', '["phishing"]').reason).toBe("shared_infra"); // IaaS: ASN-only too
+    expect(legacyTargetClusterId('["AS14618"]', '["phishing"]').reason).toBe("shared_infra"); // IaaS: ASN-only too
   });
 
   it("unparseable rows release", () => {
@@ -236,15 +237,79 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
     expect(log.some((l) => l.threat_id === "t_ok" || l.threat_id === "t_none")).toBe(false);
     // Each logged row matches the threat's new state...
     for (const l of log) expect(clusterOf(l.threat_id)).toBe(l.new_cluster_id);
-    // ...and the documented undo restores the pre-run state exactly.
-    raw.exec(`UPDATE threats SET cluster_id = l.old_cluster_id
-                FROM cluster_repoint_log l
-               WHERE threats.id = l.threat_id AND threats.cluster_id IS l.new_cluster_id`);
+    // ...the result carries the run_at the log was stamped with...
+    expect(r.run_at).toBe(log[0]!.run_at);
+    // ...and the documented per-run_at undo restores the pre-run state exactly.
+    undoRun(r.run_at!);
     expect(raw.prepare("SELECT id, cluster_id FROM threats ORDER BY id").all()).toEqual(before);
   });
 
-  it("dry run writes no cluster_repoint_log rows", async () => {
-    await runClusterRetirementBatch(db, { dryRun: true });
+  // The documented undo (lib/cluster-retirement.ts header, migration 0305,
+  // docs/API_REFERENCE.md): one run_at at a time, newest first.
+  const undoRun = (runAt: string): void => {
+    raw.prepare(`UPDATE threats SET cluster_id = l.old_cluster_id
+                   FROM cluster_repoint_log l
+                  WHERE threats.id = l.threat_id
+                    AND l.run_at = ?
+                    AND threats.cluster_id IS l.new_cluster_id`).run(runAt);
+  };
+  const nextMs = async (): Promise<void> => { await new Promise((res) => setTimeout(res, 5)); };
+
+  it("a threat moved twice (U → X, then X → NULL) is restored to U by undoing per run_at, newest first", async () => {
+    const before = raw.prepare("SELECT id, cluster_id FROM threats ORDER BY id").all();
+    // Call 1: L1 (U) → cluster_asn_as4837_malware_distribution (X).
+    const r1 = await runClusterRetirementBatch(db, { dryRun: false });
+    expect(clusterOf("t1_0")).toBe("cluster_asn_as4837_malware_distribution");
+    // X is later retired, so call 2 releases X → NULL.
+    raw.prepare("UPDATE infrastructure_clusters SET status = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
+    await nextMs();
+    const r2 = await runClusterRetirementBatch(db, { dryRun: false });
+    expect(r1.run_at).not.toBeNull();
+    expect(r2.run_at).not.toBeNull();
+    expect(r2.run_at! > r1.run_at!).toBe(true);
+    expect(clusterOf("t1_0")).toBeNull();
+    expect(clusterOf("t_ok")).toBeNull();
+
+    const runs = (raw.prepare("SELECT DISTINCT run_at FROM cluster_repoint_log ORDER BY run_at DESC").all() as Array<{ run_at: string }>)
+      .map((x) => x.run_at);
+    expect(runs).toEqual([r2.run_at, r1.run_at]);
+    for (const runAt of runs) undoRun(runAt);
+    expect(clusterOf("t1_0")).toBe(L1);                                        // U, not X
+    expect(clusterOf("t_ok")).toBe("cluster_asn_as4837_malware_distribution"); // only ever moved by call 2
+    expect(raw.prepare("SELECT id, cluster_id FROM threats ORDER BY id").all()).toEqual(before);
+  });
+
+  it("oldest-first undo would NOT restore a twice-moved threat (why the order is documented)", async () => {
+    const r1 = await runClusterRetirementBatch(db, { dryRun: false });
+    raw.prepare("UPDATE infrastructure_clusters SET status = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
+    await nextMs();
+    const r2 = await runClusterRetirementBatch(db, { dryRun: false });
+    undoRun(r1.run_at!); // t1_0 is on NULL, not X: guarded no-op
+    undoRun(r2.run_at!); // NULL → X
+    expect(clusterOf("t1_0")).toBe("cluster_asn_as4837_malware_distribution");
+  });
+
+  it("the undo guard skips a released threat that NEXUS has since re-claimed", async () => {
+    const r = await runClusterRetirementBatch(db, { dryRun: false });
+    expect(clusterOf("t2_0")).toBeNull(); // released (Cloudflare)
+    raw.prepare("UPDATE threats SET cluster_id = 'cluster_ip_203.0.113.7' WHERE id = 't2_0'").run();
+    undoRun(r.run_at!);
+    expect(clusterOf("t2_0")).toBe("cluster_ip_203.0.113.7"); // the newer stamp survives
+    expect(clusterOf("t2_1")).toBe(L2);                        // untouched siblings are restored
+  });
+
+  it("the move UPDATE drives from the log index into the threats PRIMARY KEY, not the cluster_id index", () => {
+    const plan = (raw.prepare(`EXPLAIN QUERY PLAN ${REPOINT_UPDATE_SQL}`).all("t", "s", "s", "r") as Array<{ detail: string }>)
+      .map((p) => p.detail);
+    expect(plan.some((d) => /^SEARCH threats USING INDEX sqlite_autoindex_threats_1 \(id=\?\)/.test(d)), plan.join(" | ")).toBe(true);
+    expect(plan.some((d) => /idx_cluster_repoint_log_old \(old_cluster_id=\? AND run_at=\?\)/.test(d)), plan.join(" | ")).toBe(true);
+    expect(plan.some((d) => /threats USING (COVERING )?INDEX idx_threats_cluster/.test(d)), plan.join(" | ")).toBe(false);
+    expect(REPOINT_UPDATE_SQL).toMatch(/WHERE \+cluster_id = \?/);
+  });
+
+  it("dry run writes no cluster_repoint_log rows and returns run_at null", async () => {
+    const r = await runClusterRetirementBatch(db, { dryRun: true });
+    expect(r.run_at).toBeNull();
     expect((raw.prepare("SELECT COUNT(*) AS n FROM cluster_repoint_log").all()[0] as { n: number }).n).toBe(0);
   });
 

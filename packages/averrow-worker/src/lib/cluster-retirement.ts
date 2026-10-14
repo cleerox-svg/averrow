@@ -32,10 +32,34 @@
  *      itself: every moved threat is first recorded in `cluster_repoint_log`
  *      (migration 0305: threat_id, old_cluster_id, new_cluster_id, run_at),
  *      in the same db.batch as the move, so the re-point can be undone from
- *      that table (`UPDATE threats SET cluster_id = l.old_cluster_id FROM
- *      cluster_repoint_log l WHERE threats.id = l.threat_id AND
- *      threats.cluster_id IS l.new_cluster_id`). Each applied (non-dry-run)
- *      call also writes one audit_log row with its counts (index.ts route).
+ *      that table. Each applied call returns its `run_at` and writes one
+ *      audit_log row carrying it plus its counts (index.ts route).
+ *
+ *      Undo ONE run_at at a time, NEWEST FIRST:
+ *
+ *        SELECT DISTINCT run_at FROM cluster_repoint_log ORDER BY run_at DESC;
+ *        -- then, for each run_at in that order:
+ *        UPDATE threats SET cluster_id = l.old_cluster_id
+ *          FROM cluster_repoint_log l
+ *         WHERE threats.id = l.threat_id
+ *           AND l.run_at = ?
+ *           AND threats.cluster_id IS l.new_cluster_id;
+ *
+ *      Order matters when one threat moved twice (U → X in one call, X →
+ *      NULL in a later one): newest-first restores X, then U. Oldest-first
+ *      would skip the U row (the threat is no longer on X) and end on X.
+ *
+ *      The `threats.cluster_id IS l.new_cluster_id` guard is load-bearing:
+ *      a log row does not prove its threat is still where the move left it.
+ *        - The move's UPDATE is guarded on `+cluster_id = <old>`, so a
+ *          threat another writer restamped first (a concurrent NEXUS stamp)
+ *          is logged but skipped. D1 runs the two statements as one
+ *          transaction, so this is defensive; the guard covers it anyway.
+ *        - A released threat (new_cluster_id NULL) is exactly what the NEXUS
+ *          lanes claim (`cluster_id IS NULL`), so a later NEXUS run may have
+ *          stamped it after the move.
+ *      In both cases the threat is not on new_cluster_id, so the undo leaves
+ *      it alone instead of clobbering the newer stamp.
  *
  * Legacy-id predicate: an id that does not start with `cluster_` is exactly
  * `id < 'cluster_' OR id >= 'cluster`'` ('`' is the code point after '_'),
@@ -320,6 +344,12 @@ export interface RetirementBatchResult {
   plan_sample: Array<RepointPlanEntry & { threats: number }>;
   /** True when nothing is left to move (never true for a dry run that found work). */
   done: boolean;
+  /**
+   * The cluster_repoint_log.run_at this call stamped on every row it logged
+   * — the key for undoing exactly this call (see the module header). null
+   * for a dry run, which logs nothing.
+   */
+  run_at: string | null;
 }
 
 export function parseRetirementParams(sp: URLSearchParams): RetirementBatchOptions {
@@ -336,6 +366,19 @@ export function parseRetirementParams(sp: URLSearchParams): RetirementBatchOptio
   };
 }
 
+/** Statement 1 of a move: log what will move (binds: target, run_at, source, limit). */
+export const REPOINT_LOG_SQL = `INSERT INTO cluster_repoint_log (threat_id, old_cluster_id, new_cluster_id, run_at)
+           SELECT id, cluster_id, ?, ? FROM threats WHERE cluster_id = ? LIMIT ?`;
+
+/**
+ * Statement 2 of a move (binds: target, source, source, run_at). `+cluster_id`
+ * is deliberate — see runClusterRetirementBatch.
+ */
+export const REPOINT_UPDATE_SQL = `UPDATE threats SET cluster_id = ?
+            WHERE +cluster_id = ?
+              AND id IN (SELECT threat_id FROM cluster_repoint_log
+                          WHERE old_cluster_id = ? AND run_at = ?)`;
+
 /**
  * One bounded batch. Phase 1: threats pointing at LEGACY (non-`cluster_`)
  * ids. Phase 2: threats pointing at retired STABLE rows (superseded
@@ -344,10 +387,15 @@ export function parseRetirementParams(sp: URLSearchParams): RetirementBatchOptio
  *   1. `INSERT INTO cluster_repoint_log SELECT id, cluster_id, <target>, now
  *      FROM threats WHERE cluster_id = ? LIMIT <remaining budget>` — an index
  *      seek on (cluster_id, created_at) recording exactly what will move;
- *   2. `UPDATE threats SET cluster_id = <target> WHERE cluster_id = ? AND id
- *      IN (SELECT threat_id FROM cluster_repoint_log WHERE old_cluster_id = ?
- *      AND run_at = <this call>)` — moves exactly the rows this call logged,
- *      and never overwrites a concurrent NEXUS stamp.
+ *   2. `UPDATE threats SET cluster_id = <target> WHERE +cluster_id = ? AND
+ *      id IN (SELECT threat_id FROM cluster_repoint_log WHERE old_cluster_id
+ *      = ? AND run_at = <this call>)` — moves exactly the rows this call
+ *      logged, and never overwrites a concurrent NEXUS stamp. The unary `+`
+ *      keeps the planner off the (cluster_id, created_at) index — which
+ *      would walk EVERY threat still on the source id — and makes it drive
+ *      from the log's (old_cluster_id, run_at) index into the threats
+ *      PRIMARY KEY, touching only the logged rows (pinned by
+ *      test/cluster-retirement.test.ts).
  * Idempotent: moved threats leave the source set; a rerun after completion
  * writes nothing and reports done. The per-phase counters (cluster_ids /
  * repoint / release) count only source ids actually handled this call — an
@@ -366,6 +414,7 @@ export async function runClusterRetirementBatch(
     retired_stable: { cluster_ids: 0, repoint: 0, release: 0, threats_repointed: 0, threats_released: 0 },
     plan_sample: [],
     done: false,
+    run_at: null,
   };
 
   // Phase 1 — legacy ids still referenced by threats.
@@ -389,6 +438,7 @@ export async function runClusterRetirementBatch(
   // One run_at per call (ms precision): the UPDATE moves exactly the rows
   // THIS call logged, even if an undo put earlier-logged threats back.
   const runAt = new Date().toISOString().replace("T", " ").slice(0, 23);
+  if (!opts.dryRun) result.run_at = runAt;
   for (const { plan, counts, out } of phases) {
     for (const entry of plan) {
       // Budget exhausted: leave this id for the next call, uncounted.
@@ -404,16 +454,8 @@ export async function runClusterRetirementBatch(
         continue;
       }
       const [, upd] = await db.batch([
-        db.prepare(
-          `INSERT INTO cluster_repoint_log (threat_id, old_cluster_id, new_cluster_id, run_at)
-           SELECT id, cluster_id, ?, ? FROM threats WHERE cluster_id = ? LIMIT ?`,
-        ).bind(entry.target, runAt, entry.cluster_id, budget),
-        db.prepare(
-          `UPDATE threats SET cluster_id = ?
-            WHERE cluster_id = ?
-              AND id IN (SELECT threat_id FROM cluster_repoint_log
-                          WHERE old_cluster_id = ? AND run_at = ?)`,
-        ).bind(entry.target, entry.cluster_id, entry.cluster_id, runAt),
+        db.prepare(REPOINT_LOG_SQL).bind(entry.target, runAt, entry.cluster_id, budget),
+        db.prepare(REPOINT_UPDATE_SQL).bind(entry.target, entry.cluster_id, entry.cluster_id, runAt),
       ]);
       const moved = Number(upd?.meta?.changes ?? 0);
       budget -= moved;

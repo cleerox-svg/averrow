@@ -264,9 +264,13 @@ function severitySums(severityCol: string, countExpr: string): string {
 // the whole top-12 was copies of one AS13335 malware cluster. Those legacy
 // rows are never returned (status=all included). The status predicate is
 // written `+c.status` so the planner can't take idx_clusters_status /
-// idx_clusters_status_threat_count (migration 0301, now unused here) and
+// idx_clusters_status_threat_count (migration 0301, now unused HERE) and
 // walk tens of thousands of legacy rows; the PK range reads the ~780-row
 // stable population instead (pinned in test/observatory-lens-plans.test.ts).
+// Do NOT drop idx_clusters_status_threat_count as unused: the Attribution
+// Backlog (handlers/admin/attribution.ts) pins it with `INDEXED BY`, and an
+// INDEXED BY naming a missing index is a hard "no such index" error, not a
+// plan fallback.
 // There is no SQL ORDER BY: the whole range (≤ OPERATIONS_GEO_SCAN_CAP rows)
 // is classified and ranked in JS, then `limit` is applied AFTER filtering.
 //

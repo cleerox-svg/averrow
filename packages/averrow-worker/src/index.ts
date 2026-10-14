@@ -509,7 +509,8 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         const result = await runClusterRetirementBatch(env.DB, params);
         if (!result.dry_run) {
           // One audit row per applied call. Every moved threat is also in
-          // cluster_repoint_log (migration 0305) — the undo record.
+          // cluster_repoint_log (migration 0305) — the undo record, keyed by
+          // this call's run_at (undo per run_at, newest first).
           const { audit } = await import('./lib/audit');
           await audit(env, {
             action: 'nexus_cluster_repoint',
@@ -517,6 +518,7 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
             resourceType: 'infrastructure_clusters',
             details: {
               actor: 'internal',
+              run_at: result.run_at,
               max_clusters: params.maxClusters,
               max_threats: params.maxThreats,
               legacy: result.legacy,

@@ -78,6 +78,10 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
     // planner otherwise full-scans it for both statements. INDEXED BY makes
     // each read four index seeks + the few hundred live rows.
     // test/cluster-list-plans.test.ts pins the plans with and without stats.
+    // Both statements below name idx_clusters_status_threat_count (migration
+    // 0301): dropping or renaming that index turns them into a hard
+    // "no such index" error, so it must stay even though other readers
+    // (observatory operations-geo) deliberately avoid it.
     const listStmt = env.DB.prepare(`
         SELECT id, cluster_name, asns, countries, threat_count,
                confidence_score, status, first_detected, last_seen,

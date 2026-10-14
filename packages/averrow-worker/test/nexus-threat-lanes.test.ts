@@ -84,18 +84,25 @@ describe("shared-infra split: multi-tenant vs single-tenant IaaS", () => {
   });
 
   it("classifies CDN / site builders / parking as multi-tenant and hyperscalers / VPS as IaaS", () => {
-    for (const a of ["AS13335", "AS209242", "AS16625", "AS20940", "AS54113", "AS396982", "AS8075",
+    for (const a of ["AS13335", "AS209242", "AS16625", "AS20940", "AS54113", "AS15169", "AS16509", "AS8075",
       "AS27647", "AS58182", "AS34119", "AS47583", "AS22612", "AS133618", "AS40034", "AS15348", "AS32491",
       "AS2635", "AS30148", "AS40680", "AS53831", "AS47846", "AS8560", "AS6724", "AS29169", "AS397273"]) {
       expect(MULTI_TENANT_ASNS.has(a), a).toBe(true);
     }
-    for (const a of ["AS16509", "AS14618", "AS15169", "AS14061", "AS16276", "AS24940", "AS20473", "AS63949",
+    for (const a of ["AS14618", "AS8987", "AS396982", "AS14061", "AS16276", "AS24940", "AS20473", "AS63949",
       "AS45102", "AS37963", "AS132203", "AS45090", "AS31898", "AS135377"]) {
       expect(SINGLE_TENANT_IAAS_ASNS.has(a), a).toBe(true);
     }
     expect(isMultiTenantAsn("AS13335 Cloudflare, Inc.")).toBe(true);
-    expect(isMultiTenantAsn("AS16509")).toBe(false);
-    expect(isSharedInfraAsn("AS16509")).toBe(true);
+    expect(isMultiTenantAsn("AS14618")).toBe(false);
+    expect(isSharedInfraAsn("AS14618")).toBe(true);
+    // Google front-ends (Sites / Firebase / appspot) and Amazon's primary
+    // ASN (CloudFront / S3 website / Amplify) serve many tenants per IP.
+    expect(isMultiTenantAsn("AS15169")).toBe(true);
+    expect(isMultiTenantAsn("16509")).toBe(true);
+    // Google Cloud (GCE VMs; LB IPs are per customer project) is IaaS.
+    expect(isMultiTenantAsn("AS396982")).toBe(false);
+    expect(isSharedInfraAsn("AS396982")).toBe(true);
   });
 
   it("SQL lists carry exactly the set members", () => {
@@ -121,6 +128,9 @@ const IP_SAMPLES: Array<[string, boolean]> = [
   ["100.64.0.1", true], ["100.127.1.1", true], ["100.63.0.1", false], ["100.128.0.1", false], ["100.1.2.3", false],
   ["1.0.0.1", false], ["100.0.0.1", false], ["101.0.0.1", false], ["110.0.0.1", false], ["192.169.0.1", false],
   ["169.25.1.1", false], ["203.0.113.7", false], ["2001:db8::1", false], ["8.8.8.8", false],
+  // Padded values: both twins trim spaces (the retire pass reads the cleaned
+  // IP from the cluster id, so the lane SQL must agree on padded input).
+  [" 10.0.0.1", true], ["127.0.0.1 ", true], ["  172.20.0.1  ", true], [" 100.64.0.1", true], [" 8.8.8.8 ", false],
 ];
 
 describe("isBogonIpv4", () => {
@@ -289,7 +299,11 @@ describe("decideLaneRowRetirement", () => {
     expect(decideLaneRowRetirement(row("cluster_ip_100.64.3.4", [], ["phishing"], 10))?.status).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_ip_203.0.113.7", ["AS9009"], ["phishing"], 150))).toBeNull();
     // An IaaS IP is a legitimate per-IP cluster (one VM = one customer).
-    expect(decideLaneRowRetirement(row("cluster_ip_3.120.0.5", ["AS16509"], ["phishing"], 12))).toBeNull();
+    expect(decideLaneRowRetirement(row("cluster_ip_54.80.0.5", ["AS14618"], ["phishing"], 12))).toBeNull();
+    expect(decideLaneRowRetirement(row("cluster_ip_34.120.0.5", ["AS396982"], ["phishing"], 12))).toBeNull();
+    // ...but Google front-end / Amazon primary-ASN IPs are multi-tenant.
+    expect(decideLaneRowRetirement(row("cluster_ip_216.239.32.21", ["AS15169"], ["phishing"], 3))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_52.84.0.5", ["AS16509"], ["phishing"], 3))?.status).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_ip_51.38.10.1", ["AS16276"], ["phishing"], 12))).toBeNull();
   });
 
@@ -398,26 +412,43 @@ describe.skipIf(!hasSqlite())("NEXUS threats lanes on the migrated schema", () =
     raw.exec("DELETE FROM threats");
     insertThreats(raw, [
       // One AWS EC2 IP, 4 brands, 12 threats — a real operator's VM.
-      ...many(12, (i) => ({ id: `aws_${i}`, ip: "3.120.0.5", asn: "AS16509", brand: `aw${i % 4}`, cc: "DE" })),
+      ...many(12, (i) => ({ id: `aws_${i}`, ip: "54.80.0.5", asn: "AS14618", brand: `aw${i % 4}`, cc: "US" })),
       // Two more AWS IPs in the same /24 so the /24 lane WOULD qualify.
-      ...many(6, (i) => ({ id: `aws2_${i}`, ip: `3.120.0.${6 + (i % 2)}`, asn: "AS16509", brand: `aw${i % 3}`, cc: "DE" })),
+      ...many(6, (i) => ({ id: `aws2_${i}`, ip: `54.80.0.${6 + (i % 2)}`, asn: "AS14618", brand: `aw${i % 3}`, cc: "US" })),
     ]);
     await runPerIpLane(db);
     await runSubnetLane(db);
     await runAsnLane(db);
     const ids = allIds();
-    expect(ids).toContain("cluster_ip_3.120.0.5");
-    expect(stampedTo("cluster_ip_3.120.0.5")).toBe(12);
+    expect(ids).toContain("cluster_ip_54.80.0.5");
+    expect(stampedTo("cluster_ip_54.80.0.5")).toBe(12);
     expect(ids.filter((id) => id.startsWith("cluster_subnet_") || id.startsWith("cluster_asn_"))).toEqual([]);
     // ...and the retire pass leaves the IaaS per-IP row alone.
     const r = await retireNonOperationalLaneClusters(db);
     expect(r.markedSharedInfra).toBe(0);
-    expect(cluster("cluster_ip_3.120.0.5")!.status).toBe("active");
+    expect(cluster("cluster_ip_54.80.0.5")!.status).toBe("active");
   });
 
-  it("per-IP and /24 lanes exclude bogon / private / sinkhole IPs (SELECT and stamp)", async () => {
+  it("per-IP lane: a 3-brand IP on Google's front-end ASN (AS15169) forms no cluster; Amazon's AS16509 likewise", async () => {
     raw.exec("DELETE FROM threats");
-    const bogons = ["127.0.0.1", "0.0.0.0", "10.1.2.3", "172.16.5.5", "192.168.1.1", "100.64.0.9", "169.254.9.9"];
+    insertThreats(raw, [
+      // A Google Sites / Firebase front-end IP: 3 brands, 9 threats — would
+      // qualify (>= 3 brands, >= 5 threats) if the ASN were not multi-tenant.
+      ...many(9, (i) => ({ id: `gfe_${i}`, ip: "216.239.32.21", asn: "AS15169", brand: `g${i % 3}`, cc: "US" })),
+      // A CloudFront / S3-website IP on AS16509, same shape.
+      ...many(9, (i) => ({ id: `cfr_${i}`, ip: "52.84.0.5", asn: "16509", brand: `c${i % 3}`, cc: "US" })),
+    ]);
+    const r = await runPerIpLane(db);
+    expect(r.analyzed).toBe(0);
+    expect(allIds().filter((id) => id.startsWith("cluster_ip_"))).toEqual([]);
+    expect((raw.prepare("SELECT COUNT(*) AS n FROM threats WHERE cluster_id IS NOT NULL").all()[0] as { n: number }).n).toBe(0);
+  });
+
+  it("per-IP and /24 lanes exclude bogon IPs in reserved / private ranges (SELECT and stamp)", async () => {
+    raw.exec("DELETE FROM threats");
+    // " 192.168.7.7" is padded: the SQL tests trim(ip_address), agreeing with
+    // the retire pass (which reads the cleaned IP from the cluster id).
+    const bogons = ["127.0.0.1", "0.0.0.0", "10.1.2.3", "172.16.5.5", "192.168.1.1", "100.64.0.9", "169.254.9.9", " 192.168.7.7"];
     insertThreats(raw, bogons.flatMap((ip, k) =>
       many(10, (i) => ({ id: `bg_${k}_${i}`, ip, asn: "AS65020", brand: `bg${i % 5}` }))));
     // A /24 of private space: 3 IPs, 3 brands, 9 threats.

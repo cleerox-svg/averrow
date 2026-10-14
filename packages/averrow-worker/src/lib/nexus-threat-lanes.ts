@@ -38,7 +38,7 @@
  *     ASN-only confidence at ASN_CONFIDENCE_CAP — it rises with campaign
  *     overlap, volume and targeting (few brands), never with brand breadth.
  *   - Per-IP lane: candidates capped at the component hub threshold, threats
- *     on multi-tenant ASNs and bogon / private / sinkhole IPs excluded,
+ *     on multi-tenant ASNs and bogon IPs (reserved / private ranges) excluded,
  *     ranked by threat volume; confidence no longer rewards brand breadth.
  *   - /24 lane: the 5-ASN CDN literal is replaced by SHARED_INFRA_ASNS (both
  *     sets), bogon / private ranges are excluded, and the stamp mirrors the
@@ -99,29 +99,43 @@ const NOT_SHARED_ASN_SQL =
 const NOT_MULTI_TENANT_ASN_SQL =
   `(asn IS NULL OR COALESCE(${asnKeySql("asn")}, '') NOT IN (${MULTI_TENANT_ASNS_SQL_LIST}))`;
 
-// ─── Bogon / private / sinkhole IPs ───────────────────────────────────
+// ─── Bogon / private IPs (reserved / private ranges) ──────────────────
 //
 // A "shared IP" of 127.0.0.1, 0.0.0.0, 10.x or a CGNAT address is a feed's
-// sinkhole / placeholder / resolver artefact, not hosting — hundreds of
-// unrelated domains resolve there. Excluded from the per-IP and /24 lanes
-// (SELECT and stamp alike) and retired by the lane retire pass.
-// 0/8, 10/8, 127/8, 169.254/16, 192.168/16 are plain prefixes; 172.16/12 and
-// 100.64/10 check the second octet numerically. isBogonIpv4 is the JS twin
-// (test/nexus-threat-lanes.test.ts runs both over the same samples).
+// placeholder / resolver artefact in reserved / private ranges, not hosting
+// — hundreds of unrelated domains resolve there. Excluded from the per-IP
+// and /24 lanes (SELECT and stamp alike) and retired by the lane retire
+// pass. 0/8, 10/8, 127/8, 169.254/16, 192.168/16 are plain prefixes;
+// 172.16/12 and 100.64/10 check the second octet numerically. isBogonIpv4
+// is the JS twin (test/nexus-threat-lanes.test.ts runs both over the same
+// samples).
+//
+// The SQL tests trim(ip_address), not the raw column: the retire pass
+// judges a per-IP row by the CLEANED IP taken from its cluster id, so a
+// padded " 10.0.0.1" must read as a bogon here too, or the lane would emit
+// a row the retire pass then parks — every run (flip-flop). Prod holds no
+// padded IPs today; this is defensive. trim() is a cheap per-row string op
+// and none of these predicates is index-driven (the lanes are driven by
+// status / ip_subnet24), so it costs no plan change.
 
-const SECOND_OCTET_SQL = "CAST(substr(ip_address, 5, instr(substr(ip_address, 5), '.') - 1) AS INTEGER)";
+const BOGON_IP_EXPR = "trim(ip_address)";
+const SECOND_OCTET_SQL = `CAST(substr(${BOGON_IP_EXPR}, 5, instr(substr(${BOGON_IP_EXPR}, 5), '.') - 1) AS INTEGER)`;
 
-/** `ip_address` is NOT a bogon / private / CGNAT / link-local IPv4. */
-export const NOT_BOGON_IP_SQL = `(ip_address NOT LIKE '0.%'
-            AND ip_address NOT LIKE '10.%'
-            AND ip_address NOT LIKE '127.%'
-            AND ip_address NOT LIKE '169.254.%'
-            AND ip_address NOT LIKE '192.168.%'
-            AND NOT (ip_address LIKE '172.%' AND ${SECOND_OCTET_SQL} BETWEEN 16 AND 31)
-            AND NOT (ip_address LIKE '100.%' AND ${SECOND_OCTET_SQL} BETWEEN 64 AND 127))`;
+/** `trim(ip_address)` is NOT a bogon / private / CGNAT / link-local IPv4. */
+export const NOT_BOGON_IP_SQL = `(${BOGON_IP_EXPR} NOT LIKE '0.%'
+            AND ${BOGON_IP_EXPR} NOT LIKE '10.%'
+            AND ${BOGON_IP_EXPR} NOT LIKE '127.%'
+            AND ${BOGON_IP_EXPR} NOT LIKE '169.254.%'
+            AND ${BOGON_IP_EXPR} NOT LIKE '192.168.%'
+            AND NOT (${BOGON_IP_EXPR} LIKE '172.%' AND ${SECOND_OCTET_SQL} BETWEEN 16 AND 31)
+            AND NOT (${BOGON_IP_EXPR} LIKE '100.%' AND ${SECOND_OCTET_SQL} BETWEEN 64 AND 127))`;
 
-/** JS twin of NOT_BOGON_IP_SQL (negated): true for a bogon / private IPv4. */
-export function isBogonIpv4(ip: string): boolean {
+/**
+ * JS twin of NOT_BOGON_IP_SQL (negated): true for a bogon / private IPv4.
+ * Trims spaces only, like SQLite's one-argument trim().
+ */
+export function isBogonIpv4(raw: string): boolean {
+  const ip = raw.replace(/^ +| +$/g, "");
   const lower = ip.toLowerCase();
   if (["0.", "10.", "127.", "169.254.", "192.168."].some((p) => lower.startsWith(p))) return true;
   const octet2 = (): number => {
@@ -535,7 +549,7 @@ export async function runCertSanLane(db: D1Database): Promise<LaneResult> {
 //     eligible: one IaaS IP is normally one customer, and the hub cap above
 //     drops the few that aren't. An unknown ASN still qualifies — the IP
 //     itself is the evidence;
-//   - bogon / private / sinkhole IPs are excluded (NOT_BOGON_IP_SQL);
+//   - bogon IPs (reserved / private ranges) are excluded (NOT_BOGON_IP_SQL);
 //   - ranking is by threat volume, then breadth.
 
 export const PER_IP_LANE_SQL = `
@@ -1058,7 +1072,7 @@ export function decideLaneRowRetirement(row: {
     if (row.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD) return fanoutRetire("IP");
     const ip = row.id.slice("cluster_ip_".length);
     if (isBogonIpv4(ip)) {
-      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${ip} is a bogon / private / sinkhole address.` };
+      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${ip} is a bogon address (reserved / private range).` };
     }
     const shared = parseJsonAsnArray(row.asns).find((a) => MULTI_TENANT_ASNS.has(a));
     if (shared) {

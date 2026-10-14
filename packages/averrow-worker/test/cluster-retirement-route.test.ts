@@ -61,8 +61,12 @@ describe.skipIf(!hasSqlite())(`${PATH}`, () => {
     expect(dry.data.dry_run).toBe(true);
     expect(stamp()).toBe("88888888-0000-4000-8000-000000000008");
     expect(audits).toHaveLength(0); // dry runs are not audited
-    const applied = (await (await call(`${PATH}?dry_run=0`, env, "POST")).json()) as { data: { dry_run: boolean; done: boolean } };
+    expect((dry.data as { run_at?: unknown }).run_at).toBeNull();
+    const applied = (await (await call(`${PATH}?dry_run=0`, env, "POST")).json()) as { data: { dry_run: boolean; done: boolean; run_at: string | null } };
     expect(applied.data).toMatchObject({ dry_run: false, done: true });
+    const runAt = (raw.prepare("SELECT DISTINCT run_at FROM cluster_repoint_log").all() as Array<{ run_at: string }>).map((x) => x.run_at);
+    expect(runAt).toHaveLength(1);
+    expect(applied.data.run_at).toBe(runAt[0]);
     expect(stamp()).toBeNull();
     expect(raw.prepare("SELECT threat_id, old_cluster_id, new_cluster_id FROM cluster_repoint_log").all()).toEqual([
       { threat_id: "r1", old_cluster_id: "88888888-0000-4000-8000-000000000008", new_cluster_id: null },
@@ -75,6 +79,7 @@ describe.skipIf(!hasSqlite())(`${PATH}`, () => {
     expect(resourceType).toBe("infrastructure_clusters");
     expect(JSON.parse(details as string)).toMatchObject({
       actor: "internal",
+      run_at: runAt[0],
       legacy: { cluster_ids: 1, release: 1, threats_released: 1 },
       done: true,
     });
