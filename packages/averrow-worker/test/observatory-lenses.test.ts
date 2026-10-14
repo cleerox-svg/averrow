@@ -299,14 +299,24 @@ describe("selectOperations", () => {
       "cluster_cert_x", "cluster_subnet_x", "cluster_asn_a", "cluster_asn_b", "cluster_ip_small",
     ]);
   });
-  it("include_shared keeps everything (nothing excluded) and still ranks by tier", () => {
-    const r = selectOperations(ops, { includeShared: true, limit: 50 });
-    expect(r.excluded).toEqual({ shared_asn: 0, hub_ip: 0, ip_reputation: 0 });
+  it("include_shared = the normal top-N PLUS every excluded row (threat_count DESC), counts reconcile", () => {
+    const r = selectOperations(ops, { includeShared: true, limit: 3 });
+    expect(r.excluded).toEqual({ shared_asn: 2, hub_ip: 1, ip_reputation: 1 });
+    expect(r.shared_returned).toBe(4);
     expect(r.operations.map((o) => o.id)).toEqual([
-      "cluster_cert_x", "cluster_ip_hub", "cluster_subnet_x", "cluster_asn_cf", "cluster_asn_cf_scan",
-      "cluster_asn_scan", "cluster_asn_a", "cluster_asn_b", "cluster_ip_small",
+      "cluster_cert_x", "cluster_subnet_x", "cluster_asn_a",
+      "cluster_asn_cf", "cluster_asn_cf_scan", "cluster_ip_hub", "cluster_asn_scan",
     ]);
+    // Same top-N as the default response, so the toggle only ADDS rows.
+    expect(r.operations.slice(0, 3)).toEqual(selectOperations(ops, { includeShared: false, limit: 3 }).operations);
+    expect(selectOperations(ops, { includeShared: false, limit: 3 }).shared_returned).toBe(0);
     expect(compareOperations(ops[5]!, ops[4]!)).toBeLessThan(0);
+  });
+  it("the shared cap bounds what Show reveals; excluded still counts the whole population", () => {
+    const r = selectOperations(ops, { includeShared: true, limit: 3, sharedCap: 2 });
+    expect(r.shared_returned).toBe(2);
+    expect(r.operations.slice(3).map((o) => o.id)).toEqual(["cluster_asn_cf", "cluster_asn_cf_scan"]);
+    expect(r.excluded).toEqual({ shared_asn: 2, hub_ip: 1, ip_reputation: 1 });
   });
 });
 
@@ -409,14 +419,14 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
       edges: [{ a: "cluster_ip_1.2.3.4", b: "cluster_cert_s1", kind: "per_ip", shared_asns: ["AS2"] }],
     }]);
     expect(log.every((l) => !l.error)).toBe(true);
-    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo.v2:active:3:s0"]);
+    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo.v3:active:3:s0"]);
 
     const all = await body<{ operations: OperationGeo[] }>(await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=all&limit=999"), env));
     expect(all.data.operations.map((o) => o.id)).toEqual([
       "cluster_cert_s1", "cluster_ip_1.2.3.4", "cluster_subnet_dormant", "cluster_asn_as9_x",
       "cluster_ip_5.5.5.5", // per-IP with < 10 threats → residue tier
     ]);
-    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo.v2:all:50:s0");
+    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo.v3:all:50:s0");
 
     const bad = await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=dormant"), env);
     expect(bad.status).toBe(400);
@@ -487,11 +497,16 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
 
     const shared = await body<{ operations: OperationGeo[] }>(
       await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?include_shared=1&limit=4"), env));
+    // Normal top-4, then every excluded row by threat_count (nothing is cut by the limit).
     expect(shared.data.operations.map((o) => o.id)).toEqual([
-      "cluster_cert_san1", "cluster_ip_6.6.6.6", "cluster_ip_7.7.7.7", "cluster_subnet_45_9_20",
+      "cluster_cert_san1", "cluster_ip_7.7.7.7", "cluster_subnet_45_9_20", "cluster_asn_as9009_phishing",
+      "cluster_asn_as13335_malware_distribution", "cluster_asn_as16509_phishing", "cluster_asn_as9009_scanning", "cluster_ip_6.6.6.6",
     ]);
-    expect(shared.data.operations[1]).toMatchObject({ hub: true, brand_fanout: 151 });
-    expect(shared.meta).toMatchObject({ include_shared: true, excluded: { shared_asn: 0, hub_ip: 0, ip_reputation: 0 } });
+    expect(shared.data.operations[7]).toMatchObject({ hub: true, brand_fanout: 151 });
+    // Counts reconcile: hidden (4) == shared rows returned == the flagged rows in the payload.
+    expect(shared.meta).toMatchObject({ include_shared: true, excluded: { shared_asn: 2, hub_ip: 1, ip_reputation: 1 }, shared_returned: 4 });
+    expect(shared.data.operations.filter((o) => o.shared_infra || o.hub || o.ip_reputation)).toHaveLength(4);
+    expect(b.meta).toMatchObject({ shared_returned: 0 });
     const sharedAll = await body<{ operations: OperationGeo[] }>(
       await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?include_shared=1&limit=50"), env));
     const cf = sharedAll.data.operations.find((o) => o.id === "cluster_asn_as13335_malware_distribution")!;
@@ -505,10 +520,10 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     expect(all.meta).toMatchObject({ scanned: 10 });
 
     expect(lensKeys(kv).sort()).toEqual([
-      "cv:observatory_lens.operations_geo.v2:active:25:s0",
-      "cv:observatory_lens.operations_geo.v2:active:4:s1",
-      "cv:observatory_lens.operations_geo.v2:active:50:s1",
-      "cv:observatory_lens.operations_geo.v2:all:25:s0",
+      "cv:observatory_lens.operations_geo.v3:active:25:s0",
+      "cv:observatory_lens.operations_geo.v3:active:4:s1",
+      "cv:observatory_lens.operations_geo.v3:active:50:s1",
+      "cv:observatory_lens.operations_geo.v3:all:25:s0",
     ]);
     for (const bad of ["2", "true", "yes", "-1"]) {
       const r = await handleObservatoryOperationsGeo(req(`/api/observatory/operations-geo?include_shared=${bad}`), env);

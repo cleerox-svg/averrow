@@ -282,7 +282,11 @@ function severitySums(severityCol: string, countExpr: string): string {
 //   ip_reputation  asn kind whose primary attack type is scanning /
 //                  malicious_ip (IP-reputation feed noise, not an operation).
 // Default excludes all three (counted once each in meta.excluded, first
-// match of shared_asn → hub_ip → ip_reputation); include_shared=1 keeps them.
+// match of shared_asn → hub_ip → ip_reputation); include_shared=1 returns the
+// normal top-`limit` PLUS the excluded rows (top OPERATIONS_GEO_SHARED_CAP by
+// threat_count, flagged by their own shared_infra/hub/ip_reputation booleans).
+// meta.excluded always counts the whole excluded population; meta.shared_returned
+// is how many of them this response carries (≤ cap).
 // Rank: evidence tier, then threat_count DESC, then id.
 //
 // Components group the RETURNED operations by component_id (S2.4
@@ -463,24 +467,44 @@ export function compareOperations(a: OperationGeo, b: OperationGeo): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
+/** include_shared=1 returns up to this many excluded rows on top of the normal top-N. */
+export const OPERATIONS_GEO_SHARED_CAP = 50;
+
 /**
- * Pure: filter (unless includeShared), rank, then cut to `limit`.
- * `excluded` counts every filtered operation once (all zero when
- * includeShared — nothing is filtered).
+ * Pure: split the population into kept / excluded (shared, hub, ip-reputation),
+ * rank each, cut kept to `limit`. `excluded` counts EVERY excluded operation in
+ * the scanned population once, whether or not include_shared is set, so the
+ * "N hidden" figure is the same number the toggle then reveals up to the cap.
+ * With includeShared the excluded rows (ranked by threat_count DESC, then id —
+ * their tiers are all the lowest, so the usual tier rank would bury them) are
+ * appended after the normal top-N, up to `sharedCap`; they stay marked by their
+ * own shared_infra / hub / ip_reputation flags. `shared_returned` is how many
+ * were appended (0 without includeShared).
  */
 export function selectOperations(
   ops: readonly OperationGeo[],
-  opts: { includeShared: boolean; limit: number },
-): { operations: OperationGeo[]; excluded: OperationExclusions } {
+  opts: { includeShared: boolean; limit: number; sharedCap?: number },
+): { operations: OperationGeo[]; excluded: OperationExclusions; shared_returned: number } {
   const excluded: OperationExclusions = { shared_asn: 0, hub_ip: 0, ip_reputation: 0 };
   const kept: OperationGeo[] = [];
+  const shared: OperationGeo[] = [];
   for (const op of ops) {
-    const bucket = opts.includeShared ? null : exclusionOf(op);
-    if (bucket) excluded[bucket]++;
-    else kept.push(op);
+    const bucket = exclusionOf(op);
+    if (bucket) {
+      excluded[bucket]++;
+      shared.push(op);
+    } else kept.push(op);
   }
   kept.sort(compareOperations);
-  return { operations: kept.slice(0, Math.max(0, opts.limit)), excluded };
+  const operations = kept.slice(0, Math.max(0, opts.limit));
+  let shared_returned = 0;
+  if (opts.includeShared) {
+    shared.sort((a, b) => (a.threat_count !== b.threat_count ? b.threat_count - a.threat_count : a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const extra = shared.slice(0, Math.max(0, opts.sharedCap ?? OPERATIONS_GEO_SHARED_CAP));
+    shared_returned = extra.length;
+    operations.push(...extra);
+  }
+  return { operations, excluded, shared_returned };
 }
 
 function asBridgeKind(kind: ClusterKind): BridgeKind | null {
@@ -612,10 +636,10 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
   const includeShared = sharedFlag === "1";
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), OPERATIONS_GEO_DEFAULT_LIMIT, OPERATIONS_GEO_MAX_LIMIT);
 
-  // `.v2` — the stable-id / classified shape; pre-v2 keys
+  // `.v3` — shared rows appended under include_shared; older keys
   // (`operations_geo:<status>:<limit>`) are never read again and expire.
   return serveLens(request, env, "observatory_operations_geo",
-    `${CACHE_NS}.operations_geo.v2:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
+    `${CACHE_NS}.operations_geo.v3:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
     async (session, tally) => {
       // `+c.status`: keep the planner on the PK range (see block comment).
       const statusFilter = status === "active" ? "AND +c.status = 'active'" : "";
@@ -639,7 +663,7 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
       `).bind(STABLE_CLUSTER_ID_LO, STABLE_CLUSTER_ID_HI, OPERATIONS_GEO_SCAN_CAP).all<OperationRow>();
       addToTally(tally, rows.meta);
       const scanned = (rows.results ?? []).map(shapeOperation);
-      const { operations, excluded } = selectOperations(scanned, { includeShared, limit });
+      const { operations, excluded, shared_returned } = selectOperations(scanned, { includeShared, limit });
       // Resolve cert representatives outside the returned set by PK (at
       // most one per component, ≤50 → one statement in practice).
       const repKinds = new Map<string, ClusterKind>();
@@ -664,6 +688,7 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
         meta: {
           include_shared: includeShared,
           excluded,
+          shared_returned,
           scanned: scanned.length,
           truncated: scanned.length >= OPERATIONS_GEO_SCAN_CAP,
         },
