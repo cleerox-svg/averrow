@@ -5,10 +5,10 @@
 // Endpoints:
 //   GET /api/observatory/nodes      — ScatterplotLayer hotspot clusters
 //   GET /api/observatory/arcs       — ArcLayer attack corridors
-//   GET /api/observatory/live       — 20 most recent threats (live feed)
+//   GET /api/observatory/live       — most recent active threats (live feed)
 //   GET /api/observatory/brand-arcs — Arcs targeting a specific brand
 //   GET /api/observatory/stats      — Summary stats bar
-//   GET /api/observatory/heatmap    — Heatmap points
+//   GET /api/observatory/heatmap    — Heatmap points (geo cube buckets)
 //   GET /api/observatory/operations — Active NEXUS clusters
 //
 // Auth: every route is wrapped in requireStaff at the route layer
@@ -17,19 +17,29 @@
 // register one of these on a public route. Navigator calls them
 // directly for KV pre-warm; the `observatory_*` cache keys are
 // therefore staff-audience only.
+//
+// Query params are canonicalised BEFORE any cache key is built:
+//   period      — allow-list 24h | 7d | 30d | 90d; anything else → 7d
+//   source_feed — absent / '' / 'all' → one `all` key segment, no filter
+//   limit       — integer, clamped per endpoint; NaN / missing → default
+// so a garbage param can never mint a fresh cache key or an unbounded scan.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from '../lib/db';
 import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedValue } from "../lib/cached-value";
+import { readRefreshableCache, writeRefreshableCache } from "../lib/cache-refresh";
+import { getCountryCentroid } from "../lib/country-centroids";
 import type { Env } from "../types";
 
 /** TTL for the stats tile's distinct-brands count over the brand cube. */
 export const OBSERVATORY_BRANDS_DISTINCT_TTL_S = 3600;
 
 // ── Brand HQ coordinates — real locations ────────────────────────────────────
-// Used as arc target positions. Format: [longitude, latitude]
-// Keyed by canonical_domain AND by brand-name slug for flexible matching.
+// Last-resort arc target (after brands.hq_lat/hq_lng and hq_country). Format:
+// [longitude, latitude]. Keyed by canonical_domain AND by brand-name slug;
+// matched EXACTLY — the former substring match sent e.g. "Targetry" to
+// Target's HQ and "Apple Bank" to Cupertino.
 const BRAND_HQ: Record<string, [number, number]> = {
   // Fintech
   'paypal.com':        [-121.9687,  37.3790],
@@ -130,94 +140,61 @@ const BRAND_HQ: Record<string, [number, number]> = {
   'httpwg.org':        [-122.4194,  37.7749],  // W3C/IETF working group → SF
 };
 
-// Continent-based fallback coords [lng, lat] — ensures arcs always draw
-const CONTINENT_DEFAULTS: Record<string, [number, number]> = {
-  'US': [-122.4194,  37.7749],  // SF
-  'GB': [  -0.1278,  51.5074],  // London
-  'DE': [  13.4050,  52.5200],  // Berlin
-  'FR': [   2.3522,  48.8566],  // Paris
-  'JP': [ 139.6503,  35.6762],  // Tokyo
-  'CN': [ 116.4074,  39.9042],  // Beijing
-  'AU': [ 151.2093, -33.8688],  // Sydney
-  'CA': [ -79.3832,  43.6532],  // Toronto
-  'IN': [  77.2090,  28.6139],  // New Delhi
-  'BR': [ -46.6333, -23.5505],  // São Paulo
-  'SG': [ 103.8198,   1.3521],  // Singapore
-  'NL': [   4.9041,  52.3676],  // Amsterdam
+// ── Param parsing (shared by every endpoint) ─────────────────────────────────
+
+export const OBSERVATORY_PERIODS = ["24h", "7d", "30d", "90d"] as const;
+export type ObservatoryPeriod = (typeof OBSERVATORY_PERIODS)[number];
+
+const PERIOD_HOURS: Record<ObservatoryPeriod, number> = {
+  "24h": 24,
+  "7d": 7 * 24,
+  "30d": 30 * 24,
+  "90d": 90 * 24,
 };
 
-function getContinentFallback(country?: string | null): [number, number] {
-  if (!country) return [-122.4194, 37.7749]; // default SF
-  return CONTINENT_DEFAULTS[country] ?? [-122.4194, 37.7749];
-}
-
-function getBrandCoords(brandName: string | null, canonicalDomain?: string | null, originCountry?: string | null): [number, number] {
-  // Try canonical domain first (most precise)
-  if (canonicalDomain) {
-    const clean = canonicalDomain.replace(/^www\./, "").toLowerCase();
-    if (BRAND_HQ[clean]) return BRAND_HQ[clean];
-    // Partial match on domain
-    for (const [k, coords] of Object.entries(BRAND_HQ)) {
-      if (!k.includes(".")) continue;
-      if (clean === k || clean.endsWith("." + k) || k.endsWith("." + clean.split(".")[0])) {
-        return coords;
-      }
-    }
-  }
-  if (!brandName) return getContinentFallback(originCountry);
-  // Try brand name slug
-  const key = brandName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (BRAND_HQ[key]) return BRAND_HQ[key];
-  // Partial match on brand name
-  for (const [k, coords] of Object.entries(BRAND_HQ)) {
-    if (k.includes(".")) continue;
-    if (key.includes(k) || k.includes(key)) return coords;
-  }
-  // Fallback — continent default, NOT null
-  return getContinentFallback(originCountry);
-}
-
-function periodToInterval(period: string): string {
-  if (period === "24h") return "-1 days";
-  if (period === "30d") return "-30 days";
-  if (period === "90d") return "-90 days";
-  if (period === "all") return "-3650 days";
-  return "-7 days"; // default 7d
-}
-
-// ── Cube window helpers ───────────────────────────────────────────────────────
-// Used by handlers that query threat_cube_geo. The cube's hour_bucket column is
-// a string-compared key in 'YYYY-MM-DD HH:00:00' form, so window boundaries
-// must be snapped to the top of the hour or else an entire bucket's rows are
-// silently excluded at the edge.
-//
-// The snappedWindowStart helper is duplicated from parity-checker.ts by design
-// (Phase 5 design principle #4). Consolidation into a shared lib module is
-// deferred to a future cleanup phase — parity-checker and Navigator are both
-// in a stability freeze and cannot be touched in this PR.
-
-/** Period → hours, matching periodToInterval() semantics. */
-function periodToHours(period: string): number {
-  if (period === "24h") return 24;
-  if (period === "30d") return 30 * 24;
-  if (period === "90d") return 90 * 24;
-  if (period === "all") return 3650 * 24;
-  return 7 * 24; // default 7d
+/**
+ * Canonical period. Unknown / missing values collapse to `7d` so a garbage
+ * `?period=` neither mints its own KV key nor widens the window (the former
+ * `all` → 10-year window is gone; nothing in the client sends it).
+ */
+export function parseObservatoryPeriod(raw: string | null): ObservatoryPeriod {
+  return (OBSERVATORY_PERIODS as readonly string[]).includes(raw ?? "")
+    ? (raw as ObservatoryPeriod)
+    : "7d";
 }
 
 /**
- * Compute the cube window-start hour bucket for a given period, snapped to
- * the top of the current UTC hour. Returns 'YYYY-MM-DD HH:00:00'.
- *
- * Snapping up to the hour widens the query window by up to 59 minutes vs the
- * raw datetime('now', ?) predicate, which is within the parity-checker's
- * observed drift envelope (<0.02%).
+ * Integer limit clamped to [1, max]. Missing, empty or non-numeric → `def`.
+ * Bare `Math.min(max, parseInt(x))` let `?limit=-1` through as `LIMIT -1`
+ * (unbounded in SQLite) and `?limit=abc` through as `LIMIT NaN`.
  */
-function snappedWindowStart(period: string): string {
+export function parseObservatoryLimit(raw: string | null, def: number, max: number): number {
+  if (raw === null || raw.trim() === "") return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(1, Math.min(Math.floor(n), max));
+}
+
+/** Period → hours, for the allow-listed periods only. */
+function periodToHours(period: ObservatoryPeriod): number {
+  return PERIOD_HOURS[period];
+}
+
+// ── Cube window helpers ───────────────────────────────────────────────────────
+// The cubes' hour_bucket column is a string-compared key in
+// 'YYYY-MM-DD HH:00:00' form, so window boundaries must be snapped to the top
+// of the hour or else an entire bucket's rows are silently excluded at the
+// edge. The raw-threats fallbacks bind the SAME snapped start so the cube and
+// fallback paths cover an identical window.
+
+/**
+ * Cube window-start hour bucket for a period, snapped to the top of the
+ * current UTC hour. Returns 'YYYY-MM-DD HH:00:00'.
+ */
+export function snappedWindowStart(period: ObservatoryPeriod, now: Date = new Date()): string {
   const hours = periodToHours(period);
-  const nowSnapped = new Date();
+  const nowSnapped = new Date(now.getTime());
   nowSnapped.setUTCMinutes(0, 0, 0);
-  nowSnapped.setUTCMilliseconds(0);
   const d = new Date(nowSnapped.getTime() - hours * 60 * 60 * 1000);
   // 'YYYY-MM-DDTHH:00:00.000Z' → 'YYYY-MM-DD HH:00:00'
   return d.toISOString().replace("T", " ").slice(0, 19);
@@ -262,34 +239,143 @@ function buildSourceFilter(rawSourceFeed: string | null, alias?: string): Source
   return { sql: ` AND ${col} = ?`, params: [sourceFeed] };
 }
 
+// ── Severity ranking ──────────────────────────────────────────────────────────
+// MAX(severity) picked alphabetically: 'unknown' > 'medium' > 'low' > 'high'
+// > 'critical', so a cell holding one critical and one medium threat was
+// labelled medium. Rank from the per-severity sums instead.
+
+export const SEVERITY_RANK = ["critical", "high", "medium", "low"] as const;
+export type RankedSeverity = (typeof SEVERITY_RANK)[number] | "unknown";
+
+export interface SeverityCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+/** Highest severity with a non-zero count; `unknown` when none of the four. */
+export function topSeverity(counts: SeverityCounts): RankedSeverity {
+  for (const s of SEVERITY_RANK) if ((counts[s] ?? 0) > 0) return s;
+  return "unknown";
+}
+
+/** Per-severity SUM columns over a count expression (case-insensitive). */
+function severitySumsSql(severityCol: string, countExpr: string): string {
+  return SEVERITY_RANK.map(
+    (s) => `SUM(CASE WHEN LOWER(${severityCol}) = '${s}' THEN ${countExpr} ELSE 0 END) AS ${s}`,
+  ).join(",\n        ");
+}
+
+// ── Arc target resolution ─────────────────────────────────────────────────────
+
+export type TargetPrecision = "hq" | "country";
+
+export interface BrandTargetInput {
+  name: string | null;
+  canonical_domain: string | null;
+  hq_lat: number | null;
+  hq_lng: number | null;
+  hq_country: string | null;
+}
+
+export interface ResolvedTarget {
+  position: [number, number];
+  precision: TargetPrecision;
+}
+
+function isUsableCoord(lat: number | null, lng: number | null): boolean {
+  if (typeof lat !== "number" || typeof lng !== "number") return false;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat === 0 && lng === 0) return false; // null-island sentinel
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+/** Exact BRAND_HQ lookup: cleaned canonical domain, then name slug. */
+function exactDictionaryHq(name: string | null, canonicalDomain: string | null): [number, number] | null {
+  if (canonicalDomain) {
+    const clean = canonicalDomain.trim().replace(/^www\./i, "").replace(/\.$/, "").toLowerCase();
+    const hit = BRAND_HQ[clean];
+    if (hit) return hit;
+  }
+  if (name) {
+    const slug = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const hit = slug ? BRAND_HQ[slug] : undefined;
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Where an arc targeting this brand lands. Resolution order:
+ *   1. EXACT BRAND_HQ dictionary match            → precision 'hq'
+ *   2. brands.hq_lat / hq_lng                     → precision 'hq'
+ *   3. centroid of brands.hq_country              → precision 'country'
+ *   4. null — the caller drops the arc and counts it
+ * The curated dictionary wins over hq_lat/hq_lng because the enricher
+ * derives those from where the brand's domain resolves, which is often a
+ * CDN edge rather than the headquarters.
+ * Never the attacker's country, never random jitter: the former fallback
+ * drew arcs from an attacker to the attacker's own continent.
+ */
+export function resolveBrandTarget(brand: BrandTargetInput): ResolvedTarget | null {
+  const dict = exactDictionaryHq(brand.name, brand.canonical_domain);
+  if (dict) return { position: [dict[0], dict[1]], precision: "hq" };
+  if (isUsableCoord(brand.hq_lat, brand.hq_lng)) {
+    return { position: [brand.hq_lng as number, brand.hq_lat as number], precision: "hq" };
+  }
+  const centroid = getCountryCentroid(brand.hq_country);
+  if (centroid) return { position: [centroid[0], centroid[1]], precision: "country" };
+  return null;
+}
+
+// ── Response caching ──────────────────────────────────────────────────────────
+
+/** Response TTLs (seconds). Navigator refresh-warms ahead of expiry. */
+export const OBSERVATORY_TTL_S = {
+  nodes: 900,
+  arcs: 7200,
+  arcsFallback: 300,
+  live: 60,
+  brandArcs: 900,
+  stats: 900,
+  heatmap: 900,
+  operations: 900,
+} as const;
+
 // ── GET /api/observatory/nodes ─────────────────────────────────────────────────
 // Returns threat hotspot clusters for ScatterplotLayer.
 //
-// Phase 5: now reads from threat_cube_geo. The cube is stored at 0.01° grid
-// resolution; this handler aggregates back up to the original 0.1° grid at
-// read time by rounding lat_bucket / lng_bucket. Response shape is unchanged.
+// Reads threat_cube_geo (0.01° grid) and aggregates back up to a 0.1° grid at
+// read time. Per cell:
+//   - top_severity    — highest severity with a non-zero count (ranked, not
+//                       alphabetical MAX)
+//   - country_code    — the country with the most threats in the cell; the
+//                       'XX' sentinel (NULL country in threats) is never
+//                       picked, and a cell that is ALL 'XX' returns null
+//   - top_threat_type — the threat type with the most threats in the cell
+// Ties break alphabetically so the response is deterministic.
 //
-// top_severity and top_threat_type use MAX() over the cube's PK columns —
-// deterministic (alphabetical) vs the pre-cube "arbitrary row" SQLite
-// behaviour. country_code may return the 'XX' sentinel that cube-builder
-// writes for NULL country rows.
+// `limit` (1..2000, default 2000) is honoured and part of the KV key.
+export const NODES_MAX_LIMIT = 2000;
+
 export async function handleObservatoryNodes(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-  const period = url.searchParams.get("period") ?? "7d";
+  const period = parseObservatoryPeriod(url.searchParams.get("period"));
+  const limit = parseObservatoryLimit(url.searchParams.get("limit"), NODES_MAX_LIMIT, NODES_MAX_LIMIT);
   const windowStart = snappedWindowStart(period);
-  const sourceFilter = buildSourceFilter(url.searchParams.get("source_feed"));
+  const rawSource = url.searchParams.get("source_feed");
+  const sourceFilter = buildSourceFilter(rawSource);
 
   try {
-    // KV cache: nodes query aggregates threat_cube_geo — cache for 15
-    // minutes. Bumped from 5min as part of D1-budget cleanup; the cube
-    // is rebuilt every 10 min by Navigator so 15min staleness is at
-    // worst one tick old, and Navigator-driven cache warms now miss
-    // ~3x less often.
-    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}`;
-    const cached = await env.CACHE.get(cacheKey);
+    // KV cache, 15 min. The geo cube's current + previous hour are rebuilt
+    // by Navigator every 5 min; the 6-hourly cube_healer reconciles older
+    // hours, so a 15-min-old 7-day aggregate is visually indistinguishable.
+    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.nodes);
     if (cached) {
       // Cache hit — record zero D1 reads so attribution still shows
       // request volume.
@@ -298,32 +384,13 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
     }
 
     const tally = newTally();
-    const rows = await session.prepare(`
-      SELECT
-        ROUND(lat_bucket, 1) AS lat,
-        ROUND(lng_bucket, 1) AS lng,
-        SUM(threat_count) AS threat_count,
-        MAX(severity) AS top_severity,
-        SUM(CASE WHEN severity = 'critical' THEN threat_count ELSE 0 END) AS critical,
-        SUM(CASE WHEN severity = 'high'     THEN threat_count ELSE 0 END) AS high,
-        SUM(CASE WHEN severity = 'medium'   THEN threat_count ELSE 0 END) AS medium,
-        SUM(CASE WHEN severity = 'low'      THEN threat_count ELSE 0 END) AS low,
-        MAX(country_code) AS country_code,
-        MAX(threat_type) AS top_threat_type
-      FROM threat_cube_geo
-      WHERE hour_bucket >= ?${sourceFilter.sql}
-      GROUP BY ROUND(lat_bucket, 1), ROUND(lng_bucket, 1)
-      ORDER BY threat_count DESC
-      LIMIT 200
-    `).bind(windowStart, ...sourceFilter.params).all<{
-      lat: number; lng: number; threat_count: number; top_severity: string | null;
-      critical: number; high: number; medium: number; low: number;
-      country_code: string | null; top_threat_type: string | null;
-    }>();
+    const rows = await session.prepare(NODES_SQL(sourceFilter.sql))
+      .bind(windowStart, ...sourceFilter.params, limit)
+      .all<NodeRow>();
     addToTally(tally, rows.meta);
 
-    const data = { success: true, data: rows.results ?? [] };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 900 });
+    const data = { success: true, data: (rows.results ?? []).map(shapeNode) };
+    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.nodes);
     recordD1Reads(env, "observatory_nodes", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -331,40 +398,190 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
   }
 }
 
+interface NodeRow {
+  lat: number; lng: number; threat_count: number;
+  critical: number; high: number; medium: number; low: number;
+  country_code: string | null; top_threat_type: string | null;
+}
+
+/**
+ * Nodes query. `g` is referenced three times, so SQLite (≥3.35) materialises
+ * it once — the cube window is scanned a single time. Binds: window start,
+ * source params, limit.
+ */
+export function NODES_SQL(sourceSql: string): string {
+  return `
+      WITH g AS (
+        SELECT
+          ROUND(lat_bucket, 1) AS lat,
+          ROUND(lng_bucket, 1) AS lng,
+          country_code,
+          threat_type,
+          LOWER(severity) AS severity,
+          SUM(threat_count) AS n
+        FROM threat_cube_geo
+        WHERE hour_bucket >= ?${sourceSql}
+        GROUP BY 1, 2, 3, 4, 5
+      ),
+      cells AS (
+        SELECT
+          lat, lng,
+          SUM(n) AS threat_count,
+          ${severitySumsSql("severity", "n")}
+        FROM g
+        GROUP BY lat, lng
+        ORDER BY threat_count DESC, lat, lng
+        LIMIT ?
+      ),
+      cc AS (
+        SELECT lat, lng, country_code,
+          ROW_NUMBER() OVER (PARTITION BY lat, lng ORDER BY SUM(n) DESC, country_code) AS rn
+        FROM g
+        WHERE country_code != 'XX'
+        GROUP BY lat, lng, country_code
+      ),
+      tt AS (
+        SELECT lat, lng, threat_type,
+          ROW_NUMBER() OVER (PARTITION BY lat, lng ORDER BY SUM(n) DESC, threat_type) AS rn
+        FROM g
+        GROUP BY lat, lng, threat_type
+      )
+      SELECT
+        c.lat, c.lng, c.threat_count,
+        c.critical, c.high, c.medium, c.low,
+        cc.country_code,
+        tt.threat_type AS top_threat_type
+      FROM cells c
+      LEFT JOIN cc ON cc.lat = c.lat AND cc.lng = c.lng AND cc.rn = 1
+      LEFT JOIN tt ON tt.lat = c.lat AND tt.lng = c.lng AND tt.rn = 1
+      ORDER BY c.threat_count DESC, c.lat, c.lng
+    `;
+}
+
+function shapeNode(r: NodeRow) {
+  return {
+    lat: r.lat,
+    lng: r.lng,
+    threat_count: r.threat_count,
+    top_severity: topSeverity(r),
+    critical: r.critical,
+    high: r.high,
+    medium: r.medium,
+    low: r.low,
+    country_code: r.country_code ?? null,
+    top_threat_type: r.top_threat_type ?? null,
+  };
+}
+
+// ── Arc assembly (shared by /arcs and /brand-arcs) ────────────────────────────
+
+export interface ArcRow extends SeverityCounts {
+  source_lat: number | null;
+  source_lng: number | null;
+  threat_type: string;
+  source_country: string | null;
+  target_brand: string | null;
+  target_domain: string | null;
+  target_sector: string | null;
+  hq_lat: number | null;
+  hq_lng: number | null;
+  hq_country: string | null;
+  volume: number;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface ArcAssembly {
+  arcs: Array<{
+    sourcePosition: [number, number];
+    targetPosition: [number, number];
+    target_precision: TargetPrecision;
+    threat_type: string;
+    severity: RankedSeverity;
+    source_region: string;
+    target_brand: string;
+    brand_name: string | null;
+    volume: number;
+    first_seen: string | null;
+    last_seen: string | null;
+  }>;
+  /** Corridors whose brand has no hq_lat/lng, hq_country or exact HQ entry. */
+  dropped_unknown_target: number;
+  /** Corridors with no source centroid (never drawn at [0,0]). */
+  dropped_no_source: number;
+}
+
+/** Turn grouped arc rows into drawable arcs; never invents an endpoint. */
+export function assembleArcs(rows: ArcRow[]): ArcAssembly {
+  const out: ArcAssembly = { arcs: [], dropped_unknown_target: 0, dropped_no_source: 0 };
+  for (const row of rows) {
+    if (!isUsableCoord(row.source_lat, row.source_lng)) {
+      out.dropped_no_source++;
+      continue;
+    }
+    const target = resolveBrandTarget({
+      name: row.target_brand,
+      canonical_domain: row.target_domain,
+      hq_lat: row.hq_lat,
+      hq_lng: row.hq_lng,
+      hq_country: row.hq_country,
+    });
+    if (!target) {
+      out.dropped_unknown_target++;
+      continue;
+    }
+    out.arcs.push({
+      sourcePosition: [row.source_lng as number, row.source_lat as number],
+      targetPosition: target.position,
+      target_precision: target.precision,
+      threat_type: row.threat_type,
+      severity: topSeverity(row),
+      source_region: row.source_country && row.source_country !== "XX" ? row.source_country : "Unknown",
+      target_brand: row.target_brand ?? "Unknown",
+      brand_name: row.target_brand ?? null,
+      volume: row.volume,
+      first_seen: row.first_seen,
+      last_seen: row.last_seen,
+    });
+  }
+  return out;
+}
+
 // ── GET /api/observatory/arcs ──────────────────────────────────────────────────
-// Returns attack corridors for ArcLayer
+// Returns attack corridors for ArcLayer.
 //
-// PR-Z: reads from threat_cube_arcs instead of scanning the raw threats
-// table joined to brands. Pre-PR-Z this was the single largest D1 spender
-// for Averrow's surfaces (~14.8M reads/24h, scanning ~43K of 7-day
-// partial-index rows per uncached call). The cube reduces it to a small
-// hour-bucket SELECT joined to brands by id (~hundreds of rows max).
+// PR-Z: reads threat_cube_arcs (grain: hour, country, brand, type, severity,
+// source_feed) joined to brands by id. Grouped per (country, brand, type);
+// severity is ranked from per-severity sums and the source position is the
+// threat-count-weighted centroid of the per-hour cube centroids.
 //
-// The cube's grain — (hour_bucket, country_code, target_brand_id,
-// threat_type, severity, source_feed) — exactly matches what the previous
-// query produced after its GROUP BY (country, brand, type), so there's no
-// visual fidelity loss. source_lat/source_lng are the country-bucket
-// centroid (better than the previous arbitrary-pick).
+// Target placement — see resolveBrandTarget(). Arcs whose brand cannot be
+// placed are DROPPED and counted in `dropped_unknown_target`; arcs without a
+// source centroid are dropped and counted in `dropped_no_source`.
 //
-// PR-Z follow-up: if the cube SELECT returns 0 rows for the requested
-// window, fall back to the legacy raw-threats query so the globe is
-// never blank during cube bootstrap (Navigator's first 1-2 ticks after
-// deploy, or any transient cube unavailability). The fallback is the
-// expensive code path so cache its result for a shorter window (5 min)
-// — we want to recover quickly once the cube fills, not hold the
-// fallback response in cache for 30 min.
+// Cube-empty fallback: if the cube returns 0 rows for an UNFILTERED window the
+// handler falls back to a raw-threats GROUP BY so the globe is never blank
+// during cube bootstrap. CLAUDE.md §8 flags raw GROUP BY over threats; this one
+// is kept because it is (a) bounded — snapped window + status='active' via
+// idx_threats_status_created, LIMIT 2500, (b) rare — the 7d cube is never
+// empty in steady state, and (c) not reachable via a filter: a source_feed
+// filter that matches nothing returns [] instead of paying the raw scan per
+// garbage feed value. The fallback result caches for 5 min only.
+export const ARCS_ROW_LIMIT = 2500;
+
 export async function handleObservatoryArcs(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-  const period = url.searchParams.get("period") ?? "7d";
+  const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
-  const cubeSourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "c");
+  const rawSource = url.searchParams.get("source_feed");
+  const cubeSourceFilter = buildSourceFilter(rawSource, "c");
 
   try {
-    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}`;
-    const cached = await env.CACHE.get(cacheKey);
+    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(rawSource)}`;
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.arcs);
     if (cached) {
       recordD1Reads(env, "observatory_arcs", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -373,81 +590,55 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     const tally = newTally();
     const rows = await session.prepare(`
       SELECT
-        ROUND(AVG(c.source_lat), 1) AS source_lat,
-        ROUND(AVG(c.source_lng), 1) AS source_lng,
+        ROUND(SUM(c.source_lat * c.threat_count) / SUM(CASE WHEN c.source_lat IS NOT NULL THEN c.threat_count END), 1) AS source_lat,
+        ROUND(SUM(c.source_lng * c.threat_count) / SUM(CASE WHEN c.source_lng IS NOT NULL THEN c.threat_count END), 1) AS source_lng,
         c.threat_type,
-        MAX(c.severity)             AS severity,
         c.country_code              AS source_country,
         b.name                      AS target_brand,
         b.canonical_domain          AS target_domain,
         b.sector                    AS target_sector,
+        b.hq_lat                    AS hq_lat,
+        b.hq_lng                    AS hq_lng,
+        b.hq_country                AS hq_country,
         SUM(c.threat_count)         AS volume,
+        ${severitySumsSql("c.severity", "c.threat_count")},
         MIN(c.first_seen)           AS first_seen,
         MAX(c.last_seen)            AS last_seen
       FROM threat_cube_arcs c
       JOIN brands b ON b.id = c.target_brand_id
       WHERE c.hour_bucket >= ?${cubeSourceFilter.sql}
-      GROUP BY c.country_code, c.target_brand_id, c.threat_type, b.name, b.canonical_domain, b.sector
-      ORDER BY volume DESC
-      LIMIT 2500
-    `).bind(windowStart, ...cubeSourceFilter.params).all<{
-      source_lat: number | null; source_lng: number | null; threat_type: string;
-      severity: string | null; source_country: string | null;
-      target_brand: string | null; target_domain: string | null;
-      target_sector: string | null; volume: number;
-      first_seen: string; last_seen: string;
-    }>();
+      GROUP BY c.country_code, c.target_brand_id, c.threat_type
+      ORDER BY volume DESC, c.country_code, c.target_brand_id, c.threat_type
+      LIMIT ${ARCS_ROW_LIMIT}
+    `).bind(windowStart, ...cubeSourceFilter.params).all<ArcRow>();
     addToTally(tally, rows.meta);
 
     let resultRows = rows.results ?? [];
-    // D1 spend reduction (2026-05-16): bumped from 1800s → 3600s.
-    // At the time Navigator prewarmed all 3 periods every 5 min (today: 7d
-    // every 10 min in phase A, 24h/30d every 15 min in phase A2 — see
-    // NAVIGATOR_WARM_TARGETS in cron/navigator.ts). At 30min TTL the cache
-    // was fresh roughly 80% of prewarm ticks (rest were forced refreshes
-    // because the TTL boundary fell inside the prewarm cycle). Production
-    // audit showed 245 actual handler hits / 24h × 56K rows = 13.8M.
-    // 1h TTL drops the prewarm-driven miss count from ~50/day to ~24/day
-    // = ~7M rows saved. Globe freshness: arcs are aggregated over a
-    // 7-day window so a 1h cache lag is invisible to the user.
-    //
-    // D1 spend reduction (platform-audit-2026-07-26): bumped 3600s → 7200s.
-    // The endpoint was STILL ~13.8M reads/24h because the cache key carries
-    // the `source_feed` query param but Navigator only prewarms the
-    // no-source_feed ("all") variant — every feed-filtered request is a
-    // guaranteed miss that pays the full cube scan, and no TTL clears a
-    // never-prewarmed key. Doubling the TTL to 2h keeps a feed-filtered
-    // key warm across ~24 prewarm ticks instead of ~12, roughly halving
-    // the organic-miss recompute rate on those variants. A 7-day aggregate
-    // tolerates 2h staleness. (Adding source_feed variants to the Navigator
-    // prewarm set is the real fix but is deliberately out of scope here.)
-    //
-    // PR7b: the "all" variant itself was ALSO a miss — the ops client sends
-    // `source_feed=` (empty) for All Sources, which keyed to `…:` instead of
-    // `…:all`. sourceFeedCacheSegment() now collapses empty/absent/`all`.
-    let cacheTtlSeconds = 7200;
+    // TTL history: 1800s → 3600s (2026-05-16) → 7200s (platform-audit
+    // 2026-07-26) to cut the arcs D1 spend; a 7-day aggregate tolerates 2h
+    // staleness. Navigator's refresh-warm rewrites the unfiltered 7d/24h/30d
+    // keys ahead of expiry (CACHE_REFRESH_MARGIN_S), so the landing page no
+    // longer hits the cold gap when the 2h TTL lapses between warms.
+    let cacheTtlSeconds: number = OBSERVATORY_TTL_S.arcs;
     let usedFallback = false;
 
-    // Fallback: cube empty for the requested window — defensive path back
-    // to the legacy raw-threats query so the globe is never blank during
-    // cube bootstrap. Caches for 5 min so we recover quickly the moment
-    // the cube fills (and don't keep paying the expensive scan).
-    if (resultRows.length === 0) {
+    if (resultRows.length === 0 && normalizeSourceFeed(rawSource) === null) {
       usedFallback = true;
-      cacheTtlSeconds = 300;
-      const interval = periodToInterval(period);
-      const fallbackSourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "t");
+      cacheTtlSeconds = OBSERVATORY_TTL_S.arcsFallback;
       const fallback = await session.prepare(`
         SELECT
-          ROUND(t.lat, 1) AS source_lat,
-          ROUND(t.lng, 1) AS source_lng,
-          t.threat_type,
-          t.severity,
-          t.country_code AS source_country,
+          ROUND(AVG(t.lat), 1) AS source_lat,
+          ROUND(AVG(t.lng), 1) AS source_lng,
+          COALESCE(t.threat_type, 'unknown') AS threat_type,
+          COALESCE(t.country_code, 'XX') AS source_country,
           b.name AS target_brand,
           b.canonical_domain AS target_domain,
           b.sector AS target_sector,
+          b.hq_lat AS hq_lat,
+          b.hq_lng AS hq_lng,
+          b.hq_country AS hq_country,
           COUNT(*) AS volume,
+          ${severitySumsSql("t.severity", "1")},
           MIN(t.created_at) AS first_seen,
           MAX(t.created_at) AS last_seen
         FROM threats t
@@ -455,45 +646,24 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
         WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
           AND t.target_brand_id IS NOT NULL
           AND t.status = 'active'
-          AND t.created_at > datetime('now', ?)${fallbackSourceFilter.sql}
-        GROUP BY t.country_code, t.target_brand_id, t.threat_type
+          AND t.created_at >= ?
+        GROUP BY COALESCE(t.country_code, 'XX'), t.target_brand_id, COALESCE(t.threat_type, 'unknown')
         ORDER BY volume DESC
-        LIMIT 2500
-      `).bind(interval, ...fallbackSourceFilter.params).all<{
-        source_lat: number | null; source_lng: number | null; threat_type: string;
-        severity: string | null; source_country: string | null;
-        target_brand: string | null; target_domain: string | null;
-        target_sector: string | null; volume: number;
-        first_seen: string; last_seen: string;
-      }>();
+        LIMIT ${ARCS_ROW_LIMIT}
+      `).bind(windowStart).all<ArcRow>();
       addToTally(tally, fallback.meta);
       resultRows = fallback.results ?? [];
     }
 
-    const arcs = resultRows
-      .map(row => {
-        const targetCoords = getBrandCoords(row.target_brand, row.target_domain, row.source_country);
-        const jitter: [number, number] = [
-          targetCoords[0] + (Math.random() - 0.5) * 0.5,
-          targetCoords[1] + (Math.random() - 0.5) * 0.5,
-        ];
-        return {
-          sourcePosition: [row.source_lng ?? 0, row.source_lat ?? 0] as [number, number],
-          targetPosition: jitter,
-          threat_type: row.threat_type,
-          severity: row.severity ?? "low",
-          source_region: row.source_country ?? "Unknown",
-          target_brand: row.target_brand ?? "Unknown",
-          brand_name: row.target_brand ?? null,
-          volume: row.volume,
-          first_seen: row.first_seen,
-          last_seen: row.last_seen,
-        };
-      })
-      .filter((a): a is NonNullable<typeof a> => a !== null);
-
-    const data = { success: true, data: arcs, _fallback: usedFallback || undefined };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: cacheTtlSeconds });
+    const assembled = assembleArcs(resultRows);
+    const data = {
+      success: true,
+      data: assembled.arcs,
+      dropped_unknown_target: assembled.dropped_unknown_target,
+      dropped_no_source: assembled.dropped_no_source,
+      _fallback: usedFallback || undefined,
+    };
+    await writeRefreshableCache(env.CACHE, cacheKey, data, cacheTtlSeconds);
     recordD1Reads(env, "observatory_arcs", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -502,23 +672,22 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
 }
 
 // ── GET /api/observatory/live ──────────────────────────────────────────────────
-// Returns 20 most recent active threats with full geo data
+// Returns the most recent active threats with full geo data.
+// `limit` 1..50 (default 20). TTL 60s: the side panel polls every 15s, so a
+// longer TTL made the "live" ticker visibly stale; 60s still collapses the
+// polling of every open panel onto one D1 read per minute per key.
 export async function handleObservatoryLive(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-  const sourceFilter = buildSourceFilter(url.searchParams.get("source_feed"), "t");
-  const limit = Math.min(50, parseInt(url.searchParams.get("limit") ?? "20", 10));
+  const rawSource = url.searchParams.get("source_feed");
+  const sourceFilter = buildSourceFilter(rawSource, "t");
+  const limit = parseObservatoryLimit(url.searchParams.get("limit"), 20, 50);
 
   try {
-    // KV cache: live feed query. PR-Z bumped 2 → 5 min to match what was
-    // then a 5-min Navigator pre-warm. Navigator now warms `?limit=8` only
-    // every 10 min (phase A), so the key is cold for roughly half of each
-    // warm interval; 5 min is kept because the "live" ticker must stay
-    // visibly fresh (the side panel refetches every 15s).
-    const cacheKey = `observatory_live:${sourceFeedCacheSegment(url.searchParams.get("source_feed"))}:${limit}`;
-    const cached = await env.CACHE.get(cacheKey);
+    const cacheKey = `observatory_live:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.live);
     if (cached) {
       recordD1Reads(env, "observatory_live", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -553,7 +722,7 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results ?? [] };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
+    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.live);
     recordD1Reads(env, "observatory_live", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -562,150 +731,192 @@ export async function handleObservatoryLive(request: Request, env: Env): Promise
 }
 
 // ── GET /api/observatory/brand-arcs ───────────────────────────────────────────
-// Returns arcs targeting a specific brand.
+// Returns arcs targeting one brand (≤40 corridors, grouped per attacking
+// country × threat type from threat_cube_arcs).
 //
-// PR-Z: reads from threat_cube_arcs. Original query bucketed at 0.1°
-// lat/lng; the cube grain is country-level. For a brand panel (LIMIT
-// 40 corridors max) the visualization is unchanged — at country
-// resolution a brand typically maps to 10-30 distinct attacking
-// countries, well below the 40-row cap. The 0.1° bucketing of the
-// previous query was effectively the same since attacking IPs cluster
-// inside national geographies.
+//   brand_id     required (400 when missing or >128 chars); 404 when unknown
+//   period       allow-listed (see parseObservatoryPeriod)
+//   source_feed  same canonicalisation as the other endpoints
 //
-// PR-Z follow-up: cube-empty fallback to the legacy raw-threats query,
-// same defensive pattern as handleObservatoryArcs.
+// KV-cached 15 min under `observatory_brand_arcs:<brand_id>:<period>:<source>`
+// — staff-global like every observatory key (requireStaff route, no org
+// scope). Unknown brand ids 404 BEFORE any cache write, so they never mint
+// keys.
+//
+// Target placement — resolveBrandTarget(); if the brand cannot be placed the
+// response carries `data: []`, `target_precision: null` and the corridor count
+// in `dropped_unknown_target`.
+//
+// Cube-empty fallback (unfiltered only): raw threats grouped by the SAME
+// (country, threat type) grain as the cube path, over the same snapped
+// window. Bounded by idx_threats_brand_created (one brand × window), LIMIT 40.
+export const BRAND_ARCS_ROW_LIMIT = 40;
+const BRAND_ID_MAX_LEN = 128;
+
 export async function handleObservatoryBrandArcs(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
   const brandId = url.searchParams.get("brand_id");
-  const period = url.searchParams.get("period") ?? "7d";
+  const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
+  const rawSource = url.searchParams.get("source_feed");
 
-  if (!brandId) {
+  if (!brandId || brandId.length > BRAND_ID_MAX_LEN) {
     return attachBookmark(json({ success: false, error: "brand_id required" }, 400, origin), session);
   }
 
   try {
-    // Get brand name + domain for coordinate lookup
+    const cacheKey = `observatory_brand_arcs:${brandId}:${period}:${sourceFeedCacheSegment(rawSource)}`;
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.brandArcs);
+    if (cached) {
+      recordD1Reads(env, "observatory_brand_arcs", newTally());
+      return attachBookmark(json(JSON.parse(cached), 200, origin), session);
+    }
+
+    const tally = newTally();
+    tally.queries += 1; // .first() exposes no meta
     const brand = await session.prepare(
-      "SELECT id, name, canonical_domain FROM brands WHERE id = ? LIMIT 1"
-    ).bind(brandId).first<{ id: string; name: string; canonical_domain: string | null }>();
+      "SELECT id, name, canonical_domain, hq_lat, hq_lng, hq_country FROM brands WHERE id = ? LIMIT 1"
+    ).bind(brandId).first<{
+      id: string; name: string; canonical_domain: string | null;
+      hq_lat: number | null; hq_lng: number | null; hq_country: string | null;
+    }>();
 
-    const targetCoords = getBrandCoords(brand?.name ?? null, brand?.canonical_domain) ?? [-74.0, 40.7];
+    if (!brand) {
+      recordD1Reads(env, "observatory_brand_arcs", tally);
+      return attachBookmark(json({ success: false, error: "Brand not found" }, 404, origin), session);
+    }
 
+    const sourceFilter = buildSourceFilter(rawSource);
     const rows = await session.prepare(`
       SELECT
-        ROUND(AVG(source_lat), 1) AS source_lat,
-        ROUND(AVG(source_lng), 1) AS source_lng,
+        ROUND(SUM(source_lat * threat_count) / SUM(CASE WHEN source_lat IS NOT NULL THEN threat_count END), 1) AS source_lat,
+        ROUND(SUM(source_lng * threat_count) / SUM(CASE WHEN source_lng IS NOT NULL THEN threat_count END), 1) AS source_lng,
         threat_type,
-        MAX(severity)             AS severity,
         country_code              AS source_country,
-        SUM(threat_count)         AS volume
+        SUM(threat_count)         AS volume,
+        ${severitySumsSql("severity", "threat_count")},
+        MIN(first_seen)           AS first_seen,
+        MAX(last_seen)            AS last_seen
       FROM threat_cube_arcs
       WHERE target_brand_id = ?
-        AND hour_bucket >= ?
+        AND hour_bucket >= ?${sourceFilter.sql}
       GROUP BY country_code, threat_type
-      ORDER BY volume DESC
-      LIMIT 40
-    `).bind(brandId, windowStart).all<{
-      source_lat: number | null; source_lng: number | null; threat_type: string;
-      severity: string | null; source_country: string | null; volume: number;
-    }>();
+      ORDER BY volume DESC, country_code, threat_type
+      LIMIT ${BRAND_ARCS_ROW_LIMIT}
+    `).bind(brandId, windowStart, ...sourceFilter.params).all<BrandArcRow>();
+    addToTally(tally, rows.meta);
 
     let resultRows = rows.results ?? [];
     let usedFallback = false;
+    let ttl: number = OBSERVATORY_TTL_S.brandArcs;
 
-    // Cube-empty fallback — same defensive pattern as handleObservatoryArcs.
-    // Restores the legacy 0.1° lat/lng resolution during cube bootstrap.
-    if (resultRows.length === 0) {
+    if (resultRows.length === 0 && normalizeSourceFeed(rawSource) === null) {
       usedFallback = true;
-      const interval = periodToInterval(period);
+      ttl = OBSERVATORY_TTL_S.arcsFallback;
       const fallback = await session.prepare(`
         SELECT
-          ROUND(t.lat, 1) AS source_lat,
-          ROUND(t.lng, 1) AS source_lng,
-          t.threat_type,
-          t.severity,
-          t.country_code AS source_country,
-          COUNT(*) AS volume
+          ROUND(AVG(t.lat), 1) AS source_lat,
+          ROUND(AVG(t.lng), 1) AS source_lng,
+          COALESCE(t.threat_type, 'unknown') AS threat_type,
+          COALESCE(t.country_code, 'XX') AS source_country,
+          COUNT(*) AS volume,
+          ${severitySumsSql("t.severity", "1")},
+          MIN(t.created_at) AS first_seen,
+          MAX(t.created_at) AS last_seen
         FROM threats t
-        WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
-          AND t.target_brand_id = ?
+        WHERE t.target_brand_id = ?
+          AND t.created_at >= ?
+          AND t.lat IS NOT NULL AND t.lng IS NOT NULL
           AND t.status = 'active'
-          AND t.created_at > datetime('now', ?)
-        GROUP BY ROUND(t.lat, 1), ROUND(t.lng, 1), t.threat_type
+        GROUP BY COALESCE(t.country_code, 'XX'), COALESCE(t.threat_type, 'unknown')
         ORDER BY volume DESC
-        LIMIT 40
-      `).bind(brandId, interval).all<{
-        source_lat: number | null; source_lng: number | null; threat_type: string;
-        severity: string | null; source_country: string | null; volume: number;
-      }>();
+        LIMIT ${BRAND_ARCS_ROW_LIMIT}
+      `).bind(brandId, windowStart).all<BrandArcRow>();
+      addToTally(tally, fallback.meta);
       resultRows = fallback.results ?? [];
     }
 
-    const arcs = resultRows.map(row => ({
-      sourcePosition: [row.source_lng ?? 0, row.source_lat ?? 0] as [number, number],
-      targetPosition: [
-        targetCoords[0] + (Math.random() - 0.5) * 1,
-        targetCoords[1] + (Math.random() - 0.5) * 1,
-      ] as [number, number],
-      threat_type: row.threat_type,
-      severity: row.severity ?? "low",
-      source_region: row.source_country ?? "Unknown",
-      volume: row.volume,
-      country_code: row.source_country,
-    }));
+    const assembled = assembleArcs(resultRows.map((r) => ({
+      ...r,
+      target_brand: brand.name,
+      target_domain: brand.canonical_domain,
+      target_sector: null,
+      hq_lat: brand.hq_lat,
+      hq_lng: brand.hq_lng,
+      hq_country: brand.hq_country,
+    })));
+    const target = resolveBrandTarget(brand);
 
-    return attachBookmark(json({
+    const data = {
       success: true,
-      data: arcs,
-      brand: brand ? { id: brand.id, name: brand.name } : null,
+      data: assembled.arcs.map((a) => ({
+        sourcePosition: a.sourcePosition,
+        targetPosition: a.targetPosition,
+        target_precision: a.target_precision,
+        threat_type: a.threat_type,
+        severity: a.severity,
+        source_region: a.source_region,
+        volume: a.volume,
+        country_code: a.source_region === "Unknown" ? null : a.source_region,
+        first_seen: a.first_seen,
+        last_seen: a.last_seen,
+      })),
+      brand: { id: brand.id, name: brand.name },
+      target_precision: target?.precision ?? null,
+      dropped_unknown_target: assembled.dropped_unknown_target,
+      dropped_no_source: assembled.dropped_no_source,
       _fallback: usedFallback || undefined,
-    }, 200, origin), session);
+    };
+    await writeRefreshableCache(env.CACHE, cacheKey, data, ttl);
+    recordD1Reads(env, "observatory_brand_arcs", tally);
+    return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
     return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
   }
 }
 
+interface BrandArcRow extends SeverityCounts {
+  source_lat: number | null;
+  source_lng: number | null;
+  threat_type: string;
+  source_country: string | null;
+  volume: number;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
 // ── GET /api/observatory/stats ─────────────────────────────────────────────────
-// Returns summary stats for the stats bar.
-//
-// Phase 5 partial swap:
-//   - threats_mapped → threat_cube_geo (SUM(threat_count)). Note: the cube
-//     only stores rows with lat/lng, so this value is strictly the count
-//     of geolocated active threats — active threats with NULL lat/lng do
-//     not contribute. When GeoIP coverage degrades (empty MMDB, ip-api
-//     misses, etc.) this number drifts toward zero even though ingest is
-//     healthy. Pair with `threats_total` to surface coverage as a ratio.
-//   - threats_total → threat_cube_status (SUM(threat_count)). Every
-//     ingested threat lands here regardless of geo. `geo_coverage_pct`
-//     is mapped/total — operators see a coverage drop immediately
-//     instead of a slow-bleeding tile.
-//   - countries       → threat_cube_geo (COUNT(DISTINCT country_code))
-//   - active_campaigns → unchanged (queries campaigns table, not threats)
-//   - brands_monitored → stays on raw threats. The cube has no
-//     target_brand_id dimension, so this query cannot be served from it.
-//     Adding a brand-keyed cube is a future-phase scope decision.
+// Returns summary stats for the stats bar. Every tile is cube-served:
+//   - threats_mapped   → threat_cube_geo SUM(threat_count). The geo cube only
+//                        holds ACTIVE threats WITH lat/lng.
+//   - threats_total    → threat_cube_status SUM(threat_count) WHERE
+//                        status='active', same source_feed filter. Same
+//                        population as threats_mapped minus the geo
+//                        requirement, so `geo_coverage_pct` = mapped / total
+//                        is a true geo-coverage ratio (it previously divided by
+//                        every status and ignored source_feed).
+//   - countries        → threat_cube_geo COUNT(DISTINCT country_code), the
+//                        'XX' (unknown country) sentinel excluded
+//   - active_campaigns → campaigns table (not threats)
+//   - brands_monitored → threat_cube_brand COUNT(DISTINCT target_brand_id),
+//                        behind its own 1h cachedValue
 export async function handleObservatoryStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-  const period = url.searchParams.get("period") ?? "7d";
-  const interval = periodToInterval(period);
+  const period = parseObservatoryPeriod(url.searchParams.get("period"));
   const windowStart = snappedWindowStart(period);
   const sourceFeed = url.searchParams.get("source_feed");
   const sf = buildSourceFilter(sourceFeed);
 
   try {
-    // KV cache: observatory stats only change when feeds run — cache for 2 minutes.
-    // Cache key is intentionally unchanged from the raw-sourced implementation;
-    // existing cached entries will serve pre-swap values until TTL expires
-    // (up to 2 minutes of stale raw-sourced values post-deploy).
+    // KV cache, 15 min (stats move only when feeds/cubes move).
     const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(sourceFeed)}`;
-    const cached = await env.CACHE.get(cacheKey);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.stats);
     if (cached) {
       recordD1Reads(env, "observatory_stats", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -717,16 +928,11 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       session.prepare(
         `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
       ).bind(windowStart, ...sf.params).first<{ n: number }>(),
-      // Total threats over the same window — sourced from threat_cube_status
-      // which has no lat/lng requirement. The ratio of (mapped / total)
-      // surfaces geo-enrichment coverage on the home tile and lets the
-      // operator notice GeoIP regressions before the mapped count drifts
-      // toward zero unexplained.
       session.prepare(
-        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ?`
-      ).bind(windowStart).first<{ n: number }>(),
+        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ? AND status = 'active'${sf.sql}`
+      ).bind(windowStart, ...sf.params).first<{ n: number }>(),
       session.prepare(
-        `SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
+        `SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE hour_bucket >= ? AND country_code != 'XX'${sf.sql}`
       ).bind(windowStart, ...sf.params).first<{ n: number }>(),
       session.prepare(
         // status='active' alone over-reports — 48% of "active" campaigns
@@ -753,15 +959,14 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       ),
     ]);
     // .first() doesn't expose meta — count queries but not rows_read.
-    // All five reads are now cube-served (geo cube × 2, status cube,
-    // campaigns table, brand cube). DISTINCT target_brand_id moved from
-    // threats → threat_cube_brand to kill the last full-table-scan path.
     // The brand-cube DISTINCT only counts when its cachedValue missed.
     tally.queries += brandsDistinctQueried ? 5 : 4;
 
     const mapped = threats?.n ?? 0;
     const total = threatsTotal?.n ?? 0;
-    const coveragePct = total > 0 ? Math.round((mapped / total) * 100) : null;
+    // Clamp: the two cubes are rebuilt by separate statements, so a
+    // mid-rebuild read can momentarily see mapped > total.
+    const coveragePct = total > 0 ? Math.min(100, Math.round((mapped / total) * 100)) : null;
 
     const data = {
       success: true,
@@ -776,7 +981,7 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       },
     };
 
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 900 });
+    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.stats);
     recordD1Reads(env, "observatory_stats", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -785,61 +990,48 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
 }
 
 // ── GET /api/observatory/heatmap ───────────────────────────────────────────
-// Public global threat heatmap points for the v3 Observatory heatmap layer.
+// Global threat heatmap for the Observatory heatmap layer (staff-only, like
+// every route here — see the file header).
 //
-// Mirrors the staff-gated /api/threats/heatmap query (global geo scan, NOT
-// org-scoped) but is UNauthenticated like the rest of the observatory surface
-// and returns the standard { success, data } envelope the observatory hooks
-// consume. Only lat/lng/severity/threat_type are exposed — no domains/PII.
+// Served from threat_cube_geo (ACTIVE, geolocated threats only), bucketed to
+// a 0.1° grid per severity × threat type. Each point carries
+// `weight` = SUM(threat_count) for that bucket. Ordered by weight DESC with
+// coordinate/severity/type tie-breaks, so a truncated response (`limit`) is
+// always the heaviest buckets, deterministically. Previously this read up to
+// 10K raw threat rows with no ORDER BY, no status filter and no source_feed.
+//
+// Points at exactly (0,0) are excluded (null-island sentinel).
+export const HEATMAP_MAX_LIMIT = 10000;
+
 export async function handleObservatoryHeatmap(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
   const session = getReadSession(env, ctx);
   const url = new URL(request.url);
-
-  // F1: clamp limit on BOTH ends + reject NaN. Bare Math.min doesn't clamp the
-  // lower bound, so ?limit=-1 → LIMIT -1 = unbounded full-window scan on a
-  // public raw-threats endpoint.
-  const rawLimit = Number(url.searchParams.get("limit") ?? "10000");
-  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(Math.floor(rawLimit), 10000)) : 10000;
-
-  // F2: canonicalize period against the dayMap whitelist so unknown values
-  // collapse to the default '7d' KV key instead of minting a distinct cache
-  // entry per garbage param (?period=a1&period=a2… cache-busting the raw scan).
-  const dayMap: Record<string, string> = {
-    "24h": "-1 days", "7d": "-7 days", "30d": "-30 days", "90d": "-90 days",
-  };
-  const rawPeriod = url.searchParams.get("period") || "7d";
-  const period = dayMap[rawPeriod] ? rawPeriod : "7d";
-  const interval = dayMap[period];
+  const period = parseObservatoryPeriod(url.searchParams.get("period"));
+  const limit = parseObservatoryLimit(url.searchParams.get("limit"), HEATMAP_MAX_LIMIT, HEATMAP_MAX_LIMIT);
+  const windowStart = snappedWindowStart(period);
+  const rawSource = url.searchParams.get("source_feed");
+  const sf = buildSourceFilter(rawSource);
 
   try {
-    // KV cache: heatmap returns up to 10K rows from raw threats — cache for
-    // 5 min. Distinct key namespace from the staff route's `threats_heatmap:`.
-    // Key is built from the CANONICAL period + clamped limit so out-of-range
-    // params can't amplify cache misses.
-    const cacheKey = `observatory_heatmap:${period}:${limit}`;
-    const cached = await env.CACHE.get(cacheKey);
+    // Key built from the CANONICAL period, source segment and clamped limit
+    // so out-of-range params can't amplify cache misses.
+    const cacheKey = `observatory_heatmap:${period}:${sourceFeedCacheSegment(rawSource)}:${limit}`;
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.heatmap);
     if (cached) {
       recordD1Reads(env, "observatory_heatmap", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
     }
 
     const tally = newTally();
-    const rows = await session.prepare(`
-      SELECT lat, lng, severity, threat_type
-      FROM threats
-      WHERE lat IS NOT NULL AND lng IS NOT NULL
-        AND lat != 0 AND lng != 0
-        AND created_at >= datetime('now', ?)
-      LIMIT ?
-    `).bind(interval, limit).all<{
-      lat: number; lng: number; severity: string | null; threat_type: string | null;
-    }>();
+    const rows = await session.prepare(HEATMAP_SQL(sf.sql))
+      .bind(windowStart, ...sf.params, limit)
+      .all<{ lat: number; lng: number; severity: string; threat_type: string; weight: number }>();
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results ?? [] };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 });
+    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.heatmap);
     recordD1Reads(env, "observatory_heatmap", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -847,8 +1039,27 @@ export async function handleObservatoryHeatmap(request: Request, env: Env): Prom
   }
 }
 
+/** Heatmap query. Binds: window start, source params, limit. */
+export function HEATMAP_SQL(sourceSql: string): string {
+  return `
+      SELECT
+        ROUND(lat_bucket, 1) AS lat,
+        ROUND(lng_bucket, 1) AS lng,
+        LOWER(severity) AS severity,
+        threat_type,
+        SUM(threat_count) AS weight
+      FROM threat_cube_geo
+      WHERE hour_bucket >= ?
+        AND NOT (lat_bucket = 0 AND lng_bucket = 0)${sourceSql}
+      GROUP BY 1, 2, 3, 4
+      ORDER BY weight DESC, lat, lng, severity, threat_type
+      LIMIT ?
+    `;
+}
+
 // ── GET /api/observatory/operations ─────────────────────────────────────────
-// Lightweight unauthenticated operations list for the Observatory sidebar
+// Lightweight operations list for the Observatory sidebar (staff-only, like
+// every route here). `limit` 1..10 (default 5).
 export async function handleObservatoryOperations(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -856,7 +1067,7 @@ export async function handleObservatoryOperations(request: Request, env: Env): P
   try {
     const url = new URL(request.url);
     const status = url.searchParams.get("status");
-    const limit = Math.min(10, parseInt(url.searchParams.get("limit") ?? "5", 10));
+    const limit = parseObservatoryLimit(url.searchParams.get("limit"), 5, 10);
 
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -871,7 +1082,7 @@ export async function handleObservatoryOperations(request: Request, env: Env): P
 
     // KV cache: lightweight query but fires on every Observatory mount — cache for 15 minutes.
     const cacheKey = `observatory_operations:${status ?? "all"}:${limit}`;
-    const cached = await env.CACHE.get(cacheKey);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.operations);
     if (cached) {
       recordD1Reads(env, "observatory_operations", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -896,7 +1107,7 @@ export async function handleObservatoryOperations(request: Request, env: Env): P
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results ?? [] };
-    await env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 900 });
+    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.operations);
     recordD1Reads(env, "observatory_operations", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {

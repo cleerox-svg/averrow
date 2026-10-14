@@ -45,7 +45,8 @@ import { reapOrphanFeedPullHistory } from '../lib/feed-pull-reaper';
 import { reapOrphanAgentRuns } from '../lib/agent-runs-reaper';
 import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, buildStatusCubeForHour, buildArcsCubeForHour, getCubeSourceWatermark } from '../lib/cube-builder';
 import type { CubeBuildResult } from '../lib/cube-builder';
-import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive } from '../handlers/observatory';
+import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryHeatmap } from '../handlers/observatory';
+import { markCacheRefresh } from '../lib/cache-refresh';
 import { handleDashboardOverview } from '../handlers/dashboard';
 import { handleListAgents } from '../handlers/agents';
 import { handleAdminDashboard } from '../handlers/admin';
@@ -77,7 +78,7 @@ export const NAVIGATOR_LEGACY_AGENT_ID = 'fast_tick';
 // the client's request key.
 //
 // Phases (cadence + budget gating live in runNavigatorImpl, unchanged):
-//   A  — every 10 min (Observatory landing: globe 7d + desktop side panel)
+//   A  — every 10 min (Observatory landing: globe 7d + heatmap 7d + desktop side panel)
 //   A2 — every 15 min (Observatory 24h/30d period toggles)
 //   B  — every 15 min (Campaigns, Agents, Feeds, admin dashboard, MCP probe)
 //   C  — every 30 min (Brands + Threat Actors pages)
@@ -111,13 +112,16 @@ const DASHBOARD_WARM_CTX: AuthContext = {
 
 export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // ── Phase A — Observatory landing (7d default) ──
-  // The ops client also sends `source_feed=` (and `limit=2000` on nodes);
-  // the handlers normalise empty source_feed to the `all` key segment and
-  // nodes does not key on limit, so the param-less warm is the same key.
+  // The ops client also sends `source_feed=` (and `limit=2000` on nodes,
+  // `limit=10000` on heatmap); the handlers normalise empty / absent / `all`
+  // source_feed to the `all` key segment and default an absent limit to the
+  // same clamped value the client sends, so the param-less warm is the same
+  // key.
   { phase: 'A', path: '/api/observatory/nodes?period=7d', consumer: 'ops ObservatoryV3 + SidePanel (useObservatoryThreats)', handler: handleObservatoryNodes },
   { phase: 'A', path: '/api/observatory/arcs?period=7d', consumer: 'ops ObservatoryV3 (useObservatoryArcs)', handler: handleObservatoryArcs },
   { phase: 'A', path: '/api/observatory/stats?period=7d', consumer: 'ops ObservatoryV3 + SidePanel (useObservatoryStats); MCP smoke probe', handler: handleObservatoryStats },
   { phase: 'A', path: '/api/observatory/live?limit=8', consumer: 'ops SidePanel LiveFeedWidget', handler: handleObservatoryLive },
+  { phase: 'A', path: '/api/observatory/heatmap?period=7d', consumer: 'ops ObservatoryV3 HEATMAP mode (useObservatoryHeatmap)', handler: handleObservatoryHeatmap },
   { phase: 'A', path: '/api/v1/operations?limit=4&offset=0&status=active', consumer: 'ops SidePanel OperationsWidget (useOperations)', handler: handleListOperations },
 
   // ── Phase A2 — Observatory alternate periods ──
@@ -598,9 +602,13 @@ async function runNavigatorImpl(
 
   // ── 4. Cache pre-warming ──
   // Call handler functions with synthetic requests to populate KV caches.
-  // Each handler checks KV (miss on first call after TTL), runs DB queries,
-  // stores result in KV, returns response (discarded here). Next real user
-  // request hits warm KV cache instead of cold DB queries.
+  // Each request is passed through markCacheRefresh() (lib/cache-refresh.ts —
+  // an in-process WeakSet marker no HTTP caller can set). Handlers that
+  // honour it (the Observatory ones) treat the warm as refresh-ahead: they
+  // recompute and rewrite the key once it is within CACHE_REFRESH_MARGIN_S of
+  // expiry instead of returning the cached copy, so a key the landing page
+  // reads never lapses between warms. Handlers that don't honour it keep the
+  // old fill-on-miss behaviour.
   //
   // Tiered by scheduled minute. Navigator fires every 5 min, but only the
   // Observatory 7d hot path needs that cadence — it's what the landing
@@ -615,15 +623,15 @@ async function runNavigatorImpl(
   //   Phase C   — every 30 min (Brands + Threat Actors)
   //
   // The exact targets (and the consumer each serves) are the module-level
-  // NAVIGATOR_WARM_TARGETS table — 21 warms across the four phases.
+  // NAVIGATOR_WARM_TARGETS table — 22 warms across the four phases.
   //
   // Math over a 30-day month if Navigator runs clean (*/5 cron = 8,640
   // ticks; the minute gates below pick the subset each phase runs on):
-  //   A:  5 warms × 4,320 ticks (minute % 10) = 21,600
+  //   A:  6 warms × 4,320 ticks (minute % 10) = 25,920
   //   A2: 6 warms × 2,880 ticks (minute % 15) = 17,280
   //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
   //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
-  // Total: ~61.9K warms/month, vs ~181K (21 × 8,640) if every target ran
+  // Total: ~66.2K warms/month, vs ~190K (22 × 8,640) if every target ran
   // every tick (-66%). Phase A throttled from every-5-min to every-10-min
   // as part of the D1-budget cleanup; pairs with the 15-min KV TTL on
   // Observatory nodes/stats so cold-load UX stays inside the cache window.
@@ -670,7 +678,7 @@ async function runNavigatorImpl(
       const results = await Promise.allSettled(
         NAVIGATOR_WARM_TARGETS
           .filter(t => t.phase === phase)
-          .map(t => t.handler(new Request(`https://averrow.com${t.path}`), env)),
+          .map(t => t.handler(markCacheRefresh(new Request(`https://averrow.com${t.path}`)), env)),
       );
       const ok = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
       cacheWarmFailed += results.length - ok;
