@@ -210,6 +210,7 @@ export function ObservatoryV3() {
     needs, period, source, actorId,
     timelineCountry: sel?.kind === 'country' ? sel.id : null,
     replayNowMs,
+    includeShared: state.shared,
   });
 
   // Re-pin the window whenever the period/source changes or fresh arcs / moves arrive.
@@ -303,10 +304,14 @@ export function ObservatoryV3() {
     () => (drill?.kind === 'node' ? { kind: 'node', node: drill.node } : drill?.kind === 'arc' ? { kind: 'arc', arc: drill.arc } : null),
     [drill],
   );
+  /** A panel row under the pointer: its operation's links are previewed on the map (nothing is selected). */
+  const [previewOpId, setPreviewOpId] = useState<string | null>(null);
+  const onPanelPreview = useCallback((t: DrillTarget | null) => setPreviewOpId(t && t.kind === 'operation' ? t.id : null), []);
   const lensSel = useMemo<LensSelection>(() => {
-    if (!drill) return NO_SELECTION;
+    if (!drill) return previewOpId ? { ...NO_SELECTION, previewOpId } : NO_SELECTION;
     return {
       ...NO_SELECTION,
+      previewOpId,
       opId: drill.kind === 'operation' ? drill.id : null,
       providerId: drill.kind === 'provider' ? drill.id : null,
       country: drill.kind === 'country' ? drill.code : null,
@@ -314,7 +319,7 @@ export function ObservatoryV3() {
       movementId: drill.kind === 'movement' ? drill.id : null,
       actorId: drill.kind === 'actor' ? drill.id : null,
     };
-  }, [drill]);
+  }, [drill, previewOpId]);
 
   // ─── Right slot ──
   const panelOpen = (panelPref ?? layout.panelStartsOpen) && hasPanel;
@@ -613,6 +618,8 @@ export function ObservatoryV3() {
           : lens === 'movement' ? L.movementsQ
             : lens === 'actors' ? L.actorsQ : fast ? L.velocityQ : null;
   // The Actors lens needs its list for the panel even before the legend asks for it.
+  const ex = L.operationsQ.data?.meta?.excluded;
+  const excludedTotal = ex ? (ex.shared_asn ?? 0) + (ex.hub_ip ?? 0) + (ex.ip_reputation ?? 0) : 0;
   const lensPanel = (placement: 'dock' | 'overlay' | 'sheet') => (
     panelSection && panelQuery ? (
       <LensPanel
@@ -625,6 +632,21 @@ export function ObservatoryV3() {
         placement={placement}
         question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
         note={takedownNote}
+        onPreview={lens === 'operations' ? onPanelPreview : undefined}
+        aside={lens === 'operations' && (excludedTotal > 0 || state.shared) ? (
+          <div className="flex flex-col gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            {excludedTotal > 0 && <span role="status">{`${excludedTotal.toLocaleString()} shared-infrastructure ${excludedTotal === 1 ? 'cluster' : 'clusters'} hidden`}</span>}
+            <button
+              type="button"
+              onClick={() => update({ shared: !state.shared })}
+              aria-pressed={state.shared}
+              className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
+              style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              {state.shared ? 'Hide shared infrastructure' : 'Show shared infrastructure'}
+            </button>
+          </div>
+        ) : undefined}
       />
     ) : (
       <SidePanel

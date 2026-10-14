@@ -7,6 +7,7 @@
  * over the map under the toolbar on tablets, a peek sheet on phones.
  */
 
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import type { DrillTarget } from '../lib/drill';
 import { LENS_DEFS, type LensId } from '../lib/lenses';
@@ -26,6 +27,10 @@ export interface LensPanelProps {
   question?: string;
   /** A one-line status under the question (e.g. a link to a view this role cannot see was set aside). */
   note?: string;
+  /** A row's target is under the pointer / focused (null when it leaves): the map previews it. */
+  onPreview?: (target: DrillTarget | null) => void;
+  /** Extra content after the list (e.g. the Operations lens's shared-infrastructure toggle). */
+  aside?: ReactNode;
   className?: string;
 }
 
@@ -33,7 +38,7 @@ const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = 
   rising: 'var(--sev-critical-text)', falling: 'var(--sev-info-text)', neutral: 'var(--text-primary)',
 };
 
-export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, className }: LensPanelProps) {
+export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside, className }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
     <div className="flex flex-col gap-3 p-4">
@@ -75,6 +80,10 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                     <button
                       type="button"
                       onClick={() => onSelect(row.target!)}
+                      onMouseEnter={onPreview ? () => onPreview(row.target!) : undefined}
+                      onMouseLeave={onPreview ? () => onPreview(null) : undefined}
+                      onFocus={onPreview ? () => onPreview(row.target!) : undefined}
+                      onBlur={onPreview ? () => onPreview(null) : undefined}
                       className="ds-focusable w-full flex items-center gap-3 rounded-md px-1.5 py-1.5 min-h-[44px] sm:min-h-[40px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors motion-reduce:transition-none"
                       style={{ background: 'none', border: 'none', cursor: 'pointer' }}
                     >
@@ -89,6 +98,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
           </ul>
         )}
       </section>
+      {aside}
     </div>
   );
 

@@ -35,10 +35,12 @@ export interface UseLensDataArgs {
   timelineCountry: string | null;
   /** Replay window end (ms): movement trails are timed inside [replayNowMs - period, replayNowMs], like the particles. */
   replayNowMs: number;
+  /** Operations lens: also return the clusters flagged as shared infrastructure. */
+  includeShared?: boolean;
 }
 
-export function useLensData({ needs, period, source, actorId, timelineCountry, replayNowMs }: UseLensDataArgs) {
-  const operationsQ = useOperationsGeo({ enabled: needs.operations });
+export function useLensData({ needs, period, source, actorId, timelineCountry, replayNowMs, includeShared = false }: UseLensDataArgs) {
+  const operationsQ = useOperationsGeo({ enabled: needs.operations, includeShared });
   const movementsQ = useMovements({ enabled: needs.movements, period });
   const providersQ = useProvidersGeo({ enabled: needs.providers });
   const overindexQ = useOverindex({ enabled: needs.overindex, period });

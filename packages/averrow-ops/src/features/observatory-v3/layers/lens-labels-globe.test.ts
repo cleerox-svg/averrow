@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { OperationGeo } from '@/hooks/useObservatoryLenses';
-import { buildOperationsModel } from '../lib/lens/operations';
+import { buildOperationsModel, visibleEdges } from '../lib/lens/operations';
 import { edgeLabelSources, hostLabelSources, placeLensLabels, stablePlacement, type PlacedLabels, type Project } from './lens-labels';
 import { buildHostingModel } from '../lib/lens/hosting';
 
@@ -13,7 +13,7 @@ const op = (id: string, countries: string[]): OperationGeo => ({
 describe('edge labels on a globe (ends past the horizon)', () => {
   const size = { width: 1000, height: 700 };
   const model = buildOperationsModel([op('a', ['US', 'DE'])], []);
-  const sources = edgeLabelSources(model, '');
+  const sources = edgeLabelSources(visibleEdges(model, null), '');
   const same = (a: readonly number[], b: readonly number[]) => a[0] === b[0] && a[1] === b[1];
   const near: Project = p => ({ x: 500 + p[0] * 3, y: 350 - p[1] * 2 });
 
@@ -42,7 +42,7 @@ describe('edge labels on a globe (ends past the horizon)', () => {
 describe('limb fade: the projector\'s fade rides on the placed label', () => {
   const size = { width: 1000, height: 700 };
   const model = buildOperationsModel([op('a', ['US', 'DE'])], []);
-  const sources = edgeLabelSources(model, '');
+  const sources = edgeLabelSources(visibleEdges(model, null), '');
   const near = (fade: number): Project => p => ({ x: 500 + p[0] * 3, y: 350 - p[1] * 2, fade });
 
   it('edge labels carry the fade of their anchor', () => {

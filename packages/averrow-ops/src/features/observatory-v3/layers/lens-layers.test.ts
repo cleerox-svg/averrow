@@ -95,12 +95,11 @@ describe('which layers are built', () => {
 });
 
 describe('animation inputs', () => {
-  it('passes animTime through (uniform-only per-frame change) and gives nodes a shared phase per component', () => {
+  it('passes animTime through (uniform-only per-frame change) and gives each country node its own phase', () => {
     const l = props(find(input({ operations: true }), 'ops-core', { seconds: 7.5, t: 0 }));
     expect(l.animTime).toBe(7.5);
     const model = input({ operations: true }).operations!;
-    const phases = new Map(model.nodes.map(n => [n.opId, n.phase]));
-    expect(phases.get('a')).not.toBe(phases.get('b'));
+    expect(new Set(model.nodes.map(n => n.phase)).size).toBeGreaterThan(1); // each country beats on its own phase
   });
   it('reduced motion: amplitude 0, solid edges, no trails, numbered hops', () => {
     const rm = input({ operations: true, movement: true, hosting: true }, { reducedMotion: true });
@@ -131,15 +130,15 @@ describe('animation inputs', () => {
 });
 
 describe('selection', () => {
-  it('dims everything outside the selected operation\'s component and brightens its edges', () => {
+  it('dims every country outside the selected operation\'s footprint', () => {
     const i = input({ operations: true }, { sel: { ...NO_SELECTION, opId: 'a' } });
     const core = props(find(i, 'ops-core'));
     const nodes = i.operations!.nodes;
-    const inGroup = nodes.find(n => n.opId === 'a')!;
-    const outGroup = nodes.find(n => n.opId === 'b')!;
+    const inGroup = nodes.find(n => n.country === 'NL')!;
+    const outGroup = nodes.find(n => n.country === 'US')!;
     const fill = core.getFillColor as (n: unknown) => number[];
     expect(fill(inGroup)[3]).toBeGreaterThan(fill(outGroup)[3]);
-    expect((core.updateTriggers as Props).getFillColor).toBe('g1');
+    expect((core.updateTriggers as Props).getFillColor).toBe('a');
   });
   it('highlights the selected provider and dims the others', () => {
     const i = input({ hosting: true }, { sel: { ...NO_SELECTION, providerId: 'p' } });
@@ -152,11 +151,11 @@ describe('selection', () => {
 });
 
 describe('picking', () => {
-  it('clicking a node / ring reports the object kind and id', () => {
+  it('clicking a country node opens that country (its drawer lists the operations); a ring reports the provider', () => {
     const i = input({ operations: true, hosting: true });
     const opClick = props(find(i, 'ops-core')).onClick as (info: { object: unknown }) => boolean;
     expect(opClick({ object: i.operations!.nodes[0] })).toBe(true);
-    expect(i.pick.click).toHaveBeenCalledWith({ kind: 'operation', id: i.operations!.nodes[0]!.opId });
+    expect(i.pick.click).toHaveBeenCalledWith({ kind: 'country', id: i.operations!.nodes[0]!.country });
     const hostClick = props(find(i, 'hosting-rings')).onClick as (info: { object: unknown }) => boolean;
     hostClick({ object: i.hosting!.rings[0] });
     expect(i.pick.click).toHaveBeenCalledWith({ kind: 'provider', id: i.hosting!.rings[0]!.id });
@@ -545,5 +544,67 @@ describe('takedown outcomes on the map', () => {
       expect(props(a).data).toBe(props(b).data);
       expect(props(find(i, 'hosting-rings', { seconds: 1, t: 1 })).data).toBe(props(find(i, 'hosting-rings', { seconds: 9, t: 9 })).data);
     });
+  });
+});
+
+describe('Operations lens on a realistic day (50 operations x 15 countries)', () => {
+  const HOT = ['US', 'DE', 'NL', 'GB', 'FR', 'SG', 'JP', 'AU', 'CA', 'BR', 'IN', 'RU', 'CN', 'HK', 'IE', 'SE', 'PL', 'IT', 'ES', 'ZA'];
+  const real = Array.from({ length: 50 }, (_, i) => op({
+    id: `op${i}`, threat_count: 1000 - i, countries: Array.from({ length: 15 }, (_, k) => HOT[(i * 3 + k * 2 + (k % 3)) % HOT.length]!),
+  }));
+  const model = buildOperationsModel(real, []);
+  const realInput = (extra: Partial<LensLayerInput> = {}) => input({ operations: true }, { operations: model, ...extra });
+  const dataOf = (i: LensLayerInput, id: string, f = { seconds: 1, t: 1 }) => props(find(i, id, f)).data as unknown[];
+
+  it('draws one node per country and a capped, small arc set', () => {
+    const i = realInput();
+    expect(dataOf(i, 'ops-core').length).toBe(model.nodes.length);
+    expect(dataOf(i, 'ops-core').length).toBeLessThanOrEqual(HOT.length);
+    expect(dataOf(i, 'ops-edges').length).toBeLessThanOrEqual(150);
+    expect(dataOf(i, 'ops-edges').length).toBeLessThan(80);
+  });
+  it('data identity is stable across frames (uniform-only per-frame change)', () => {
+    const i = realInput();
+    expect(dataOf(i, 'ops-edges', { seconds: 1, t: 1 })).toBe(dataOf(i, 'ops-edges', { seconds: 9, t: 99 }));
+    expect(dataOf(i, 'ops-core', { seconds: 1, t: 1 })).toBe(dataOf(i, 'ops-core', { seconds: 9, t: 99 }));
+  });
+  it('a selection draws only that operation\'s footprint', () => {
+    const i = realInput({ sel: { ...NO_SELECTION, opId: 'op20' } });
+    const edges = dataOf(i, 'ops-edges') as Array<{ opIds: string[] }>;
+    expect(edges.length).toBeGreaterThan(0);
+    expect(edges.every(e => e.opIds.includes('op20'))).toBe(true);
+  });
+  it('a previewed row adds its links as a STATIC thin layer (the dash animation stays on the main ones)', () => {
+    const i = realInput({ sel: { ...NO_SELECTION, previewOpId: 'op49' } });
+    const prev = props(find(i, 'ops-edges-preview'));
+    expect((prev.data as Array<{ opIds: string[] }>).some(e => e.opIds.includes('op49'))).toBe(true);
+    expect(prev.extensions).toEqual([]);
+    expect(prev.pickable).toBe(false);
+    expect((props(find(i, 'ops-edges')).extensions as unknown[]).length).toBe(1);
+    expect(ids(realInput())).not.toContain('ops-edges-preview');
+  });
+  it('arc width and opacity grow with the operations sharing the pair', () => {
+    const e = props(find(realInput(), 'ops-edges'));
+    const [light, heavy] = [{ opCount: 1 }, { opCount: 9 }];
+    expect((e.getWidth as (x: unknown) => number)(heavy)).toBeGreaterThan((e.getWidth as (x: unknown) => number)(light));
+    expect((e.getColor as (x: unknown) => number[])(heavy)[3]).toBeGreaterThan((e.getColor as (x: unknown) => number[])(light)[3]!);
+  });
+  it('on the globe the arcs are lifted great circles; flat arcs stay in one world copy', () => {
+    const flat = (props(find(realInput(), 'ops-edges')).getPath as (e: unknown) => number[][])((dataOf(realInput(), 'ops-edges') as unknown[])[0]);
+    expect(flat.every(p => p.length === 2 && Math.abs(p[0]!) <= 180)).toBe(true);
+    const g = realInput({ projection: 'globe' });
+    const path = (props(find(g, 'ops-edges')).getPath as (e: unknown) => number[][])((dataOf(g, 'ops-edges') as unknown[])[0]);
+    expect(path.every(p => p.length === 3)).toBe(true);
+    expect(Math.max(...path.map(p => p[2]!))).toBeGreaterThan(0);
+  });
+  it('a country node opens the country drawer; hover names the operations there', () => {
+    const i = realInput();
+    const core = props(find(i, 'ops-core'));
+    const object = model.nodes[0]!;
+    (core.onClick as (x: unknown) => boolean)({ object });
+    expect(i.pick.click).toHaveBeenCalledWith({ kind: 'country', id: object.country });
+    (core.onHover as (x: unknown) => void)({ object, x: 1, y: 2 });
+    const tip = (i.pick.hover as unknown as { mock: { lastCall: Array<{ lines: string[] }> } }).mock.lastCall[0]!;
+    expect(tip.lines[0]).toMatch(/\d+ operations?/);
   });
 });

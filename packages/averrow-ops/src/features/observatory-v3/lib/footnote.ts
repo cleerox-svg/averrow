@@ -11,7 +11,7 @@ export function lensFootnote(i: { lens: LensId; reducedMotion: boolean; motionOn
   switch (i.lens) {
     case 'threats': return i.fast ? 'Very fast nodes pulse' : 'Replaying attacks';
     case 'movement': return 'Replaying moves';
-    case 'operations': return 'Linked operations pulse together';
+    case 'operations': return 'Links: the top operations, or the selected one';
     case 'campaigns': return 'Dashes run adversary → target';
     case 'actors': return 'Brighter = higher confidence';
     default: return 'Animated';

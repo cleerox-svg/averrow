@@ -32,7 +32,7 @@ import {
 import { formatRatio } from '../lib/lens/baseline';
 import { formatHours, hasRate, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED } from '../lib/lens/takedowns';
 import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
-import { kindLabel, normalizeConfidence } from '../lib/lens/operations';
+import { kindLabel, normalizeConfidence, operationEvidence } from '../lib/lens/operations';
 import { trendClass } from '../lib/lens/hosting';
 import { confidenceBand, confidenceValue, type ConfidenceBand } from '../lib/lens/actors';
 import { useActorDetail } from '@/hooks/useObservatoryLenses';
@@ -363,7 +363,7 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
         badges={(
           <>
             {op.status && <Badge status={OP_STATUS[status as keyof typeof OP_STATUS] ?? 'pending'} size="md" label={op.status} />}
-            <Badge context="nexus" size="md" label={kindLabel(op.kind)} />
+            <Badge context="nexus" size="md" label={operationEvidence(op)} />
           </>
         )}
         cta={{ label: 'Open operation →', to: `/campaigns/${encodeURIComponent(op.id)}` }}

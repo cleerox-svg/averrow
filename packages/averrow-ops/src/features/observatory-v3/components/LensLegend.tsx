@@ -117,11 +117,11 @@ export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }
       {m && m.nodes.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Operation in a country. Nodes of one operator pulse in unison.</Row>
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Linked by shared evidence. The label says what: ◆ cert, ● IP, ▲ ASN ×count. Hover a link for the full detail.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Country with operations: bigger = more of them there. Click for the list.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>One link per country pair, thicker = more operations share it. The label says the evidence: ◆ cert, ● IP, ▲ ASN ×count.</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
-            {m.placedOps.size} operations · {m.nodes.length} country nodes · {m.edges.length} links
+            {m.placedOps.size} operations · {m.nodes.length} countries · links drawn for the top {m.topOpIds.length}; select one for its whole footprint
             {m.unplaced > 0 && ` · ${m.unplaced} country entries not placeable`}
           </div>
         </>

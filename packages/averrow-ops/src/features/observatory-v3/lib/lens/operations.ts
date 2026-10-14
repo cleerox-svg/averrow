@@ -1,48 +1,58 @@
 /**
- * Operations lens model: NEXUS operations as pulsing nodes (one per operation
- * country) joined by evidence-labelled edges.
+ * Operations lens model: NEXUS operations as ONE node per country, joined by ONE arc per country pair.
  *
- *  - A node per (operation, country), at the country centroid (operations that
- *    share a country are spread so none is hidden).
- *  - Every node of one component (or, without a component, one operation) shares
- *    a heartbeat phase, so the eye groups them without reading labels.
- *  - Edges: within an operation, a star from its first country (the cluster
- *    spans those countries by definition); between operations, the component
- *    edges (shared cert serial / SAN / IP) carrying the ASNs they share.
- *  - Selecting an operation highlights its whole component.
+ * With real data (50 operations x ~15 countries, heavy overlap on US / DE / NL / GB ...) a node or an arc per
+ * (operation, country) is thousands of overlapping marks: ropes of dashed arcs and solid blobs. So:
+ *  - a node per COUNTRY at its centroid, sized by how many operations are there (the drawer lists them);
+ *  - an arc per unordered country PAIR, its width / opacity by how many operations share it; an operation
+ *    contributes a star from the busiest country it spans (it spans those countries by definition);
+ *  - the default view draws links only for the few biggest operations; selecting one draws its whole footprint
+ *    and dims everything else; hovering a panel row previews its links; never more than MAX_EDGES arcs;
+ *  - flat arcs are drawn once, inside the primary world copy, with a lift capped by their length (they stay on
+ *    the map); the globe draws the lifted great circle (layers/lens-layers.ts).
  */
 
 import type { ComponentGeo, OperationGeo } from '@/hooks/useObservatoryLenses';
-import { greatCirclePath } from '../../anim/great-circle';
 import { cumulativeDistances } from '../../anim/dash-flow-extension';
 import { phaseForKey } from '../../anim/pulse';
-import { countryCenter, groupIndexes, groupSizes, iso2, placeAround, stepFor } from './placement';
+import { countryCenter, iso2 } from './placement';
 import type { LngLat } from '@/lib/country-centroids';
 
+/** Links are drawn for this many biggest operations unless one is selected. */
+export const TOP_OPERATIONS = 5;
+/** Hard cap on arcs drawn at once (degrades by dropping the weakest pairs). */
+export const MAX_EDGES = 150;
+
 export interface OpNode {
+  /** The country code. */
   id: string;
-  opId: string;
-  /** Heartbeat / highlight group: the component id, else the operation id. */
-  group: string;
   country: string;
   position: LngLat;
-  /** 0..1 */
-  confidence: number | null;
+  /** Operations present (ids, biggest first). */
+  opIds: string[];
+  opCount: number;
   threats: number;
+  /** 0..1, the best-evidenced operation here. */
+  confidence: number | null;
   name: string;
   phase: number;
 }
 
 export interface OpEdge {
+  /** `AA-BB` (country codes, sorted). */
   id: string;
-  group: string;
-  /** Operation ids at either end (a single id for an intra-operation edge). */
+  a: string;
+  b: string;
+  /** Operations sharing this pair (ids, biggest first). */
   opIds: string[];
+  opCount: number;
+  threats: number;
   kind: string;
   /** Full evidence text (tooltip). */
   label: string;
   /** Glyph + a word or two for the map ("◆ cert", "● IP", "▲ ASN ×3"). */
   short: string;
+  /** Flat-map path: inside [-180, 180], one world copy, lift capped by length. */
   path: LngLat[];
   distances: number[];
   midpoint: LngLat;
@@ -50,7 +60,10 @@ export interface OpEdge {
 }
 
 export interface OperationsModel {
+  /** One per country. */
   nodes: OpNode[];
+  nodeByCc: Map<string, OpNode>;
+  /** Every pair any operation spans (capped at MAX_EDGES, strongest first). */
   edges: OpEdge[];
   /** Operations (by id) with at least one placeable country. */
   placedOps: Set<string>;
@@ -59,9 +72,14 @@ export interface OperationsModel {
   byId: Map<string, OperationGeo>;
   /** opId -> group (component or itself). */
   groupOf: Map<string, string>;
+  /** opId -> its placeable countries, in the order the server gave them. */
+  countriesOf: Map<string, string[]>;
+  /** The biggest operations, whose links the default view draws. */
+  topOpIds: string[];
 }
 
 export const KIND_LABELS: Record<string, string> = {
+  cert: 'shared cert',
   cert_serial: 'shared cert serial',
   cert_san: 'shared cert SAN',
   per_ip: 'shared IP',
@@ -94,10 +112,10 @@ export function edgeLabel(kind: string | null, asns: readonly string[]): string 
 
 /** Evidence glyphs: distinct shapes, all in the geometric-shapes block every mono font carries. */
 const KIND_GLYPH: Record<string, string> = {
-  cert_serial: '◆', cert_san: '◆', per_ip: '●', subnet: '■', registrar: '◇', asn: '▲',
+  cert: '◆', cert_serial: '◆', cert_san: '◆', per_ip: '●', subnet: '■', registrar: '◇', asn: '▲',
 };
 const KIND_SHORT: Record<string, string> = {
-  cert_serial: 'cert', cert_san: 'SAN', per_ip: 'IP', subnet: 'subnet', registrar: 'registrar', asn: 'ASN',
+  cert: 'cert', cert_serial: 'cert', cert_san: 'SAN', per_ip: 'IP', subnet: 'subnet', registrar: 'registrar', asn: 'ASN',
   app_store: 'app store', dark_web: 'dark web',
 };
 
@@ -110,14 +128,85 @@ export function edgeShortLabel(kind: string | null, asns: readonly string[]): st
   return `${glyph} ${word}${times}`;
 }
 
-function arcPath(a: LngLat, b: LngLat): { path: LngLat[]; distances: number[]; midpoint: LngLat } {
-  const path = greatCirclePath(a, b, 24);
-  return { path, distances: cumulativeDistances(path), midpoint: path[Math.floor(path.length / 2)]! };
+/**
+ * A flat-map arc between two centroids: one polyline inside the primary world copy (no wrapping across the
+ * antimeridian, so it is never drawn twice), bowed toward the nearer pole by a lift that is a fraction of its
+ * length and capped, and kept below the map's top edge.
+ */
+export function flatArc(a: LngLat, b: LngLat, segments = 20): { path: LngLat[]; distances: number[]; midpoint: LngLat } {
+  const dLng = b[0] - a[0];
+  const dLat = b[1] - a[1];
+  const len = Math.hypot(dLng, dLat);
+  const lift = Math.min(10, len * 0.14);
+  const dir = (a[1] + b[1]) / 2 >= 0 ? 1 : -1;
+  const path: LngLat[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const lat = a[1] + dLat * t + dir * lift * 4 * t * (1 - t);
+    path.push([a[0] + dLng * t, Math.max(-78, Math.min(78, lat))]);
+  }
+  return { path, distances: cumulativeDistances(path), midpoint: path[Math.floor(segments / 2)]! };
+}
+
+const asEvidence = (o: OperationGeo): string => o.evidence_tier ?? o.kind;
+
+/** One operation's evidence label for the panel / drawer: its tier when the server sends one, else its kind. */
+export function operationEvidence(o: Pick<OperationGeo, 'evidence_tier' | 'kind' | 'shared_infra'>): string {
+  const base = kindLabel(o.evidence_tier ?? o.kind);
+  return o.shared_infra ? `${base} · shared infrastructure` : base;
+}
+
+type Pair = { a: string; b: string; ops: Map<string, OperationGeo> };
+
+/** Aggregate the stars of `opIds` into one edge per country pair, strongest first, at most MAX_EDGES. */
+export function aggregateEdges(m: OperationsModel, opIds: readonly string[]): OpEdge[] {
+  const pairs = new Map<string, Pair>();
+  for (const id of opIds) {
+    const op = m.byId.get(id);
+    const list = m.countriesOf.get(id);
+    if (!op || !list || list.length < 2) continue;
+    // The star's centre is the busiest country the operation spans, so operations that overlap share their arcs.
+    const hub = list.reduce((best, cc) => {
+      const w = m.nodeByCc.get(cc)!.opCount;
+      const bw = m.nodeByCc.get(best)!.opCount;
+      return w > bw || (w === bw && cc < best) ? cc : best;
+    });
+    for (const other of list) {
+      if (other === hub) continue;
+      const [a, b] = hub < other ? [hub, other] : [other, hub];
+      const key = `${a}-${b}`;
+      let p = pairs.get(key);
+      if (!p) { p = { a, b, ops: new Map() }; pairs.set(key, p); }
+      p.ops.set(id, op);
+    }
+  }
+  const out: OpEdge[] = [];
+  for (const [key, p] of pairs) {
+    const ops = [...p.ops.values()].sort((x, y) => y.threat_count - x.threat_count || x.id.localeCompare(y.id));
+    const lead = ops[0]!;
+    const na = m.nodeByCc.get(p.a)!;
+    const nb = m.nodeByCc.get(p.b)!;
+    if (na.position[0] === nb.position[0] && na.position[1] === nb.position[1]) continue;
+    const kind = asEvidence(lead);
+    const g = flatArc(na.position, nb.position);
+    out.push({
+      id: key, a: p.a, b: p.b,
+      opIds: ops.map(o => o.id), opCount: ops.length,
+      threats: ops.reduce((n, o) => n + o.threat_count, 0),
+      kind,
+      label: edgeLabel(kind, lead.asns) + (ops.length > 1 ? ` · ${ops.length} operations` : ''),
+      short: edgeShortLabel(kind, lead.asns),
+      sharedAsns: lead.asns.slice(0, 20),
+      ...g,
+    });
+  }
+  out.sort((x, y) => y.opCount - x.opCount || y.threats - x.threats || x.id.localeCompare(y.id));
+  return out.length > MAX_EDGES ? out.slice(0, MAX_EDGES) : out;
 }
 
 export function buildOperationsModel(
   operations: readonly OperationGeo[],
-  components: readonly ComponentGeo[],
+  _components: readonly ComponentGeo[] = [],
 ): OperationsModel {
   const byId = new Map<string, OperationGeo>();
   const groupOf = new Map<string, string>();
@@ -126,96 +215,71 @@ export function buildOperationsModel(
     groupOf.set(op.id, op.component_id ?? op.id);
   }
 
-  // Stable order: biggest operations first (they claim the centre of a shared country).
   const ordered = [...operations].sort((a, b) => b.threat_count - a.threat_count || a.id.localeCompare(b.id));
-  const entries: Array<{ op: OperationGeo; country: string }> = [];
+  const countriesOf = new Map<string, string[]>();
+  const perCountry = new Map<string, OperationGeo[]>();
   let unplaced = 0;
   for (const op of ordered) {
     const seen = new Set<string>();
+    const list: string[] = [];
     for (const raw of op.countries) {
       const cc = iso2(raw);
       if (!cc || seen.has(cc)) continue;
       seen.add(cc);
       if (!countryCenter(cc)) { unplaced++; continue; }
-      entries.push({ op, country: cc });
+      list.push(cc);
+      const there = perCountry.get(cc);
+      if (there) there.push(op); else perCountry.set(cc, [op]);
     }
+    if (list.length > 0) countriesOf.set(op.id, list);
   }
 
-  const idx = groupIndexes(entries, e => e.country);
-  const sizes = groupSizes(entries, e => e.country);
-  const nodes: OpNode[] = entries.map((e, i) => {
-    const group = groupOf.get(e.op.id) ?? e.op.id;
-    return {
-      id: `${e.op.id}|${e.country}`,
-      opId: e.op.id,
-      group,
-      country: e.country,
-      position: placeAround(countryCenter(e.country)!, idx[i]!, stepFor(sizes[i]!, 1.4, 3), 3),
-      confidence: normalizeConfidence(e.op.confidence_score),
-      threats: e.op.threat_count,
-      name: e.op.name ?? e.op.id,
-      phase: phaseForKey(group),
-    };
-  });
+  const nodes: OpNode[] = [...perCountry.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([cc, ops]) => {
+      const confs = ops.map(o => normalizeConfidence(o.confidence_score)).filter((c): c is number => c !== null);
+      return {
+        id: cc, country: cc, position: countryCenter(cc)!,
+        opIds: ops.map(o => o.id), opCount: ops.length,
+        threats: ops.reduce((n, o) => n + o.threat_count, 0),
+        confidence: confs.length > 0 ? Math.max(...confs) : null,
+        name: ops.length === 1 ? (ops[0]!.name ?? ops[0]!.id) : `${ops.length} operations`,
+        phase: phaseForKey(cc),
+      };
+    });
+  const nodeByCc = new Map(nodes.map(n => [n.country, n]));
 
-  const nodesByOp = new Map<string, OpNode[]>();
-  for (const n of nodes) {
-    const list = nodesByOp.get(n.opId);
-    if (list) list.push(n); else nodesByOp.set(n.opId, [n]);
-  }
-
-  const edges: OpEdge[] = [];
-  // Intra-operation: a star from the first country.
-  for (const [opId, list] of nodesByOp) {
-    if (list.length < 2) continue;
-    const op = byId.get(opId)!;
-    const hub = list[0]!;
-    for (let i = 1; i < list.length; i++) {
-      const to = list[i]!;
-      const g = arcPath(hub.position, to.position);
-      edges.push({
-        id: `${opId}:${hub.country}-${to.country}`,
-        group: hub.group,
-        opIds: [opId],
-        kind: op.kind,
-        label: edgeLabel(op.kind, op.asns),
-        short: edgeShortLabel(op.kind, op.asns),
-        sharedAsns: op.asns.slice(0, 20),
-        ...g,
-      });
-    }
-  }
-  // Inter-operation: the component edges between returned operations.
-  for (const comp of components) {
-    for (const e of comp.edges) {
-      const a = nodesByOp.get(e.a)?.[0];
-      const b = nodesByOp.get(e.b)?.[0];
-      if (!a || !b) continue;
-      if (a.position[0] === b.position[0] && a.position[1] === b.position[1]) continue;
-      const g = arcPath(a.position, b.position);
-      edges.push({
-        id: `${comp.component_id}:${e.a}-${e.b}`,
-        group: comp.component_id,
-        opIds: [e.a, e.b],
-        kind: e.kind ?? 'other',
-        label: edgeLabel(e.kind, e.shared_asns),
-        short: edgeShortLabel(e.kind, e.shared_asns),
-        sharedAsns: e.shared_asns,
-        ...g,
-      });
-    }
-  }
-
-  return { nodes, edges, placedOps: new Set(nodesByOp.keys()), unplaced, byId, groupOf };
+  const model: OperationsModel = {
+    nodes, nodeByCc, edges: [], placedOps: new Set(countriesOf.keys()), unplaced, byId, groupOf, countriesOf,
+    topOpIds: ordered.filter(o => countriesOf.has(o.id)).slice(0, TOP_OPERATIONS).map(o => o.id),
+  };
+  model.edges = aggregateEdges(model, [...countriesOf.keys()]);
+  return model;
 }
 
-/** Groups to highlight for a selected operation (its whole component), or null when nothing is selected / it is unknown. */
-export function highlightGroup(model: OperationsModel, selectedOpId: string | null): string | null {
-  if (!selectedOpId) return null;
-  return model.groupOf.get(selectedOpId) ?? null;
+const visibleCache = new WeakMap<OperationsModel, Map<string, OpEdge[]>>();
+
+/**
+ * The arcs to draw: the selected operation's full footprint, else the top operations' links; a hovered panel
+ * row's links are added as a preview. Memoised per (model, selection, preview) so data identity is stable.
+ */
+export function visibleEdges(m: OperationsModel, selectedOpId: string | null, previewOpId: string | null = null): OpEdge[] {
+  const sel = selectedOpId && m.countriesOf.has(selectedOpId) ? selectedOpId : null;
+  const base = sel ? [sel] : m.topOpIds;
+  const ids = previewOpId && m.countriesOf.has(previewOpId) && !base.includes(previewOpId) ? [...base, previewOpId] : base;
+  const key = ids.join('|');
+  let inner = visibleCache.get(m);
+  if (!inner) { inner = new Map(); visibleCache.set(m, inner); }
+  let hit = inner.get(key);
+  if (!hit) {
+    if (inner.size >= 8) inner.delete(inner.keys().next().value as string);
+    hit = aggregateEdges(m, ids);
+    inner.set(key, hit);
+  }
+  return hit;
 }
 
-/** The operation node / edge dimming rule: everything outside the selected group fades. */
-export function isDimmed(group: string, selectedGroup: string | null): boolean {
-  return selectedGroup !== null && group !== selectedGroup;
+/** Whether a node belongs to the selected operation's footprint (everything else dims). */
+export function nodeInFootprint(n: OpNode, selectedOpId: string | null): boolean {
+  return selectedOpId === null || n.opIds.includes(selectedOpId);
 }

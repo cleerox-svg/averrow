@@ -36,6 +36,11 @@ export interface OperationGeo {
   asns: string[];
   last_seen: string | null;
   last_movement_pivot_at: string | null;
+  /** Backend filter fields: all optional, the UI works before and after they ship (unknown tiers read as the kind). */
+  evidence_tier?: string | null;
+  brand_fanout?: number | null;
+  shared_infra?: boolean;
+  hub?: boolean;
 }
 
 export interface ComponentEdge {
@@ -217,6 +222,8 @@ export interface LensMeta {
   country: string | null;
   /** velocity-nodes only: countries' fast counts dropped for lacking a centroid. */
   dropped_no_centroid: number | null;
+  /** operations-geo only: clusters left out by the backend's shared-infrastructure filters (optional: absent before it ships). */
+  excluded?: { shared_asn?: number; hub_ip?: number; ip_reputation?: number } | null;
 }
 
 export interface LensPayload<T> {
@@ -237,7 +244,13 @@ export function readLensMeta(raw: unknown): LensMeta {
     source_feed: str(m.source_feed),
     country: str(m.country),
     dropped_no_centroid: typeof m.dropped_no_centroid === 'number' ? m.dropped_no_centroid : null,
+    ...(m.excluded && typeof m.excluded === 'object' ? { excluded: readExcluded(m.excluded as Record<string, unknown>) } : null),
   };
+}
+
+const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+function readExcluded(e: Record<string, unknown>): NonNullable<LensMeta['excluded']> {
+  return { shared_asn: count(e.shared_asn), hub_ip: count(e.hub_ip), ip_reputation: count(e.ip_reputation) };
 }
 
 async function fetchLens<T>(url: string, signal: AbortSignal): Promise<LensPayload<T>> {
@@ -257,12 +270,12 @@ const LENS_POLL = { ...POLL, refetchInterval: 600_000, staleTime: 120_000 } as c
 
 export const OPERATIONS_GEO_LIMIT = 50;
 
-export function useOperationsGeo(opts: Opts & { limit?: number; status?: 'active' | 'all' } = {}): ObservatoryQueryResult<LensPayload<OperationsGeoData>> {
-  const { enabled = true, status = 'active', limit = OPERATIONS_GEO_LIMIT } = opts;
+export function useOperationsGeo(opts: Opts & { limit?: number; status?: 'active' | 'all'; includeShared?: boolean } = {}): ObservatoryQueryResult<LensPayload<OperationsGeoData>> {
+  const { enabled = true, status = 'active', limit = OPERATIONS_GEO_LIMIT, includeShared = false } = opts;
   const safe = clampLimit(limit, 1, 50);
   return shape(useQuery({
-    queryKey: observatoryKeys.lens('operations-geo', { status, limit: safe }),
-    queryFn: ({ signal }) => fetchLens<OperationsGeoData>(buildObservatoryUrl('/api/observatory/operations-geo', { status, limit: safe }), signal),
+    queryKey: observatoryKeys.lens('operations-geo', { status, limit: safe, ...(includeShared ? { shared: 1 } : null) }),
+    queryFn: ({ signal }) => fetchLens<OperationsGeoData>(buildObservatoryUrl('/api/observatory/operations-geo', { status, limit: safe, ...(includeShared ? { include_shared: 1 } : null) }), signal),
     enabled,
     ...LENS_POLL,
   }));

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import type { OperationGeo, ComponentGeo } from '@/hooks/useObservatoryLenses';
-import { edgeLabel, buildOperationsModel, highlightGroup, isDimmed, normalizeConfidence, kindLabel } from './operations';
+import type { OperationGeo } from '@/hooks/useObservatoryLenses';
+import {
+  edgeLabel, buildOperationsModel, visibleEdges, aggregateEdges, flatArc, nodeInFootprint, operationEvidence, normalizeConfidence, kindLabel,
+  MAX_EDGES, TOP_OPERATIONS,
+} from './operations';
 import { placeAround, spreadOffset, groupIndexes, iso2 } from './placement';
 import { getCountryCentroid } from '@/lib/country-centroids';
 
@@ -36,52 +39,141 @@ describe('placement', () => {
 describe('buildOperationsModel', () => {
   const ops = [
     op({ id: 'a', component_id: 'c1', countries: ['NL', 'MD', 'SC'], asns: ['AS1', 'AS2', 'AS3'], threat_count: 50 }),
-    op({ id: 'b', component_id: 'c1', countries: ['NL'], kind: 'cert_serial', threat_count: 20 }),
+    op({ id: 'b', component_id: 'c1', countries: ['NL', 'MD'], kind: 'cert_serial', threat_count: 20 }),
     op({ id: 'c', countries: ['US', 'ZZ'], threat_count: 5 }),
   ];
-  const comps: ComponentGeo[] = [{
-    component_id: 'c1', operation_ids: ['a', 'b'], countries: ['NL', 'MD', 'SC'],
-    edges: [{ a: 'a', b: 'b', kind: 'cert_serial', shared_asns: ['AS9'] }],
-  }];
-  const m = buildOperationsModel(ops, comps);
+  const m = buildOperationsModel(ops, []);
 
-  it('makes one node per operation country at the centroid, spreading operations that share a country', () => {
+  it('makes ONE node per country, at the centroid, counting the operations there', () => {
     const nl = m.nodes.filter(n => n.country === 'NL');
-    expect(nl).toHaveLength(2);
-    expect(nl[0].position).toEqual(getCountryCentroid('NL'));
-    expect(nl[1].position).not.toEqual(nl[0].position);
-    expect(m.nodes.filter(n => n.opId === 'a')).toHaveLength(3);
+    expect(nl).toHaveLength(1);
+    expect(nl[0]!.position).toEqual(getCountryCentroid('NL'));
+    expect(nl[0]!.opCount).toBe(2);
+    expect(nl[0]!.opIds).toEqual(['a', 'b']); // biggest first
+    expect(nl[0]!.threats).toBe(70);
+    expect(m.nodes.map(n => n.country).sort()).toEqual(['MD', 'NL', 'SC', 'US']);
   });
   it('drops countries without a centroid and counts them', () => {
     expect(m.nodes.some(n => n.country === 'ZZ')).toBe(false);
     expect(m.unplaced).toBe(1);
   });
-  it('nodes of one component share a heartbeat phase; others differ', () => {
-    const phases = new Map(m.nodes.map(n => [n.opId, n.phase]));
-    expect(phases.get('a')).toBe(phases.get('b'));
-    expect(phases.get('c')).not.toBe(phases.get('a'));
+  it('makes ONE arc per unordered country pair, however many operations share it', () => {
+    const nlmd = m.edges.filter(e => e.id === 'MD-NL');
+    expect(nlmd).toHaveLength(1);
+    expect(nlmd[0]!.opCount).toBe(2);
+    expect(nlmd[0]!.opIds).toEqual(['a', 'b']);
+    expect(new Set(m.edges.map(e => e.id)).size).toBe(m.edges.length);
+    expect(m.edges.find(e => e.id === 'MD-SC')!.opCount).toBe(1);
   });
-  it('builds a star within an operation labelled by kind + ASNs, and component edges labelled by shared evidence', () => {
-    const intra = m.edges.filter(e => e.opIds.length === 1);
-    expect(intra).toHaveLength(2); // NL hub -> MD, SC
-    expect(intra[0].label).toBe('same ASN · AS1 AS2 +1');
-    const inter = m.edges.find(e => e.opIds.length === 2)!;
-    expect(inter.label).toBe('shared cert serial · AS9');
-    expect(inter.distances).toHaveLength(inter.path.length);
-    expect(inter.distances[0]).toBe(0);
+  it('labels an arc by its lead operation\'s evidence, and says how many operations share it', () => {
+    const e = m.edges.find(e => e.id === 'MD-NL')!;
+    expect(e.label).toBe('same ASN · AS1 AS2 +1 · 2 operations');
+    expect(e.distances).toHaveLength(e.path.length);
+    expect(e.distances[0]).toBe(0);
   });
-  it('highlights the whole component of a selected operation and dims the rest', () => {
-    const g = highlightGroup(m, 'b');
-    expect(g).toBe('c1');
-    expect(isDimmed('c1', g)).toBe(false);
-    expect(isDimmed('c', g)).toBe(true);
-    expect(isDimmed('c', null)).toBe(false);
-    expect(highlightGroup(m, 'nope')).toBeNull();
+  it('the default view links only the biggest operations; a selection shows only its footprint', () => {
+    expect(m.topOpIds).toEqual(['a', 'b', 'c']);
+    expect(visibleEdges(m, 'b').map(e => e.id)).toEqual(['MD-NL']);
+    expect(visibleEdges(m, 'b').every(e => e.opIds.includes('b'))).toBe(true);
+    expect(visibleEdges(m, 'nope')).toBe(visibleEdges(m, null)); // an unknown id is no selection
+  });
+  it('a hovered row\'s links are previewed on top of the default view; identity is stable per input', () => {
+    const many = buildOperationsModel(Array.from({ length: 8 }, (_, i) => op({ id: `o${i}`, countries: i % 2 ? ['US', 'JP'] : ['DE', 'BR'], threat_count: 100 - i })), []);
+    const base = visibleEdges(many, null);
+    const withPreview = visibleEdges(many, null, 'o7');
+    expect(withPreview.length).toBeGreaterThanOrEqual(base.length);
+    expect(withPreview.some(e => e.opIds.includes('o7'))).toBe(true);
+    expect(visibleEdges(many, null, 'o7')).toBe(withPreview);
+    expect(visibleEdges(many, null)).toBe(base);
+  });
+  it('nodes of the selected footprint stay lit, the rest dim', () => {
+    const nl = m.nodeByCc.get('NL')!;
+    const us = m.nodeByCc.get('US')!;
+    expect(nodeInFootprint(nl, 'a')).toBe(true);
+    expect(nodeInFootprint(us, 'a')).toBe(false);
+    expect(nodeInFootprint(us, null)).toBe(true);
   });
   it('is empty-safe', () => {
     const e = buildOperationsModel([], []);
     expect(e.nodes).toEqual([]);
     expect(e.edges).toEqual([]);
+    expect(visibleEdges(e, null)).toEqual([]);
+  });
+});
+
+describe('flat arcs stay on the map, once', () => {
+  it('every point is inside one world copy and below the top of the map, whatever the pair', () => {
+    for (const [a, b] of [[[-170, 60], [175, 62]], [[-120, 75], [140, 70]], [[0, 0], [0, 0.5]], [[10, -50], [-60, -50]]] as Array<[[number, number], [number, number]]>) {
+      for (const [lng, lat] of flatArc(a, b).path) {
+        expect(lng).toBeGreaterThanOrEqual(-180);
+        expect(lng).toBeLessThanOrEqual(180);
+        expect(Math.abs(lat)).toBeLessThanOrEqual(78);
+      }
+    }
+  });
+  it('the lift is a capped fraction of the length (short hops stay low, long ones do not leave the viewport)', () => {
+    const lift = (a: [number, number], b: [number, number]) => Math.max(...flatArc(a, b).path.map(p => Math.abs(p[1] - (a[1] + (b[1] - a[1]) * ((p[0] - a[0]) / (b[0] - a[0] || 1))))));
+    expect(lift([0, 40], [4, 40])).toBeLessThan(1);
+    expect(lift([-120, 40], [140, 40])).toBeLessThanOrEqual(10.01);
+  });
+  it('starts and ends on the two centroids', () => {
+    const { path } = flatArc([5, 52], [-74, 40]);
+    expect(path[0]).toEqual([5, 52]);
+    expect(path.at(-1)![0]).toBeCloseTo(-74, 9);
+  });
+});
+
+describe('evidence labels (the backend\'s tier fields are optional)', () => {
+  it('prefers the tier, falls back to the kind, and flags shared infrastructure', () => {
+    expect(operationEvidence({ kind: 'asn' })).toBe('same ASN');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'cert' })).toBe('shared cert');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'per_ip', shared_infra: true })).toBe('shared IP · shared infrastructure');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'brand_new_tier' })).toBe('brand new tier');
+    expect(operationEvidence({ kind: 'asn', evidence_tier: null, shared_infra: false })).toBe('same ASN');
+  });
+});
+
+describe('a realistic day: 50 operations x ~15 countries with heavy overlap', () => {
+  const HOT = ['US', 'DE', 'NL', 'GB', 'FR', 'SG', 'JP', 'AU', 'CA', 'BR', 'IN', 'RU', 'CN', 'HK', 'IE', 'SE', 'PL', 'IT', 'ES', 'ZA', 'MX', 'TR', 'KR', 'ID', 'UA'];
+  const real = Array.from({ length: 50 }, (_, i) => op({
+    id: `op${String(i).padStart(2, '0')}`, threat_count: 1000 - i * 13,
+    kind: (['asn', 'per_ip', 'cert_serial'] as const)[i % 3],
+    countries: Array.from({ length: 15 }, (_, k) => HOT[(i * 3 + k * 2 + (k % 3)) % HOT.length]!),
+  }));
+  const m = buildOperationsModel(real, []);
+
+  it('one node per country (never one per operation per country)', () => {
+    expect(m.nodes.length).toBeLessThanOrEqual(HOT.length);
+    expect(new Set(m.nodes.map(n => n.country)).size).toBe(m.nodes.length);
+    expect(m.nodes.reduce((n, x) => n + x.opCount, 0)).toBeGreaterThan(m.nodes.length * 5); // ...yet they are crowded
+  });
+  it('the whole model has at most MAX_EDGES arcs, one per pair, strongest first', () => {
+    expect(m.edges.length).toBeLessThanOrEqual(MAX_EDGES);
+    expect(new Set(m.edges.map(e => e.id)).size).toBe(m.edges.length);
+    for (let i = 1; i < m.edges.length; i++) expect(m.edges[i - 1]!.opCount).toBeGreaterThanOrEqual(m.edges[i]!.opCount);
+  });
+  it('the default view draws only the top operations\' links: a handful of arcs, not hundreds', () => {
+    const shown = visibleEdges(m, null);
+    expect(m.topOpIds).toHaveLength(TOP_OPERATIONS);
+    expect(shown.length).toBeLessThanOrEqual(TOP_OPERATIONS * 14);
+    expect(shown.length).toBeLessThanOrEqual(MAX_EDGES);
+    expect(shown.every(e => e.opIds.some(id => m.topOpIds.includes(id)))).toBe(true);
+  });
+  it('a selection is that operation\'s footprint alone (<= its country count - 1 arcs)', () => {
+    const shown = visibleEdges(m, 'op17');
+    expect(shown.length).toBeLessThanOrEqual(new Set(real[17]!.countries).size - 1);
+    expect(shown.every(e => e.opIds.includes('op17'))).toBe(true);
+  });
+  it('no arc is drawn twice: no duplicate pair, every path inside one world copy', () => {
+    const all = aggregateEdges(m, [...m.countriesOf.keys()]);
+    expect(new Set(all.map(e => `${e.a}-${e.b}`)).size).toBe(all.length);
+    for (const e of all) for (const [lng, lat] of e.path) {
+      expect(lng).toBeGreaterThanOrEqual(-180); expect(lng).toBeLessThanOrEqual(180); expect(Math.abs(lat)).toBeLessThanOrEqual(78);
+    }
+  });
+  it('arc width / alpha inputs: busy pairs carry more operations than quiet ones', () => {
+    expect(m.edges[0]!.opCount).toBeGreaterThan(5); // the overlap collapses into few, heavy arcs
+    expect(m.edges[0]!.opCount).toBeGreaterThan(m.edges.at(-1)!.opCount);
   });
 });
 
@@ -89,11 +181,8 @@ describe('edges with an unresolved kind', () => {
   it('label falls back to "linked" (+ shared ASNs) and the model still builds', () => {
     expect(edgeLabel(null, [])).toBe('linked');
     expect(edgeLabel(null, ['AS9'])).toBe('linked · AS9');
-    const m = buildOperationsModel(
-      [op({ id: 'a', component_id: 'c', countries: ['NL'] }), op({ id: 'b', component_id: 'c', countries: ['US'] })],
-      [{ component_id: 'c', operation_ids: ['a', 'b'], countries: ['NL', 'US'], edges: [{ a: 'a', b: 'b', kind: null, shared_asns: ['AS9'] }] }],
-    );
-    expect(m.edges[0]).toMatchObject({ label: 'linked · AS9', kind: 'other' });
+    const m = buildOperationsModel([op({ id: 'a', countries: ['NL'] }), op({ id: 'b', countries: ['US'] })], []);
+    expect(m.edges).toEqual([]); // single-country operations have nothing to link
   });
 });
 

@@ -18,7 +18,7 @@ import { countryName } from './country-name';
 import type { DrillTarget } from './drill';
 import { formatRatio } from './lens/baseline';
 import { trendClass } from './lens/hosting';
-import { normalizeConfidence } from './lens/operations';
+import { normalizeConfidence, operationEvidence } from './lens/operations';
 import { isActiveCampaign } from './lens/campaigns';
 import { iso2 } from './lens/placement';
 import { formatHours, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED, type TakedownCountryModel, type TakedownProviderModel } from './lens/takedowns';
@@ -75,7 +75,7 @@ export function operationRows(ops: readonly OperationGeo[] | undefined): PanelSe
       const conf = normalizeConfidence(o.confidence_score);
       return {
         key: o.id, primary: o.name ?? o.id,
-        secondary: `${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
+        secondary: `${operationEvidence(o)} · ${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
         trailing: o.threat_count.toLocaleString(),
         target: { kind: 'operation', id: o.id, op: o },
       };

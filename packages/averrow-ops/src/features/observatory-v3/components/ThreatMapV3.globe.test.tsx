@@ -17,6 +17,7 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     setProjection = vi.fn();
     setSky = vi.fn();
     resize = vi.fn();
+    setRenderWorldCopies = vi.fn();
     flyTo = vi.fn();
     jumpTo = vi.fn();
     transform = { _helper: { _latRange: [-85.051129, 85.051129] as [number, number] } };
@@ -723,5 +724,20 @@ describe('ThreatMapV3 globe: inset only while the whole planet fits', () => {
     expect(container(c).style.left).toBe('0px');
     rerender(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
     expect(container(c).style.left).toBe('68px');
+  });
+});
+
+describe('ThreatMapV3: the Operations lens draws each arc once (no repeated world copies)', () => {
+  const lens = (operations: boolean) => ({
+    layers: { ...noLayers(), operations },
+    operations: null, hosting: null, baseline: null, measure: 'index' as const, bot: null, countries: null, campaigns: null, velocity: null,
+    takedownCountries: null, takedownProviders: null, actors: null, movement: null, sel: NO_SELECTION,
+  });
+  it('turns the world copies off while the lens is on, and back on elsewhere', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} lens={lens(true) as never} />);
+    ready();
+    expect(lastMap().setRenderWorldCopies).toHaveBeenLastCalledWith(false);
+    rerender(<ThreatMapV3 {...base} lens={lens(false) as never} />);
+    expect(lastMap().setRenderWorldCopies).toHaveBeenLastCalledWith(true);
   });
 });

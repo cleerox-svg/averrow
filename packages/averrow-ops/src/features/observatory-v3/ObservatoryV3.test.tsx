@@ -275,6 +275,55 @@ describe('ObservatoryV3 disabled controls explain themselves in text', () => {
   });
 });
 
+describe('ObservatoryV3 Operations: shared infrastructure and row previews', () => {
+  const opsData = [
+    { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    { id: 'o2', name: 'Beta', component_id: null, kind: 'asn', evidence_tier: 'cert', shared_infra: true, status: 'active', confidence_score: 60, threat_count: 20, actor: null, countries: ['NL', 'FR'], asns: [], last_seen: null, last_movement_pivot_at: null },
+  ];
+  const routeOps = (excluded?: object) => fetchMock.mockImplementation((url: string) => {
+    if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded } });
+    if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+    return Promise.resolve({ success: true, data: [] });
+  });
+
+  it('names each row\'s evidence, marks shared infrastructure, and works without the new fields', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    expect(await screen.findByText(/shared cert · shared infrastructure/)).toBeInTheDocument();
+    expect(screen.getByText(/same ASN · 2 countries/)).toBeInTheDocument();
+    expect(screen.queryByText(/clusters hidden/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show shared infrastructure' })).not.toBeInTheDocument();
+  });
+
+  it('a muted line counts the hidden clusters; the toggle sets shared=1 and requests include_shared=1', async () => {
+    routeOps({ shared_asn: 3, hub_ip: 1, ip_reputation: 0 });
+    renderAt('/observatory?lens=operations');
+    expect(await screen.findByText('4 shared-infrastructure clusters hidden')).toBeInTheDocument();
+    expect(urls().some(u => u.includes('include_shared'))).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Show shared infrastructure' }));
+    await waitFor(() => expect(search).toContain('shared=1'));
+    await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
+    expect(screen.getByRole('button', { name: 'Hide shared infrastructure' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('a shared=1 link opens with them included', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations&shared=1');
+    await waitFor(() => expect(urls().some(u => u.includes('include_shared=1'))).toBe(true));
+  });
+
+  it('hovering a panel row previews its links on the map; leaving clears it', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    const row = await screen.findByRole('button', { name: /Alpha/ });
+    const lensProp = () => (mapProps.mock.calls.at(-1)![0] as { lens: { sel: { previewOpId?: string | null } } }).lens.sel.previewOpId;
+    await userEvent.hover(row);
+    await waitFor(() => expect(lensProp()).toBe('o1'));
+    await userEvent.unhover(row);
+    await waitFor(() => expect(lensProp() ?? null).toBeNull());
+  });
+});
+
 describe('ObservatoryV3 refresh', () => {
   it('the refresh button refetches the page data', async () => {
     renderAt('/observatory');

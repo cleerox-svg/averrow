@@ -30,7 +30,9 @@ import type { Measure } from '../lib/url-state';
 import { GLOBE_SCREEN_SPACE_PARAMETERS, type Projection } from '../lib/projection';
 import type { Rgba } from '../lib/map-colors';
 import type { OperationsModel, OpNode, OpEdge } from '../lib/lens/operations';
-import { highlightGroup, isDimmed } from '../lib/lens/operations';
+import { visibleEdges, nodeInFootprint } from '../lib/lens/operations';
+import { greatCirclePath3D, EARTH_RADIUS_M, type LngLatAlt } from '../anim/great-circle';
+import { cumulativeDistances } from '../anim/dash-flow-extension';
 import type { HostingModel, ProviderRing } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
 import type { BaselineModel } from '../lib/lens/baseline';
@@ -83,6 +85,8 @@ export interface LensPickHandlers {
 
 export interface LensSelection {
   opId: string | null;
+  /** A panel row under the pointer: its links are previewed, nothing is selected. */
+  previewOpId?: string | null;
   providerId: string | null;
   country: string | null;
   campaignId: string | null;
@@ -199,7 +203,7 @@ const hostingParts = memoByModel((m: HostingModel) => ({
   withTakedown: m.rings.filter(r => r.takedownShare !== null),
 }));
 
-const opsMax = memoByModel((m: OperationsModel) => m.nodes.reduce((x, n) => Math.max(x, n.threats), 0));
+const opsMax = memoByModel((m: OperationsModel) => m.nodes.reduce((x, n) => Math.max(x, n.opCount), 0));
 
 const campaignMarkers = memoByModel((m: CampaignsModel) => {
   // One marker per country, at the country's OWN centroid. (The arc's last vertex can sit on an
@@ -340,23 +344,6 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
 
 // ─── Operations ─────────────────────────────────────────────
 
-const OP_ALPHA_BASE = 130;
-
-function opNodeRadius(n: OpNode, maxThreats: number): number {
-  const f = maxThreats > 0 ? Math.sqrt(n.threats / maxThreats) : 0;
-  return 6 + 10 * Math.min(1, f);
-}
-
-/** Pixel radius an operation node's bloom is drawn at (edge labels keep clear of it). */
-export function opNodePx(n: OpNode, maxThreats: number): number {
-  return opNodeRadius(n, maxThreats) * 2.1;
-}
-
-/** Largest operation size, the denominator for node radii (memoised). */
-export function opsMaxThreats(m: OperationsModel): number {
-  return opsMax(m);
-}
-
 /** A label colour at the label's `fade` (limb fade on the globe); the shared constant when fully opaque. */
 const fadedText = (base: Rgba) => (d: object): Rgba => {
   const fade = (d as { fade?: number }).fade;
@@ -378,23 +365,84 @@ function labelStyle(projection: Projection = 'flat') {
   };
 }
 
+const OP_ALPHA_BASE = 130;
+
+/** A country node's radius: grows with the number of operations there (the drawer lists them). */
+function opNodeRadius(n: OpNode, maxOps: number): number {
+  const f = maxOps > 0 ? Math.sqrt(n.opCount / maxOps) : 0;
+  return 6 + 10 * Math.min(1, f);
+}
+
+/** Pixel radius a country node's bloom is drawn at (edge labels keep clear of it). */
+export function opNodePx(n: OpNode, maxOps: number): number {
+  return opNodeRadius(n, maxOps) * 2.1;
+}
+
+/** Largest operation count in any country, the denominator for node radii (memoised). */
+export function opsMaxThreats(m: OperationsModel): number {
+  return opsMax(m);
+}
+
+/** Arc width / opacity grow with the number of operations sharing the pair. */
+const opEdgeWidth = (e: OpEdge): number => 1 + Math.min(2.4, 0.7 * Math.sqrt(e.opCount));
+const opEdgeAlpha = (e: OpEdge): number => Math.min(230, 110 + 30 * e.opCount);
+
+/** The lifted great circle the globe draws for a pair (flat arcs are the model's own in-range paths). */
+const globeEdgePath = memoByModel((e: OpEdge): { path: LngLatAlt[]; distances: number[] } => {
+  const path = greatCirclePath3D(e.path[0]!, e.path[e.path.length - 1]!, 24, EARTH_RADIUS_M * 0.12);
+  return { path, distances: cumulativeDistances(path.map(p => [p[0], p[1]] as [number, number])) };
+});
+
+/** Animated (selected / top operations) vs static preview edges, split once per (visible set, selection). */
+const splitOpEdges = memoByModelAndKey((edges: OpEdge[], key: string) => {
+  const [sel, top] = key.split('#');
+  const focus = new Set(sel ? [sel] : (top ?? '').split(',').filter(Boolean));
+  const main: OpEdge[] = [];
+  const preview: OpEdge[] = [];
+  for (const e of edges) (e.opIds.some(id => focus.has(id)) ? main : preview).push(e);
+  return { main, preview };
+});
+
 function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.operations;
   if (!m || m.nodes.length === 0) return [];
   const { sel, reducedMotion, pick, labels } = input;
-  const group = highlightGroup(m, sel.opId);
-  const maxThreats = opsMax(m);
+  const selOp = sel.opId;
+  const maxOps = opsMax(m);
+  const globe = input.projection === 'globe';
   const animTime = reducedMotion ? 0 : frame.seconds;
   const out: Layer[] = [];
 
-  if (m.edges.length > 0) {
+  const visible = visibleEdges(m, selOp, sel.previewOpId ?? null);
+  const { main, preview } = splitOpEdges(visible, `${selOp ?? ''}#${m.topOpIds.join(',')}`);
+  const pathOf = (e: OpEdge) => (globe ? globeEdgePath(e).path : e.path);
+  const distOf = (e: OpEdge) => (globe ? globeEdgePath(e).distances : e.distances);
+  const edgeHover = (info: PickInfo<OpEdge>) => pick.hover(info.object
+    ? { x: info.x, y: info.y, title: info.object.label, lines: info.object.opIds.slice(0, 5).map(id => m.byId.get(id)?.name ?? id) }
+    : null);
+  const edgeClick = (info: PickInfo<OpEdge>) => (info.object ? pick.click({ kind: 'operation', id: info.object.opIds[0]! }) : false);
+
+  // Links: ONE animated idea, on the selected / top operations only; a previewed row's links are static and thin.
+  if (preview.length > 0) {
+    out.push(new PathLayer<OpEdge>({
+      id: 'ops-edges-preview',
+      data: preview,
+      getPath: pathOf,
+      getColor: () => withAlpha(CYAN, 150),
+      getWidth: 1.2,
+      widthUnits: 'pixels',
+      pickable: false,
+      updateTriggers: { getPath: globe },
+    }));
+  }
+  if (main.length > 0) {
     out.push(new PathLayer<OpEdge, DashFlowExtensionProps<OpEdge>>({
       id: 'ops-edges',
-      data: m.edges,
-      getPath: (e: OpEdge) => e.path,
-      getDashDistances: (e: OpEdge) => e.distances,
-      getColor: (e: OpEdge) => withAlpha(CYAN, isDimmed(e.group, group) ? 36 : e.group === group ? 255 : 200),
-      getWidth: (e: OpEdge) => (e.group === group ? 2.6 : 1.6),
+      data: main,
+      getPath: pathOf,
+      getDashDistances: distOf,
+      getColor: (e: OpEdge) => withAlpha(CYAN, opEdgeAlpha(e)),
+      getWidth: opEdgeWidth,
       widthUnits: 'pixels',
       capRounded: true,
       pickable: true,
@@ -404,15 +452,14 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       speed: reducedMotion ? 0 : 2.4,
       animTime,
       transitions: reducedMotion ? undefined : TR_PATH,
-      updateTriggers: { getColor: group, getWidth: group },
+      updateTriggers: { getPath: globe, getDashDistances: globe },
       // Full evidence lives here (and in the drawer); the map label is the short form.
-      onHover: (info: PickInfo<OpEdge>) => pick.hover(info.object
-        ? { x: info.x, y: info.y, title: info.object.label, lines: info.object.opIds.map(id => m.byId.get(id)?.name ?? id) }
-        : null),
-      onClick: (info: PickInfo<OpEdge>) => (info.object ? pick.click({ kind: 'operation', id: info.object.opIds[0]! }) : false),
+      onHover: edgeHover,
+      onClick: edgeClick,
     }));
   }
 
+  const dim = (n: OpNode): boolean => !nodeInFootprint(n, selOp);
   const shared = {
     data: m.nodes,
     getPosition: posNode,
@@ -428,31 +475,33 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-bloom',
-      getRadius: (n: OpNode) => opNodePx(n, maxThreats),
-      getFillColor: (n: OpNode) => withAlpha(CYAN, isDimmed(n.group, group) ? 6 : 34),
+      getRadius: (n: OpNode) => opNodePx(n, maxOps),
+      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 6 : 34),
       transitions: reducedMotion ? undefined : TR_FILL,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: group },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: selOp },
     }),
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-core',
-      getRadius: (n: OpNode) => opNodeRadius(n, maxThreats),
-      getFillColor: (n: OpNode) => withAlpha(CYAN, isDimmed(n.group, group) ? 40 : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
+      getRadius: (n: OpNode) => opNodeRadius(n, maxOps),
+      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 40 : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
       stroked: true,
-      getLineColor: (n: OpNode) => (n.opId === sel.opId ? AMBER : withAlpha(CYAN, isDimmed(n.group, group) ? 40 : 255)),
-      getLineWidth: (n: OpNode) => (n.opId === sel.opId ? 2.5 : 1.2),
+      getLineColor: (n: OpNode) => (n.country === sel.country ? AMBER : withAlpha(CYAN, dim(n) ? 40 : 255)),
+      getLineWidth: (n: OpNode) => (n.country === sel.country ? 2.5 : 1.2),
       lineWidthUnits: 'pixels',
       pickable: true,
       transitions: reducedMotion ? undefined : TR_DOT,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: group, getLineColor: [group, sel.opId], getLineWidth: sel.opId },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: selOp, getLineColor: [selOp, sel.country], getLineWidth: sel.country },
       onHover: (info: PickInfo<OpNode>) => pick.hover(info.object
         ? {
-          x: info.x, y: info.y, title: info.object.name,
-          lines: [countryName(info.object.country), `${info.object.threats.toLocaleString()} threats`,
-            info.object.confidence !== null ? `${Math.round(info.object.confidence * 100)}% confidence` : 'confidence n/a'],
+          x: info.x, y: info.y, title: countryName(info.object.country),
+          lines: [`${info.object.opCount} operation${info.object.opCount === 1 ? '' : 's'} · ${info.object.threats.toLocaleString()} threats`,
+            ...info.object.opIds.slice(0, 4).map(id => m.byId.get(id)?.name ?? id),
+            ...(info.object.opCount > 4 ? [`+${info.object.opCount - 4} more`] : [])],
         }
         : null),
-      onClick: (info: PickInfo<OpNode>) => (info.object ? pick.click({ kind: 'operation', id: info.object.opId }) : false),
+      // A country node opens the country drawer, which lists the operations present there.
+      onClick: (info: PickInfo<OpNode>) => (info.object ? pick.click({ kind: 'country', id: info.object.country }) : false),
     }),
   );
 

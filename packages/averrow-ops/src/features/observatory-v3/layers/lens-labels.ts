@@ -12,7 +12,7 @@
  */
 
 import type { LngLat } from '@/lib/country-centroids';
-import type { OperationsModel, OpEdge } from '../lib/lens/operations';
+import type { OpEdge } from '../lib/lens/operations';
 import type { HostingModel } from '../lib/lens/hosting';
 import { confidenceBand, actorNodePx, type ActorModel } from '../lib/lens/actors';
 import { placeLabels, type LabelCandidate, type Obstacle } from '../lib/label-placement';
@@ -63,13 +63,14 @@ export const MAX_ACTOR_LABELS = 10;
 const pathLength = (e: OpEdge): number => e.distances[e.distances.length - 1] ?? 0;
 
 /**
- * One label per operation (and evidence kind): a star of "same ASN" edges would otherwise repeat the
- * same words N times. The selected component's edges outrank everything else.
+ * One label per evidence kind per lead operation among the arcs being DRAWN (`edges` is the visible set, see
+ * `visibleEdges`): a star of "same ASN" arcs would otherwise repeat the same words N times. The selected
+ * operation's arcs outrank everything else, then the ones shared by more operations.
  */
-export const edgeLabelSources = memoByModelAndKey((m: OperationsModel, group: string): EdgeLabelSource[] => {
+export const edgeLabelSources = memoByModelAndKey((edges: OpEdge[], selOpId: string): EdgeLabelSource[] => {
   const best = new Map<string, OpEdge>();
-  for (const e of m.edges) {
-    const key = `${e.opIds.join('+')}|${e.short}`;
+  for (const e of edges) {
+    const key = `${e.opIds[0]}|${e.short}`;
     const cur = best.get(key);
     if (!cur || pathLength(e) > pathLength(cur)) best.set(key, e);
   }
@@ -84,7 +85,7 @@ export const edgeLabelSources = memoByModelAndKey((m: OperationsModel, group: st
       after: e.path[Math.min(e.path.length - 1, mid + 1)]!,
       from: e.path[0]!,
       to: e.path[e.path.length - 1]!,
-      priority: (group && e.group === group ? 1e6 : 0) + pathLength(e),
+      priority: (selOpId && e.opIds.includes(selOpId) ? 1e6 : 0) + e.opCount * 1e3 + pathLength(e),
     });
   }
   return out.sort((a, b) => b.priority - a.priority).slice(0, MAX_EDGE_CANDIDATES);

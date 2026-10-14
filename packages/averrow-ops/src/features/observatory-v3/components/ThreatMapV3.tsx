@@ -78,7 +78,7 @@ import {
   edgeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
-import { highlightGroup } from '../lib/lens/operations';
+import { visibleEdges } from '../lib/lens/operations';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
 import {
@@ -916,7 +916,7 @@ function ThreatMapV3Inner({
     const host = lens.layers.hosting ? lens.hosting : null;
     const actors = lens.layers.actors ? lens.actors : null;
     if (!ops && !host && !actors) return null;
-    const edges = ops ? edgeLabelSources(ops, highlightGroup(ops, lens.sel.opId) ?? '') : [];
+    const edges = ops ? edgeLabelSources(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '') : [];
     const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
     const maxT = ops ? opsMaxThreats(ops) : 0;
     const actorLabels = actors && !actors.empty ? actorLabelSources(actors) : [];
@@ -1088,6 +1088,16 @@ function ThreatMapV3Inner({
     // Screen-space labels were placed under the previous projection: place them again once the new one has drawn.
     map.once('idle', () => recomputeLabelsRef.current());
   }, [projection, mapLoaded]);
+
+  // The Operations lens draws links between countries: each arc is ONE polyline in the primary world copy, but deck
+  // repeats every layer in each visible world copy, so at the map's edges every arc showed twice. With the copies off
+  // (this lens only) the basemap does not repeat either, and nothing is drawn twice. Other lenses keep the wrap.
+  const worldCopies = !(lens?.layers.operations && mapMode === 'global');
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || typeof map.setRenderWorldCopies !== 'function') return;
+    map.setRenderWorldCopies(worldCopies);
+  }, [mapLoaded, worldCopies]);
 
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {

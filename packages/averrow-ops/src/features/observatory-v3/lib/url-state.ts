@@ -108,6 +108,8 @@ export interface ObservatoryUrlState {
   measure: Measure;
   /** Map projection: the flat map (default) or the globe (`proj=globe`). Independent of the lens. */
   proj: Projection;
+  /** Operations lens: include the clusters the backend flags as shared infrastructure (`shared=1`; off by default). */
+  shared: boolean;
 }
 
 /** The scene the map draws for a state. */
@@ -138,10 +140,11 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   sel: null,
   measure: 'index',
   proj: DEFAULT_PROJECTION,
+  shared: false,
 };
 
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj'] as const;
+export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -219,6 +222,7 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     measure,
     // Absent / unknown = flat, so every pre-globe link keeps opening on the flat map.
     proj: pick(PROJECTION_IDS, sp.get('proj'), DEFAULT_STATE.proj),
+    shared: sp.get('shared') === '1',
   };
 }
 
@@ -235,6 +239,7 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   if (layers) out.set('layers', layers);
   if (measuresFor(state.lens).includes(state.measure) && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
   if (state.proj !== DEFAULT_STATE.proj) out.set('proj', state.proj);
+  if (state.shared) out.set('shared', '1');
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);

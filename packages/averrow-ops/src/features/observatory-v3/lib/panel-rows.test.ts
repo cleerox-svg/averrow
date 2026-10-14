@@ -26,7 +26,7 @@ describe('lens-aware panel rows', () => {
     const op = (id: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: n, actor: { id: 'a', name: 'APT' }, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
     const s = operationRows([op('small', 1), op('big', 99)]);
     expect(s.rows.map(r => r.key)).toEqual(['big', 'small']);
-    expect(s.rows[0]!.secondary).toBe('2 countries · 80% conf · APT');
+    expect(s.rows[0]!.secondary).toBe('same ASN · 2 countries · 80% conf · APT');
     expect(operationRows(undefined).rows).toEqual([]);
   });
   it('Baseline over-index: most over-indexed first, ignoring tiny samples and countries without a baseline', () => {

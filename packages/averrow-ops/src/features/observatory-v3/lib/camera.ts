@@ -181,8 +181,9 @@ export function drillPoints(t: DrillTarget, m: FocusModels): LngLat[] {
     case 'country':
       return present([countryCenter(t.code)]);
     case 'operation': {
-      const nodes = m.operations?.nodes.filter(n => n.opId === t.id) ?? [];
-      return nodes.length > 0 ? nodes.map(n => n.position) : centers(t.op?.countries);
+      const ccs = m.operations?.countriesOf.get(t.id) ?? [];
+      const nodes = ccs.flatMap(cc => m.operations?.nodeByCc.get(cc)?.position ?? []);
+      return nodes.length > 0 ? ccs.map(cc => m.operations!.nodeByCc.get(cc)!.position) : centers(t.op?.countries);
     }
     case 'provider': {
       const ring = m.hosting?.byId.get(t.id);
