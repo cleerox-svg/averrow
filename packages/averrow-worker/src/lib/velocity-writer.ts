@@ -254,6 +254,18 @@ const VELOCITY_STAMP_CURSOR_TTL_S = 7 * 24 * 60 * 60;
 // idx_threats_velocity_unstamped (an id range seek, no sort). Rows stamped by
 // a previous page have left the index; rows whose velocity is not computable
 // stay in it and are walked past once per cursor cycle.
+//
+// Non-computable backlog — measured, deliberately not tracked (2026-10-14,
+// prod trust-radar-v2, read-only): 11,712 rows carry domain_created_at, all
+// still unstamped (0300 not yet applied). Applying the decide-fn guards in
+// SQL (unparseable timestamp, created year < 1985, negative delta, delta >
+// 500,000 h) matched 0 of them. So the rows that would sit in
+// idx_threats_velocity_unstamped forever are ~0 against a 2,000 rows/day
+// page budget, and a `velocity_checked_at` column + replacement partial
+// index would cost a migration for no read saving. Re-check if
+// cube_healer's velocity_stamp `scanned` stays well above `written` once the
+// initial backlog has drained (≈6 days at 2,000/day) — that gap IS the
+// non-computable population being re-walked each cycle.
 const UNSTAMPED_PAGE_SELECT = `
   SELECT id, domain_created_at, first_seen
   FROM threats
