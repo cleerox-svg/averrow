@@ -211,8 +211,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1535,
-      "last_modified": "2026-10-10T01:46:55.352Z"
+      "loc": 1532,
+      "last_modified": "2026-10-14T03:30:57.190Z"
     },
     {
       "name": "ct-monitor",
@@ -353,8 +353,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 3325,
-      "last_modified": "2026-10-14T01:59:29.041Z"
+      "loc": 3343,
+      "last_modified": "2026-10-14T03:30:57.190Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -1243,8 +1243,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/threatfox.ts",
       "source_type": "unknown",
       "schedule": null,
-      "loc": 104,
-      "last_modified": "2026-10-10T01:46:55.368Z"
+      "loc": 128,
+      "last_modified": "2026-10-14T03:30:57.194Z"
     },
     {
       "name": "torExitNodes",

@@ -9,6 +9,11 @@ import {
   handleObservatoryBrandArcs, handleObservatoryStats, handleObservatoryOperations,
   handleObservatoryHeatmap,
 } from "../handlers/observatory";
+import {
+  handleObservatoryOperationsGeo, handleObservatoryMovements, handleObservatoryProvidersGeo,
+  handleObservatoryOverindex, handleObservatoryCampaignsGeo, handleObservatoryTimeline,
+  handleObservatoryActors,
+} from "../handlers/observatoryLenses";
 import { handleDashboardOverview, handleDashboardTopBrands, handleDashboardProviders } from "../handlers/dashboard";
 import { handleBrandAdminDashboard } from "../handlers/brandAdminDashboard";
 import { handleIngestSignal } from "../handlers/signals";
@@ -100,6 +105,14 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     ["/api/observatory/stats",      handleObservatoryStats],
     ["/api/observatory/heatmap",    handleObservatoryHeatmap],
     ["/api/observatory/operations", handleObservatoryOperations],
+    // Phase B lens endpoints (handlers/observatoryLenses.ts).
+    ["/api/observatory/operations-geo", handleObservatoryOperationsGeo],
+    ["/api/observatory/movements",      handleObservatoryMovements],
+    ["/api/observatory/providers-geo",  handleObservatoryProvidersGeo],
+    ["/api/observatory/overindex",      handleObservatoryOverindex],
+    ["/api/observatory/campaigns-geo",  handleObservatoryCampaignsGeo],
+    ["/api/observatory/timeline",       handleObservatoryTimeline],
+    ["/api/observatory/actors",         handleObservatoryActors],
   ];
   for (const [path, handler] of observatoryRoutes) {
     router.get(path, async (request: Request, env: Env) => {

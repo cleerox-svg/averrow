@@ -18,7 +18,7 @@
 //      never be served to an anonymous caller.
 //   2. A tenant `client` JWT          → 403, same no-handler guarantee.
 //   3. Staff roles (analyst, auditor) → reach the handler (200).
-//   4. The route table registers exactly the seven known paths, so a
+//   4. The route table registers exactly the fourteen known paths, so a
 //      new observatory route can't slip in without this test noticing.
 
 import { describe, it, expect } from "vitest";
@@ -40,7 +40,18 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/stats?period=7d",
   "/api/observatory/heatmap?period=7d",
   "/api/observatory/operations?limit=5",
+  // Phase B lens endpoints (handlers/observatoryLenses.ts)
+  "/api/observatory/operations-geo?status=active&limit=10",
+  "/api/observatory/movements?period=7d",
+  "/api/observatory/providers-geo?limit=50",
+  "/api/observatory/overindex?period=7d",
+  "/api/observatory/campaigns-geo",
+  "/api/observatory/timeline?period=24h",
+  "/api/observatory/actors",
 ] as const;
+
+/** Observatory cache keys: Phase A raw `observatory_*` + Phase B cachedValue `cv:observatory_lens.*`. */
+const isObservatoryKey = (k: string) => k.startsWith("observatory_") || k.startsWith("cv:observatory_");
 
 // A cached payload that would leak a customer brand if it were ever
 // served to the wrong audience. Returned by CACHE.get for every
@@ -85,7 +96,9 @@ function makeHarness(): Harness {
   const cache = {
     async get(key: string): Promise<string | null> {
       cacheReads.push(key);
-      return key.startsWith("observatory_") ? LEAKY_CACHED : null;
+      if (key.startsWith("observatory_")) return LEAKY_CACHED;
+      if (key.startsWith("cv:observatory_")) return JSON.stringify({ v: JSON.parse(LEAKY_CACHED), t: Date.now() });
+      return null;
     },
     async put(): Promise<void> {},
   };
@@ -131,7 +144,7 @@ describe("/api/observatory/* — staff-only", () => {
       const body = JSON.parse(text) as Record<string, unknown>;
       expect(body.success).toBe(false);
       expect(body).not.toHaveProperty("data");
-      expect(h.cacheReads.filter((k) => k.startsWith("observatory_"))).toEqual([]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
     it(`${path.split("?")[0]} rejects a tenant client JWT 403 without running the handler`, async () => {
@@ -140,7 +153,7 @@ describe("/api/observatory/* — staff-only", () => {
       expect(res.status).toBe(403);
       const text = await res.text();
       expect(text).not.toContain("Acme");
-      expect(h.cacheReads.filter((k) => k.startsWith("observatory_"))).toEqual([]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
     it(`${path.split("?")[0]} rejects a forged/invalid token 401`, async () => {
@@ -159,7 +172,7 @@ describe("/api/observatory/* — staff-only", () => {
     }
   }
 
-  it("registers exactly the seven known observatory paths, all behind requireStaff", () => {
+  it("registers exactly the fourteen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const registered = [...src.matchAll(/"(\/api\/observatory\/[a-z-]+)"/g)].map((m) => m[1]).sort();
     expect(registered).toEqual(OBSERVATORY_PATHS.map((p) => p.split("?")[0]).sort());
