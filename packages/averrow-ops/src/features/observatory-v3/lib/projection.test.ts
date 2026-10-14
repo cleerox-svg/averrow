@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   DEFAULT_PROJECTION, PROJECTION_IDS, isProjection, effectiveProjection, overlayInterleaved, projectionSpec, maxZoomFor,
-  globeFitZoom, globeCanvasBox, globeDiscPx, globeBleeds, BLEED_ENTER, BLEED_EXIT, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, skyFor,
-  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE,
+  globeFitZoom, globeCanvasBox, globeDiscPx, globeBleeds, BLEED_ENTER, BLEED_EXIT, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, centreAngleDeg, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, skyFor,
+  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE, GLOBE_START_CENTER, globeStartCamera,
 } from './projection';
 
 describe('projection ids', () => {
@@ -166,5 +166,38 @@ describe('globeLabelOpacity: occlusion is MapLibre\'s, the fade is ours', () => 
     expect(globeLabelOpacity(c, [20, 10], { isLocationOccluded: () => { throw new Error('nope'); } })).toBe(1);
     expect(globeLabelOpacity(c, [20, 10], {})).toBe(1);
     expect(globeLabelOpacity(c, [20, 10], null)).toBe(1);
+  });
+});
+
+describe('globeStartCamera: where the globe opens', () => {
+  it('shows the Americas, the Atlantic, Europe and Africa together, not Europe alone', () => {
+    const [lng, lat] = GLOBE_START_CENTER;
+    // The centre of the disc is over the Atlantic: the eastern Americas (west of it) and Europe / Africa (east) all sit
+    // inside the 74 degree radius where labels still draw, the three big regions each well inside the 52 degree no-fade one.
+    const angle = (a: [number, number], b: [number, number]) => centreAngleDeg(a, b);
+    expect(lng).toBeLessThan(0);
+    expect(angle([lng, lat], [-74, 40.7])).toBeLessThan(52);    // New York
+    expect(angle([lng, lat], [-46.6, -23.5])).toBeLessThan(52); // Sao Paulo
+    expect(angle([lng, lat], [2.35, 48.85])).toBeLessThan(52);  // Paris
+    expect(angle([lng, lat], [3.4, 6.5])).toBeLessThan(52);     // Lagos
+    expect(angle([lng, lat], [-122.4, 37.8])).toBeLessThan(90); // San Francisco is on the near side, at the limb
+    expect(angle([lng, lat], [139.7, 35.7])).toBeGreaterThan(90); // Tokyo is on the far side
+  });
+
+  it('is a fixed centre and the same planet-fit zoom the flip uses, a little larger on a phone', () => {
+    const desktop = globeStartCamera(1440, 900, false);
+    const phone = globeStartCamera(390, 844, true);
+    expect(desktop.center).toBe(GLOBE_START_CENTER);
+    expect(phone.center).toBe(GLOBE_START_CENTER);
+    expect(desktop.zoom).toBeCloseTo(globeFitZoom(1440, 900, 0.72), 9);
+    expect(phone.zoom).toBeCloseTo(globeFitZoom(390, 844, 0.8), 9);
+  });
+
+  it('keeps the whole planet inside the canvas on desktop and phone (the disc is under the shorter side)', () => {
+    for (const [w, h, m] of [[1440, 900, false], [1024, 700, false], [390, 844, true], [844, 390, true]] as const) {
+      const { zoom } = globeStartCamera(w, h, m);
+      expect(globeDiscPx(zoom)).toBeLessThan(Math.min(w, h));
+      expect(globeDiscPx(zoom)).toBeGreaterThan(Math.min(w, h) * 0.5);
+    }
   });
 });

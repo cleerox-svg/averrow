@@ -30,35 +30,37 @@ export const FLY_CURVE = 1.2;
 export const FRAME_MARGIN = 40;
 /** Mercator world width at zoom 0, px (512px tiles). */
 const WORLD_PX = 512;
-/** Closest-in floor of the phone's minimum zoom: it never needs to be higher than the original 0.5. */
-const PHONE_MIN_ZOOM_CAP = 0.5;
+/** Minimum zoom used before the canvas has a width. */
+const NO_WIDTH_MIN_ZOOM = 0.5;
 
 /** MapLibre's own default minimum zoom (restored when leaving the phone layout), and the lowest it accepts. */
 export const DEFAULT_MIN_ZOOM = -2;
 
 /**
- * Lowest zoom a phone map may reach, derived from its canvas width: low enough that the whole world fits
- * inside the framing margins on both sides, so a world-spanning target (US to Japan) can be framed in full.
- * A fixed 0.5 floor clipped those on 400px screens (the world is 512px * 2^z wide).
+ * Lowest zoom at which ONE copy of the world still fills `canvasWidth`: 512px * 2^z >= the canvas. Below it the flat
+ * map repeats the world (MapLibre `renderWorldCopies`), so zooming out showed several Earths side by side. Rounded UP to
+ * a thousandth so a sub-pixel gap never shows a sliver of the neighbouring copy.
  *
- * Never below MapLibre's own -2 floor: a canvas narrower than 232px would ask for less (the free width is
- * pinned at 64px, log2(64/512) = -3) and `setMinZoom` rejects anything under -2.
+ * The world copies themselves stay ON (turning them off clamps the longitude: no panning across the Pacific, see
+ * lib/world-copies.ts), so this floor is what keeps them out of the zoomed-out view. A world-spanning target (US to Japan)
+ * is therefore framed no tighter than the world filling the canvas: on a 400px phone it still fits (214 degrees = 238px),
+ * on a 1024px screen with the drawer open its ends sit under the drawer.
+ *
+ * Never below MapLibre's own -2 floor (`setMinZoom` rejects anything lower: a canvas narrower than 128px).
  */
-export function phoneMinZoom(canvasWidth: number): number {
-  if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
-  const free = Math.max(64, canvasWidth - 2 * (12 + FRAME_MARGIN));
-  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX)));
+export function worldFillZoom(canvasWidth: number): number {
+  if (!(canvasWidth > 0)) return NO_WIDTH_MIN_ZOOM;
+  return Math.max(DEFAULT_MIN_ZOOM, Math.ceil(Math.log2(canvasWidth / WORLD_PX) * 1000) / 1000);
 }
 
-/**
- * Lowest zoom a desktop flat map may reach: the world never needs to be narrower than ~30% of the canvas. Below
- * the vertical-coverage floor (~0.5 on a 700px-tall canvas) this is what lets a world-spanning target (US to
- * Japan) fit the free strip left of the open drawer on a 1024px screen; capped at the phone's 0.5 so a wide
- * canvas keeps a sensible floor.
- */
+/** Lowest zoom a phone map may reach: the world fills the canvas width (see `worldFillZoom`). */
+export function phoneMinZoom(canvasWidth: number): number {
+  return worldFillZoom(canvasWidth);
+}
+
+/** Lowest zoom a desktop flat map may reach: the world fills the canvas width (see `worldFillZoom`). */
 export function desktopMinZoom(canvasWidth: number): number {
-  if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
-  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2((0.3 * canvasWidth) / WORLD_PX)));
+  return worldFillZoom(canvasWidth);
 }
 
 /** Mercator's own latitude limit (MapLibre's default `latRange`). */
@@ -256,7 +258,7 @@ export function lensFitPoints(lens: string, m: FocusModels): LngLat[] {
   }
 }
 
-/** The slice of MapLibre 5's transform that holds the latitude range (private: there is no public setter that keeps lngRange null). */
+/** The slice of MapLibre's transform that holds the latitude range (private: there is no public setter that keeps lngRange null). */
 interface LatRangeHolder {
   _helper?: { _latRange?: [number, number] | null };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, desktopMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, desktopMinZoom, worldFillZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel, aggregateEdges } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -9,42 +9,41 @@ import type { CampaignGeo, Movement, OperationGeo, ProviderGeo, ActorDetail } fr
 
 const EMPTY: FocusModels = { operations: null, hosting: null, campaigns: null, movement: null, actors: null };
 
-describe('desktopMinZoom: low enough that a world-spanning target fits beside the open drawer', () => {
-  it('is capped at 0.5 on a wide canvas and drops with the canvas width, never below MapLibre\'s floor', () => {
-    expect(desktopMinZoom(3000)).toBe(0.5);
-    expect(desktopMinZoom(776)).toBeLessThan(-0.5); // 1024px screen: the world must fit in ~440px of free width
-    expect(desktopMinZoom(776)).toBeLessThan(desktopMinZoom(1192));
-    expect(desktopMinZoom(10)).toBe(DEFAULT_MIN_ZOOM);
-    expect(desktopMinZoom(0)).toBe(0.5);
+describe('worldFillZoom: one copy of the world always fills the canvas width (no side-by-side Earths)', () => {
+  const worldWidth = (z: number) => 512 * 2 ** z;
+  it('the world at the floor is at least as wide as the canvas, and not a pixel-and-a-half wider', () => {
+    for (const w of [400, 776, 1024, 1440, 1920, 2560]) {
+      const z = worldFillZoom(w);
+      expect(worldWidth(z)).toBeGreaterThanOrEqual(w);
+      expect(worldWidth(z)).toBeLessThan(w * 1.002);
+    }
   });
-});
-
-describe('phoneMinZoom: derived from the canvas so a world-spanning target can fit', () => {
-  // zoom at which a lng span (deg) exactly fills `free` px: world = 512 * 2^z px wide
-  const fitZoom = (spanDeg: number, free: number) => Math.log2((free * 360) / (spanDeg * 512));
-  it('is never above the old 0.5 floor, and goes lower on narrow canvases', () => {
-    expect(phoneMinZoom(1200)).toBe(0.5);
-    expect(phoneMinZoom(400)).toBeLessThan(0);
-    expect(phoneMinZoom(320)).toBeLessThan(phoneMinZoom(400));
-    expect(phoneMinZoom(0)).toBe(0.5);
+  it('desktop and phone use the same rule', () => {
+    for (const w of [390, 844, 1280, 1920]) {
+      expect(desktopMinZoom(w)).toBe(worldFillZoom(w));
+      expect(phoneMinZoom(w)).toBe(worldFillZoom(w));
+    }
   });
-  it('Operation Alpha (US, BR, DE, RU, JP: a 214 degree box) fits a 400px canvas, which the fixed 0.5 floor could not', () => {
-    const plan = planCamera([[-74, 40.7], [-47.9, -15.8], [13.4, 52.5], [37.6, 55.7], [139.7, 35.7]], { width: 400, height: 800 }, { top: 124, right: 12, bottom: 250, left: 12 })!;
-    expect(plan.box.east - plan.box.west).toBeGreaterThan(200);
-    const free = 400 - plan.padding.left - plan.padding.right;
-    const needed = fitZoom(plan.box.east - plan.box.west, free);
-    expect(needed).toBeLessThan(0.5);               // the old floor clamped here and cut both ends off
-    expect(phoneMinZoom(400)).toBeLessThanOrEqual(needed);
+  it('rises with the canvas, and is not capped at the old 0.5 on a wide desktop', () => {
+    expect(worldFillZoom(1440)).toBeGreaterThan(1.4);
+    expect(worldFillZoom(1920)).toBeGreaterThan(worldFillZoom(1440));
+    expect(worldFillZoom(3000)).toBeGreaterThan(0.5);
   });
   it("never goes below MapLibre's -2 floor, however narrow the canvas", () => {
-    // free width is pinned at 64px under 168px of canvas: log2(64/512) = -3 would be rejected by setMinZoom
-    for (const w of [1, 100, 168, 200, 231]) expect(phoneMinZoom(w)).toBe(DEFAULT_MIN_ZOOM);
-    expect(phoneMinZoom(232)).toBe(-2);           // exactly the boundary: 128px free = 2^-2 of the world
-    expect(phoneMinZoom(233)).toBeGreaterThan(-2);
+    for (const w of [1, 100, 127]) expect(worldFillZoom(w)).toBe(DEFAULT_MIN_ZOOM);
+    expect(worldFillZoom(128)).toBe(-2); // 128px = 512 * 2^-2
+    expect(worldFillZoom(129)).toBeGreaterThan(-2);
   });
-  it('a full 360 degree target still fits inside the framing margins', () => {
-    const free = 400 - 2 * (12 + FRAME_MARGIN);
-    expect(phoneMinZoom(400)).toBeLessThanOrEqual(fitZoom(360, free) + 1e-9);
+  it('uses a sane default before the canvas has a width', () => {
+    expect(worldFillZoom(0)).toBe(0.5);
+    expect(worldFillZoom(Number.NaN)).toBe(0.5);
+  });
+  // zoom at which a lng span (deg) exactly fills `free` px: world = 512 * 2^z px wide
+  const fitZoom = (spanDeg: number, free: number) => Math.log2((free * 360) / (spanDeg * 512));
+  it('Operation Alpha (US, BR, DE, RU, JP: a 214 degree box) still fits a 400px phone canvas inside the framing margins', () => {
+    const plan = planCamera([[-74, 40.7], [-47.9, -15.8], [13.4, 52.5], [37.6, 55.7], [139.7, 35.7]], { width: 400, height: 800 }, { top: 124, right: 12, bottom: 250, left: 12 })!;
+    const free = 400 - plan.padding.left - plan.padding.right;
+    expect(phoneMinZoom(400)).toBeLessThanOrEqual(fitZoom(plan.box.east - plan.box.west, free));
   });
 });
 

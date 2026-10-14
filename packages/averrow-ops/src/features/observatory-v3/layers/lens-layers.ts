@@ -127,7 +127,14 @@ export interface LensLayerInput {
   pick: LensPickHandlers;
   /** The projection the layers are drawn in (default flat): the globe draws text without the depth test. */
   projection?: Projection;
+  /** Multiplier for halo radii (blooms, provider rings, their rings), 0.4..1: smaller toward the world view (lib/halo.ts). Default 1. */
+  haloScale?: number;
 }
+
+/** Smallest radius (px) a scaled halo is drawn at: it must still read as a halo round its core. */
+const MIN_HALO_PX = 3;
+/** A halo radius (px) at the input's zoom scale. */
+const haloPx = (px: number, scale: number | undefined): number => (scale !== undefined && scale < 1 ? Math.max(MIN_HALO_PX, px * scale) : px);
 
 export interface LensFrame {
   /** Monotonic animation seconds (pulses, dashes, spins). */
@@ -518,10 +525,10 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-bloom',
-      getRadius: (n: OpNode) => opNodePx(n.opCount, range),
+      getRadius: (n: OpNode) => haloPx(opNodePx(n.opCount, range), input.haloScale),
       getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 6 : hi ? 70 : 34),
       transitions: reducedMotion ? undefined : TR_FILL,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp, getRadius: input.haloScale },
     }),
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
@@ -600,6 +607,9 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const animTime = reducedMotion ? 0 : frame.seconds;
   const { bullet, withTakedown } = hostingParts(m);
   const dimmed = (r: ProviderRing): boolean => sel.providerId !== null && r.id !== sel.providerId;
+  const hs = input.haloScale;
+  /** A ring's drawn radius: the halos / arcs round it follow it, so they never float off a shrunken ring. */
+  const ringPx = (r: ProviderRing): number => haloPx(r.radiusPx, hs);
   const out: Layer[] = [];
 
   out.push(new ScatterplotLayer<ProviderRing>({
@@ -607,7 +617,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     data: m.rings,
     getPosition: posNode,
     radiusUnits: 'pixels',
-    getRadius: (r: ProviderRing) => r.radiusPx,
+    getRadius: (r: ProviderRing) => haloPx(r.radiusPx, hs),
     // Takedowns measure: the fill IS the success share (sequential green), so it keeps its own alpha.
     getFillColor: (r: ProviderRing) => (tp ? withAlpha(ringColor(r), dimmed(r) ? 30 : Math.max(ringColor(r)[3], 110)) : withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 14 : 82)),
     stroked: true,
@@ -617,7 +627,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     pickable: true,
     // Size / colour glide when the numbers move (a 15-minute refetch) and when a ring is picked, instead of snapping.
     transitions: reducedMotion ? undefined : TR_RING,
-    updateTriggers: { getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
+    updateTriggers: { getRadius: hs, getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
     onHover: (info: PickInfo<ProviderRing>) => pick.hover(info.object
       ? {
         x: info.x, y: info.y, title: info.object.name,
@@ -640,7 +650,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       data: bullet,
       getPosition: posNode,
       radiusUnits: 'pixels',
-      getRadius: (r: ProviderRing) => r.radiusPx + 7,
+      getRadius: (r: ProviderRing) => ringPx(r) + 7,
       filled: false,
       stroked: true,
       getLineColor: BULLETPROOF_COLOR,
@@ -651,7 +661,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getMaskDashes: 14,
       getMaskSpin: reducedMotion ? 0 : 0.11,
       animTime,
-      updateTriggers: { getMaskSpin: reducedMotion },
+      updateTriggers: { getMaskSpin: reducedMotion, getRadius: hs },
     }));
   }
 
@@ -663,22 +673,24 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => r.radiusPx + 3.5,
+        getRadius: (r: ProviderRing) => ringPx(r) + 3.5,
         filled: false, stroked: true,
         getLineColor: TRACK_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,
+        updateTriggers: { getRadius: hs },
       }),
       new ScatterplotLayer<ProviderRing, RingMaskExtensionProps<ProviderRing>>({
         id: 'hosting-takedown-arc',
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => r.radiusPx + 3.5,
+        getRadius: (r: ProviderRing) => ringPx(r) + 3.5,
         filled: false, stroked: true,
         getLineColor: TAKEDOWN_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,
         extensions: MASK_EXT,
         getMaskFraction: (r: ProviderRing) => r.takedownShare ?? 0,
+        updateTriggers: { getRadius: hs },
         animTime,
       }),
     );
@@ -798,8 +810,9 @@ function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<ActorCountry, PulseExtensionProps<ActorCountry>>({
       ...shared,
       id: 'actor-bloom',
-      getRadius: (c: ActorCountry) => radius(c) * 2,
+      getRadius: (c: ActorCountry) => haloPx(radius(c) * 2, input.haloScale),
       getFillColor: (c: ActorCountry) => withAlpha(FUCHSIA, Math.round(bandAlpha(c) * 0.16)),
+      updateTriggers: { ...shared.updateTriggers, getRadius: input.haloScale },
     }),
     new ScatterplotLayer<ActorCountry, PulseExtensionProps<ActorCountry>>({
       ...shared,
@@ -980,8 +993,9 @@ function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<VelocityPoint, PulseExtensionProps<VelocityPoint>>({
       ...shared,
       id: 'velocity-bloom',
-      getRadius: (p: VelocityPoint) => p.radiusPx * 2.1,
+      getRadius: (p: VelocityPoint) => haloPx(p.radiusPx * 2.1, input.haloScale),
       getFillColor: (p: VelocityPoint) => withAlpha(VELOCITY_COLOR, p.hot ? 40 : 22),
+      updateTriggers: { ...shared.updateTriggers, getRadius: input.haloScale },
     }),
     new ScatterplotLayer<VelocityPoint, PulseExtensionProps<VelocityPoint>>({
       ...shared,

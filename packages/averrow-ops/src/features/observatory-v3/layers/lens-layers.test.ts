@@ -636,3 +636,40 @@ describe('Operations lens on a realistic day (50 operations x 15 countries)', ()
     expect(tip.lines[0]).toMatch(/\d+ operations?/);
   });
 });
+
+describe('halo scale (blooms and provider rings shrink toward the world view)', () => {
+  const radius = (i: LensLayerInput, id: string, d: unknown) => (props(find(i, id)).getRadius as (x: unknown) => number)(d);
+
+  it('full size by default and at haloScale 1; smaller (never below the floor) at a lower scale, cores untouched', () => {
+    const full = input({ operations: true });
+    const small = input({ operations: true }, { haloScale: 0.4 });
+    const node = full.operations!.nodes[0]!;
+    const bloom = radius(full, 'ops-bloom', node);
+    expect(radius(input({ operations: true }, { haloScale: 1 }), 'ops-bloom', node)).toBe(bloom);
+    expect(radius(small, 'ops-bloom', node)).toBeCloseTo(bloom * 0.4, 6);
+    expect(radius(input({ operations: true }, { haloScale: 0.01 }), 'ops-bloom', node)).toBe(3); // the floor
+    expect(radius(small, 'ops-core', node)).toBe(radius(full, 'ops-core', node));
+  });
+
+  it('the bloom radius accessor is re-evaluated when the scale changes (updateTriggers)', () => {
+    const t = (s: number) => (props(find(input({ operations: true }, { haloScale: s }), 'ops-bloom')).updateTriggers as Props).getRadius;
+    expect(t(0.4)).not.toBe(t(1));
+  });
+
+  it('hosting: the ring, its bulletproof halo and the takedown track follow the scaled ring, so none floats off it', () => {
+    const full = input({ hosting: true });
+    const small = input({ hosting: true }, { haloScale: 0.5 });
+    const ring = full.hosting!.rings.find(r => r.bulletproof)!;
+    expect(radius(small, 'hosting-rings', ring)).toBeLessThan(radius(full, 'hosting-rings', ring));
+    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(7, 6);
+    expect(radius(small, 'hosting-takedown-track', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
+    expect(radius(small, 'hosting-takedown-arc', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
+    expect((props(find(small, 'hosting-rings')).updateTriggers as Props).getRadius).toBe(0.5);
+  });
+
+  it('actor blooms scale too', () => {
+    const a = input({ actors: true });
+    const c = a.actors!.countries[0]!;
+    expect(radius(input({ actors: true }, { haloScale: 0.5 }), 'actor-bloom', c)).toBeLessThan(radius(a, 'actor-bloom', c));
+  });
+});
