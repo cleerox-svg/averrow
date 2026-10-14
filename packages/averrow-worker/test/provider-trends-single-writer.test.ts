@@ -167,7 +167,7 @@ describe.skipIf(!hasSqlite())("B1 — updateProviderTrends zeroes providers abse
 });
 
 describe.skipIf(!hasSqlite())("B2 — generateDailySnapshots no longer writes trend_7d", () => {
-  it("leaves trend_7d's 7-day COUNT intact while still refreshing active/total counts", async () => {
+  it("leaves trend_7d's 7-day COUNT intact and no longer touches active/total counts (lib/provider-counts.ts owns them)", async () => {
     const raw = openDerivedDb(["hosting_providers", "threats", "daily_snapshots"]);
     const log: StatementLogEntry[] = [];
     const db = d1FromSqlite(raw, { log });
@@ -191,7 +191,13 @@ describe.skipIf(!hasSqlite())("B2 — generateDailySnapshots no longer writes tr
     const row = raw.prepare(
       `SELECT trend_7d, trend_30d, active_threat_count, total_threat_count FROM hosting_providers WHERE id = 'p1'`,
     ).all()[0];
-    expect(row).toEqual({ trend_7d: 12, trend_30d: 30, active_threat_count: 1, total_threat_count: 1 });
+    expect(row).toEqual({ trend_7d: 12, trend_30d: 30, active_threat_count: 0, total_threat_count: 0 });
+    // The provider snapshot itself still lands.
+    const snap = raw.prepare(
+      `SELECT active_threats FROM daily_snapshots WHERE date = ? AND entity_type = 'provider' AND entity_id = 'p1'`,
+    ).all(today)[0];
+    expect(snap).toEqual({ active_threats: 1 });
+    expect(log.some((e) => /UPDATE\s+hosting_providers/i.test(e.sql))).toBe(false);
   });
 
   it("no SQL in lib/snapshots.ts assigns trend_7d / trend_30d (single-writer guard)", () => {

@@ -117,6 +117,7 @@ not_found_handling = "404-page"
 #   :23 (hly)  trademark_monitor     ← S0.1
 #   :26 (6h)   executive_monitor     ← EXEC_IMPERSONATION Stage 4
 #   :27 (4h)   pulsedive enrichment feed
+#   :28 (00:28, 12:28) daily_snapshots (brand + provider, per-type repair)
 #   */10       page_capture          ← PHISH_PAGE_CAPTURE_SPEC_2026-10
 #   14:24 Mon  tenant weekly digest
 #
@@ -130,7 +131,16 @@ not_found_handling = "404-page"
 # so neither double-runs. No minute gates in the handler (its daily
 # retention sweep is an hour-only UTC-0 gate + KV day stamp) —
 # cron-audit-safe.
-crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *", "*/10 * * * *"]
+# `28 0,12 * * *` is the daily_snapshots writer (handlers/dailySnapshots.ts).
+# It ran at the tail of the hourly orchestrator (`hour === 0 || no row
+# today`), which was routinely starved, and its any-row check could not see
+# a missing entity TYPE — prod lost provider snapshots on 11 of ~23 days
+# (Flight Control's provider-escalation baseline). Own invocation = fresh
+# budget. 00:28 generates; 12:28 is a per-type PK-probe repair pass (two
+# one-row reads unless a type is missing). Minute :28 is off the */5 and
+# */10 grids and distinct from the other dedicated crons. Exact event.cron
+# match, no minute/hour gates — cron-audit-safe.
+crons = ["7 * * * *", "8 * * * *", "9 * * * *", "10 */6 * * *", "11 */6 * * *", "13 */6 * * *", "14 */6 * * *", "15 */6 * * *", "16 0 * * *", "*/5 * * * *", "12 */6 * * *", "13 13 * * *", "17 * * * *", "18 * * * *", "19 */4 * * *", "21 * * * *", "22 * * * *", "23 * * * *", "26 */6 * * *", "24 14 * * 1", "27 */4 * * *", "*/10 * * * *", "28 0,12 * * *"]
 
 # ─── Workflows (durable multi-step processing) ──────────────
 [[workflows]]

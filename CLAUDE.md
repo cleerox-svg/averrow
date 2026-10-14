@@ -655,6 +655,26 @@ page_capture: */10 * * * *  (every 10 min — phishing page evidence capture, sp
                              Needs R2 `PHISH_CAPTURES` + `[browser]` `BROWSER` (prod only;
                              absent → clean no-op). Manual/fallback trigger:
                              `POST /api/internal/agents/page_capture/run`.)
+daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` brand +
+                             provider rows; Flight Control's provider-escalation watcher
+                             compares `hosting_providers.active_threat_count` to YESTERDAY's
+                             provider snapshot. Was an `hour === 0 || no row today` block at
+                             the tail of the orchestrator tick: starved like PR-E/F/Q/T, and
+                             its any-row check could not see a missing TYPE — prod lacked
+                             provider snapshots on 11 of ~23 days (2026-10-12: 10,137 brand
+                             rows / 0 provider). Per-type idempotent: each type is probed with
+                             a PK-prefix `SELECT 1 … LIMIT 1` and generated only if absent, so
+                             00:28 does the work and 12:28 is a two-read repair pass that
+                             rebuilds only a missing type. `handleScheduled` early-returns on
+                             an exact `event.cron` match above the hourly-mesh guard; no
+                             minute/hour gates. Handler: `handlers/dailySnapshots.ts`
+                             `runDailySnapshotsCron` — handler-dispatched writer like
+                             daily_briefing: `agent_runs` (agent_id 'daily_snapshots';
+                             success / partial when one type failed / failed) + telemetry
+                             `agent_events` (`snapshots_generated`, target_agent=NULL). The
+                             provider-counter recount it used to run was dropped —
+                             `lib/provider-counts.ts` (enrichment Stage 5, every 4h) owns
+                             those columns. Manual force-regenerate: `POST /api/snapshots/generate`.)
 ```
 
 ### Agent dispatch (inside orchestrator hourly tick):
@@ -711,7 +731,9 @@ Social discovery:     NOT dispatched on this hourly tick — relocated (paired w
                        (see schedule above); the hour % 6 === 0 handleScheduled
                        gate no longer exists (orchestrator.ts:388)
 Social monitor:       NOT dispatched on this hourly tick — see Social discovery above
-Daily snapshots:      hour === 0, or if none exist today (inline await)
+Daily snapshots:      NOT dispatched on this hourly tick — moved to dedicated
+                       `28 0,12 * * *` cron (see schedule above); the
+                       `hour === 0 || no row today` tail block is gone
 ```
 
 **Parity-checker:** Removed in Wave 6. No longer runs anywhere. Do not reference.

@@ -462,6 +462,40 @@ export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: Exec
     return;
   }
 
+  // ─── Daily snapshots: dedicated cron (28 0,12 * * *) ──
+  //
+  // Generates daily_snapshots (brand + provider) in its own Worker
+  // invocation. Previously an `hour === 0 || no row today` block at the
+  // tail of runThreatFeedScan — starved by the mesh ahead of it, and its
+  // any-row check could not detect a missing provider TYPE, so Flight
+  // Control's provider-escalation baseline (yesterday's provider snapshot)
+  // was absent on 11 of ~23 days. Per-type PK-prefix probes make the 12:28
+  // fire a near-free repair pass that rebuilds only a missing type.
+  // Handler-dispatched writer (agent_id 'daily_snapshots'): agent_runs +
+  // telemetry agent_events, like the daily briefing.
+  //
+  // CRON-AUDIT (CLAUDE.md §6): EXACT event.cron match, no minute or hour
+  // gate in this branch or in runDailySnapshotsCron (the date comes from
+  // event.scheduledTime). Minute 28 is off the */5 Navigator and */10
+  // page_capture grids and distinct from every other dedicated cron. MUST
+  // stay above the `event.cron !== '7 * * * *'` mesh guard below.
+  if (event.cron === '28 0,12 * * *') {
+    try {
+      const { runDailySnapshotsCron } = await import('../handlers/dailySnapshots');
+      const result = await runDailySnapshotsCron(env, new Date(event.scheduledTime));
+      logger.info('daily_snapshots_cron', {
+        date: result.date,
+        status: result.status,
+        provider: result.provider.action,
+        brand: result.brand.action,
+        records: result.recordsProcessed,
+      });
+    } catch (err) {
+      logger.error('daily_snapshots_dispatch_error', { error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
   // ─── Executive-impersonation monitor: dedicated cron (26 */6 * * *) ──
   //
   // Stage 4 of EXEC_IMPERSONATION_2026-07. Scans the active org_executives
@@ -1373,19 +1407,11 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
   // explicitly via POST /api/agents/pathfinder/trigger when sales
   // intelligence is desired. Resurrect by reverting this commit.
 
-  // Daily snapshots — generate if none exist today
-  try {
-    const { generateDailySnapshots } = await import('../lib/snapshots');
-    const today = scheduledTime.toISOString().slice(0, 10);
-    const hasSnapshotToday = await env.DB.prepare(
-      "SELECT COUNT(*) as n FROM daily_snapshots WHERE date = ?"
-    ).bind(today).first<{ n: number }>();
-    if (hour === 0 || (hasSnapshotToday?.n ?? 0) === 0) {
-      await generateDailySnapshots(env.DB, today);
-    }
-  } catch (err) {
-    logger.error('threat_feed_scan_snapshots_error', { error: err instanceof Error ? err.message : String(err) });
-  }
+  // Daily snapshots — MOVED to the dedicated `28 0,12 * * *` cron
+  // (handlers/dailySnapshots.ts, branch at the top of handleScheduled).
+  // This tail block was routinely starved before reaching it, and its
+  // "any row today" fallback could not see a missing entity TYPE — prod
+  // lost provider snapshots on 11 of ~23 days. Same fix as PR-T.
 
   // ── Abuse mailbox classifier ──
   //
