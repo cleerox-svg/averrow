@@ -6,6 +6,7 @@
 import type { ArcData, ThreatPoint } from '@/hooks/useObservatory';
 import { arcKey, nodeKey } from './url-state';
 import { getArcPath } from './trips';
+import { hasValidArc, hasValidPosition } from './geo';
 
 export type MapSelection =
   | { kind: 'node'; node: ThreatPoint }
@@ -33,11 +34,23 @@ export function resolveSelection(
   return null;
 }
 
-/** Geographic anchor ([lng, lat]) used to place the card when there was no click (URL restore). */
-export function selectionLngLat(s: MapSelection): [number, number] {
-  if (s.kind === 'node') return [s.node.lng, s.node.lat];
+/**
+ * Geographic anchor ([lng, lat]) of a selection: the node itself, or the arc's
+ * mid-point. Null when the selection has no placeable position (so callers skip
+ * the projection / camera move instead of feeding NaN to the map).
+ */
+export function selectionLngLat(s: MapSelection): [number, number] | null {
+  if (s.kind === 'node') {
+    return hasValidPosition(s.node.lat, s.node.lng) ? [s.node.lng, s.node.lat] : null;
+  }
+  if (!hasValidArc(s.arc)) return null;
   const path = getArcPath(s.arc);
-  return path[Math.floor(path.length / 2)];
+  const mid = path[Math.floor(path.length / 2)];
+  if (mid && hasValidPosition(mid[1], mid[0])) return [mid[0], mid[1]];
+  // Degenerate path: fall back to the endpoints' mid-point.
+  const [sx, sy] = s.arc.sourcePosition;
+  const [tx, ty] = s.arc.targetPosition;
+  return [(sx + tx) / 2, (sy + ty) / 2];
 }
 
 export interface CardBounds {
@@ -48,9 +61,13 @@ export interface CardBounds {
   rightInset?: number;
 }
 
+const finite = (n: number, fallback: number): number => (Number.isFinite(n) ? n : fallback);
+
 /**
  * Top-left position for a card anchored at (x, y), kept fully inside the
- * container (minus the right inset). If the card cannot fit, it pins to the margin.
+ * container (minus the right inset). If the card cannot fit, it pins to the
+ * margin. Non-finite inputs (an unmeasured card, a projection that failed) are
+ * treated as 0 so the result is always finite.
  */
 export function clampCardPosition(
   anchor: { x: number; y: number },
@@ -59,10 +76,10 @@ export function clampCardPosition(
   margin = 8,
   offset = 12,
 ): { left: number; top: number } {
-  const maxLeft = bounds.width - (bounds.rightInset ?? 0) - card.width - margin;
-  const maxTop = bounds.height - card.height - margin;
+  const maxLeft = finite(bounds.width, 0) - finite(bounds.rightInset ?? 0, 0) - finite(card.width, 0) - margin;
+  const maxTop = finite(bounds.height, 0) - finite(card.height, 0) - margin;
   return {
-    left: Math.max(margin, Math.min(anchor.x + offset, maxLeft)),
-    top: Math.max(margin, Math.min(anchor.y + offset, maxTop)),
+    left: Math.max(margin, Math.min(finite(anchor.x, 0) + offset, maxLeft)),
+    top: Math.max(margin, Math.min(finite(anchor.y, 0) + offset, maxTop)),
   };
 }

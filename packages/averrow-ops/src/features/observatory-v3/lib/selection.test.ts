@@ -28,14 +28,28 @@ describe('resolveSelection', () => {
   });
   it('anchors a node at its position and an arc on its path', () => {
     expect(selectionLngLat({ kind: 'node', node })).toEqual([-74.006, 40.7128]);
-    const [lng, lat] = selectionLngLat({ kind: 'arc', arc });
+    const [lng, lat] = selectionLngLat({ kind: 'arc', arc })!;
     expect(lng).toBeLessThan(10);
     expect(lng).toBeGreaterThan(-100);
     expect(Number.isFinite(lat)).toBe(true);
   });
 });
 
+describe('selectionLngLat never yields NaN', () => {
+  it('returns null for a node or arc with no placeable position', () => {
+    expect(selectionLngLat({ kind: 'node', node: { ...node, lat: NaN } })).toBeNull();
+    expect(selectionLngLat({ kind: 'node', node: { ...node, lat: 0, lng: 0 } })).toBeNull();
+    expect(selectionLngLat({ kind: 'arc', arc: { ...arc, sourcePosition: [NaN, 1] } })).toBeNull();
+    expect(selectionLngLat({ kind: 'arc', arc: { ...arc, targetPosition: [] as unknown as [number, number] } })).toBeNull();
+  });
+});
+
 describe('clampCardPosition', () => {
+  it('is always finite, whatever it is given', () => {
+    const p = clampCardPosition({ x: NaN, y: Infinity }, { width: NaN, height: NaN }, { width: NaN, height: 100, rightInset: NaN });
+    expect(Number.isFinite(p.left)).toBe(true);
+    expect(Number.isFinite(p.top)).toBe(true);
+  });
   const card = { width: 300, height: 200 };
   it('keeps the card inside the container, not the window', () => {
     const p = clampCardPosition({ x: 790, y: 590 }, card, { width: 800, height: 600 });

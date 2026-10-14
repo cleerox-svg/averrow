@@ -24,6 +24,9 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     removeControl(c: unknown) { this.controls = this.controls.filter(x => x !== c); }
     resize() {}
     project() { return { x: 100, y: 100 }; }
+    getZoom() { return 2; }
+    flyTo = vi.fn();
+    jumpTo = vi.fn();
     remove() { this.removed = true; }
   }
   class FakeOverlay {
@@ -92,6 +95,13 @@ describe('ThreatMapV3 error handling', () => {
     expect(maps).toHaveLength(2);
     expect(lastMap()).not.toBe(first);
     expect(screen.queryByText('Map Unavailable')).not.toBeInTheDocument();
+  });
+
+  it('a URL-less fetch failure before style.load is fatal (Retry shown), not a silent blank map', () => {
+    render(<ThreatMapV3 {...base} />);
+    act(() => lastMap().emit('error', { error: new TypeError('Failed to fetch') }));
+    expect(screen.getByText('Map Unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   it('a sprite 404 (URL under the style directory) is NOT fatal and the map still loads on style.load', () => {
@@ -188,5 +198,40 @@ describe('ThreatMapV3 selection card', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Close details' }));
     expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ThreatMapV3 camera focus', () => {
+  const ready = () => act(() => { lastMap().emit('style.load'); });
+
+  it('flies (<= 800ms) to a new focus request, once per id', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    expect(lastMap().flyTo).toHaveBeenCalledTimes(1);
+    const arg = lastMap().flyTo.mock.calls[0][0];
+    expect(arg.center).toEqual([10, 20]);
+    expect(arg.duration).toBeLessThanOrEqual(800);
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    expect(lastMap().flyTo).toHaveBeenCalledTimes(1);
+    rerender(<ThreatMapV3 {...base} focus={{ id: 2, lng: -5, lat: 1 }} />);
+    expect(lastMap().flyTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('jumps instead of flying under reduced motion or when asked to be instant', () => {
+    stubMatchMedia(true);
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    expect(lastMap().flyTo).not.toHaveBeenCalled();
+    expect(lastMap().jumpTo).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a non-finite target (never feeds NaN to the camera)', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: NaN, lat: 20 }} />);
+    expect(lastMap().flyTo).not.toHaveBeenCalled();
+    expect(lastMap().jumpTo).not.toHaveBeenCalled();
   });
 });

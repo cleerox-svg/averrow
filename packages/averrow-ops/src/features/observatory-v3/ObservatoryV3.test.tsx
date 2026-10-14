@@ -264,6 +264,27 @@ describe('ObservatoryV3 chrome', () => {
   });
 });
 
+describe('ObservatoryV3 footer label follows the stats query only', () => {
+  it('relabels the threats / countries line as soon as stats arrive, even while nodes still load', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>(r => { release = r; });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/nodes') && url.includes('period=30d')) return gate.then(() => ({ success: true, data: [] }));
+      if (url.startsWith('/api/observatory/stats') && url.includes('period=30d')) return Promise.resolve({ success: true, data: { ...okStats, threats_mapped: 777, period: '30d' } });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: { ...okStats, threats_mapped: 5 } });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory');
+    const footer = () => document.querySelector('div.font-mono[aria-busy]') as HTMLElement;
+    await waitFor(() => expect(footer().textContent).toMatch(/^7D/));
+    await userEvent.click(screen.getByRole('tab', { name: '30D' }));
+    await waitFor(() => expect(footer().textContent).toMatch(/^30D/));
+    expect(footer().textContent).toContain('777');
+    expect(footer().getAttribute('aria-busy')).toBe('false');
+    await act(async () => { release(); await gate; });
+  });
+});
+
 describe('ObservatoryV3 keyboard selection path', () => {
   it('selecting a side-panel origin writes the node to the URL (and passes it as the selection)', async () => {
     route({ '/api/observatory/nodes': [node], '/api/observatory/stats': { ...okStats, threats_mapped: 3, threats_total: 3 } });
@@ -272,6 +293,8 @@ describe('ObservatoryV3 keyboard selection path', () => {
     await userEvent.click(screen.getByRole('button', { name: 'pick-origin' }));
     await waitFor(() => expect(search).toContain('node=10.00%2C20.00'));
     await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].selection).toMatchObject({ kind: 'node' }));
+    // Not a map click: the camera is asked to follow the selection.
+    expect(mapProps.mock.calls.at(-1)![0].focus).toMatchObject({ lng: 20, lat: 10, instant: false });
   });
 });
 

@@ -94,6 +94,18 @@ const bloomColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low',
 const glowColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 12);
 const nodePosition = (d: ThreatPoint): [number, number] => [d.lng, d.lat];
 
+export interface MapFocus {
+  id: number;
+  lng: number;
+  lat: number;
+  zoom?: number;
+  /** Skip the animation (initial URL restore). */
+  instant?: boolean;
+}
+
+/** Fly-to duration cap (ms): long enough to track, short enough never to feel slow. */
+export const FLY_DURATION_MS = 700;
+
 // ─── Props ──────────────────────────────────────────────────
 export interface ThreatMapV3Props {
   threats: ThreatPoint[];
@@ -124,6 +136,12 @@ export interface ThreatMapV3Props {
    * passes its own to drive play / pause / speed / seek.
    */
   clock?: AnimationClock;
+  /**
+   * Camera request. A NEW `id` flies the map to (lng, lat) (MapLibre flyTo, <= 800ms;
+   * jumpTo under reduced motion or `instant`). Used when the selection did not
+   * come from a click on the map (side panel, search, URL restore).
+   */
+  focus?: MapFocus | null;
   /** Notified when the map enters / leaves the fatal fallback (so the page can hide map-dependent overlays). */
   onFatalChange?: (fatal: boolean) => void;
 }
@@ -200,7 +218,7 @@ function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
   mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT,
   botDensity, botGlobalAvg = null, controlRightInset = 0,
-  selection = null, onSelect, clock: clockProp, onFatal,
+  selection = null, onSelect, clock: clockProp, onFatal, focus = null,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -702,9 +720,27 @@ function ThreatMapV3Inner({
     if (anchor?.key === selKey) return;
     const map = mapRef.current;
     if (!mapLoaded || !map) return;
-    const p = map.project(selectionLngLat(selection));
+    const at = selectionLngLat(selection);
+    if (!at) return; // nothing placeable: no card anchor (and never a NaN projection)
+    const p = map.project(at);
     setAnchor({ key: selKey, x: p.x, y: p.y });
   }, [selKey, mapLoaded]);
+
+  // ─── Camera fly-to (non-click selections) ─────────────────
+  const focusId = focus?.id ?? null;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !focus) return;
+    if (!Number.isFinite(focus.lng) || !Number.isFinite(focus.lat)) return;
+    const target = {
+      center: [focus.lng, focus.lat] as [number, number],
+      zoom: Math.max(map.getZoom(), focus.zoom ?? 3),
+      padding: { top: 0, bottom: 0, left: 0, right: latest.current.controlRightInset },
+    };
+    if (reducedMotion || focus.instant) map.jumpTo(target);
+    else map.flyTo({ ...target, duration: FLY_DURATION_MS, essential: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per request id
+  }, [focusId, mapLoaded]);
 
   const cardAnchor = selection && anchor?.key === selKey ? anchor : null;
 

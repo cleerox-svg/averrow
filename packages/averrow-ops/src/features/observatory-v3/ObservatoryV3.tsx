@@ -16,7 +16,7 @@ import {
   useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap, useRefreshObservatory,
 } from '@/hooks/useObservatory';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
-import { ThreatMapV3 } from './components/ThreatMapV3';
+import { ThreatMapV3, type MapFocus } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Card, Tabs, Button } from '@/design-system/components';
@@ -37,7 +37,7 @@ import {
 } from './lib/url-state';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
-import { resolveSelection, type MapSelection } from './lib/selection';
+import { resolveSelection, selectionLngLat, type MapSelection } from './lib/selection';
 import { usePrefersReducedMotion } from './lib/use-motion';
 
 const PERIOD_LABELS: Record<Period, string> = { '24h': '24H', '7d': '7D', '30d': '30D', '90d': '90D' };
@@ -224,6 +224,9 @@ export function ObservatoryV3() {
     needs.nodes ? threatsQ : null, needs.stats ? statsQ : null, needs.arcs ? arcsQ : null, needs.heatmap ? heatmapQ : null,
   ].filter((q): q is typeof threatsQ => q !== null);
   const isUpdating = activeQueries.some(q => q.isUpdating);
+  // The footer's threats / countries come from the stats query alone: its label
+  // must not flip to the new period until THAT data has arrived.
+  const statsUpdating = needs.stats && statsQ.isUpdating;
   const isInitialLoading = activeQueries.some(q => q.isLoading);
   const isFetching = activeQueries.some(q => q.isFetching) || (isBotMode && botLoading);
 
@@ -246,11 +249,32 @@ export function ObservatoryV3() {
     });
   }, [update]);
 
+  const [focus, setFocus] = useState<MapFocus | null>(null);
+  const focusSeq = useRef(0);
+  const requestFocus = useCallback((sel: MapSelection, instant = false) => {
+    const at = selectionLngLat(sel);
+    if (!at) return; // unplaceable: select without moving the camera
+    focusSeq.current += 1;
+    setFocus({ id: focusSeq.current, lng: at[0], lat: at[1], instant });
+  }, []);
+
   // Keyboard / SR path to node selection: the side panel's Top Threat Origins rows.
+  // Not a map click, so the camera follows the selection.
   const handleSelectNodeFromPanel = useCallback((node: ThreatPoint) => {
-    handleSelect({ kind: 'node', node });
+    const sel: MapSelection = { kind: 'node', node };
+    handleSelect(sel);
+    requestFocus(sel);
     setShowMobilePanel(false);
-  }, [handleSelect]);
+  }, [handleSelect, requestFocus]);
+
+  // A shared link that restores a selection frames it once (instantly), as the
+  // camera otherwise opens on the default world view.
+  const restoredRef = useRef(!(state.node || state.arc)); // true = nothing to restore
+  useEffect(() => {
+    if (restoredRef.current || !selection) return;
+    restoredRef.current = true;
+    requestFocus(selection, true);
+  }, [selection, requestFocus]);
 
   // A shared link may point at a node/arc that no longer exists in the fresh
   // data: once the relevant query has settled, drop the dead key from the URL.
@@ -276,8 +300,8 @@ export function ObservatoryV3() {
   // While the new period loads, the numbers still belong to the previous one: keep
   // labelling them with it (the "Updating to X" pill announces the switch).
   const settledPeriod = useRef(period);
-  if (!isUpdating) settledPeriod.current = period;
-  const footerPeriodLabel = PERIOD_LABELS[isUpdating ? settledPeriod.current : period];
+  if (!statsUpdating) settledPeriod.current = period;
+  const footerPeriodLabel = PERIOD_LABELS[statsUpdating ? settledPeriod.current : period];
   const panelInset = !isMobile && showPanel && hasSidePanel ? 320 : 0;
 
   // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
@@ -305,6 +329,7 @@ export function ObservatoryV3() {
           controlRightInset={panelInset}
           selection={selection}
           onSelect={handleSelect}
+          focus={focus}
           onFatalChange={setMapFatal}
         />
         {overlayKind && (
@@ -602,7 +627,7 @@ export function ObservatoryV3() {
               )}
             </div>
           ) : (
-            <div className="font-mono text-[10px]" aria-busy={isUpdating} style={{ color: 'var(--text-muted)', opacity: isUpdating ? 0.6 : 1 }}>
+            <div className="font-mono text-[10px]" aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
               <span style={{ color: 'var(--amber-text)' }}>{footerPeriodLabel}</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats

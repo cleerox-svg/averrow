@@ -15,8 +15,13 @@ describe('classifyMapError', () => {
     expect(classifyMapError({ error: { message: 'Failed to fetch', url: STYLE } }, { styleLoaded: false, styleUrl: STYLE })).toBe('fatal');
     expect(classifyMapError({ error: { message: 'Style could not be loaded' } }, { styleLoaded: false, styleUrl: STYLE })).toBe('fatal');
   });
-  it('treats unknown pre-load errors as transient (glyph / sprite hiccups)', () => {
-    expect(classifyMapError({ error: { message: 'glyph 404' } }, { styleLoaded: false, styleUrl: STYLE })).toBe('transient');
+  it('treats a URL-less style fetch failure before style.load as fatal', () => {
+    // A network-level fetch failure carries no request URL (TypeError: Failed to fetch).
+    expect(classifyMapError({ error: { message: 'Failed to fetch' } }, { styleLoaded: false, styleUrl: STYLE })).toBe('fatal');
+    expect(classifyMapError({ error: { message: 'NetworkError when attempting to fetch resource.' } }, { styleLoaded: false, styleUrl: STYLE })).toBe('fatal');
+  });
+  it('leaves a URL-less failure transient once the style has loaded, and ignores an empty event', () => {
+    expect(classifyMapError({ error: { message: 'Failed to fetch' } }, { styleLoaded: true, styleUrl: STYLE })).toBe('transient');
     expect(classifyMapError({}, { styleLoaded: false, styleUrl: STYLE })).toBe('transient');
   });
   it('treats a sprite / glyph failure under the style directory as transient (the word "style" is in its URL)', () => {

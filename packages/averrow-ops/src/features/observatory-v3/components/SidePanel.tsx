@@ -37,6 +37,7 @@ import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { relativeTime } from '@/lib/time';
 import { parseStringArray } from '@/lib/safe-json';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
+import { topOrigins } from '../lib/origins';
 
 // ─── Helpers ────────────────────────────────────────────────
 function fmtPeriod(p: string): string {
@@ -218,21 +219,8 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
 }: { period: string; source: string; onSelectNode?: (node: ThreatPoint) => void }) {
   const q = useObservatoryThreats({ period, source });
 
-  const top = useMemo(() => {
-    // Per country: total volume + its busiest node (the keyboard path to selecting it on the map).
-    const byCountry = new Map<string, { count: number; node: ThreatPoint }>();
-    for (const n of q.data ?? []) {
-      if (!n.country_code) continue;
-      const cur = byCountry.get(n.country_code);
-      if (!cur) byCountry.set(n.country_code, { count: n.threat_count, node: n });
-      else {
-        cur.count += n.threat_count;
-        if (n.threat_count > cur.node.threat_count) cur.node = n;
-      }
-    }
-    return [...byCountry.entries()].map(([code, v]) => [code, v.count, v.node] as const).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [q.data]);
-  const max = top[0]?.[1] ?? 1;
+  const top = useMemo(() => topOrigins(q.data), [q.data]);
+  const max = top[0]?.count ?? 1;
 
   return (
     <div>
@@ -245,7 +233,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
         errorText="Origins failed to load"
         emptyText="No geolocated threats in this period"
       >
-        {top.map(([code, count, node]) => {
+        {top.map(({ code, count, node }) => {
           const row = (
             <>
             <span className="text-sm shrink-0" aria-hidden>{countryFlag(code)}</span>
@@ -258,7 +246,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
             </span>
             </>
           );
-          return onSelectNode ? (
+          return onSelectNode && node ? (
             <button
               key={code}
               type="button"
