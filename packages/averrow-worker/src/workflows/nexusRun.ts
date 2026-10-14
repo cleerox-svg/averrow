@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:work
 import type { Env } from '../types';
 import { updateProviderTrends } from '../lib/provider-trends';
 import { groupClusterComponents } from '../lib/cluster-components';
-import { detectClusterInfraMovement } from '../lib/cluster-infra-movement';
+import { detectClusterInfraMovement, buildDormancyPivotPayload } from '../lib/cluster-infra-movement';
 // Shared with agents/nexus.ts — both paths upsert the same
 // `infrastructure_clusters` rows, so id slug AND display name must be
 // computed by the same code. See lib/cluster-naming.ts.
@@ -739,7 +739,7 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
           await this.env.DB.prepare(`
             INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
             VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
-          `).bind(crypto.randomUUID(), JSON.stringify({ kind: 'dormancy', cluster_id: clusterId, asn })).run();
+          `).bind(crypto.randomUUID(), JSON.stringify(buildDormancyPivotPayload(clusterId, asn))).run();
         }
 
         if (isAccelerating) accelerating++;
