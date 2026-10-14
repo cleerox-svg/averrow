@@ -2,8 +2,9 @@
  * Country polygons for the Baseline choropleth.
  *
  * Natural Earth 110m admin-0 (public domain), via world-atlas, flattened to a
- * GeoJSON FeatureCollection keyed by ISO-2 `id`, coordinates rounded to 0.1° and
- * Antarctica dropped (~140 kB raw). It is NOT in the JS bundle: Vite emits it as
+ * GeoJSON FeatureCollection keyed by ISO-2 `id`, coordinates rounded to 0.1°,
+ * rings that cross ±180 cut at the date line (lib/antimeridian.ts, so Russia and
+ * Fiji have no world-wide smear edge) and Antarctica dropped (~140 kB raw). It is NOT in the JS bundle: Vite emits it as
  * a hashed static asset (`?url`) that is fetched only the first time the Baseline
  * layer is switched on, then kept for the session.
  */
