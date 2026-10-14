@@ -2,7 +2,7 @@
 // Future-facing import path: @/design-system/components
 //
 // Usage:
-//   import { Card, Button, Badge, Avatar, StatTile, PageState, ... } from '@/design-system/components'
+//   import { Card, Button, Badge, Avatar, StatTile, statFitEm, PageState, ... } from '@/design-system/components'
 //
 // Single barrel for ops (Phase 1 PR6a folded `components/ui/index.ts` into it).
 // Badge, Tabs, FilterBar, Sparkline, Avatar, Card and the Table primitives
@@ -20,7 +20,7 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from '../../components/ui
 
 // ── Shared kit (@averrow/shared/ui) ────────────────────────────────────────
 export {
-  Banner, Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, PageState, pageStateKind,
+  Banner, Badge, Tabs, FilterBar, Sparkline, Avatar, StatTile, statFitEm, PageState, pageStateKind,
   Card, CardHeader, CardTitle, CardContent, CardFooter,
   Table, Th, Td, DataTable,
 } from '@averrow/shared/ui';

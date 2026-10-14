@@ -44,7 +44,12 @@ export const DEFAULT_MIN_ZOOM = -2;
  * The world copies themselves stay ON (turning them off clamps the longitude: no panning across the Pacific, see
  * lib/world-copies.ts), so this floor is what keeps them out of the zoomed-out view. A world-spanning target (US to Japan)
  * is therefore framed no tighter than the world filling the canvas: on a 400px phone it still fits (214 degrees = 238px),
- * on a 1024px screen with the drawer open its ends sit under the drawer.
+ * on a 1024px screen with the drawer open its ends sit under the drawer: a world-spanning target NO LONGER fits beside
+ * the drawer at 1024 (the floor stops the zoom at one world per canvas width, and the drawer takes part of that width).
+ *
+ * The floor is derived from the WIDTH only, and the latitude range is widened (`PHONE_LAT_LIMIT`) so MapLibre's
+ * vertical cover rule does not override it. On a tall phone one world is therefore much shorter than the canvas, and
+ * the empty bands above and below the world are deliberate (background-coloured), not a bug.
  *
  * Never below MapLibre's own -2 floor (`setMinZoom` rejects anything lower: a canvas narrower than 128px).
  */

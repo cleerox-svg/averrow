@@ -61,6 +61,17 @@ export function worldPx(lng: number, lat: number, zoom: number): [number, number
   return [((lng + 180) / 360) * size, (0.5 - Math.log(Math.tan(Math.PI / 4 + rad / 2)) / (2 * Math.PI)) * size];
 }
 
+const SEVERITY_RANK: Readonly<Record<string, number>> = { critical: 4, high: 3, medium: 2, low: 1 };
+
+/**
+ * Thinning weight of a node: severity first, then threat count. A critical 3-threat node must keep its breathing bloom
+ * over a low-severity 40-threat neighbour in the same cell. The count is clamped under 1e9 so it can never outrank a severity step.
+ */
+export function haloWeight(severity: string | null | undefined, count: number): number {
+  const rank = SEVERITY_RANK[(severity ?? '').toLowerCase()] ?? 0;
+  return rank * 1e9 + Math.max(0, Math.min(count, 1e9 - 1));
+}
+
 /**
  * Keep the heaviest item per `cellPx` x `cellPx` screen cell (all of them when `cellPx` is 0). The input order is kept,
  * and ties go to the earlier item, so the result is stable for the same data.

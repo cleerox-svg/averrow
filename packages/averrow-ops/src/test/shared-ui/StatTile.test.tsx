@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StatTile } from '@averrow/shared/ui';
+import { StatTile, statFitEm } from '@averrow/shared/ui';
 import { stubMatchMedia } from './helpers';
 
 // Custom properties are stored verbatim.
@@ -264,6 +264,18 @@ describe('shared StatTile', () => {
     expect(screen.getByText('CRITICAL')).toBeInTheDocument();
     rerender(<StatTile label="Threats" value={76712} />);
     expect(screen.getByText('76,712')).toBeInTheDocument();
+  });
+
+  it('compact: paired tiles share one size through fitEm (the widest value decides), and text is measured wider than digits', () => {
+    const em = (c: HTMLElement) => (c.querySelector('.ds-stat-value--fit') as HTMLElement).style.getPropertyValue('--ds-stat-em');
+    const a = render(<StatTile label="A" value={76712} compact />);
+    const b = render(<StatTile label="B" value="60%" compact />);
+    expect(Number(em(b.container))).toBeLessThan(Number(em(a.container)));
+    const shared = Math.max(statFitEm(76712), statFitEm('60%'));
+    const c = render(<StatTile label="C" value="60%" compact fitEm={shared} />);
+    expect(Number(em(c.container))).toBe(Number(em(a.container)));
+    expect(statFitEm('MEDIUM')).toBeGreaterThan(6 * 0.62); // uppercase runs wider than the numeral estimate
+    expect(statFitEm(5)).toBe(statFitEm(123)); // never under 3 digits
   });
 
   it('reserves bottom space for the "View" hint only when clickable', () => {

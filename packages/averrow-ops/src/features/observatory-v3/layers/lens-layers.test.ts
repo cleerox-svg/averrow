@@ -12,7 +12,7 @@ import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_SMALL_C
 import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { getSeverityColor } from '../lib/map-colors';
 import {
-  buildLensLayers, buildLensBaseLayers, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
+  buildLensLayers, buildLensBaseLayers, haloPx, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
 } from './lens-layers';
 import { NO_LABELS, type PlacedLabels } from './lens-labels';
 import { buildBotShareModel } from '../lib/lens/bot-share';
@@ -656,15 +656,25 @@ describe('halo scale (blooms and provider rings shrink toward the world view)', 
     expect(t(0.4)).not.toBe(t(1));
   });
 
-  it('hosting: the ring, its bulletproof halo and the takedown track follow the scaled ring, so none floats off it', () => {
+  it('hosting: the pickable ring keeps its full size; only the glow / arcs round it shrink', () => {
     const full = input({ hosting: true });
     const small = input({ hosting: true }, { haloScale: 0.5 });
     const ring = full.hosting!.rings.find(r => r.bulletproof)!;
-    expect(radius(small, 'hosting-rings', ring)).toBeLessThan(radius(full, 'hosting-rings', ring));
-    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(7, 6);
-    expect(radius(small, 'hosting-takedown-track', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
-    expect(radius(small, 'hosting-takedown-arc', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
-    expect((props(find(small, 'hosting-rings')).updateTriggers as Props).getRadius).toBe(0.5);
+    expect(radius(small, 'hosting-rings', ring)).toBe(radius(full, 'hosting-rings', ring));
+    expect(radius(full, 'hosting-bulletproof-halo', ring) - radius(full, 'hosting-rings', ring)).toBeCloseTo(7, 6);
+    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3.5, 6);
+    expect(radius(small, 'hosting-takedown-track', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6); // the floor
+    expect(radius(small, 'hosting-takedown-arc', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6);
+    expect((props(find(small, 'hosting-bulletproof-halo')).updateTriggers as Props).getRadius).toBe(0.5);
+  });
+
+  it('the floor never enlarges a radius that is already under it', () => {
+    expect(haloPx(2, 0.4)).toBe(2);
+    expect(haloPx(2.9, 0.1)).toBe(2.9);
+    expect(haloPx(3, 0.4)).toBe(3);
+    expect(haloPx(10, 0.4)).toBe(4);
+    expect(haloPx(10, 1)).toBe(10);
+    expect(haloPx(10, undefined)).toBe(10);
   });
 
   it('actor blooms scale too', () => {

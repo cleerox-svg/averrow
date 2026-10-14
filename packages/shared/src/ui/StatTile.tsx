@@ -65,6 +65,11 @@ export interface StatTileProps
    * stays available: `title` on hover and a screen-reader-only copy. Text values and smaller numbers are unchanged.
    */
   compact?: boolean;
+  /**
+   * `compact` only: the em width to size the value for, when it is larger than this tile's own value needs. Give paired
+   * tiles the max of `statFitEm` over the group so "76.7K" and "60%" sit at the same size.
+   */
+  fitEm?: number;
 }
 
 export interface StatDelta {
@@ -74,10 +79,19 @@ export interface StatDelta {
   label?: string;
 }
 
-/** Characters the settled value is shown with (never fewer than 3: a one-digit tile keeps the full size). */
-function fitChars(value: number | string, compacted: boolean): number {
-  const text = typeof value === 'number' ? (compacted ? formatCompact(value) : formatFull(value)) : value;
-  return Math.max(3, text.length);
+/** Average glyph advance, in em, of the tile's tabular numerals / of a text value (uppercase letters run wider than digits). */
+const EM_PER_DIGIT = 0.62;
+const EM_PER_TEXT_CHAR = 0.76;
+
+/**
+ * Width, in em, a settled value needs: its length times the glyph advance (never under 3 digits: a one-digit tile keeps
+ * the full size). Feeds the compact tile's `100cqi / width` size. A row of paired compact tiles passes the largest of
+ * their widths as `fitEm`, so they all render at one size.
+ */
+export function statFitEm(value: number | string, compact = true): number {
+  const isNum = typeof value === 'number';
+  const text = isNum ? (compact && Math.abs(value) >= COMPACT_FROM ? formatCompact(value) : formatFull(value)) : value;
+  return Math.max(3 * EM_PER_DIGIT, text.length * (isNum ? EM_PER_DIGIT : EM_PER_TEXT_CHAR));
 }
 
 const TREND_W = 100;
@@ -132,6 +146,7 @@ export function StatTile({
   trend,
   live = false,
   compact = false,
+  fitEm,
   className,
   ...rest
 }: StatTileProps) {
@@ -176,13 +191,13 @@ export function StatTile({
         {critCount > 0 ? null : deltaChip}
       </span>
       {compact && !isNull ? (
-        // The value scales to the tile (container query, sized by its final length so it does not jump while counting
+        // The value scales to the tile (container query, sized by its final width so it does not jump while counting
         // up): a 6-character count in a 140px tile shrinks instead of clipping.
         <span className="ds-stat-fit">
           <span
             className="ds-stat-value ds-stat-value--fit"
             title={isCompact ? formatFull(value) : undefined}
-            style={{ '--ds-stat-chars': fitChars(value, isCompact) } as CSSProperties}
+            style={{ '--ds-stat-em': Math.max(statFitEm(value, true), fitEm ?? 0) } as CSSProperties}
           >
             <span aria-hidden={isCompact || undefined}>{display}</span>
             {isCompact ? <span className="sr-only">{formatFull(value)}</span> : null}

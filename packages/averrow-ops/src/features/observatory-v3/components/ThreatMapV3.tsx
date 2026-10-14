@@ -54,8 +54,8 @@ import {
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
-import { ensureMapWorker, installTransformAlias, mapTransform } from '../lib/maplibre-compat';
-import { HALO_FULL, haloCellPx, haloViewForZoom, thinForHalos, type HaloView } from '../lib/halo';
+import { canInterleave, ensureMapWorker, installTransformAlias, mapTransform } from '../lib/maplibre-compat';
+import { HALO_FULL, haloCellPx, haloViewForZoom, haloWeight, thinForHalos, type HaloView } from '../lib/halo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
   effectiveProjection, globeBleeds, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeStartCamera, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
@@ -370,6 +370,8 @@ function ThreatMapV3Inner({
   const overlaysRef = useRef<OverlaySlots>({ flat: null, globe: null });
   /** Whether the ACTIVE overlay is the interleaved (globe) one. */
   const overlayInterleavedRef = useRef(false);
+  /** False when this MapLibre exposes no transform for deck.gl (see lib/maplibre-compat.ts): the globe then uses the overlaid overlay. */
+  const canInterleaveRef = useRef(true);
   /**
    * True only while the map-click path below invokes the layers' own `onClick` handlers. On the globe (interleaved
    * deck) deck's native tap recogniser is NOT trusted to deliver a click (see `onMapClick`), so a click that
@@ -393,7 +395,7 @@ function ThreatMapV3Inner({
   bleedRef.current = bleed;
   /** The canvas box is changing because of the zoom (not the chrome): the view is kept where it is (see the box effect). */
   const bleedFlipRef = useRef(false);
-  /** The person has dragged / zoomed the camera since the last projection flip (a flip then keeps their position). */
+  /** The camera was placed deliberately since the last projection flip: dragged / zoomed by the person, or framed by a focus request. A flip then keeps its position. */
   const userMovedRef = useRef(false);
   /** Halo size follows the zoom (smaller toward the world view, where Europe's blooms would otherwise overlap). */
   const [haloView, setHaloView] = useState<HaloView>(HALO_FULL);
@@ -568,6 +570,9 @@ function ThreatMapV3Inner({
     }
     // MapLibre 6 dropped `map.transform`, which @deck.gl/mapbox still reads every interleaved frame.
     installTransformAlias(map);
+    // Without a transform deck.gl's interleaved globe would throw on every frame: the globe then keeps the overlaid
+    // (separate canvas) mode instead. installTransformAlias warns in dev.
+    canInterleaveRef.current = canInterleave(map);
     mapRef.current = map;
 
     // Set on cleanup. Under React StrictMode (dev) the effect is mounted,
@@ -678,7 +683,8 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!map || !mapLoaded || size.width === 0) return;
     // Flat desktop gets the widened range too: "the world covers the canvas vertically" otherwise pins the zoom at
-    // ~0.5 and a world-spanning selection cannot fit beside the drawer on a 1024px screen (the globe keeps Mercator's).
+    // ~0.5 (the globe keeps Mercator's). This lets the zoom floor drop to one world filling the canvas WIDTH; it does
+    // not make a world-spanning target fit beside the drawer at 1024px (see the note on the world-fill floor in lib/camera.ts).
     const lat = isMobile || !isGlobe ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
     setLatRange(mapTransform(map), lat);
     // The globe needs no wide-world floor: one planet fits at `globeFitZoom`, and a little less is plenty.
@@ -888,7 +894,7 @@ function ThreatMapV3Inner({
 
   // The nodes whose bloom / glow is drawn: all of them at full size; toward the world view the heaviest per screen cell.
   const haloThinned = useMemo(
-    () => thinForHalos(geoThreats, nodePosition, d => d.threat_count, haloView.zoom, haloCellPx(haloView.scale)),
+    () => thinForHalos(geoThreats, nodePosition, d => haloWeight(d.top_severity, d.threat_count), haloView.zoom, haloCellPx(haloView.scale)),
     [geoThreats, haloView],
   );
 
@@ -1157,7 +1163,7 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!mapLoaded || !map) return;
     const layers = compose(animSecondsRef.current, clock.currentTime);
-    const kind: OverlayKind = overlayInterleaved(projection) ? 'globe' : 'flat';
+    const kind: OverlayKind = overlayInterleaved(projection) && canInterleaveRef.current ? 'globe' : 'flat';
     const slots = overlaysRef.current;
     const pickingRadius = isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE;
     // The other kind is parked, not destroyed (see overlaysRef): empty, and with no handler of its own.
@@ -1310,6 +1316,8 @@ function ThreatMapV3Inner({
       { padding: plan.padding, maxZoom: plan.maxZoom },
     );
     if (!cam) return;
+    // The app framed this camera: a flip to the globe keeps its longitude (only gestures set this otherwise).
+    userMovedRef.current = true;
     const target = { center: cam.center, zoom: cam.zoom, bearing: cam.bearing ?? 0 };
     if (reducedMotion || focus.instant) map.jumpTo(target);
     else map.flyTo({ ...target, duration: FLY_MS, curve: FLY_CURVE, essential: false });

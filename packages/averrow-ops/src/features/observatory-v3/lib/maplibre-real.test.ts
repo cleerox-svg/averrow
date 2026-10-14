@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 vi.hoisted(() => { (window.URL as unknown as { createObjectURL: () => string }).createObjectURL = () => 'blob:stub'; });
 import * as maplibregl from 'maplibre-gl';
 import { setLatRange, resetLatRangeWarning } from './camera';
-import { installTransformAlias, mapTransform } from './maplibre-compat';
+import { canInterleave, installTransformAlias, mapTransform } from './maplibre-compat';
 import { GLOBE_SKY, applySky, globeLabelOpacity, projectionSpec, type OcclusionProbe } from './projection';
 
 function fakeGl(canvas: HTMLCanvasElement): WebGLRenderingContext {
@@ -48,6 +48,20 @@ beforeAll(async () => {
   ]);
 });
 afterAll(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe('MapLibre transform: the map.transform alias (lib/maplibre-compat.ts)', () => {
+  it('MapLibre 6 has no map.transform of its own: the first installTransformAlias installs one onto the camera transform', () => {
+    // The alias is what @deck.gl/mapbox reads every interleaved frame. If this fails, the library has either regained
+    // `map.transform` (the alias is then dead code to delete) or moved the camera (the globe cannot interleave).
+    expect(Object.getOwnPropertyDescriptor(map, 'transform')).toBeUndefined();
+    expect(installTransformAlias(map)).toBe(true);
+    const aliased = (map as unknown as { transform: unknown }).transform;
+    expect(aliased).toBeTruthy();
+    expect(aliased).toBe((map as unknown as { _camera: { transform: unknown } })._camera.transform);
+    expect(canInterleave(map)).toBe(true);
+    expect(installTransformAlias(map)).toBe(false); // idempotent
+  });
+});
 
 describe('MapLibre transform: the latitude range hack (lib/camera.ts)', () => {
   it('the private field is still where setLatRange writes it, and the public getter reads it back', () => {

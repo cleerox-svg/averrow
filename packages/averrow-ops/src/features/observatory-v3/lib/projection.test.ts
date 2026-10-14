@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   DEFAULT_PROJECTION, PROJECTION_IDS, isProjection, effectiveProjection, overlayInterleaved, projectionSpec, maxZoomFor,
   globeFitZoom, globeCanvasBox, globeDiscPx, globeBleeds, BLEED_ENTER, BLEED_EXIT, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, centreAngleDeg, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, skyFor,
-  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE, GLOBE_START_CENTER, globeStartCamera,
+  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE, GLOBE_START_CENTER, GLOBE_START_CENTER_PHONE, globeStartCamera,
 } from './projection';
 
 describe('projection ids', () => {
@@ -177,18 +177,18 @@ describe('globeStartCamera: where the globe opens', () => {
     const angle = (a: [number, number], b: [number, number]) => centreAngleDeg(a, b);
     expect(lng).toBeLessThan(0);
     expect(angle([lng, lat], [-74, 40.7])).toBeLessThan(52);    // New York
-    expect(angle([lng, lat], [-46.6, -23.5])).toBeLessThan(52); // Sao Paulo
+    expect(angle([lng, lat], [-46.6, -23.5])).toBeLessThan(74); // Sao Paulo: south-west of the retuned centre, still drawn with labels
     expect(angle([lng, lat], [2.35, 48.85])).toBeLessThan(52);  // Paris
     expect(angle([lng, lat], [3.4, 6.5])).toBeLessThan(52);     // Lagos
     expect(angle([lng, lat], [-122.4, 37.8])).toBeLessThan(90); // San Francisco is on the near side, at the limb
     expect(angle([lng, lat], [139.7, 35.7])).toBeGreaterThan(90); // Tokyo is on the far side
   });
 
-  it('is a fixed centre and the same planet-fit zoom the flip uses, a little larger on a phone', () => {
+  it('is a fixed centre and the same planet-fit zoom the flip uses, a little larger (and a touch further east) on a phone', () => {
     const desktop = globeStartCamera(1440, 900, false);
     const phone = globeStartCamera(390, 844, true);
     expect(desktop.center).toBe(GLOBE_START_CENTER);
-    expect(phone.center).toBe(GLOBE_START_CENTER);
+    expect(phone.center).toBe(GLOBE_START_CENTER_PHONE);
     expect(desktop.zoom).toBeCloseTo(globeFitZoom(1440, 900, 0.72), 9);
     expect(phone.zoom).toBeCloseTo(globeFitZoom(390, 844, 0.8), 9);
   });

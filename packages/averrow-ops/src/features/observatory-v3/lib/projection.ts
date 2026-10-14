@@ -72,18 +72,21 @@ export function globeFitZoom(width: number, height: number, fill = 0.72): number
 
 /**
  * Where the globe opens. Centred so the Americas, the Atlantic, Europe and Africa share the disc (the three regions most
- * threats originate in or target), not Europe alone: longitude -35 puts the eastern US/Canada and Brazil inside the left
- * half of the disc and Europe, West Africa and the Mediterranean inside the right half, latitude 22 keeps the northern landmasses and the Sahel in view. The idle spin
+ * threats originate in or target), not Europe alone: longitude -22 puts the eastern US/Canada in the left
+ * half of the disc and Europe about a third in from its right edge (at -35 Europe sat on the limb, foreshortened), West Africa and the
+ * Mediterranean in the right half; latitude 30 keeps the northern landmasses in view. Brazil sits nearer the lower-left limb. The idle spin
  * then carries on from here.
  */
-export const GLOBE_START_CENTER: LngLat = [-35, 22];
+export const GLOBE_START_CENTER: LngLat = [-22, 30];
+/** The phone's centre: the disc is nearer square there, so it sits a little further east / north to keep Europe off the limb. */
+export const GLOBE_START_CENTER_PHONE: LngLat = [-18, 32];
 /** Share of the canvas's shorter side the planet spans at the start: a phone is narrow but tall, so it can afford more. */
 export const GLOBE_START_FILL_DESKTOP = 0.72;
 export const GLOBE_START_FILL_PHONE = 0.8;
 
 /** The globe's opening camera for a canvas: the centre above and the zoom at which the planet spans `fill` of the shorter side. */
 export function globeStartCamera(width: number, height: number, mobile: boolean): { center: LngLat; zoom: number } {
-  return { center: GLOBE_START_CENTER, zoom: globeFitZoom(width, height, mobile ? GLOBE_START_FILL_PHONE : GLOBE_START_FILL_DESKTOP) };
+  return { center: mobile ? GLOBE_START_CENTER_PHONE : GLOBE_START_CENTER, zoom: globeFitZoom(width, height, mobile ? GLOBE_START_FILL_PHONE : GLOBE_START_FILL_DESKTOP) };
 }
 
 /**

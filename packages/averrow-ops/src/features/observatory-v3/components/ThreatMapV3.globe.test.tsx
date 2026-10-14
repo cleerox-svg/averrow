@@ -3,7 +3,8 @@ import { render, act, within, fireEvent } from '@testing-library/react';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 // ─── Fakes (hoisted so the vi.mock factories can reference them) ──
-const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
+const { maps, overlays, flags, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
+  const flags = { noTransform: false };
   type Handler = (e?: unknown) => void;
 
   class FakeMap {
@@ -18,10 +19,17 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     setSky = vi.fn();
     resize = vi.fn();
     setRenderWorldCopies = vi.fn();
-    flyTo = vi.fn();
-    jumpTo = vi.fn();
+    /** Where the camera was last put by flyTo / jumpTo (the real map reports it from getCenter). */
+    cam: { lng: number; lat: number } | null = null;
+    flyTo = vi.fn((t: { center?: { lng: number; lat: number } }) => { if (t.center) this.cam = t.center; });
+    jumpTo = vi.fn((t: { center?: { lng: number; lat: number } | [number, number] }, _data?: unknown) => {
+      if (t.center) this.cam = Array.isArray(t.center) ? { lng: t.center[0], lat: t.center[1] } : t.center;
+    });
     transform = { _helper: { _latRange: [-85.051129, 85.051129] as [number, number] } };
-    constructor(opts: Record<string, unknown> = {}) { this.opts = opts; maps.push(this); }
+    constructor(opts: Record<string, unknown> = {}) {
+      this.opts = opts; maps.push(this);
+      if (flags.noTransform) Object.defineProperty(this, 'transform', { value: undefined, configurable: true });
+    }
     on(ev: string, cb: Handler) { this.handlers.set(ev, [...(this.handlers.get(ev) ?? []), cb]); return this; }
     once(ev: string, cb: Handler) { return this.on(ev, cb); }
     emit(ev: string, payload?: unknown) { (this.handlers.get(ev) ?? []).forEach(h => h(payload)); }
@@ -37,7 +45,7 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     get _listeners() { return Object.fromEntries(this.handlers); }
     project() { return { x: 100, y: 100 }; }
     getZoom() { return 2; }
-    getCenter() { return { lng: 30, lat: 70 }; }
+    getCenter() { return this.cam ?? { lng: 30, lat: 70 }; }
     isMoving() { return false; }
     cameraForBounds = vi.fn((b: [[number, number], [number, number]], o: { maxZoom?: number }) => ({
       center: { lng: (b[0][0] + b[1][0]) / 2, lat: (b[0][1] + b[1][1]) / 2 }, zoom: Math.min(o.maxZoom ?? 22, 3.1), bearing: 0,
@@ -75,7 +83,7 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
   }
   const maps: FakeMap[] = [];
   const overlays: FakeOverlay[] = [];
-  return { maps, overlays, FakeMap, FakeOverlay, FakeLayer };
+  return { maps, overlays, flags, FakeMap, FakeOverlay, FakeLayer };
 });
 
 vi.mock('maplibre-gl', () => ({
@@ -89,6 +97,7 @@ vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
 import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, GLOBE_DEPTH_BIAS, GLOBE_START_CENTER } from '../lib/projection';
 import { buildHostingModel } from '../lib/lens/hosting';
+import { resetCompatWarnings } from '../lib/maplibre-compat';
 import { resetSpinSession } from '../lib/use-idle-spin';
 import { noLayers } from '../lib/lenses';
 import { NO_SELECTION } from '../layers/lens-layers';
@@ -116,6 +125,7 @@ const sizeDescs = {
 beforeEach(() => {
   maps.length = 0;
   overlays.length = 0;
+  flags.noTransform = false;
   stubMatchMedia(false);
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 });
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1200 });
@@ -265,7 +275,7 @@ describe('ThreatMapV3 projection: switching', () => {
     const { rerender } = render(<ThreatMapV3 {...base} />);
     ready();
     rerender(<ThreatMapV3 {...base} projection="globe" />);
-    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
     expect(toGlobe.center).toEqual(GLOBE_START_CENTER);
   });
 
@@ -274,11 +284,11 @@ describe('ThreatMapV3 projection: switching', () => {
     ready();
     act(() => { lastMap().emit('movestart', { originalEvent: {} }); }); // a drag / wheel carries an originalEvent
     rerender(<ThreatMapV3 {...base} projection="globe" />);
-    const kept = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    const kept = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
     expect(kept.center).toEqual([30, 45]); // the fake camera sits at lng 30, lat 70
     rerender(<ThreatMapV3 {...base} projection="flat" />);
     rerender(<ThreatMapV3 {...base} projection="globe" />);
-    const again = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    const again = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
     expect(again.center).toEqual(GLOBE_START_CENTER); // no gesture since the last flip
   });
 
@@ -287,8 +297,40 @@ describe('ThreatMapV3 projection: switching', () => {
     ready();
     act(() => { lastMap().emit('movestart', {}); });
     rerender(<ThreatMapV3 {...base} projection="globe" />);
-    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
     expect(toGlobe.center).toEqual(GLOBE_START_CENTER);
+  });
+
+  it('a camera the app framed (a focus request) is kept on the flip to the globe: East Asia stays East Asia', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, points: [[120, 30], [130, 40]] }} />);
+    expect(lastMap().flyTo).toHaveBeenCalled(); // no originalEvent: this is not a gesture
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, points: [[120, 30], [130, 40]] }} projection="globe" />);
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
+    expect(toGlobe.center[0]).toBe(125);
+    expect(toGlobe.center).not.toEqual(GLOBE_START_CENTER);
+  });
+
+  it('a focus with nothing placeable moves nothing, so the flip still opens on the globe default', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, points: [] }} />);
+    rerender(<ThreatMapV3 {...base} focus={{ id: 1, points: [] }} projection="globe" />);
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as unknown as { center: [number, number] };
+    expect(toGlobe.center).toEqual(GLOBE_START_CENTER);
+  });
+
+  it('without a map transform deck.gl cannot interleave: the globe keeps the overlaid overlay and warns in dev', () => {
+    flags.noTransform = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    resetCompatWarnings();
+    render(<ThreatMapV3 {...base} projection="globe" />);
+    ready();
+    expect(overlays).toHaveLength(1);
+    expect(overlays[0]!.props.interleaved).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('installTransformAlias'));
+    warn.mockRestore();
   });
 
   it('a data change on the globe does not rebuild the overlay (it is updated in place)', () => {

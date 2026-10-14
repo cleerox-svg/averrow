@@ -25,7 +25,7 @@ export {
   type ContextTag, type VerdictTag, type Classification, type LegacyVariant,
 } from './Badge';
 export { Banner, type BannerProps, type BannerTone, type BannerVariant, type BannerDensity } from './Banner';
-export { StatTile, type StatTileProps, type StatTone } from './StatTile';
+export { StatTile, statFitEm, type StatTileProps, type StatTone } from './StatTile';
 export { formatCompact, formatFull, COMPACT_FROM } from './lib/compact-number';
 export {
   PageState, pageStateKind,

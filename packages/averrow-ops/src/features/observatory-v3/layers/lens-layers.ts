@@ -133,8 +133,14 @@ export interface LensLayerInput {
 
 /** Smallest radius (px) a scaled halo is drawn at: it must still read as a halo round its core. */
 const MIN_HALO_PX = 3;
-/** A halo radius (px) at the input's zoom scale. */
-const haloPx = (px: number, scale: number | undefined): number => (scale !== undefined && scale < 1 ? Math.max(MIN_HALO_PX, px * scale) : px);
+/**
+ * A halo radius (px) at the input's zoom scale. The floor only stops a halo shrinking away to nothing: it never
+ * enlarges one, so a radius already under the floor is left as it is.
+ */
+export const haloPx = (px: number, scale: number | undefined): number => {
+  if (scale === undefined || scale >= 1 || px < MIN_HALO_PX) return px;
+  return Math.max(MIN_HALO_PX, px * scale);
+};
 
 export interface LensFrame {
   /** Monotonic animation seconds (pulses, dashes, spins). */
@@ -608,8 +614,8 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const { bullet, withTakedown } = hostingParts(m);
   const dimmed = (r: ProviderRing): boolean => sel.providerId !== null && r.id !== sel.providerId;
   const hs = input.haloScale;
-  /** A ring's drawn radius: the halos / arcs round it follow it, so they never float off a shrunken ring. */
-  const ringPx = (r: ProviderRing): number => haloPx(r.radiusPx, hs);
+  /** The ring is the pickable data mark and always keeps its full size; only the glow / arcs round it shrink (their offset from the ring). */
+  const ringPx = (r: ProviderRing): number => r.radiusPx;
   const out: Layer[] = [];
 
   out.push(new ScatterplotLayer<ProviderRing>({
@@ -617,7 +623,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     data: m.rings,
     getPosition: posNode,
     radiusUnits: 'pixels',
-    getRadius: (r: ProviderRing) => haloPx(r.radiusPx, hs),
+    getRadius: (r: ProviderRing) => r.radiusPx,
     // Takedowns measure: the fill IS the success share (sequential green), so it keeps its own alpha.
     getFillColor: (r: ProviderRing) => (tp ? withAlpha(ringColor(r), dimmed(r) ? 30 : Math.max(ringColor(r)[3], 110)) : withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 14 : 82)),
     stroked: true,
@@ -627,7 +633,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     pickable: true,
     // Size / colour glide when the numbers move (a 15-minute refetch) and when a ring is picked, instead of snapping.
     transitions: reducedMotion ? undefined : TR_RING,
-    updateTriggers: { getRadius: hs, getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
+    updateTriggers: { getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
     onHover: (info: PickInfo<ProviderRing>) => pick.hover(info.object
       ? {
         x: info.x, y: info.y, title: info.object.name,
@@ -650,7 +656,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       data: bullet,
       getPosition: posNode,
       radiusUnits: 'pixels',
-      getRadius: (r: ProviderRing) => ringPx(r) + 7,
+      getRadius: (r: ProviderRing) => ringPx(r) + haloPx(7, hs),
       filled: false,
       stroked: true,
       getLineColor: BULLETPROOF_COLOR,
@@ -673,7 +679,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => ringPx(r) + 3.5,
+        getRadius: (r: ProviderRing) => ringPx(r) + haloPx(3.5, hs),
         filled: false, stroked: true,
         getLineColor: TRACK_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,
@@ -684,7 +690,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: withTakedown,
         getPosition: posNode,
         radiusUnits: 'pixels',
-        getRadius: (r: ProviderRing) => ringPx(r) + 3.5,
+        getRadius: (r: ProviderRing) => ringPx(r) + haloPx(3.5, hs),
         filled: false, stroked: true,
         getLineColor: TAKEDOWN_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  HALO_CELL_PX, HALO_FULL, HALO_FULL_ZOOM, HALO_MIN_SCALE, HALO_MIN_ZOOM, haloCellPx, haloScaleForZoom, haloViewForZoom, thinForHalos, worldPx,
+  HALO_CELL_PX, HALO_FULL, HALO_FULL_ZOOM, HALO_MIN_SCALE, HALO_MIN_ZOOM, haloCellPx, haloScaleForZoom, haloViewForZoom, thinForHalos, haloWeight, worldPx,
 } from './halo';
 
 describe('haloScaleForZoom', () => {
@@ -112,5 +112,21 @@ describe('thinForHalos', () => {
   it('drops nothing that is far apart, and ignores non-finite positions without throwing', () => {
     const far: N[] = [{ id: 'a', lng: -100, lat: 40, w: 1 }, { id: 'b', lng: 100, lat: -30, w: 1 }, { id: 'c', lng: Number.NaN, lat: 0, w: 1 }];
     expect(thinForHalos(far, pos, weight, 1, 16).map(n => n.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('haloWeight (severity first, then count)', () => {
+  it('a critical 3-threat node outranks a low 40-threat one; count breaks ties within a severity', () => {
+    expect(haloWeight('critical', 3)).toBeGreaterThan(haloWeight('low', 40));
+    expect(haloWeight('high', 1)).toBeGreaterThan(haloWeight('medium', 5000));
+    expect(haloWeight('high', 9)).toBeGreaterThan(haloWeight('high', 2));
+    expect(haloWeight(null, 5)).toBeLessThan(haloWeight('low', 1));
+    expect(haloWeight('low', 1e12)).toBeLessThan(haloWeight('medium', 0));
+  });
+
+  it('thinning keeps the critical node in a cell it shares with a heavier low one', () => {
+    const nodes = [{ id: 'low40', lng: 10, lat: 50, s: 'low', n: 40 }, { id: 'crit3', lng: 10.01, lat: 50.01, s: 'critical', n: 3 }];
+    const kept = thinForHalos(nodes, n => [n.lng, n.lat], n => haloWeight(n.s, n.n), 1, 40).map(n => n.id);
+    expect(kept).toEqual(['crit3']);
   });
 });
