@@ -112,6 +112,17 @@ const edgeLabelSourcesFor = memoByModelAndKey((edges: OpEdge[], key: string): Ed
   return out.sort((a, b) => b.priority - a.priority).slice(0, MAX_EDGE_CANDIDATES);
 });
 
+/**
+ * The arcs that earn an evidence word: only the selected operation's and a hovered panel row's. In the default view
+ * the words are left off (a stray "◆ cert" floating mid-ocean says nothing); the tooltip and drawer carry them.
+ */
+export const edgesToLabel = memoByModelAndKey((edges: OpEdge[], key: string): OpEdge[] => {
+  const ids = key.split('|').filter(Boolean);
+  return ids.length === 0 ? [] : edges.filter(e => e.opIds.some(id => ids.includes(id)));
+});
+export const labelledEdges = (edges: OpEdge[], selOpId: string | null, previewOpId: string | null): OpEdge[] =>
+  edgesToLabel(edges, `${selOpId ?? ''}|${previewOpId ?? ''}`);
+
 export const edgeLabelSources = (edges: OpEdge[], selOpId: string, projection: Projection = 'flat'): EdgeLabelSource[] =>
   edgeLabelSourcesFor(edges, `${projection === 'globe' ? 'globe' : 'flat'}|${selOpId}`);
 

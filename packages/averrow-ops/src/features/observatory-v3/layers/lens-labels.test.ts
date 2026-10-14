@@ -4,7 +4,7 @@ import { buildOperationsModel, edgeShortLabel, visibleEdges } from '../lib/lens/
 import { buildHostingModel } from '../lib/lens/hosting';
 import type { ActorModel, ActorCountry } from '../lib/lens/actors';
 import {
-  edgeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, MAX_ACTOR_LABELS, NO_LABELS,
+  edgeLabelSources, labelledEdges, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, MAX_ACTOR_LABELS, NO_LABELS,
   type Project, type PlacedLabels,
 } from './lens-labels';
 
@@ -49,6 +49,28 @@ describe('edge label sources', () => {
     const vis = visibleEdges(m, null);
     const sel = edgeLabelSources(vis, 'b');
     expect(vis.find(e => e.id === sel[0]!.id)!.opIds).toContain('b');
+  });
+});
+
+describe('labelledEdges: evidence words only for the selected or hovered links', () => {
+  const model = buildOperationsModel([op('a', ['US', 'DE']), op('b', ['FR', 'NL'], { kind: 'per_ip' })], []);
+  it('the default view labels nothing', () => {
+    expect(visibleEdges(model, null).length).toBeGreaterThan(0);
+    expect(labelledEdges(visibleEdges(model, null), null, null)).toEqual([]);
+    expect(edgeLabelSources(labelledEdges(visibleEdges(model, null), null, null), '')).toEqual([]);
+  });
+  it('a selected operation labels its own arcs; a hovered row labels only its arcs', () => {
+    const sel = labelledEdges(visibleEdges(model, 'a'), 'a', null);
+    expect(sel.length).toBeGreaterThan(0);
+    expect(sel.every(e => e.opIds.includes('a'))).toBe(true);
+    const hov = labelledEdges(visibleEdges(model, null, 'b'), null, 'b');
+    expect(hov.length).toBeGreaterThan(0);
+    expect(hov.every(e => e.opIds.includes('b'))).toBe(true);
+    expect(hov.length).toBeLessThan(visibleEdges(model, null, 'b').length);
+  });
+  it('is memoised: same identity on repeat calls', () => {
+    const vis = visibleEdges(model, 'a');
+    expect(labelledEdges(vis, 'a', null)).toBe(labelledEdges(vis, 'a', null));
   });
 });
 

@@ -189,6 +189,16 @@ describe('country node labels ("DE 37")', () => {
     expect((p.getPixelOffset as (l: unknown) => number[])(labels.opNodes[0])).toEqual([0, 11]); // below the bloom, never inside it
     expect(layerProps(base({ operations: true }), 'ops-node-labels')).toBeUndefined();
   });
+  it('each label has a dark halo: four layers in the outline colour, 1.25px off, drawn before the text', () => {
+    const labels = { ...NO_LABELS, opNodes: [{ id: 'DE', text: 'DE 3', position: [10, 51] as [number, number], radiusPx: 9 }] };
+    const layers = buildLensLayers(base({ operations: true }, { labels }), { seconds: 1, t: 1 }).filter(l => l.id.startsWith('ops-node-labels'));
+    expect(layers.map(l => l.id)).toEqual(['ops-node-labels-halo0', 'ops-node-labels-halo1', 'ops-node-labels-halo2', 'ops-node-labels-halo3', 'ops-node-labels']);
+    const offs = layers.slice(0, 4).map(l => ((l as unknown as { props: Record<string, unknown> }).props.getPixelOffset as (d: unknown) => number[])(labels.opNodes[0]));
+    expect(offs).toEqual([[-1.25, 11], [1.25, 11], [0, 9.75], [0, 12.25]]);
+    const colour = (l: (typeof layers)[number]) => ((l as unknown as { props: Record<string, unknown> }).props.getColor as (d: unknown) => number[])(labels.opNodes[0]);
+    expect(colour(layers[0]!)).not.toEqual(colour(layers[4]!));
+    expect(colour(layers[0]!)[0]).toBeLessThan(40); // the dark outline colour
+  });
 });
 
 describe('edge labels on the globe sit on the great-circle arc that is drawn', () => {

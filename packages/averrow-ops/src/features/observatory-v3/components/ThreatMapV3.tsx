@@ -75,7 +75,7 @@ import {
   type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
 } from '../layers/lens-layers';
 import {
-  edgeLabelSources, opNodeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
+  edgeLabelSources, labelledEdges, opNodeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { visibleEdges } from '../lib/lens/operations';
@@ -932,7 +932,7 @@ function ThreatMapV3Inner({
     const host = lens.layers.hosting ? lens.hosting : null;
     const actors = lens.layers.actors ? lens.actors : null;
     if (!ops && !host && !actors) return null;
-    const edges = ops ? edgeLabelSources(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '', projection) : [];
+    const edges = ops ? edgeLabelSources(labelledEdges(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '', projection) : [];
     const opNodes = ops ? opNodeLabelSources(ops) : [];
     const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
     const range = ops ? opCountRange(ops) : null;

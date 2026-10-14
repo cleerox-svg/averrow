@@ -351,14 +351,29 @@ const fadedText = (base: Rgba) => (d: object): Rgba => {
   return fade === undefined || fade >= 1 ? base : [base[0], base[1], base[2], Math.round(base[3] * Math.max(0, fade))];
 };
 const TEXT_COLOR_AT = fadedText(TEXT_COLOR);
+const HALO_COLOR_AT = fadedText(TEXT_OUTLINE);
+
+/**
+ * The dark halo behind a map label. deck.gl's SDF `outlineWidth` is a fraction of the glyph's ~0.7px spread at 11px:
+ * it never drew a visible edge, so an arc crossing "US 47" swallowed the text. Instead the label is drawn first in
+ * the outline colour at four 1.25px offsets, then in its own colour on top: a real ~1.25px outline at any zoom.
+ */
+const HALO_PX = 1.25;
+const HALO_SHIFTS: ReadonlyArray<readonly [number, number]> = [[-HALO_PX, 0], [HALO_PX, 0], [0, -HALO_PX], [0, HALO_PX]];
+export interface LabelVariant { suffix: string; getColor: typeof TEXT_COLOR_AT; shift: readonly [number, number] }
+const TEXT_VARIANT: LabelVariant = { suffix: '', getColor: TEXT_COLOR_AT, shift: [0, 0] };
+/** Pushes the four halo layers, then the label itself (`make` builds one layer per variant). */
+function pushHaloed(out: Layer[], make: (v: LabelVariant) => Layer): void {
+  HALO_SHIFTS.forEach((shift, i) => out.push(make({ suffix: `-halo${i}`, getColor: HALO_COLOR_AT, shift })));
+  out.push(make(TEXT_VARIANT));
+}
+const shifted = (base: readonly [number, number], v: LabelVariant): [number, number] => [base[0] + v.shift[0], base[1] + v.shift[1]];
 
 function labelStyle(projection: Projection = 'flat') {
   return {
     ...(projection === 'globe' ? { parameters: GLOBE_SCREEN_SPACE_PARAMETERS } : null),
     sizeUnits: 'pixels' as const,
     getColor: TEXT_COLOR_AT,
-    outlineWidth: 3,
-    outlineColor: TEXT_OUTLINE, // a layer-wide prop in deck.gl (not an accessor): the dark halo stays, only the fill fades
     fontFamily: MONO,
     fontSettings: { sdf: true },
     characterSet: 'auto' as const,
@@ -535,24 +550,28 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
   // The busiest countries, named with their operation count ("DE 37"); the rest are in the tooltip.
   if (labels.opNodes && labels.opNodes.length > 0) {
-    out.push(new TextLayer<PlacedNodeLabel>({
-      id: 'ops-node-labels',
+    pushHaloed(out, v => new TextLayer<PlacedNodeLabel>({
+      id: `ops-node-labels${v.suffix}`,
       ...labelStyle(input.projection),
+      getColor: v.getColor,
       data: labels.opNodes,
       getPosition: l => l.position,
       getText: l => l.text,
       getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: (l: PlacedNodeLabel) => (l.above ? 'bottom' : 'top'),
-      getPixelOffset: (l: PlacedNodeLabel) => [0, (l.radiusPx + NODE_LABEL_GAP) * (l.above ? -1 : 1)],
+      getPixelOffset: (l: PlacedNodeLabel) => shifted([0, (l.radiusPx + NODE_LABEL_GAP) * (l.above ? -1 : 1)], v),
+      updateTriggers: { getPixelOffset: v.suffix },
     }));
   }
 
   // Edge evidence: short ("◆ cert"), one per operation, laid along the edge, de-duplicated in screen space.
   if (labels.edges.length > 0) {
-    out.push(new PrimaryTextLayer<PlacedEdgeLabel>({
-      id: 'ops-edge-labels',
+    pushHaloed(out, v => new PrimaryTextLayer<PlacedEdgeLabel>({
+      id: `ops-edge-labels${v.suffix}`,
       ...labelStyle(input.projection),
+      getColor: v.getColor,
+      getPixelOffset: shifted([0, 0], v),
       data: labels.edges,
       getPosition: e => e.position,
       getText: e => e.text,
@@ -667,16 +686,17 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
   // Name the biggest providers (and the selected one) that fit without colliding, so the map reads without hovering.
   if (labels.hosts.length > 0) {
-    out.push(new TextLayer<PlacedHostLabel>({
-      id: 'hosting-labels',
+    pushHaloed(out, v => new TextLayer<PlacedHostLabel>({
+      id: `hosting-labels${v.suffix}`,
       ...labelStyle(input.projection),
+      getColor: v.getColor,
       data: labels.hosts,
       getPosition: r => r.position,
       getText: r => r.text,
       getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'top',
-      getPixelOffset: r => [0, r.radiusPx + 10],
+      getPixelOffset: r => shifted([0, r.radiusPx + 10], v),
     }));
   }
   return out;
@@ -805,16 +825,17 @@ function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   );
   // Country names that fit without clipping at the edge or colliding (placed when the camera settles).
   if (labels.actors.length > 0) {
-    out.push(new TextLayer<PlacedActorLabel>({
-      id: 'actor-labels',
+    pushHaloed(out, v => new TextLayer<PlacedActorLabel>({
+      id: `actor-labels${v.suffix}`,
       ...labelStyle(input.projection),
+      getColor: v.getColor,
       data: labels.actors,
       getPosition: a => a.position,
       getText: a => a.text,
       getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'top',
-      getPixelOffset: a => [0, a.radiusPx + 10],
+      getPixelOffset: a => shifted([0, a.radiusPx + 10], v),
     }));
   }
   return out;
