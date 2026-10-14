@@ -26,6 +26,8 @@ export const POINT_ZOOM = 3.4;
 export const FLY_MS = 720;
 /** MapLibre flight curve: lower is flatter / quicker, 1.42 is the default. */
 export const FLY_CURVE = 1.2;
+/** Breathing room kept between a framed target and the edge of the free area, px (a node never sits on the edge). */
+export const FRAME_MARGIN = 40;
 /** Half-size of the box built round a single point so cameraForBounds has something to fit. */
 const POINT_EPS = 0.02;
 
@@ -97,7 +99,10 @@ export function planCamera(
 ): CameraPlan | null {
   const box = boundsOf(points);
   if (!box) return null;
-  const padding = clampInsets(insets, canvas.width, canvas.height);
+  const padding = clampInsets(
+    { top: insets.top + FRAME_MARGIN, right: insets.right + FRAME_MARGIN, bottom: insets.bottom + FRAME_MARGIN, left: insets.left + FRAME_MARGIN },
+    canvas.width, canvas.height,
+  );
   const degenerate = box.east - box.west < 1e-6 && box.north - box.south < 1e-6;
   if (degenerate) {
     const lng = box.west;

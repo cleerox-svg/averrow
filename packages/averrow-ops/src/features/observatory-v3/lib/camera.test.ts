@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -69,7 +69,8 @@ describe('planCamera', () => {
   it('frames a group with a zoom ceiling and the insets as padding', () => {
     const plan = planCamera([[0, 0], [40, 30]], canvas, insets)!;
     expect(plan.maxZoom).toBe(FIT_MAX_ZOOM);
-    expect(plan.padding).toEqual(insets);
+    // the overlays' insets plus breathing room, so a node never sits on the edge of the free area
+    expect(plan.padding).toEqual({ top: 60 + FRAME_MARGIN, right: 320 + FRAME_MARGIN, bottom: 90 + FRAME_MARGIN, left: 60 + FRAME_MARGIN });
     expect(plan.point).toBe(false);
   });
   it('a single point lands on the point zoom with a tiny box', () => {

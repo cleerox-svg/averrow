@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -207,7 +207,7 @@ describe('ThreatMapV3 camera focus', () => {
     expect(lastMap().cameraForBounds).toHaveBeenCalledTimes(1);
     const [bounds, opts] = lastMap().cameraForBounds.mock.calls[0];
     expect(bounds).toEqual([[-30, 10], [40, 50]]);
-    expect(opts.padding).toEqual(insets);
+    expect(opts.padding).toEqual({ top: 104, right: 384, bottom: 120, left: 108 }); // insets + 40px breathing room
     expect(opts.maxZoom).toBeLessThanOrEqual(3.5);
     expect(lastMap().flyTo).toHaveBeenCalledTimes(1);
     const arg = lastMap().flyTo.mock.calls[0][0];
@@ -327,5 +327,61 @@ describe('ThreatMapV3 motion policy', () => {
     stubMatchMedia(false);
     rerender(<ThreatMapV3 {...base} threats={[mk('critical')]} pings={{ seq: 1, items: [{ id: 'x', position: [2, 1], color: [200, 60, 60, 235], severity: 'critical', type: 'phishing', country: 'US', domain: null }] }} />);
     expect(layerOf('live-pings')).toBeDefined();
+  });
+});
+
+
+describe('ThreatMapV3 animation loop idles when nothing animates', () => {
+  const mk = (sev: string, lat = 1) => ({ lat, lng: 2, threat_count: 4, top_severity: sev, critical: 0, high: 0, medium: 0, low: 0, country_code: 'US', top_threat_type: 'c2' });
+  const arc = { sourcePosition: [10, 20] as [number, number], targetPosition: [-70, 40] as [number, number], threat_type: 'phishing', severity: 'high', source_region: 'NL', target_brand: 'b', brand_name: 'B', volume: 3 };
+  const ready = () => act(() => { lastMap().emit('style.load'); });
+  let raf: { mockClear: () => unknown; mockRestore: () => unknown; mock: { calls: unknown[][] } };
+  beforeEach(() => {
+    vi.useFakeTimers();
+    raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1);
+  });
+  afterEach(() => { raf.mockRestore(); vi.useRealTimers(); });
+  const settle = () => act(() => { vi.advanceTimersByTime(3500); }); // past the post-mount hold
+
+  it('a paused replay with particles but no breathing nodes runs ZERO frames', () => {
+    render(<ThreatMapV3 {...base} showParticles threats={[mk('low')]} arcs={[arc]} clockPlaying={false} />);
+    ready();
+    settle();
+    raf.mockClear();
+    settle();
+    expect(raf).not.toHaveBeenCalled();
+  });
+
+  it('a playing replay with particles runs frames', () => {
+    render(<ThreatMapV3 {...base} showParticles threats={[mk('low')]} arcs={[arc]} clockPlaying />);
+    ready();
+    expect(raf).toHaveBeenCalled();
+  });
+
+  it('a breathing critical node keeps the loop up even with the replay paused', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical')]} clockPlaying={false} />);
+    ready();
+    settle();
+    raf.mockClear();
+    settle();
+    // the loop is running: it has already asked for its next frame
+    render(<ThreatMapV3 {...base} threats={[mk('critical', 5)]} clockPlaying={false} />);
+    ready();
+    expect(raf).toHaveBeenCalled();
+  });
+
+  it('a live ping wakes an idle loop (paused replay, nothing breathing) so the ring is drawn', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} showParticles threats={[mk('low')]} arcs={[arc]} clockPlaying={false} />);
+    ready();
+    settle();
+    raf.mockClear();
+    rerender(<ThreatMapV3 {...base} showParticles threats={[mk('low')]} arcs={[arc]} clockPlaying={false}
+      pings={{ seq: 1, items: [{ id: 'p', position: [2, 1], color: [1, 2, 3, 4], severity: 'low', type: 'phishing', country: 'US', domain: null }] }} />);
+    expect(raf).toHaveBeenCalled();
+    // ...and it goes back to sleep once the ring has had time to finish
+    settle();
+    raf.mockClear();
+    settle();
+    expect(raf).not.toHaveBeenCalled();
   });
 });

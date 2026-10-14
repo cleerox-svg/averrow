@@ -38,6 +38,13 @@ describe('placeLabels', () => {
     const r = placeLabels([c('a', 100, 100, 1, 'IP', { dy: -12 }), c('b', 400, 300)], { width: W, height: H, obstacles: [{ x: 100, y: 88, r: 12 }] });
     expect(r.map(p => p.id)).toEqual(['b']);
   });
+  it('a label may sit against its OWN node (it is anchored to it), but not against others', () => {
+    const own = { x: 300, y: 300, r: 22, id: 'a' };
+    const r = placeLabels([c('a', 300, 300, 1, 'Host A', { dy: 18 })], { width: W, height: H, obstacles: [own] });
+    expect(r.map(p => p.id)).toEqual(['a']);
+    const other = placeLabels([c('a', 300, 300, 1, 'Host A', { dy: 18 })], { width: W, height: H, obstacles: [{ ...own, id: 'b' }] });
+    expect(other).toEqual([]);
+  });
   it('skips labels that would hang off the screen', () => {
     expect(placeLabels([c('a', 4, 100), c('b', W - 4, 100), c('c', 100, 2)], { width: W, height: H })).toEqual([]);
   });

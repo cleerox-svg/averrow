@@ -105,7 +105,7 @@ export interface PlaceInput {
   edges: readonly EdgeLabelSource[];
   hosts: readonly HostLabelSource[];
   /** Discs the labels must clear (operation nodes, provider rings). */
-  nodes: ReadonlyArray<{ position: LngLat; radiusPx: number }>;
+  nodes: ReadonlyArray<{ position: LngLat; radiusPx: number; /** Provider id: its own label may sit against it. */ id?: string }>;
 }
 
 const CHAR_PX = 6.6; // 11px mono
@@ -116,7 +116,7 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
   const obstacles: Obstacle[] = [];
   for (const n of input.nodes) {
     const p = project(n.position);
-    if (p) obstacles.push({ x: p.x, y: p.y, r: n.radiusPx + 2 });
+    if (p) obstacles.push({ x: p.x, y: p.y, r: n.radiusPx + 2, id: n.id });
   }
 
   const edgeCands: LabelCandidate[] = [];

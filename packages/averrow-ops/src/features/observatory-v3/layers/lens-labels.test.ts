@@ -86,6 +86,14 @@ describe('screen-space placement', () => {
     expect(placeLensLabels({ edges: edgeLabelSources(model, ''), hosts: [], nodes }, off, size).edges).toEqual([]);
     expect(placeLensLabels({ edges: edgeLabelSources(model, ''), hosts: [], nodes }, () => null, size)).toEqual(NO_LABELS);
   });
+  it('a provider\'s name is placed under its own ring (the ring is not an obstacle to itself)', () => {
+    const provs: ProviderGeo[] = [{ id: 'p0', name: 'Solo Host', asn: null, country: 'NL', active_threat_count: 50, total_threat_count: 1, trend_7d: 0, trend_30d: 0, is_bulletproof: false, reputation_score: null, takedown: null }];
+    const hosting = buildHostingModel(provs);
+    const proj: Project = () => ({ x: 400, y: 300 });
+    const nodes = hosting.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx, id: r.id }));
+    const out = placeLensLabels({ edges: [], hosts: hostLabelSources(hosting, ''), nodes }, proj, size);
+    expect(out.hosts.map(h => h.id)).toEqual(['p0']);
+  });
   it('de-duplicates provider names that collide and caps the total', () => {
     const provs: ProviderGeo[] = Array.from({ length: 14 }, (_, i) => ({
       id: `p${i}`, name: `Provider number ${i}`, asn: null, country: 'NL', active_threat_count: 100 - i, total_threat_count: 1, trend_7d: 0, trend_30d: 0,

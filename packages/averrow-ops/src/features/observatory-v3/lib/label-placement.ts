@@ -24,8 +24,8 @@ export interface LabelCandidate {
   dy?: number;
 }
 
-/** A disc the labels must keep clear of (a node). */
-export interface Obstacle { x: number; y: number; r: number }
+/** A disc the labels must keep clear of (a node). A label never collides with its OWN disc (`id` = the label's id). */
+export interface Obstacle { x: number; y: number; r: number; id?: string }
 
 export interface PlacedLabel {
   id: string;
@@ -95,7 +95,7 @@ export function placeLabels(candidates: readonly LabelCandidate[], opts: PlaceOp
     // Off screen (or half off it): skip rather than clip.
     if (box.x0 < 0 || box.y0 < 0 || box.x1 > opts.width || box.y1 > opts.height) continue;
     if (kept.some(k => overlaps(box, k))) continue;
-    if (obstacles.some(o => hitsDisc(box, o))) continue;
+    if (obstacles.some(o => o.id !== c.id && hitsDisc(box, o))) continue;
     kept.push(box);
     out.push({ id: c.id, angle });
   }

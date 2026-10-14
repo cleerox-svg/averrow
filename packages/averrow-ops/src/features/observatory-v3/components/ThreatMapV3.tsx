@@ -720,7 +720,7 @@ function ThreatMapV3Inner({
     const maxT = ops ? opsMaxThreats(ops) : 0;
     const nodes = [
       ...(ops ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n, maxT) })) : []),
-      ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx })) : []),
+      ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx, id: r.id })) : []),
     ];
     return { edges, hosts, nodes };
   }, [lens, mapMode]);
