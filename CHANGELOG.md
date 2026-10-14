@@ -4,6 +4,58 @@ All notable changes to the Averrow platform are documented here.
 
 ---
 
+## [v4.6.0] — 2026-10-14
+
+Observatory overhaul (PRs #1843, #1847). Tag `v4.6.0` is created by
+`tag-release.yml` on merge. Staff-only surface: no tenant changelog entry (no
+tenant register exists yet, and customers do not see the Observatory).
+
+### Correctness
+- Threat counts no longer drift upward: stale aggregate (cube) rows are cleaned
+  up on rebuild.
+- Severity is ranked correctly; attack arcs now land on real brand
+  headquarters; coverage % fixed; heatmap now reads from aggregates instead of
+  raw `threats`; query-parameter input validation added; KV cache refresh fixed.
+
+### Reliability / frontend
+- Single shared Observatory data layer; views are URL-shareable; legends added;
+  tap/click node details.
+- Accessibility pass and light-theme support.
+- Animation is frame-rate independent and honours `prefers-reduced-motion`.
+
+### New Observatory console
+- Lens-first layout: Threats, Operations, Movement, Hosting, Baseline
+  (over-index vs the internet attack baseline / raw / bot share), Campaigns,
+  Actors.
+- Drill-in drawer, search, replay timeline, live pings, camera framing, mobile
+  peek sheet.
+- GPU animations: breathing nodes, impact rings, flowing links, migration
+  trails.
+
+### Data
+- Operation linkage across countries; infrastructure migration events;
+  hosting provider trends and bulletproof-host flags.
+- Takedown outcome rollup, visible only to staff holding `manage_takedowns`.
+- Weaponization-velocity data (`threats.weaponization_flag`) surfaced.
+
+### Notes
+- New staff routes (all `requireStaff`, KV-cached, cube/precomputed reads only):
+  `/api/observatory/{operations-geo,movements,providers-geo,overindex,
+  campaigns-geo,timeline,actors,takedowns-geo,velocity-nodes}`.
+  `takedowns-geo` (and the `takedown` field of `providers-geo`) also require
+  `manage_takedowns`. See `docs/API_REFERENCE.md`.
+- Additive migrations: 0298 (lens indexes, `agent_events` bootstrap), 0299
+  (`takedown_outcome_daily`), 0300 (`threat_cube_velocity` + partial `threats`
+  indexes), 0301 (`infrastructure_clusters(status, threat_count DESC, id)`).
+- `cube_healer` (existing `12 */6` cron, hour-only gates) now heals in per-day
+  chunks, heals the velocity cube, stamps ≤500 velocity flags per run, runs the
+  takedown rollup on the 00:12 UTC cold tick, finishes `partial` when most days
+  fail, and emits `cubes_healed` telemetry. No new cron, no binding changes.
+- NEXUS `pivot_detected` payloads carry `new_asn_list` / `prev_asn_list`
+  (`payload_v: 2`) for the Movement lens.
+
+---
+
 ## [v4.5.0] — 2026-10-12
 
 Internet bot-traffic intelligence release (PRs #1820, #1822, #1825, #1827,

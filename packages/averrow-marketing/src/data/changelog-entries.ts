@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.6.0",
+    publishedAt: "2026-10-14",
+    kind: "Feature",
+    title: "A rebuilt global threat map console",
+    description:
+      "The global threat map is now a full console organized around lenses: Threats, Operations, Movement, Hosting, Baseline, Campaigns, and Actors. Baseline compares where attacks concentrate against the typical internet attack baseline, alongside raw volume and bot share. Open any node or link for a detail drawer, search across the map, replay activity on a timeline, and watch live pings with smoother animation, including breathing nodes, impact rings, flowing links, and infrastructure migration trails. The camera frames your selection automatically, and phones get a compact peek sheet. Views are now shareable by link, legends explain what you are seeing, and the map is more accessible, with a light theme, tap and keyboard support, and animation that respects reduced-motion settings. New data includes links between operations across countries, detected infrastructure migrations, hosting provider trends with known bulletproof hosts, weaponization speed, and takedown outcome summaries. Also fixed threat counts drifting upward over time, corrected severity ranking, placed attack arcs on real brand headquarters, fixed coverage percentages, and improved input validation and data freshness.",
+  },
+  {
     version: "v4.5.0",
     publishedAt: "2026-10-12",
     kind: "Feature",
