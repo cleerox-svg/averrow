@@ -246,8 +246,13 @@ function severitySums(severityCol: string, countExpr: string): string {
 //   status  active (default) | all      — anything else → 400
 //   limit   1..50, default 25
 //
-// Operations are the top-N infrastructure_clusters by threat_count
-// (idx_clusters_threat_count, migration 0298). Components group the RETURNED
+// Operations are the top-N infrastructure_clusters by threat_count:
+// status=active walks idx_clusters_status_threat_count (status, threat_count
+// DESC, id — migration 0301), status=all walks idx_clusters_threat_count
+// (threat_count DESC, id — migration 0298). Either way the read stops at
+// LIMIT; a status-only index would sort every active row (~71K) per miss.
+// The ORDER BY must stay `threat_count DESC, id` to match both indexes.
+// Components group the RETURNED
 // operations by component_id (S2.4 connected-components label).
 //
 // Edges: the component layer stores only the label, not the union-find
@@ -840,11 +845,16 @@ export async function handleObservatoryOverindex(request: Request, env: Env): Pr
     `${CACHE_NS}.overindex:${period}`, LENS_TTL_S.overindex, period,
     async (session, tally) => {
       const [ours, radar] = await Promise.all([
+        // `GROUP BY +country_code`: the unary + stops the planner satisfying
+        // the GROUP BY from idx_cube_geo_country_hour. Without sqlite_stat1
+        // it otherwise SCANs that whole index (every hour the cube retains)
+        // to skip a small sort; with it, the read is always the
+        // idx_cube_geo_hour range for the window + a per-country fold.
         session.prepare(`
           SELECT country_code, SUM(threat_count) AS n
           FROM threat_cube_geo
           WHERE hour_bucket >= ? AND country_code != 'XX'
-          GROUP BY country_code
+          GROUP BY +country_code
         `).bind(snappedWindowStart(period)).all<{ country_code: string; n: number }>(),
         session.prepare(`
           SELECT snapshot_date, country_code, value_pct

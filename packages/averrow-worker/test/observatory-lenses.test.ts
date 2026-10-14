@@ -2,13 +2,11 @@
 //
 // Pure helpers are unit-tested directly; every handler runs against a real
 // SQLite DB whose schema is DERIVED from migrations/ (so a phantom column is
-// a "no such column" failure, not a silent accommodation). The query-plan
-// tests apply migration 0298's indexes and pin that the hot reads are
-// index-ordered (no full sort / full scan).
+// a "no such column" failure, not a silent accommodation). Query plans are
+// pinned in observatory-lens-plans.test.ts against the FULLY migrated schema
+// (every index), at realistic scale.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   parseLensPeriod,
   parseJsonStringArray,
@@ -32,7 +30,6 @@ import {
   handleObservatoryActors,
   type OperationGeo,
 } from "../src/handlers/observatoryLenses";
-import { splitStatements } from "./migration-schema";
 import { hasSqlite, openDerivedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
 
@@ -84,14 +81,6 @@ const TABLES = [
   "geopolitical_campaigns", "threat_actor_infrastructure", "threat_attributions",
   "takedown_outcome_daily",
 ];
-
-/** Apply migration 0298's CREATE INDEX statements (derived schema skips indexes). */
-function applyLensIndexes(raw: SqliteDb): void {
-  const sql = readFileSync(resolve(__dirname, "../migrations/0298_observatory_lens_indexes.sql"), "utf-8");
-  for (const stmt of splitStatements(sql)) {
-    if (/^\s*CREATE INDEX/i.test(stmt)) raw.exec(stmt);
-  }
-}
 
 function cluster(raw: SqliteDb, c: {
   id: string; name?: string; status?: string; threat_count: number; countries?: string | null; asns?: string | null;
@@ -562,24 +551,5 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     const again = await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo?bulletproof=0&limit=100"), env);
     expect(again.status).toBe(200);
     expect(log.length).toBe(n);
-  });
-
-  it("migration 0298: hot reads are index-ordered (no full sort / scan)", () => {
-    const raw = openDerivedDb(TABLES);
-    applyLensIndexes(raw);
-    const plan = (sql: string, ...binds: unknown[]) =>
-      (raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...binds) as Array<{ detail: string }>).map((r) => r.detail).join(" | ");
-
-    const mv = plan(`SELECT id, created_at, payload_json FROM agent_events
-      WHERE event_type = 'pivot_detected' AND created_at >= ? ORDER BY created_at DESC LIMIT ?`, "2026-10-01 00:00:00", 50);
-    expect(mv).toContain("idx_agent_events_type_created");
-    expect(mv).not.toContain("TEMP B-TREE");
-
-    for (const where of ["WHERE c.status = 'active'", ""]) {
-      const ops = plan(`SELECT c.id FROM infrastructure_clusters c LEFT JOIN threat_actors a ON a.id = c.actor_id
-        ${where} ORDER BY c.threat_count DESC, c.id LIMIT 50`);
-      expect(ops).toContain("idx_clusters_threat_count");
-      expect(ops).not.toContain("TEMP B-TREE");
-    }
   });
 });
