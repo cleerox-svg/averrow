@@ -12,7 +12,10 @@
  */
 
 import type { LngLat } from '@/lib/country-centroids';
-import type { OpEdge } from '../lib/lens/operations';
+import type { OpEdge, OperationsModel } from '../lib/lens/operations';
+import { globeEdgePath } from '../lib/lens/operations-globe';
+import { opCountRange, opNodeRadius, MAX_NODE_LABELS } from '../lib/lens/operations-draw';
+import type { Projection } from '../lib/projection';
 import type { HostingModel } from '../lib/lens/hosting';
 import { confidenceBand, actorNodePx, type ActorModel } from '../lib/lens/actors';
 import { placeLabels, type LabelCandidate, type Obstacle } from '../lib/label-placement';
@@ -32,6 +35,19 @@ export interface EdgeLabelSource {
   /** Edge ends (to skip edges too short for their label). */
   from: LngLat;
   to: LngLat;
+  priority: number;
+}
+
+/** A country node's name with its operation count ("DE 37"). */
+export interface NodeLabelSource {
+  /** Country code. */
+  id: string;
+  text: string;
+  position: LngLat;
+  /** The node's core radius, px (the label sits below it). */
+  radiusPx: number;
+  /** The node's bloom, px: other labels keep clear of it. */
+  bloomPx: number;
   priority: number;
 }
 
@@ -67,28 +83,47 @@ const pathLength = (e: OpEdge): number => e.distances[e.distances.length - 1] ??
  * `visibleEdges`): a star of "same ASN" arcs would otherwise repeat the same words N times. The selected
  * operation's arcs outrank everything else, then the ones shared by more operations.
  */
-export const edgeLabelSources = memoByModelAndKey((edges: OpEdge[], selOpId: string): EdgeLabelSource[] => {
+const edgeLabelSourcesFor = memoByModelAndKey((edges: OpEdge[], key: string): EdgeLabelSource[] => {
+  const globe = key.startsWith('globe|');
+  const selOpId = key.slice(key.indexOf('|') + 1);
   const best = new Map<string, OpEdge>();
   for (const e of edges) {
-    const key = `${e.opIds[0]}|${e.short}`;
-    const cur = best.get(key);
-    if (!cur || pathLength(e) > pathLength(cur)) best.set(key, e);
+    const k = `${e.opIds[0]}|${e.short}`;
+    const cur = best.get(k);
+    if (!cur || pathLength(e) > pathLength(cur)) best.set(k, e);
   }
   const out: EdgeLabelSource[] = [];
   for (const e of best.values()) {
-    const mid = Math.floor(e.path.length / 2);
+    // The label sits on the arc that is DRAWN: on the globe that is the great circle, not the flat polyline.
+    const path: readonly LngLat[] = globe ? globeEdgePath(e).path.map(p => [p[0], p[1]] as LngLat) : e.path;
+    const mid = Math.floor(path.length / 2);
     out.push({
       id: e.id,
       text: e.short,
-      position: e.midpoint,
-      before: e.path[Math.max(0, mid - 1)]!,
-      after: e.path[Math.min(e.path.length - 1, mid + 1)]!,
-      from: e.path[0]!,
-      to: e.path[e.path.length - 1]!,
+      position: path[mid]!,
+      before: path[Math.max(0, mid - 1)]!,
+      after: path[Math.min(path.length - 1, mid + 1)]!,
+      from: path[0]!,
+      to: path[path.length - 1]!,
       priority: (selOpId && e.opIds.includes(selOpId) ? 1e6 : 0) + e.opCount * 1e3 + pathLength(e),
     });
   }
   return out.sort((a, b) => b.priority - a.priority).slice(0, MAX_EDGE_CANDIDATES);
+});
+
+export const edgeLabelSources = (edges: OpEdge[], selOpId: string, projection: Projection = 'flat'): EdgeLabelSource[] =>
+  edgeLabelSourcesFor(edges, `${projection === 'globe' ? 'globe' : 'flat'}|${selOpId}`);
+
+/** "DE 37" for the busiest few country nodes (all of them when fewer): the rest are named by their tooltip. */
+export const opNodeLabelSources = memoByModel((m: OperationsModel): NodeLabelSource[] => {
+  const range = opCountRange(m);
+  return [...m.nodes]
+    .sort((a, b) => b.opCount - a.opCount || b.threats - a.threats || a.country.localeCompare(b.country))
+    .slice(0, MAX_NODE_LABELS)
+    .map(n => {
+      const r = opNodeRadius(n.opCount, range);
+      return { id: n.country, text: `${n.country} ${n.opCount}`, position: n.position, radiusPx: r, bloomPx: r * 2.1, priority: n.opCount * 1e6 + n.threats };
+    });
 });
 
 export const hostLabelSources = memoByModelAndKey((m: HostingModel, selectedId: string): HostLabelSource[] => {
@@ -116,18 +151,23 @@ export const actorLabelSources = memoByModel((m: ActorModel): ActorLabelSource[]
 export interface PlacedEdgeLabel { id: string; text: string; position: LngLat; angle: number; fade?: number }
 export interface PlacedHostLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
 export interface PlacedActorLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
+export interface PlacedNodeLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
 export interface PlacedLabels {
+  /** Operation country nodes ("DE 37"); absent = none. */
+  opNodes?: PlacedNodeLabel[];
   edges: PlacedEdgeLabel[];
   hosts: PlacedHostLabel[];
   actors: PlacedActorLabel[];
 }
 
-export const NO_LABELS: PlacedLabels = { edges: [], hosts: [], actors: [] };
+export const NO_LABELS: PlacedLabels = { opNodes: [], edges: [], hosts: [], actors: [] };
 
 /** Screen position of a point, or null when it cannot be labelled. `fade` (0..1, default 1): limb fade on the globe. */
 export type Project = (p: LngLat) => { x: number; y: number; fade?: number } | null;
 
 export interface PlaceInput {
+  /** The Operations lens's busiest country nodes (placed first: a name beats a link's evidence word). */
+  opNodes?: readonly NodeLabelSource[];
   edges: readonly EdgeLabelSource[];
   hosts: readonly HostLabelSource[];
   /** The Actors lens's country markers (optional: only that lens draws them). */
@@ -138,6 +178,8 @@ export interface PlaceInput {
 
 const CHAR_PX = 6.6; // 11px mono
 const LABEL_H = 14;
+/** Gap, px, between a node's core and its label: the same constant the layer offsets the text by. */
+export const NODE_LABEL_GAP = 4;
 
 /** Greedy screen-space placement of both label sets at the current camera. */
 export function placeLensLabels(input: PlaceInput, project: Project, size: { width: number; height: number }): PlacedLabels {
@@ -146,6 +188,29 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     const p = project(n.position);
     if (p) obstacles.push({ x: p.x, y: p.y, r: n.radiusPx + 2, id: n.id });
   }
+
+  // Country names first: they carry the identity of a node, the evidence words only describe a link.
+  const nodeCands: LabelCandidate[] = [];
+  const nodeById = new Map<string, NodeLabelSource>();
+  const nodeFade = new Map<string, number>();
+  for (const n of input.opNodes ?? []) {
+    const p = project(n.position);
+    if (!p) continue;
+    nodeFade.set(n.id, p.fade ?? 1);
+    nodeCands.push({ id: n.id, text: n.text, x: p.x, y: p.y, dy: n.radiusPx + NODE_LABEL_GAP + LABEL_H / 2, priority: n.priority });
+    nodeById.set(n.id, n);
+  }
+  const opNodes = placeLabels(nodeCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_NODE_LABELS, obstacles })
+    .map(p => {
+      const src = nodeById.get(p.id)!;
+      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: nodeFade.get(p.id) ?? 1 } satisfies PlacedNodeLabel;
+    });
+  // ...and the edge words keep clear of the names that were placed.
+  const nodeLabelBoxes: Obstacle[] = opNodes.flatMap(l => {
+    const p = project(l.position);
+    return p ? [{ x: p.x, y: p.y + l.radiusPx + NODE_LABEL_GAP + LABEL_H / 2, r: (l.text.length * CHAR_PX) / 2 }] : [];
+  });
+  obstacles.push(...nodeLabelBoxes);
 
   const edgeCands: LabelCandidate[] = [];
   const edgeById = new Map<string, EdgeLabelSource>();
@@ -216,7 +281,7 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
       return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: actorFade.get(p.id) ?? 1 } satisfies PlacedActorLabel;
     });
 
-  return { edges, hosts, actors };
+  return { opNodes, edges, hosts, actors };
 }
 
 const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1];
@@ -230,6 +295,10 @@ const sameFade = (a: number, b: number): boolean => Math.round(a * 20) === Math.
  * resizes its ring must NOT be swallowed here, or the map keeps painting the old label.
  */
 export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedLabels {
+  const nodesSame = (prev.opNodes ?? []).length === (next.opNodes ?? []).length && (prev.opNodes ?? []).every((l, i) => {
+    const n = next.opNodes![i]!;
+    return l.id === n.id && l.text === n.text && l.radiusPx === n.radiusPx && samePos(l.position, n.position) && sameFade(l.fade ?? 1, n.fade ?? 1);
+  });
   const edgesSame = prev.edges.length === next.edges.length && prev.edges.every((e, i) => {
     const n = next.edges[i]!;
     return e.id === n.id && e.text === n.text && samePos(e.position, n.position) && Math.round(e.angle) === Math.round(n.angle) && sameFade(e.fade ?? 1, n.fade ?? 1);
@@ -242,5 +311,5 @@ export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedL
     const n = next.actors[i]!;
     return a.id === n.id && a.text === n.text && a.radiusPx === n.radiusPx && samePos(a.position, n.position) && sameFade(a.fade ?? 1, n.fade ?? 1);
   });
-  return edgesSame && hostsSame && actorsSame ? prev : next;
+  return nodesSame && edgesSame && hostsSame && actorsSame ? prev : next;
 }

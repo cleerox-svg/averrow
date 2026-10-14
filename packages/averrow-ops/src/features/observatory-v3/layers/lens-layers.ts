@@ -31,8 +31,10 @@ import { GLOBE_SCREEN_SPACE_PARAMETERS, type Projection } from '../lib/projectio
 import type { Rgba } from '../lib/map-colors';
 import type { OperationsModel, OpNode, OpEdge } from '../lib/lens/operations';
 import { visibleEdges, nodeInFootprint } from '../lib/lens/operations';
-import { greatCirclePath3D, EARTH_RADIUS_M, type LngLatAlt } from '../anim/great-circle';
-import { cumulativeDistances } from '../anim/dash-flow-extension';
+import { globeEdgePath } from '../lib/lens/operations-globe';
+import {
+  opCountRange, opNodeRadius, opNodePx, opNodesDrawOrder, opEdgeStyle, maxPairOps, OP_EDGE_UNDERLAY,
+} from '../lib/lens/operations-draw';
 import type { HostingModel, ProviderRing } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
 import type { BaselineModel } from '../lib/lens/baseline';
@@ -56,7 +58,7 @@ import {
   type PulseExtensionProps, type RingMaskExtensionProps, type DashFlowExtensionProps,
 } from '../anim';
 import { memoByModel, memoByModelAndKey } from './memo';
-import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel, PlacedActorLabel } from './lens-labels';
+import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel, PlacedActorLabel, PlacedNodeLabel } from './lens-labels';
 
 // ─── Types shared with ThreatMapV3 ──────────────────────────
 
@@ -202,8 +204,6 @@ const hostingParts = memoByModel((m: HostingModel) => ({
   bullet: m.rings.filter(r => r.bulletproof),
   withTakedown: m.rings.filter(r => r.takedownShare !== null),
 }));
-
-const opsMax = memoByModel((m: OperationsModel) => m.nodes.reduce((x, n) => Math.max(x, n.opCount), 0));
 
 const campaignMarkers = memoByModel((m: CampaignsModel) => {
   // One marker per country, at the country's OWN centroid. (The arc's last vertex can sit on an
@@ -367,31 +367,11 @@ function labelStyle(projection: Projection = 'flat') {
 
 const OP_ALPHA_BASE = 130;
 
-/** A country node's radius: grows with the number of operations there (the drawer lists them). */
-function opNodeRadius(n: OpNode, maxOps: number): number {
-  const f = maxOps > 0 ? Math.sqrt(n.opCount / maxOps) : 0;
-  return 6 + 10 * Math.min(1, f);
-}
+/** Gap, px, between a country node's core and its "DE 37" label. */
+const NODE_LABEL_GAP = 4;
 
-/** Pixel radius a country node's bloom is drawn at (edge labels keep clear of it). */
-export function opNodePx(n: OpNode, maxOps: number): number {
-  return opNodeRadius(n, maxOps) * 2.1;
-}
-
-/** Largest operation count in any country, the denominator for node radii (memoised). */
-export function opsMaxThreats(m: OperationsModel): number {
-  return opsMax(m);
-}
-
-/** Arc width / opacity grow with the number of operations sharing the pair. */
-const opEdgeWidth = (e: OpEdge): number => 1 + Math.min(2.4, 0.7 * Math.sqrt(e.opCount));
-const opEdgeAlpha = (e: OpEdge): number => Math.min(230, 110 + 30 * e.opCount);
-
-/** The lifted great circle the globe draws for a pair (flat arcs are the model's own in-range paths). */
-const globeEdgePath = memoByModel((e: OpEdge): { path: LngLatAlt[]; distances: number[] } => {
-  const path = greatCirclePath3D(e.path[0]!, e.path[e.path.length - 1]!, 24, EARTH_RADIUS_M * 0.12);
-  return { path, distances: cumulativeDistances(path.map(p => [p[0], p[1]] as [number, number])) };
-});
+/** Dimmed (outside the selected footprint) node core: low, but still a visible, pickable dot. */
+const OP_DIM_CORE_ALPHA = 70;
 
 /** Animated (selected / top operations) vs static preview edges, split once per (visible set, selection). */
 const splitOpEdges = memoByModelAndKey((edges: OpEdge[], key: string) => {
@@ -408,12 +388,15 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   if (!m || m.nodes.length === 0) return [];
   const { sel, reducedMotion, pick, labels } = input;
   const selOp = sel.opId;
-  const maxOps = opsMax(m);
+  const range = opCountRange(m);
+  const nodes = opNodesDrawOrder(m);
   const globe = input.projection === 'globe';
   const animTime = reducedMotion ? 0 : frame.seconds;
   const out: Layer[] = [];
 
   const visible = visibleEdges(m, selOp, sel.previewOpId ?? null);
+  const widest = maxPairOps(visible);
+  const edgeStyle = (e: OpEdge) => opEdgeStyle(e.opCount, widest);
   const { main, preview } = splitOpEdges(visible, `${selOp ?? ''}#${m.topOpIds.join(',')}`);
   const pathOf = (e: OpEdge) => (globe ? globeEdgePath(e).path : e.path);
   const distOf = (e: OpEdge) => (globe ? globeEdgePath(e).distances : e.distances);
@@ -436,13 +419,29 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     }));
   }
   if (main.length > 0) {
+    // A faint solid line under the dashed flow: the gaps in the dashes would otherwise break a thin, light link.
+    if (!reducedMotion) {
+      out.push(new PathLayer<OpEdge>({
+        id: 'ops-edges-under',
+        data: main,
+        getPath: pathOf,
+        getColor: (e: OpEdge) => withAlpha(CYAN, Math.round(edgeStyle(e).alpha * OP_EDGE_UNDERLAY)),
+        getWidth: (e: OpEdge) => edgeStyle(e).width,
+        widthUnits: 'pixels',
+        capRounded: true,
+        pickable: true,
+        updateTriggers: { getPath: globe, getColor: widest, getWidth: widest },
+        onHover: edgeHover,
+        onClick: edgeClick,
+      }));
+    }
     out.push(new PathLayer<OpEdge, DashFlowExtensionProps<OpEdge>>({
       id: 'ops-edges',
       data: main,
       getPath: pathOf,
       getDashDistances: distOf,
-      getColor: (e: OpEdge) => withAlpha(CYAN, opEdgeAlpha(e)),
-      getWidth: opEdgeWidth,
+      getColor: (e: OpEdge) => withAlpha(CYAN, edgeStyle(e).alpha),
+      getWidth: (e: OpEdge) => edgeStyle(e).width,
       widthUnits: 'pixels',
       capRounded: true,
       pickable: true,
@@ -452,7 +451,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       speed: reducedMotion ? 0 : 2.4,
       animTime,
       transitions: reducedMotion ? undefined : TR_PATH,
-      updateTriggers: { getPath: globe, getDashDistances: globe },
+      updateTriggers: { getPath: globe, getDashDistances: globe, getColor: widest, getWidth: widest },
       // Full evidence lives here (and in the drawer); the map label is the short form.
       onHover: edgeHover,
       onClick: edgeClick,
@@ -461,7 +460,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
   const dim = (n: OpNode): boolean => !nodeInFootprint(n, selOp);
   const shared = {
-    data: m.nodes,
+    data: nodes,
     getPosition: posNode,
     radiusUnits: 'pixels' as const,
     getPulsePhase: (n: OpNode) => n.phase,
@@ -475,7 +474,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-bloom',
-      getRadius: (n: OpNode) => opNodePx(n, maxOps),
+      getRadius: (n: OpNode) => opNodePx(n.opCount, range),
       getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 6 : 34),
       transitions: reducedMotion ? undefined : TR_FILL,
       updateTriggers: { ...shared.updateTriggers, getFillColor: selOp },
@@ -483,8 +482,8 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-core',
-      getRadius: (n: OpNode) => opNodeRadius(n, maxOps),
-      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 40 : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
+      getRadius: (n: OpNode) => opNodeRadius(n.opCount, range),
+      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? OP_DIM_CORE_ALPHA : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
       stroked: true,
       getLineColor: (n: OpNode) => (n.country === sel.country ? AMBER : withAlpha(CYAN, dim(n) ? 40 : 255)),
       getLineWidth: (n: OpNode) => (n.country === sel.country ? 2.5 : 1.2),
@@ -504,6 +503,21 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       onClick: (info: PickInfo<OpNode>) => (info.object ? pick.click({ kind: 'country', id: info.object.country }) : false),
     }),
   );
+
+  // The busiest countries, named with their operation count ("DE 37"); the rest are in the tooltip.
+  if (labels.opNodes && labels.opNodes.length > 0) {
+    out.push(new TextLayer<PlacedNodeLabel>({
+      id: 'ops-node-labels',
+      ...labelStyle(input.projection),
+      data: labels.opNodes,
+      getPosition: l => l.position,
+      getText: l => l.text,
+      getSize: LABEL_PX,
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'top',
+      getPixelOffset: l => [0, l.radiusPx + NODE_LABEL_GAP],
+    }));
+  }
 
   // Edge evidence: short ("◆ cert"), one per operation, laid along the edge, de-duplicated in screen space.
   if (labels.edges.length > 0) {

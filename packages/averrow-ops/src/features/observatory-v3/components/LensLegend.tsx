@@ -13,6 +13,7 @@ import { RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Measure } from '../lib/url-state';
 import type { OperationsModel } from '../lib/lens/operations';
+import { opEdgeStyle } from '../lib/lens/operations-draw';
 import type { MovementModel } from '../lib/lens/movement';
 import type { HostingModel } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
@@ -109,6 +110,9 @@ function Section({ title, children, id }: { title: string; children: ReactNode; 
 
 const css = (c: Rgba): string => rgbCss(c);
 
+/** The legend's link scale: 1, 3 and 5+ operations sharing a country pair. */
+const EDGE_SCALE = [1, 3, 5] as const;
+
 export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }) {
   const m = s.model;
   return (
@@ -117,8 +121,22 @@ export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }
       {m && m.nodes.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Country with operations: bigger = more of them there. Click for the list.</Row>
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>One link per country pair, thicker = more operations share it. The label says the evidence: ◆ cert, ● IP, ▲ ASN ×count.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Country with operations: bigger = more of them there (labelled &ldquo;DE 37&rdquo; for the busiest). Click for the list.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Links radiate from each operation&rsquo;s busiest country. The label says the evidence: ◆ cert, ● IP, ▲ ASN.</Row>
+            <li className={`${TEXT} flex items-center gap-2`} style={{ color: 'var(--text-secondary)' }} data-testid="ops-edge-scale">
+              <span aria-hidden className="inline-flex items-center gap-2 shrink-0">
+                {EDGE_SCALE.map(n => {
+                  const { width, alpha } = opEdgeStyle(n, EDGE_SCALE[EDGE_SCALE.length - 1]!);
+                  return (
+                    <span key={n} className="inline-flex items-center gap-1">
+                      <span style={{ display: 'inline-block', width: 18, height: Math.max(1, Math.round(width)), borderRadius: 1, background: `rgba(122, 234, 255, ${(alpha / 255).toFixed(2)})` }} />
+                      <span style={{ color: 'var(--text-tertiary)' }}>{n === EDGE_SCALE[EDGE_SCALE.length - 1] ? `${n}+` : n}</span>
+                    </span>
+                  );
+                })}
+              </span>
+              <span className="min-w-0">operations share a link: thicker and brighter = more</span>
+            </li>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             {m.placedOps.size} operations · {m.nodes.length} countries · links drawn for the top {m.topOpIds.length}; select one for its whole footprint

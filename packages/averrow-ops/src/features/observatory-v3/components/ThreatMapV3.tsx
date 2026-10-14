@@ -71,14 +71,15 @@ import {
 } from '../lib/selection';
 import { nodeKey, arcKey, type MapMode } from '../lib/url-state';
 import {
-  buildLensBaseLayers, buildLensLayers, lensNeedsFrame, opNodePx, opsMaxThreats,
+  buildLensBaseLayers, buildLensLayers, lensNeedsFrame,
   type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
 } from '../layers/lens-layers';
 import {
-  edgeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
+  edgeLabelSources, opNodeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { visibleEdges } from '../lib/lens/operations';
+import { opCountRange, opNodePx } from '../lib/lens/operations-draw';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
 import {
@@ -916,17 +917,18 @@ function ThreatMapV3Inner({
     const host = lens.layers.hosting ? lens.hosting : null;
     const actors = lens.layers.actors ? lens.actors : null;
     if (!ops && !host && !actors) return null;
-    const edges = ops ? edgeLabelSources(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '') : [];
+    const edges = ops ? edgeLabelSources(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '', projection) : [];
+    const opNodes = ops ? opNodeLabelSources(ops) : [];
     const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
-    const maxT = ops ? opsMaxThreats(ops) : 0;
+    const range = ops ? opCountRange(ops) : null;
     const actorLabels = actors && !actors.empty ? actorLabelSources(actors) : [];
     const nodes = [
-      ...(ops ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n, maxT) })) : []),
+      ...(ops && range ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n.opCount, range), id: n.country })) : []),
       ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx, id: r.id })) : []),
       ...actorLabels.map(a => ({ position: a.position, radiusPx: a.radiusPx, id: a.id })),
     ];
-    return { edges, hosts, actors: actorLabels, nodes };
-  }, [lens, mapMode]);
+    return { opNodes, edges, hosts, actors: actorLabels, nodes };
+  }, [lens, mapMode, projection]);
 
   /** The idle spin is turning the globe: labels (placed for a still camera) stay hidden until it stops. */
   const spinningRef = useRef(false);
