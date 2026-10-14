@@ -90,15 +90,17 @@ function seedAtScale(db: SqliteDb): void {
   for (let i = 0; i < SCALE.actors; i++) s.run(`ta_${i}`, `Actor ${i}`);
 
   // Legacy: ~92% active, frozen HIGH threat_count (they dominate any
-  // threat_count order), ~5% attributed. Stable: ~47% active, smaller counts,
-  // ~30% in a component, every NEXUS id prefix represented.
+  // threat_count order), ~5% attributed, retired by migration 0303
+  // (retired_reason='superseded' — status keeps its prod value, the CHECK
+  // allows nothing else). Stable: ~47% active, smaller counts, ~30% in a
+  // component, every NEXUS id prefix represented, ~1/13 retired by NEXUS.
   s = db.prepare(`INSERT INTO infrastructure_clusters
-    (id, cluster_name, threat_count, status, first_detected, last_seen, countries, asns, attack_types, brand_ids, agent_notes, actor_id, component_id)
-    VALUES (?, ?, ?, ?, '2026-01-01', '2026-10-01', '["US"]', ?, ?, ?, ?, ?, ?)`);
+    (id, cluster_name, threat_count, status, retired_reason, first_detected, last_seen, countries, asns, attack_types, brand_ids, agent_notes, actor_id, component_id)
+    VALUES (?, ?, ?, ?, ?, '2026-01-01', '2026-10-01', '["US"]', ?, ?, ?, ?, ?, ?)`);
   for (let i = 0; i < SCALE.legacyClusters; i++) {
     const hex = (i * 2654435761 >>> 0).toString(16).padStart(8, "0");
     s.run(`${hex}-${String(i).padStart(4, "0").slice(-4)}-4a1c-9b2d-${String(i).padStart(12, "0")}`, `op ${i}`,
-      5000 + Math.floor(rnd() * 20_000), i % 12 === 0 ? "dormant" : "active",
+      5000 + Math.floor(rnd() * 20_000), i % 12 === 0 ? "dormant" : "active", "superseded",
       '["AS13335"]', '["malware_distribution"]', '["b1","b2"]', null,
       rnd() < 0.05 ? `ta_${Math.floor(rnd() ** 3 * SCALE.actors)}` : null, null);
   }
@@ -106,6 +108,7 @@ function seedAtScale(db: SqliteDb): void {
   for (let i = 0; i < SCALE.stableClusters; i++) {
     const prefix = prefixes[i % prefixes.length]!;
     s.run(`${prefix}${i}`, `stable ${i}`, Math.floor(rnd() ** 4 * 3000), rnd() < 0.47 ? "active" : "dormant",
+      i % 13 === 0 ? "shared_infra" : null,
       i % 3 === 0 ? '["AS13335"]' : `["AS${2000 + i}"]`, i % 7 === 0 ? '["scanning"]' : '["phishing"]',
       JSON.stringify(Array.from({ length: i % 11 === 0 ? 200 : 3 }, (_, k) => `b${k}`)),
       prefix === "cluster_cert_" ? JSON.stringify({ cluster_type: i % 2 ? "ssl_san_hash" : "ssl_cert_serial" }) : null,
@@ -227,6 +230,7 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
           .all() as Array<{ name: string }>).map((r) => r.name);
         expect(names).toEqual(expect.arrayContaining([
           "idx_clusters_status", "idx_clusters_threat_count", "idx_clusters_status_threat_count",
+          "idx_clusters_live_status_threat_count",
         ]));
       });
 
@@ -236,12 +240,13 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
         const [active, all] = ops[0]!.sql.includes("+c.status = 'active'") ? [ops[0]!, ops[1]!] : [ops[1]!, ops[0]!];
         expect(active.sql).toContain("+c.status = 'active'");
         expect(all.sql).not.toContain("c.status = 'active'");
-        // status=all drops retired rows with the same unary-`+` guard, so the
-        // predicate can't pull the planner off the PK range either.
-        expect(all.sql).toContain("+c.status NOT IN ('superseded', 'shared_infra')");
+        // Both statuses drop retired rows (retirement leaves status alone)
+        // with the same unary-`+` guard, so the predicate can't pull the
+        // planner off the PK range onto the partial live-rows index either.
+        for (const p of ops) expect(p.sql).toContain("+c.retired_reason IS NULL");
         for (const p of ops) {
           expect(p.plan).toContain("SEARCH c USING INDEX sqlite_autoindex_infrastructure_clusters_1 (id>? AND id<?)");
-          expect(p.plan).not.toMatch(/idx_clusters_status|idx_clusters_threat_count/);
+          expect(p.plan).not.toMatch(/idx_clusters_status|idx_clusters_threat_count|idx_clusters_live_status_threat_count/);
           expect(p.plan).not.toContain("SCAN c");
           expect(p.plan).not.toContain("TEMP B-TREE");
         }
@@ -302,14 +307,15 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
 
       it("actors: list counts come from covering per-actor indexes; detail reads are actor-keyed", () => {
         const [list] = find(modes[mode]!, /SELECT a\.id, a\.name, \(SELECT COUNT\(\*\)/);
-        // Retired clusters are excluded (lib/cluster-status.ts); migration 0304
-        // keeps the per-actor count covering via (actor_id, status).
-        expect(list!.plan).toContain("SEARCH c USING COVERING INDEX idx_clusters_actor_status (actor_id=?)");
+        // Retired clusters are excluded (retired_reason IS NULL,
+        // lib/cluster-status.ts); migration 0304's partial live-rows
+        // (actor_id) index keeps the per-actor count covering.
+        expect(list!.plan).toContain("SEARCH c USING COVERING INDEX idx_clusters_actor_live (actor_id=? AND retired_reason=?)");
         expect(list!.plan).toContain("SEARCH i USING COVERING INDEX idx_tai_actor (threat_actor_id=?)");
         const [infra] = find(modes[mode]!, /FROM threat_actor_infrastructure WHERE threat_actor_id = \?/);
         expect(infra!.plan).toContain("idx_tai_actor (threat_actor_id=?)");
         const [clusters] = find(modes[mode]!, /FROM infrastructure_clusters WHERE actor_id = \?/);
-        expect(clusters!.plan).toMatch(/idx_clusters_actor(_status)? \(actor_id=\?\)/);
+        expect(clusters!.plan).toMatch(/idx_clusters_actor(_live)? \(actor_id=\?( AND retired_reason=\?)?\)/);
         const [attr] = find(modes[mode]!, /FROM threat_attributions WHERE actor_id = \?/);
         expect(attr!.plan).toContain("idx_attribution_actor (actor_id=?)");
       });

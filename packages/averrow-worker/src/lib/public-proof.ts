@@ -67,6 +67,7 @@ import type { Env } from "../types";
 import { cachedValue } from "./cached-value";
 import { cachedCount } from "./cached-count";
 import { MONITORED_BRAND_PREDICATE_SQL } from "./monitored-brands";
+import { notRetiredClusterSql } from "./cluster-status";
 
 /** Lookalike rows created before this are the pre-seeder legacy population. */
 export const LOOKALIKE_PROOF_POPULATION_START = "2026-09-30";
@@ -116,6 +117,7 @@ async function computeCore(env: Env): Promise<ProofCore> {
       `SELECT COUNT(DISTINCT COALESCE(component_id, id)) AS n
          FROM infrastructure_clusters
         WHERE status IN (${statusPlaceholders})
+          AND ${notRetiredClusterSql()}
           AND last_seen >= datetime('now', '-30 days')`,
     ).bind(...LIVE_OPERATION_STATUSES).first<{ n: number }>(),
     // Static trusted predicate text (see lib/monitored-brands.ts) — no

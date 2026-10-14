@@ -42,7 +42,11 @@ CREATE TABLE IF NOT EXISTS infrastructure_clusters (
   confidence_score     INTEGER,
   first_detected       TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen            TEXT NOT NULL DEFAULT (datetime('now')),
-  status               TEXT NOT NULL DEFAULT 'active',
+  -- Prod's CHECK, reproduced so fresh DBs (and every test schema derived
+  -- from migrations/, test/migration-schema.ts) reject any other status —
+  -- see migration 0303. Never add a status value: use retired_reason.
+  status               TEXT NOT NULL DEFAULT 'active'
+                       CHECK (status IN ('active','dormant','disrupted')),
   agent_notes          TEXT
 );
 

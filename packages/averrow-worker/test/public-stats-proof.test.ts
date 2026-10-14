@@ -73,10 +73,10 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
       extra.baselineHoursAgo == null ? null : sqliteTimestampHoursAgo(extra.baselineHoursAgo),
       extra.createdAt ?? null,
     );
-  const cluster = (id: string, status: string, component: string | null, lastSeenHoursAgo = 1) =>
+  const cluster = (id: string, status: string, component: string | null, lastSeenHoursAgo = 1, retiredReason: string | null = null) =>
     raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, status, component_id, last_seen) VALUES (?, ?, ?, ?)`,
-    ).run(id, status, component, sqliteTimestampHoursAgo(lastSeenHoursAgo));
+      `INSERT INTO infrastructure_clusters (id, status, component_id, last_seen, retired_reason) VALUES (?, ?, ?, ?, ?)`,
+    ).run(id, status, component, sqliteTimestampHoursAgo(lastSeenHoursAgo), retiredReason);
 
   beforeEach(() => {
     raw = openDerivedDb(TABLES);
@@ -125,11 +125,14 @@ describe.skipIf(!hasSqlite())("public stats + proof (real SQLite, migration-deri
     });
     lookalike("l7", 1, 24);                                   //    yes    no  (no evidence: legacy first_seen)
 
+    // Statuses stay inside prod's CHECK (active / dormant / disrupted).
     cluster("c1", "active", "component_A");
-    cluster("c2", "accelerating", "component_A"); // same operation as c1
-    cluster("c3", "pivot", null);                 // its own operation
+    cluster("c2", "active", "component_A");       // same operation as c1
+    cluster("c3", "active", null);                // its own operation
     cluster("c4", "dormant", null);               // not live
     cluster("c5", "active", null, 24 * 40);       // stale
+    cluster("c6", "active", null, 1, "superseded");   // retired legacy copy
+    cluster("c7", "active", null, 1, "shared_infra"); // retired by NEXUS
 
     const d = await getStats(envFor(raw));
     const proof = d.proof as Record<string, unknown>;

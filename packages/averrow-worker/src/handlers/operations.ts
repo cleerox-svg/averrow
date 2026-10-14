@@ -82,13 +82,18 @@ export async function handleListOperations(request: Request, env: Env): Promise<
     const conditions: string[] = [];
     const params: unknown[] = [];
 
+    // Retired rows (retired_reason set: superseded legacy duplicates,
+    // shared_infra) are not operations (lib/cluster-status.ts). Retirement
+    // does not change `status`, so the status filter alone would still
+    // return them — the predicate applies to every request. `+ic.status`
+    // keeps the planner off idx_clusters_status (which, without ANALYZE
+    // stats, it otherwise takes — walking ~70K retired 'active' rows); the
+    // only indexes left are the live-rows partial ones (migrations 0304 /
+    // 0306), a few hundred rows.
+    conditions.push(notRetiredClusterSql("ic"));
     if (status) {
-      conditions.push("ic.status = ?");
+      conditions.push("+ic.status = ?");
       params.push(status);
-    } else {
-      // "all" means every OPERATION — retired rows (superseded legacy
-      // duplicates, shared_infra) are not operations (lib/cluster-status.ts).
-      conditions.push(notRetiredClusterSql("ic"));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

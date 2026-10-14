@@ -28,7 +28,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { recordAttribution, type AttributionSource } from './otx-attribution';
-import { isRetiredClusterStatus } from './cluster-status';
+import { isRetiredCluster } from './cluster-status';
 
 // ─── Pure decision function (no I/O, no clock) ───────────────────────
 
@@ -178,16 +178,16 @@ export async function inheritOtxActorsToClusters(
   const clusterActor = new Map<string, string | null>();
   const retiredClusters = new Set<string>();
   for (const chunk of chunkArray(winners, IN_CHUNK)) {
-    // Retired rows (superseded legacy duplicates, shared_infra — see
+    // Retired rows (retired_reason superseded / shared_infra — see
     // lib/cluster-status.ts) are not operations: never inherit onto them or
     // fan an actor out to their members.
     const rows = await db.prepare(`
-      SELECT id, actor_id, status
+      SELECT id, actor_id, retired_reason
       FROM infrastructure_clusters
       WHERE id IN (${placeholders(chunk.length)})
-    `).bind(...chunk).all<{ id: string; actor_id: string | null; status: string | null }>();
+    `).bind(...chunk).all<{ id: string; actor_id: string | null; retired_reason: string | null }>();
     for (const r of rows.results ?? []) {
-      if (isRetiredClusterStatus(r.status)) retiredClusters.add(r.id);
+      if (isRetiredCluster(r.retired_reason)) retiredClusters.add(r.id);
       clusterActor.set(r.id, r.actor_id);
     }
   }

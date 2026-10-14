@@ -10,7 +10,8 @@
 -- country_code) as the operation's country (the old "CA AS13335 …" names).
 --
 -- NULL until the next NEXUS run refreshes a row; app-store / dark-web
--- clusters (no country dimension) stay NULL. Retired rows (status
--- 'superseded' / 'shared_infra') are never refreshed and stay NULL.
+-- clusters (no country dimension) stay NULL. Retired rows (retired_reason
+-- 'superseded' / 'shared_infra', migration 0303) are never refreshed and
+-- stay NULL.
 
 ALTER TABLE infrastructure_clusters ADD COLUMN country_counts TEXT;

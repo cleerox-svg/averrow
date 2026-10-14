@@ -267,52 +267,52 @@ describe("decideLaneRowRetirement", () => {
   });
 
   it("ASN rows: shared ASN / IP-reputation → shared_infra; malformed key → superseded; real → untouched", () => {
-    expect(decideLaneRowRetirement(row("cluster_asn_as13335_phishing", ["AS13335"], ["phishing"]))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_asn_as4134_scanning", ["AS4134"], ["scanning"]))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_asn_as4134_malicious_ip", ["AS4134"], ["malicious_ip"]))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_asn_as4837_cn_unicom_phishing", ["AS4837 CN Unicom"], ["phishing"]))?.status).toBe("superseded");
-    expect(decideLaneRowRetirement(row("cluster_asn_as4837_unknown", ["AS4837"], [null]))?.status).toBe("superseded");
+    expect(decideLaneRowRetirement(row("cluster_asn_as13335_phishing", ["AS13335"], ["phishing"]))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4134_scanning", ["AS4134"], ["scanning"]))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4134_malicious_ip", ["AS4134"], ["malicious_ip"]))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4837_cn_unicom_phishing", ["AS4837 CN Unicom"], ["phishing"]))?.retiredReason).toBe("superseded");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4837_unknown", ["AS4837"], [null]))?.retiredReason).toBe("superseded");
     expect(decideLaneRowRetirement(row("cluster_asn_as4837_phishing", ["AS4837"], ["phishing"]))).toBeNull();
   });
 
   it("ASN rows: brand fan-out over the hub threshold → shared_infra (data-driven landlord rule)", () => {
-    expect(decideLaneRowRetirement(row("cluster_asn_as4837_phishing", ["AS4837"], ["phishing"], ASN_MAX_BRAND_FANOUT + 1))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4837_phishing", ["AS4837"], ["phishing"], ASN_MAX_BRAND_FANOUT + 1))?.retiredReason).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_asn_as4837_phishing", ["AS4837"], ["phishing"], ASN_MAX_BRAND_FANOUT))).toBeNull();
   });
 
   it("ASN rows: IaaS ASNs retire too (ASN lane skips both sets); a '' type is superseded", () => {
-    expect(decideLaneRowRetirement(row("cluster_asn_as16509_phishing", ["AS16509"], ["phishing"]))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_asn_as4837_unknown", ["AS4837"], [""]))?.status).toBe("superseded");
+    expect(decideLaneRowRetirement(row("cluster_asn_as16509_phishing", ["AS16509"], ["phishing"]))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as4837_unknown", ["AS4837"], [""]))?.retiredReason).toBe("superseded");
   });
 
   it("numeric asns entries are read (a [13335] row is still retired)", () => {
-    expect(decideLaneRowRetirement(row("cluster_asn_as13335_phishing", [13335], ["phishing"]))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_104.21.0.9", [13335], ["phishing"], 10))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_asn_as13335_phishing", [13335], ["phishing"]))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_104.21.0.9", [13335], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_asn_as4837_phishing", [4837], ["phishing"]))).toBeNull();
   });
 
   it("per-IP rows: hub fan-out, multi-tenant ASN or bogon IP → shared_infra; IaaS stays", () => {
-    expect(decideLaneRowRetirement(row("cluster_ip_13.248.169.48", ["AS16509"], ["phishing"], 900))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_198.51.100.1", [], ["phishing"], 151))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_104.21.0.9", ["AS13335 Cloudflare"], ["phishing"], 10))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_127.0.0.1", ["AS9009"], ["phishing"], 10))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_100.64.3.4", [], ["phishing"], 10))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_13.248.169.48", ["AS16509"], ["phishing"], 900))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_198.51.100.1", [], ["phishing"], 151))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_104.21.0.9", ["AS13335 Cloudflare"], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_127.0.0.1", ["AS9009"], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_100.64.3.4", [], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_ip_203.0.113.7", ["AS9009"], ["phishing"], 150))).toBeNull();
     // An IaaS IP is a legitimate per-IP cluster (one VM = one customer).
     expect(decideLaneRowRetirement(row("cluster_ip_54.80.0.5", ["AS14618"], ["phishing"], 12))).toBeNull();
     expect(decideLaneRowRetirement(row("cluster_ip_34.120.0.5", ["AS396982"], ["phishing"], 12))).toBeNull();
     // ...but Google front-end / Amazon primary-ASN IPs are multi-tenant.
-    expect(decideLaneRowRetirement(row("cluster_ip_216.239.32.21", ["AS15169"], ["phishing"], 3))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_ip_52.84.0.5", ["AS16509"], ["phishing"], 3))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_216.239.32.21", ["AS15169"], ["phishing"], 3))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_ip_52.84.0.5", ["AS16509"], ["phishing"], 3))?.retiredReason).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_ip_51.38.10.1", ["AS16276"], ["phishing"], 12))).toBeNull();
   });
 
   it("subnet rows: shared ASN (either set), hub fan-out or bogon range → shared_infra", () => {
-    expect(decideLaneRowRetirement(row("cluster_subnet_104_21_0", ["AS13335"], ["phishing"], 10))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_subnet_51_38_10", ["AS9999", "AS16276"], ["phishing"], 10))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_subnet_74_115_51", ["AS9999"], ["phishing"], 151))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_subnet_192_168_1", ["AS9999"], ["phishing"], 10))?.status).toBe("shared_infra");
-    expect(decideLaneRowRetirement(row("cluster_subnet_172_20_0", [], ["phishing"], 10))?.status).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_subnet_104_21_0", ["AS13335"], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_subnet_51_38_10", ["AS9999", "AS16276"], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_subnet_74_115_51", ["AS9999"], ["phishing"], 151))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_subnet_192_168_1", ["AS9999"], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
+    expect(decideLaneRowRetirement(row("cluster_subnet_172_20_0", [], ["phishing"], 10))?.retiredReason).toBe("shared_infra");
     expect(decideLaneRowRetirement(row("cluster_subnet_74_115_51", ["AS9999"], ["phishing"], 150))).toBeNull();
     expect(decideLaneRowRetirement(row("cluster_subnet_172_32_0", ["AS9999"], ["phishing"], 10))).toBeNull();
   });
@@ -326,7 +326,7 @@ describe("decideLaneRowRetirement", () => {
 // ─── Lane SQL against the real migrated schema ─────────────────────────
 
 type ClusterRow = {
-  id: string; cluster_name: string; status: string; threat_count: number;
+  id: string; cluster_name: string; status: string; retired_reason: string | null; threat_count: number;
   confidence_score: number; asns: string; countries: string; country_counts: string | null;
 };
 
@@ -481,7 +481,8 @@ describe.skipIf(!hasSqlite())("NEXUS threats lanes on the migrated schema", () =
        VALUES ('cluster_asn_as65032_phishing', 'old', '["AS65032"]', '["phishing"]', ?, 'active', 400)`,
     ).run(brands);
     await runAll();
-    expect(cluster("cluster_asn_as65032_phishing")!.status).toBe("shared_infra");
+    expect(cluster("cluster_asn_as65032_phishing")!.retired_reason).toBe("shared_infra");
+    expect(cluster("cluster_asn_as65032_phishing")!.status).toBe("active"); // retirement never writes status
     const again = await retireNonOperationalLaneClusters(db);
     expect(again.markedSharedInfra + again.markedSuperseded).toBe(0);
   });
@@ -575,16 +576,19 @@ describe.skipIf(!hasSqlite())("NEXUS threats lanes on the migrated schema", () =
     ins.run("cluster_ip_192.168.1.1", "IP 192.168.1.1", '["AS9999"]', '["phishing"]', brands(5), "active", 50);
 
     await runAll();
-    const st = (id: string) => cluster(id)!.status;
-    expect(st("cluster_asn_as13335_phishing")).toBe("shared_infra");
-    expect(st("cluster_asn_as4134_scanning")).toBe("shared_infra");
-    expect(st("cluster_asn_as13335_cloudflare_inc_phishing")).toBe("superseded");
-    expect(st("cluster_ip_13.248.169.48")).toBe("shared_infra");
-    expect(st("cluster_subnet_104_21_0")).toBe("shared_infra");
-    expect(st("cluster_subnet_10_0_0")).toBe("shared_infra");
-    expect(st("cluster_ip_192.168.1.1")).toBe("shared_infra");
-    expect(st("cluster_subnet_74_115_51")).toBe("active"); // the lane's own row is never retired
-    expect(st("cluster_asn_as4837_malware_distribution")).toBe("active");
+    const rr = (id: string) => cluster(id)!.retired_reason;
+    expect(rr("cluster_asn_as13335_phishing")).toBe("shared_infra");
+    expect(rr("cluster_asn_as4134_scanning")).toBe("shared_infra");
+    expect(rr("cluster_asn_as13335_cloudflare_inc_phishing")).toBe("superseded");
+    expect(rr("cluster_ip_13.248.169.48")).toBe("shared_infra");
+    expect(rr("cluster_subnet_104_21_0")).toBe("shared_infra");
+    expect(rr("cluster_subnet_10_0_0")).toBe("shared_infra");
+    expect(rr("cluster_ip_192.168.1.1")).toBe("shared_infra");
+    expect(rr("cluster_subnet_74_115_51")).toBeNull(); // the lane's own row is never retired
+    expect(rr("cluster_asn_as4837_malware_distribution")).toBeNull();
+    // Retirement leaves status alone (prod CHECK: active / dormant / disrupted).
+    expect(cluster("cluster_asn_as4134_scanning")!.status).toBe("dormant");
+    expect(cluster("cluster_asn_as13335_phishing")!.status).toBe("active");
     expect(cluster("cluster_asn_as4837_malware_distribution")!.threat_count).toBe(12); // refreshed by the lane
 
     const again = await retireNonOperationalLaneClusters(db);
@@ -593,17 +597,54 @@ describe.skipIf(!hasSqlite())("NEXUS threats lanes on the migrated schema", () =
 
   it("a shared_infra per-IP row that qualifies again is reactivated by the lane", async () => {
     raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, brand_ids, status, threat_count)
-       VALUES ('cluster_ip_203.0.113.7', 'old', '[]', '[]', 'shared_infra', 0)`,
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, brand_ids, status, retired_reason, threat_count)
+       VALUES ('cluster_ip_203.0.113.7', 'old', '[]', '[]', 'active', 'shared_infra', 0)`,
     ).run();
     await runPerIpLane(db);
+    expect(cluster("cluster_ip_203.0.113.7")!.retired_reason).toBeNull();
     expect(cluster("cluster_ip_203.0.113.7")!.status).toBe("active");
+    // ...and the retire pass leaves it alone (no retire / reactivate loop).
+    const r = await retireNonOperationalLaneClusters(db);
+    expect(r.markedSharedInfra + r.markedSuperseded).toBe(0);
+  });
+
+  it("a shared_infra ASN row that qualifies again is reactivated by the ASN lane (status still owned by the lane)", async () => {
+    raw.prepare(
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, retired_reason, threat_count)
+       VALUES ('cluster_asn_as4837_malware_distribution', 'old', '["AS4837"]', '["malware_distribution"]', '[]', 'dormant', 'shared_infra', 0)`,
+    ).run();
+    await runAll();
+    const c = cluster("cluster_asn_as4837_malware_distribution")!;
+    expect(c.retired_reason).toBeNull();
+    expect(["active", "dormant"]).toContain(c.status);
+    expect(c.threat_count).toBe(12);
+  });
+
+  it("a lane upsert never clears 'superseded' (per-IP and ASN paths)", async () => {
+    const ins = raw.prepare(
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, retired_reason, threat_count)
+       VALUES (?, 'old', ?, ?, '[]', 'active', 'superseded', 0)`,
+    );
+    ins.run("cluster_ip_203.0.113.7", "[]", '["phishing"]');
+    ins.run("cluster_asn_as4837_malware_distribution", '["AS4837"]', '["malware_distribution"]');
+    await runPerIpLane(db);
+    await runAsnLane(db);
+    expect(cluster("cluster_ip_203.0.113.7")!.retired_reason).toBe("superseded");
+    expect(cluster("cluster_asn_as4837_malware_distribution")!.retired_reason).toBe("superseded");
+  });
+
+  it("every status a lane writes satisfies the prod CHECK (the migrated schema enforces it)", async () => {
+    await runAll();
+    const bad = raw.prepare(
+      "SELECT id, status FROM infrastructure_clusters WHERE status NOT IN ('active', 'dormant', 'disrupted')",
+    ).all();
+    expect(bad).toEqual([]);
   });
 
   it("a full run produces exactly the expected operations", async () => {
     await runAll();
     const ops = (raw.prepare(
-      `SELECT id FROM infrastructure_clusters WHERE status NOT IN ('superseded','shared_infra') ORDER BY id`,
+      `SELECT id FROM infrastructure_clusters WHERE retired_reason IS NULL ORDER BY id`,
     ).all() as Array<{ id: string }>).map((r) => r.id);
     expect(ops).toEqual([
       "cluster_asn_as4837_malware_distribution",

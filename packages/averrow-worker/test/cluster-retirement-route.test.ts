@@ -15,8 +15,8 @@ const execCtx = { waitUntil() {}, passThroughOnException() {} } as unknown as Ex
 function makeEnv() {
   const raw = openMigratedDb();
   raw.prepare(
-    `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, status)
-     VALUES ('88888888-0000-4000-8000-000000000008', 'n', '["AS13335"]', '["phishing"]', 'superseded')`,
+    `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, status, retired_reason)
+     VALUES ('88888888-0000-4000-8000-000000000008', 'n', '["AS13335"]', '["phishing"]', 'active', 'superseded')`,
   ).run();
   insertThreats(raw, [{ id: "r1", cluster_id: "88888888-0000-4000-8000-000000000008" }]);
   // Capturing AUDIT_DB: records each audit_log INSERT's binds.

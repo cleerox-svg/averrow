@@ -2,6 +2,7 @@
 // Averrow — Trend API Endpoints
 
 import { json } from "../lib/cors";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 function periodClause(period: string): { since: string; bucket: string; hourly: boolean } {
@@ -333,6 +334,7 @@ export async function handleTrendNexusActive(request: Request, env: Env): Promis
         created_at
       FROM infrastructure_clusters
       WHERE status = 'active'
+        AND ${notRetiredClusterSql()}
       ORDER BY threat_count DESC LIMIT 5
     `).all<{ id: string; label: string; threat_count: number; severity: string; created_at: string }>();
 

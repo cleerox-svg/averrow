@@ -66,7 +66,7 @@
 //      the "min member cluster_id" wording — see the S2.4 report.
 
 import type { D1Database } from '@cloudflare/workers-types';
-import { notRetiredClusterSql } from './cluster-status';
+import { notRetiredClusterSql, retiredClusterSql } from './cluster-status';
 
 // ─── Cluster taxonomy ─────────────────────────────────────────────────
 
@@ -459,7 +459,7 @@ export async function groupClusterComponents(
       WHERE ${notRetiredClusterSql()}`,
   ).all<ClusterRow>()).results ?? [];
 
-  // Retired rows (superseded legacy duplicates, shared_infra) are excluded
+  // Retired rows (retired_reason superseded / shared_infra) are excluded
   // above, so a threat that still points at one is an unknown id to
   // computeComponents (ignored, never glue). Any component_id such a row
   // carried from before its retirement is cleared here — the diff-write
@@ -467,7 +467,7 @@ export async function groupClusterComponents(
   // steady-state run reads and writes ~nothing.
   const retiredCleared = await db.prepare(
     `UPDATE infrastructure_clusters SET component_id = NULL
-      WHERE component_id IS NOT NULL AND NOT (${notRetiredClusterSql()})`,
+      WHERE component_id IS NOT NULL AND ${retiredClusterSql()}`,
   ).run();
 
   const clusters: ComponentClusterInput[] = [];

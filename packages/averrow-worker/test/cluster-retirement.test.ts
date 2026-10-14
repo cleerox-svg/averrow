@@ -15,9 +15,10 @@ import {
 } from "../src/lib/cluster-retirement";
 import {
   notRetiredClusterSql,
+  retiredClusterSql,
   liveClusterStatusSql,
-  isRetiredClusterStatus,
-  RETIRED_CLUSTER_STATUSES,
+  isRetiredCluster,
+  CLUSTER_RETIRED_REASONS,
   LIVE_CLUSTER_STATUSES,
 } from "../src/lib/cluster-status";
 import { OPERATION_STATUSES } from "../src/handlers/operations";
@@ -70,68 +71,153 @@ describe("parseRetirementParams", () => {
 });
 
 describe("cluster-status helpers", () => {
-  it("notRetiredClusterSql covers every retired status, alias-aware", () => {
-    expect(notRetiredClusterSql()).toBe("status NOT IN ('superseded', 'shared_infra')");
-    expect(notRetiredClusterSql("ic")).toBe("ic.status NOT IN ('superseded', 'shared_infra')");
-    for (const s of RETIRED_CLUSTER_STATUSES) expect(isRetiredClusterStatus(s)).toBe(true);
-    expect(isRetiredClusterStatus("active")).toBe(false);
-    expect(isRetiredClusterStatus(null)).toBe(false);
+  it("notRetiredClusterSql is the retired_reason IS NULL predicate, alias-aware", () => {
+    expect(notRetiredClusterSql()).toBe("retired_reason IS NULL");
+    expect(notRetiredClusterSql("ic")).toBe("ic.retired_reason IS NULL");
+    expect(notRetiredClusterSql("c", { unindexed: true })).toBe("+c.retired_reason IS NULL");
+    expect(retiredClusterSql()).toBe("retired_reason IS NOT NULL");
+    expect(retiredClusterSql("ic")).toBe("ic.retired_reason IS NOT NULL");
+    for (const r of CLUSTER_RETIRED_REASONS) expect(isRetiredCluster(r)).toBe(true);
+    expect(isRetiredCluster(null)).toBe(false);
+    expect(isRetiredCluster(undefined)).toBe(false);
   });
 
-  it("liveClusterStatusSql is the positive list: every operation status, no retired one", () => {
-    expect(liveClusterStatusSql()).toBe("status IN ('active', 'dormant', 'accelerating', 'pivot')");
-    expect(liveClusterStatusSql("ic")).toBe("ic.status IN ('active', 'dormant', 'accelerating', 'pivot')");
+  it("liveClusterStatusSql is the positive status list AND not retired", () => {
+    expect(liveClusterStatusSql()).toBe("status IN ('active', 'dormant', 'accelerating', 'pivot') AND retired_reason IS NULL");
+    expect(liveClusterStatusSql("ic")).toBe("ic.status IN ('active', 'dormant', 'accelerating', 'pivot') AND ic.retired_reason IS NULL");
     expect(new Set(LIVE_CLUSTER_STATUSES)).toEqual(OPERATION_STATUSES);
-    for (const s of LIVE_CLUSTER_STATUSES) expect(isRetiredClusterStatus(s)).toBe(false);
+  });
+
+  it("no retired reason is a status value (statuses stay inside the prod CHECK)", () => {
+    for (const r of CLUSTER_RETIRED_REASONS) expect(LIVE_CLUSTER_STATUSES).not.toContain(r);
   });
 });
 
-// ─── Migration 0303 ─────────────────────────────────────────────────────
+// ─── Migrations 0302–0306 on prod's real infrastructure_clusters ───────
+//
+// Prod's table was created outside the repo's migrations and carries
+// CHECK (status IN ('active','dormant','disrupted')). The first 0303 wrote
+// status='superseded' and failed the deploy on it. These tests apply the
+// migrations to that exact DDL, with legacy + stable rows, the way the deploy
+// does (statement by statement, foreign keys ON as in D1).
 
-describe.skipIf(!hasSqlite())("migration 0303 — supersede legacy clusters", () => {
-  it("flips exactly the non-`cluster_` ids, leaves actor/counts intact, and is idempotent", () => {
-    const raw = openMigratedDb();
-    const ins = raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, cluster_name, status, threat_count, actor_id) VALUES (?, 'n', ?, ?, ?)`,
-    );
-    const legacy = [
-      "0f8e2b9c-1111-4000-8000-000000000000", "3a000000-0000-4000-8000-000000000000",
-      "5b000000-0000-4000-8000-000000000000", "7c000000-0000-4000-8000-000000000000",
-      "9d000000-0000-4000-8000-000000000000", "b1000000-0000-4000-8000-000000000000",
-      "c0ffee00-0000-4000-8000-000000000000", "f0000000-0000-4000-8000-000000000000",
-      "ABCDEF00-0000-4000-8000-000000000000", "cluster-hyphen", "clusterz", "cluster",
-    ];
-    const stable = ["cluster_asn_as4837_phishing", "cluster_ip_203.0.113.7", "cluster_"];
-    legacy.forEach((id, i) => ins.run(id, i % 2 ? "dormant" : "active", 10 + i, i === 0 ? "actor_apt" : null));
-    stable.forEach((id) => ins.run(id, "active", 5, null));
+/** Prod DDL as of 2026-10-14 (0302's country_counts already applied). */
+const PROD_CLUSTERS_DDL = `CREATE TABLE infrastructure_clusters (id TEXT PRIMARY KEY, cluster_name TEXT, asns TEXT NOT NULL, ip_ranges TEXT, countries TEXT, campaign_ids TEXT, brand_ids TEXT, attack_types TEXT, hosting_provider_ids TEXT, threat_count INTEGER DEFAULT 0, confidence_score INTEGER, ai_generated_probability INTEGER, ai_classification TEXT, pivot_from_cluster_id TEXT REFERENCES infrastructure_clusters(id), first_detected TEXT DEFAULT (datetime('now')), last_updated TEXT DEFAULT (datetime('now')), last_seen TEXT, status TEXT DEFAULT 'active' CHECK (status IN ('active','dormant','disrupted')), agent_notes TEXT, nexus_brief TEXT, actor_id TEXT REFERENCES threat_actors(id) ON DELETE SET NULL, attribution_attempted_at TEXT, attribution_dismissed_at TEXT, component_id TEXT, infra_fingerprint TEXT, infra_fingerprint_at TEXT, last_movement_pivot_at TEXT, country_counts TEXT)`;
 
-    const sql = readFileSync(join(MIGRATIONS, "0303_supersede_legacy_clusters.sql"), "utf8");
-    const apply = () => { for (const s of splitStatements(sql)) raw.exec(s); };
-    apply();
-    const status = (id: string) => (raw.prepare("SELECT status FROM infrastructure_clusters WHERE id = ?").all(id)[0] as { status: string }).status;
-    for (const id of legacy) expect(status(id), id).toBe("superseded");
-    for (const id of stable) expect(status(id), id).toBe("active");
-    const kept = raw.prepare("SELECT actor_id, threat_count FROM infrastructure_clusters WHERE id = ?").all(legacy[0]) as Array<{ actor_id: string; threat_count: number }>;
-    expect(kept[0]).toEqual({ actor_id: "actor_apt", threat_count: 10 });
-    apply(); // idempotent
-    for (const id of legacy) expect(status(id)).toBe("superseded");
+const migrationFile = (prefix: string): string => {
+  const f = readdirSync(MIGRATIONS).filter((n) => n.startsWith(`${prefix}_`) && n.endsWith(".sql"));
+  expect(f, prefix).toHaveLength(1);
+  return join(MIGRATIONS, f[0]!);
+};
+
+const applyMigration = (raw: SqliteDb, prefix: string): void => {
+  for (const stmt of splitStatements(readFileSync(migrationFile(prefix), "utf8"))) raw.exec(stmt);
+};
+
+/**
+ * In-memory DB with prod's DDL, the infrastructure_clusters indexes every
+ * earlier migration created, and seeded legacy (random-UUID) + stable rows.
+ */
+function openProdShapedDb(opts: { withCountryCounts: boolean; legacy: number }): { raw: SqliteDb; legacyIds: string[]; stableIds: string[] } {
+  const raw = openMigratedDb(); // a DatabaseSync; tables are rebuilt below
+  raw.exec("PRAGMA foreign_keys = OFF");
+  raw.exec("DROP TABLE infrastructure_clusters");
+  raw.exec("DROP TABLE IF EXISTS cluster_repoint_log");
+  const ddl = opts.withCountryCounts ? PROD_CLUSTERS_DDL : PROD_CLUSTERS_DDL.replace(", country_counts TEXT)", ")");
+  raw.exec(ddl);
+  // Indexes earlier migrations put on the table (prod has them all).
+  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql") && f < "0302").sort()) {
+    for (const stmt of splitStatements(readFileSync(join(MIGRATIONS, file), "utf8"))) {
+      if (/^CREATE\s+(UNIQUE\s+)?INDEX\b[\s\S]*\bON\s+infrastructure_clusters\b/i.test(stmt)) raw.exec(stmt);
+    }
+  }
+  raw.exec("PRAGMA foreign_keys = ON"); // D1 enforces FKs
+  raw.prepare("INSERT OR IGNORE INTO threat_actors (id, name) VALUES ('actor_apt', 'APT')").run();
+  const ins = raw.prepare(
+    `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, status, threat_count, actor_id)
+     VALUES (?, 'n', '["AS4837"]', '["phishing"]', ?, ?, ?)`,
+  );
+  const legacyIds: string[] = [
+    // Every leading-character slice of 0303, plus the `cluster…` near-misses.
+    "0f8e2b9c-1111-4000-8000-000000000000", "3a000000-0000-4000-8000-000000000000",
+    "5b000000-0000-4000-8000-000000000000", "7c000000-0000-4000-8000-000000000000",
+    "9d000000-0000-4000-8000-000000000000", "b1000000-0000-4000-8000-000000000000",
+    "c0ffee00-0000-4000-8000-000000000000", "f0000000-0000-4000-8000-000000000000",
+    "ABCDEF00-0000-4000-8000-000000000000", "cluster-hyphen", "clusterz", "cluster",
+  ];
+  for (let i = legacyIds.length; i < opts.legacy; i++) {
+    legacyIds.push(`${((i * 2654435761) >>> 0).toString(16).padStart(8, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`);
+  }
+  const stableIds = ["cluster_asn_as4837_phishing", "cluster_ip_203.0.113.7", "cluster_", "cluster_subnet_203_0_113"];
+  raw.exec("BEGIN");
+  legacyIds.forEach((id, i) => ins.run(id, i % 12 === 1 ? "dormant" : "active", 10 + i, i === 0 ? "actor_apt" : null));
+  stableIds.forEach((id, i) => ins.run(id, i === 1 ? "dormant" : "active", 5, null));
+  raw.exec("COMMIT");
+  return { raw, legacyIds, stableIds };
+}
+
+describe.skipIf(!hasSqlite())("migrations 0302–0306 on prod's infrastructure_clusters DDL", () => {
+  const LEGACY = 3000;
+
+  for (const withCountryCounts of [true, false]) {
+    const from = withCountryCounts ? "0303" : "0302";
+    it(`apply cleanly from ${from} (country_counts ${withCountryCounts ? "present, as in prod" : "absent"}), legacy + stable rows`, () => {
+      const { raw, legacyIds, stableIds } = openProdShapedDb({ withCountryCounts, legacy: LEGACY });
+      const before = raw.prepare("SELECT id, status, threat_count, actor_id FROM infrastructure_clusters ORDER BY id").all();
+      const prefixes = withCountryCounts ? ["0303", "0304", "0305", "0306"] : ["0302", "0303", "0304", "0305", "0306"];
+      for (const p of prefixes) expect(() => applyMigration(raw, p), p).not.toThrow();
+
+      const reason = new Map((raw.prepare("SELECT id, retired_reason FROM infrastructure_clusters").all() as Array<{ id: string; retired_reason: string | null }>)
+        .map((r) => [r.id, r.retired_reason]));
+      for (const id of legacyIds) expect(reason.get(id), id).toBe("superseded");
+      for (const id of stableIds) expect(reason.get(id), id).toBeNull();
+      // status / counts / actor untouched — retirement is the new column only.
+      expect(raw.prepare("SELECT id, status, threat_count, actor_id FROM infrastructure_clusters ORDER BY id").all()).toEqual(before);
+
+      const idx = raw.prepare(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'infrastructure_clusters'",
+      ).all() as Array<{ name: string; sql: string | null }>;
+      const byName = new Map(idx.map((r) => [r.name, r.sql ?? ""]));
+      expect(byName.get("idx_clusters_actor_live")).toMatch(/\(actor_id, retired_reason\)\s*WHERE retired_reason IS NULL/);
+      expect(byName.get("idx_clusters_live_status_threat_count")).toMatch(/\(status, threat_count DESC, id\)\s*WHERE retired_reason IS NULL/);
+      expect(byName.has("idx_clusters_status_threat_count")).toBe(true); // 0301, kept
+      const cols = (raw.prepare("PRAGMA table_info(cluster_repoint_log)").all() as Array<{ name: string }>).map((c) => c.name);
+      expect(cols).toEqual(["threat_id", "old_cluster_id", "new_cluster_id", "run_at"]);
+
+      // The partial index holds exactly the live rows.
+      const live = (raw.prepare(
+        "SELECT COUNT(*) AS n FROM infrastructure_clusters INDEXED BY idx_clusters_live_status_threat_count WHERE retired_reason IS NULL",
+      ).all()[0] as { n: number }).n;
+      expect(live).toBe(stableIds.length);
+
+      // The CHECK is still there: the original 0303's write is still refused.
+      expect(() => raw.prepare("UPDATE infrastructure_clusters SET status = 'superseded' WHERE id = ?").run(stableIds[0]!))
+        .toThrow(/CHECK constraint failed/);
+      expect(raw.prepare("PRAGMA foreign_key_check(infrastructure_clusters)").all()).toEqual([]);
+    });
+  }
+
+  it("0303's backfill is idempotent (re-running its UPDATEs changes nothing)", () => {
+    const { raw } = openProdShapedDb({ withCountryCounts: true, legacy: 50 });
+    applyMigration(raw, "0303");
+    const updates = splitStatements(readFileSync(migrationFile("0303"), "utf8")).filter((st) => /^UPDATE/i.test(st));
+    expect(updates).toHaveLength(8);
+    let changed = 0;
+    for (const u of updates) changed += Number(raw.prepare(u).run().changes);
+    expect(changed).toBe(0);
   });
 
-  it("0305 adds cluster_repoint_log with an old_cluster_id-leading index", () => {
-    const raw = openMigratedDb();
-    const cols = (raw.prepare("PRAGMA table_info(cluster_repoint_log)").all() as Array<{ name: string; notnull: number }>);
-    expect(cols.map((c) => c.name)).toEqual(["threat_id", "old_cluster_id", "new_cluster_id", "run_at"]);
-    expect(cols.find((c) => c.name === "new_cluster_id")!.notnull).toBe(0);
-    const idx = raw.prepare("PRAGMA index_info(idx_cluster_repoint_log_old)").all() as Array<{ name: string }>;
-    expect(idx.map((c) => c.name)).toEqual(["old_cluster_id", "run_at"]);
+  it("the ORIGINAL 0303 (status='superseded') fails on this DDL — the deploy failure, reproduced", () => {
+    const { raw } = openProdShapedDb({ withCountryCounts: true, legacy: 20 });
+    expect(() => raw.exec("UPDATE infrastructure_clusters SET status = 'superseded' WHERE id < '2' AND status != 'superseded'"))
+      .toThrow(/CHECK constraint failed/);
   });
 
-  it("0302 adds country_counts; 0304 adds the (actor_id, status) index", () => {
+  it("the migrated repo schema (0136) carries the same CHECK, so tests catch a bad status write", () => {
     const raw = openMigratedDb();
-    const cols = (raw.prepare("PRAGMA table_info(infrastructure_clusters)").all() as Array<{ name: string }>).map((c) => c.name);
-    expect(cols).toContain("country_counts");
-    const idx = (raw.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='infrastructure_clusters'").all() as Array<{ name: string }>).map((r) => r.name);
-    expect(idx).toContain("idx_clusters_actor_status");
+    expect(() => raw.prepare("INSERT INTO infrastructure_clusters (id, cluster_name, status) VALUES ('x', 'n', 'shared_infra')").run())
+      .toThrow(/CHECK constraint failed/);
+    raw.prepare("INSERT INTO infrastructure_clusters (id, cluster_name, status) VALUES ('y', 'n', 'disrupted')").run();
   });
 });
 
@@ -152,17 +238,18 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
     raw = openMigratedDb();
     db = d1FromSqlite(raw);
     const ins = raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, status, threat_count, actor_id, attribution_attempted_at)
-       VALUES (?, 'n', ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, status, retired_reason, threat_count, actor_id, attribution_attempted_at)
+       VALUES (?, 'n', ?, ?, ?, ?, 1, ?, ?)`,
     );
-    ins.run(L1, '["AS4837"]', '["malware_distribution"]', "superseded", null, "2026-09-01");
-    ins.run(L2, '["AS13335 Cloudflare, Inc."]', '["phishing"]', "superseded", "actor_spurious_apt", "2026-09-01");
-    ins.run(L3, '["AS64500"]', '["phishing"]', "superseded", null, null);
-    ins.run(L4, '["AS4837"]', '["phishing"]', "superseded", null, null);
-    ins.run("cluster_asn_as4837_malware_distribution", '["AS4837"]', '["malware_distribution"]', "active", null, null);
+    // Retired rows keep a CHECK-valid status (active / dormant).
+    ins.run(L1, '["AS4837"]', '["malware_distribution"]', "active", "superseded", null, "2026-09-01");
+    ins.run(L2, '["AS13335 Cloudflare, Inc."]', '["phishing"]', "active", "superseded", "actor_spurious_apt", "2026-09-01");
+    ins.run(L3, '["AS64500"]', '["phishing"]', "dormant", "superseded", null, null);
+    ins.run(L4, '["AS4837"]', '["phishing"]', "active", "superseded", null, null);
+    ins.run("cluster_asn_as4837_malware_distribution", '["AS4837"]', '["malware_distribution"]', "active", null, null, null);
     // Retired STABLE rows still holding threats.
-    ins.run("cluster_asn_as13335_phishing", '["AS13335"]', '["phishing"]', "shared_infra", null, null);
-    ins.run("cluster_asn_as4837_china_unicom_ltd_malware_distribution", '["AS4837 China Unicom, Ltd"]', '["malware_distribution"]', "superseded", null, null);
+    ins.run("cluster_asn_as13335_phishing", '["AS13335"]', '["phishing"]', "active", "shared_infra", null, null);
+    ins.run("cluster_asn_as4837_china_unicom_ltd_malware_distribution", '["AS4837 China Unicom, Ltd"]', '["malware_distribution"]', "dormant", "superseded", null, null);
     insertThreats(raw, [
       ...many(5, (i) => ({ id: `t1_${i}`, asn: "AS4837", threat_type: "malware_distribution", cluster_id: L1 })),
       ...many(3, (i) => ({ id: `t2_${i}`, asn: "AS13335", cluster_id: L2 })),
@@ -176,7 +263,10 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
 
   it("report: legacy counts, threat refs, mapping coverage, retired stable rows", async () => {
     const r = await legacyClusterReport(db);
-    expect(r.legacy_rows).toEqual({ total: 4, by_status: { superseded: 4 }, actor_linked: 1, attributor_processed: 2 });
+    expect(r.legacy_rows).toEqual({
+      total: 4, by_status: { active: 3, dormant: 1 }, by_retired_reason: { superseded: 4 },
+      actor_linked: 1, attributor_processed: 2,
+    });
     expect(r.legacy_threat_refs).toEqual({ threats: 10, distinct_cluster_ids: 3 });
     expect(r.mapping.clusters_evaluated).toBe(3);
     expect(r.mapping.truncated).toBe(false);
@@ -211,8 +301,8 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
     expect(clusterOf("t_ok")).toBe("cluster_asn_as4837_malware_distribution");
     expect(clusterOf("t_none")).toBeNull();
     // Cluster rows untouched (reversible).
-    const l2 = raw.prepare("SELECT status, actor_id FROM infrastructure_clusters WHERE id = ?").all(L2)[0];
-    expect(l2).toEqual({ status: "superseded", actor_id: "actor_spurious_apt" });
+    const l2 = raw.prepare("SELECT status, retired_reason, actor_id FROM infrastructure_clusters WHERE id = ?").all(L2)[0];
+    expect(l2).toEqual({ status: "active", retired_reason: "superseded", actor_id: "actor_spurious_apt" });
 
     const again = await runClusterRetirementBatch(db, { dryRun: false });
     expect(again.legacy.cluster_ids + again.retired_stable.cluster_ids).toBe(0);
@@ -261,7 +351,7 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
     const r1 = await runClusterRetirementBatch(db, { dryRun: false });
     expect(clusterOf("t1_0")).toBe("cluster_asn_as4837_malware_distribution");
     // X is later retired, so call 2 releases X → NULL.
-    raw.prepare("UPDATE infrastructure_clusters SET status = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
+    raw.prepare("UPDATE infrastructure_clusters SET retired_reason = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
     await nextMs();
     const r2 = await runClusterRetirementBatch(db, { dryRun: false });
     expect(r1.run_at).not.toBeNull();
@@ -281,7 +371,7 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
 
   it("oldest-first undo would NOT restore a twice-moved threat (why the order is documented)", async () => {
     const r1 = await runClusterRetirementBatch(db, { dryRun: false });
-    raw.prepare("UPDATE infrastructure_clusters SET status = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
+    raw.prepare("UPDATE infrastructure_clusters SET retired_reason = 'shared_infra' WHERE id = 'cluster_asn_as4837_malware_distribution'").run();
     await nextMs();
     const r2 = await runClusterRetirementBatch(db, { dryRun: false });
     undoRun(r1.run_at!); // t1_0 is on NULL, not X: guarded no-op
@@ -349,11 +439,11 @@ describe.skipIf(!hasSqlite())("readers exclude retired clusters", () => {
     const raw = openMigratedDb();
     const db = d1FromSqlite(raw);
     const ins = raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, cluster_name, brand_ids, agent_notes, status, component_id) VALUES (?, 'n', '[]', ?, ?, ?)`,
+      `INSERT INTO infrastructure_clusters (id, cluster_name, brand_ids, agent_notes, status, retired_reason, component_id) VALUES (?, 'n', '[]', ?, 'active', ?, ?)`,
     );
     const certNotes = (s: string) => JSON.stringify({ cluster_type: "ssl_cert_serial", ssl_cert_serial: s });
-    ins.run("cluster_cert_s1", certNotes("s1"), "active", null);
-    ins.run("cluster_ip_192.0.2.9", "per-ip", "active", null);
+    ins.run("cluster_cert_s1", certNotes("s1"), null, null);
+    ins.run("cluster_ip_192.0.2.9", "per-ip", null, null);
     ins.run("55555555-0000-4000-8000-000000000005", null, "superseded", "component_cluster_ip_192.0.2.9");
     // Members: the serial and the IP share a threat; a legacy-stamped threat
     // shares the serial too.
@@ -371,23 +461,25 @@ describe.skipIf(!hasSqlite())("readers exclude retired clusters", () => {
     expect(byId["cluster_cert_s1"]).toBe(byId["cluster_ip_192.0.2.9"]);
   });
 
-  it("observatory operations (status=all) lists operations only", async () => {
+  it("observatory operations lists operations only — status=all AND status=active", async () => {
     const raw = openMigratedDb();
     const d1 = d1FromSqlite(raw);
-    const ins = raw.prepare(`INSERT INTO infrastructure_clusters (id, cluster_name, status, threat_count) VALUES (?, 'n', ?, ?)`);
-    ins.run("77777777-0000-4000-8000-000000000007", "superseded", 9999);
-    ins.run("cluster_asn_as13335_phishing", "shared_infra", 9000);
-    ins.run("cluster_asn_as4837_phishing", "active", 10);
-    ins.run("cluster_asn_as4837_malware_distribution", "dormant", 5);
+    const ins = raw.prepare(`INSERT INTO infrastructure_clusters (id, cluster_name, status, retired_reason, threat_count) VALUES (?, 'n', ?, ?, ?)`);
+    // Retired rows keep status 'active' — a bare status filter would return them.
+    ins.run("77777777-0000-4000-8000-000000000007", "active", "superseded", 9999);
+    ins.run("cluster_asn_as13335_phishing", "active", "shared_infra", 9000);
+    ins.run("cluster_asn_as4837_phishing", "active", null, 10);
+    ins.run("cluster_asn_as4837_malware_distribution", "dormant", null, 5);
     const env = {
       DB: Object.assign(d1, { withSession: () => ({ prepare: d1.prepare.bind(d1), getBookmark: () => null }) }),
       CACHE: fakeKv(),
     } as unknown as Env;
-    const res = await handleObservatoryOperations(new Request("https://x/api/observatory/operations?limit=10"), env);
-    const body = await res.json() as { data: Array<{ id: string }> };
-    expect(body.data.map((r) => r.id).sort()).toEqual([
-      "cluster_asn_as4837_malware_distribution", "cluster_asn_as4837_phishing",
-    ]);
+    const ids = async (qs: string): Promise<string[]> => {
+      const res = await handleObservatoryOperations(new Request(`https://x/api/observatory/operations?limit=10${qs}`), env);
+      return ((await res.json()) as { data: Array<{ id: string }> }).data.map((r) => r.id).sort();
+    };
+    expect(await ids("")).toEqual(["cluster_asn_as4837_malware_distribution", "cluster_asn_as4837_phishing"]);
+    expect(await ids("&status=active")).toEqual(["cluster_asn_as4837_phishing"]);
   });
 
   it("OTX inheritance skips retired clusters", async () => {
@@ -395,7 +487,7 @@ describe.skipIf(!hasSqlite())("readers exclude retired clusters", () => {
     const db = d1FromSqlite(raw);
     raw.prepare(`INSERT INTO threat_actors (id, name) VALUES ('act_1', 'Actor One')`).run();
     raw.prepare(
-      `INSERT INTO infrastructure_clusters (id, cluster_name, status) VALUES ('66666666-0000-4000-8000-000000000006', 'n', 'superseded')`,
+      `INSERT INTO infrastructure_clusters (id, cluster_name, status, retired_reason) VALUES ('66666666-0000-4000-8000-000000000006', 'n', 'active', 'superseded')`,
     ).run();
     insertThreats(raw, [
       { id: "o1", cluster_id: "66666666-0000-4000-8000-000000000006" },
@@ -416,10 +508,12 @@ describe.skipIf(!hasSqlite())("readers exclude retired clusters", () => {
 // ─── Static reader audit ───────────────────────────────────────────────
 //
 // Every SQL literal under src/ that reads infrastructure_clusters must
-// either exclude retired rows (notRetiredClusterSql / an explicit live
-// status filter) or be a by-id / by-key read. A new reader that lists or
-// counts clusters without one fails here instead of silently resurfacing
-// ~76K superseded legacy duplicates.
+// either exclude retired rows (notRetiredClusterSql / liveClusterStatusSql /
+// a literal `retired_reason IS NULL`) or be a by-id / by-key read. A status
+// filter is NOT enough: retirement leaves status unchanged (prod CHECK), so
+// `status = 'active'` matches ~70K retired legacy rows. A new reader that
+// lists or counts clusters without the retired predicate fails here instead
+// of silently resurfacing them.
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -430,9 +524,8 @@ function walk(dir: string): string[] {
 
 const SAFE = [
   /notRetiredClusterSql\(/,
-  /status = 'active'/,
-  /liveClusterStatusSql\(/,                         // positive live-status list
-  /status IN \(\$\{statusPlaceholders\}\)/,        // public-proof LIVE_OPERATION_STATUSES
+  /liveClusterStatusSql\(/,                         // positive live-status list + not retired
+  /retired_reason IS NULL/,
   /WHERE (\w+\.)?id = \?/,                          // by-id
   /WHERE id IN \(/,                                 // by-id batch
   /ON ic\.id = t\.cluster_id AND/,                   // detail join, filtered

@@ -1134,12 +1134,14 @@ export async function handleObservatoryOperations(request: Request, env: Env): P
     const conditions: string[] = [];
     const params: unknown[] = [];
 
+    // Retired rows are not operations (lib/cluster-status.ts); retirement
+    // leaves `status` unchanged, so this applies with or without ?status=.
+    // `+ic.status`: stay on the live-rows partial indexes, never
+    // idx_clusters_status (~70K retired 'active' rows) — see operations.ts.
+    conditions.push(notRetiredClusterSql("ic"));
     if (status) {
-      conditions.push("ic.status = ?");
+      conditions.push("+ic.status = ?");
       params.push(status);
-    } else {
-      // "all" = every operation; retired rows are not (lib/cluster-status.ts).
-      conditions.push(notRetiredClusterSql("ic"));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
