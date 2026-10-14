@@ -4,13 +4,19 @@
  * The sole Observatory surface as of #35 Phase D (v2 retired). Uses
  * TripsLayer for animation, overlaid MapboxOverlay mode, enhanced side
  * panel widgets.
+ *
+ * View state (period, source, mode, colour-by, layer toggles, selected
+ * node/arc) lives in the URL — see lib/url-state.ts — so views are shareable
+ * and survive reload. Each map mode fetches only the data it renders
+ * (lib/mode-data.ts).
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap } from '@/hooks/useObservatory';
-import type { ArcData } from '@/hooks/useObservatory';
+import {
+  useObservatoryThreats, useObservatoryStats, useObservatoryArcs, useObservatoryHeatmap, useRefreshObservatory,
+} from '@/hooks/useObservatory';
+import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import { ThreatMapV3 } from './components/ThreatMapV3';
-import type { MapMode } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Card, Tabs, Button } from '@/design-system/components';
@@ -23,54 +29,77 @@ import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay'
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import { BotDensityLegend } from './components/BotDensityLegend';
+import { MapLegend } from './components/MapLegend';
 import { buildBotDensityPoints, botDensityDomain, resolveGlobalAvg } from './lib/bot-density';
+import {
+  useObservatoryUrlState, nodeKey, arcKey,
+  PERIOD_IDS, SOURCE_IDS, MAP_MODE_IDS, COLOR_BY_IDS, LAYER_IDS,
+  type MapMode, type Period, type Source, type ColorBy, type LayerId,
+} from './lib/url-state';
+import { dataNeeds, relevantFailures } from './lib/mode-data';
+import { clearOverlayKind } from './lib/overlay-visibility';
+import { resolveSelection, type MapSelection } from './lib/selection';
+import { usePrefersReducedMotion } from './lib/use-motion';
 
-const PERIODS = [
-  { id: '24h', label: '24H' },
-  { id: '7d', label: '7D' },
-  { id: '30d', label: '30D' },
-  { id: '90d', label: '90D' },
-];
+const PERIOD_LABELS: Record<Period, string> = { '24h': '24H', '7d': '7D', '30d': '30D', '90d': '90D' };
+const PERIODS = PERIOD_IDS.map(id => ({ id, label: PERIOD_LABELS[id] }));
 
-const MAP_MODES: { id: MapMode; label: string }[] = [
-  { id: 'global', label: 'GLOBAL' },
-  { id: 'heatmap', label: 'HEATMAP' },
-  { id: 'bot_density', label: 'BOT DENSITY' },
-];
+const MODE_LABELS: Record<MapMode, string> = { global: 'GLOBAL', heatmap: 'HEATMAP', bot_density: 'BOT DENSITY' };
+const MAP_MODES = MAP_MODE_IDS.map(id => ({ id, label: MODE_LABELS[id] }));
 
-const SOURCES = [
-  { id: 'all', label: 'All Sources' },
-  { id: 'feeds', label: 'Feeds' },
-  { id: 'spam_trap', label: 'Spam Trap' },
-];
+const SOURCE_LABELS: Record<Source, string> = { all: 'All Sources', feeds: 'Feeds', spam_trap: 'Spam Trap' };
+const SOURCES = SOURCE_IDS.map(id => ({ id, label: SOURCE_LABELS[id] }));
 
-const COLOR_BY_TABS = [
-  { id: 'severity', label: 'Severity' },
-  { id: 'type', label: 'Type' },
-];
+const COLOR_BY_LABELS: Record<ColorBy, string> = { severity: 'Severity', type: 'Type' };
+const COLOR_BY_TABS = COLOR_BY_IDS.map(id => ({ id, label: COLOR_BY_LABELS[id] }));
+
+const LAYER_LABELS: Record<LayerId, string> = { nodes: 'Nodes', particles: 'Particles', beams: 'Beams' };
+
+// Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
+const EMPTY_THREATS: ThreatPoint[] = [];
+const EMPTY_ARCS: ArcData[] = [];
+const EMPTY_HEAT: HeatmapPoint[] = [];
 
 // Explicit stacking order for this view's overlay chrome — replaces raw
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
 // one place instead of scattered magic numbers. (ThreatMapV3's own hover
-// tooltip renders above all of these, at z-50, inside that component.)
+// tooltip and detail card render above all of these, inside that component.)
 const Z_CHROME = 10;   // top control stack, stats bar, ticker, layer toggles
 const Z_PANEL = 20;    // mobile Intel FAB (opens the SidePanel drawer)
 const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
-const Z_DETAIL = 40;   // arc click-detail card
+
+function RefreshButton({ onClick, busy, className }: { onClick: () => void; busy: boolean; className?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Refresh Observatory data"
+      aria-busy={busy}
+      className={cn('ds-focusable p-1.5 rounded-md transition-colors', className)}
+      style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-base)',
+        color: busy ? 'var(--amber-text)' : 'var(--text-muted)',
+        cursor: 'pointer',
+      }}
+    >
+      <RefreshCw size={14} className={busy ? 'animate-spin motion-reduce:animate-none' : ''} />
+    </button>
+  );
+}
 
 export function ObservatoryV3() {
   const { isMobile } = useBreakpoint();
-  const [period, setPeriod] = useState('7d');
-  const [source, setSource] = useState('all');
-  const [mapMode, setMapMode] = useState<MapMode>('global');
-  const [colorBy, setColorBy] = useState<'severity' | 'type'>('severity');
-  const [showNodes, setShowNodes] = useState(true);
-  const [showBeams, setShowBeams] = useState(false); // beams off by default
-  const [showParticles, setShowParticles] = useState(true);
+  const reducedMotion = usePrefersReducedMotion();
+  const { state, update } = useObservatoryUrlState();
+  const { period, source, mode: mapMode, colorBy, layers } = state;
+  const showNodes = layers.nodes;
+  const showParticles = layers.particles;
+  const showBeams = layers.beams;
+
   const [showPanel, setShowPanel] = useState(!isMobile);
   // C1 — mobile-only: the 3 control rows (mode/period/source) collapse
-  // behind a single summary toggle so they don't crowd the map. Mirrors
-  // v2's Observatory.tsx filtersExpanded pattern (~line 70-83).
+  // behind a single summary toggle so they don't crowd the map.
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // C2 — mobile-only: bottom-sheet drawer exposing the same SidePanel
@@ -89,9 +118,8 @@ export function ObservatoryV3() {
     };
   }, []);
 
-  // Review fix (LOW): if the viewport crosses back to desktop while the
-  // mobile filter panel/drawer is open, don't let it silently spring back
-  // open the next time the viewport narrows to mobile again.
+  // If the viewport crosses back to desktop while the mobile filter
+  // panel/drawer is open, don't let it silently spring back open.
   useEffect(() => {
     if (!isMobile) {
       setFiltersExpanded(false);
@@ -99,20 +127,24 @@ export function ObservatoryV3() {
     }
   }, [isMobile]);
 
-  // Click state
-  const [clickedArc, setClickedArc] = useState<{ arc: ArcData; x: number; y: number } | null>(null);
+  const setPeriod = useCallback((id: string) => update({ period: id as Period }), [update]);
+  const setSource = useCallback((id: string) => update({ source: id as Source }), [update]);
+  const setMapMode = useCallback((id: string) => update({ mode: id as MapMode }), [update]);
+  const setColorBy = useCallback((id: string) => update({ colorBy: id as ColorBy }), [update]);
 
-  // ─── Data ──
-  const { data: threatsRaw, isRefreshing, error: threatsError, refetch } = useObservatoryThreats({ period, source });
-  const threats = threatsRaw ?? [];
-  const { data: stats, error: statsError, refetch: refetchStats } = useObservatoryStats({ period, source });
-  const { data: arcs, error: arcsError, refetch: refetchArcs } = useObservatoryArcs({ period, source });
-  const arcsResolved = arcs ?? [];
-  const { data: heatmapRaw, error: heatmapError, refetch: refetchHeatmap } = useObservatoryHeatmap({ period });
-  const heatmapData = heatmapRaw ?? [];
+  // ─── Data — each query is enabled only for the modes that render it ──
+  const needs = useMemo(() => dataNeeds(mapMode, layers), [mapMode, layers]);
+  const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
+  const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
+  const arcsQ = useObservatoryArcs({ period, source, enabled: needs.arcs });
+  const heatmapQ = useObservatoryHeatmap({ period, source, enabled: needs.heatmap });
+  const threats = threatsQ.data ?? EMPTY_THREATS;
+  const arcsResolved = arcsQ.data ?? EMPTY_ARCS;
+  const heatmapData = heatmapQ.data ?? EMPTY_HEAT;
+  const stats = statsQ.data;
 
   // Bot density mode: fetched only while that mode is active (days=7).
-  const isBotMode = mapMode === 'bot_density';
+  const isBotMode = needs.bot;
   const { data: botData, isLoading: botLoading, error: botError, refetch: refetchBot } = useBotTraffic(7, { enabled: isBotMode });
   const botPoints = useMemo(() => buildBotDensityPoints(botData?.bot_density), [botData?.bot_density]);
   const botDomain = useMemo(() => botDensityDomain(botPoints), [botPoints]);
@@ -122,29 +154,68 @@ export function ObservatoryV3() {
   // The SidePanel (and its toggle / Intel drawer) only exists in the global view.
   const hasSidePanel = mapMode === 'global';
 
-  // Uniform across the four useObservatoryQuery-backed hooks above — same
-  // { error, refetch } shape (useObservatoryQuery.ts), so one combined
-  // retry-all affordance covers them without per-query bespoke handling.
-  const loadError = !isBotMode && (threatsError || statsError || arcsError || heatmapError);
+  // Only failures from queries the current mode actually uses raise the banner.
+  const failures = relevantFailures(needs, {
+    nodes: threatsQ.error, arcs: arcsQ.error, heatmap: heatmapQ.error, stats: statsQ.error,
+  });
+  const loadError = failures.length > 0;
   const retryFailed = useCallback(() => {
-    if (threatsError) refetch();
-    if (statsError) refetchStats();
-    if (arcsError) refetchArcs();
-    if (heatmapError) refetchHeatmap();
-  }, [threatsError, statsError, arcsError, heatmapError, refetch, refetchStats, refetchArcs, refetchHeatmap]);
+    if (failures.includes('nodes')) void threatsQ.refetch();
+    if (failures.includes('stats')) void statsQ.refetch();
+    if (failures.includes('arcs')) void arcsQ.refetch();
+    if (failures.includes('heatmap')) void heatmapQ.refetch();
+  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ]);
 
-  const handleArcClick = useCallback((arc: ArcData, x: number, y: number) => {
-    // Panel-aware clamp: when the desktop SidePanel is open it eats the
-    // right 320px of the viewport, so the detail card's own bounds check
-    // needs to account for that inset or the card renders half-hidden
-    // underneath the panel.
-    const panelInset = !isMobile && showPanel ? 320 : 0;
-    setClickedArc({
-      arc,
-      x: Math.min(x, window.innerWidth - panelInset - 340),
-      y: Math.min(y, window.innerHeight - 200),
+  // "Updating" = showing the previous period/source's data while the new one loads.
+  const activeQueries = [
+    needs.nodes ? threatsQ : null, needs.stats ? statsQ : null, needs.arcs ? arcsQ : null, needs.heatmap ? heatmapQ : null,
+  ].filter((q): q is typeof threatsQ => q !== null);
+  const isUpdating = activeQueries.some(q => q.isUpdating);
+  const isInitialLoading = activeQueries.some(q => q.isLoading);
+  const isFetching = activeQueries.some(q => q.isFetching) || (isBotMode && botLoading);
+
+  // Refresh: invalidate every observatory query + the side panel's widgets.
+  const refreshAll = useRefreshObservatory();
+  const handleRefresh = useCallback(() => {
+    void refreshAll();
+    if (isBotMode) void refetchBot();
+  }, [refreshAll, isBotMode, refetchBot]);
+
+  // ─── Selection (URL-backed) ──
+  const selection = useMemo(
+    () => (mapMode === 'global' ? resolveSelection(state.node, state.arc, threats, arcsResolved) : null),
+    [mapMode, state.node, state.arc, threats, arcsResolved],
+  );
+  const handleSelect = useCallback((sel: MapSelection | null) => {
+    update({
+      node: sel?.kind === 'node' ? nodeKey(sel.node) : null,
+      arc: sel?.kind === 'arc' ? arcKey(sel.arc) : null,
     });
-  }, [isMobile, showPanel]);
+  }, [update]);
+
+  // A shared link may point at a node/arc that no longer exists in the fresh
+  // data: once the relevant query has settled, drop the dead key from the URL.
+  const nodesSettled = !threatsQ.isFetching && threatsQ.data !== undefined;
+  const arcsSettled = !arcsQ.isFetching && arcsQ.data !== undefined;
+  useEffect(() => {
+    if (selection) return;
+    if (state.node && nodesSettled) update({ node: null });
+    else if (state.arc && arcsSettled && nodesSettled) update({ arc: null });
+  }, [selection, state.node, state.arc, nodesSettled, arcsSettled, update]);
+
+  // "Threat Landscape Clear" — only when verified for THIS view.
+  const overlayKind = clearOverlayKind({
+    mode: mapMode,
+    nodesReady: needs.nodes && threatsQ.data !== undefined && !threatsQ.error && !threatsQ.isUpdating,
+    nodeCount: threats.length,
+    stats: stats && !statsQ.error && !statsQ.isUpdating
+      ? { threats_mapped: stats.threats_mapped, threats_total: stats.threats_total }
+      : null,
+  });
+
+  const periodLabel = PERIOD_LABELS[period];
+  const panelInset = !isMobile && showPanel && hasSidePanel ? 320 : 0;
+  const layerToggles: Array<{ id: LayerId; active: boolean }> = LAYER_IDS.map(id => ({ id, active: layers[id] }));
 
   // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
   // it tracks the real topbar + safe-area + platform-alert-banner height.
@@ -152,7 +223,10 @@ export function ObservatoryV3() {
     <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* Full-screen map — bottom inset reserves the stats bar + ticker
           band below (desktop: 36 + 40 = 76; mobile: 36 + 72 = 108). */}
-      <div className={cn('absolute inset-0', isMobile ? 'bottom-[108px]' : 'bottom-[76px]')}>
+      <div
+        className={cn('absolute inset-0', isMobile ? 'bottom-[108px]' : 'bottom-[76px]')}
+        aria-busy={isInitialLoading || isUpdating}
+      >
         <ThreatMapV3
           threats={threats}
           arcs={arcsResolved}
@@ -165,17 +239,36 @@ export function ObservatoryV3() {
           heatmapData={heatmapData}
           botDensity={botPoints}
           botGlobalAvg={botGlobalAvg}
-          controlRightInset={!isMobile && showPanel && hasSidePanel ? 320 : 0}
-          onArcClick={handleArcClick}
+          controlRightInset={panelInset}
+          selection={selection}
+          onSelect={handleSelect}
         />
-        {!isBotMode && threats.length === 0 && (
+        {overlayKind && (
           <ObservatoryOverlay
-            historicalThreats={stats?.threats_mapped ?? 0}
-            historicalCountries={stats?.countries ?? 0}
-            timeWindow={PERIODS.find(p => p.id === period)?.label ?? period}
+            kind={overlayKind}
+            totalThreats={stats?.threats_total ?? 0}
+            timeWindow={periodLabel}
+            sourceLabel={source === 'all' ? null : SOURCE_LABELS[source]}
           />
         )}
       </div>
+
+      {/* Subtle loading / updating pill over the map (no skeleton). */}
+      {!isBotMode && (isInitialLoading || isUpdating) && (
+        <div
+          role="status"
+          className="absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full font-mono text-[10px] uppercase tracking-wider pointer-events-none"
+          style={{
+            top: isMobile ? 60 : 14,
+            zIndex: Z_CHROME,
+            background: 'var(--bg-card-deep)',
+            border: '1px solid var(--border-base)',
+            color: 'var(--amber-text)',
+          }}
+        >
+          {isUpdating ? `Updating to ${periodLabel}…` : 'Loading…'}
+        </div>
+      )}
 
       {/* Bot density: loading / error / empty states over the map */}
       {isBotMode && (botLoading || botError || (botData && botPoints.length === 0)) && (
@@ -203,20 +296,17 @@ export function ObservatoryV3() {
       {isMobile ? (
         /* R10 mobile chrome (C1): fold Mode + Period + Source behind a
            single collapsible summary toggle so 3 stacked rows don't sit
-           on top of the map. Pattern mirrors v2's Observatory.tsx
-           filtersExpanded block (~line 184-268). Desktop branch below is
-           untouched. */
+           on top of the map. The LiveIndicator + Refresh subset rides
+           in-flow beside the summary toggle (no absolute-position overlap
+           possible at any width). */
         <div className="absolute top-3 left-0 right-0 flex flex-col gap-1.5 px-4" style={{ zIndex: Z_CHROME }}>
-          {/* Review fix (MUST #1): the unconditional top-right cluster
-              (LiveIndicator + Refresh, below) shares this same top-3 band
-              on desktop. On mobile it's gated off entirely and a minimal
-              LiveIndicator + Refresh subset rides in-flow alongside the
-              summary toggle instead of absolutely-pinned top-right —
-              normal flexbox flow means it can never overlap the summary
-              button, at any width. */}
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setFiltersExpanded(prev => !prev)}
+              aria-expanded={filtersExpanded}
+              aria-controls="observatory-mobile-filters"
+              aria-label="Map filters"
               className="ds-focusable"
               style={{
                 flex: 1,
@@ -231,17 +321,16 @@ export function ObservatoryV3() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 cursor: 'pointer',
-                outline: 'none',
               }}
             >
               <span className="text-xs font-mono truncate">
-                <span style={{ color: 'var(--amber-text)' }}>{MAP_MODES.find(m => m.id === mapMode)?.label}</span>
+                <span style={{ color: 'var(--amber-text)' }}>{MODE_LABELS[mapMode]}</span>
                 {!isBotMode && (
                   <>
                     <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                    <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
+                    <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
                     <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                    <span style={{ color: 'var(--amber-text)' }}>{SOURCES.find(s => s.id === source)?.label}</span>
+                    <span style={{ color: 'var(--amber-text)' }}>{SOURCE_LABELS[source]}</span>
                   </>
                 )}
               </span>
@@ -252,25 +341,15 @@ export function ObservatoryV3() {
             </button>
             <div className="flex items-center gap-1.5 shrink-0">
               <LiveIndicator />
-              <button
-                onClick={() => refetch()}
-                className="ds-focusable p-1.5 rounded-md transition-colors"
-                style={{
-                  background: 'var(--bg-card)',
-                  border: '1px solid var(--border-base)',
-                  color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
-                  cursor: 'pointer',
-                }}
-              >
-                <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-              </button>
+              <RefreshButton onClick={handleRefresh} busy={isFetching} />
             </div>
           </div>
 
           <div
+            id="observatory-mobile-filters"
             className={cn(
               'overflow-hidden transition-all duration-300 ease-in-out',
-              filtersExpanded ? 'max-h-[420px] opacity-100' : 'max-h-0 opacity-0'
+              filtersExpanded ? 'max-h-[420px] opacity-100' : 'max-h-0 opacity-0',
             )}
           >
             <Card variant="elevated" style={{ marginTop: 4, padding: '8px 14px' }}>
@@ -278,9 +357,9 @@ export function ObservatoryV3() {
               <div style={{ padding: '6px 0' }}>
                 <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>View</div>
                 <Tabs
-                  tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
+                  tabs={MAP_MODES}
                   activeTab={mapMode}
-                  onChange={(id) => handleFilterSelect(() => setMapMode(id as MapMode))}
+                  onChange={(id) => handleFilterSelect(() => setMapMode(id))}
                   variant="bar"
                 />
               </div>
@@ -295,35 +374,31 @@ export function ObservatoryV3() {
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
                 <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
                 <Tabs
-                  tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
+                  tabs={PERIODS}
                   activeTab={period}
                   onChange={(id) => handleFilterSelect(() => setPeriod(id))}
                   variant="bar"
                 />
               </div>
 
-              {/* COLOR group */}
-              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
-                <button
-                  onClick={() => handleFilterSelect(() => setColorBy(colorBy === 'severity' ? 'type' : 'severity'))}
-                  className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider"
-                  style={{
-                    background: 'var(--bg-card)',
-                    border: '1px solid var(--border-base)',
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {colorBy === 'severity' ? 'By Severity' : 'By Type'}
-                </button>
-              </div>
+              {/* COLOR group (global map only — the heatmap ignores it) */}
+              {mapMode === 'global' && (
+                <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
+                  <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
+                  <Tabs
+                    tabs={COLOR_BY_TABS}
+                    activeTab={colorBy}
+                    onChange={(id) => handleFilterSelect(() => setColorBy(id))}
+                    variant="bar"
+                  />
+                </div>
+              )}
 
               {/* SOURCE group */}
               <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
                 <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Source</div>
                 <Tabs
-                  tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
+                  tabs={SOURCES}
                   activeTab={source}
                   onChange={(id) => handleFilterSelect(() => setSource(id))}
                   variant="bar"
@@ -341,78 +416,41 @@ export function ObservatoryV3() {
           style={{ position: 'absolute', top: 12, left: 16, zIndex: Z_CHROME }}
         >
           {/* Mode tabs */}
-          <Tabs
-            tabs={MAP_MODES.map(m => ({ id: m.id, label: m.label }))}
-            activeTab={mapMode}
-            onChange={(id) => setMapMode(id as MapMode)}
-            variant="bar"
-          />
+          <Tabs tabs={MAP_MODES} activeTab={mapMode} onChange={setMapMode} variant="bar" />
           {isBotMode && (
             <div className="font-mono text-[10px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
               Period, source and colour filters don&apos;t apply &mdash; daily Cloudflare Radar data.
             </div>
           )}
           {/* Period + color-by row */}
-          {!isBotMode && <div className="flex items-center gap-2">
-            <Tabs
-              tabs={PERIODS.map(p => ({ id: p.id, label: p.label }))}
-              activeTab={period}
-              onChange={setPeriod}
-              variant="bar"
-            />
-            <Tabs
-              tabs={COLOR_BY_TABS}
-              activeTab={colorBy}
-              onChange={(id) => setColorBy(id as 'severity' | 'type')}
-              variant="bar"
-            />
-          </div>}
-          {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
           {!isBotMode && (
-            <Tabs
-              tabs={SOURCES.map(s => ({ id: s.id, label: s.label }))}
-              activeTab={source}
-              onChange={setSource}
-              variant="bar"
-            />
+            <div className="flex items-center gap-2">
+              <Tabs tabs={PERIODS} activeTab={period} onChange={setPeriod} variant="bar" />
+              {mapMode === 'global' && (
+                <Tabs tabs={COLOR_BY_TABS} activeTab={colorBy} onChange={setColorBy} variant="bar" />
+              )}
+            </div>
           )}
+          {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
+          {!isBotMode && <Tabs tabs={SOURCES} activeTab={source} onChange={setSource} variant="bar" />}
         </Card>
       )}
 
       {/* ─── Top-right: Status + controls (desktop) ────────────────
-          Review fix (MUST #1): this whole cluster shared the top-3 band
-          with the new mobile filter summary and overlapped it at 375px.
           Gated to desktop; mobile gets a minimal LiveIndicator + Refresh
-          subset laid out in-flow next to the summary toggle instead (see
-          the isMobile controls branch above) — no absolute-position
-          overlap possible. */}
+          subset laid out in-flow next to the summary toggle instead. */}
       {!isMobile && (
         <div
           className="absolute top-3 flex items-center gap-2"
           style={{ right: showPanel && hasSidePanel ? 336 : 16, zIndex: Z_CHROME }}
         >
-          {/* Live indicator */}
           <LiveIndicator />
-          {/* Refresh */}
-          <button
-            onClick={() => refetch()}
-            className="p-1.5 rounded-md transition-colors"
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-base)',
-              color: isRefreshing ? 'var(--amber-text)' : 'var(--text-muted)',
-              cursor: 'pointer',
-            }}
-          >
-            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-          </button>
+          <RefreshButton onClick={handleRefresh} busy={isFetching} />
         </div>
       )}
 
       {/* ─── Load-error banner ──────────────────────────────────
-          Mirrors v2's Observatory.tsx "Load failed / Retry" affordance
-          (previously the only version that surfaced this) — a failed
-          threats/stats/arcs/heatmap fetch no longer renders silently. */}
+          Only failures from queries the current mode uses. */}
       {loadError && (
         // Right offset clears the default-open desktop SidePanel (w-80 = 320px)
         // + its inset gap; a flat 16 when the panel is closed, on mobile, or in
@@ -428,33 +466,49 @@ export function ObservatoryV3() {
       {/* ─── Bottom-left: Layer toggles ───────────────────────── */}
       {!isMobile && mapMode === 'global' && (
         <div
+          role="group"
+          aria-label="Map layers"
           className="absolute bottom-[96px] left-4 flex gap-2"
           style={{ zIndex: Z_CHROME }}
         >
-          {[
-            { key: 'nodes', label: 'Nodes', active: showNodes, set: setShowNodes },
-            { key: 'particles', label: 'Particles', active: showParticles, set: setShowParticles },
-            { key: 'beams', label: 'Beams', active: showBeams, set: setShowBeams },
-          ].map(({ key, label, active, set }) => (
+          {layerToggles.map(({ id, active }) => (
             <button
-              key={key}
-              onClick={() => set(!active)}
-              className="font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
+              key={id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => update({ layers: { [id]: !active } })}
+              className="ds-focusable font-mono text-[9px] px-2.5 py-1.5 rounded-md uppercase tracking-wider transition-all"
               style={{
-                background: active ? 'rgba(229,168,50,0.15)' : 'var(--bg-card)',
-                border: `1px solid ${active ? 'rgba(229,168,50,0.30)' : 'var(--border-base)'}`,
+                background: active ? 'color-mix(in srgb, var(--amber) 15%, transparent)' : 'var(--bg-card)',
+                border: `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
                 color: active ? 'var(--amber-text)' : 'var(--text-muted)',
                 backdropFilter: 'blur(12px)',
                 cursor: 'pointer',
               }}
             >
-              {label}
+              {LAYER_LABELS[id]}
             </button>
           ))}
         </div>
       )}
 
-      {/* ─── Bot density legend ──────────────────────────────── */}
+      {/* ─── Legends ──────────────────────────────────────────── */}
+      {mapMode === 'global' && (
+        <MapLegend
+          mode="global"
+          colorBy={colorBy}
+          defaultCollapsed={isMobile}
+          style={{ left: 16, bottom: isMobile ? 120 : 132, zIndex: Z_CHROME }}
+        />
+      )}
+      {mapMode === 'heatmap' && (
+        <MapLegend
+          mode="heatmap"
+          colorBy={colorBy}
+          defaultCollapsed={isMobile}
+          style={{ left: 16, bottom: isMobile ? 120 : 96, zIndex: Z_CHROME }}
+        />
+      )}
       {isBotMode && botPoints.length > 0 && (
         <BotDensityLegend
           domain={botDomain}
@@ -483,52 +537,48 @@ export function ObservatoryV3() {
         <div className="flex items-center gap-4">
           {isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span style={{ color: 'var(--amber-text)' }}>24H</span>
-              {' \u00b7 '}
+              {/* Bot mode fetches the 7-day Radar window (useBotTraffic(7)). */}
+              <span style={{ color: 'var(--amber-text)' }}>7D</span>
+              {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
               {botGlobalAvg != null && (
-                <>{' \u00b7 '}global avg <span style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
+                <>{' · '}global avg <span style={{ color: 'var(--text-secondary)' }}>{botGlobalAvg.toFixed(1)}%</span> bots</>
               )}
             </div>
           ) : (
-          <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            <span style={{ color: 'var(--amber-text)' }}>{PERIODS.find(p => p.id === period)?.label}</span>
-            {' \u00b7 '}
-            <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
-            {' \u00b7 '}
-            <span style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
-            {' \u00b7 '}
-            <span style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
-          </div>
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)', opacity: isUpdating ? 0.6 : 1 }}>
+              <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{stats?.countries ?? 0}</span> countries
+              {mapMode === 'global' && (
+                <>
+                  {' · '}
+                  <span style={{ color: 'var(--text-secondary)' }}>{arcsResolved.length}</span> arcs
+                </>
+              )}
+            </div>
           )}
         </div>
         <div className="font-mono text-[9px]" style={{ color: 'var(--text-muted)' }}>
           {showParticles && mapMode === 'global' && (
-            <span style={{ color: 'var(--sev-info-text)' }}>GPU particles active</span>
+            reducedMotion
+              ? <span>Motion reduced</span>
+              : <span style={{ color: 'var(--sev-info-text)' }}>GPU particles active</span>
           )}
         </div>
       </div>
 
       {/* ─── Event ticker ─────────────────────────────────────────
-          Root-cause fix: EventTicker no longer self-positions (it used to
-          be `fixed` with hardcoded bottom/left/width offsets that ignored
-          the Sidebar's real width and the SidePanel's existence, so it
-          painted across the panel bottom + mis-aligned with the nav — see
-          components/observatory/EventTicker.tsx). It now just fills
-          whatever box this wrapper gives it, and this wrapper is
-          panel-aware (`right` inset) exactly like the ticker's siblings. */}
+          EventTicker doesn't self-position; it fills whatever box this
+          wrapper gives it, and this wrapper is panel-aware (`right` inset)
+          exactly like the ticker's siblings. Desktop 40 / mobile 72 (touch
+          target sizing) match the stats-bar `bottom` offset and the map's
+          bottom inset above. */}
       <div
         className="absolute bottom-0 left-0"
         style={{
-          // Desktop: 40 is the ticker's own intended height (bumped from 32
-          // in this same polish pass) — the wrapper now matches it exactly
-          // instead of the old 48 (a leftover that no longer means
-          // anything now `.event-ticker` fills 100% of whatever height
-          // it's given). The stats bar's `bottom` offset just below and the
-          // map's bottom inset are updated to the same new total (36 stats
-          // bar + 40 ticker = 76) so nothing opens a gap elsewhere.
-          // Mobile's 72 is unchanged (touch-target sizing), matching the
-          // still-unchanged 72 on the stats bar + 108 on the map.
           height: isMobile ? 72 : 40,
           right: !isMobile && showPanel && hasSidePanel ? 320 : 0,
           zIndex: Z_CHROME,
@@ -539,14 +589,17 @@ export function ObservatoryV3() {
 
       {/* ─── Right panel (desktop) ────────────────────────────── */}
       {!isMobile && (
-        <SidePanel period={period} visible={showPanel && hasSidePanel} />
+        <SidePanel period={period} source={source} visible={showPanel && hasSidePanel} />
       )}
 
       {/* Panel toggle */}
       {!isMobile && hasSidePanel && (
         <button
+          type="button"
           onClick={() => setShowPanel(!showPanel)}
-          className="absolute top-1/2 transform -translate-y-1/2"
+          aria-label={showPanel ? 'Hide intelligence panel' : 'Show intelligence panel'}
+          aria-expanded={showPanel}
+          className="ds-focusable absolute top-1/2 transform -translate-y-1/2"
           style={{
             ...(showPanel ? { right: '320px' } : { right: 0 }),
             background: 'var(--bg-card)',
@@ -566,8 +619,10 @@ export function ObservatoryV3() {
       {/* ─── Intel FAB (mobile) — opens the bottom-sheet drawer ── */}
       {isMobile && hasSidePanel && (
         <button
+          type="button"
           onClick={() => setShowMobilePanel(true)}
-          className="absolute flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+          aria-label="Open intelligence panel"
+          className="ds-focusable absolute flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
           style={{
             bottom: 120,
             right: 16,
@@ -589,14 +644,9 @@ export function ObservatoryV3() {
       )}
 
       {/* ─── Intel drawer (mobile) — reuses the existing BottomSheet
-          primitive (src/components/BottomSheet.tsx, already used by
-          UserAvatar/NotificationBell) instead of a hand-rolled portal.
-          Gets Esc-to-close + body-scroll-lock for free. BottomSheet owns
-          the single scroll container (its own `flex-1 overflow-y-auto`
-          wraps these children), so the title row below is made sticky
-          rather than adding a second scroll container. BottomSheet
-          already renders its own grip handle, so ours is dropped; it has
-          no title/close of its own, so both are kept here. */}
+          primitive (Esc-to-close + body-scroll-lock for free). BottomSheet
+          owns the single scroll container, so the title row below is made
+          sticky rather than adding a second scroll container. */}
       {isMobile && hasSidePanel && (
         <BottomSheet open={showMobilePanel} onClose={() => setShowMobilePanel(false)}>
           <div
@@ -613,43 +663,17 @@ export function ObservatoryV3() {
               Intelligence
             </span>
             <button
+              type="button"
               onClick={() => setShowMobilePanel(false)}
               aria-label="Close intelligence panel"
+              className="ds-focusable"
               style={{ padding: 4, background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
             >
               <PanelRightClose size={14} />
             </button>
           </div>
-          <SidePanel period={period} visible mobile />
+          <SidePanel period={period} source={source} visible mobile />
         </BottomSheet>
-      )}
-
-      {/* ─── Click card (arc detail) ────────────────────────────
-          Operations mode (and its cluster-detail card) was removed —
-          the SidePanel's "Active Operations" widget covers that surface. */}
-      {clickedArc && (
-        <Card
-          variant="elevated"
-          className="absolute"
-          style={{ left: clickedArc.x, top: clickedArc.y, width: 300, padding: 16, zIndex: Z_DETAIL }}
-        >
-          <div className="flex justify-between items-start mb-2">
-            <span className="font-mono text-xs font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
-              {clickedArc.arc.threat_type?.replace(/_/g, ' ')}
-            </span>
-            <button onClick={() => setClickedArc(null)} className="text-white/55 hover:text-white/90" style={{ cursor: 'pointer', background: 'none', border: 'none' }}>
-              x
-            </button>
-          </div>
-          <div className="space-y-1 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-            <div>{clickedArc.arc.volume} threat{clickedArc.arc.volume > 1 ? 's' : ''}</div>
-            {clickedArc.arc.brand_name && <div style={{ color: 'var(--amber-text)' }}>Target: {clickedArc.arc.brand_name}</div>}
-            {clickedArc.arc.source_region && <div>From: {clickedArc.arc.source_region}</div>}
-            <div className="uppercase" style={{ color: `var(--sev-${clickedArc.arc.severity || 'medium'})` }}>
-              {clickedArc.arc.severity}
-            </div>
-          </div>
-        </Card>
       )}
     </div>
   );
