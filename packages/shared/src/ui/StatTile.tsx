@@ -21,6 +21,7 @@ import { Slot, Slottable } from '@radix-ui/react-slot';
 import { cn } from './cn';
 import { useCountUp } from './lib/useCountUp';
 import { resolveStatAccent, statNumeric, STAT_NEUTRAL } from './lib/stat-accent';
+import { COMPACT_FROM, formatCompact, formatFull } from './lib/compact-number';
 
 export type StatTone = 'amber' | 'red' | 'blue' | 'green' | 'neutral';
 
@@ -59,6 +60,16 @@ export interface StatTileProps
   trend?: number[];
   /** Animated hairline for the one tile that needs action. Ignored unless value > 0. */
   live?: boolean;
+  /**
+   * Show a numeric value >= 10,000 in compact form ("76.7K") so it never clips in a narrow tile. The full value
+   * stays available: `title` on hover and a screen-reader-only copy. Text values and smaller numbers are unchanged.
+   */
+  compact?: boolean;
+  /**
+   * `compact` only: the em width to size the value for, when it is larger than this tile's own value needs. Give paired
+   * tiles the max of `statFitEm` over the group so "76.7K" and "60%" sit at the same size.
+   */
+  fitEm?: number;
 }
 
 export interface StatDelta {
@@ -66,6 +77,23 @@ export interface StatDelta {
   tone?: 'good' | 'bad' | 'neutral';
   /** e.g. "412 more than yesterday" (aria-label). */
   label?: string;
+}
+
+/** Average glyph advance, in em, of a tabular numeral or punctuation mark (digits, '%', '.', ',') / of a letter (uppercase runs wider). */
+const EM_PER_DIGIT = 0.62;
+const EM_PER_LETTER = 0.76;
+
+/**
+ * Width, in em, a settled value needs: its length times the glyph advance (never under 3 digits: a one-digit tile keeps
+ * the full size). Feeds the compact tile's `100cqi / width` size. A row of paired compact tiles passes the largest of
+ * their widths as `fitEm`, so they all render at one size.
+ */
+export function statFitEm(value: number | string, compact = true): number {
+  const isNum = typeof value === 'number';
+  const text = isNum ? (compact && Math.abs(value) >= COMPACT_FROM ? formatCompact(value) : formatFull(value)) : value;
+  let em = 0;
+  for (const ch of text) em += /\p{L}/u.test(ch) ? EM_PER_LETTER : EM_PER_DIGIT;
+  return Math.max(3 * EM_PER_DIGIT, em);
 }
 
 const TREND_W = 100;
@@ -119,6 +147,8 @@ export function StatTile({
   delta,
   trend,
   live = false,
+  compact = false,
+  fitEm,
   className,
   ...rest
 }: StatTileProps) {
@@ -128,9 +158,10 @@ export function StatTile({
   const accent = resolveStatAccent(value, accentProp ?? TONE_COLOR[tone]);
   // Hooks run unconditionally regardless of loading state.
   const counted = useCountUp(typeof value === 'number' ? value : 0);
+  const isCompact = compact && typeof value === 'number' && Math.abs(value) >= COMPACT_FROM;
   const display = isNull
     ? '—'
-    : typeof value === 'number' ? counted.toLocaleString('en-US') : value;
+    : typeof value === 'number' ? (isCompact ? formatCompact(counted) : formatFull(counted)) : value;
   const critCount = critical ?? 0;
   const clickable = !!onClick || asChild;
 
@@ -161,7 +192,22 @@ export function StatTile({
         </span>
         {critCount > 0 ? null : deltaChip}
       </span>
-      <span className={cn('ds-stat-value', (loading || failed) && 'ds-stat-value--muted')}>{display}</span>
+      {compact && !isNull ? (
+        // The value scales to the tile (container query, sized by its final width so it does not jump while counting
+        // up): a 6-character count in a 140px tile shrinks instead of clipping.
+        <span className="ds-stat-fit">
+          <span
+            className="ds-stat-value ds-stat-value--fit"
+            title={isCompact ? formatFull(value) : undefined}
+            style={{ '--ds-stat-em': Math.max(statFitEm(value, true), fitEm ?? 0) } as CSSProperties}
+          >
+            <span aria-hidden={isCompact || undefined}>{display}</span>
+            {isCompact ? <span className="sr-only">{formatFull(value)}</span> : null}
+          </span>
+        </span>
+      ) : (
+        <span className={cn('ds-stat-value', (loading || failed) && 'ds-stat-value--muted')}>{display}</span>
+      )}
       {showTrend && !loading && !failed ? <Trend points={trend} /> : null}
       {failed ? (
         <span className="ds-stat-sub">Couldn't load</span>

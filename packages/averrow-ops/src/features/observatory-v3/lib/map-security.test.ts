@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// maplibre-gl <= 6.4.0 (we run 5.x) builds its attribution control, and any Popup given HTML, with innerHTML: the style
+// maplibre-gl <= 6.4.0 (fixed in 6.4.1; we run 6.14, defence in depth) builds its attribution control, and any Popup given HTML, with innerHTML: the style
 // document the basemap is fetched from is third-party, so its `attribution` markup would run in this origin
 // (GHSA-jrc7-96c5-q579). The Observatory therefore never uses those APIs. This reads every non-test source file in
 // the feature and fails if one starts to.

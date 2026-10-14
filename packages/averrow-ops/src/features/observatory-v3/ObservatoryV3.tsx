@@ -457,25 +457,44 @@ export function ObservatoryV3() {
   // ...except a link to an operation the default view hides (shared hosting / hub / scanning): that one is
   // resolved by turning `shared=1` on in the URL (replacing the entry), once per id, rather than dropped.
   const sharedRetried = useRef<string | null>(null);
-  const sharedPending = useRef(false);
+  /**
+   * The operation id whose auto-widening (`shared=1`) was requested and has not landed in the URL yet. An id, not a flag:
+   * it only means something while THAT operation is still selected, so it cannot outlive its selection. (A boolean stayed
+   * set when the selection moved on or a toggle overtook the update, and then suppressed the dead-key drop for good.)
+   */
+  const sharedPendingFor = useRef<string | null>(null);
+  /**
+   * What `shared` is, or is about to be, in the URL. `setSearchParams` hands an updater the params of the render that
+   * created it (React Router 6 does not queue them), so a toggle that reads `state.shared` repeats the previous click when
+   * two land before the URL does. The ref moves the moment a click or the auto-widening decides, and follows the URL
+   * once it settles.
+   */
+  const sharedIntent = useRef(state.shared);
+  useEffect(() => { sharedIntent.current = state.shared; }, [state.shared]);
   // Auto-widening is for deep links only. A manual toggle-off while an operation is selected marks that id as already
   // handled, so the effect never flips shared back on: the selection stays if the narrower set still holds it, else
-  // it is dropped with the usual dead-key path.
+  // it is dropped with the usual dead-key path. Any toggle also ends a pending auto-widening (the person's choice wins),
+  // and flips the intended value (`sharedIntent`), not the one this render saw: two quick clicks, or a click while a
+  // fetch is in flight, are on-then-off, never on-then-on.
   const toggleShared = useCallback(() => {
-    if (state.shared && sel?.kind === 'op') sharedRetried.current = sel.id;
-    update({ shared: !state.shared });
-  }, [state.shared, sel, update]);
+    sharedPendingFor.current = null;
+    if (sharedIntent.current && sel?.kind === 'op') sharedRetried.current = sel.id;
+    sharedIntent.current = !sharedIntent.current;
+    update({ shared: sharedIntent.current });
+  }, [sel, update]);
   useEffect(() => {
     if (drill) return;
-    if (state.shared) sharedPending.current = false;
-    else if (sel?.kind === 'op' && settled.op) {
+    // Nothing left to wait for once the widening landed, or when the operation it was requested for is no longer selected.
+    if (state.shared || !(sel?.kind === 'op' && sel.id === sharedPendingFor.current)) sharedPendingFor.current = null;
+    if (!state.shared && sel?.kind === 'op' && settled.op) {
       if (sharedRetried.current !== sel.id) {
         sharedRetried.current = sel.id;
-        sharedPending.current = true;
+        sharedPendingFor.current = sel.id;
+        sharedIntent.current = true;
         update({ shared: true });
         return;
       }
-      if (sharedPending.current) return; // the URL update has not landed yet: do not drop the key under it
+      if (sharedPendingFor.current === sel.id) return; // the URL update has not landed yet: do not drop the key under it
     }
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));

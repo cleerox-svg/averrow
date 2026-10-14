@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { StatTile } from '@averrow/shared/ui';
+import { StatTile, statFitEm } from '@averrow/shared/ui';
 import { stubMatchMedia } from './helpers';
 
 // Custom properties are stored verbatim.
@@ -248,6 +248,38 @@ describe('shared StatTile', () => {
     const btn = screen.getByRole('button');
     expect(btn).not.toHaveAttribute('aria-label');
     expect(btn).toHaveAccessibleName(/Open alerts/);
+  });
+
+  it('compact: shows 76.7K for a 5-digit count, with the full value as the title and the accessible text', () => {
+    const { container } = render(<StatTile label="Threats" value={76712} compact />);
+    expect(screen.getByText('76.7K')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('.ds-stat-value')).toHaveAttribute('title', '76,712');
+    expect(container.querySelector('.sr-only')).toHaveTextContent('76,712');
+  });
+
+  it('compact: leaves a 4-digit count, a text value and the default (non-compact) tile alone', () => {
+    const { rerender } = render(<StatTile label="Threats" value={9876} compact />);
+    expect(screen.getByText('9,876')).toBeInTheDocument();
+    rerender(<StatTile label="Threats" value="CRITICAL" compact />);
+    expect(screen.getByText('CRITICAL')).toBeInTheDocument();
+    rerender(<StatTile label="Threats" value={76712} />);
+    expect(screen.getByText('76,712')).toBeInTheDocument();
+  });
+
+  it('compact: paired tiles share one size through fitEm (the widest value decides), and text is measured wider than digits', () => {
+    const em = (c: HTMLElement) => (c.querySelector('.ds-stat-value--fit') as HTMLElement).style.getPropertyValue('--ds-stat-em');
+    const a = render(<StatTile label="A" value={76712} compact />);
+    const b = render(<StatTile label="B" value="60%" compact />);
+    expect(Number(em(b.container))).toBeLessThan(Number(em(a.container)));
+    const shared = Math.max(statFitEm(76712), statFitEm('60%'));
+    const c = render(<StatTile label="C" value="60%" compact fitEm={shared} />);
+    expect(Number(em(c.container))).toBe(Number(em(a.container)));
+    expect(statFitEm('MEDIUM')).toBeGreaterThan(6 * 0.62); // uppercase runs wider than the numeral estimate
+    expect(statFitEm(5)).toBe(statFitEm(123)); // never under 3 digits
+    expect(statFitEm('MEDIUM')).toBeCloseTo(6 * 0.76, 6);
+    expect(statFitEm('60%')).toBeCloseTo(3 * 0.62, 6); // digits and punctuation at the numeral width
+    expect(statFitEm('1.5K')).toBeCloseTo(3 * 0.62 + 0.76, 6); // mixed: per-character widths
+    expect(statFitEm('12.5%')).toBeCloseTo(5 * 0.62, 6);
   });
 
   it('reserves bottom space for the "View" hint only when clickable', () => {

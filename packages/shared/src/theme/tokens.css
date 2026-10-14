@@ -1207,6 +1207,9 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 .ds-stat-label { font-size: 12px; font-weight: 500; line-height: 1.3; color: var(--text-secondary); min-width: 0; }
 .ds-stat-value { display: block; margin-top: 8px; font-size: 42px; font-weight: 600; line-height: 1.05; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--text-primary); }
 .ds-stat-value--muted { color: var(--text-tertiary); }
+/* `compact` tiles: the number's size follows the tile's width (6 characters never clip in a narrow tile). */
+.ds-stat-fit { display: block; container-type: inline-size; }
+.ds-stat-value--fit { font-size: clamp(18px, calc(100cqi / var(--ds-stat-em, 3.1)), 42px); white-space: nowrap; }
 .ds-stat-sub { display: block; margin-top: 8px; font-size: 12px; line-height: 1.4; color: var(--text-secondary); }
 .ds-stat-foot { display: block; margin-top: 12px; }
 .ds-stat-crit {
@@ -1251,6 +1254,7 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
   .ds-stat--interactive { padding-bottom: 10px; }
   .ds-stat-label { font-size: 11.5px; }
   .ds-stat-value { margin-top: 2px; font-size: 26px; }
+  .ds-stat-value--fit { font-size: clamp(16px, calc(100cqi / var(--ds-stat-em, 3.1)), 26px); }
   .ds-stat-sub { margin-top: 4px; }
   .ds-stat-hint { display: none; }
 }

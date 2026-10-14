@@ -21,7 +21,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
-import { Badge, StatTile, KitButton } from '@/design-system/components';
+import { Badge, StatTile, statFitEm, KitButton } from '@/design-system/components';
 import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/time';
 import { sevText, typeLabel } from '../lib/map-colors';
@@ -177,10 +177,12 @@ interface HeroCta { label: string; to?: string; onClick?: () => void }
 
 /** The same opening for every kind of target: two tiles, the status, one primary action. */
 function Hero({ tiles, badges, cta }: { tiles: [HeroTile, HeroTile]; badges?: ReactNode; cta?: HeroCta | null }) {
+  // The pair shares one value size (the wider of the two decides): "76.7K" next to "60%" must not read as two scales.
+  const fitEm = Math.max(...tiles.map(t => (t.value === null ? 0 : statFitEm(t.value))));
   return (
     <div className="flex flex-col gap-2.5" data-hero>
       <div className="grid grid-cols-2 gap-2">
-        {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} />)}
+        {tiles.map(t => <StatTile key={t.label} label={t.label} value={t.value} sub={t.sub} tone={t.tone ?? 'neutral'} compact fitEm={fitEm} />)}
       </div>
       {badges && <div className="flex flex-wrap items-center gap-1.5">{badges}</div>}
       {cta && (cta.to

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { HALO_MIN_SCALE } from '../lib/halo';
 import type { OperationGeo, ProviderGeo, CampaignGeo, Movement, ActorDetail } from '@/hooks/useObservatoryLenses';
 import { lensPreset, noLayers, type LayerToggles } from '../lib/lenses';
 import { buildOperationsModel } from '../lib/lens/operations';
@@ -12,7 +13,7 @@ import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_SMALL_C
 import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { getSeverityColor } from '../lib/map-colors';
 import {
-  buildLensLayers, buildLensBaseLayers, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
+  buildLensLayers, buildLensBaseLayers, haloPx, MIN_HALO_GAP_PX, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
 } from './lens-layers';
 import { NO_LABELS, type PlacedLabels } from './lens-labels';
 import { buildBotShareModel } from '../lib/lens/bot-share';
@@ -634,5 +635,63 @@ describe('Operations lens on a realistic day (50 operations x 15 countries)', ()
     (core.onHover as (x: unknown) => void)({ object, x: 1, y: 2 });
     const tip = (i.pick.hover as unknown as { mock: { lastCall: Array<{ lines: string[] }> } }).mock.lastCall[0]!;
     expect(tip.lines[0]).toMatch(/\d+ operations?/);
+  });
+});
+
+describe('halo scale (blooms and provider rings shrink toward the world view)', () => {
+  const radius = (i: LensLayerInput, id: string, d: unknown) => (props(find(i, id)).getRadius as (x: unknown) => number)(d);
+
+  it('full size by default and at haloScale 1; smaller (never below the floor) at a lower scale, cores untouched', () => {
+    const full = input({ operations: true });
+    const small = input({ operations: true }, { haloScale: 0.4 });
+    const node = full.operations!.nodes[0]!;
+    const bloom = radius(full, 'ops-bloom', node);
+    expect(radius(input({ operations: true }, { haloScale: 1 }), 'ops-bloom', node)).toBe(bloom);
+    expect(radius(small, 'ops-bloom', node)).toBeCloseTo(bloom * 0.4, 6);
+    expect(radius(input({ operations: true }, { haloScale: 0.01 }), 'ops-bloom', node)).toBe(3); // the floor
+    expect(radius(small, 'ops-core', node)).toBe(radius(full, 'ops-core', node));
+  });
+
+  it('the bloom radius accessor is re-evaluated when the scale changes (updateTriggers)', () => {
+    const t = (s: number) => (props(find(input({ operations: true }, { haloScale: s }), 'ops-bloom')).updateTriggers as Props).getRadius;
+    expect(t(0.4)).not.toBe(t(1));
+  });
+
+  it('hosting: the pickable ring keeps its full size; only the glow / arcs round it shrink', () => {
+    const full = input({ hosting: true });
+    const small = input({ hosting: true }, { haloScale: 0.5 });
+    const ring = full.hosting!.rings.find(r => r.bulletproof)!;
+    expect(radius(small, 'hosting-rings', ring)).toBe(radius(full, 'hosting-rings', ring));
+    expect(radius(full, 'hosting-bulletproof-halo', ring) - radius(full, 'hosting-rings', ring)).toBeCloseTo(7, 6);
+    expect(radius(small, 'hosting-bulletproof-halo', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(6, 6); // track (3, the floor) + gap (3)
+    expect(radius(small, 'hosting-takedown-track', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6); // the floor
+    expect(radius(small, 'hosting-takedown-arc', ring) - radius(small, 'hosting-rings', ring)).toBeCloseTo(3, 6);
+    expect((props(find(small, 'hosting-bulletproof-halo')).updateTriggers as Props).getRadius).toBe(0.5);
+  });
+
+  it('hosting: the bulletproof halo sits at least 2px outside the takedown track at every zoom scale', () => {
+    for (const haloScale of [HALO_MIN_SCALE, 0.7, 1]) {
+      const i = input({ hosting: true }, { haloScale });
+      const ring = i.hosting!.rings.find(r => r.bulletproof)!;
+      const gap = radius(i, 'hosting-bulletproof-halo', ring) - radius(i, 'hosting-takedown-track', ring);
+      expect(gap).toBeGreaterThanOrEqual(2);
+      expect(gap).toBeGreaterThanOrEqual(MIN_HALO_GAP_PX);
+      expect(radius(i, 'hosting-takedown-arc', ring)).toBe(radius(i, 'hosting-takedown-track', ring));
+    }
+  });
+
+  it('the floor never enlarges a radius that is already under it', () => {
+    expect(haloPx(2, 0.4)).toBe(2);
+    expect(haloPx(2.9, 0.1)).toBe(2.9);
+    expect(haloPx(3, 0.4)).toBe(3);
+    expect(haloPx(10, 0.4)).toBe(4);
+    expect(haloPx(10, 1)).toBe(10);
+    expect(haloPx(10, undefined)).toBe(10);
+  });
+
+  it('actor blooms scale too', () => {
+    const a = input({ actors: true });
+    const c = a.actors!.countries[0]!;
+    expect(radius(input({ actors: true }, { haloScale: 0.5 }), 'actor-bloom', c)).toBeLessThan(radius(a, 'actor-bloom', c));
   });
 });

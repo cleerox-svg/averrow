@@ -401,6 +401,33 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
     expect(screen.queryByRole('button', { name: 'Hide low-evidence clusters' })).not.toBeInTheDocument();
   });
 
+  it('two quick clicks (before the first URL update lands) are on-then-off: the toggle is never left on', async () => {
+    routeOps({ shared_asn: 3, hub_ip: 1, ip_reputation: 0 });
+    renderAt('/observatory?lens=operations');
+    const btn = await screen.findByRole('button', { name: 'Show low-evidence clusters' });
+    act(() => { btn.click(); btn.click(); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'false'));
+    expect(search).not.toContain('shared=1');
+  });
+
+  it('clicking twice while the operations are still loading ends where it started (off-then-on from a shared=1 link)', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) {
+        return new Promise(resolve => setTimeout(() => resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 3 }, shared_returned: 1 } }), 200));
+      }
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations&shared=1');
+    const btn = await screen.findByRole('button', { name: 'Show low-evidence clusters' }); // visible during the fetch: shared is on
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    act(() => { btn.click(); btn.click(); });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(search).toContain('shared=1');
+    await act(async () => { await new Promise(r => setTimeout(r, 300)); }); // the fetch lands: nothing flips it
+    expect(search).toContain('shared=1');
+  });
+
   it('with the toggle on the line says how many of the hidden clusters are shown', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 70, hub_ip: 0, ip_reputation: 0 }, shared_returned: 50 } });
