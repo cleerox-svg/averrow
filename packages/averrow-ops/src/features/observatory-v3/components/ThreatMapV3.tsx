@@ -65,17 +65,17 @@ import {
   type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
 } from '../layers/lens-layers';
 import {
-  edgeLabelSources, hostLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
+  edgeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { highlightGroup } from '../lib/lens/operations';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
 import {
-  planCamera, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
+  planCamera, phoneMinZoom, DEFAULT_MIN_ZOOM, WORLD_LAT_LIMIT, PHONE_LAT_LIMIT, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
 } from '../lib/camera';
 import {
-  motionPolicy, breatheAmp, isLoudSeverity, lensFade, loopNeeded, PING_COLOR, LENS_FADE_IN_MS,
+  motionPolicy, breatheAmp, isLoudSeverity, lensFade, loopNeeded, splitFade, PING_COLOR, LENS_FADE_IN_MS,
 } from '../lib/motion';
 
 export type { MapMode } from '../lib/url-state';
@@ -364,7 +364,7 @@ function ThreatMapV3Inner({
         zoom: isMobileRef.current ? 0.6 : 2.2,
         pitch: isMobileRef.current ? 0 : 20,
         bearing: 0,
-        minZoom: isMobileRef.current ? 0.5 : undefined,
+        minZoom: isMobileRef.current ? phoneMinZoom(container.clientWidth) : undefined,
         maxZoom: 12,
         antialias: true,
         attributionControl: false,
@@ -447,6 +447,17 @@ function ThreatMapV3Inner({
       navControlRef.current = null;
     }
   }, [isMobile, mapLoaded, applyControlInset]);
+
+  // The phone's zoom floor follows the canvas width (a rotation changes how much world fits). The latitude
+  // range is widened with it: otherwise MapLibre's "world must cover the canvas vertically" rule pins the
+  // zoom at ~0.3 on a tall phone and a world-spanning target is clipped (see PHONE_LAT_LIMIT).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || size.width === 0) return;
+    const lat = isMobile ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
+    if (map.transform) map.transform.latRange = [-lat, lat];
+    if (typeof map.setMinZoom === 'function') map.setMinZoom(isMobile ? phoneMinZoom(size.width) : DEFAULT_MIN_ZOOM);
+  }, [isMobile, mapLoaded, size.width]);
 
   // Track container size (resize, rotation, side-panel toggles) and keep the GL canvas in sync.
   useEffect(() => {
@@ -714,15 +725,18 @@ function ThreatMapV3Inner({
     if (!lens || mapMode === 'heatmap') return null;
     const ops = lens.layers.operations ? lens.operations : null;
     const host = lens.layers.hosting ? lens.hosting : null;
-    if (!ops && !host) return null;
+    const actors = lens.layers.actors ? lens.actors : null;
+    if (!ops && !host && !actors) return null;
     const edges = ops ? edgeLabelSources(ops, highlightGroup(ops, lens.sel.opId) ?? '') : [];
     const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
     const maxT = ops ? opsMaxThreats(ops) : 0;
+    const actorLabels = actors && !actors.empty ? actorLabelSources(actors) : [];
     const nodes = [
       ...(ops ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n, maxT) })) : []),
       ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx, id: r.id })) : []),
+      ...actorLabels.map(a => ({ position: a.position, radiusPx: a.radiusPx, id: a.id })),
     ];
-    return { edges, hosts, nodes };
+    return { edges, hosts, actors: actorLabels, nodes };
   }, [lens, mapMode]);
 
   const recomputeLabels = useCallback(() => {
@@ -809,7 +823,8 @@ function ThreatMapV3Inner({
     if (ringsOn) layers.push(makeRings(seconds));
     if (movementOn) layers.push(makeRingLayer('movement-rings', moveBuffer, 26, 1.5, seconds));
     if (mapMode === 'global') layers.push(makeRingLayer('live-pings', pingBuffer, isMobile ? 26 : 34, 2, seconds));
-    if (staticPings.length > 0) {
+    // Reduced-motion stand-in for the sonar ring: only where pings exist at all (the Threats scene).
+    if (staticPings.length > 0 && reducedMotion && mapMode === 'global') {
       layers.push(new ScatterplotLayer<{ id: string; position: [number, number]; color: [number, number, number, number] }>({
         id: 'live-pings-static',
         data: staticPings,
@@ -827,10 +842,15 @@ function ThreatMapV3Inner({
     lastSceneRef.current = layers;
     const fade = lensFade(typeof performance !== 'undefined' ? performance.now() : 0, fadeStartRef.current, reducedMotion);
     if (!fade.active) return layers;
-    // Cross-fade: the new scene eases in, the old one (kept ~200ms) eases out. `clone` keeps data identity.
-    const mixed = layers.map(l => l.clone({ opacity: fade.incoming }));
+    // Cross-fade: layers that are NEW in this scene ease in, layers that are GONE (kept ~200ms) ease out.
+    // Layers in both scenes are left alone, so nothing flashes or draws doubled. `clone` keeps data identity.
+    const outgoing = outgoingRef.current;
+    const split = splitFade(layers.map(l => l.id), outgoing.map(l => l.id));
+    const easeIn = new Set(split.fadeIn);
+    const mixed = layers.map(l => (easeIn.has(l.id) ? l.clone({ opacity: fade.incoming }) : l));
     if (fade.outgoing > 0) {
-      for (const l of outgoingRef.current) mixed.push(l.clone({ id: `out:${l.id}`, opacity: fade.outgoing, pickable: false }));
+      const easeOut = new Set(split.fadeOut);
+      for (const l of outgoing) if (easeOut.has(l.id)) mixed.push(l.clone({ id: `out:${l.id}`, opacity: fade.outgoing, pickable: false }));
     }
     return mixed;
   }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings, reducedMotion]);
@@ -860,7 +880,8 @@ function ThreatMapV3Inner({
     holdTimer.current = setTimeout(() => { holdTimer.current = null; setHold(false); }, LOOP_HOLD_MS);
   }, []);
   useEffect(() => () => { if (holdTimer.current) clearTimeout(holdTimer.current); }, []);
-  useEffect(() => { holdLoop(); }, [clockPlaying, holdLoop]);
+  // Nothing animates under reduced motion (no rings, no pulses): don't spin the loop for the hold window.
+  useEffect(() => { if (!reducedMotion) holdLoop(); }, [clockPlaying, holdLoop, reducedMotion]);
 
   // New pings: spawn once per batch.
   const lastPingSeq = useRef(0);
@@ -872,7 +893,8 @@ function ThreatMapV3Inner({
     if (reducedMotion) {
       setStaticPings(placed.map(p => ({ id: p.id, position: p.position, color: PING_COLOR })));
       const timer = setTimeout(() => setStaticPings([]), 1600);
-      return () => clearTimeout(timer);
+      // A scene / motion-preference change must not strand the highlight on screen.
+      return () => { clearTimeout(timer); setStaticPings([]); };
     }
     pingSpawner.spawn(
       placed.map(p => ({ time: 0, lng: p.position[0], lat: p.position[1], color: PING_COLOR, key: `${p.position[0].toFixed(2)},${p.position[1].toFixed(2)}` })),

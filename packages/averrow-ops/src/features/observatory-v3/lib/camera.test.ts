@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, phoneMinZoom, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -8,6 +8,29 @@ import { buildHostingModel } from './lens/hosting';
 import type { CampaignGeo, Movement, OperationGeo, ProviderGeo, ActorDetail } from '@/hooks/useObservatoryLenses';
 
 const EMPTY: FocusModels = { operations: null, hosting: null, campaigns: null, movement: null, actors: null };
+
+describe('phoneMinZoom: derived from the canvas so a world-spanning target can fit', () => {
+  // zoom at which a lng span (deg) exactly fills `free` px: world = 512 * 2^z px wide
+  const fitZoom = (spanDeg: number, free: number) => Math.log2((free * 360) / (spanDeg * 512));
+  it('is never above the old 0.5 floor, and goes lower on narrow canvases', () => {
+    expect(phoneMinZoom(1200)).toBe(0.5);
+    expect(phoneMinZoom(400)).toBeLessThan(0);
+    expect(phoneMinZoom(320)).toBeLessThan(phoneMinZoom(400));
+    expect(phoneMinZoom(0)).toBe(0.5);
+  });
+  it('Operation Alpha (US, BR, DE, RU, JP: a 214 degree box) fits a 400px canvas, which the fixed 0.5 floor could not', () => {
+    const plan = planCamera([[-74, 40.7], [-47.9, -15.8], [13.4, 52.5], [37.6, 55.7], [139.7, 35.7]], { width: 400, height: 800 }, { top: 124, right: 12, bottom: 250, left: 12 })!;
+    expect(plan.box.east - plan.box.west).toBeGreaterThan(200);
+    const free = 400 - plan.padding.left - plan.padding.right;
+    const needed = fitZoom(plan.box.east - plan.box.west, free);
+    expect(needed).toBeLessThan(0.5);               // the old floor clamped here and cut both ends off
+    expect(phoneMinZoom(400)).toBeLessThanOrEqual(needed);
+  });
+  it('a full 360 degree target still fits inside the framing margins', () => {
+    const free = 400 - 2 * (12 + FRAME_MARGIN);
+    expect(phoneMinZoom(400)).toBeLessThanOrEqual(fitZoom(360, free) + 1e-9);
+  });
+});
 
 describe('wrapLng', () => {
   it('maps into [-180, 180)', () => {

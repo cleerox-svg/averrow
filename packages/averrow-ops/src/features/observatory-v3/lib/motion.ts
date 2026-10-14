@@ -84,6 +84,24 @@ export function lensFade(nowMs: number, startMs: number | null, instant: boolean
   };
 }
 
+export interface FadeSplit {
+  /** Incoming layer ids that did not exist in the outgoing scene: these ease in. */
+  fadeIn: string[];
+  /** Outgoing layer ids that are gone from the incoming scene: these ease out (as `out:` clones). */
+  fadeOut: string[];
+}
+
+/**
+ * Which layers actually change across a lens switch. A layer present in BOTH scenes (nodes, particles,
+ * the baseline outline …) stays put at full opacity: fading it in again would make it flash, and cloning
+ * it as an `out:` twin would draw it doubled.
+ */
+export function splitFade(incoming: readonly string[], outgoing: readonly string[]): FadeSplit {
+  const inSet = new Set(incoming);
+  const outSet = new Set(outgoing);
+  return { fadeIn: incoming.filter(id => !outSet.has(id)), fadeOut: outgoing.filter(id => !inSet.has(id)) };
+}
+
 export interface LoopInputs {
   /** Particles + impact rings are on screen. */
   particles: boolean;

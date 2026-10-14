@@ -61,7 +61,7 @@ describe('which layers are built', () => {
     ['operations', ['ops-edges', 'ops-bloom', 'ops-core']],
     ['hosting', ['hosting-rings', 'hosting-bulletproof-halo', 'hosting-takedown-track', 'hosting-takedown-arc']],
     ['campaigns', ['campaign-arcs', 'campaign-adversaries', 'campaign-targets']],
-    ['actors', ['actor-edges', 'actor-bloom', 'actor-core', 'actor-labels']],
+    ['actors', ['actor-edges', 'actor-bloom', 'actor-core']],
     ['movement', ['movement-paths', 'movement-ghosts', 'movement-landings', 'movement-trails']],
   ] as const)('%s', (layer, expected) => {
     const got = ids(input({ [layer]: true }));
@@ -189,6 +189,7 @@ const everything = (extra: Partial<LensLayerInput> = {}): LensLayerInput => {
   const labels: PlacedLabels = {
     edges: [{ id: 'e', text: '◆ cert', position: [5, 52], angle: 10 }],
     hosts: [{ id: 'p', text: 'p', position: [5, 52], radiusPx: 10 }],
+    actors: [{ id: 'DE', text: 'DE · high', position: [10, 51], radiusPx: 12 }],
   };
   return { ...base, labels: extra.labels ?? labels };
 };
@@ -221,11 +222,13 @@ describe('layer data identity is stable across frames (no per-frame rebuilds)', 
     const get = (id: string) => (layers.find(l => l.id === id) as unknown as { props: { data: unknown } }).props.data;
     expect(get('ops-edge-labels')).toBe(i.labels.edges);
     expect(get('hosting-labels')).toBe(i.labels.hosts);
+    expect(get('actor-labels')).toBe(i.labels.actors);
   });
   it('no labels placed => no label layers', () => {
     const got = ids(everything({ labels: NO_LABELS }));
     expect(got).not.toContain('ops-edge-labels');
     expect(got).not.toContain('hosting-labels');
+    expect(got).not.toContain('actor-labels');
   });
   it('the baseline outline of a selected country is built once per (shapes, country)', () => {
     const i = input({ baseline: true }, { sel: { ...NO_SELECTION, country: 'NL' } });

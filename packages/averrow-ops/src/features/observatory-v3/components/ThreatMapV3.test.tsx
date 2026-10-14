@@ -13,7 +13,10 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     removed = false;
     controls: unknown[] = [];
     canvas = document.createElement('canvas');
-    constructor() { maps.push(this); }
+    opts: Record<string, unknown>;
+    setMinZoom = vi.fn();
+    transform = { latRange: [-85.051129, 85.051129] as [number, number] };
+    constructor(opts: Record<string, unknown> = {}) { this.opts = opts; maps.push(this); }
     on(ev: string, cb: Handler) { this.handlers.set(ev, [...(this.handlers.get(ev) ?? []), cb]); return this; }
     once(ev: string, cb: Handler) { return this.on(ev, cb); }
     emit(ev: string, payload?: unknown) { (this.handlers.get(ev) ?? []).forEach(h => h(payload)); }
@@ -256,6 +259,52 @@ describe('ThreatMapV3 camera focus', () => {
 });
 
 
+describe('ThreatMapV3 phone zoom floor', () => {
+  const ready = () => act(() => { lastMap().emit('style.load'); });
+  const widthDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const innerWidth = window.innerWidth;
+  afterEach(() => {
+    if (widthDesc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', widthDesc); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
+  });
+  const phone = (w: number) => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: w });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => w });
+  };
+
+  it('a 400px phone map may zoom out below the old 0.5 floor, so a world-spanning target fits', () => {
+    phone(400);
+    render(<ThreatMapV3 {...base} />);
+    expect(lastMap().opts.minZoom as number).toBeLessThan(0);
+  });
+  it('the floor follows the canvas width once the map is up (rotation)', () => {
+    phone(400);
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    const narrow = lastMap().setMinZoom.mock.calls.at(-1)![0] as number;
+    expect(narrow).toBeLessThan(0);
+  });
+  it('the phone also widens the latitude range: MapLibre otherwise pins a tall phone at zoom ~0.3 whatever minZoom says', () => {
+    phone(400);
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    expect(lastMap().transform.latRange[1]).toBeGreaterThan(89);
+    expect(lastMap().transform.latRange[0]).toBeLessThan(-89);
+  });
+  it('desktop keeps MapLibre\'s own latitude range', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1400 });
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    expect(lastMap().transform.latRange).toEqual([-85.051129, 85.051129]);
+  });
+  it('desktop keeps the library default (no phone floor)', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });
+    render(<ThreatMapV3 {...base} />);
+    expect(lastMap().opts.minZoom).toBeUndefined();
+  });
+});
+
 describe('ThreatMapV3 motion policy', () => {
   const mk = (sev: string, lat = 1) => ({ lat, lng: 2, threat_count: 4, top_severity: sev, critical: 0, high: 0, medium: 0, low: 0, country_code: 'US', top_threat_type: 'c2' });
   const layerOf = (id: string) => (overlays[0].props.layers as Array<{ props: Record<string, unknown> }>).find(l => l.props.id === id);
@@ -311,6 +360,25 @@ describe('ThreatMapV3 motion policy', () => {
     expect(outgoing.props.opacity as number).toBeGreaterThan(0);
   });
 
+  it('a cross-fade only fades what changes: layers in BOTH scenes stay at full opacity and get no out: twin', () => {
+    const arc = { sourcePosition: [10, 20] as [number, number], targetPosition: [-70, 40] as [number, number], threat_type: 'phishing', severity: 'high', source_region: 'NL', target_brand: 'b', brand_name: 'B', volume: 3 };
+    const t = [mk('critical')];
+    const { rerender } = render(<ThreatMapV3 {...base} showBeams threats={t} arcs={[arc]} sceneKey="a" />);
+    ready();
+    rerender(<ThreatMapV3 {...base} showBeams threats={t} arcs={[arc]} showNodes={false} sceneKey="b" />);
+    const layers = overlays[0].props.layers as Array<{ props: Record<string, unknown> }>;
+    const ids = layers.map(l => l.props.id as string);
+    // nodes left the scene: only they fade out
+    expect(ids).toContain('out:nodes-core');
+    // beams + targets are in both scenes: untouched, not doubled, not re-faded
+    expect(ids).not.toContain('out:beam-core');
+    expect(ids).not.toContain('out:targets-core');
+    expect(ids.filter(id => id === 'beam-core')).toHaveLength(1);
+    expect(layers.find(l => l.props.id === 'beam-core')!.props.opacity).toBeUndefined();
+    // nothing else was rebuilt as an out: copy
+    expect(ids.filter(id => id.startsWith('out:')).every(id => id.startsWith('out:nodes-'))).toBe(true);
+  });
+
   it('reduced motion: the scene change is instant (no outgoing copy)', () => {
     stubMatchMedia(true);
     const t = [mk('critical')];
@@ -319,6 +387,20 @@ describe('ThreatMapV3 motion policy', () => {
     rerender(<ThreatMapV3 {...base} threats={t} showNodes={false} sceneKey="b" />);
     const ids = (overlays[0].props.layers as Array<{ props: Record<string, unknown> }>).map(l => l.props.id as string);
     expect(ids.some(id => id.startsWith('out:'))).toBe(false);
+  });
+
+  it('reduced-motion static pings are cleared when the scene leaves the Threats map, and never drawn there', () => {
+    stubMatchMedia(true);
+    const ping = { seq: 1, items: [{ id: 'x', position: [2, 1] as [number, number], color: [200, 60, 60, 235] as [number, number, number, number], severity: 'critical', type: 'phishing', country: 'US', domain: null }] };
+    const { rerender } = render(<ThreatMapV3 {...base} threats={[mk('critical')]} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} threats={[mk('critical')]} pings={ping} />);
+    expect(layerOf('live-pings-static')).toBeDefined();
+    // the user switches to another scene before the 1.6s timer: the highlight must not be stranded
+    rerender(<ThreatMapV3 {...base} threats={[mk('critical')]} pings={ping} mapMode="heatmap" />);
+    expect(layerOf('live-pings-static')).toBeUndefined();
+    rerender(<ThreatMapV3 {...base} threats={[mk('critical')]} pings={ping} mapMode="global" />);
+    expect(layerOf('live-pings-static')).toBeUndefined(); // and it does not come back on return
   });
 
   it('live pings use their own colour, not the threat severity colour', () => {
@@ -349,6 +431,13 @@ describe('ThreatMapV3 animation loop idles when nothing animates', () => {
     settle();
     raf.mockClear();
     settle();
+    expect(raf).not.toHaveBeenCalled();
+  });
+
+  it('under reduced motion the loop does not spin for the post-mount hold window', () => {
+    stubMatchMedia(true);
+    render(<ThreatMapV3 {...base} threats={[mk('critical')]} clockPlaying={false} />);
+    ready();
     expect(raf).not.toHaveBeenCalled();
   });
 

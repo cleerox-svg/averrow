@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { OperationGeo, ComponentGeo, ProviderGeo } from '@/hooks/useObservatoryLenses';
 import { buildOperationsModel, edgeShortLabel } from '../lib/lens/operations';
 import { buildHostingModel } from '../lib/lens/hosting';
+import type { ActorModel, ActorCountry } from '../lib/lens/actors';
 import {
-  edgeLabelSources, hostLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, NO_LABELS,
+  edgeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, MAX_ACTOR_LABELS, NO_LABELS,
   type Project, type PlacedLabels,
 } from './lens-labels';
 
@@ -112,14 +113,69 @@ describe('screen-space placement', () => {
   });
 });
 
+const P = (p: Partial<PlacedLabels>): PlacedLabels => ({ edges: [], hosts: [], actors: [], ...p });
+
 describe('stablePlacement', () => {
-  const a: PlacedLabels = { edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 10.1 }], hosts: [] };
+  const a = P({ edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 10.1 }] });
   it('keeps the previous object when nothing visible changed', () => {
-    const b: PlacedLabels = { edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 10.4 }], hosts: [] };
-    expect(stablePlacement(a, b)).toBe(a);
+    expect(stablePlacement(a, P({ edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 10.4 }] }))).toBe(a);
   });
   it('takes the new one when a label appears, goes, or turns', () => {
-    expect(stablePlacement(a, { edges: [], hosts: [] })).not.toBe(a);
-    expect(stablePlacement(a, { edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 40 }], hosts: [] })).not.toBe(a);
+    expect(stablePlacement(a, P({}))).not.toBe(a);
+    expect(stablePlacement(a, P({ edges: [{ id: 'e', text: 'x', position: [0, 0], angle: 40 }] }))).not.toBe(a);
+  });
+  it('takes the new one when a label keeps its id but its text, anchor or ring size changed (refetch)', () => {
+    expect(stablePlacement(a, P({ edges: [{ id: 'e', text: 'y', position: [0, 0], angle: 10.1 }] }))).not.toBe(a);
+    expect(stablePlacement(a, P({ edges: [{ id: 'e', text: 'x', position: [3, 4], angle: 10.1 }] }))).not.toBe(a);
+    const h = P({ hosts: [{ id: 'p1', text: 'Host A', position: [1, 2], radiusPx: 10 }] });
+    expect(stablePlacement(h, P({ hosts: [{ id: 'p1', text: 'Host A', position: [1, 2], radiusPx: 10 }] }))).toBe(h);
+    expect(stablePlacement(h, P({ hosts: [{ id: 'p1', text: 'Host A', position: [1, 2], radiusPx: 18 }] }))).not.toBe(h);
+    expect(stablePlacement(h, P({ hosts: [{ id: 'p1', text: 'Host B', position: [1, 2], radiusPx: 10 }] }))).not.toBe(h);
+    expect(stablePlacement(h, P({ hosts: [{ id: 'p1', text: 'Host A', position: [9, 2], radiusPx: 10 }] }))).not.toBe(h);
+  });
+  it('a provider rank swap (same ids, swapped sizes) is a change', () => {
+    const before = P({ hosts: [{ id: 'a', text: 'A', position: [0, 0], radiusPx: 20 }, { id: 'b', text: 'B', position: [10, 10], radiusPx: 12 }] });
+    const after = P({ hosts: [{ id: 'a', text: 'A', position: [0, 0], radiusPx: 12 }, { id: 'b', text: 'B', position: [10, 10], radiusPx: 20 }] });
+    expect(stablePlacement(before, after)).toBe(after);
+  });
+  it('actor labels: same ids but a new count/text is a change; identical is not', () => {
+    const x = P({ actors: [{ id: 'DE', text: 'DE · high', position: [10, 51], radiusPx: 12 }] });
+    expect(stablePlacement(x, P({ actors: [{ id: 'DE', text: 'DE · high', position: [10, 51], radiusPx: 12 }] }))).toBe(x);
+    expect(stablePlacement(x, P({ actors: [{ id: 'DE', text: 'DE · low', position: [10, 51], radiusPx: 12 }] }))).not.toBe(x);
+    expect(stablePlacement(x, P({ actors: [{ id: 'DE', text: 'DE · high', position: [10, 51], radiusPx: 16 }] }))).not.toBe(x);
+  });
+});
+
+describe('actor labels go through the same screen-space placement', () => {
+  const size = { width: 800, height: 500 };
+  const country = (cc: string, lng: number, lat: number, items = 1, confidence: number | null = 0.9): ActorCountry => ({
+    country: cc, position: [lng, lat], confidence, items, asns: [], phase: 0,
+  });
+  const model = (countries: ActorCountry[]): ActorModel => ({ actorId: 'ta', countries, edges: [], asns: [], clusters: [], unplaced: 0, empty: countries.length === 0 });
+  // lng/lat straight to pixels.
+  const project: Project = ([lng, lat]) => ({ x: lng, y: lat });
+  it('builds one source per country, text "CC · band"', () => {
+    const src = actorLabelSources(model([country('DE', 10, 50, 3, 0.9), country('RU', 100, 60, 1, null)]));
+    expect(src.map(s => s.text)).toEqual(['DE · high', 'RU · unknown']);
+    expect(src[0]!.radiusPx).toBeGreaterThan(8);
+  });
+  it('drops a label that would clip at the screen edge (the old layer drew it half cut off)', () => {
+    const src = actorLabelSources(model([country('DE', 400, 250), country('US', 4, 250)]));
+    const out = placeLensLabels({ edges: [], hosts: [], actors: src, nodes: [] }, project, size);
+    expect(out.actors.map(a => a.id)).toEqual(['DE']);
+  });
+  it('drops the lower-priority label of two that collide', () => {
+    const src = actorLabelSources(model([country('DE', 400, 250, 5), country('FR', 408, 252, 1)]));
+    const out = placeLensLabels({ edges: [], hosts: [], actors: src, nodes: [] }, project, size);
+    expect(out.actors.map(a => a.id)).toEqual(['DE']);
+  });
+  it('keeps clear of a provider label already placed, and caps the count', () => {
+    const many = model(Array.from({ length: 30 }, (_, i) => country(`C${i}`, 60 + (i % 10) * 70, 60 + Math.floor(i / 10) * 120)));
+    const out = placeLensLabels({ edges: [], hosts: [], actors: actorLabelSources(many), nodes: [] }, project, size);
+    expect(out.actors.length).toBeLessThanOrEqual(MAX_ACTOR_LABELS);
+    expect(out.actors.length).toBeGreaterThan(0);
+  });
+  it('no actor sources => none placed', () => {
+    expect(placeLensLabels({ edges: [], hosts: [], nodes: [] }, project, size).actors).toEqual([]);
   });
 });

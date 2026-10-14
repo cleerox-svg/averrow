@@ -38,7 +38,7 @@ import type { BotShareModel } from '../lib/lens/bot-share';
 import { botHover } from '../lib/lens/bot-share';
 import type { CampaignsModel, CampaignArc } from '../lib/lens/campaigns';
 import type { ActorModel, ActorCountry, ActorEdge } from '../lib/lens/actors';
-import { confidenceBand } from '../lib/lens/actors';
+import { actorNodePx, confidenceBand } from '../lib/lens/actors';
 import type { MovementModel, MovementHop, MovementPulse } from '../lib/lens/movement';
 import { HOP_UNITS, hopLabel } from '../lib/lens/movement';
 import { countryCenter } from '../lib/lens/placement';
@@ -49,7 +49,7 @@ import {
   type PulseExtensionProps, type RingMaskExtensionProps, type DashFlowExtensionProps,
 } from '../anim';
 import { memoByModel, memoByModelAndKey } from './memo';
-import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel } from './lens-labels';
+import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel, PlacedActorLabel } from './lens-labels';
 
 // ─── Types shared with ThreatMapV3 ──────────────────────────
 
@@ -579,10 +579,10 @@ const BAND_ALPHA = { high: 235, medium: 170, low: 105, unknown: 80 } as const;
 function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.actors;
   if (!m || m.empty) return [];
-  const { reducedMotion, pick } = input;
+  const { reducedMotion, pick, labels } = input;
   const animTime = reducedMotion ? 0 : frame.seconds;
   const bandAlpha = (c: ActorCountry): number => BAND_ALPHA[confidenceBand(c.confidence)];
-  const radius = (c: ActorCountry): number => 8 + 4 * Math.sqrt(c.items);
+  const radius = (c: ActorCountry): number => actorNodePx(c.items);
   const shared = {
     data: m.countries,
     getPosition: posNode,
@@ -639,18 +639,21 @@ function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       // through to the map and clear the selection).
       onClick: (info: PickInfo<ActorCountry>) => (info.object ? pick.click({ kind: 'actor', id: m.actorId }) : false),
     }),
-    new TextLayer<ActorCountry>({
+  );
+  // Country names that fit without clipping at the edge or colliding (placed when the camera settles).
+  if (labels.actors.length > 0) {
+    out.push(new TextLayer<PlacedActorLabel>({
       id: 'actor-labels',
       ...labelStyle(),
-      data: m.countries,
-      getPosition: posNode,
-      getText: (c: ActorCountry) => `${c.country} · ${confidenceBand(c.confidence)}`,
+      data: labels.actors,
+      getPosition: a => a.position,
+      getText: a => a.text,
       getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'top',
-      getPixelOffset: (c: ActorCountry) => [0, radius(c) + 8],
-    }),
-  );
+      getPixelOffset: a => [0, a.radiusPx + 10],
+    }));
+  }
   return out;
 }
 

@@ -66,6 +66,11 @@ export interface ActorEdge {
   distances: number[];
 }
 
+/** Pixel radius of an actor's country marker (labels keep clear of it). */
+export function actorNodePx(items: number): number {
+  return 8 + 4 * Math.sqrt(items);
+}
+
 export interface ActorModel {
   actorId: string;
   countries: ActorCountry[];

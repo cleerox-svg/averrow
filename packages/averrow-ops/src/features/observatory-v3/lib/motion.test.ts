@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  motionPolicy, breatheAmp, isLoudSeverity, fadeProgress, lensFade, loopNeeded, PING_COLOR,
+  motionPolicy, breatheAmp, isLoudSeverity, fadeProgress, lensFade, loopNeeded, splitFade, PING_COLOR,
   LENS_FADE_IN_MS, LENS_FADE_OUT_MS, COLOR_TRANSITION_MS, DRAWER_ENTER_MS,
 } from './motion';
 import { SEVERITY_COLORS, THREAT_TYPE_COLORS } from './map-colors';
@@ -74,6 +74,19 @@ describe('lens cross-fade (clock driven)', () => {
   it('is instant under reduced motion and when nothing changed', () => {
     expect(lensFade(1000, 1000, true)).toEqual({ incoming: 1, outgoing: 0, active: false });
     expect(lensFade(1000, null, false)).toEqual({ incoming: 1, outgoing: 0, active: false });
+  });
+});
+
+describe('splitFade: only layers that actually change across a lens switch fade', () => {
+  it('a layer in both scenes neither re-fades in nor leaves an out: twin', () => {
+    const s = splitFade(['nodes-core', 'particle-trails', 'ops-bloom'], ['nodes-core', 'particle-trails', 'hosting-rings']);
+    expect(s.fadeIn).toEqual(['ops-bloom']);
+    expect(s.fadeOut).toEqual(['hosting-rings']);
+  });
+  it('identical scenes fade nothing; disjoint scenes fade everything', () => {
+    expect(splitFade(['a', 'b'], ['a', 'b'])).toEqual({ fadeIn: [], fadeOut: [] });
+    expect(splitFade(['a'], ['b'])).toEqual({ fadeIn: ['a'], fadeOut: ['b'] });
+    expect(splitFade([], ['b'])).toEqual({ fadeIn: [], fadeOut: ['b'] });
   });
 });
 

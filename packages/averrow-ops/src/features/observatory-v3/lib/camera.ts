@@ -28,6 +28,34 @@ export const FLY_MS = 720;
 export const FLY_CURVE = 1.2;
 /** Breathing room kept between a framed target and the edge of the free area, px (a node never sits on the edge). */
 export const FRAME_MARGIN = 40;
+/** Mercator world width at zoom 0, px (512px tiles). */
+const WORLD_PX = 512;
+/** Closest-in floor of the phone's minimum zoom: it never needs to be higher than the original 0.5. */
+const PHONE_MIN_ZOOM_CAP = 0.5;
+/**
+ * Lowest zoom a phone map may reach, derived from its canvas width: low enough that the whole world fits
+ * inside the framing margins on both sides, so a world-spanning target (US to Japan) can be framed in full.
+ * A fixed 0.5 floor clipped those on 400px screens (the world is 512px * 2^z wide).
+ */
+export function phoneMinZoom(canvasWidth: number): number {
+  if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
+  const free = Math.max(64, canvasWidth - 2 * (12 + FRAME_MARGIN));
+  return Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX));
+}
+
+/** MapLibre's own default minimum zoom (restored when leaving the phone layout). */
+export const DEFAULT_MIN_ZOOM = -2;
+
+/** Mercator's own latitude limit (MapLibre's default `latRange`). */
+export const WORLD_LAT_LIMIT = 85.051129;
+/**
+ * Latitude range a phone map may show. MapLibre keeps the world covering the canvas VERTICALLY, so on an
+ * 800px-tall phone it cannot zoom out below ~0.3 however low `minZoom` is, and a 214 degree target (US to
+ * Japan) does not fit 400px of width. Allowing the (empty, background-coloured) space beyond the poles lifts
+ * that floor, so the width-derived `phoneMinZoom` is what actually applies.
+ */
+export const PHONE_LAT_LIMIT = 89.5;
+
 /** Half-size of the box built round a single point so cameraForBounds has something to fit. */
 const POINT_EPS = 0.02;
 

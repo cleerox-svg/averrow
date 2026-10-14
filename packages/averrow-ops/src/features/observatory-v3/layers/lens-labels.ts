@@ -14,8 +14,9 @@
 import type { LngLat } from '@/lib/country-centroids';
 import type { OperationsModel, OpEdge } from '../lib/lens/operations';
 import type { HostingModel } from '../lib/lens/hosting';
-import { placeLabels, samePlacement, type LabelCandidate, type Obstacle } from '../lib/label-placement';
-import { memoByModelAndKey } from './memo';
+import { confidenceBand, actorNodePx, type ActorModel } from '../lib/lens/actors';
+import { placeLabels, type LabelCandidate, type Obstacle } from '../lib/label-placement';
+import { memoByModel, memoByModelAndKey } from './memo';
 
 // ─── Stage 1: sources ───────────────────────────────────────
 
@@ -42,12 +43,22 @@ export interface HostLabelSource {
   priority: number;
 }
 
+export interface ActorLabelSource {
+  /** Country code. */
+  id: string;
+  text: string;
+  position: LngLat;
+  radiusPx: number;
+  priority: number;
+}
+
 /** Candidates considered per kind before screen-space de-dup. */
 export const MAX_EDGE_CANDIDATES = 60;
 export const MAX_HOST_CANDIDATES = 14;
 /** Labels kept after de-dup. */
 export const MAX_EDGE_LABELS = 10;
 export const MAX_HOST_LABELS = 8;
+export const MAX_ACTOR_LABELS = 10;
 
 const pathLength = (e: OpEdge): number => e.distances[e.distances.length - 1] ?? 0;
 
@@ -88,22 +99,36 @@ export const hostLabelSources = memoByModelAndKey((m: HostingModel, selectedId: 
   return out;
 });
 
+/** One label per attributed country: "DE · high". Most-attested, best-evidenced first. */
+export const actorLabelSources = memoByModel((m: ActorModel): ActorLabelSource[] =>
+  m.countries.map(c => ({
+    id: c.country,
+    text: `${c.country} · ${confidenceBand(c.confidence)}`,
+    position: c.position,
+    radiusPx: actorNodePx(c.items),
+    priority: c.items + (c.confidence ?? 0),
+  })));
+
 // ─── Stage 2: placement ─────────────────────────────────────
 
 export interface PlacedEdgeLabel { id: string; text: string; position: LngLat; angle: number }
 export interface PlacedHostLabel { id: string; text: string; position: LngLat; radiusPx: number }
+export interface PlacedActorLabel { id: string; text: string; position: LngLat; radiusPx: number }
 export interface PlacedLabels {
   edges: PlacedEdgeLabel[];
   hosts: PlacedHostLabel[];
+  actors: PlacedActorLabel[];
 }
 
-export const NO_LABELS: PlacedLabels = { edges: [], hosts: [] };
+export const NO_LABELS: PlacedLabels = { edges: [], hosts: [], actors: [] };
 
 export type Project = (p: LngLat) => { x: number; y: number } | null;
 
 export interface PlaceInput {
   edges: readonly EdgeLabelSource[];
   hosts: readonly HostLabelSource[];
+  /** The Actors lens's country markers (optional: only that lens draws them). */
+  actors?: readonly ActorLabelSource[];
   /** Discs the labels must clear (operation nodes, provider rings). */
   nodes: ReadonlyArray<{ position: LngLat; radiusPx: number; /** Provider id: its own label may sit against it. */ id?: string }>;
 }
@@ -162,13 +187,49 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
       return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx } satisfies PlacedHostLabel;
     });
 
-  return { edges, hosts };
+  // Actor country markers: their names get the same treatment (no clipping at the edge, no collisions
+  // with the edge / provider labels already placed).
+  const actorCands: LabelCandidate[] = [];
+  const actorById = new Map<string, ActorLabelSource>();
+  for (const a of input.actors ?? []) {
+    const p = project(a.position);
+    if (!p) continue;
+    actorCands.push({ id: a.id, text: a.text, x: p.x, y: p.y, dy: a.radiusPx + 10, priority: a.priority });
+    actorById.set(a.id, a);
+  }
+  const actorObstacles = hostObstacles.concat(hosts.flatMap(h => {
+    const p = project(h.position);
+    return p ? [{ x: p.x, y: p.y + h.radiusPx + 10, r: (h.text.length * 6.4) / 2 }] : [];
+  }));
+  const actors = placeLabels(actorCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_ACTOR_LABELS, obstacles: actorObstacles })
+    .map(p => {
+      const src = actorById.get(p.id)!;
+      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx } satisfies PlacedActorLabel;
+    });
+
+  return { edges, hosts, actors };
 }
 
-/** Keep the previous object when nothing visible changed, so layer `data` identity survives no-op camera moves. */
+const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1];
+
+/**
+ * Keep the previous object when nothing visible changed, so layer `data` identity survives no-op camera moves.
+ * "Visible" is everything a label draws from: id and order, text, anchor position, ring radius and (edges)
+ * the screen angle to the degree. A refetch that keeps the same ids but moves a provider, renames it or
+ * resizes its ring must NOT be swallowed here, or the map keeps painting the old label.
+ */
 export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedLabels {
-  const same =
-    samePlacement(prev.edges.map(e => ({ id: e.id, angle: e.angle })), next.edges.map(e => ({ id: e.id, angle: e.angle }))) &&
-    samePlacement(prev.hosts.map(h => ({ id: h.id, angle: 0 })), next.hosts.map(h => ({ id: h.id, angle: 0 })));
-  return same ? prev : next;
+  const edgesSame = prev.edges.length === next.edges.length && prev.edges.every((e, i) => {
+    const n = next.edges[i]!;
+    return e.id === n.id && e.text === n.text && samePos(e.position, n.position) && Math.round(e.angle) === Math.round(n.angle);
+  });
+  const hostsSame = prev.hosts.length === next.hosts.length && prev.hosts.every((h, i) => {
+    const n = next.hosts[i]!;
+    return h.id === n.id && h.text === n.text && h.radiusPx === n.radiusPx && samePos(h.position, n.position);
+  });
+  const actorsSame = prev.actors.length === next.actors.length && prev.actors.every((a, i) => {
+    const n = next.actors[i]!;
+    return a.id === n.id && a.text === n.text && a.radiusPx === n.radiusPx && samePos(a.position, n.position);
+  });
+  return edgesSame && hostsSame && actorsSame ? prev : next;
 }
