@@ -33,6 +33,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
@@ -55,10 +56,11 @@ import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
-  effectiveProjection, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
-  FLAT_SKY, GLOBE_BACKDROP, GLOBE_SKY, type OcclusionProbe, type Projection,
+  effectiveProjection, globeBleeds, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
+  GLOBE_BACKDROP, applySky, type OcclusionProbe, type Projection,
 } from '../lib/projection';
 import { useIdleSpin, SPIN_EVENT_KEY } from '../lib/use-idle-spin';
+import { ProjectionToggle } from './ProjectionToggle';
 import {
   useDeckFrame, PulseExtension, RingExtension, RingBuffer, ringBufferLayerProps, ImpactRingSpawner,
   ArrivalScheduler, buildArrivalEvents, phaseForKey, pulseRateForSeverity, pulseAmpForSeverity,
@@ -162,6 +164,8 @@ export interface ThreatMapV3Props {
    * the density heatmap has no globe variant and stays flat.
    */
   projection?: Projection;
+  /** The Flat | Globe toggle in the map's zoom cluster calls this (omit to show no toggle). */
+  onProjection?: (projection: Projection) => void;
   /** The page is showing something the viewer is reading (the legend is open): the globe holds still. */
   spinHold?: boolean;
   /** Quiet time (ms) before the globe starts to drift; defaults to SPIN_IDLE_MS (tests and kiosks override it). */
@@ -238,6 +242,16 @@ function disposeOverlay(map: maplibregl.Map, overlay: MapboxOverlay, kind: Overl
   releaseOwnedGl(ownCanvas);
 }
 
+/** An empty cell in MapLibre's control stack (same chrome and placement as the zoom buttons) that React portals into. */
+class ProjectionSlot implements maplibregl.IControl {
+  readonly element = document.createElement('div');
+  onAdd(): HTMLElement {
+    this.element.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    return this.element;
+  }
+  onRemove(): void { this.element.remove(); }
+}
+
 // ─── Error boundary ─────────────────────────────────────────
 class MapErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -308,7 +322,7 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
-  mapMode, projection: requestedProjection = 'flat', spinHold = false, spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
+  mapMode, projection: requestedProjection = 'flat', onProjection, spinHold = false, spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
   controlRightInset = 0, cameraInsets = NO_INSETS,
   selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null,
   lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
@@ -358,8 +372,14 @@ function ThreatMapV3Inner({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [tileIssue, setTileIssue] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  // Globe: the canvas is the area the chrome leaves free, so the planet is centred in it (see globeCanvasBox).
-  const box = globeCanvasBox({ left: cameraInsets.left, right: cameraInsets.right }, projection);
+  // Globe: while the whole planet is in view the canvas is the area the chrome leaves free, so the planet is centred in
+  // it; zoomed in past the disc it is full-bleed and the planet flows under the chrome like the flat map (globeCanvasBox).
+  const [bleed, setBleed] = useState(false);
+  const bleedRef = useRef(false);
+  bleedRef.current = bleed;
+  /** The canvas box is changing because of the zoom (not the chrome): the view is kept where it is (see the box effect). */
+  const bleedFlipRef = useRef(false);
+  const box = globeCanvasBox({ left: cameraInsets.left, right: cameraInsets.right }, projection, bleed);
   /** The map canvas's own size (equals `size` on the flat map). */
   const canvasSize = useMemo(
     () => (box.left === 0 && box.right === 0 ? size : { width: Math.max(0, size.width - box.left - box.right), height: size.height }),
@@ -368,8 +388,8 @@ function ThreatMapV3Inner({
 
   // Stable handler bag: layers close over THIS, never over props, so a parent
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
-  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: { width: 0, height: 0 } });
-  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: canvasSize };
+  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: { width: 0, height: 0 }, root: { width: 0, height: 0 } });
+  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, onProjection, lens, mapMode, canvas: canvasSize, root: size };
   /** A click deck.gl delivered itself while the interleaved (globe) overlay is up: dropped, `onMapClick` owns clicks there. */
   const deckNativeClick = useCallback(() => overlayInterleavedRef.current && !dispatchingClickRef.current, []);
   const handlers = useMemo(() => ({
@@ -428,12 +448,53 @@ function ThreatMapV3Inner({
   // Keep the zoom control clear of the panel overlaying the map's right edge.
   const applyControlInset = useCallback(() => {
     const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
-    // On the globe the canvas already ends where the panel starts.
-    if (ctrl) ctrl.style.right = projectionRef.current === 'globe' ? '0px' : `${latest.current.controlRightInset}px`;
+    // On the inset globe the canvas already ends where the panel starts.
+    if (ctrl) ctrl.style.right = projectionRef.current === 'globe' && !bleedRef.current ? '0px' : `${latest.current.controlRightInset}px`;
   }, []);
-  useEffect(applyControlInset, [controlRightInset, projection, applyControlInset]);
-  // The canvas box changed (panel opened, globe on / off): the GL canvas must follow.
-  useEffect(() => { mapRef.current?.resize(); }, [box.left, box.right]);
+  useEffect(applyControlInset, [controlRightInset, projection, bleed, applyControlInset]);
+  // The canvas box changed (panel opened, globe on / off, zoomed past the disc): the GL canvas must follow.
+  const prevBoxRef = useRef(box);
+  useEffect(() => {
+    const prev = prevBoxRef.current;
+    prevBoxRef.current = box;
+    const map = mapRef.current;
+    if (!map) return;
+    map.resize();
+    const flip = bleedFlipRef.current;
+    bleedFlipRef.current = false;
+    const W = latest.current.root.width;
+    // A chrome change recentres the planet in the new free area (intended). A ZOOM-driven change must not move the
+    // view: the canvas centre moved by `dx` page px, so put the map centre on the point that is now `dx` to its side.
+    if (!flip || !(W > 0) || typeof map.unproject !== 'function') return;
+    const dx = (box.left + (W - box.right)) / 2 - (prev.left + (W - prev.right)) / 2;
+    if (dx === 0) return;
+    const el = map.getContainer?.();
+    const c = map.unproject([(el?.clientWidth ?? W) / 2 + dx, (el?.clientHeight ?? latest.current.root.height) / 2]);
+    if (c && Number.isFinite(c.lng) && Number.isFinite(c.lat)) map.jumpTo({ center: c });
+  }, [box.left, box.right]);
+
+  // Full-bleed once the planet no longer fits the free area. Decided when the camera settles (never mid-zoom: a
+  // canvas change would cancel the ease), and reset whenever the projection changes.
+  useEffect(() => {
+    bleedFlipRef.current = false;
+    setBleed(false);
+  }, [projection]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !isGlobe) return;
+    const check = () => {
+      const ins = latest.current.cameraInsets;
+      const root = latest.current.root;
+      const free = Math.min(root.width - ins.left - ins.right, root.height);
+      const next = globeBleeds(map.getZoom(), free, bleedRef.current);
+      if (next === bleedRef.current) return;
+      bleedFlipRef.current = true;
+      setBleed(next);
+    };
+    map.on('moveend', check);
+    check();
+    return () => { map.off('moveend', check); };
+  }, [mapLoaded, isGlobe, size.width, size.height, cameraInsets.left, cameraInsets.right]);
 
   // ─── Map initialization (once per mount; retry remounts) ──
   useEffect(() => {
@@ -546,6 +607,28 @@ function ThreatMapV3Inner({
       navControlRef.current = null;
     }
   }, [isMobile, mapLoaded, applyControlInset]);
+
+  // The Flat | Globe toggle: one more cell in the zoom cluster (bottom-right; top-right under the toolbar on phones,
+  // which have no zoom buttons and a crowded bottom edge).
+  const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
+  const hasProjectionToggle = !!onProjection;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded || !hasProjectionToggle) return;
+    const ctrl = new ProjectionSlot();
+    map.addControl(ctrl, isMobile ? 'top-right' : 'bottom-right');
+    setSlotEl(ctrl.element);
+    return () => {
+      try { map.removeControl(ctrl); } catch { /* map already removed */ }
+      setSlotEl(null);
+    };
+  }, [mapLoaded, isMobile, hasProjectionToggle]);
+  const phoneTop = cameraInsets.top;
+  useEffect(() => {
+    if (!isMobile) return;
+    const corner = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-top-right');
+    if (corner) corner.style.top = `${phoneTop}px`;
+  }, [isMobile, phoneTop, slotEl]);
 
   // The phone's zoom floor follows the canvas width (a rotation changes how much world fits). The latitude
   // range is widened with it: otherwise MapLibre's "world must cover the canvas vertically" rule pins the
@@ -991,8 +1074,7 @@ function ThreatMapV3Inner({
     if (prev === null && projection === 'flat') return;
     map.setProjection(projectionSpec(projection));
     map.setMaxZoom(maxZoomFor(projection));
-    if (projection === 'globe') map.setSky(GLOBE_SKY);
-    else map.setSky(FLAT_SKY);
+    applySky(map, projection);
     if (prev !== null) {
       // A flip re-frames the world: the globe fits the planet in the canvas, the flat map returns to its overview.
       const c = map.getCenter();
@@ -1155,10 +1237,10 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!map || !mapLoaded || !focus) return;
     pokeSpin(); // a requested camera move is an interaction: the globe waits before drifting again
-    // On the globe the canvas already excludes the left / right chrome: only top and bottom remain as insets.
+    // On the inset globe the canvas already excludes the left / right chrome: only top and bottom remain as insets.
     const ci = latest.current.cameraInsets;
-    const globeNow = projectionRef.current === 'globe';
-    const plan = planCamera(focus.points, latest.current.canvas, globeNow ? { ...ci, left: 0, right: 0 } : ci);
+    const insetCanvas = projectionRef.current === 'globe' && !bleedRef.current;
+    const plan = planCamera(focus.points, latest.current.canvas, insetCanvas ? { ...ci, left: 0, right: 0 } : ci);
     if (!plan) return; // nothing placeable: select without moving the camera
     const cam = map.cameraForBounds(
       [[plan.box.west, plan.box.south], [plan.box.east, plan.box.north]],
@@ -1179,6 +1261,16 @@ function ThreatMapV3Inner({
         data-projection={projection}
         style={{ left: box.left, right: box.right }}
       />
+
+      {slotEl && createPortal(
+        <ProjectionToggle
+          projection={requestedProjection}
+          flatOnly={mapMode === 'heatmap'}
+          onToggle={next => latest.current.onProjection?.(next)}
+          touch={isMobile}
+        />,
+        slotEl,
+      )}
 
       {tileIssue && (
         <div

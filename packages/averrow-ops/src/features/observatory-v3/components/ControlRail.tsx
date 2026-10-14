@@ -9,7 +9,8 @@
  *   TRAFFIC   threat traffic underneath: Off | Nodes | Nodes + Flow
  *   Beams     static attack corridors
  *   Colour    severity | threat type
- *   PROJECTION  Flat map | Globe (the globe is unavailable on the density heatmap)
+ *
+ * (Flat | Globe is a MAP control, not a lens control: it lives in the map's zoom cluster, see ProjectionToggle.)
  *
  * Every control is an icon button with a tooltip and, where one exists, its
  * keyboard hint (the 1-9 layer keys keep working; they just aren't a list any
@@ -18,12 +19,11 @@
  */
 
 import { useCallback, useId, useState, type ReactNode } from 'react';
-import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Globe2, Map as MapIcon, Palette, Route, Scale, ScatterChart, Server, ShieldCheck, Zap } from 'lucide-react';
+import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart, Server, ShieldCheck, Zap } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LayerToggles, LensId } from '../lib/lenses';
 import type { ColorBy, Measure, ThreatView } from '../lib/url-state';
 import { announceTraffic, trafficModeOf, trafficPatch, TRAFFIC_LABEL, type TrafficMode } from '../lib/controls';
-import type { Projection } from '../lib/projection';
 
 export interface ControlRailProps {
   lens: LensId;
@@ -38,11 +38,6 @@ export interface ControlRailProps {
   onColorBy: (colorBy: ColorBy) => void;
   /** Holds `manage_takedowns`: only then are the Takedowns measures offered (the server refuses them to every other role). */
   canSeeTakedowns?: boolean;
-  /** The REQUESTED projection (the URL's `proj`). */
-  projection: Projection;
-  onProjection: (projection: Projection) => void;
-  /** False where the globe cannot draw the scene (the density heatmap): the Globe button is disabled with a reason. */
-  globeAvailable?: boolean;
   /** `rail`: 44px icon column (tablet / desktop). `panel`: labelled 44px rows (phone filters card). */
   layout?: 'rail' | 'panel';
   className?: string;
@@ -118,7 +113,7 @@ function Group({ label, items, layout }: { label: string; items: Item[]; layout:
 
 export function ControlRail({
   lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, canSeeTakedowns = false,
-  projection, onProjection, globeAvailable = true, layout = 'rail', className,
+  layout = 'rail', className,
 }: ControlRailProps) {
   const [announcement, setAnnouncement] = useState('');
   const say = useCallback((msg: string) => setAnnouncement(prev => (prev === msg ? `${msg}​` : msg)), []);
@@ -148,19 +143,6 @@ export function ControlRail({
       id: 'color', label: colorBy === 'severity' ? 'Colour: severity' : 'Colour: type',
       hint: 'Switch the colour key between severity and threat type', icon: icon(<Palette size={16} />), pressed: colorBy === 'type',
       onPress: () => { const next: ColorBy = colorBy === 'severity' ? 'type' : 'severity'; onColorBy(next); say(`Colour by ${next === 'severity' ? 'severity' : 'threat type'}`); },
-    },
-  ];
-
-  const projectionItems: Item[] = [
-    {
-      id: 'proj-flat', label: 'Flat map', hint: 'Web Mercator: the analyst default', icon: icon(<MapIcon size={16} />),
-      pressed: projection === 'flat', onPress: () => { onProjection('flat'); say('Projection: flat map'); },
-    },
-    {
-      id: 'proj-globe', label: 'Globe', icon: icon(<Globe2 size={16} />),
-      hint: globeAvailable ? 'True great-circle arcs on a rotating planet. Drifts when idle.' : 'The density heat view is flat-only',
-      disabled: !globeAvailable,
-      pressed: projection === 'globe', onPress: () => { onProjection('globe'); say('Projection: globe'); },
     },
   ];
 
@@ -217,10 +199,6 @@ export function ControlRail({
           <Group label="Map options" items={extras} layout={layout} />
         </>
       )}
-      {panel
-        ? <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Projection</div>
-        : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
-      <Group label="Projection" items={projectionItems} layout={layout} />
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     </div>
   );

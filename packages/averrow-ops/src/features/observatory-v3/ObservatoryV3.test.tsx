@@ -241,6 +241,40 @@ describe('ObservatoryV3 lenses', () => {
   });
 });
 
+describe('ObservatoryV3 projection', () => {
+  it('the map gets the REQUESTED projection and a handler that writes proj; the rail has no projection control', async () => {
+    renderAt('/observatory?proj=globe');
+    await screen.findByRole('group', { name: 'Threat traffic underneath' });
+    const last = () => mapProps.mock.calls.at(-1)![0] as { projection: string; onProjection: (p: string) => void };
+    expect(last().projection).toBe('globe');
+    expect(screen.queryByRole('group', { name: 'Projection' })).not.toBeInTheDocument();
+    act(() => last().onProjection('flat'));
+    await waitFor(() => expect(search).not.toContain('proj='));
+    act(() => last().onProjection('globe'));
+    await waitFor(() => expect(search).toContain('proj=globe'));
+  });
+
+  it('Heat keeps the requested globe (the preference is not dropped) while the map draws flat', async () => {
+    renderAt('/observatory?proj=globe&view=heat');
+    await waitFor(() => expect(mapProps.mock.calls.length).toBeGreaterThan(0));
+    const p = mapProps.mock.calls.at(-1)![0] as { projection: string; mapMode: string };
+    expect(p.mapMode).toBe('heatmap');
+    expect(p.projection).toBe('globe');
+    expect(search).toContain('proj=globe');
+  });
+});
+
+describe('ObservatoryV3 disabled controls explain themselves in text', () => {
+  it('the Fast view\'s all-sources source select says why on the phone filters card, where there is no tooltip', async () => {
+    window.innerWidth = 400;
+    renderAt('/observatory?view=fast');
+    await userEvent.click(await screen.findByRole('button', { name: /Filters/ }));
+    const notes = await screen.findAllByText('Fast weaponization is always all sources');
+    expect(notes.some(n => !n.classList.contains('sr-only'))).toBe(true); // written out, not only the screen-reader copy
+    window.innerWidth = 1440;
+  });
+});
+
 describe('ObservatoryV3 refresh', () => {
   it('the refresh button refetches the page data', async () => {
     renderAt('/observatory');

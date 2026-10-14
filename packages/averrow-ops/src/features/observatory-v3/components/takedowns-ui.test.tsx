@@ -20,7 +20,7 @@ import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_MIN_RES
 const railProps = (over: Partial<ControlRailProps> = {}): ControlRailProps => ({
   lens: 'baseline', layers: lensPreset('baseline'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
   onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(),
-  projection: 'flat', onProjection: vi.fn(), ...over,
+  ...over,
 });
 
 describe('ControlRail: Takedowns measures need manage_takedowns', () => {

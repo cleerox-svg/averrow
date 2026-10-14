@@ -72,11 +72,32 @@ export function globeFitZoom(width: number, height: number, fill = 0.72): number
 
 /**
  * Horizontal room the console's chrome takes (rail on the left, panel / drawer on the right). The flat map
- * runs underneath it, but a globe is a disc: it is centred in what is left by giving the CANVAS that box
- * (deck.gl's globe viewport has no `padding`, so MapLibre's own padding would put the overlay out of register).
+ * runs underneath it, but a globe is a disc: while the WHOLE planet is in view it is centred in what is left by giving
+ * the CANVAS that box (deck.gl's globe viewport has no `padding`, so MapLibre's own padding would put the overlay out of
+ * register). Once zoomed in past the disc (`bleed`) the planet fills the view and flows under the chrome like the flat
+ * map: an inset canvas would only cut it off at hard edges.
  */
-export function globeCanvasBox(insets: { left: number; right: number }, projection: Projection): { left: number; right: number } {
-  return projection === 'globe' ? { left: Math.max(0, insets.left), right: Math.max(0, insets.right) } : { left: 0, right: 0 };
+export function globeCanvasBox(insets: { left: number; right: number }, projection: Projection, bleed = false): { left: number; right: number } {
+  return projection === 'globe' && !bleed ? { left: Math.max(0, insets.left), right: Math.max(0, insets.right) } : { left: 0, right: 0 };
+}
+
+/** Apparent diameter (px) of the planet at `zoom` (MapLibre draws it at GLOBE_APPARENT_SCALE of the orthographic 512 * 2^z / pi). */
+export function globeDiscPx(zoom: number): number {
+  return ((512 * 2 ** zoom) / Math.PI) * GLOBE_APPARENT_SCALE;
+}
+
+/** The disc must be this much larger than the free area before the canvas goes full-bleed, and this much smaller before it is inset again. */
+export const BLEED_ENTER = 1.02;
+export const BLEED_EXIT = 0.9;
+
+/**
+ * Whether the globe canvas should be full-bleed at `zoom`: the disc no longer fits the area the chrome leaves free
+ * (`freePx` = its shorter side). Hysteresis, so a zoom resting near the threshold does not flip the canvas back and forth.
+ */
+export function globeBleeds(zoom: number, freePx: number, wasBleeding: boolean): boolean {
+  if (!(freePx > 0) || !Number.isFinite(zoom)) return wasBleeding;
+  const disc = globeDiscPx(zoom);
+  return wasBleeding ? disc > freePx * BLEED_EXIT : disc >= freePx * BLEED_ENTER;
 }
 
 /**
@@ -104,8 +125,22 @@ export const GLOBE_SKY: SkySpecification = {
   'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 4, 1, 7, 0],
 };
 
-/** The sky for flat mode: no atmosphere at all (blend 0) so the flat map is exactly as before. */
-export const FLAT_SKY: SkySpecification = { 'atmosphere-blend': 0 };
+/**
+ * The sky to give MapLibre for a projection. Flat has NONE: `setSky(undefined)` removes the style's sky entirely, which
+ * is exactly the state before the globe was ever shown. (The old flat sky, `{ 'atmosphere-blend': 0 }`, kept a sky
+ * object alive with the library's default colours, so a steeply pitched flat map could show a default-coloured sky.)
+ */
+export function skyFor(projection: Projection): SkySpecification | undefined {
+  return projection === 'globe' ? GLOBE_SKY : undefined;
+}
+
+/**
+ * Set (or remove) the sky for `projection`. MapLibre's own `Map.setSky` is typed as requiring a specification although
+ * the style layer behind it removes the sky on `undefined` (verified against the real library in maplibre-real.test.ts).
+ */
+export function applySky(map: { setSky(sky?: SkySpecification): unknown }, projection: Projection): void {
+  map.setSky(skyFor(projection));
+}
 
 /**
  * Label visibility on the globe has two parts (the projector in ThreatMapV3 combines them):

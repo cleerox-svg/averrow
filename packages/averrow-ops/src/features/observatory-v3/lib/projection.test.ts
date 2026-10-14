@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   DEFAULT_PROJECTION, PROJECTION_IDS, isProjection, effectiveProjection, overlayInterleaved, projectionSpec, maxZoomFor,
-  globeFitZoom, globeCanvasBox, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY,
-  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE,
+  globeFitZoom, globeCanvasBox, globeDiscPx, globeBleeds, BLEED_ENTER, BLEED_EXIT, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, skyFor,
+  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE,
 } from './projection';
 
 describe('projection ids', () => {
@@ -41,7 +41,8 @@ describe('overlay + spec decisions', () => {
     expect(maxZoomFor('flat')).toBe(FLAT_MAX_ZOOM);
   });
   it('the flat sky has no atmosphere; the globe sky has a glow that fades with zoom', () => {
-    expect(FLAT_SKY['atmosphere-blend']).toBe(0);
+    expect(skyFor('flat')).toBeUndefined(); // no sky at all: setSky(undefined) restores the pre-globe state
+    expect(skyFor('globe')).toBe(GLOBE_SKY);
     expect(GLOBE_SKY['atmosphere-blend']).toBeTruthy();
     expect(GLOBE_SKY['horizon-color']).toBeTruthy();
   });
@@ -83,6 +84,36 @@ describe('globeCanvasBox: the globe is centred in what the chrome leaves free', 
   it('globe: the canvas takes the horizontal insets', () => {
     expect(globeCanvasBox({ left: 60, right: 340 }, 'globe')).toEqual({ left: 60, right: 340 });
     expect(globeCanvasBox({ left: -5, right: 0 }, 'globe')).toEqual({ left: 0, right: 0 });
+  });
+  it('globe zoomed past the disc (bleed): the planet flows under the chrome, the canvas is the whole box', () => {
+    expect(globeCanvasBox({ left: 60, right: 340 }, 'globe', true)).toEqual({ left: 0, right: 0 });
+    expect(globeCanvasBox({ left: 60, right: 340 }, 'globe', false)).toEqual({ left: 60, right: 340 });
+  });
+});
+
+describe('globeBleeds: inset only while the disc fits', () => {
+  const free = 700;
+  const zoomWhereDiscIs = (frac: number) => Math.log2((frac * free * Math.PI) / (512 * GLOBE_APPARENT_SCALE));
+  it('the disc grows with zoom and matches globeFitZoom\'s planet size', () => {
+    expect(globeDiscPx(3)).toBeCloseTo(2 * globeDiscPx(2), 6);
+    const z = globeFitZoom(1000, 700, 0.72);
+    expect(globeDiscPx(z)).toBeCloseTo(0.72 * 700, 3);
+  });
+  it('the default planet-fit view is inset; zoomed far in it is full-bleed', () => {
+    expect(globeBleeds(globeFitZoom(1000, 700), 700, false)).toBe(false);
+    expect(globeBleeds(6, 700, false)).toBe(true);
+  });
+  it('enters bleed once the disc exceeds the free area, leaves it once it is well inside (hysteresis)', () => {
+    expect(globeBleeds(zoomWhereDiscIs(BLEED_ENTER - 0.01), free, false)).toBe(false);
+    expect(globeBleeds(zoomWhereDiscIs(BLEED_ENTER + 0.01), free, false)).toBe(true);
+    expect(globeBleeds(zoomWhereDiscIs(1), free, true)).toBe(true);                 // resting at the threshold: stays
+    expect(globeBleeds(zoomWhereDiscIs(BLEED_EXIT + 0.01), free, true)).toBe(true);
+    expect(globeBleeds(zoomWhereDiscIs(BLEED_EXIT - 0.01), free, true)).toBe(false);
+  });
+  it('an unknown size or zoom changes nothing', () => {
+    expect(globeBleeds(4, 0, false)).toBe(false);
+    expect(globeBleeds(4, 0, true)).toBe(true);
+    expect(globeBleeds(NaN, 700, true)).toBe(true);
   });
 });
 

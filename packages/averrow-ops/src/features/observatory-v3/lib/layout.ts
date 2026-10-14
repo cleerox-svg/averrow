@@ -170,6 +170,19 @@ export function chipPlacement(i: { rootHeight: number; wantBottom: number; topIn
   return { bottom, maxPanel };
 }
 
+/** Top of the control rail (under the one-row toolbar). */
+export const RAIL_TOP = 60;
+
+/**
+ * Tallest the control rail may be. The legend chip (and the replay timeline above it) shares the rail's left edge, so on
+ * a short canvas the rail would run into them: it stops a gap above the chip and scrolls instead. Never less than two
+ * buttons' worth. `undefined` while the root has no height yet.
+ */
+export function railMaxHeight(i: { rootHeight: number; chipBottom: number }): number | undefined {
+  if (!(i.rootHeight > 0)) return undefined;
+  return Math.max(96, Math.floor(i.rootHeight - RAIL_TOP - (i.chipBottom + CHIP_H + 8)));
+}
+
 /** Initial height (px) of a phone peek sheet in an area of `areaPx`: lets the camera plan for it before it has mounted. */
 export function initialSheetPx(areaPx: number, snap = 0): number {
   return Math.round(snapFraction(snap) * Math.max(0, areaPx));

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, act } from '@testing-library/react';
+import { render, act, within, fireEvent } from '@testing-library/react';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 // ─── Fakes (hoisted so the vi.mock factories can reference them) ──
@@ -27,7 +27,10 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     off(ev: string, cb: Handler) { this.handlers.set(ev, (this.handlers.get(ev) ?? []).filter(h => h !== cb)); return this; }
     isStyleLoaded() { return false; }
     getCanvas() { return this.canvas; }
-    addControl(c: unknown) { this.controls.push(c); (c as { onAdd?: (m: unknown) => void }).onAdd?.(this); }
+    positions = new Map<unknown, string | undefined>();
+    addControl(c: unknown, position?: string) { this.controls.push(c); this.positions.set(c, position); (c as { onAdd?: (m: unknown) => void }).onAdd?.(this); }
+    unproject = vi.fn(([x, y]: [number, number]) => ({ lng: x, lat: y }));
+    getContainer() { return { clientWidth: 1200, clientHeight: 700 }; }
     removeControl(c: unknown) { this.controls = this.controls.filter(x => x !== c); (c as { onRemove?: () => void }).onRemove?.(); }
     /** MapLibre's Evented keeps its listeners here (deck-utils' anonymous render listener lands in it). */
     get _listeners() { return Object.fromEntries(this.handlers); }
@@ -83,7 +86,7 @@ vi.mock('@deck.gl/aggregation-layers', () => ({ HeatmapLayer: FakeLayer }));
 vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
 import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
-import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
+import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
 import { buildHostingModel } from '../lib/lens/hosting';
 import { resetSpinSession } from '../lib/use-idle-spin';
 import { noLayers } from '../lib/lenses';
@@ -247,7 +250,7 @@ describe('ThreatMapV3 projection: switching', () => {
     rerender(<ThreatMapV3 {...base} projection="flat" />);
     expect(lastMap().setProjection).toHaveBeenLastCalledWith({ type: 'mercator' });
     expect(lastMap().setMaxZoom).toHaveBeenLastCalledWith(FLAT_MAX_ZOOM);
-    expect(lastMap().setSky).toHaveBeenLastCalledWith(FLAT_SKY);
+    expect(lastMap().setSky).toHaveBeenLastCalledWith(undefined); // the sky is removed, not left half-configured
     expect(overlays).toHaveLength(2); // reused, not rebuilt
     expect((flatOverlay.props.layers as unknown[]).length).toBeGreaterThan(0);
     expect(flatOverlay.props.onClick).toBeDefined();
@@ -577,5 +580,148 @@ describe('ThreatMapV3 globe: animation frame cap', () => {
   });
   it('the flat map still draws every display frame', () => {
     expect(framesDrawn('flat')).toBeGreaterThanOrEqual(55);
+  });
+});
+
+describe('ThreatMapV3: the Flat | Globe toggle lives in the map\'s zoom cluster', () => {
+  const slot = (): HTMLElement | undefined => (lastMap().controls.find(c => (c as { constructor: { name: string } }).constructor.name === 'ProjectionSlot') as { element: HTMLElement } | undefined)?.element;
+  const mounted = (el: HTMLElement) => { document.body.appendChild(el); return within(el); };
+  afterEach(() => { slot()?.remove(); });
+
+  it('adds one control to the bottom-right stack (same chrome as the zoom buttons) and renders the toggle into it', () => {
+    render(<ThreatMapV3 {...base} onProjection={vi.fn()} />);
+    ready();
+    const el = slot()!;
+    expect(el).toBeDefined();
+    expect(el.className).toContain('maplibregl-ctrl-group');
+    const ctrl = lastMap().controls.find(c => (c as { element?: HTMLElement }).element === el)!;
+    expect(lastMap().positions.get(ctrl)).toBe('bottom-right');
+    expect(mounted(el).getByRole('button', { name: 'Switch to globe' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('there is no toggle without a handler', () => {
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    expect(slot()).toBeUndefined();
+  });
+
+  it('pressing it asks for the other projection', () => {
+    const onProjection = vi.fn();
+    const { rerender } = render(<ThreatMapV3 {...base} onProjection={onProjection} />);
+    ready();
+    fireEvent.click(mounted(slot()!).getByRole('button'));
+    expect(onProjection).toHaveBeenLastCalledWith('globe');
+    rerender(<ThreatMapV3 {...base} projection="globe" onProjection={onProjection} />);
+    fireEvent.click(mounted(slot()!).getByRole('button'));
+    expect(onProjection).toHaveBeenLastCalledWith('flat');
+  });
+
+  it('it is in every view; in Heat it is disabled with the reason, and the REQUESTED globe stays pressed', () => {
+    const onProjection = vi.fn();
+    render(<ThreatMapV3 {...base} mapMode="heatmap" projection="globe" onProjection={onProjection} heatmapData={[{ lat: 1, lng: 2, severity: 'low', threat_type: 'c2', weight: 1 } as never]} />);
+    ready();
+    const q = mounted(slot()!);
+    const btn = q.getByRole('button');
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(q.getByText('Heat view is flat-only')).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onProjection).not.toHaveBeenCalled();
+  });
+
+  it('on a phone (no zoom buttons, crowded bottom edge) it sits top-right, under the toolbar', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 400 });
+    render(<ThreatMapV3 {...base} onProjection={vi.fn()} cameraInsets={{ top: 108, right: 0, bottom: 0, left: 0 }} />);
+    ready();
+    const ctrl = lastMap().controls.find(c => (c as { constructor: { name: string } }).constructor.name === 'ProjectionSlot')!;
+    expect(lastMap().positions.get(ctrl)).toBe('top-right');
+    expect(mounted((ctrl as { element: HTMLElement }).element).getByRole('button').style.width).toBe('44px');
+    (ctrl as { element: HTMLElement }).element.remove();
+  });
+
+  it('is removed from the map with the component', () => {
+    const { unmount } = render(<ThreatMapV3 {...base} onProjection={vi.fn()} />);
+    ready();
+    const m = lastMap();
+    unmount();
+    expect(m.controls.some(c => (c as { constructor: { name: string } }).constructor.name === 'ProjectionSlot')).toBe(false);
+  });
+});
+
+describe('ThreatMapV3 globe: inset only while the whole planet fits', () => {
+  const insets = { top: 64, right: 344, bottom: 80, left: 68 };
+  const container = (c: HTMLElement) => c.querySelector<HTMLElement>('[data-projection]')!;
+  const settleAt = (zoom: number) => act(() => { lastMap().getZoom = () => zoom; lastMap().emit('moveend', {}); });
+
+  it('the default planet-fit view is inset (centred in the free area)', () => {
+    const { container: c } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    expect(container(c).style.left).toBe('68px');
+    expect(container(c).style.right).toBe('344px');
+  });
+
+  it('zoomed past the disc the canvas fills the box (the planet flows under the chrome like the flat map); back out, it is inset again', () => {
+    const { container: c } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    settleAt(6);
+    expect(container(c).style.left).toBe('0px');
+    expect(container(c).style.right).toBe('0px');
+    settleAt(2);
+    expect(container(c).style.left).toBe('68px');
+    expect(container(c).style.right).toBe('344px');
+  });
+
+  it('does not flip while the camera is still moving (only when it settles)', () => {
+    const { container: c } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    act(() => { lastMap().getZoom = () => 6; lastMap().emit('zoom', {}); lastMap().emit('move', {}); });
+    expect(container(c).style.left).toBe('68px');
+  });
+
+  it('a flip caused by the zoom keeps the view where it is: the map centre moves to the point now dx to the side', () => {
+    render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    lastMap().jumpTo.mockClear();
+    lastMap().unproject.mockClear();
+    settleAt(6);
+    // canvas centre: (68 + (1200 - 344)) / 2 = 462 -> 600, so dx = 138
+    expect(lastMap().unproject).toHaveBeenCalledWith([600 + 138, 350]);
+    expect(lastMap().jumpTo).toHaveBeenLastCalledWith({ center: { lng: 738, lat: 350 } });
+    lastMap().jumpTo.mockClear();
+    settleAt(2);
+    expect(lastMap().jumpTo).toHaveBeenLastCalledWith({ center: { lng: 462, lat: 350 } }); // dx = -138
+  });
+
+  it('a CHROME change (panel opened) still recentres the planet in the new free area: no compensation', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={{ ...insets, right: 0 }} />);
+    ready();
+    lastMap().jumpTo.mockClear();
+    rerender(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    expect(lastMap().jumpTo).not.toHaveBeenCalled();
+    expect(lastMap().resize).toHaveBeenCalled();
+  });
+
+  it('camera framing uses the chrome insets once the canvas is full-bleed, and none of left / right while it is inset', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    settleAt(6);
+    rerender(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} focus={{ id: 1, points: [[10, 20], [40, 50]] }} />);
+    const padding = (lastMap().cameraForBounds.mock.calls[0]![1] as { padding: Record<string, number> }).padding;
+    expect(padding.left).toBeGreaterThan(68);   // the rail's 68px is part of the padding again
+    expect(padding.right).toBeGreaterThan(344);
+  });
+
+  it('the flat map is never affected, and a globe entered afresh starts at the planet-fit view (inset)', () => {
+    const { container: c, rerender } = render(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    ready();
+    settleAt(6);
+    expect(container(c).style.left).toBe('0px');
+    lastMap().getZoom = () => 2.2; // the flip jumps the camera back to the overview
+    rerender(<ThreatMapV3 {...base} projection="flat" cameraInsets={insets} />);
+    expect(container(c).style.left).toBe('0px');
+    act(() => { lastMap().emit('moveend', {}); });
+    expect(container(c).style.left).toBe('0px');
+    rerender(<ThreatMapV3 {...base} projection="globe" cameraInsets={insets} />);
+    expect(container(c).style.left).toBe('68px');
   });
 });

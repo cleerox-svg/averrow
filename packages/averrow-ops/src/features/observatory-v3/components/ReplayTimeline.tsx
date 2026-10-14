@@ -258,52 +258,58 @@ export function ReplayTimeline({
       )}
 
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div
-          ref={sliderRef}
-          {...(velocity
-            ? { role: 'img', 'aria-label': stillSummary }
-            : {
-              role: 'slider', tabIndex: 0, 'aria-label': `Replay position, ${subtitle}`,
-              'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0, 'aria-orientation': 'horizontal' as const,
-              onKeyDown, onPointerDown, onPointerMove, onPointerUp: endDrag, onPointerCancel: endDrag,
-            })}
-          className="ds-focusable relative rounded-md"
-          style={{ height: HIST_HEIGHT + 2, cursor: velocity ? 'default' : 'ew-resize', touchAction: velocity ? undefined : 'none', background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)' }}
-        >
-          <div ref={trackRef} className="absolute inset-0 overflow-hidden rounded-md">
-            {paths && !empty && (
-              <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
-                <path d={paths.other} fill={SEV_FILL.other} opacity={0.5} />
-                <path d={paths.low} fill={SEV_FILL.low} opacity={0.7} />
-                <path d={paths.medium} fill={SEV_FILL.medium} opacity={0.75} />
-                <path d={paths.high} fill={SEV_FILL.high} opacity={0.85} />
-                <path d={paths.critical} fill={SEV_FILL.critical} />
-              </svg>
-            )}
-            {vPaths && !empty && (
-              <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
-                <path d={vPaths.fast} fill={VELOCITY_RGB} opacity={0.5} />
-                <path d={vPaths.veryFast} fill={VELOCITY_RGB} />
-              </svg>
-            )}
-            {(isLoading || error || empty || !hist) && (
-              <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                {error ? (
-                  <span role="alert">
-                    Timeline unavailable{' '}
-                    <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} onPointerDown={e => e.stopPropagation()} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
-                  </span>
-                ) : isLoading ? 'Loading timeline…' : empty ? (velocity ? 'Coverage still filling: no fast-weaponized threats counted yet' : 'No activity in this period') : ''}
-              </div>
-            )}
+        {/* The slider / image role makes its children presentational for assistive tech, so anything that has to be
+            reachable (the Retry button, the status text) is a SIBLING laid over it, never inside it. */}
+        <div className="relative" style={{ height: HIST_HEIGHT + 2 }}>
+          <div
+            ref={sliderRef}
+            {...(velocity
+              ? { role: 'img', 'aria-label': stillSummary }
+              : {
+                role: 'slider', tabIndex: 0, 'aria-label': `Replay position, ${subtitle}`,
+                'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0, 'aria-orientation': 'horizontal' as const,
+                onKeyDown, onPointerDown, onPointerMove, onPointerUp: endDrag, onPointerCancel: endDrag,
+              })}
+            className="ds-focusable absolute inset-0 rounded-md"
+            style={{ cursor: velocity ? 'default' : 'ew-resize', touchAction: velocity ? undefined : 'none', background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)' }}
+          >
+            <div ref={trackRef} className="absolute inset-0 overflow-hidden rounded-md">
+              {paths && !empty && (
+                <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
+                  <path d={paths.other} fill={SEV_FILL.other} opacity={0.5} />
+                  <path d={paths.low} fill={SEV_FILL.low} opacity={0.7} />
+                  <path d={paths.medium} fill={SEV_FILL.medium} opacity={0.75} />
+                  <path d={paths.high} fill={SEV_FILL.high} opacity={0.85} />
+                  <path d={paths.critical} fill={SEV_FILL.critical} />
+                </svg>
+              )}
+              {vPaths && !empty && (
+                <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
+                  <path d={vPaths.fast} fill={VELOCITY_RGB} opacity={0.5} />
+                  <path d={vPaths.veryFast} fill={VELOCITY_RGB} />
+                </svg>
+              )}
+            </div>
+            {/* Playhead: a transform-only marker, positioned by `apply`. */}
+            {!velocity && <div
+              ref={headRef}
+              aria-hidden
+              className="absolute top-0 bottom-0 left-0 pointer-events-none"
+              style={{ width: 2, marginLeft: -1, background: 'var(--amber)', boxShadow: '0 0 6px var(--amber)', willChange: 'transform' }}
+            />}
           </div>
-          {/* Playhead: a transform-only marker, positioned by `apply`. */}
-          {!velocity && <div
-            ref={headRef}
-            aria-hidden
-            className="absolute top-0 bottom-0 left-0 pointer-events-none"
-            style={{ width: 2, marginLeft: -1, background: 'var(--amber)', boxShadow: '0 0 6px var(--amber)', willChange: 'transform' }}
-          />}
+          {(isLoading || error || empty || !hist) && (
+            <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] pointer-events-none" style={{ color: 'var(--text-muted)' }}>
+              {error ? (
+                <span role="alert" className="pointer-events-auto">
+                  Timeline unavailable{' '}
+                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
+                </span>
+              ) : isLoading ? <span role="status">Loading timeline…</span>
+                : empty ? <span role="status">{velocity ? 'Coverage still filling: no fast-weaponized threats counted yet' : 'No activity in this period'}</span>
+                  : null}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between gap-2 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {/* The readout follows the playhead's bucket (written imperatively, never via React state). */}

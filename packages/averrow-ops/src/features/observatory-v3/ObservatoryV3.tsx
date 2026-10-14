@@ -55,7 +55,7 @@ import {
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type ThreatView,
 } from './lib/url-state';
 import { noLayers, type LayerToggles } from './lib/lenses';
-import { effectiveProjection, type Projection } from './lib/projection';
+import type { Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
@@ -69,7 +69,7 @@ import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
 import { TAKEDOWN_ROLE_NOTE, useCanSeeTakedowns, useTakedownAccess } from './lib/use-takedown-access';
-import { computeLayout, cameraInsets, chipPlacement, initialSheetPx, DOCK_WIDTH, TIMELINE_H } from './lib/layout';
+import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, initialSheetPx, DOCK_WIDTH, RAIL_TOP, TIMELINE_H } from './lib/layout';
 import { useElementSize } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
@@ -647,6 +647,8 @@ export function ObservatoryV3() {
       <div className="flex flex-col gap-1.5">
         <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
         <SourceSelect source={source} onChange={setSource} touch={phone} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
+        {/* The select's own reason is a tooltip: there is no hover on touch, so it is also written out. */}
+        {fast && <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{FAST_SOURCE_NOTE}</div>}
       </div>
       {isBotMode && (
         <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -659,7 +661,6 @@ export function ObservatoryV3() {
   const railProps = {
     lens, layers, view, measure, colorBy, reducedMotion,
     onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy, canSeeTakedowns,
-    projection: effectiveProjection(state.proj, mapMode), onProjection: setProjection, globeAvailable: mapMode !== 'heatmap',
   };
 
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
@@ -691,6 +692,7 @@ export function ObservatoryV3() {
           colorBy={colorBy}
           mapMode={mapMode}
           projection={state.proj}
+          onProjection={setProjection}
           spinHold={legendOpen}
           period={period}
           heatmapData={heatmapData}
@@ -814,7 +816,11 @@ export function ObservatoryV3() {
 
           {/* Rail: the lens's option + threat traffic underneath. */}
           {(mapMode !== 'heatmap' || lens === 'threats') && (
-            <div className="absolute left-3" style={{ top: 60, zIndex: Z_CHROME }}>
+            <div
+              className="absolute left-3"
+              // Stops above the legend chip on a short canvas and scrolls instead of running into it.
+              style={{ top: RAIL_TOP, zIndex: Z_CHROME, maxHeight: railMaxHeight({ rootHeight, chipBottom }), overflowY: 'auto', scrollbarWidth: 'thin' }}
+            >
               <ControlRail {...railProps} />
             </div>
           )}

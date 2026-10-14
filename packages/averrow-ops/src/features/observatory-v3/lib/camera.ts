@@ -229,7 +229,23 @@ interface LatRangeHolder {
  */
 export function setLatRange(transform: unknown, lat: number): boolean {
   const helper = (transform as LatRangeHolder | null | undefined)?._helper;
-  if (!helper || !('_latRange' in helper)) return false;
+  if (!helper || !('_latRange' in helper)) {
+    warnLatRangeOnce();
+    return false;
+  }
   helper._latRange = [-lat, lat];
   return true;
+}
+
+let latRangeWarned = false;
+/** Test seam. */
+export function resetLatRangeWarning(): void { latRangeWarned = false; }
+/**
+ * This writes a private field, so a MapLibre upgrade can silently turn it into a no-op (the phone would be pinned at
+ * ~zoom 0.3 and a world-spanning target clipped). In development say so, once; production builds drop the branch.
+ */
+function warnLatRangeOnce(): void {
+  if (process.env.NODE_ENV === 'production' || latRangeWarned) return;
+  latRangeWarned = true;
+  console.warn('[observatory] setLatRange: MapLibre\'s transform no longer has _helper._latRange, so the widened phone latitude range is NOT applied. Re-check lib/camera.ts after the MapLibre upgrade.');
 }

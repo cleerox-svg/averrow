@@ -13,8 +13,7 @@ import { buildVelocityModel, VELOCITY_FILLING } from '../lib/lens/velocity';
 
 const railProps = (over: Partial<ControlRailProps> = {}): ControlRailProps => ({
   lens: 'threats', layers: lensPreset('threats'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
-  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(),
-  projection: 'flat', onProjection: vi.fn(), ...over,
+  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(), ...over,
 });
 
 describe('ControlRail: Fast weaponization view', () => {
@@ -83,6 +82,22 @@ describe('ReplayTimeline velocity series', () => {
     expect(screen.queryByRole('button', { name: /replay/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Replay speed' })).not.toBeInTheDocument();
     expect(subscribe).not.toHaveBeenCalled(); // nothing follows the clock
+  });
+  it('a failed timeline: Retry and the message are NOT inside the role=img element (which would hide them from assistive tech)', async () => {
+    const onRetry = vi.fn();
+    setup({ data: undefined, error: new Error('boom'), onRetry });
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry.closest('[role="img"]')).toBeNull();
+    expect(screen.getByRole('alert')).toHaveTextContent('Timeline unavailable');
+    expect(screen.getByRole('alert').closest('[role="img"]')).toBeNull();
+    await userEvent.click(retry);
+    expect(onRetry).toHaveBeenCalled();
+  });
+  it('loading and empty states are status messages outside the image too', () => {
+    setup({ data: undefined, isLoading: true });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Loading timeline…');
+    expect(status.closest('[role="img"]')).toBeNull();
   });
   it('keys the two classes in text', () => {
     setup();

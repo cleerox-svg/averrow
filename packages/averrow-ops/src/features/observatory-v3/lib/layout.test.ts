@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { computeLayout, cameraInsets, chipPlacement, initialSheetPx, CHIP_H, SHORT_VIEWPORT_H, TOOLBAR_FULL, DOCK_MIN_MAP, DOCK_WIDTH, RAIL_WIDTH } from './layout';
+import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, RAIL_TOP, initialSheetPx, CHIP_H, SHORT_VIEWPORT_H, TOOLBAR_FULL, DOCK_MIN_MAP, DOCK_WIDTH, RAIL_WIDTH } from './layout';
 import { useElementWidth } from './use-element-width';
 
 describe('computeLayout: tiers follow the free map width, not the viewport', () => {
@@ -69,6 +69,25 @@ describe('short viewports (landscape phones)', () => {
     expect(cameraInsets({ layout: land, rightSlotOpen: false, showTimeline: false, sheetPx: 0 }).top).toBe(land.topInset);
     // sheet 120px from the bottom, a 36px band under the map => 84 covered (+12)
     expect(cameraInsets({ layout: land, rightSlotOpen: true, showTimeline: false, sheetPx: 120 }).bottom).toBe(96);
+  });
+});
+
+describe('railMaxHeight: the control rail stops above the legend chip', () => {
+  it('leaves the chip (and a gap) below the rail on a tall canvas', () => {
+    expect(railMaxHeight({ rootHeight: 900, chipBottom: 116 })).toBe(900 - RAIL_TOP - (116 + CHIP_H + 8));
+  });
+  it('shrinks with the canvas (the rail would otherwise run into the legend / timeline)', () => {
+    const tall = railMaxHeight({ rootHeight: 900, chipBottom: 116 })!;
+    const short = railMaxHeight({ rootHeight: 560, chipBottom: 116 })!;
+    expect(short).toBeLessThan(tall);
+    expect(short + RAIL_TOP + 116 + CHIP_H + 8).toBeLessThanOrEqual(560);
+  });
+  it('a taller bottom stack (timeline shown) takes more room', () => {
+    expect(railMaxHeight({ rootHeight: 700, chipBottom: 180 })!).toBeLessThan(railMaxHeight({ rootHeight: 700, chipBottom: 116 })!);
+  });
+  it('never below two buttons, and unset until the root has a height', () => {
+    expect(railMaxHeight({ rootHeight: 200, chipBottom: 150 })).toBe(96);
+    expect(railMaxHeight({ rootHeight: 0, chipBottom: 116 })).toBeUndefined();
   });
 });
 
