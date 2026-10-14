@@ -4,7 +4,7 @@
  * queries disabled (no wasted requests, no phantom error banner).
  */
 
-import type { MapMode } from './url-state';
+import type { MapMode, SelKind } from './url-state';
 import type { LayerToggles } from './lenses';
 
 export interface DataNeeds {
@@ -31,10 +31,15 @@ export interface DataNeeds {
 }
 
 export interface NeedsOptions {
-  /** A node selection exists (it must be resolvable even if the Nodes layer is off). */
-  nodeSelected?: boolean;
-  /** An arc selection exists. */
-  arcSelected?: boolean;
+  /**
+   * What is currently selected. Its data must stay loaded even when the layer
+   * that draws it is off (a shared link, a search pick, a drawer hop), and a
+   * country drawer additionally reads threats, brands, operations, hosts and the
+   * Radar baseline.
+   */
+  selection?: 'node' | 'arc' | SelKind | null;
+  /** The search box has been focused: load the lens lists it searches. */
+  searching?: boolean;
 }
 
 const NONE: DataNeeds = {
@@ -45,22 +50,26 @@ const NONE: DataNeeds = {
 
 export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOptions = {}): DataNeeds {
   switch (mode) {
-    case 'global':
+    case 'global': {
+      const sel = opts.selection ?? null;
+      const country = sel === 'country';
+      const searching = !!opts.searching;
       return {
         ...NONE,
-        nodes: layers.nodes || !!opts.nodeSelected,
+        nodes: layers.nodes || sel === 'node' || country,
         // Particles + beams are arc-driven; target rings draw with nodes or beams.
-        arcs: layers.particles || layers.beams || layers.nodes || !!opts.arcSelected,
+        arcs: layers.particles || layers.beams || layers.nodes || sel === 'arc' || country,
         stats: true,
-        operations: layers.operations,
-        movements: layers.movement,
-        providers: layers.hosting,
-        overindex: layers.baseline,
-        campaigns: layers.campaigns,
-        actors: layers.actors,
+        operations: layers.operations || sel === 'op' || country || searching,
+        movements: layers.movement || sel === 'move',
+        providers: layers.hosting || sel === 'provider' || country || searching,
+        overindex: layers.baseline || country,
+        campaigns: layers.campaigns || sel === 'campaign' || searching,
+        actors: layers.actors || sel === 'actor' || searching,
         timeline: layers.particles || layers.movement,
         live: layers.nodes,
       };
+    }
     case 'heatmap':
       return { ...NONE, heatmap: true, stats: true };
     case 'bot_density':

@@ -9,6 +9,8 @@
 import type { ActorDetail } from '@/hooks/useObservatoryLenses';
 import type { LngLat } from '@/lib/country-centroids';
 import { phaseForKey } from '../../anim/pulse';
+import { greatCirclePath } from '../../anim/great-circle';
+import { cumulativeDistances } from '../../anim/dash-flow-extension';
 import { normalizeConfidence } from './operations';
 import { countryCenter, iso2 } from './placement';
 
@@ -56,9 +58,19 @@ export interface ActorAsn {
   lastObserved: string | null;
 }
 
+export interface ActorEdge {
+  id: string;
+  clusterId: string;
+  confidence: number | null;
+  path: LngLat[];
+  distances: number[];
+}
+
 export interface ActorModel {
   actorId: string;
   countries: ActorCountry[];
+  /** A cluster spans several countries: a star from its first placeable country. */
+  edges: ActorEdge[];
   asns: ActorAsn[];
   clusters: Array<{ id: string; countries: string[]; asns: string[]; confidence: number | null }>;
   /** Items with a country that has no centroid, or no country at all. */
@@ -100,6 +112,20 @@ export function buildActorModel(detail: ActorDetail): ActorModel {
     return { id: cl.id, countries: cl.countries, asns: cl.asns, confidence: conf };
   });
 
+  const edges: ActorEdge[] = [];
+  for (const cl of clusters) {
+    const placed: Array<{ cc: string; at: LngLat }> = [];
+    for (const raw of cl.countries) {
+      const cc = iso2(raw);
+      const at = cc ? countryCenter(cc) : null;
+      if (cc && at && !placed.some(p => p.cc === cc)) placed.push({ cc, at });
+    }
+    for (let i = 1; i < placed.length; i++) {
+      const path = greatCirclePath(placed[0]!.at, placed[i]!.at, 24);
+      edges.push({ id: `${cl.id}:${placed[0]!.cc}-${placed[i]!.cc}`, clusterId: cl.id, confidence: cl.confidence, path, distances: cumulativeDistances(path) });
+    }
+  }
+
   const list = [...countries.values()].sort((a, b) => b.items - a.items || a.country.localeCompare(b.country));
-  return { actorId: detail.actor.id, countries: list, asns, clusters, unplaced, empty: list.length === 0 };
+  return { actorId: detail.actor.id, countries: list, edges, asns, clusters, unplaced, empty: list.length === 0 };
 }

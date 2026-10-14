@@ -39,7 +39,8 @@ export interface OperationGeo {
 export interface ComponentEdge {
   a: string;
   b: string;
-  kind: 'cert_serial' | 'cert_san' | 'per_ip';
+  /** null when the bridge kind could not be resolved. */
+  kind: 'cert_serial' | 'cert_san' | 'per_ip' | null;
   shared_asns: string[];
 }
 

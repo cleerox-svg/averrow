@@ -26,3 +26,25 @@ export function hasValidArc(a: Pick<ArcData, 'sourcePosition' | 'targetPosition'
     hasValidPosition(a.targetPosition[1], a.targetPosition[0])
   );
 }
+
+/** Width of the whole world in CSS px at a MapLibre zoom (512px tiles). */
+export function worldPixels(zoom: number): number {
+  return 512 * 2 ** zoom;
+}
+
+/**
+ * Longitude to move the map CENTRE by so that a point lands `dxPx` pixels to the
+ * right of the centre of the viewport (Mercator longitude is linear in x). The
+ * console overlays the map with a left rail and a right drawer; the free area's
+ * centre is offset from the map's by (left - right) / 2.
+ */
+export function lngShiftForPixels(dxPx: number, zoom: number): number {
+  if (!Number.isFinite(dxPx) || !Number.isFinite(zoom)) return 0;
+  return (dxPx / worldPixels(zoom)) * 360;
+}
+
+/** Camera centre longitude that puts `lng` at the middle of the area left free by the overlays. */
+export function centerLngForFreeArea(lng: number, leftInset: number, rightInset: number, zoom: number): number {
+  const dx = ((Number.isFinite(leftInset) ? leftInset : 0) - (Number.isFinite(rightInset) ? rightInset : 0)) / 2;
+  return lng - lngShiftForPixels(dx, zoom);
+}

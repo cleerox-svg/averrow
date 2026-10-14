@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { OperationGeo, ComponentGeo } from '@/hooks/useObservatoryLenses';
-import { buildOperationsModel, highlightGroup, isDimmed, normalizeConfidence, kindLabel } from './operations';
+import { edgeLabel, buildOperationsModel, highlightGroup, isDimmed, normalizeConfidence, kindLabel } from './operations';
 import { placeAround, spreadOffset, groupIndexes, iso2 } from './placement';
 import { getCountryCentroid } from '@/lib/country-centroids';
 
@@ -82,6 +82,18 @@ describe('buildOperationsModel', () => {
     const e = buildOperationsModel([], []);
     expect(e.nodes).toEqual([]);
     expect(e.edges).toEqual([]);
+  });
+});
+
+describe('edges with an unresolved kind', () => {
+  it('label falls back to "linked" (+ shared ASNs) and the model still builds', () => {
+    expect(edgeLabel(null, [])).toBe('linked');
+    expect(edgeLabel(null, ['AS9'])).toBe('linked · AS9');
+    const m = buildOperationsModel(
+      [op({ id: 'a', component_id: 'c', countries: ['NL'] }), op({ id: 'b', component_id: 'c', countries: ['US'] })],
+      [{ component_id: 'c', operation_ids: ['a', 'b'], countries: ['NL', 'US'], edges: [{ a: 'a', b: 'b', kind: null, shared_asns: ['AS9'] }] }],
+    );
+    expect(m.edges[0]).toMatchObject({ label: 'linked · AS9', kind: 'other' });
   });
 });
 

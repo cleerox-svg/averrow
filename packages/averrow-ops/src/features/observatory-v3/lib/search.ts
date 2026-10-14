@@ -178,27 +178,30 @@ export function runSearch(index: readonly SearchEntry[], query: string, limit = 
   return scored.slice(0, limit);
 }
 
-/** The layer a kind of result lives on (null = visible on any lens). */
-const KIND_LAYER: Partial<Record<SearchKind, { layer: LayerId; lens: LensId }>> = {
+/** The lens + layer a kind of target is drawn on (absent = visible on any lens). */
+const TARGET_LAYER: Partial<Record<DrillTarget['kind'], { layer: LayerId; lens: LensId }>> = {
   operation: { layer: 'operations', lens: 'operations' },
   provider: { layer: 'hosting', lens: 'hosting' },
-  asn: { layer: 'hosting', lens: 'hosting' },
   actor: { layer: 'actors', lens: 'actors' },
   campaign: { layer: 'campaigns', lens: 'campaigns' },
+  movement: { layer: 'movement', lens: 'movement' },
 };
 
 /**
- * URL patch for picking a result: select it, and switch lens only when the
- * layer it is drawn on isn't already on.
+ * URL patch for selecting `target`: select it, and switch lens only when the
+ * layer it is drawn on isn't already on (so a country opened from the Hosting
+ * lens stays on Hosting, but an operation opened from it flips to Operations).
  */
-export function searchPatch(result: Pick<SearchResult, 'kind' | 'target'>, layers: LayerToggles): ObservatoryPatch {
-  const need = KIND_LAYER[result.kind];
-  const selection = drillToPatch(result.target);
-  // An ASN that resolved to an operation lives on the Operations layer, not Hosting.
-  const resolved = result.kind === 'asn' && result.target.kind === 'operation' ? KIND_LAYER.operation : need;
-  const patch: ObservatoryPatch = { ...selection, mode: 'global' };
-  if (resolved && !layers[resolved.layer]) patch.lens = resolved.lens;
-  // A brand's corridor needs arcs: the threats lens (nodes / particles / beams) provides them.
-  if (result.kind === 'brand' && !(layers.nodes || layers.particles || layers.beams)) patch.lens = 'threats';
+export function targetPatch(target: DrillTarget, layers: LayerToggles): ObservatoryPatch {
+  const need = TARGET_LAYER[target.kind];
+  const patch: ObservatoryPatch = { ...drillToPatch(target), mode: 'global' };
+  if (need && !layers[need.layer]) patch.lens = need.lens;
+  // A node / corridor needs the threat layers that provide its data.
+  if ((target.kind === 'arc' || target.kind === 'node') && !(layers.nodes || layers.particles || layers.beams)) patch.lens = 'threats';
   return patch;
+}
+
+/** Picking a search result: its target's patch (an ASN resolves to a provider or operation target). */
+export function searchPatch(result: Pick<SearchResult, 'kind' | 'target'>, layers: LayerToggles): ObservatoryPatch {
+  return targetPatch(result.target, layers);
 }

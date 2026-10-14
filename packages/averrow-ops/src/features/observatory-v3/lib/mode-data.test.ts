@@ -44,8 +44,28 @@ describe('lens layers fetch only while on', () => {
     expect(dataNeeds('global', layers({ hosting: true })).timeline).toBe(false);
   });
   it('a node / arc selection keeps its data loaded even with the Nodes layer off', () => {
-    expect(dataNeeds('global', layers({ hosting: true }), { nodeSelected: true }).nodes).toBe(true);
-    expect(dataNeeds('global', layers({ hosting: true }), { arcSelected: true }).arcs).toBe(true);
+    expect(dataNeeds('global', layers({ hosting: true }), { selection: 'node' }).nodes).toBe(true);
+    expect(dataNeeds('global', layers({ hosting: true }), { selection: 'arc' }).arcs).toBe(true);
+  });
+  it('a selection keeps exactly the data it resolves against loaded', () => {
+    const only = (sel: Parameters<typeof dataNeeds>[2] extends infer O ? O extends { selection?: infer S } ? S : never : never) =>
+      dataNeeds('global', layers({ baseline: true }), { selection: sel });
+    expect(only('op').operations).toBe(true);
+    expect(only('provider').providers).toBe(true);
+    expect(only('campaign').campaigns).toBe(true);
+    expect(only('move').movements).toBe(true);
+    expect(only('actor').actors).toBe(true);
+    expect(only(null).operations).toBe(false);
+  });
+  it('a country drawer reads threats, brands, operations, hosts and the baseline', () => {
+    expect(dataNeeds('global', layers({ hosting: true }), { selection: 'country' })).toMatchObject({
+      nodes: true, arcs: true, operations: true, providers: true, overindex: true,
+    });
+  });
+  it('focusing the search box loads the lists it searches, and nothing else', () => {
+    expect(dataNeeds('global', layers({ hosting: true }), { searching: true })).toMatchObject({
+      operations: true, providers: true, actors: true, campaigns: true, movements: false, overindex: false,
+    });
   });
   it('lens queries never run outside the global map', () => {
     const needs = dataNeeds('heatmap', layers({ operations: true, hosting: true }));

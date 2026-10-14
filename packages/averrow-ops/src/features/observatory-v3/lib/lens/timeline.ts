@@ -32,7 +32,7 @@ export interface Histogram {
 }
 
 export function buildHistogram(data: TimelineData | undefined): Histogram | null {
-  if (!data || data.points.length === 0) return null;
+  if (!data || !Array.isArray(data.points) || data.points.length === 0) return null;
   const bucketMs = BUCKET_MS[data.bucket] ?? BUCKET_MS['1h'];
   const bars: HistBar[] = [];
   let max = 0;

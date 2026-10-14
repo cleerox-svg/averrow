@@ -81,8 +81,9 @@ export function normalizeConfidence(v: number | null | undefined): number | null
   return Math.max(0, Math.min(1, f));
 }
 
-function edgeLabel(kind: string, asns: readonly string[]): string {
-  const base = kindLabel(kind);
+/** Label for an edge; an unresolved (null) kind falls back to "linked" plus whatever ASNs are shared. */
+export function edgeLabel(kind: string | null, asns: readonly string[]): string {
+  const base = kind === null ? 'linked' : kindLabel(kind);
   if (asns.length === 0) return base;
   const shown = asns.slice(0, 2).join(' ');
   return `${base} · ${shown}${asns.length > 2 ? ` +${asns.length - 2}` : ''}`;
@@ -173,7 +174,7 @@ export function buildOperationsModel(
         id: `${comp.component_id}:${e.a}-${e.b}`,
         group: comp.component_id,
         opIds: [e.a, e.b],
-        kind: e.kind,
+        kind: e.kind ?? 'other',
         label: edgeLabel(e.kind, e.shared_asns),
         sharedAsns: e.shared_asns,
         ...g,

@@ -2,6 +2,7 @@
 
 export { PulseExtension, type PulseExtensionProps } from './pulse-extension';
 export { RingExtension, type RingExtensionProps } from './ring-extension';
+export { RingMaskExtension, type RingMaskExtensionProps } from './ring-mask-extension';
 export { DashFlowExtension, cumulativeDistances, type DashFlowExtensionProps } from './dash-flow-extension';
 export { RingBuffer, ringBufferLayerProps, DEFAULT_RING_CAPACITY, type RingSpawn } from './ring-buffer';
 export { ImpactRingSpawner, type ImpactRingOptions } from './impact-rings';
@@ -11,7 +12,7 @@ export {
   pulseRateForSeverity, pulseAmpForSeverity, phaseForKey, type PulseSeverity,
 } from './pulse';
 export {
-  pulseScale, ringState, ringScale, ringAlpha, ringActive, ringProgress, ringAge, easeOutCubic, dashVisible, glslMod,
+  pulseScale, ringMaskVisible, RING_MASK_DASH_DUTY, ringState, ringScale, ringAlpha, ringActive, ringProgress, ringAge, easeOutCubic, dashVisible, glslMod,
   type RingState,
 } from './shader-math';
 export {

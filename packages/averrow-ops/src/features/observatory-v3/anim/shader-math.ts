@@ -86,3 +86,17 @@ export function dashVisible(dist: number, t: number, dash: number, gap: number, 
   const cycle = dash + gap;
   return glslMod(dist - t * speed, cycle) <= dash;
 }
+
+/** Fraction of each dash period that is drawn (the rest is the gap). Shared with RingMaskExtension's GLSL. */
+export const RING_MASK_DASH_DUTY = 0.58;
+
+/**
+ * Whether a point at angle `turn` (0..1, clockwise from 12 o'clock) is inside
+ * the ring mask at time `t`. Mirrors RingMaskExtension's fragment shader.
+ */
+export function ringMaskVisible(turn: number, fraction: number, dashes: number, spin: number, t: number): boolean {
+  const tn = glslMod(turn, 1);
+  if (tn > fraction) return false;
+  if (dashes > 0.5) return glslMod(tn * dashes - t * spin, 1) <= RING_MASK_DASH_DUTY;
+  return true;
+}

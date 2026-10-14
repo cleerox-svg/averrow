@@ -16,6 +16,7 @@ import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import type { Layer } from '@deck.gl/core';
 import { PulseExtension, PULSE_INJECT, pulseModule } from './pulse-extension';
 import { RingExtension, RING_INJECT, ringModule } from './ring-extension';
+import { RingMaskExtension, RING_MASK_INJECT, ringMaskModule } from './ring-mask-extension';
 import { DashFlowExtension, DASH_FLOW_INJECT, dashFlowModule, cumulativeDistances } from './dash-flow-extension';
 import type { AnimShaderModule, AnimShaders } from './types';
 
@@ -249,5 +250,50 @@ describe('extensions equality (no spurious extensionsChanged per frame)', () => 
   it('distinct extension classes have distinct names', () => {
     const names = [PulseExtension, RingExtension, DashFlowExtension].map(c => c.extensionName);
     expect(new Set(names).size).toBe(3);
+  });
+});
+
+describe('RingMaskExtension', () => {
+  const ext = new RingMaskExtension();
+
+  it('merges its defaults into a real stroked ScatterplotLayer', () => {
+    const layer = new ScatterplotLayer<{ p: [number, number] }>({
+      id: 'mask-test', data: [{ p: [0, 0] }], getPosition: d => d.p, stroked: true, filled: false, extensions: [ext],
+    });
+    const props = layer.props as unknown as Record<string, unknown>;
+    expect(props.animTime).toBe(0);
+    expect(props.getMaskFraction).toBe(1);
+    expect(props.getMaskDashes).toBe(0);
+  });
+
+  it('declares a well-formed uniform module and real injection hook points', () => {
+    const shaders = ext.getShaders.call(fakeLayer().self);
+    expect(shaders.modules).toEqual([ringMaskModule]);
+    checkModule(ringMaskModule);
+    checkInject(shaders);
+    expect(shaders.inject).toBe(RING_MASK_INJECT);
+  });
+
+  it('masks in the fragment stage and forwards per-instance values through varyings', () => {
+    expect(RING_MASK_INJECT['fs:DECKGL_FILTER_COLOR']).toContain('geometry.uv');
+    expect(RING_MASK_INJECT['fs:DECKGL_FILTER_COLOR']).toContain('discard');
+    for (const v of ['vMaskFraction', 'vMaskDashes', 'vMaskSpin']) {
+      expect(RING_MASK_INJECT['vs:#decl']).toContain(`out float ${v};`);
+      expect(RING_MASK_INJECT['fs:#decl']).toContain(`in float ${v};`);
+    }
+  });
+
+  it('registers every attribute the vertex shader reads', () => {
+    const { self, addInstanced } = fakeLayer();
+    ext.initializeState.call(self);
+    const spec = addInstanced.mock.calls[0]![0] as Record<string, { accessor: string }>;
+    expect(Object.keys(spec).sort()).toEqual(declaredAttributes(RING_MASK_INJECT).sort());
+    expect(spec.instanceMaskFraction!.accessor).toBe('getMaskFraction');
+  });
+
+  it('pushes animTime each draw', () => {
+    const { self, setShaderModuleProps } = fakeLayer({ animTime: 4.5 });
+    ext.draw.call(self);
+    expect(setShaderModuleProps).toHaveBeenCalledWith({ ringMask: { animTime: 4.5 } });
   });
 });

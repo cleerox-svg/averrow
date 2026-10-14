@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  glslMod, pulseScale, ringAge, ringProgress, ringActive, easeOutCubic, ringScale, ringAlpha, ringState,
+  ringMaskVisible, RING_MASK_DASH_DUTY, glslMod, pulseScale, ringAge, ringProgress, ringActive, easeOutCubic, ringScale, ringAlpha, ringState,
   dashVisible, RING_FADE_IN,
 } from './shader-math';
 import {
@@ -154,5 +154,34 @@ describe('dash flow math', () => {
     }
     // reversed speed moves the other way
     expect(dashVisible(0.7, 0.3, 0.6, 0.9, -1)).toBe(false);
+  });
+});
+
+describe('ringMaskVisible', () => {
+  it('a solid full ring is always visible', () => {
+    for (const turn of [0, 0.3, 0.999]) expect(ringMaskVisible(turn, 1, 0, 0, 5)).toBe(true);
+  });
+  it('a fraction hides the rest of the circle, clockwise from the top', () => {
+    expect(ringMaskVisible(0.1, 0.62, 0, 0, 0)).toBe(true);
+    expect(ringMaskVisible(0.62, 0.62, 0, 0, 0)).toBe(true);
+    expect(ringMaskVisible(0.63, 0.62, 0, 0, 0)).toBe(false);
+    expect(ringMaskVisible(0.9, 0, 0, 0, 0)).toBe(false);
+  });
+  it('dashes alternate around the circle with the shared duty cycle', () => {
+    const N = 10;
+    const period = 1 / N;
+    expect(ringMaskVisible(period * (RING_MASK_DASH_DUTY - 0.01), 1, N, 0, 0)).toBe(true);
+    expect(ringMaskVisible(period * (RING_MASK_DASH_DUTY + 0.05), 1, N, 0, 0)).toBe(false);
+    const visible = Array.from({ length: 1000 }, (_, i) => ringMaskVisible(i / 1000, 1, N, 0, 0)).filter(Boolean).length;
+    expect(visible / 1000).toBeCloseTo(RING_MASK_DASH_DUTY, 1);
+  });
+  it('spin rotates the dashes clockwise over time and repeats each revolution', () => {
+    const N = 8;
+    const at = (turn: number, t: number) => ringMaskVisible(turn, 1, N, 0.5, t);
+    // after half a dash period of travel the pattern is shifted by that much
+    const shifted = 1 / N / 2;
+    for (const turn of [0.01, 0.07, 0.31]) expect(at(turn + shifted, (shifted * N) / 0.5)).toBe(at(turn, 0));
+    // one full revolution (2 s at 0.5 rev/s) returns the same pattern
+    for (const turn of [0.02, 0.2, 0.55, 0.9]) expect(at(turn, 2)).toBe(at(turn, 0));
   });
 });

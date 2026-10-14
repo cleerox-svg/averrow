@@ -43,6 +43,14 @@ describe('buildActorModel', () => {
     expect(m.asns).toHaveLength(2);
     expect(m.empty).toBe(false);
   });
+  it('draws a star of edges across a multi-country cluster and none for a single-country one', () => {
+    const m = buildActorModel(detail({ clusters: [
+      { id: 'multi', countries: ['NL', 'MD', 'RU'], asns: [], confidence_score: 60 },
+      { id: 'single', countries: ['US'], asns: [], confidence_score: 60 },
+    ] }));
+    expect(m.edges.map(e => e.clusterId)).toEqual(['multi', 'multi']);
+    expect(m.edges[0].distances[0]).toBe(0);
+  });
   it('counts unplaceable items and reports an empty actor as empty (not as "no activity")', () => {
     const m = buildActorModel(detail({
       infrastructure: [{ asn: 'AS9', country_code: null, hosting_provider: null, confidence: 'low', last_observed: '2026-10-01' }],

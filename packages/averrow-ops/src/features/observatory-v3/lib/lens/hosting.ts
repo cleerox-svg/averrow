@@ -98,7 +98,7 @@ export function buildHostingModel(providers: readonly ProviderGeo[]): HostingMod
     name: p.name,
     asn: p.asn,
     country: cc,
-    position: placeAround(countryCenter(cc)!, idx[i]!, 1.5),
+    position: placeAround(countryCenter(cc)!, idx[i]!, 2.6),
     active: p.active_threat_count,
     total: p.total_threat_count,
     trend7: p.trend_7d,
