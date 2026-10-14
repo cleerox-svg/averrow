@@ -12,7 +12,7 @@ import {
 import {
   handleObservatoryOperationsGeo, handleObservatoryMovements, handleObservatoryProvidersGeo,
   handleObservatoryOverindex, handleObservatoryCampaignsGeo, handleObservatoryTimeline,
-  handleObservatoryActors,
+  handleObservatoryActors, handleObservatoryTakedownsGeo, handleObservatoryVelocityNodes,
 } from "../handlers/observatoryLenses";
 import { handleDashboardOverview, handleDashboardTopBrands, handleDashboardProviders } from "../handlers/dashboard";
 import { handleBrandAdminDashboard } from "../handlers/brandAdminDashboard";
@@ -113,6 +113,8 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     ["/api/observatory/campaigns-geo",  handleObservatoryCampaignsGeo],
     ["/api/observatory/timeline",       handleObservatoryTimeline],
     ["/api/observatory/actors",         handleObservatoryActors],
+    ["/api/observatory/takedowns-geo",  handleObservatoryTakedownsGeo],
+    ["/api/observatory/velocity-nodes", handleObservatoryVelocityNodes],
   ];
   for (const [path, handler] of observatoryRoutes) {
     router.get(path, async (request: Request, env: Env) => {

@@ -7,6 +7,8 @@
 //   GET /api/observatory/campaigns-geo  — curated geopolitical campaigns
 //   GET /api/observatory/timeline       — severity time series (cube-served)
 //   GET /api/observatory/actors         — threat-actor list / detail
+//   GET /api/observatory/takedowns-geo  — takedown outcomes by country/provider (B5)
+//   GET /api/observatory/velocity-nodes — fast-weaponization map nodes (B5)
 //
 // Auth: every route is wrapped in requireStaff at the route layer
 // (routes/dashboard.ts), exactly like the Phase A observatory routes. The
@@ -40,6 +42,8 @@ import {
   sourceFeedCacheSegment,
   SEVERITY_RANK,
 } from "./observatory";
+import { getCountryCentroid } from "../lib/country-centroids";
+import { rollupWindowStartDay } from "../lib/takedown-outcome-rollup";
 import type { Env } from "../types";
 
 type ReadSession = ReturnType<typeof getReadSession>;
@@ -54,6 +58,8 @@ export const LENS_TTL_S = {
   timelineShort: 300, // 24h
   timeline: 900,
   actors: 900,
+  takedownsGeo: 3600,
+  velocityNodes: 900,
 } as const;
 
 /** Max entries kept per JSON array field (countries, asns) in a response. */
@@ -533,7 +539,12 @@ export async function handleObservatoryMovements(request: Request, env: Env): Pr
 // Pre-computed hosting_providers columns only, ordered by
 // active_threat_count DESC (idx_providers_active_threats). No id tie-break:
 // it would defeat the index and force a full sort of ~12.8K rows per miss.
-// `takedown` is reserved for the takedown overlay (always null for now).
+// `takedown` — {share, median_hours, n} from takedown_outcome_daily
+// (dim='provider', last 90 days), matched on hosting_providers.id ==
+// rollup `key` (the source threat's hosting_provider_id — the rollup never
+// keys on the free-text takedown_requests.provider_name, which names the
+// abuse contact, not the host). null when the provider has no submitted
+// takedown in the window. See foldTakedownCells for share / median_hours.
 export const PROVIDERS_GEO_DEFAULT_LIMIT = 100;
 export const PROVIDERS_GEO_MAX_LIMIT = 200;
 
@@ -570,6 +581,13 @@ export async function handleObservatoryProvidersGeo(request: Request, env: Env):
         LIMIT ?
       `).bind(limit).all<ProviderRow>();
       addToTally(tally, rows.meta);
+      // One read of the provider rollup window (≤90 days × the few providers
+      // that ever had a threat-sourced takedown), folded in JS.
+      const td = await session.prepare(TAKEDOWN_ROLLUP_READ_SQL)
+        .bind("provider", rollupWindowStartDay(new Date(), 90))
+        .all<TakedownRollupRow>();
+      addToTally(tally, td.meta);
+      const takedowns = foldTakedownCells(td.results ?? []);
       const data = (rows.results ?? []).map((r) => ({
         id: r.id,
         name: r.name,
@@ -581,7 +599,7 @@ export async function handleObservatoryProvidersGeo(request: Request, env: Env):
         trend_30d: num(r.trend_30d),
         is_bulletproof: r.is_bulletproof === 1,
         reputation_score: r.reputation_score ?? null,
-        takedown: null,
+        takedown: providerTakedown(takedowns.get(r.id)),
       }));
       return { data };
     });
@@ -736,6 +754,13 @@ export async function handleObservatoryCampaignsGeo(request: Request, env: Env):
 //   period       24h | 7d (default) | 30d | 90d → else 400
 //   source_feed  same canonicalisation as Phase A (absent / '' / all → all)
 //   country      optional ISO-2 (case-insensitive) → else 400
+//   velocity     optional very_fast | fast | all → else 400 (B5). When set
+//                the series comes from threat_cube_velocity instead: `total`
+//                = fast-weaponized active threats, plus `very_fast` / `fast`
+//                per point; the severity fields stay in the shape but are 0
+//                (the velocity cube has no severity dimension). The cube has
+//                no source_feed dimension either, so velocity + a source_feed
+//                other than all → 400.
 //
 // Buckets: 24h → 24×1h, 7d → 168×1h, 30d → 120×6h, 90d → 90×1d. Buckets are
 // aligned to UTC boundaries (hour / 00-06-12-18 / midnight) and the LAST
@@ -826,6 +851,34 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
   const feed = source.feed;
   const spec = TIMELINE_SPECS[period];
   const ttl = period === "24h" ? LENS_TTL_S.timelineShort : LENS_TTL_S.timeline;
+  const rawVelocity = url.searchParams.get("velocity");
+  if (rawVelocity !== null && rawVelocity !== "") {
+    const velocity = parseVelocityFlag(rawVelocity);
+    if (!velocity) return badRequest(request, "velocity must be very_fast, fast or all");
+    if (feed !== null) return badRequest(request, "source_feed is not supported with velocity");
+    return serveLens(request, env, "observatory_timeline",
+      `${CACHE_NS}.timeline:${period}:all:${country ?? "all"}:v:${velocity}`, ttl, period,
+      async (session, tally) => {
+        const startMs = timelineStartMs(spec);
+        const binds: unknown[] = [toHourBucket(startMs)];
+        let where = "hour_bucket >= ?";
+        if (country) { where += " AND country_code = ?"; binds.push(country); }
+        if (velocity !== "all") { where += " AND flag = ?"; binds.push(velocity); }
+        const rows = await session.prepare(`
+          SELECT hour_bucket, SUM(threat_count) AS total,
+            SUM(CASE WHEN flag = 'very_fast' THEN threat_count ELSE 0 END) AS very_fast,
+            SUM(CASE WHEN flag = 'fast' THEN threat_count ELSE 0 END) AS fast
+          FROM threat_cube_velocity
+          WHERE ${where}
+          GROUP BY hour_bucket
+        `).bind(...binds).all<VelocityTimelineRow>();
+        addToTally(tally, rows.meta);
+        return {
+          data: { bucket: spec.bucket, points: bucketVelocityTimeline(rows.results ?? [], spec, startMs) },
+          meta: { source_feed: "all", country, velocity },
+        };
+      });
+  }
 
   return serveLens(request, env, "observatory_timeline",
     `${CACHE_NS}.timeline:${period}:${sourceFeedCacheSegment(feed)}:${country ?? "all"}`, ttl, period,
@@ -995,5 +1048,309 @@ export async function handleObservatoryActors(request: Request, env: Env): Promi
           attributions: { by_confidence, by_source },
         },
       };
+    });
+}
+
+// ── Phase B (B5) shared: velocity flag + takedown rollup folding ──────────────
+
+export type VelocityFilter = "very_fast" | "fast" | "all";
+
+/** very_fast | fast | all → that value; anything else → null (400). */
+export function parseVelocityFlag(raw: string): VelocityFilter | null {
+  return raw === "very_fast" || raw === "fast" || raw === "all" ? raw : null;
+}
+
+interface VelocityTimelineRow {
+  hour_bucket: string;
+  total: number | null;
+  very_fast: number | null;
+  fast: number | null;
+}
+
+export interface VelocityTimelinePoint extends TimelinePoint {
+  very_fast: number;
+  fast: number;
+}
+
+/** Pure: fold hourly velocity-cube rows into N zero-filled buckets. */
+export function bucketVelocityTimeline(
+  rows: readonly VelocityTimelineRow[],
+  spec: TimelineSpec,
+  startMs: number,
+): VelocityTimelinePoint[] {
+  const base = bucketTimeline(
+    rows.map((r) => ({ hour_bucket: r.hour_bucket, total: r.total, critical: 0, high: 0, medium: 0, low: 0 })),
+    spec, startMs,
+  );
+  const points: VelocityTimelinePoint[] = base.map((p) => ({ ...p, very_fast: 0, fast: 0 }));
+  for (const r of rows) {
+    const ms = Date.parse(`${r.hour_bucket.replace(" ", "T")}Z`);
+    if (!Number.isFinite(ms)) continue;
+    const k = Math.floor((ms - startMs) / spec.bucketMs);
+    if (k < 0 || k >= spec.points) continue;
+    points[k]!.very_fast += num(r.very_fast);
+    points[k]!.fast += num(r.fast);
+  }
+  return points;
+}
+
+// takedown_outcome_daily window read: (dim, day) range on
+// idx_takedown_outcome_dim_day (0299). Binds: dim, first day.
+export const TAKEDOWN_ROLLUP_READ_SQL = `
+  SELECT day, key, submitted, taken_down, refused, expired, pending, median_hours
+  FROM takedown_outcome_daily
+  WHERE dim = ? AND day >= ?
+`;
+
+export interface TakedownRollupRow {
+  day: string;
+  key: string;
+  submitted: number | null;
+  taken_down: number | null;
+  refused: number | null;
+  expired: number | null;
+  pending: number | null;
+  median_hours: number | null;
+}
+
+export interface TakedownAgg {
+  key: string;
+  submitted: number;
+  taken_down: number;
+  refused: number;
+  expired: number;
+  pending: number;
+  /** taken_down / (taken_down + refused + expired); null when none resolved. */
+  share: number | null;
+  /** Weighted median of the daily medians (weight = that day's taken_down). */
+  median_hours: number | null;
+}
+
+/** Weighted median: the smallest value whose cumulative weight reaches half. */
+export function weightedMedian(pairs: ReadonlyArray<{ value: number; weight: number }>): number | null {
+  const xs = pairs.filter((p) => Number.isFinite(p.value) && p.weight > 0).sort((a, b) => a.value - b.value);
+  const total = xs.reduce((s, p) => s + p.weight, 0);
+  if (total <= 0) return null;
+  let cum = 0;
+  for (const p of xs) {
+    cum += p.weight;
+    if (cum * 2 >= total) return round(p.value, 2);
+  }
+  return round(xs[xs.length - 1]!.value, 2);
+}
+
+/**
+ * Pure: fold daily rollup cells into one aggregate per key. Counts sum.
+ * `median_hours` over a multi-day window is the taken_down-weighted median
+ * of the per-day medians — the rollup stores one median per day, not the
+ * raw durations, so this is an approximation of the true window median
+ * (exact when every day holds ≤1 takedown).
+ */
+export function foldTakedownCells(rows: readonly TakedownRollupRow[]): Map<string, TakedownAgg> {
+  const acc = new Map<string, TakedownAgg & { medians: Array<{ value: number; weight: number }> }>();
+  for (const r of rows) {
+    if (typeof r.key !== "string" || r.key === "") continue;
+    let a = acc.get(r.key);
+    if (!a) {
+      a = { key: r.key, submitted: 0, taken_down: 0, refused: 0, expired: 0, pending: 0, share: null, median_hours: null, medians: [] };
+      acc.set(r.key, a);
+    }
+    a.submitted += num(r.submitted);
+    a.taken_down += num(r.taken_down);
+    a.refused += num(r.refused);
+    a.expired += num(r.expired);
+    a.pending += num(r.pending);
+    if (typeof r.median_hours === "number" && Number.isFinite(r.median_hours)) {
+      a.medians.push({ value: r.median_hours, weight: Math.max(1, num(r.taken_down)) });
+    }
+  }
+  const out = new Map<string, TakedownAgg>();
+  for (const [k, { medians, ...a }] of acc) {
+    const resolved = a.taken_down + a.refused + a.expired;
+    out.set(k, { ...a, share: resolved > 0 ? round(a.taken_down / resolved, 4) : null, median_hours: weightedMedian(medians) });
+  }
+  return out;
+}
+
+/** providers-geo `takedown` field: null when the provider had no submission. */
+export function providerTakedown(a: TakedownAgg | undefined): { share: number | null; median_hours: number | null; n: number } | null {
+  if (!a || a.submitted <= 0) return null;
+  return { share: a.share, median_hours: a.median_hours, n: a.submitted };
+}
+
+// ── 8. GET /api/observatory/takedowns-geo ─────────────────────────────────────
+//
+//   period  30d (default) | 90d          → else 400
+//   by      country (default) | provider  → else 400
+//
+// Source: takedown_outcome_daily (migration 0299; rebuilt daily at the UTC
+// hour-0 cube_healer tick from takedown_requests — lib/takedown-outcome-
+// rollup.ts). The window is whole UTC days: today and the previous N-1.
+// Rows: [{key, label, country, lat, lng, submitted, taken_down, refused,
+// expired, pending, share, median_hours}], submitted DESC, key; ≤200 rows.
+//   key     ISO-2 (by=country) | hosting_providers.id (by=provider) | 'unknown'
+//           (not threat-sourced, or the threat lacks country/provider)
+//   label   country code | provider name ('Unknown' / the id when unnamed)
+//   country by=country → key; by=provider → the provider's country; null
+//   lat/lng that country's centroid, or null (never drawn at [0,0])
+//   share   taken_down / (taken_down + refused + expired), null when nothing
+//           resolved — the SUCCESS share, not the volume share (volume share
+//           is submitted / Σsubmitted, derivable client-side)
+//   median_hours  see foldTakedownCells
+export const TAKEDOWNS_GEO_ROW_LIMIT = 200;
+const TAKEDOWN_PERIODS: readonly ObservatoryPeriod[] = ["30d", "90d"];
+
+export async function handleObservatoryTakedownsGeo(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const period = parseLensPeriod(url.searchParams.get("period"), TAKEDOWN_PERIODS, "30d");
+  if (!period) return badRequest(request, "period must be 30d or 90d");
+  const rawBy = url.searchParams.get("by");
+  const by = rawBy === null || rawBy === "" ? "country" : rawBy;
+  if (by !== "country" && by !== "provider") return badRequest(request, "by must be country or provider");
+
+  return serveLens(request, env, "observatory_takedowns_geo",
+    `${CACHE_NS}.takedowns_geo:${period}:${by}`, LENS_TTL_S.takedownsGeo, period,
+    async (session, tally) => {
+      const days = period === "90d" ? 90 : 30;
+      const windowStart = rollupWindowStartDay(new Date(), days);
+      const res = await session.prepare(TAKEDOWN_ROLLUP_READ_SQL).bind(by, windowStart).all<TakedownRollupRow>();
+      addToTally(tally, res.meta);
+      const aggs = [...foldTakedownCells(res.results ?? []).values()]
+        .filter((a) => a.submitted > 0)
+        .sort((a, b) => b.submitted - a.submitted || a.key.localeCompare(b.key))
+        .slice(0, TAKEDOWNS_GEO_ROW_LIMIT);
+
+      // Provider labels: PK lookups, ≤99 binds per statement.
+      const providers = new Map<string, { name: string | null; country: string | null }>();
+      if (by === "provider") {
+        const ids = aggs.map((a) => a.key).filter((k) => k !== "unknown");
+        for (const part of chunk(ids, LENS_MAX_BINDS)) {
+          const pr = await session.prepare(
+            `SELECT id, name, country FROM hosting_providers WHERE id IN (${placeholders(part.length)})`,
+          ).bind(...part).all<{ id: string; name: string | null; country: string | null }>();
+          addToTally(tally, pr.meta);
+          for (const p of pr.results ?? []) providers.set(p.id, { name: p.name, country: p.country });
+        }
+      }
+
+      const data = aggs.map((a) => {
+        let label: string;
+        let country: string | null;
+        if (a.key === "unknown") {
+          label = "Unknown";
+          country = null;
+        } else if (by === "country") {
+          label = a.key;
+          country = normalizeCountry(a.key);
+        } else {
+          const p = providers.get(a.key);
+          label = p?.name ?? a.key;
+          country = normalizeCountry(p?.country ?? null);
+        }
+        const c = country ? getCountryCentroid(country) : null;
+        return {
+          key: a.key,
+          label,
+          country,
+          lat: c ? c[1] : null,
+          lng: c ? c[0] : null,
+          submitted: a.submitted,
+          taken_down: a.taken_down,
+          refused: a.refused,
+          expired: a.expired,
+          pending: a.pending,
+          share: a.share,
+          median_hours: a.median_hours,
+        };
+      });
+      return { data, meta: { by, window_start_day: windowStart } };
+    });
+}
+
+// ── 9. GET /api/observatory/velocity-nodes ────────────────────────────────────
+//
+//   period  24h | 7d (default) | 30d | 90d → else 400
+//   flag    very_fast | fast | all (default, both) → else 400
+//
+// Source: threat_cube_velocity (migration 0300; ACTIVE threats whose
+// weaponization_flag is very_fast/fast, per created_at hour × country),
+// summed over the Phase A snapped window. One node per country, placed at
+// the country centroid (precision 'country'); 'XX' / unknown-centroid
+// countries are dropped and their count reported in meta.dropped_no_centroid.
+// Shape = /nodes (lat, lng, threat_count, top_severity, critical, high,
+// medium, low, country_code, top_threat_type) + very_fast, fast, precision.
+// The velocity cube has no severity / threat_type dimension, so the severity
+// counts are 0 and top_severity / top_threat_type are null. Ordered
+// threat_count DESC, country_code.
+const VELOCITY_NODES_SQL = (withFlag: boolean) => `
+  SELECT country_code,
+    SUM(CASE WHEN flag = 'very_fast' THEN threat_count ELSE 0 END) AS very_fast,
+    SUM(CASE WHEN flag = 'fast' THEN threat_count ELSE 0 END) AS fast
+  FROM threat_cube_velocity
+  WHERE hour_bucket >= ?${withFlag ? " AND flag = ?" : ""}
+  GROUP BY country_code
+`;
+
+export interface VelocityNode {
+  lat: number;
+  lng: number;
+  threat_count: number;
+  top_severity: null;
+  critical: 0;
+  high: 0;
+  medium: 0;
+  low: 0;
+  country_code: string;
+  top_threat_type: null;
+  very_fast: number;
+  fast: number;
+  precision: "country";
+}
+
+/** Pure: per-country velocity counts → centroid-placed nodes. */
+export function shapeVelocityNodes(
+  rows: ReadonlyArray<{ country_code: string | null; very_fast: number | null; fast: number | null }>,
+): { nodes: VelocityNode[]; dropped: number } {
+  const nodes: VelocityNode[] = [];
+  let dropped = 0;
+  for (const r of rows) {
+    const veryFast = num(r.very_fast);
+    const fast = num(r.fast);
+    const total = veryFast + fast;
+    if (total <= 0) continue;
+    const cc = normalizeCountry(r.country_code);
+    const c = cc ? getCountryCentroid(cc) : null;
+    if (!cc || !c) { dropped += total; continue; }
+    nodes.push({
+      lat: c[1], lng: c[0], threat_count: total,
+      top_severity: null, critical: 0, high: 0, medium: 0, low: 0,
+      country_code: cc, top_threat_type: null,
+      very_fast: veryFast, fast, precision: "country",
+    });
+  }
+  nodes.sort((a, b) => b.threat_count - a.threat_count || a.country_code.localeCompare(b.country_code));
+  return { nodes, dropped };
+}
+
+export async function handleObservatoryVelocityNodes(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const period = parseLensPeriod(url.searchParams.get("period"));
+  if (!period) return badRequest(request, "invalid period");
+  const rawFlag = url.searchParams.get("flag");
+  const flag = rawFlag === null || rawFlag === "" ? "all" : parseVelocityFlag(rawFlag);
+  if (!flag) return badRequest(request, "flag must be very_fast, fast or all");
+
+  return serveLens(request, env, "observatory_velocity_nodes",
+    `${CACHE_NS}.velocity_nodes:${period}:${flag}`, LENS_TTL_S.velocityNodes, period,
+    async (session, tally) => {
+      const withFlag = flag !== "all";
+      const stmt = session.prepare(VELOCITY_NODES_SQL(withFlag));
+      const bound = withFlag
+        ? stmt.bind(snappedWindowStart(period), flag)
+        : stmt.bind(snappedWindowStart(period));
+      const res = await bound.all<{ country_code: string | null; very_fast: number | null; fast: number | null }>();
+      addToTally(tally, res.meta);
+      const { nodes, dropped } = shapeVelocityNodes(res.results ?? []);
+      return { data: nodes, meta: { flag, dropped_no_centroid: dropped } };
     });
 }

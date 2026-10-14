@@ -81,6 +81,7 @@ const TABLES = [
   "infrastructure_clusters", "threat_actors", "agent_events", "hosting_providers",
   "threat_cube_geo", "threat_cube_status", "radar_country_snapshots",
   "geopolitical_campaigns", "threat_actor_infrastructure", "threat_attributions",
+  "takedown_outcome_daily",
 ];
 
 /** Apply migration 0298's CREATE INDEX statements (derived schema skips indexes). */
@@ -356,7 +357,7 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     for (const q of inQueries) expect((q.sql.match(/\?/g) ?? []).length).toBeLessThanOrEqual(99);
   });
 
-  it("providers-geo: precomputed columns, active DESC, bulletproof filter, 400, takedown null", async () => {
+  it("providers-geo: precomputed columns, active DESC, bulletproof filter, 400, takedown null without rollup rows", async () => {
     const raw = openDerivedDb(TABLES);
     provider(raw, { id: "hp_a", asn: "AS1", country: "us", active: 5 });
     provider(raw, { id: "hp_b", asn: "AS2", country: null, active: 50, bp: 1 });

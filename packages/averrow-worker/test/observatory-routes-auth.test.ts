@@ -18,7 +18,7 @@
 //      never be served to an anonymous caller.
 //   2. A tenant `client` JWT          → 403, same no-handler guarantee.
 //   3. Staff roles (analyst, auditor) → reach the handler (200).
-//   4. The route table registers exactly the fourteen known paths, so a
+//   4. The route table registers exactly the sixteen known paths, so a
 //      new observatory route can't slip in without this test noticing.
 
 import { describe, it, expect } from "vitest";
@@ -48,6 +48,8 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/campaigns-geo",
   "/api/observatory/timeline?period=24h",
   "/api/observatory/actors",
+  "/api/observatory/takedowns-geo?period=30d&by=country",
+  "/api/observatory/velocity-nodes?period=7d&flag=very_fast",
 ] as const;
 
 /** Observatory cache keys: Phase A raw `observatory_*` + Phase B cachedValue `cv:observatory_lens.*`. */
@@ -172,7 +174,7 @@ describe("/api/observatory/* — staff-only", () => {
     }
   }
 
-  it("registers exactly the fourteen known observatory paths, all behind requireStaff", () => {
+  it("registers exactly the sixteen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const registered = [...src.matchAll(/"(\/api\/observatory\/[a-z-]+)"/g)].map((m) => m[1]).sort();
     expect(registered).toEqual(OBSERVATORY_PATHS.map((p) => p.split("?")[0]).sort());
