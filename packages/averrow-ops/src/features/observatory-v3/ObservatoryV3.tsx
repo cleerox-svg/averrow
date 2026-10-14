@@ -75,6 +75,7 @@ import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
 import { drillPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
+import { linkedOperationIds } from './lib/lens/operations';
 import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
 import { takedownPeriod } from '@/hooks/useObservatoryLenses';
 import { lensFootnote } from './lib/footnote';
@@ -602,7 +603,7 @@ export function ObservatoryV3() {
   const panelSection = useMemo(() => {
     switch (lens) {
       case 'hosting': return takedownsOn ? takedownProviderRows(L.takedownProviderModel, L.providers, tdWindow) : hostingRows(L.providers);
-      case 'operations': return operationRows(L.operationsQ.data?.data.operations);
+      case 'operations': return operationRows(L.operationsQ.data?.data.operations, L.operationsModel ? linkedOperationIds(L.operationsModel) : undefined);
       case 'baseline': return takedownsOn ? takedownCountryRows(L.takedownCountryModel, tdWindow) : baselineRows(measure, L.overindex, botPoints);
       case 'campaigns': return campaignRows(L.campaigns);
       case 'movement': return movementRows(L.movements);

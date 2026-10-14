@@ -4,8 +4,9 @@
  * With real data (50 operations x ~15 countries, heavy overlap on US / DE / NL / GB ...) a node or an arc per
  * (operation, country) is thousands of overlapping marks: ropes of dashed arcs and solid blobs. So:
  *  - a node per COUNTRY at its centroid, sized by how many operations are there (the drawer lists them);
+ *  - operations keep the server's ranking (evidence tier, then threat count): the client never re-ranks by size alone;
  *  - an arc per unordered country PAIR, its width / opacity by how many operations share it; an operation
- *    contributes a star from the busiest country it spans (it spans those countries by definition);
+ *    contributes a star from the busiest country it spans (ties: most threats, then country code) (it spans those countries by definition);
  *  - the default view draws links only for the few biggest operations; selecting one draws its whole footprint
  *    and dims everything else; hovering a panel row previews its links; never more than MAX_EDGES arcs;
  *  - flat arcs are drawn once, inside the primary world copy, with a lift capped by their length (they stay on
@@ -50,7 +51,7 @@ export interface OpEdge {
   kind: string;
   /** Full evidence text (tooltip). */
   label: string;
-  /** Glyph + a word or two for the map ("◆ cert", "● IP", "▲ ASN ×3"). */
+  /** Glyph + a word or two for the map ("◆ cert", "● IP", "▲ 3 ASNs"). */
   short: string;
   /** Flat-map path: inside [-180, 180], one world copy, lift capped by length. */
   path: LngLat[];
@@ -63,8 +64,6 @@ export interface OperationsModel {
   /** One per country. */
   nodes: OpNode[];
   nodeByCc: Map<string, OpNode>;
-  /** Every pair any operation spans (capped at MAX_EDGES, strongest first). */
-  edges: OpEdge[];
   /** Operations (by id) with at least one placeable country. */
   placedOps: Set<string>;
   /** Country entries that couldn't be placed (no centroid). */
@@ -83,11 +82,13 @@ export const KIND_LABELS: Record<string, string> = {
   cert_serial: 'shared cert serial',
   cert_san: 'shared cert SAN',
   per_ip: 'shared IP',
+  ip: 'shared IP',
   subnet: 'same subnet',
   registrar: 'same registrar',
   asn: 'same ASN',
   app_store: 'app store',
   dark_web: 'dark web',
+  residue: 'weak evidence',
   other: 'linked',
 };
 
@@ -102,30 +103,33 @@ export function normalizeConfidence(v: number | null | undefined): number | null
   return Math.max(0, Math.min(1, f));
 }
 
-/** Label for an edge; an unresolved (null) kind falls back to "linked" plus whatever ASNs are shared. */
+/**
+ * Label for an edge; an unresolved (null) kind falls back to "linked". The shared ASNs are listed only when the
+ * evidence IS the ASN (a cert or IP link has ASNs too, but they are not why the countries are joined).
+ */
 export function edgeLabel(kind: string | null, asns: readonly string[]): string {
   const base = kind === null ? 'linked' : kindLabel(kind);
-  if (asns.length === 0) return base;
+  if (kind !== 'asn' || asns.length === 0) return base;
   const shown = asns.slice(0, 2).join(' ');
   return `${base} · ${shown}${asns.length > 2 ? ` +${asns.length - 2}` : ''}`;
 }
 
 /** Evidence glyphs: distinct shapes, all in the geometric-shapes block every mono font carries. */
 const KIND_GLYPH: Record<string, string> = {
-  cert: '◆', cert_serial: '◆', cert_san: '◆', per_ip: '●', subnet: '■', registrar: '◇', asn: '▲',
+  cert: '◆', cert_serial: '◆', cert_san: '◆', per_ip: '●', ip: '●', subnet: '■', registrar: '◇', asn: '▲',
 };
 const KIND_SHORT: Record<string, string> = {
-  cert: 'cert', cert_serial: 'cert', cert_san: 'SAN', per_ip: 'IP', subnet: 'subnet', registrar: 'registrar', asn: 'ASN',
-  app_store: 'app store', dark_web: 'dark web',
+  cert: 'cert', cert_serial: 'cert', cert_san: 'SAN', per_ip: 'IP', ip: 'IP', subnet: 'subnet', registrar: 'registrar', asn: 'ASN',
+  app_store: 'app store', dark_web: 'dark web', residue: 'weak',
 };
 
-/** Short map label for an edge: "◆ cert", "● IP", "▲ ASN ×3" (×N = number of shared ASNs, shown for the ASN kind). */
+/** Short map label for an edge: "◆ cert", "● IP", "▲ 3 ASNs" (×N = number of shared ASNs, shown for the ASN kind). */
 export function edgeShortLabel(kind: string | null, asns: readonly string[]): string {
   const k = kind ?? 'other';
   const glyph = KIND_GLYPH[k] ?? '·';
+  if (k === 'asn' && asns.length > 1) return `${glyph} ${asns.length} ASNs`;
   const word = KIND_SHORT[k] ?? (kind === null ? 'link' : kind.replace(/_/g, ' '));
-  const times = k === 'asn' && asns.length > 1 ? ` ×${asns.length}` : '';
-  return `${glyph} ${word}${times}`;
+  return `${glyph} ${word}`;
 }
 
 /**
@@ -150,6 +154,18 @@ export function flatArc(a: LngLat, b: LngLat, segments = 20): { path: LngLat[]; 
 
 const asEvidence = (o: OperationGeo): string => o.evidence_tier ?? o.kind;
 
+/** The server's evidence ranking (worker EVIDENCE_TIER_RANK): strongest evidence first. Unknown tiers rank last. */
+const TIER_RANK: Record<string, number> = {
+  cert: 0, cert_serial: 0, cert_san: 0, ip: 1, per_ip: 1, subnet: 2, registrar: 3, asn: 4, residue: 5,
+};
+export const tierRank = (o: Pick<OperationGeo, 'evidence_tier' | 'kind'>): number => TIER_RANK[o.evidence_tier ?? o.kind] ?? 6;
+
+/** The server's operation order: evidence tier, then threat count (largest first), then id. Without tiers: threats, id. */
+export function compareOperations(a: OperationGeo, b: OperationGeo): number {
+  const t = a.evidence_tier != null && b.evidence_tier != null ? tierRank(a) - tierRank(b) : 0;
+  return t || b.threat_count - a.threat_count || a.id.localeCompare(b.id);
+}
+
 /** One operation's evidence label for the panel / drawer: its tier when the server sends one, else its kind. */
 export function operationEvidence(o: Pick<OperationGeo, 'evidence_tier' | 'kind' | 'shared_infra'>): string {
   const base = kindLabel(o.evidence_tier ?? o.kind);
@@ -167,9 +183,9 @@ export function aggregateEdges(m: OperationsModel, opIds: readonly string[]): Op
     if (!op || !list || list.length < 2) continue;
     // The star's centre is the busiest country the operation spans, so operations that overlap share their arcs.
     const hub = list.reduce((best, cc) => {
-      const w = m.nodeByCc.get(cc)!.opCount;
-      const bw = m.nodeByCc.get(best)!.opCount;
-      return w > bw || (w === bw && cc < best) ? cc : best;
+      const n = m.nodeByCc.get(cc)!;
+      const b = m.nodeByCc.get(best)!;
+      return n.opCount > b.opCount || (n.opCount === b.opCount && (n.threats > b.threats || (n.threats === b.threats && cc < best))) ? cc : best;
     });
     for (const other of list) {
       if (other === hub) continue;
@@ -182,7 +198,7 @@ export function aggregateEdges(m: OperationsModel, opIds: readonly string[]): Op
   }
   const out: OpEdge[] = [];
   for (const [key, p] of pairs) {
-    const ops = [...p.ops.values()].sort((x, y) => y.threat_count - x.threat_count || x.id.localeCompare(y.id));
+    const ops = [...p.ops.values()].sort(compareOperations);
     const lead = ops[0]!;
     const na = m.nodeByCc.get(p.a)!;
     const nb = m.nodeByCc.get(p.b)!;
@@ -196,7 +212,7 @@ export function aggregateEdges(m: OperationsModel, opIds: readonly string[]): Op
       kind,
       label: edgeLabel(kind, lead.asns) + (ops.length > 1 ? ` · ${ops.length} operations` : ''),
       short: edgeShortLabel(kind, lead.asns),
-      sharedAsns: lead.asns.slice(0, 20),
+      sharedAsns: kind === 'asn' ? lead.asns.slice(0, 20) : [],
       ...g,
     });
   }
@@ -215,7 +231,7 @@ export function buildOperationsModel(
     groupOf.set(op.id, op.component_id ?? op.id);
   }
 
-  const ordered = [...operations].sort((a, b) => b.threat_count - a.threat_count || a.id.localeCompare(b.id));
+  const ordered = [...operations].sort(compareOperations);
   const countriesOf = new Map<string, string[]>();
   const perCountry = new Map<string, OperationGeo[]>();
   let unplaced = 0;
@@ -250,11 +266,15 @@ export function buildOperationsModel(
   const nodeByCc = new Map(nodes.map(n => [n.country, n]));
 
   const model: OperationsModel = {
-    nodes, nodeByCc, edges: [], placedOps: new Set(countriesOf.keys()), unplaced, byId, groupOf, countriesOf,
+    nodes, nodeByCc, placedOps: new Set(countriesOf.keys()), unplaced, byId, groupOf, countriesOf,
     topOpIds: ordered.filter(o => countriesOf.has(o.id)).slice(0, TOP_OPERATIONS).map(o => o.id),
   };
-  model.edges = aggregateEdges(model, [...countriesOf.keys()]);
   return model;
+}
+
+/** Operations whose links the default view draws (the top ones that span two or more placeable countries). */
+export function linkedOperationIds(m: OperationsModel): Set<string> {
+  return new Set(m.topOpIds.filter(id => (m.countriesOf.get(id)?.length ?? 0) >= 2));
 }
 
 const visibleCache = new WeakMap<OperationsModel, Map<string, OpEdge[]>>();

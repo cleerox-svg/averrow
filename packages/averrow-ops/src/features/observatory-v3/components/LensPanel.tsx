@@ -11,6 +11,7 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import type { DrillTarget } from '../lib/drill';
 import { LENS_DEFS, type LensId } from '../lib/lenses';
+import { Badge } from '@/design-system/components';
 import type { PanelSection } from '../lib/panel-rows';
 
 export interface LensPanelProps {
@@ -32,6 +33,20 @@ export interface LensPanelProps {
   /** Extra content after the list (e.g. the Operations lens's shared-infrastructure toggle). */
   aside?: ReactNode;
   className?: string;
+}
+
+/** Two joined dots: this row's links are drawn on the map. */
+function LinkedGlyph() {
+  return (
+    <span className="inline-flex shrink-0" title="Links drawn on the map">
+      <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false">
+        <line x1="3" y1="5" x2="13" y2="5" stroke="var(--cyan-text, #7aeaff)" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
+        <circle cx="2.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
+        <circle cx="13.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
+      </svg>
+      <span className="sr-only">links drawn on the map</span>
+    </span>
+  );
 }
 
 const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = {
@@ -66,8 +81,16 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
               const inner = (
                 <>
                   <span className="min-w-0 flex-1 text-left">
-                    <span className="block text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
-                    {row.secondary && <span className="block font-mono text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {row.linked && <LinkedGlyph />}
+                      <span className="block text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
+                    </span>
+                    {(row.badge || row.secondary) && (
+                      <span className="flex items-center gap-1.5 min-w-0 mt-0.5">
+                        {row.badge && <Badge context="nexus" size="xs" label={row.badge} />}
+                        {row.secondary && <span className="block font-mono text-[11px] truncate min-w-0" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
+                      </span>
+                    )}
                   </span>
                   {row.trailing && (
                     <span className="font-mono text-xs font-bold tabular-nums shrink-0" style={{ color: TONE[row.tone ?? 'neutral'] }}>{row.trailing}</span>
@@ -95,6 +118,11 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                 </li>
               );
             })}
+            {section.more !== undefined && section.more > 0 && (
+              <li className="font-mono text-[11px] px-1.5 py-1.5" style={{ color: 'var(--text-muted)' }}>
+                {`+${section.more.toLocaleString()} more — search or filter`}
+              </li>
+            )}
           </ul>
         )}
       </section>

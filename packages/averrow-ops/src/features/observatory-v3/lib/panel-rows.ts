@@ -18,7 +18,7 @@ import { countryName } from './country-name';
 import type { DrillTarget } from './drill';
 import { formatRatio } from './lens/baseline';
 import { trendClass } from './lens/hosting';
-import { normalizeConfidence, operationEvidence } from './lens/operations';
+import { compareOperations, kindLabel, normalizeConfidence } from './lens/operations';
 import { isActiveCampaign } from './lens/campaigns';
 import { iso2 } from './lens/placement';
 import { formatHours, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED, type TakedownCountryModel, type TakedownProviderModel } from './lens/takedowns';
@@ -36,6 +36,10 @@ export interface PanelRow {
   tone?: 'rising' | 'falling' | 'neutral';
   /** Selecting the row re-targets the map + drawer. Absent => informational. */
   target?: DrillTarget;
+  /** A short tag shown as a badge before the secondary line (never truncated with it): the Operations evidence tier. */
+  badge?: string;
+  /** The row's links are drawn on the map in the default view (Operations top rows). */
+  linked?: boolean;
 }
 
 export interface PanelSection {
@@ -43,6 +47,8 @@ export interface PanelSection {
   /** Shown when there are no rows. */
   empty: string;
   rows: PanelRow[];
+  /** Rows the section holds beyond those listed (the list is capped): rendered as a "+N more" hint. */
+  more?: number;
 }
 
 export const PANEL_ROWS = 12;
@@ -67,21 +73,29 @@ export function hostingRows(providers: readonly ProviderGeo[] | undefined): Pane
   return { title: 'Top hosting providers', empty: 'No provider has active threats.', rows };
 }
 
-export function operationRows(ops: readonly OperationGeo[] | undefined): PanelSection {
-  const rows = [...(ops ?? [])]
-    .sort((a, b) => b.threat_count - a.threat_count || a.id.localeCompare(b.id))
+/**
+ * Operations keep the server's order (evidence tier, then threat count): the panel and the map's "top operations"
+ * agree. `linkedIds` are the operations whose links the default view draws; their rows say so.
+ */
+export function operationRows(ops: readonly OperationGeo[] | undefined, linkedIds: ReadonlySet<string> = NO_LINKED): PanelSection {
+  const sorted = [...(ops ?? [])].sort(compareOperations);
+  const rows = sorted
     .slice(0, PANEL_ROWS)
     .map((o): PanelRow => {
       const conf = normalizeConfidence(o.confidence_score);
       return {
         key: o.id, primary: o.name ?? o.id,
-        secondary: `${operationEvidence(o)} · ${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
+        badge: kindLabel(o.evidence_tier ?? o.kind),
+        secondary: `${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.shared_infra ? ' · shared infra' : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
         trailing: o.threat_count.toLocaleString(),
+        linked: linkedIds.has(o.id),
         target: { kind: 'operation', id: o.id, op: o },
       };
     });
-  return { title: 'Top operations', empty: 'No active operations.', rows };
+  const more = sorted.length - rows.length;
+  return { title: 'Top operations', empty: 'No active operations.', rows, ...(more > 0 ? { more } : {}) };
 }
+const NO_LINKED: ReadonlySet<string> = new Set();
 
 export function baselineRows(
   measure: 'index' | 'raw' | 'bot',

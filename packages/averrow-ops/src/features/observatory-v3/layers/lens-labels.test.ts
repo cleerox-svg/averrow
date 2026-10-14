@@ -18,7 +18,7 @@ describe('edgeShortLabel: glyph + a word', () => {
     expect(edgeShortLabel('cert_serial', [])).toBe('◆ cert');
     expect(edgeShortLabel('cert_san', [])).toBe('◆ SAN');
     expect(edgeShortLabel('per_ip', ['AS1'])).toBe('● IP');
-    expect(edgeShortLabel('asn', ['AS1', 'AS2', 'AS3'])).toBe('▲ ASN ×3');
+    expect(edgeShortLabel('asn', ['AS1', 'AS2', 'AS3'])).toBe('▲ 3 ASNs');
     expect(edgeShortLabel('asn', ['AS1'])).toBe('▲ ASN');
     expect(edgeShortLabel(null, [])).toBe('· link');
     expect(edgeShortLabel('weird_kind', [])).toBe('· weird kind');
@@ -31,13 +31,13 @@ describe('edgeShortLabel: glyph + a word', () => {
 });
 
 describe('edge label sources', () => {
-  // A star of 4 countries => 3 arcs, all "▲ ASN ×3".
+  // A star of 4 countries => 3 arcs, all "▲ 3 ASNs".
   const model = buildOperationsModel([op('a', ['US', 'DE', 'JP', 'BR']), op('b', ['FR', 'NL'], { kind: 'per_ip', asns: ['AS9'] })], []);
   const shown = visibleEdges(model, null);
   it('keeps ONE label per lead operation and evidence kind (not one per star arc)', () => {
     expect(shown.filter(e => e.opIds[0] === 'a')).toHaveLength(3);
     const src = edgeLabelSources(shown, '');
-    expect(src.filter(s => s.text === '▲ ASN ×3')).toHaveLength(1);
+    expect(src.filter(s => s.text === '▲ 3 ASNs')).toHaveLength(1);
     expect(src.filter(s => s.text === '● IP')).toHaveLength(1);
   });
   it('is memoised on (visible arcs, selection): same identity on repeat calls', () => {

@@ -289,8 +289,9 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
   it('names each row\'s evidence, marks shared infrastructure, and works without the new fields', async () => {
     routeOps();
     renderAt('/observatory?lens=operations');
-    expect(await screen.findByText(/shared cert · shared infrastructure/)).toBeInTheDocument();
-    expect(screen.getByText(/same ASN · 2 countries/)).toBeInTheDocument();
+    expect(await screen.findByText('shared cert')).toBeInTheDocument();
+    expect(screen.getByText(/60% conf · shared infra/)).toBeInTheDocument();
+    expect(screen.getByText('same ASN')).toBeInTheDocument();
     expect(screen.queryByText(/clusters hidden/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show shared infrastructure' })).not.toBeInTheDocument();
   });

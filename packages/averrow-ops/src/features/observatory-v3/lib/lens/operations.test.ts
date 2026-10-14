@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { OperationGeo } from '@/hooks/useObservatoryLenses';
 import {
   edgeLabel, buildOperationsModel, visibleEdges, aggregateEdges, flatArc, nodeInFootprint, operationEvidence, normalizeConfidence, kindLabel,
-  MAX_EDGES, TOP_OPERATIONS,
+  compareOperations, edgeShortLabel, linkedOperationIds, MAX_EDGES, TOP_OPERATIONS,
 } from './operations';
 import { placeAround, spreadOffset, groupIndexes, iso2 } from './placement';
 import { getCountryCentroid } from '@/lib/country-centroids';
@@ -43,6 +43,7 @@ describe('buildOperationsModel', () => {
     op({ id: 'c', countries: ['US', 'ZZ'], threat_count: 5 }),
   ];
   const m = buildOperationsModel(ops, []);
+  const allEdges = aggregateEdges(m, [...m.countriesOf.keys()]);
 
   it('makes ONE node per country, at the centroid, counting the operations there', () => {
     const nl = m.nodes.filter(n => n.country === 'NL');
@@ -58,15 +59,15 @@ describe('buildOperationsModel', () => {
     expect(m.unplaced).toBe(1);
   });
   it('makes ONE arc per unordered country pair, however many operations share it', () => {
-    const nlmd = m.edges.filter(e => e.id === 'MD-NL');
+    const nlmd = allEdges.filter(e => e.id === 'MD-NL');
     expect(nlmd).toHaveLength(1);
     expect(nlmd[0]!.opCount).toBe(2);
     expect(nlmd[0]!.opIds).toEqual(['a', 'b']);
-    expect(new Set(m.edges.map(e => e.id)).size).toBe(m.edges.length);
-    expect(m.edges.find(e => e.id === 'MD-SC')!.opCount).toBe(1);
+    expect(new Set(allEdges.map(e => e.id)).size).toBe(allEdges.length);
+    expect(allEdges.find(e => e.id === 'MD-SC')!.opCount).toBe(1);
   });
   it('labels an arc by its lead operation\'s evidence, and says how many operations share it', () => {
-    const e = m.edges.find(e => e.id === 'MD-NL')!;
+    const e = allEdges.find(e => e.id === 'MD-NL')!;
     expect(e.label).toBe('same ASN · AS1 AS2 +1 · 2 operations');
     expect(e.distances).toHaveLength(e.path.length);
     expect(e.distances[0]).toBe(0);
@@ -96,7 +97,6 @@ describe('buildOperationsModel', () => {
   it('is empty-safe', () => {
     const e = buildOperationsModel([], []);
     expect(e.nodes).toEqual([]);
-    expect(e.edges).toEqual([]);
     expect(visibleEdges(e, null)).toEqual([]);
   });
 });
@@ -127,7 +127,9 @@ describe('evidence labels (the backend\'s tier fields are optional)', () => {
   it('prefers the tier, falls back to the kind, and flags shared infrastructure', () => {
     expect(operationEvidence({ kind: 'asn' })).toBe('same ASN');
     expect(operationEvidence({ kind: 'asn', evidence_tier: 'cert' })).toBe('shared cert');
-    expect(operationEvidence({ kind: 'asn', evidence_tier: 'per_ip', shared_infra: true })).toBe('shared IP · shared infrastructure');
+    // the server's tier names are 'ip' and 'residue' ('per_ip' is only a cluster KIND)
+    expect(operationEvidence({ kind: 'asn', evidence_tier: 'ip', shared_infra: true })).toBe('shared IP · shared infrastructure');
+    expect(operationEvidence({ kind: 'per_ip', evidence_tier: 'residue' })).toBe('weak evidence');
     expect(operationEvidence({ kind: 'asn', evidence_tier: 'brand_new_tier' })).toBe('brand new tier');
     expect(operationEvidence({ kind: 'asn', evidence_tier: null, shared_infra: false })).toBe('same ASN');
   });
@@ -148,9 +150,10 @@ describe('a realistic day: 50 operations x ~15 countries with heavy overlap', ()
     expect(m.nodes.reduce((n, x) => n + x.opCount, 0)).toBeGreaterThan(m.nodes.length * 5); // ...yet they are crowded
   });
   it('the whole model has at most MAX_EDGES arcs, one per pair, strongest first', () => {
-    expect(m.edges.length).toBeLessThanOrEqual(MAX_EDGES);
-    expect(new Set(m.edges.map(e => e.id)).size).toBe(m.edges.length);
-    for (let i = 1; i < m.edges.length; i++) expect(m.edges[i - 1]!.opCount).toBeGreaterThanOrEqual(m.edges[i]!.opCount);
+    const edges = aggregateEdges(m, [...m.countriesOf.keys()]);
+    expect(edges.length).toBeLessThanOrEqual(MAX_EDGES);
+    expect(new Set(edges.map(e => e.id)).size).toBe(edges.length);
+    for (let i = 1; i < edges.length; i++) expect(edges[i - 1]!.opCount).toBeGreaterThanOrEqual(edges[i]!.opCount);
   });
   it('the default view draws only the top operations\' links: a handful of arcs, not hundreds', () => {
     const shown = visibleEdges(m, null);
@@ -172,17 +175,18 @@ describe('a realistic day: 50 operations x ~15 countries with heavy overlap', ()
     }
   });
   it('arc width / alpha inputs: busy pairs carry more operations than quiet ones', () => {
-    expect(m.edges[0]!.opCount).toBeGreaterThan(5); // the overlap collapses into few, heavy arcs
-    expect(m.edges[0]!.opCount).toBeGreaterThan(m.edges.at(-1)!.opCount);
+    const edges = aggregateEdges(m, [...m.countriesOf.keys()]);
+    expect(edges[0]!.opCount).toBeGreaterThan(5); // the overlap collapses into few, heavy arcs
+    expect(edges[0]!.opCount).toBeGreaterThan(edges.at(-1)!.opCount);
   });
 });
 
 describe('edges with an unresolved kind', () => {
-  it('label falls back to "linked" (+ shared ASNs) and the model still builds', () => {
+  it('label falls back to "linked" and the model still builds', () => {
     expect(edgeLabel(null, [])).toBe('linked');
-    expect(edgeLabel(null, ['AS9'])).toBe('linked · AS9');
+    expect(edgeLabel(null, ['AS9'])).toBe('linked'); // ASNs are listed for ASN evidence only
     const m = buildOperationsModel([op({ id: 'a', countries: ['NL'] }), op({ id: 'b', countries: ['US'] })], []);
-    expect(m.edges).toEqual([]); // single-country operations have nothing to link
+    expect(aggregateEdges(m, ['a', 'b'])).toEqual([]); // single-country operations have nothing to link
   });
 });
 
@@ -196,5 +200,80 @@ describe('helpers', () => {
   it('labels known and unknown kinds', () => {
     expect(kindLabel('cert_serial')).toBe('shared cert serial');
     expect(kindLabel('some_new_kind')).toBe('some new kind');
+  });
+});
+
+describe('ranking: the server\'s evidence-tier order survives the client', () => {
+  const ranked = [
+    op({ id: 'cert-small', kind: 'cert_serial', evidence_tier: 'cert', threat_count: 30, countries: ['US', 'DE'] }),
+    op({ id: 'ip-mid', kind: 'per_ip', evidence_tier: 'ip', threat_count: 500, countries: ['US', 'NL'] }),
+    op({ id: 'asn-huge', kind: 'asn', evidence_tier: 'asn', threat_count: 9000, countries: ['US', 'FR'] }),
+    op({ id: 'asn-big', kind: 'asn', evidence_tier: 'asn', threat_count: 8000, countries: ['US', 'GB'] }),
+    op({ id: 'weak', kind: 'asn', evidence_tier: 'residue', threat_count: 99999, countries: ['US', 'JP'] }),
+  ];
+  it('tier rank first, threats within a tier, then id', () => {
+    expect([...ranked].reverse().sort(compareOperations).map(o => o.id)).toEqual(['cert-small', 'ip-mid', 'asn-huge', 'asn-big', 'weak']);
+  });
+  it('the top operations (whose links are drawn) are the best-evidenced, not the biggest', () => {
+    const m = buildOperationsModel([...ranked].reverse(), []);
+    expect(m.topOpIds).toEqual(['cert-small', 'ip-mid', 'asn-huge', 'asn-big', 'weak']);
+    expect(linkedOperationIds(m)).toEqual(new Set(m.topOpIds));
+    expect(m.nodeByCc.get('US')!.opIds).toEqual(['cert-small', 'ip-mid', 'asn-huge', 'asn-big', 'weak']);
+  });
+  it('without tiers (an older backend) the order is threat count', () => {
+    const plain = [op({ id: 'a', threat_count: 1 }), op({ id: 'b', threat_count: 9 })];
+    expect([...plain].sort(compareOperations).map(o => o.id)).toEqual(['b', 'a']);
+  });
+  it('an edge\'s lead operation is its best-evidenced one', () => {
+    const m = buildOperationsModel([
+      op({ id: 'asn-op', evidence_tier: 'asn', kind: 'asn', threat_count: 900, countries: ['US', 'DE'] }),
+      op({ id: 'cert-op', evidence_tier: 'cert', kind: 'cert_serial', threat_count: 5, countries: ['US', 'DE'] }),
+    ], []);
+    const [e] = aggregateEdges(m, [...m.countriesOf.keys()]);
+    expect(e!.opIds[0]).toBe('cert-op');
+    expect(e!.kind).toBe('cert');
+    expect(e!.short).toBe('◆ cert');
+  });
+});
+
+describe('star hubs', () => {
+  const hubTouching = (m: ReturnType<typeof buildOperationsModel>, id: string, cc: string) =>
+    aggregateEdges(m, [id]).every(e => e.a === cc || e.b === cc);
+  it('ties on operation count break on country code', () => {
+    const m = buildOperationsModel([
+      op({ id: 'x', countries: ['US', 'DE', 'FR'], threat_count: 10 }),
+      op({ id: 'y', countries: ['US', 'DE', 'JP'], threat_count: 10 }),
+    ], []);
+    // US and DE tie on operations and threats: the lower code (DE) is the hub
+    expect(hubTouching(m, 'x', 'DE')).toBe(true);
+  });
+  it('ties on operation count break on threats before the country code', () => {
+    const m = buildOperationsModel([
+      op({ id: 'x', countries: ['DE', 'US', 'FR'], threat_count: 10 }),
+      op({ id: 'y', countries: ['DE', 'US'], threat_count: 10 }),
+      op({ id: 'w', countries: ['JP', 'US'], threat_count: 700 }),
+      op({ id: 'v', countries: ['JP', 'DE'], threat_count: 1 }),
+    ], []);
+    // DE: x,y,v (3 ops, 21 threats); US: x,y,w (3 ops, 720 threats) => US is the hub, despite DE < US
+    expect(hubTouching(m, 'x', 'US')).toBe(true);
+  });
+});
+
+describe('ASN evidence only lists ASNs when the pair\'s evidence is the ASN', () => {
+  it('"2 ASNs" on the map, the list in the tooltip, only for ASN-tier pairs', () => {
+    expect(edgeShortLabel('asn', ['AS1', 'AS2'])).toBe('▲ 2 ASNs');
+    expect(edgeShortLabel('asn', ['AS1'])).toBe('▲ ASN');
+    expect(edgeShortLabel('ip', ['AS1', 'AS2'])).toBe('● IP');
+    expect(edgeLabel('ip', ['AS1', 'AS2'])).toBe('shared IP');
+    expect(edgeLabel('cert', ['AS1'])).toBe('shared cert');
+    expect(edgeLabel('asn', ['AS1', 'AS2'])).toBe('same ASN · AS1 AS2');
+    const m = buildOperationsModel([op({ id: 'i', kind: 'per_ip', evidence_tier: 'ip', asns: ['AS1', 'AS2'], countries: ['US', 'DE'] })], []);
+    const [e] = aggregateEdges(m, ['i']);
+    expect(e!.sharedAsns).toEqual([]);
+    expect(e!.label).toBe('shared IP');
+  });
+  it('maps the server\'s tier names (ip, residue) to glyphs and short words', () => {
+    expect(edgeShortLabel('ip', [])).toBe('● IP');
+    expect(edgeShortLabel('residue', [])).toBe('· weak');
   });
 });
