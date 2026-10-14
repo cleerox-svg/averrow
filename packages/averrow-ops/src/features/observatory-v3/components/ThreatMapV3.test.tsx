@@ -76,6 +76,23 @@ beforeEach(() => {
   stubMatchMedia(false);
 });
 
+describe('ThreatMapV3 construction options (security)', () => {
+  it('creates the map with the attribution control off and no custom attribution (maplibre-gl <= 6.4.0 renders it as HTML)', () => {
+    render(<ThreatMapV3 {...base} />);
+    const opts = lastMap().opts;
+    expect(opts.attributionControl).toBe(false);
+    expect('customAttribution' in opts).toBe(false);
+  });
+  it('never adds an attribution control or a popup afterwards', () => {
+    render(<ThreatMapV3 {...base} />);
+    act(() => lastMap().emit('style.load'));
+    for (const c of lastMap().controls) {
+      const name = (c as { constructor: { name: string } }).constructor.name;
+      expect(name).not.toMatch(/Attribution|Popup/);
+    }
+  });
+});
+
 describe('ThreatMapV3 error handling', () => {
   it('a tile/source error leaves the map on screen', () => {
     render(<ThreatMapV3 {...base} />);

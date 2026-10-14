@@ -460,6 +460,12 @@ function ThreatMapV3Inner({
         minZoom: isMobileRef.current ? phoneMinZoom(container.clientWidth) : undefined,
         maxZoom: maxZoomFor(projectionRef.current),
         canvasContextAttributes: { antialias: true },
+        // MUST STAY OFF. maplibre-gl <= 6.4.0 renders the attribution control with innerHTML from the STYLE's
+        // `attribution` strings (GHSA-jrc7-96c5-q579, stored XSS): the basemap style is a third-party document
+        // fetched at runtime, so enabling the control (or `customAttribution`, or any HTML popup built from data)
+        // would run its markup in this origin. Any attribution the basemap's licence needs must be plain text in our
+        // own markup, never this control. Pinned by lib/map-security.test.ts; revisit only after upgrading past the
+        // fixed release (installed: 5.x, affected: <= 6.4.0).
         attributionControl: false,
       });
     } catch (err) {
