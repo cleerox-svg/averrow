@@ -24,6 +24,7 @@ import {
 import { OPERATION_STATUSES } from "../src/handlers/operations";
 import { groupClusterComponents } from "../src/lib/cluster-components";
 import { inheritOtxActorsToClusters } from "../src/lib/cluster-attribution-inherit";
+import { PROD_CLUSTERS_DDL } from "./prod-cluster-ddl";
 
 const MIGRATIONS = resolve(__dirname, "..", "migrations");
 
@@ -83,8 +84,8 @@ describe("cluster-status helpers", () => {
   });
 
   it("liveClusterStatusSql is the positive status list AND not retired", () => {
-    expect(liveClusterStatusSql()).toBe("status IN ('active', 'dormant', 'accelerating', 'pivot') AND retired_reason IS NULL");
-    expect(liveClusterStatusSql("ic")).toBe("ic.status IN ('active', 'dormant', 'accelerating', 'pivot') AND ic.retired_reason IS NULL");
+    expect(liveClusterStatusSql()).toBe("status IN ('active', 'dormant', 'disrupted', 'accelerating', 'pivot') AND retired_reason IS NULL");
+    expect(liveClusterStatusSql("ic")).toBe("ic.status IN ('active', 'dormant', 'disrupted', 'accelerating', 'pivot') AND ic.retired_reason IS NULL");
     expect(new Set(LIVE_CLUSTER_STATUSES)).toEqual(OPERATION_STATUSES);
   });
 
@@ -101,8 +102,7 @@ describe("cluster-status helpers", () => {
 // migrations to that exact DDL, with legacy + stable rows, the way the deploy
 // does (statement by statement, foreign keys ON as in D1).
 
-/** Prod DDL as of 2026-10-14 (0302's country_counts already applied). */
-const PROD_CLUSTERS_DDL = `CREATE TABLE infrastructure_clusters (id TEXT PRIMARY KEY, cluster_name TEXT, asns TEXT NOT NULL, ip_ranges TEXT, countries TEXT, campaign_ids TEXT, brand_ids TEXT, attack_types TEXT, hosting_provider_ids TEXT, threat_count INTEGER DEFAULT 0, confidence_score INTEGER, ai_generated_probability INTEGER, ai_classification TEXT, pivot_from_cluster_id TEXT REFERENCES infrastructure_clusters(id), first_detected TEXT DEFAULT (datetime('now')), last_updated TEXT DEFAULT (datetime('now')), last_seen TEXT, status TEXT DEFAULT 'active' CHECK (status IN ('active','dormant','disrupted')), agent_notes TEXT, nexus_brief TEXT, actor_id TEXT REFERENCES threat_actors(id) ON DELETE SET NULL, attribution_attempted_at TEXT, attribution_dismissed_at TEXT, component_id TEXT, infra_fingerprint TEXT, infra_fingerprint_at TEXT, last_movement_pivot_at TEXT, country_counts TEXT)`;
+// PROD_CLUSTERS_DDL: test/prod-cluster-ddl.ts (shared with the prod-schema tests).
 
 const migrationFile = (prefix: string): string => {
   const f = readdirSync(MIGRATIONS).filter((n) => n.startsWith(`${prefix}_`) && n.endsWith(".sql"));

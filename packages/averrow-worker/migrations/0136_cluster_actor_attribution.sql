@@ -28,26 +28,45 @@
 -- The base deliberately EXCLUDES columns added by later ALTERs: actor_id +
 -- attribution_attempted_at (this migration, below), attribution_dismissed_at
 -- (0232), component_id (0240), infra_fingerprint/_at + last_movement_pivot_at
--- (0241) — so each of those ADD COLUMNs still succeeds on a fresh DB.
+-- (0241), country_counts (0302), retired_reason (0303) — so each of those
+-- ADD COLUMNs still succeeds on a fresh DB.
+--
+-- 2026-10-14 schema-drift fix: the base now carries EVERY column prod's
+-- out-of-band table has that no later migration adds (ip_ranges,
+-- ai_generated_probability, ai_classification, pivot_from_cluster_id,
+-- last_updated, nexus_brief), in prod's column order. Before this, a fresh
+-- DB lacked last_updated + nexus_brief, so handleListClusters, the
+-- Operations list and the Attribution Backlog failed on it. An ADD COLUMN
+-- migration would have failed in prod ("duplicate column"), and editing this
+-- CREATE TABLE IF NOT EXISTS is a no-op there. After the full migration run
+-- the column set equals prod's (pinned by
+-- test/infrastructure-clusters-prod-schema.test.ts). Existing column
+-- defaults / NOT NULLs are left as they were.
 CREATE TABLE IF NOT EXISTS infrastructure_clusters (
-  id                   TEXT PRIMARY KEY,
-  cluster_name         TEXT,
-  asns                 TEXT DEFAULT '[]',   -- JSON array
-  countries            TEXT DEFAULT '[]',   -- JSON array
-  attack_types         TEXT DEFAULT '[]',   -- JSON array
-  brand_ids            TEXT DEFAULT '[]',   -- JSON array
-  campaign_ids         TEXT DEFAULT '[]',   -- JSON array
-  hosting_provider_ids TEXT DEFAULT '[]',   -- JSON array
-  threat_count         INTEGER NOT NULL DEFAULT 0,
-  confidence_score     INTEGER,
-  first_detected       TEXT NOT NULL DEFAULT (datetime('now')),
-  last_seen            TEXT NOT NULL DEFAULT (datetime('now')),
+  id                       TEXT PRIMARY KEY,
+  cluster_name             TEXT,
+  asns                     TEXT DEFAULT '[]',   -- JSON array
+  ip_ranges                TEXT,
+  countries                TEXT DEFAULT '[]',   -- JSON array
+  campaign_ids             TEXT DEFAULT '[]',   -- JSON array
+  brand_ids                TEXT DEFAULT '[]',   -- JSON array
+  attack_types             TEXT DEFAULT '[]',   -- JSON array
+  hosting_provider_ids     TEXT DEFAULT '[]',   -- JSON array
+  threat_count             INTEGER NOT NULL DEFAULT 0,
+  confidence_score         INTEGER,
+  ai_generated_probability INTEGER,
+  ai_classification        TEXT,
+  pivot_from_cluster_id    TEXT REFERENCES infrastructure_clusters(id),
+  first_detected           TEXT NOT NULL DEFAULT (datetime('now')),
+  last_updated             TEXT DEFAULT (datetime('now')),
+  last_seen                TEXT NOT NULL DEFAULT (datetime('now')),
   -- Prod's CHECK, reproduced so fresh DBs (and every test schema derived
   -- from migrations/, test/migration-schema.ts) reject any other status —
   -- see migration 0303. Never add a status value: use retired_reason.
-  status               TEXT NOT NULL DEFAULT 'active'
-                       CHECK (status IN ('active','dormant','disrupted')),
-  agent_notes          TEXT
+  status                   TEXT NOT NULL DEFAULT 'active'
+                           CHECK (status IN ('active','dormant','disrupted')),
+  agent_notes              TEXT,
+  nexus_brief              TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_clusters_status   ON infrastructure_clusters(status);

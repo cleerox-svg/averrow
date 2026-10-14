@@ -3,7 +3,7 @@
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
-import { liveClusterStatusSql, notRetiredClusterSql } from "../lib/cluster-status";
+import { liveClusterStatusSql } from "../lib/cluster-status";
 
 // GET /api/providers/stats (top providers by threat count)
 export async function handleProviderStats(request: Request, env: Env): Promise<Response> {
@@ -518,12 +518,17 @@ export async function handleProviderClusters(request: Request, env: Env, provide
       return json({ success: true, data: [] }, 200, origin);
     }
 
+    // liveClusterStatusSql() (every storable status, AND not retired) +
+    // `+threat_count`: the planner seeks the live-rows partial index
+    // idx_clusters_live_status_threat_count per status and LIKE-filters the
+    // few hundred live rows, instead of walking idx_clusters_threat_count
+    // through ~76K retired rows. Pinned in test/cluster-list-plans.test.ts.
     const rows = await env.DB.prepare(`
       SELECT id, cluster_name, asns, countries, threat_count, status,
              confidence_score, agent_notes, first_detected, last_seen
       FROM infrastructure_clusters
-      WHERE asns LIKE ? AND ${notRetiredClusterSql()}
-      ORDER BY threat_count DESC
+      WHERE ${liveClusterStatusSql()} AND asns LIKE ?
+      ORDER BY +threat_count DESC
     `).bind(`%${provider.asn}%`).all();
 
     return json({ success: true, data: rows.results }, 200, origin);

@@ -317,14 +317,17 @@ const UPSERT_SET = `cluster_name = excluded.cluster_name,
             agent_notes = excluded.agent_notes`;
 
 /**
- * Reactivation on upsert: a row retireNonOperationalLaneClusters parked as
- * `shared_infra` that a lane emits again (e.g. a per-IP row whose fan-out
- * dropped back under the hub threshold — the lane's filter just re-admitted
- * it) gets retired_reason cleared. `superseded` is NEVER cleared: legacy
- * superseded ids don't start `cluster_`, so no lane can collide with one,
- * and the guard makes that hold even if one did. Retirement never changed
- * `status` (prod CHECK: active / dormant / disrupted — lib/cluster-status.ts),
- * so a reactivated row simply keeps its status.
+ * Reactivation on upsert. Retirement never changes `status` (prod CHECK:
+ * active / dormant / disrupted — lib/cluster-status.ts), so a reactivated
+ * row keeps its status (the ASN lane then overwrites it, see below).
+ *
+ * Specific lanes (per-IP, /24; the cert / registrar lanes are never
+ * retired): a row retireNonOperationalLaneClusters parked as `shared_infra`
+ * that the lane emits again (e.g. a per-IP row whose fan-out dropped back
+ * under the hub threshold — the lane's filter just re-admitted it) gets
+ * retired_reason cleared. Any other reason (`superseded`) is kept; the
+ * retire pass never supersedes a per-IP / subnet row, so the guard only
+ * matters if a future writer does.
  */
 const UPSERT_CLEAR_SHARED_INFRA = `retired_reason = CASE
                 WHEN infrastructure_clusters.retired_reason = '${SHARED_INFRA_RETIRED_REASON}' THEN NULL
@@ -339,7 +342,26 @@ const UPSERT_KEEP_STATUS_SQL = `
             ${UPSERT_SET},
             ${UPSERT_CLEAR_SHARED_INFRA}`;
 
-/** Upsert for the ASN lane, which owns active ↔ dormant (pivot) status. */
+/**
+ * Upsert for the ASN lane, which owns active ↔ dormant (pivot) status.
+ *
+ * Clears retired_reason UNCONDITIONALLY, `superseded` included. The lane
+ * only ever writes the canonical `cluster_asn_<AS digits>_<type>` id it just
+ * computed from a normalised ASN, and the ~76K legacy superseded rows have
+ * random-UUID ids (not `cluster_`), so the only superseded rows it can hit
+ * are canonical `cluster_asn_*` rows the retire pass superseded because
+ * their STORED asns / attack_types were unparseable or mismatched. The lane
+ * has just overwritten both with good values, so the row is a live
+ * operation again; keeping `superseded` would hide it forever while the
+ * lane kept refreshing and stamping it.
+ *
+ * No retire / reactivate loop: the retire pass runs after the lanes and
+ * decideLaneRowRetirement mirrors this lane's filter — for a row the lane
+ * just wrote, asnClusterId(asns[0], attack_types[0]) === id, the ASN is not
+ * shared, the type is not IP-reputation and the fan-out is within
+ * ASN_MAX_BRAND_FANOUT, so it returns null. Pinned in
+ * test/nexus-threat-lanes.test.ts.
+ */
 const UPSERT_LANE_STATUS_SQL = `
           INSERT INTO infrastructure_clusters (
             ${UPSERT_COLUMNS}
@@ -347,7 +369,7 @@ const UPSERT_LANE_STATUS_SQL = `
           ON CONFLICT(id) DO UPDATE SET
             ${UPSERT_SET},
             status = excluded.status,
-            ${UPSERT_CLEAR_SHARED_INFRA}`;
+            retired_reason = NULL`;
 
 async function upsertCluster(db: D1Database, c: ClusterUpsert, ownsStatus: boolean): Promise<void> {
   await db.prepare(ownsStatus ? UPSERT_LANE_STATUS_SQL : UPSERT_KEEP_STATUS_SQL).bind(

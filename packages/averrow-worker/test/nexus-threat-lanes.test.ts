@@ -620,17 +620,80 @@ describe.skipIf(!hasSqlite())("NEXUS threats lanes on the migrated schema", () =
     expect(c.threat_count).toBe(12);
   });
 
-  it("a lane upsert never clears 'superseded' (per-IP and ASN paths)", async () => {
-    const ins = raw.prepare(
+  it("the per-IP lane upsert never clears 'superseded' (only shared_infra)", async () => {
+    raw.prepare(
       `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, retired_reason, threat_count)
-       VALUES (?, 'old', ?, ?, '[]', 'active', 'superseded', 0)`,
-    );
-    ins.run("cluster_ip_203.0.113.7", "[]", '["phishing"]');
-    ins.run("cluster_asn_as4837_malware_distribution", '["AS4837"]', '["malware_distribution"]');
+       VALUES ('cluster_ip_203.0.113.7', 'old', '[]', '["phishing"]', '[]', 'active', 'superseded', 0)`,
+    ).run();
     await runPerIpLane(db);
-    await runAsnLane(db);
-    expect(cluster("cluster_ip_203.0.113.7")!.retired_reason).toBe("superseded");
+    const c = cluster("cluster_ip_203.0.113.7")!;
+    expect(c.retired_reason).toBe("superseded");
+    expect(c.threat_count).toBe(8); // still refreshed — only retirement is kept
+  });
+
+  it("the /24 lane upsert never clears 'superseded' (only shared_infra)", async () => {
+    raw.prepare(
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, retired_reason, threat_count)
+       VALUES ('cluster_subnet_74_115_51', 'old', '[]', '["phishing"]', '[]', 'active', 'superseded', 0)`,
+    ).run();
+    await runSubnetLane(db);
+    expect(cluster("cluster_subnet_74_115_51")!.retired_reason).toBe("superseded");
+  });
+
+  it("ASN lane revives a canonical row the retire pass superseded for unparseable asns, with no flip-flop", async () => {
+    // A canonical cluster_asn_* row whose STORED asns could not be parsed:
+    // the retire pass supersedes it (it can't recompute the id from asns).
+    raw.prepare(
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, threat_count)
+       VALUES ('cluster_asn_as4837_malware_distribution', 'old', 'not json', '["malware_distribution"]', '[]', 'active', 1)`,
+    ).run();
+    expect((await retireNonOperationalLaneClusters(db)).markedSuperseded).toBe(1);
     expect(cluster("cluster_asn_as4837_malware_distribution")!.retired_reason).toBe("superseded");
+
+    // Two full NEXUS runs (lanes, then the retire pass): the ASN lane
+    // rewrites asns / attack_types and clears superseded; the retire pass
+    // then sees a good row and leaves it alone — every run.
+    for (let run = 0; run < 2; run++) {
+      await runAsnLane(db);
+      const c = cluster("cluster_asn_as4837_malware_distribution")!;
+      expect(c.retired_reason, `run ${run} after lane`).toBeNull();
+      expect(JSON.parse(c.asns)).toEqual(["AS4837"]);
+      expect(c.threat_count).toBe(12);
+      const r = await retireNonOperationalLaneClusters(db);
+      expect(r.markedSuperseded + r.markedSharedInfra, `run ${run} retire pass`).toBe(0);
+      expect(cluster("cluster_asn_as4837_malware_distribution")!.retired_reason).toBeNull();
+    }
+    expect(stampedTo("cluster_asn_as4837_malware_distribution")).toBe(12);
+  });
+
+  it("ASN lane: every row it writes passes decideLaneRowRetirement (the no-flip-flop invariant)", async () => {
+    insertThreats(raw, [
+      ...many(12, (i) => ({ id: `ff_a_${i}`, asn: "as64501 Example Net", brand: `fa${i % 3}` })),
+      ...many(12, (i) => ({ id: `ff_b_${i}`, asn: "64502", threat_type: "malware_distribution", brand: `fb${i % 4}` })),
+    ]);
+    // Pre-supersede every id the lane is about to write.
+    const r = await runAsnLane(db);
+    expect(r.clusters.length).toBeGreaterThan(1);
+    raw.exec("UPDATE infrastructure_clusters SET retired_reason = 'superseded' WHERE id >= 'cluster_asn_' AND id < 'cluster_asn`'");
+    await runAsnLane(db);
+    const rows = raw.prepare(
+      `SELECT id, asns, attack_types, CASE WHEN json_valid(brand_ids) THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout, retired_reason
+         FROM infrastructure_clusters WHERE id >= 'cluster_asn_' AND id < 'cluster_asn\`'`,
+    ).all() as Array<{ id: string; asns: string | null; attack_types: string | null; brand_fanout: number; retired_reason: string | null }>;
+    expect(rows.map((x) => x.id).sort()).toEqual(r.clusters.map((c) => c.clusterId).sort());
+    for (const row of rows) {
+      expect(row.retired_reason, row.id).toBeNull();
+      expect(decideLaneRowRetirement(row), row.id).toBeNull();
+    }
+  });
+
+  it("legacy UUID superseded rows are never revived by a NEXUS run", async () => {
+    raw.prepare(
+      `INSERT INTO infrastructure_clusters (id, cluster_name, asns, attack_types, brand_ids, status, retired_reason, threat_count)
+       VALUES ('11111111-0000-4000-8000-000000000001', 'legacy', '["AS4837"]', '["malware_distribution"]', '[]', 'active', 'superseded', 900)`,
+    ).run();
+    await runAll();
+    expect(cluster("11111111-0000-4000-8000-000000000001")!.retired_reason).toBe("superseded");
   });
 
   it("every status a lane writes satisfies the prod CHECK (the migrated schema enforces it)", async () => {
