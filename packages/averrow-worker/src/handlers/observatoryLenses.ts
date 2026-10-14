@@ -13,6 +13,10 @@
 // Auth: every route is wrapped in requireStaff at the route layer
 // (routes/dashboard.ts), exactly like the Phase A observatory routes. The
 // `cv:observatory_lens.*` cache keys are therefore staff-audience only.
+// Takedown effectiveness is narrower — `manage_takedowns` (super_admin,
+// admin, analyst): takedowns-geo is gated on it at the route layer, and
+// providers-geo keeps its takedown data in a separate cache entry that only
+// flag holders read (see §3).
 //
 // Contract:
 //   - Envelope `{ success: true, data, meta: { generated_at, period? } }`.
@@ -45,6 +49,8 @@ import {
 import { getCountryCentroid } from "../lib/country-centroids";
 import { rollupWindowStartDay } from "../lib/takedown-outcome-rollup";
 import type { Env } from "../types";
+import type { AuthContext } from "../middleware/auth";
+import { roleHasPermission } from "../lib/role-permissions";
 
 type ReadSession = ReturnType<typeof getReadSession>;
 
@@ -94,11 +100,38 @@ function badRequest(request: Request, error: string): Response {
   return json({ success: false, error }, 400, request.headers.get("Origin"));
 }
 
+type LensCompute<T> = (session: ReadSession, tally: D1Tally) => Promise<{ data: T; meta?: Record<string, unknown> }>;
+
 /**
- * Run a lens compute behind cachedValue and wrap it in the envelope.
- * cachedValue only writes after `compute` resolves, so a LensHttpError
- * thrown from inside it (e.g. 404 unknown actor) never mints a key.
+ * Compute-or-read one cached lens envelope. cachedValue only writes after
+ * `compute` resolves, so a LensHttpError thrown from inside it (e.g. 404
+ * unknown actor) never mints a key.
  */
+function lensEnvelope<T>(
+  env: Env,
+  key: string,
+  ttl: number,
+  period: ObservatoryPeriod | undefined,
+  session: ReadSession,
+  tally: D1Tally,
+  compute: LensCompute<T>,
+): Promise<LensEnvelope<T>> {
+  return cachedValue<LensEnvelope<T>>(env, key, ttl, async () => {
+    const r = await compute(session, tally);
+    const meta: LensMeta = { generated_at: new Date().toISOString(), ...(r.meta ?? {}) };
+    if (period) meta.period = period;
+    return { success: true, data: r.data, meta };
+  });
+}
+
+function lensErrorResponse(err: unknown, origin: string | null, session: ReadSession): Response {
+  if (err instanceof LensHttpError) {
+    return attachBookmark(json({ success: false, error: err.message }, err.status, origin), session);
+  }
+  return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+}
+
+/** Run a lens compute behind cachedValue and answer with the envelope. */
 async function serveLens<T>(
   request: Request,
   env: Env,
@@ -106,26 +139,18 @@ async function serveLens<T>(
   key: string,
   ttl: number,
   period: ObservatoryPeriod | undefined,
-  compute: (session: ReadSession, tally: D1Tally) => Promise<{ data: T; meta?: Record<string, unknown> }>,
+  compute: LensCompute<T>,
 ): Promise<Response> {
   const origin = request.headers.get("Origin");
   const session = getReadSession(env, getDbContext(request));
   const tally = newTally();
   try {
-    const payload = await cachedValue<LensEnvelope<T>>(env, key, ttl, async () => {
-      const r = await compute(session, tally);
-      const meta: LensMeta = { generated_at: new Date().toISOString(), ...(r.meta ?? {}) };
-      if (period) meta.period = period;
-      return { success: true, data: r.data, meta };
-    });
+    const payload = await lensEnvelope(env, key, ttl, period, session, tally, compute);
     recordD1Reads(env, label, tally);
     return attachBookmark(json(payload, 200, origin), session);
   } catch (err) {
     recordD1Reads(env, label, tally);
-    if (err instanceof LensHttpError) {
-      return attachBookmark(json({ success: false, error: err.message }, err.status, origin), session);
-    }
-    return attachBookmark(json({ success: false, error: "An internal error occurred" }, 500, origin), session);
+    return lensErrorResponse(err, origin, session);
   }
 }
 
@@ -539,14 +564,28 @@ export async function handleObservatoryMovements(request: Request, env: Env): Pr
 // Pre-computed hosting_providers columns only, ordered by
 // active_threat_count DESC (idx_providers_active_threats). No id tie-break:
 // it would defeat the index and force a full sort of ~12.8K rows per miss.
+//
 // `takedown` — {share, median_hours, n} from takedown_outcome_daily
 // (dim='provider', last 90 days), matched on hosting_providers.id ==
 // rollup `key` (the source threat's hosting_provider_id — the rollup never
 // keys on the free-text takedown_requests.provider_name, which names the
 // abuse contact, not the host). null when the provider has no submitted
 // takedown in the window. See foldTakedownCells for share / median_hours.
+//
+// RBAC: takedown effectiveness is `manage_takedowns` data (same gate as
+// /api/admin/takedowns/metrics and /api/observatory/takedowns-geo). The
+// route is requireStaff, so the takedown data lives in a SEPARATE cache
+// entry from the provider list:
+//   cv:observatory_lens.providers_geo_base:<limit>:bp<0|1>  — no takedown field
+//   cv:observatory_lens.providers_geo_takedown:90d          — [id, takedown][]
+// Every caller reads the base; only a `manage_takedowns` holder reads the
+// takedown entry, and it is merged per response. A caller without the flag
+// gets `takedown: null` on every row (shape unchanged) and never causes the
+// rollup to be read. The handler defaults to NO takedown when called
+// without an AuthContext (fail closed).
 export const PROVIDERS_GEO_DEFAULT_LIMIT = 100;
 export const PROVIDERS_GEO_MAX_LIMIT = 200;
+const PROVIDERS_GEO_TAKEDOWN_DAYS = 90;
 
 interface ProviderRow {
   id: string;
@@ -561,48 +600,98 @@ interface ProviderRow {
   reputation_score: number | null;
 }
 
-export async function handleObservatoryProvidersGeo(request: Request, env: Env): Promise<Response> {
+interface ProviderGeoBase {
+  id: string;
+  name: string;
+  asn: string | null;
+  country: string | null;
+  active_threat_count: number;
+  total_threat_count: number;
+  trend_7d: number;
+  trend_30d: number;
+  is_bulletproof: boolean;
+  reputation_score: number | null;
+}
+
+type ProviderTakedown = NonNullable<ReturnType<typeof providerTakedown>>;
+
+export async function handleObservatoryProvidersGeo(
+  request: Request,
+  env: Env,
+  ctx?: Pick<AuthContext, "role">,
+): Promise<Response> {
   const url = new URL(request.url);
   const rawBp = url.searchParams.get("bulletproof");
   const bp = rawBp === null || rawBp === "" ? "0" : rawBp;
   if (bp !== "0" && bp !== "1") return badRequest(request, "bulletproof must be 0 or 1");
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), PROVIDERS_GEO_DEFAULT_LIMIT, PROVIDERS_GEO_MAX_LIMIT);
+  const canSeeTakedowns = ctx ? roleHasPermission(ctx.role, "manage_takedowns") : false;
 
-  return serveLens(request, env, "observatory_providers_geo",
-    `${CACHE_NS}.providers_geo:${limit}:bp${bp}`, LENS_TTL_S.providersGeo, undefined,
-    async (session, tally) => {
-      const where = bp === "1" ? "WHERE is_bulletproof = 1" : "";
-      const rows = await session.prepare(`
-        SELECT id, name, asn, country, active_threat_count, total_threat_count,
-               trend_7d, trend_30d, is_bulletproof, reputation_score
-        FROM hosting_providers
-        ${where}
-        ORDER BY active_threat_count DESC
-        LIMIT ?
-      `).bind(limit).all<ProviderRow>();
-      addToTally(tally, rows.meta);
+  const origin = request.headers.get("Origin");
+  const session = getReadSession(env, getDbContext(request));
+  const tally = newTally();
+  try {
+    const base = await lensEnvelope<ProviderGeoBase[]>(env,
+      `${CACHE_NS}.providers_geo_base:${limit}:bp${bp}`, LENS_TTL_S.providersGeo, undefined, session, tally,
+      async (s, t) => {
+        const where = bp === "1" ? "WHERE is_bulletproof = 1" : "";
+        const rows = await s.prepare(`
+          SELECT id, name, asn, country, active_threat_count, total_threat_count,
+                 trend_7d, trend_30d, is_bulletproof, reputation_score
+          FROM hosting_providers
+          ${where}
+          ORDER BY active_threat_count DESC
+          LIMIT ?
+        `).bind(limit).all<ProviderRow>();
+        addToTally(t, rows.meta);
+        const data = (rows.results ?? []).map((r): ProviderGeoBase => ({
+          id: r.id,
+          name: r.name,
+          asn: r.asn ?? null,
+          country: normalizeCountry(r.country),
+          active_threat_count: num(r.active_threat_count),
+          total_threat_count: num(r.total_threat_count),
+          trend_7d: num(r.trend_7d),
+          trend_30d: num(r.trend_30d),
+          is_bulletproof: r.is_bulletproof === 1,
+          reputation_score: r.reputation_score ?? null,
+        }));
+        return { data };
+      });
+
+    let takedowns: Map<string, ProviderTakedown> | null = null;
+    if (canSeeTakedowns) {
       // One read of the provider rollup window (≤90 days × the few providers
-      // that ever had a threat-sourced takedown), folded in JS.
-      const td = await session.prepare(TAKEDOWN_ROLLUP_READ_SQL)
-        .bind("provider", rollupWindowStartDay(new Date(), 90))
-        .all<TakedownRollupRow>();
-      addToTally(tally, td.meta);
-      const takedowns = foldTakedownCells(td.results ?? []);
-      const data = (rows.results ?? []).map((r) => ({
-        id: r.id,
-        name: r.name,
-        asn: r.asn ?? null,
-        country: normalizeCountry(r.country),
-        active_threat_count: num(r.active_threat_count),
-        total_threat_count: num(r.total_threat_count),
-        trend_7d: num(r.trend_7d),
-        trend_30d: num(r.trend_30d),
-        is_bulletproof: r.is_bulletproof === 1,
-        reputation_score: r.reputation_score ?? null,
-        takedown: providerTakedown(takedowns.get(r.id)),
-      }));
-      return { data };
-    });
+      // that ever had a threat-sourced takedown), folded in JS. Cached as
+      // pairs (not an object) so a provider id can never collide with an
+      // Object.prototype key.
+      const td = await lensEnvelope<Array<[string, ProviderTakedown]>>(env,
+        `${CACHE_NS}.providers_geo_takedown:${PROVIDERS_GEO_TAKEDOWN_DAYS}d`, LENS_TTL_S.providersGeo, undefined,
+        session, tally,
+        async (s, t) => {
+          const res = await s.prepare(TAKEDOWN_ROLLUP_READ_SQL)
+            .bind("provider", rollupWindowStartDay(new Date(), PROVIDERS_GEO_TAKEDOWN_DAYS))
+            .all<TakedownRollupRow>();
+          addToTally(t, res.meta);
+          const pairs: Array<[string, ProviderTakedown]> = [];
+          for (const [id, agg] of foldTakedownCells(res.results ?? [])) {
+            const v = providerTakedown(agg);
+            if (v) pairs.push([id, v]);
+          }
+          return { data: pairs };
+        });
+      takedowns = new Map(td.data);
+    }
+
+    // `takedown` is always set explicitly (never spread from the cached base),
+    // so a non-holder can only ever see null here.
+    const data = base.data.map((p) => ({ ...p, takedown: takedowns?.get(p.id) ?? null }));
+    recordD1Reads(env, "observatory_providers_geo", tally);
+    return attachBookmark(json({ ...base, data }, 200, origin), session);
+  } catch (err) {
+    recordD1Reads(env, "observatory_providers_geo", tally);
+    return lensErrorResponse(err, origin, session);
+  }
 }
 
 // ── 4. GET /api/observatory/overindex ─────────────────────────────────────────

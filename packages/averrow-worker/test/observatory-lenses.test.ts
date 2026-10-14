@@ -372,7 +372,7 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     expect(log.some((l) => /FROM threats\b/.test(l.sql))).toBe(false);
     const bp = await body<Array<{ id: string }>>(await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo?bulletproof=1"), env));
     expect(bp.data.map((p) => p.id)).toEqual(["hp_b"]);
-    expect(lensKeys(kv).sort()).toEqual(["cv:observatory_lens.providers_geo:100:bp1", "cv:observatory_lens.providers_geo:2:bp0"]);
+    expect(lensKeys(kv).sort()).toEqual(["cv:observatory_lens.providers_geo_base:100:bp1", "cv:observatory_lens.providers_geo_base:2:bp0"]);
     expect((await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo?bulletproof=yes"), env)).status).toBe(400);
   });
 

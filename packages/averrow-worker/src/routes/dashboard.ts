@@ -1,8 +1,8 @@
 import { Router } from "itty-router";
 import type { RouterType, IRequest } from "itty-router";
 import type { Env } from "../types";
-import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope, requirePermission } from "../middleware/auth";
-import { roleHasPermission } from "../lib/role-permissions";
+import { requireAuth, requireStaff, requireStaffMutation, isAuthContext, getOrgScope, requirePermission, type AuthContext } from "../middleware/auth";
+import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import { json } from "../lib/cors";
 import {
   handleObservatoryNodes, handleObservatoryArcs, handleObservatoryLive,
@@ -97,7 +97,15 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
   // requireStaff and the KV cache keys (`observatory_*`) only ever back
   // a staff audience — no public/staff response mixing.
   // Pinned by test/observatory-routes-auth.test.ts.
-  const observatoryRoutes: ReadonlyArray<[string, (request: Request, env: Env) => Promise<Response>]> = [
+  //
+  // A route with a third element additionally requires that StaffPermission
+  // ON TOP of requireStaff. Takedown effectiveness is gated on
+  // `manage_takedowns`, exactly like /api/admin/takedowns/metrics
+  // (routes/admin.ts) — sales/support/billing/auditor get 403. Handlers get
+  // the AuthContext so providers-geo can omit its `takedown` field for
+  // callers without the flag (see handlers/observatoryLenses.ts).
+  type ObservatoryHandler = (request: Request, env: Env, ctx: AuthContext) => Promise<Response>;
+  const observatoryRoutes: ReadonlyArray<readonly [string, ObservatoryHandler, StaffPermission?]> = [
     ["/api/observatory/nodes",      handleObservatoryNodes],
     ["/api/observatory/arcs",       handleObservatoryArcs],
     ["/api/observatory/live",       handleObservatoryLive],
@@ -113,14 +121,21 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     ["/api/observatory/campaigns-geo",  handleObservatoryCampaignsGeo],
     ["/api/observatory/timeline",       handleObservatoryTimeline],
     ["/api/observatory/actors",         handleObservatoryActors],
-    ["/api/observatory/takedowns-geo",  handleObservatoryTakedownsGeo],
+    ["/api/observatory/takedowns-geo",  handleObservatoryTakedownsGeo, "manage_takedowns"],
     ["/api/observatory/velocity-nodes", handleObservatoryVelocityNodes],
   ];
-  for (const [path, handler] of observatoryRoutes) {
+  for (const [path, handler, permission] of observatoryRoutes) {
     router.get(path, async (request: Request, env: Env) => {
       const ctx = await requireStaff(request, env);
       if (!isAuthContext(ctx)) return ctx;
-      return handler(request, env);
+      if (permission && !roleHasPermission(ctx.role, permission)) {
+        return json(
+          { success: false, error: `Forbidden: requires '${permission}' permission` },
+          403,
+          request.headers.get("Origin"),
+        );
+      }
+      return handler(request, env, ctx);
     });
   }
 

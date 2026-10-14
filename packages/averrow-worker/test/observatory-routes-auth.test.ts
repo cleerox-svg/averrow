@@ -20,6 +20,10 @@
 //   3. Staff roles (analyst, auditor) → reach the handler (200).
 //   4. The route table registers exactly the sixteen known paths, so a
 //      new observatory route can't slip in without this test noticing.
+//   5. Takedown effectiveness needs `manage_takedowns` (same gate as
+//      /api/admin/takedowns/metrics): takedowns-geo is 403 for sales /
+//      support / billing / auditor without running the handler, and 200
+//      for analyst / admin / super_admin.
 
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
@@ -51,6 +55,9 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/takedowns-geo?period=30d&by=country",
   "/api/observatory/velocity-nodes?period=7d&flag=very_fast",
 ] as const;
+
+/** Routes that additionally require a StaffPermission (routes/dashboard.ts). */
+const PERMISSION_GATED = new Set(["/api/observatory/takedowns-geo"]);
 
 /** Observatory cache keys: Phase A raw `observatory_*` + Phase B cachedValue `cv:observatory_lens.*`. */
 const isObservatoryKey = (k: string) => k.startsWith("observatory_") || k.startsWith("cv:observatory_");
@@ -165,7 +172,10 @@ describe("/api/observatory/* — staff-only", () => {
       expect(await res.text()).not.toContain("Acme");
     });
 
-    for (const role of ["analyst", "auditor", "super_admin"] as UserRole[]) {
+    const staffRoles: UserRole[] = PERMISSION_GATED.has(path.split("?")[0]!)
+      ? ["analyst", "admin", "super_admin"]
+      : ["analyst", "auditor", "super_admin"];
+    for (const role of staffRoles) {
       it(`${path.split("?")[0]} lets staff role '${role}' through to the handler`, async () => {
         const h = makeHarness();
         const res = await call(path, h.env, await bearer(role));
@@ -173,6 +183,42 @@ describe("/api/observatory/* — staff-only", () => {
       });
     }
   }
+
+  for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+    it(`/api/observatory/takedowns-geo rejects '${role}' (no manage_takedowns) 403 without running the handler`, async () => {
+      const h = makeHarness();
+      const res = await call("/api/observatory/takedowns-geo?period=30d&by=country", h.env, await bearer(role));
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.success).toBe(false);
+      expect(String(body.error)).toContain("manage_takedowns");
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
+    });
+  }
+
+  it("providers-geo passes the caller's role: non-holders never read the takedown cache entry", async () => {
+    for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/providers-geo?limit=50", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: Array<{ takedown: unknown }> };
+      expect(body.data.every((p) => p.takedown === null)).toBe(true);
+      expect(h.cacheReads).toContain("cv:observatory_lens.providers_geo_base:50:bp0");
+      expect(h.cacheReads.some((k) => k.includes("providers_geo_takedown"))).toBe(false);
+    }
+    for (const role of ["analyst", "admin", "super_admin"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/providers-geo?limit=50", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      expect(h.cacheReads).toContain("cv:observatory_lens.providers_geo_takedown:90d");
+    }
+  });
+
+  it("takedowns-geo is the only permission-gated observatory route, gated on manage_takedowns", () => {
+    const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
+    const gated = [...src.matchAll(/\["(\/api\/observatory\/[a-z-]+)",\s*\w+,\s*"([a-z_]+)"\]/g)].map((m) => [m[1], m[2]]);
+    expect(gated).toEqual([["/api/observatory/takedowns-geo", "manage_takedowns"]]);
+  });
 
   it("registers exactly the sixteen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");

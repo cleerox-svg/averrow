@@ -272,12 +272,53 @@ describe.skipIf(!hasSqlite())("B5 handlers — real SQLite", () => {
     cell(raw, { day: daysAgo(120), dim: "provider", key: "hp_b", submitted: 9, taken_down: 9 }); // outside 90d
     cell(raw, { day: daysAgo(1), dim: "country", key: "hp_c", submitted: 3 });                    // other dim never matches
     const { env } = makeEnv(raw);
-    const b = await body<Array<{ id: string; takedown: unknown }>>(await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env));
+    const b = await body<Array<{ id: string; takedown: unknown }>>(
+      await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env, { role: "analyst" }));
     expect(b.data.map((p) => [p.id, p.takedown])).toEqual([
       ["hp_a", { share: 0.6, median_hours: 6, n: 5 }],
       ["hp_b", null],
       ["hp_c", null],
     ]);
+  });
+
+  it("providers-geo: takedown data only for manage_takedowns holders; separate cache entries, no leak via the shared base key", async () => {
+    const raw = openDerivedDb(TABLES);
+    provider(raw, "hp_a", "A Host", "US", 50);
+    cell(raw, { day: daysAgo(10), dim: "provider", key: "hp_a", submitted: 4, taken_down: 2, refused: 2, median_hours: 6 });
+    const { env, kv, log } = makeEnv(raw);
+    const rollupReads = () => log.filter((l) => /FROM takedown_outcome_daily/.test(l.sql)).length;
+    const td = (p: Array<{ takedown: unknown }>) => p.map((x) => x.takedown);
+
+    // Non-holders first: base key minted, rollup never read, takedown null.
+    for (const role of ["sales", "support", "billing", "auditor"] as const) {
+      const b = await body<Array<{ takedown: unknown }>>(
+        await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env, { role }));
+      expect(td(b.data)).toEqual([null]);
+    }
+    // No AuthContext → fail closed.
+    expect(td((await body<Array<{ takedown: unknown }>>(
+      await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env))).data)).toEqual([null]);
+    expect(rollupReads()).toBe(0);
+    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.providers_geo_base:100:bp0"]);
+    expect(kv.store.get("cv:observatory_lens.providers_geo_base:100:bp0")!.value).not.toContain("takedown");
+
+    // Holders: same base entry + the takedown entry.
+    for (const role of ["analyst", "admin", "super_admin"] as const) {
+      const b = await body<Array<{ takedown: unknown }>>(
+        await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env, { role }));
+      expect(td(b.data)).toEqual([{ share: 0.5, median_hours: 6, n: 4 }]);
+    }
+    expect(rollupReads()).toBe(1);
+    expect(lensKeys(kv).sort()).toEqual([
+      "cv:observatory_lens.providers_geo_base:100:bp0",
+      "cv:observatory_lens.providers_geo_takedown:90d",
+    ]);
+    // Base entry is still takedown-free after holders were served, so a
+    // later non-holder can't read takedown data from it.
+    expect(kv.store.get("cv:observatory_lens.providers_geo_base:100:bp0")!.value).not.toContain("share");
+    const after = await body<Array<{ takedown: unknown }>>(
+      await handleObservatoryProvidersGeo(req("/api/observatory/providers-geo"), env, { role: "sales" }));
+    expect(td(after.data)).toEqual([null]);
   });
 
   it("migration 0299: the rollup window read is a (dim, day) range, and velocity reads range the cube PK", () => {
