@@ -292,3 +292,17 @@ describe("cube_healer — degraded when most of a cube's days fail (Phase A foll
     await expect(cubeHealerAgent.execute(ctx)).rejects.toThrow(/geo heal failed for every day/);
   });
 });
+
+describe("cube_healer — completion telemetry", () => {
+  it("emits one telemetry agent_events row (target_agent NULL) after the work", async () => {
+    const { ctx, calls } = stubCtx("2026-10-14T06:12:00Z");
+    await cubeHealerAgent.execute(ctx);
+    const ev = calls.filter((c) => c.sql.includes("INSERT INTO agent_events"));
+    expect(ev).toHaveLength(1);
+    expect(ev[0]!.sql).toContain("'cubes_healed', 'cube_healer', NULL");
+    const payload = JSON.parse(String(ev[0]!.binds[1])) as Record<string, unknown>;
+    expect(payload).toMatchObject({ scope: "hot", partial_failures: 0, degraded_cubes: [] });
+    // It is the last statement of the run.
+    expect(calls[calls.length - 1]!.sql).toContain("INSERT INTO agent_events");
+  });
+});

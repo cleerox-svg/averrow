@@ -232,7 +232,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/agents/cube-healer.ts",
       "entrypoint": "cubeHealerAgent",
       "triggers": [
-        "cron"
+        "cron",
+        "queue"
       ],
       "reads": [
         "CACHE",
@@ -240,6 +241,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "writes": [
+        "agent_events",
         "threat_cube_arcs",
         "threat_cube_brand",
         "threat_cube_geo",
@@ -248,8 +250,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threat_cube_velocity"
       ],
       "ai_models_referenced": [],
-      "loc": 637,
-      "last_modified": "2026-10-14T03:40:09.148Z"
+      "loc": 662,
+      "last_modified": "2026-10-14T03:49:54.045Z"
     },
     {
       "name": "curator",

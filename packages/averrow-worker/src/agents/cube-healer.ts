@@ -424,6 +424,7 @@ export const cubeHealerAgent: AgentModule = {
     { kind: 'd1_table', name: 'threat_cube_status' },
     { kind: 'd1_table', name: 'threat_cube_arcs' },
     { kind: 'd1_table', name: 'threat_cube_velocity' },
+    { kind: 'd1_table', name: 'agent_events' },
     // Also writes threats.weaponization_* (lib/velocity-writer.ts) and
     // takedown_outcome_daily (lib/takedown-outcome-rollup.ts) — not declared
     // for the same reason as below. Also writes brands.threat_count via lib/brand-count-reconciler.ts —
@@ -615,6 +616,30 @@ export const cubeHealerAgent: AgentModule = {
         severity: 'medium',
         details: { error: errMsg, stage: 'analyze' },
       });
+    }
+
+    // ── Completion telemetry (agent_events, target_agent NULL) ──
+    // CLAUDE.md §6: every agent emits to agent_events after its work.
+    // Telemetry only — no dispatch. Best-effort: a failed insert never fails
+    // the heal that already committed.
+    try {
+      await env.DB.prepare(
+        `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
+         VALUES (?, 'cubes_healed', 'cube_healer', NULL, ?, 3, 'pending')`,
+      ).bind(
+        crypto.randomUUID(),
+        JSON.stringify({
+          run_id: ctx.runId ?? null,
+          scope,
+          rows_written: rowsWritten,
+          partial_failures: partialFailures.length,
+          degraded_cubes: mostlyFailed,
+          velocity_stamped: velocityStamp?.written ?? null,
+          takedown_cells: takedownRollup?.cells ?? null,
+        }),
+      ).run();
+    } catch {
+      // telemetry only
     }
 
     return {

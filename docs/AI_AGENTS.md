@@ -505,14 +505,17 @@ The Seed Strategist analyzes spam trap performance and identifies coverage gaps:
 | **Trigger** | Scheduled — every 6 hours (`12 */6 * * *`) |
 | **Purpose** | Retroactive drift remediation for OLAP cube tables |
 
-The Cube Healer performs a full 30-day bulk rebuild of all three OLAP cube tables (`threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand`) via `INSERT OR REPLACE ... SELECT ... GROUP BY`. This bounds drift from Cartographer's retroactive enrichment to ≤6 hours.
+The Cube Healer heals the hour-bucketed OLAP cubes (`threat_cube_geo`, `_provider`, `_brand`, `_status`, `_arcs`, `_velocity`) over an hour-snapped window: 2 days on the 06/12/18 UTC ticks, 14 days on the 00:12 UTC (cold) tick — `threat_cube_velocity` uses 90 days on the cold tick. Each cube heals one DAY per atomic `db.batch()` of [stale-row sweep, guarded `ON CONFLICT DO UPDATE` upsert], so a D1 limit rolls back one day, not the window. This bounds drift from Cartographer's retroactive enrichment and status changes.
 
-- **Scope** — Excludes the current partial hour (Navigator's territory). The previous hour overlap is intentional and safe because `INSERT OR REPLACE` is idempotent.
-- **Status semantics** — All cubes succeed → `success`; some fail → `partial`; first cube throws → `failed`
-- **agent_runs lifecycle** — Inserts a `partial` row at start (crash-safe), updates to final status on completion
+- **Scope** — Excludes the current partial hour (Navigator's territory). The previous-hour overlap is intentional and safe; both writers are idempotent.
+- **Velocity stamping (Observatory Phase B)** — before the heals, one ≤500-row page stamps `threats.weaponization_hours/flag` (`runVelocityStampPage`, `lib/velocity-writer.ts`; KV keyset cursor `velocity_stamp:cursor` over the partial index `idx_threats_velocity_unstamped`). Metadata only — never gates triage.
+- **Takedown outcome rollup (Observatory Phase B)** — on the cold (UTC hour 0) tick only, rebuilds `takedown_outcome_daily` (rolling 90 days, `lib/takedown-outcome-rollup.ts`). Hour-only gate.
+- **Also** — dark-web / app-store brand summaries, `brands.threat_count` / `active_threat_count` reconciliation, weekly `ANALYZE`.
+- **Status semantics** — clean → `success`; a few failed cube days / a failed side step → `success` + `high`/`medium` diagnostic `agent_outputs`; **more than half of any cube's days failed → `AgentResult.degraded` → `partial`**; every geo day failed → throws → `failed`.
+- **agent_runs lifecycle** — owned by `executeAgent` (start row, completion with `completed_at` + `records_processed`, telemetry `agent_events`).
 
-**Inputs:** Raw `threats` table (30-day window, active status)
-**Outputs:** Rebuilt rows in `threat_cube_geo`, `threat_cube_provider`, `threat_cube_brand`
+**Inputs:** `threats` (heal windows, flagged-row index for velocity), `takedown_requests` (cold tick)
+**Outputs:** the six cube tables, `threats.weaponization_*`, `takedown_outcome_daily`, brand summaries / counters
 
 ---
 
