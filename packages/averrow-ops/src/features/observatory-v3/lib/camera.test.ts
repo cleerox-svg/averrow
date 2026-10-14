@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, phoneMinZoom, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, phoneMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -25,6 +25,12 @@ describe('phoneMinZoom: derived from the canvas so a world-spanning target can f
     const needed = fitZoom(plan.box.east - plan.box.west, free);
     expect(needed).toBeLessThan(0.5);               // the old floor clamped here and cut both ends off
     expect(phoneMinZoom(400)).toBeLessThanOrEqual(needed);
+  });
+  it("never goes below MapLibre's -2 floor, however narrow the canvas", () => {
+    // free width is pinned at 64px under 168px of canvas: log2(64/512) = -3 would be rejected by setMinZoom
+    for (const w of [1, 100, 168, 200, 231]) expect(phoneMinZoom(w)).toBe(DEFAULT_MIN_ZOOM);
+    expect(phoneMinZoom(232)).toBe(-2);           // exactly the boundary: 128px free = 2^-2 of the world
+    expect(phoneMinZoom(233)).toBeGreaterThan(-2);
   });
   it('a full 360 degree target still fits inside the framing margins', () => {
     const free = 400 - 2 * (12 + FRAME_MARGIN);

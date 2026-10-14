@@ -49,10 +49,14 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, res
   const openerRef = useRef<Element | null>(null);
 
   // A (re)opened sheet starts at its initial snap BEFORE it paints: reset on close, and again as it opens.
+  // Keyed on `open` ONLY: the initial snap itself changes with the orientation (a landscape phone opens at
+  // the half snap), and a rotation while the sheet is open must keep the height the user chose.
+  const initialSnapRef = useRef(initialSnap);
+  initialSnapRef.current = initialSnap;
   useLayoutEffect(() => {
-    setSnap(initialSnap);
+    setSnap(initialSnapRef.current);
     setDrag(null);
-  }, [open, initialSnap]);
+  }, [open]);
 
   // Report the settled height: snap fraction x the area it sits in (what the CSS height resolves to).
   // Re-reported when the area resizes (rotation, URL bar); never while a drag is in flight.

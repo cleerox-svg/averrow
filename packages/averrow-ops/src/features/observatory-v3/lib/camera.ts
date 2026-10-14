@@ -32,19 +32,23 @@ export const FRAME_MARGIN = 40;
 const WORLD_PX = 512;
 /** Closest-in floor of the phone's minimum zoom: it never needs to be higher than the original 0.5. */
 const PHONE_MIN_ZOOM_CAP = 0.5;
+
+/** MapLibre's own default minimum zoom (restored when leaving the phone layout), and the lowest it accepts. */
+export const DEFAULT_MIN_ZOOM = -2;
+
 /**
  * Lowest zoom a phone map may reach, derived from its canvas width: low enough that the whole world fits
  * inside the framing margins on both sides, so a world-spanning target (US to Japan) can be framed in full.
  * A fixed 0.5 floor clipped those on 400px screens (the world is 512px * 2^z wide).
+ *
+ * Never below MapLibre's own -2 floor: a canvas narrower than 232px would ask for less (the free width is
+ * pinned at 64px, log2(64/512) = -3) and `setMinZoom` rejects anything under -2.
  */
 export function phoneMinZoom(canvasWidth: number): number {
   if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
   const free = Math.max(64, canvasWidth - 2 * (12 + FRAME_MARGIN));
-  return Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX));
+  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX)));
 }
-
-/** MapLibre's own default minimum zoom (restored when leaving the phone layout). */
-export const DEFAULT_MIN_ZOOM = -2;
 
 /** Mercator's own latitude limit (MapLibre's default `latRange`). */
 export const WORLD_LAT_LIMIT = 85.051129;
