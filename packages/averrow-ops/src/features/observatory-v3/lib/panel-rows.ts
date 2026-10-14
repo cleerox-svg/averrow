@@ -21,6 +21,7 @@ import { trendClass } from './lens/hosting';
 import { normalizeConfidence } from './lens/operations';
 import { isActiveCampaign } from './lens/campaigns';
 import { iso2 } from './lens/placement';
+import { formatHours, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED, type TakedownCountryModel, type TakedownProviderModel } from './lens/takedowns';
 import type { VelocityModel } from './lens/velocity';
 import { VELOCITY_FILLING } from './lens/velocity';
 import { parseUtc, relativeTime } from '@/lib/time';
@@ -170,4 +171,50 @@ export function velocityRows(model: VelocityModel | null): PanelSection {
     target: { kind: 'country', code: p.cc },
   }));
   return { title: 'Fastest to weaponize', empty: VELOCITY_FILLING, rows };
+}
+
+const rateTone = (share: number): PanelRow['tone'] => (share < 0.5 ? 'rising' : 'neutral');
+
+/** Baseline > Takedowns: the hardest jurisdictions, lowest success share first, enough volume only. */
+export function takedownCountryRows(model: TakedownCountryModel | null | undefined, window: string): PanelSection {
+  const rows = (model?.hardest ?? []).slice(0, PANEL_ROWS).map((r): PanelRow => {
+    const median = formatHours(r.median_hours);
+    return {
+      key: r.key, primary: countryName(r.key) || r.key,
+      secondary: `${resolvedOf(r).toLocaleString()} resolved${median ? ` · median ${median}` : ''}`,
+      trailing: pct(r.share as number),
+      tone: rateTone(r.share as number),
+      target: { kind: 'country', code: r.key },
+    };
+  });
+  return {
+    title: 'Hardest jurisdictions',
+    empty: `No country has ${TAKEDOWN_MIN_RESOLVED}+ resolved takedowns in the last ${window} yet.`,
+    rows,
+  };
+}
+
+/** Hosting > Takedowns: the hardest hosts, lowest success share first, enough volume only. */
+export function takedownProviderRows(
+  model: TakedownProviderModel | null | undefined,
+  providers: readonly ProviderGeo[] | undefined,
+  window: string,
+): PanelSection {
+  const rows = (model?.hardest ?? []).slice(0, PANEL_ROWS).map((r): PanelRow => {
+    const median = formatHours(r.median_hours);
+    const provider = providers?.find(p => p.id === r.key) ?? null;
+    return {
+      key: r.key, primary: r.label,
+      secondary: [`${resolvedOf(r).toLocaleString()} resolved`, median ? `median ${median}` : null, r.country ? countryName(iso2(r.country) ?? '') : null].filter(Boolean).join(' · '),
+      trailing: pct(r.share as number),
+      tone: rateTone(r.share as number),
+      // Only a host the map and drawer know (it has active threats) can be opened.
+      target: provider ? { kind: 'provider', id: provider.id, provider } : undefined,
+    };
+  });
+  return {
+    title: 'Hardest hosts',
+    empty: `No host has ${TAKEDOWN_MIN_RESOLVED}+ resolved takedowns in the last ${window} yet.`,
+    rows,
+  };
 }

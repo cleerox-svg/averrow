@@ -74,7 +74,8 @@ import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
 import { drillPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
-import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows } from './lib/panel-rows';
+import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
+import { takedownPeriod } from '@/hooks/useObservatoryLenses';
 import { lensFootnote } from './lib/footnote';
 import type { LngLat } from '@/lib/country-centroids';
 
@@ -99,6 +100,12 @@ type SheetKey = 'drill' | 'panel';
 
 const FAST_SOURCE_NOTE = 'Fast weaponization is always all sources';
 
+/** What the intelligence panel asks under each lens while its Takedowns measure is on. */
+const TAKEDOWN_QUESTION = {
+  baseline: 'In which countries do takedowns succeed least often?',
+  hosting: 'Which hosts ignore or refuse takedowns most often?',
+} as const;
+
 const PICK_TO_SEL: Record<LensPick['kind'], 'op' | 'provider' | 'country' | 'campaign' | 'move' | 'actor'> = {
   operation: 'op', provider: 'provider', country: 'country', campaign: 'campaign', movement: 'move', actor: 'actor',
 };
@@ -113,7 +120,12 @@ export function ObservatoryV3() {
   const canSeeTakedowns = useCanSeeTakedowns();
   const { resolvedTheme } = useTheme();
   const { state, update } = useObservatoryUrlState();
-  const { period, colorBy, layers, lens, view, measure } = state;
+  const { period, colorBy, layers, lens, view } = state;
+  // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
+  // sees the lens's default measure whatever the URL says, and no takedown request is ever made.
+  const measure: Measure = state.measure === 'takedowns' && !canSeeTakedowns ? 'index' : state.measure;
+  const takedownsOn = measure === 'takedowns';
+  const tdWindow = takedownPeriod(state.period);
   const mapMode = mapModeOf(state);
   /** Threats lens, Fast weaponization view: drawn from the velocity cube. */
   const fast = lens === 'threats' && view === 'fast';
@@ -164,8 +176,8 @@ export function ObservatoryV3() {
   // ─── Data — each query is enabled only for the views that render it ──
   const selectionKind = state.node ? 'node' : state.arc ? 'arc' : sel?.kind ?? null;
   const needs = useMemo(
-    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching, velocity: fast }),
-    [mapMode, mapLayers, selectionKind, searching, fast],
+    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching, velocity: fast, measure }),
+    [mapMode, mapLayers, selectionKind, searching, fast, measure],
   );
   const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
   const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
@@ -213,6 +225,7 @@ export function ObservatoryV3() {
     operations: L.operationsQ.error, movements: L.movementsQ.error, providers: L.providersQ.error,
     overindex: L.overindexQ.error, campaigns: L.campaignsQ.error, actors: L.actorsQ.error,
     timeline: L.timelineQ.error, velocity: L.velocityQ.error,
+    takedownsCountry: L.takedownCountriesQ.error, takedownsProvider: L.takedownProvidersQ.error,
   });
   const loadError = failures.length > 0 || (isBotMode && !!botError);
   const retryFailed = useCallback(() => {
@@ -228,8 +241,10 @@ export function ObservatoryV3() {
     if (failures.includes('actors')) void L.actorsQ.refetch();
     if (failures.includes('timeline')) void L.timelineQ.refetch();
     if (failures.includes('velocity')) void L.velocityQ.refetch();
+    if (failures.includes('takedownsCountry')) void L.takedownCountriesQ.refetch();
+    if (failures.includes('takedownsProvider')) void L.takedownProvidersQ.refetch();
     if (isBotMode && botError) void refetchBot();
-  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, L.velocityQ, isBotMode, botError, refetchBot]);
+  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, L.velocityQ, L.takedownCountriesQ, L.takedownProvidersQ, isBotMode, botError, refetchBot]);
 
   // "Updating" = showing the previous period/source's data while the new one loads.
   const activeQueries = [
@@ -260,7 +275,11 @@ export function ObservatoryV3() {
     movements: L.movements,
     actors: L.actorList,
     overindex: L.overindex,
-  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex]);
+    takedownCountries: L.takedownCountries,
+    takedownProviders: L.takedownProviders,
+    takedownWindow: tdWindow,
+    takedownCountriesError: !!L.takedownCountriesQ.error,
+  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex, L.takedownCountries, L.takedownProviders, tdWindow, L.takedownCountriesQ.error]);
 
   const drill = useMemo<DrillTarget | null>(
     () => (mapMode !== 'heatmap' && mapMode !== 'bot_density' ? resolveDrill({ node: state.node, arc: state.arc, sel: state.sel }, drillData) : null),
@@ -474,8 +493,10 @@ export function ObservatoryV3() {
     actors: L.actorModel,
     movement: L.movementModel,
     velocity: fast ? L.velocityModel : null,
+    takedownCountries: takedownsOn ? L.takedownCountryModel : null,
+    takedownProviders: takedownsOn ? L.takedownProviderModel : null,
     sel: lensSel,
-  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, fast, L.velocityModel, lensSel]);
+  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, fast, L.velocityModel, takedownsOn, L.takedownCountryModel, L.takedownProviderModel, lensSel]);
   const sceneKey = `${lens}|${view}|${measure}`;
 
   // ─── Search ──
@@ -516,7 +537,12 @@ export function ObservatoryV3() {
 
   // ─── Legend chip content ──
   const legendProps = {
-    lens, layers: mapLayers, view, colorBy, reducedMotion,
+    lens, layers: mapLayers, view, measure, colorBy, reducedMotion,
+    takedowns: {
+      window: tdWindow,
+      countries: { model: L.takedownCountryModel, q: qState(L.takedownCountriesQ) },
+      providers: { model: L.takedownProviderModel, q: qState(L.takedownProvidersQ) },
+    },
     operations: { model: L.operationsModel, q: qState(L.operationsQ) },
     movement: { model: L.movementModel, q: qState(L.movementsQ), count: L.movements?.length ?? 0 },
     hosting: { model: L.hostingModel, q: qState(L.providersQ) },
@@ -539,6 +565,11 @@ export function ObservatoryV3() {
     nodes: threatsQ.data ? threatsQ.data.length : null,
     threats: threatsQ,
     velocity: { ...L.velocityQ, count: L.velocityModel ? L.velocityModel.points.length : null },
+    takedowns: {
+      countries: { ...L.takedownCountriesQ, count: L.takedownCountryModel ? L.takedownCountryModel.rows.size : null },
+      // `unknown` (takedowns with no known host) is a row, not a host
+      providers: { ...L.takedownProvidersQ, count: L.takedownProviderModel ? L.takedownProviderModel.withRate + L.takedownProviderModel.tooSmall : null },
+    },
     operations: { ...L.operationsQ, count: L.operationsModel ? L.operationsModel.placedOps.size : null },
     movement: { ...L.movementsQ, count: L.movementModel ? L.movementModel.hops.filter(h => !h.id.endsWith(':w')).length + L.movementModel.pulses.length : null, events: L.movements?.length ?? 0 },
     hosting: { ...L.providersQ, count: L.hostingModel ? L.hostingModel.rings.length : null },
@@ -551,19 +582,19 @@ export function ObservatoryV3() {
   // ─── Lens-aware panel content ──
   const panelSection = useMemo(() => {
     switch (lens) {
-      case 'hosting': return hostingRows(L.providers);
+      case 'hosting': return takedownsOn ? takedownProviderRows(L.takedownProviderModel, L.providers, tdWindow) : hostingRows(L.providers);
       case 'operations': return operationRows(L.operationsQ.data?.data.operations);
-      case 'baseline': return baselineRows(measure, L.overindex, botPoints);
+      case 'baseline': return takedownsOn ? takedownCountryRows(L.takedownCountryModel, tdWindow) : baselineRows(measure, L.overindex, botPoints);
       case 'campaigns': return campaignRows(L.campaigns);
       case 'movement': return movementRows(L.movements);
       case 'actors': return actorRows(L.actorList);
       case 'threats': return fast ? velocityRows(L.velocityModel) : null;
       default: return null;
     }
-  }, [lens, fast, L.velocityModel, measure, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
-  const panelQuery = lens === 'hosting' ? L.providersQ
+  }, [lens, fast, L.velocityModel, measure, takedownsOn, tdWindow, L.takedownProviderModel, L.takedownCountryModel, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
+  const panelQuery = lens === 'hosting' ? (takedownsOn ? L.takedownProvidersQ : L.providersQ)
     : lens === 'operations' ? L.operationsQ
-      : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : L.overindexQ)
+      : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : takedownsOn ? L.takedownCountriesQ : L.overindexQ)
         : lens === 'campaigns' ? L.campaignsQ
           : lens === 'movement' ? L.movementsQ
             : lens === 'actors' ? L.actorsQ : fast ? L.velocityQ : null;
@@ -578,6 +609,7 @@ export function ObservatoryV3() {
         onRetry={() => void panelQuery.refetch()}
         onSelect={handlePanelSelect}
         placement={placement}
+        question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
       />
     ) : (
       <SidePanel
@@ -611,7 +643,7 @@ export function ObservatoryV3() {
 
   const railProps = {
     lens, layers, view, measure, colorBy, reducedMotion,
-    onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy,
+    onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy, canSeeTakedowns,
   };
 
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (

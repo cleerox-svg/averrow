@@ -8,8 +8,8 @@
 import { useMemo } from 'react';
 import {
   useActorDetail, useActorList, useCampaignsGeo, useMovements, useObservatoryTimeline, useOperationsGeo,
-  useOverindex, useProvidersGeo, useVelocityNodes,
-  type ActorListItem, type CampaignGeo, type Movement, type OperationGeo, type ProviderGeo, type OverindexRow,
+  useOverindex, useProvidersGeo, useTakedownsGeo, useVelocityNodes,
+  type ActorListItem, type CampaignGeo, type Movement, type OperationGeo, type ProviderGeo, type OverindexRow, type TakedownGeoRow,
 } from '@/hooks/useObservatoryLenses';
 import { periodToMs } from './trips';
 import type { DataNeeds } from './mode-data';
@@ -20,6 +20,7 @@ import { buildCampaignsModel } from './lens/campaigns';
 import { buildActorModel } from './lens/actors';
 import { buildMovementModel } from './lens/movement';
 import { buildVelocityModel } from './lens/velocity';
+import { buildTakedownCountryModel, buildTakedownProviderModel } from './lens/takedowns';
 import { useCountryGeometry } from './country-geometry';
 
 const NO_OPS: OperationGeo[] = [];
@@ -49,6 +50,9 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
     enabled: needs.timeline, period, source, country: timelineCountry, velocity: needs.velocity ? 'all' : null,
   });
   const velocityQ = useVelocityNodes({ enabled: needs.velocity, period });
+  // Requires manage_takedowns: the hook never requests either for any other role.
+  const takedownCountriesQ = useTakedownsGeo({ enabled: needs.takedownsCountry, period, by: 'country' });
+  const takedownProvidersQ = useTakedownsGeo({ enabled: needs.takedownsProvider, period, by: 'provider' });
   // Shapes load only while a choropleth is visible, never for a country drawer or a lens that draws no shapes.
   const geometry = useCountryGeometry(needs.geometry);
 
@@ -74,6 +78,14 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
   const campaigns: readonly CampaignGeo[] | undefined = campaignsQ.data?.data;
   const campaignsModel = useMemo(() => (campaigns ? buildCampaignsModel(campaigns) : null), [campaigns]);
 
+  const takedownCountries: readonly TakedownGeoRow[] | undefined = takedownCountriesQ.data?.data;
+  const takedownCountryModel = useMemo(() => (takedownCountries ? buildTakedownCountryModel(takedownCountries) : null), [takedownCountries]);
+  const takedownProviders: readonly TakedownGeoRow[] | undefined = takedownProvidersQ.data?.data;
+  const takedownProviderModel = useMemo(
+    () => (takedownProviders && hostingModel ? buildTakedownProviderModel(hostingModel, takedownProviders) : null),
+    [takedownProviders, hostingModel],
+  );
+
   const velocityNodes = velocityQ.data?.data;
   const velocityDropped = velocityQ.data?.meta.dropped_no_centroid ?? 0;
   const velocityModel = useMemo(
@@ -86,12 +98,13 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
   const actorList: readonly ActorListItem[] | undefined = actorsQ.data?.data;
 
   return {
-    operationsQ, movementsQ, providersQ, overindexQ, campaignsQ, actorsQ, actorDetailQ, timelineQ, velocityQ,
+    operationsQ, movementsQ, providersQ, overindexQ, campaignsQ, actorsQ, actorDetailQ, timelineQ, velocityQ, takedownCountriesQ, takedownProvidersQ,
     geometry,
     operations: operations ?? NO_OPS,
     operationsLoaded: operations !== undefined,
-    movements, providers, overindex, campaigns, actorList,
+    movements, providers, overindex, campaigns, actorList, takedownCountries, takedownProviders,
     operationsModel, movementModel, hostingModel, baselineModel, campaignsModel, actorModel, velocityModel,
+    takedownCountryModel, takedownProviderModel,
   };
 }
 

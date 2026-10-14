@@ -4,6 +4,7 @@ import { legendSummary, type SummaryInput } from './legend-summary';
 const ok = { isLoading: false, error: null };
 const base: SummaryInput = {
   lens: 'threats', view: 'points', measure: 'index', nodes: 12, threats: ok, velocity: { ...ok, count: null },
+  takedowns: { countries: { ...ok, count: null }, providers: { ...ok, count: null } },
   operations: { ...ok, count: null }, movement: { ...ok, count: null, events: 0 }, hosting: { ...ok, count: null },
   baseline: { ...ok, count: null }, bot: { ...ok, count: null }, campaigns: { ...ok, count: null },
   actors: { ...ok, selected: false, countries: null, empty: false },
@@ -52,5 +53,21 @@ describe('legendSummary: Fast weaponization view', () => {
   });
   it('the Points view still reads the nodes, not the velocity query', () => {
     expect(legendSummary({ ...base, velocity: { ...ok, count: 9 } })).toEqual({ text: '12 nodes', tone: 'ok' });
+  });
+});
+
+describe('legendSummary: takedown outcomes', () => {
+  it('Baseline > Takedowns counts countries with a takedown history; Hosting > Takedowns counts hosts', () => {
+    const bt = { ...base, lens: 'baseline' as const, measure: 'takedowns' as const };
+    expect(legendSummary({ ...bt, takedowns: { ...base.takedowns, countries: { ...ok, count: 12 } } })).toEqual({ text: '12 countries', tone: 'ok' });
+    expect(legendSummary({ ...bt, takedowns: { ...base.takedowns, countries: { ...ok, count: 0 } } })).toEqual({ text: 'no takedowns', tone: 'empty' });
+    const ht = { ...base, lens: 'hosting' as const, measure: 'takedowns' as const };
+    expect(legendSummary({ ...ht, takedowns: { ...base.takedowns, providers: { ...ok, count: 3 } } })).toEqual({ text: '3 hosts', tone: 'ok' });
+    expect(legendSummary({ ...ht, takedowns: { ...base.takedowns, providers: { isLoading: true, error: null, count: null } } })).toEqual({ text: 'loading…', tone: 'loading' });
+    expect(legendSummary({ ...ht, takedowns: { ...base.takedowns, providers: { isLoading: false, error: new Error('x'), count: null } } })).toEqual({ text: 'failed to load', tone: 'error' });
+  });
+  it('the default measures still read the lens\'s own data', () => {
+    expect(legendSummary({ ...base, lens: 'hosting', hosting: { ...ok, count: 4 } })).toEqual({ text: '4 providers', tone: 'ok' });
+    expect(legendSummary({ ...base, lens: 'baseline', baseline: { ...ok, count: 9 } })).toEqual({ text: '9 countries', tone: 'ok' });
   });
 });

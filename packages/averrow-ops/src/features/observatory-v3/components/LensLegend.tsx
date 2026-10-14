@@ -23,6 +23,8 @@ import { formatPct } from '../lib/bot-density';
 import { Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { CampaignsModel } from '../lib/lens/campaigns';
+import type { TakedownCountryModel, TakedownProviderModel } from '../lib/lens/takedowns';
+import { TAKEDOWN_MIN_RESOLVED, TAKEDOWN_SMALL_OUTLINE, TAKEDOWN_STOPS } from '../lib/lens/takedowns';
 import type { VelocityModel } from '../lib/lens/velocity';
 import { VELOCITY_FILLING, VELOCITY_RGB } from '../lib/lens/velocity';
 import type { ActorModel } from '../lib/lens/actors';
@@ -46,6 +48,12 @@ export interface LegendSectionProps {
   };
   campaigns: { model: CampaignsModel | null; q: QueryState };
   velocity: { model: VelocityModel | null; q: QueryState };
+  /** Takedown outcomes (Baseline / Hosting, Takedowns measure). `window` is the server's window: '30d' or '90d'. */
+  takedowns: {
+    window: string;
+    countries: { model: TakedownCountryModel | null; q: QueryState };
+    providers: { model: TakedownProviderModel | null; q: QueryState };
+  };
   actors: { model: ActorModel | null; list: ActorListItem[]; listQ: QueryState; detailQ: QueryState | null; selectedId: string | null };
   onPickActor: (id: string | null) => void;
 }
@@ -160,6 +168,66 @@ export function HostingSection({ s }: { s: LegendSectionProps['hosting'] }) {
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Ring size = active threats · {m.rings.length} providers
             {m.unplaced > 0 && ` · ${m.unplaced} without a country not shown`}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+const TAKEDOWN_GRADIENT = `linear-gradient(90deg, ${TAKEDOWN_STOPS.map(st => `${css(st.color)} ${Math.round(st.t * 100)}%`).join(', ')})`;
+
+/** The key both takedown views share: the sequential green scale and the grey "too few" outline. */
+function TakedownScale({ what }: { what: string }) {
+  return (
+    <>
+      <div role="img" aria-label="Colour scale: dark green, few taken down, to bright green, most taken down" style={{ height: 8, borderRadius: 4, background: TAKEDOWN_GRADIENT }} />
+      <div className={`${TEXT} flex justify-between`} style={{ color: 'var(--text-secondary)' }}>
+        <span>0% taken down</span><span>100%</span>
+      </div>
+      <ul className="list-none p-0 m-0">
+        <Row swatch={<Swatch color={css(TAKEDOWN_SMALL_OUTLINE)} square />}>
+          Grey: fewer than {TAKEDOWN_MIN_RESOLVED} resolved takedowns, too few for a rate ({what} left out of the ranking)
+        </Row>
+      </ul>
+    </>
+  );
+}
+
+export function TakedownCountrySection({ s, window }: { s: LegendSectionProps['takedowns']['countries']; window: string }) {
+  const m = s.model;
+  return (
+    <Section title="Takedown success by country" id="lg-td-country">
+      <Status q={s.q} what="takedown outcomes" empty={!!m && m.rows.size === 0} emptyText={`No takedowns were submitted in the last ${window}.`} />
+      {m && m.rows.size > 0 && (
+        <>
+          <TakedownScale what="countries" />
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Taken down ÷ (taken down + refused + expired), for takedowns submitted in the last {window} (whole UTC days).
+            {` ${m.withRate} ${m.withRate === 1 ? 'country' : 'countries'} with a rate, ${m.tooSmall} too small.`}
+            {m.unknownSubmitted > 0 && ` ${m.unknownSubmitted.toLocaleString()} takedowns have no known country and are not mapped.`}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+export function TakedownProviderSection({ s, window }: { s: LegendSectionProps['takedowns']['providers']; window: string }) {
+  const m = s.model;
+  return (
+    <Section title="Takedown success by host" id="lg-td-host">
+      <Status q={s.q} what="takedown outcomes" empty={!!m && m.rows.size === 0} emptyText={`No takedowns were submitted in the last ${window}.`} />
+      {m && m.rows.size > 0 && (
+        <>
+          <TakedownScale what="hosts" />
+          <ul className="list-none p-0 m-0">
+            <Row swatch={<Swatch color="rgb(60, 184, 120)" ring />}>Green arc: the same share, as a fraction of the ring</Row>
+          </ul>
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Ring size = active threats. Share = taken down ÷ (taken down + refused + expired), for takedowns submitted in the last {window}.
+            {` ${m.withRate} ${m.withRate === 1 ? 'host' : 'hosts'} with a rate, ${m.tooSmall} too small.`}
+            {m.undrawn > 0 && ` ${m.undrawn} more ${m.undrawn === 1 ? 'host has' : 'hosts have'} a takedown history but no active threats, and ${m.undrawn === 1 ? 'is' : 'are'} listed in the panel only.`}
           </div>
         </>
       )}

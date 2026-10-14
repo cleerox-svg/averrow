@@ -47,9 +47,21 @@ export type ColorBy = (typeof COLOR_BY_IDS)[number];
 
 export { LAYER_IDS, LENS_IDS, type LayerId, type LayerToggles, type LensId } from './lenses';
 
-export const MEASURE_IDS = ['index', 'raw', 'bot'] as const;
-/** Baseline lens option: colour countries by over-index vs Radar, by raw volume, or by Radar bot share. */
+export const MEASURE_IDS = ['index', 'raw', 'bot', 'takedowns'] as const;
+/**
+ * A lens's measure. Baseline: over-index vs Radar (`index`, the default), raw volume, Radar bot share, or
+ * takedown success by country. Hosting: its providers by active threats (`index`, the default) or takedown
+ * outcomes by provider. `takedowns` needs the `manage_takedowns` permission: the URL cannot know it, so the
+ * page falls back to the default for a viewer without it (see ObservatoryV3).
+ */
 export type Measure = (typeof MEASURE_IDS)[number];
+
+/** Which measures each lens has (the first is its default). Other lenses have none. */
+export function measuresFor(lens: LensId): readonly Measure[] {
+  if (lens === 'baseline') return MEASURE_IDS;
+  if (lens === 'hosting') return ['index', 'takedowns'];
+  return ['index'];
+}
 
 export const SEL_KINDS = ['country', 'op', 'provider', 'actor', 'campaign', 'move'] as const;
 export type SelKind = (typeof SEL_KINDS)[number];
@@ -89,7 +101,7 @@ export interface ObservatoryUrlState {
    * movement) — global mode only. Mutually exclusive with `node` / `arc`.
    */
   sel: string | null;
-  /** Baseline lens option. Always `index` on other lenses. */
+  /** Baseline / Hosting lens option (see `measuresFor`). Always `index` on other lenses. */
   measure: Measure;
 }
 
@@ -178,9 +190,7 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
   const view: ThreatView = lens === 'threats'
     ? (legacy?.view === 'heat' ? 'heat' : pick(THREAT_VIEW_IDS, sp.get('view'), DEFAULT_STATE.view))
     : DEFAULT_STATE.view;
-  const measure: Measure = lens === 'baseline'
-    ? pick(MEASURE_IDS, legacy ? legacy.measure : sp.get('measure'), DEFAULT_STATE.measure)
-    : DEFAULT_STATE.measure;
+  const measure: Measure = pick(measuresFor(lens), legacy ? legacy.measure : sp.get('measure'), DEFAULT_STATE.measure);
   // Selection lives on the interactive scenes: not on the density heatmap, nor the bot-share choropleth.
   const selectable = mapModeOf({ lens, view, measure }) === 'global';
   const rawNode = sp.get('node');
@@ -215,7 +225,7 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   if (state.lens === 'threats' && state.view !== DEFAULT_STATE.view) out.set('view', state.view);
   const layers = serializeLayers(state.layers, state.lens);
   if (layers) out.set('layers', layers);
-  if (state.lens === 'baseline' && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
+  if (measuresFor(state.lens).includes(state.measure) && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);
@@ -262,7 +272,7 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
     if (patch.layers === undefined) next.layers = lensPreset(next.lens);
   }
   if (next.lens !== 'threats') next.view = DEFAULT_STATE.view;
-  if (next.lens !== 'baseline') next.measure = DEFAULT_STATE.measure;
+  if (!measuresFor(next.lens).includes(next.measure)) next.measure = DEFAULT_STATE.measure;
   const setsSelection = patch.node !== undefined || patch.arc !== undefined || patch.sel !== undefined;
   if (viewChanged && !setsSelection) {
     next.node = null;

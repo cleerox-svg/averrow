@@ -22,6 +22,8 @@ export interface LensPanelProps {
   onSelect: (target: DrillTarget) => void;
   /** `dock`: right column. `overlay`: tablet float. `sheet`: content only (inside a PeekSheet). */
   placement: 'dock' | 'overlay' | 'sheet';
+  /** Replaces the lens's own question under its name (a measure of the lens can ask a different one). */
+  question?: string;
   className?: string;
 }
 
@@ -29,13 +31,13 @@ const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = 
   rising: 'var(--sev-critical-text)', falling: 'var(--sev-info-text)', neutral: 'var(--text-primary)',
 };
 
-export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, className }: LensPanelProps) {
+export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, className }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
     <div className="flex flex-col gap-3 p-4">
       <div>
         <div className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>{def.label}</div>
-        <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{def.question}</p>
+        <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{question ?? def.question}</p>
       </div>
       <section aria-label={section.title} className="flex flex-col">
         <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] m-0 mb-2" style={{ color: 'var(--text-tertiary)' }}>

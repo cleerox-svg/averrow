@@ -5,10 +5,12 @@ import type { ReactNode } from 'react';
 
 const fetchMock = vi.fn();
 vi.mock('@/lib/api', () => ({ api: { fetch: (...a: unknown[]) => fetchMock(...a) } }));
+const authState: { user: { role: string } | null } = { user: { role: 'super_admin' } };
+vi.mock('@/lib/auth', () => ({ useAuth: () => authState }));
 
 import {
   useOperationsGeo, useMovements, useProvidersGeo, useOverindex, useCampaignsGeo, useObservatoryTimeline,
-  useActorList, useActorDetail, overindexPeriod, readLensMeta, useVelocityNodes,
+  useActorList, useActorDetail, overindexPeriod, readLensMeta, useVelocityNodes, useTakedownsGeo, takedownPeriod,
 } from './useObservatoryLenses';
 
 function wrapper() {
@@ -18,6 +20,7 @@ function wrapper() {
 const urls = () => fetchMock.mock.calls.map(c => c[0] as string);
 
 beforeEach(() => {
+  authState.user = { role: 'super_admin' };
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ success: true, data: [], meta: { generated_at: '2026-10-14T00:00:00Z', period: '7d', radar_snapshot_date: '2026-10-13' } });
 });
@@ -129,6 +132,55 @@ describe('velocity', () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data?.meta.dropped_no_centroid).toBe(4);
     expect(result.current.data?.data).toEqual([]); // empty is a valid answer: the UI words it as "coverage still filling"
+  });
+});
+
+describe('takedowns-geo needs manage_takedowns: no request is ever made without it', () => {
+  it.each(['super_admin', 'admin', 'analyst'])('%s requests it', async role => {
+    authState.user = { role };
+    renderHook(() => useTakedownsGeo({ period: '30d', by: 'country' }), { wrapper: wrapper() });
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+  });
+  it.each(['sales', 'support', 'billing', 'auditor', 'client'])('%s never does, however it is enabled', async role => {
+    authState.user = { role };
+    const { result } = renderHook(() => useTakedownsGeo({ enabled: true, period: '90d', by: 'provider' }), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error).toBeNull(); // a neutral nothing, not an error
+    expect(result.current.isLoading).toBe(false);
+  });
+  it('no user (signed out / not loaded yet) never requests', async () => {
+    authState.user = null;
+    renderHook(() => useTakedownsGeo(), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('a permitted role still sends nothing while the view has it disabled', async () => {
+    renderHook(() => useTakedownsGeo({ enabled: false }), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('maps the page period onto the two windows the endpoint has, and sends `by`', async () => {
+    expect(['24h', '7d', '30d', '90d'].map(takedownPeriod)).toEqual(['30d', '30d', '30d', '90d']);
+    renderHook(() => useTakedownsGeo({ period: '90d', by: 'provider' }), { wrapper: wrapper() });
+    renderHook(() => useTakedownsGeo({ period: '7d' }), { wrapper: wrapper() });
+    await waitFor(() => expect(urls()).toEqual(expect.arrayContaining([
+      '/api/observatory/takedowns-geo?period=90d&by=provider',
+      '/api/observatory/takedowns-geo?period=30d&by=country',
+    ])));
+  });
+  it('country and provider are separate queries (no cross-talk)', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: [{ key: url.includes('by=provider') ? 'hp1' : 'NL' }] }));
+    const { result } = renderHook(() => ({ c: useTakedownsGeo({ by: 'country' }), p: useTakedownsGeo({ by: 'provider' }) }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.c.data && result.current.p.data).toBeTruthy());
+    expect(result.current.c.data?.data[0]).toEqual({ key: 'NL' });
+    expect(result.current.p.data?.data[0]).toEqual({ key: 'hp1' });
+  });
+  it('a failed request surfaces as an error for a permitted role', async () => {
+    fetchMock.mockResolvedValue({ success: false, error: 'rollup down' });
+    const { result } = renderHook(() => useTakedownsGeo(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.error?.message).toBe('rollup down'));
   });
 });
 

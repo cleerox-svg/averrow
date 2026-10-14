@@ -122,3 +122,31 @@ describe('dataNeeds: the Fast weaponization view', () => {
     expect(relevantFailures(dataNeeds('global', DEFAULT_LAYERS), { velocity: err })).toEqual([]);
   });
 });
+
+describe('dataNeeds: takedown outcomes', () => {
+  it('Baseline + Takedowns loads takedowns by country (not the Radar baseline), and the shapes', () => {
+    expect(dataNeeds('global', lensPreset('baseline'), { measure: 'takedowns' })).toMatchObject({
+      takedownsCountry: true, takedownsProvider: false, overindex: false, geometry: true,
+    });
+    expect(dataNeeds('global', lensPreset('baseline'), { measure: 'index' })).toMatchObject({ takedownsCountry: false, overindex: true });
+  });
+  it('Hosting + Takedowns loads takedowns by provider next to the providers it colours', () => {
+    expect(dataNeeds('global', lensPreset('hosting'), { measure: 'takedowns' })).toMatchObject({
+      takedownsProvider: true, takedownsCountry: false, providers: true,
+    });
+    expect(dataNeeds('global', lensPreset('hosting'), { measure: 'index' })).toMatchObject({ takedownsProvider: false });
+  });
+  it('a country drawer on any lens reads takedowns by country; the other lenses never ask otherwise', () => {
+    expect(dataNeeds('global', lensPreset('operations'), { selection: 'country' }).takedownsCountry).toBe(true);
+    for (const lens of ['threats', 'operations', 'movement', 'campaigns', 'actors'] as const) {
+      expect(dataNeeds('global', lensPreset(lens), { measure: 'takedowns' })).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+    }
+    expect(dataNeeds('global', DEFAULT_LAYERS)).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+    expect(dataNeeds('heatmap', DEFAULT_LAYERS, { measure: 'takedowns' })).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+  });
+  it('a failure only raises the banner in the view that asked', () => {
+    const err = new Error('x');
+    expect(relevantFailures(dataNeeds('global', lensPreset('baseline'), { measure: 'takedowns' }), { takedownsCountry: err, takedownsProvider: err })).toEqual(['takedownsCountry']);
+    expect(relevantFailures(dataNeeds('global', DEFAULT_LAYERS), { takedownsCountry: err })).toEqual([]);
+  });
+});

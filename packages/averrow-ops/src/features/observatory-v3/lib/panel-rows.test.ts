@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { OperationGeo, ProviderGeo, CampaignGeo, Movement, ActorListItem, OverindexRow } from '@/hooks/useObservatoryLenses';
 import {
-  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, PANEL_ROWS, MIN_RANKED_COUNT,
+  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows, PANEL_ROWS, MIN_RANKED_COUNT,
 } from './panel-rows';
+import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_MIN_RESOLVED } from './lens/takedowns';
+import { buildHostingModel } from './lens/hosting';
+import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { buildVelocityModel } from './lens/velocity';
 
 const prov = (id: string, active: number, over: Partial<ProviderGeo> = {}): ProviderGeo => ({
@@ -81,5 +84,41 @@ describe('velocityRows (Threats lens, Fast view)', () => {
       expect(empty.rows).toEqual([]);
       expect(empty.empty).toMatch(/still filling/i);
     }
+  });
+});
+
+describe('takedown panel lists', () => {
+  const trow = (key: string, td: number, refused: number, expired = 0, over: Partial<TakedownGeoRow> = {}): TakedownGeoRow => {
+    const resolved = td + refused + expired;
+    return { key, label: `Label ${key}`, country: 'NL', lat: 1, lng: 2, submitted: resolved + 2, taken_down: td, refused, expired, pending: 2, share: resolved ? td / resolved : null, median_hours: 30, ...over };
+  };
+  it('hardest jurisdictions: lowest share with enough volume, with n resolved and the median hours', () => {
+    const s = takedownCountryRows(buildTakedownCountryModel([trow('US', 40, 10), trow('RU', 2, 38), trow('DE', 0, 2), trow('FR', 6, 6)]), '30d');
+    expect(s.title).toBe('Hardest jurisdictions');
+    expect(s.rows.map(r => r.key)).toEqual(['RU', 'FR', 'US']);   // DE: 2 resolved, left out
+    expect(s.rows[0]).toMatchObject({ primary: 'Russia', secondary: '40 resolved · median 30h', trailing: '5%', tone: 'rising', target: { kind: 'country', code: 'RU' } });
+    expect(s.rows[2]).toMatchObject({ trailing: '80%', tone: 'neutral' });
+  });
+  it('says why it is empty, and names the window and the threshold', () => {
+    for (const s of [takedownCountryRows(null, '90d'), takedownCountryRows(buildTakedownCountryModel([trow('DE', 0, 2)]), '90d')]) {
+      expect(s.rows).toEqual([]);
+      expect(s.empty).toContain(`${TAKEDOWN_MIN_RESOLVED}+`);
+      expect(s.empty).toContain('90d');
+    }
+  });
+  it('hardest hosts: only a host the map knows can be opened', () => {
+    const prov = (id: string) => ({ id, name: `Host ${id}`, asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 5, trend_7d: 0, trend_30d: 0, is_bulletproof: false, reputation_score: null, takedown: null });
+    const providers = [prov('a'), prov('b')];
+    const model = buildTakedownProviderModel(buildHostingModel(providers), [trow('a', 3, 17), trow('ghost', 1, 29), trow('b', 18, 2)]);
+    const s = takedownProviderRows(model, providers, '30d');
+    expect(s.title).toBe('Hardest hosts');
+    expect(s.rows.map(r => r.key)).toEqual(['ghost', 'a', 'b']);
+    expect(s.rows[0]!.target).toBeUndefined();                       // no ring, no active threats: informational
+    expect(s.rows[1]!.target).toMatchObject({ kind: 'provider', id: 'a' });
+    expect(s.rows[1]!.secondary).toBe('20 resolved · median 30h · Netherlands');
+  });
+  it('caps the list', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => trow(`${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + ((i * 3) % 26))}`, i, 20));
+    expect(takedownCountryRows(buildTakedownCountryModel(rows), '30d').rows.length).toBeLessThanOrEqual(PANEL_ROWS);
   });
 });

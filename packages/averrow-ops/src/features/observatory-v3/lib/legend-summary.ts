@@ -5,14 +5,14 @@
  */
 
 import type { LensId } from './lenses';
-import type { ThreatView } from './url-state';
+import type { Measure, ThreatView } from './url-state';
 
 export interface QueryLike { isLoading: boolean; error: Error | null }
 
 export interface SummaryInput {
   lens: LensId;
   view: ThreatView;
-  measure: 'index' | 'raw' | 'bot';
+  measure: Measure;
   /** Nodes drawn on the Threats lens (null = not loaded). */
   nodes: number | null;
   threats: QueryLike;
@@ -24,6 +24,8 @@ export interface SummaryInput {
   baseline: QueryLike & { count: number | null };
   bot: QueryLike & { count: number | null };
   campaigns: QueryLike & { count: number | null };
+  /** Takedown outcomes: rows with a takedown history (null = not loaded). */
+  takedowns: { countries: QueryLike & { count: number | null }; providers: QueryLike & { count: number | null } };
   actors: QueryLike & { selected: boolean; countries: number | null; empty: boolean };
 }
 
@@ -51,11 +53,16 @@ export function legendSummary(i: SummaryInput): Summary {
       const s = from(i.movement, i.movement.count, ['hop'], i.movement.events === 0 ? 'no moves' : 'none placeable');
       return s;
     }
-    case 'hosting': return from(i.hosting, i.hosting.count, ['provider'], 'none to show');
+    case 'hosting':
+      return i.measure === 'takedowns'
+        ? from(i.takedowns.providers, i.takedowns.providers.count, ['host'], 'no takedowns')
+        : from(i.hosting, i.hosting.count, ['provider'], 'none to show');
     case 'baseline':
       return i.measure === 'bot'
         ? from(i.bot, i.bot.count, ['country', 'countries'], 'no data')
-        : from(i.baseline, i.baseline.count, ['country', 'countries'], 'no data');
+        : i.measure === 'takedowns'
+          ? from(i.takedowns.countries, i.takedowns.countries.count, ['country', 'countries'], 'no takedowns')
+          : from(i.baseline, i.baseline.count, ['country', 'countries'], 'no data');
     case 'campaigns': return from(i.campaigns, i.campaigns.count, ['campaign'], 'none placeable');
     case 'actors': {
       if (!i.actors.selected) return { text: 'pick an actor', tone: 'empty' };

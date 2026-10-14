@@ -8,6 +8,8 @@ import { buildCampaignsModel } from '../lib/lens/campaigns';
 import { buildActorModel } from '../lib/lens/actors';
 import { buildMovementModel } from '../lib/lens/movement';
 import { buildVelocityModel, VELOCITY_COLOR } from '../lib/lens/velocity';
+import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_SMALL_COLOR } from '../lib/lens/takedowns';
+import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { getSeverityColor } from '../lib/map-colors';
 import {
   buildLensLayers, buildLensBaseLayers, lensNeedsFrame, NO_SELECTION, type LensLayerInput, type CountryCollection,
@@ -43,6 +45,8 @@ function input(layers: Partial<LayerToggles>, extra: Partial<LensLayerInput> = {
     actors: buildActorModel(actor),
     movement: buildMovementModel([mv], { nowMs: Date.parse('2026-10-14T00:00:00Z'), periodMs: 7 * 86_400_000 }),
     velocity: null,
+    takedownCountries: null,
+    takedownProviders: null,
     sel: NO_SELECTION,
     reducedMotion: false,
     isMobile: false,
@@ -396,5 +400,114 @@ describe('Fast weaponization (velocity) layers', () => {
     const [nl, us] = [i.velocity!.byCc.get('NL')!, i.velocity!.byCc.get('US')!];
     expect(line(nl)).toEqual([229, 168, 50, 255]);
     expect(line(us).slice(0, 3)).toEqual([...VELOCITY_COLOR.slice(0, 3)]);
+  });
+});
+
+describe('takedown outcomes on the map', () => {
+  const trow = (key: string, td: number, refused: number, expired = 0): TakedownGeoRow => {
+    const resolved = td + refused + expired;
+    return { key, label: key, country: 'NL', lat: 1, lng: 2, submitted: resolved + 1, taken_down: td, refused, expired, pending: 1, share: resolved ? td / resolved : null, median_hours: 12 };
+  };
+  const cmodel = () => buildTakedownCountryModel([trow('NL', 18, 2), trow('DE', 1, 1), trow('FR', 0, 30)]);
+
+  describe('Baseline > Takedowns (a choropleth by country)', () => {
+    const tdInput = (extra: Partial<LensLayerInput> = {}) => input({ baseline: true }, {
+      measure: 'takedowns', takedownCountries: cmodel(),
+      countries: { type: 'FeatureCollection', features: ['NL', 'DE', 'FR', 'GB'].map(id => ({ type: 'Feature' as const, id, properties: { n: id }, geometry: { type: 'Polygon' as const, coordinates: [] } })) },
+      ...extra,
+    });
+    it('fills each country with its takedown colour: green scale, grey for a small sample, unfilled when no takedowns', () => {
+      const i = tdInput();
+      const base = props(buildLensBaseLayers(i)[0]);
+      const fill = base.getFillColor as (f: { id: string }) => number[];
+      expect(fill({ id: 'NL' })).toEqual([...i.takedownCountries!.colors.get('NL')!]);
+      expect(fill({ id: 'NL' })[1]).toBeGreaterThan(fill({ id: 'FR' })[1]!);          // 90% brighter than 0%
+      expect(fill({ id: 'DE' })).toEqual([...TAKEDOWN_SMALL_COLOR]);                   // 2 resolved
+      expect(fill({ id: 'GB' })).toEqual([0, 0, 0, 0]);                                // nothing submitted
+    });
+    it('outlines the small-sample countries (grey), and only those', () => {
+      const layers = buildLensBaseLayers(tdInput());
+      const outline = layers.find(l => l.id === 'takedown-small-sample');
+      expect(outline).toBeTruthy();
+      const features = (props(outline).data as { features: Array<{ id: string }> }).features;
+      expect(features.map(f => f.id)).toEqual(['DE']);
+      expect(layers.map(l => l.id)).not.toContain('baseline-no-baseline');            // the Radar outline belongs to over-index
+    });
+    it('repaints when the model changes (updateTriggers), and the outline data is memoised on the model', () => {
+      const a = tdInput();
+      const b = tdInput({ takedownCountries: cmodel() });
+      expect((props(buildLensBaseLayers(a)[0]).updateTriggers as { getFillColor: unknown[] }).getFillColor).toEqual(['takedowns', a.takedownCountries]);
+      expect((props(buildLensBaseLayers(b)[0]).updateTriggers as { getFillColor: unknown[] }).getFillColor[1]).not.toBe(a.takedownCountries);
+      const d1 = props(buildLensBaseLayers(a).find(l => l.id === 'takedown-small-sample')).data;
+      const d2 = props(buildLensBaseLayers(a).find(l => l.id === 'takedown-small-sample')).data;
+      expect(d1).toBe(d2);
+    });
+    it('hover states the rate, the volume and the median; or why there is no rate; or that nothing was submitted', () => {
+      const i = tdInput();
+      const hover = props(buildLensBaseLayers(i)[0]).onHover as (info: unknown) => void;
+      hover({ object: { id: 'NL' }, x: 1, y: 2 });
+      expect(i.pick.hover).toHaveBeenLastCalledWith(expect.objectContaining({ lines: ['90% taken down', '21 submitted · 20 resolved', 'median 12h to take down'] }));
+      hover({ object: { id: 'DE' }, x: 1, y: 2 });
+      expect((i.pick.hover as unknown as { mock: { lastCall: Array<{ lines: string[] }> } }).mock.lastCall[0]!.lines[0]).toMatch(/too few resolved/);
+      hover({ object: { id: 'GB' }, x: 1, y: 2 });
+      expect((i.pick.hover as unknown as { mock: { lastCall: Array<{ lines: string[] }> } }).mock.lastCall[0]!.lines).toEqual(['no takedowns submitted in this window']);
+    });
+    it('a click opens the country drawer', () => {
+      const i = tdInput();
+      (props(buildLensBaseLayers(i)[0]).onClick as (info: unknown) => boolean)({ object: { id: 'NL' }, x: 3, y: 4 });
+      expect(i.pick.click).toHaveBeenCalledWith({ kind: 'country', id: 'NL' }, { x: 3, y: 4 });
+    });
+    it('without a model (not permitted / still loading) it draws nothing filled and does not throw', () => {
+      const i = tdInput({ takedownCountries: null });
+      const fill = props(buildLensBaseLayers(i)[0]).getFillColor as (f: { id: string }) => number[];
+      expect(fill({ id: 'NL' })).toEqual([0, 0, 0, 0]);
+    });
+    it('reduced motion: the fill does not crossfade', () => {
+      expect(props(buildLensBaseLayers(tdInput({ reducedMotion: true }))[0]).transitions).toBeUndefined();
+      expect(props(buildLensBaseLayers(tdInput())[0]).transitions).toBeDefined();
+    });
+  });
+
+  describe('Hosting > Takedowns (rings coloured by success share)', () => {
+    const hosting = buildHostingModel([prov({ id: 'p', is_bulletproof: true }), prov({ id: 'q', country: 'US' }), prov({ id: 'r', country: 'DE' })]);
+    const tp = () => buildTakedownProviderModel(hosting, [trow('p', 16, 4), trow('q', 1, 1)]);
+    const tdInput = (extra: Partial<LensLayerInput> = {}) => input({ hosting: true }, { hosting, measure: 'takedowns', takedownProviders: tp(), ...extra });
+    it('colours each ring with its takedown colour (grey for a small sample or none) instead of its trend colour', () => {
+      const i = tdInput();
+      const rings = i.takedownProviders!.hosting.rings;
+      const line = props(find(i, 'hosting-rings')).getLineColor as (r: unknown) => number[];
+      const [p, q, r] = ['p', 'q', 'r'].map(id => rings.find(x => x.id === id)!);
+      expect(line(p!).slice(0, 3)).toEqual([...i.takedownProviders!.colors.get('p')!.slice(0, 3)]);
+      expect(line(q!).slice(0, 3)).toEqual([...TAKEDOWN_SMALL_COLOR.slice(0, 3)]);
+      expect(line(r!).slice(0, 3)).toEqual([...TAKEDOWN_SMALL_COLOR.slice(0, 3)]);
+    });
+    it('draws the rings from the takedown model, and the arc only for hosts with a rate', () => {
+      const i = tdInput();
+      expect(props(find(i, 'hosting-rings')).data).toBe(i.takedownProviders!.hosting.rings);
+      const arc = props(find(i, 'hosting-takedown-arc')).data as Array<{ id: string; takedownShare: number }>;
+      expect(arc.map(r => r.id)).toEqual(['p']);
+      expect(arc[0]!.takedownShare).toBeCloseTo(0.8, 9);
+    });
+    it('without the model the lens falls back to the trend view (providers-geo), even with measure=takedowns', () => {
+      const i = tdInput({ takedownProviders: null });
+      expect(props(find(i, 'hosting-rings')).data).toBe(hosting.rings);
+    });
+    it('the default measure is unchanged: trend colours and the providers-geo arc', () => {
+      const i = input({ hosting: true }, { hosting, measure: 'index', takedownProviders: tp() });
+      expect(props(find(i, 'hosting-rings')).data).toBe(hosting.rings);
+    });
+    it('hover states the takedown facts', () => {
+      const i = tdInput();
+      const ring = i.takedownProviders!.hosting.rings.find(r => r.id === 'p')!;
+      (props(find(i, 'hosting-rings')).onHover as (info: unknown) => void)({ object: ring, x: 1, y: 2 });
+      expect(i.pick.hover).toHaveBeenLastCalledWith(expect.objectContaining({ lines: expect.arrayContaining(['80% taken down', '21 submitted · 20 resolved']) }));
+    });
+    it('layer data identity is stable across frames and the arc subset is memoised on the takedown model', () => {
+      const i = tdInput();
+      const a = find(i, 'hosting-takedown-arc', { seconds: 1, t: 1 });
+      const b = find(i, 'hosting-takedown-arc', { seconds: 7, t: 9 });
+      expect(props(a).data).toBe(props(b).data);
+      expect(props(find(i, 'hosting-rings', { seconds: 1, t: 1 })).data).toBe(props(find(i, 'hosting-rings', { seconds: 9, t: 9 })).data);
+    });
   });
 });

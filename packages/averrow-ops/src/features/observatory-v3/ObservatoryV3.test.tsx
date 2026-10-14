@@ -415,6 +415,163 @@ describe('ObservatoryV3 Threats lens: Fast weaponization view', () => {
   });
 });
 
+describe('ObservatoryV3 takedown outcomes (manage_takedowns)', () => {
+  const trow = (key: string, td: number, refused: number, expired = 0) => ({
+    key, label: `Label ${key}`, country: 'NL', lat: 52, lng: 5, submitted: td + refused + expired + 2, taken_down: td, refused, expired, pending: 2,
+    share: td + refused + expired ? td / (td + refused + expired) : null, median_hours: 30,
+  });
+  const byCountry = [trow('US', 30, 10), trow('RU', 2, 38), trow('DE', 1, 1)];
+  const byProvider = [trow('p1', 16, 4), trow('ghost', 1, 29), trow('unknown', 3, 3)];
+  const prov = { id: 'p1', name: 'Host p1', asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 9, trend_7d: 1, trend_30d: 2, is_bulletproof: false, reputation_score: null, takedown: null };
+  const tdRoute = (u: string) => (u.includes('by=provider') ? byProvider : byCountry);
+  const routeTd = () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/takedowns-geo')) return Promise.resolve({ success: true, data: tdRoute(url) });
+      if (url.startsWith('/api/observatory/providers-geo')) return Promise.resolve({ success: true, data: [prov] });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+  };
+  const lastLens = () => mapProps.mock.calls.at(-1)![0].lens;
+
+  beforeEach(() => { authState.user.role = 'super_admin'; });
+  afterEach(() => { authState.user.role = 'super_admin'; });
+
+  it.each(['super_admin', 'admin', 'analyst'])('%s: Baseline > Takedowns requests by=country for the page window and hands the map a model', async role => {
+    authState.user.role = role;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    await waitFor(() => expect(lastLens().takedownCountries).not.toBeNull());
+    expect(lastLens()).toMatchObject({ measure: 'takedowns', takedownProviders: null });
+    expect(called('/api/observatory/overindex')).toBe(false);          // takedowns replace the Radar baseline
+    expect(called('/api/observatory/takedowns-geo?period=30d&by=provider')).toBe(false);
+    expect(mapProps.mock.calls.at(-1)![0].sceneKey).toBe('baseline|points|takedowns');
+  });
+
+  it('the window follows the period: 90D -> 90d, 24H / 7D -> 30d', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns&period=90d');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=90d&by=country'));
+  });
+
+  it('the panel lists the hardest jurisdictions (lowest share, enough volume) and a row opens the country drawer', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    const list = await screen.findByRole('region', { name: 'Hardest jurisdictions' });
+    const rows = await within(list).findAllByRole('button');
+    expect(rows.map(r => r.textContent)).toEqual([expect.stringMatching(/^Russia.*5%$/), expect.stringMatching(/^United States.*75%$/)]);   // DE: 2 resolved
+    await userEvent.click(rows[0]!);
+    await waitFor(() => expect(search).toContain('sel=country%3ARU'));
+    expect(await screen.findByRole('dialog', { name: /Country details/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Takedowns · 30d' })).toBeInTheDocument();
+  });
+
+  it('Hosting > Takedowns requests by=provider next to providers-geo; the panel lists the hardest hosts', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=provider'));
+    expect(called('/api/observatory/providers-geo')).toBe(true);
+    expect(called('/api/observatory/takedowns-geo?period=30d&by=country')).toBe(false);
+    await waitFor(() => expect(lastLens().takedownProviders).not.toBeNull());
+    const list = await screen.findByRole('region', { name: 'Hardest hosts' });
+    expect(within(list).getAllByRole('listitem').map(li => li.textContent)).toEqual([expect.stringMatching(/^Label ghost/), expect.stringMatching(/^Label p1/)]);
+    // only the host the map knows is a button
+    expect(within(list).getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('the closed legend counts hosts (the unknown-host row is not one); the panel asks the takedown question, not the lens\'s', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    expect(await screen.findByRole('button', { name: /Legend.*2 hosts/ })).toBeInTheDocument();
+    // (the lens strip also announces the lens's own question in an sr-only live region: look at the panel's <p>)
+    const panelQuestion = (text: string) => screen.queryAllByText(text).filter(el => el.tagName === 'P');
+    expect(panelQuestion('Which hosts ignore or refuse takedowns most often?')).toHaveLength(1);
+    expect(panelQuestion('Where do operators choose to host?')).toHaveLength(0);
+  });
+
+  it('Baseline asks its takedown question too; without the measure the lens keeps its own', async () => {
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns');
+    const panelQuestion = (text: string) => screen.queryAllByText(text).filter(el => el.tagName === 'P');
+    await waitFor(() => expect(panelQuestion('In which countries do takedowns succeed least often?')).toHaveLength(1));
+    unmount();
+    renderAt('/observatory?lens=baseline');
+    await waitFor(() => expect(panelQuestion('Where do we see more than normal attack traffic?')).toHaveLength(1));
+  });
+
+  it('the rail offers Takedowns to holders and writes measure=takedowns', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline');
+    await userEvent.click(await screen.findByRole('button', { name: 'Takedowns' }));
+    await waitFor(() => expect(search).toContain('measure=takedowns'));
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    await userEvent.click(screen.getByRole('button', { name: 'Over-index' }));
+    await waitFor(() => expect(search).not.toContain('measure='));
+  });
+
+  it.each(['sales', 'support', 'billing', 'auditor'])('%s: no takedown option, no takedowns-geo request, and a shared measure=takedowns link shows the default measure', async role => {
+    authState.user.role = role;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns&period=90d');
+    await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Takedowns' })).not.toBeInTheDocument();
+    expect(lastLens()).toMatchObject({ measure: 'index', takedownCountries: null, takedownProviders: null });
+    expect(mapProps.mock.calls.at(-1)![0].sceneKey).toBe('baseline|points|index');
+    expect(screen.queryByRole('region', { name: 'Hardest jurisdictions' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Most over-indexed' })).toBeInTheDocument();
+  });
+
+  it('Hosting for a non-holder: the lens works as before (providers-geo, no measure control, no takedown request)', async () => {
+    authState.user.role = 'support';
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/providers-geo')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+    expect(screen.queryByRole('group', { name: 'Hosting measure' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Top hosting providers' })).toBeInTheDocument();
+  });
+
+  it('a country drawer reads takedowns by country for a holder, on any lens, and for nobody else', async () => {
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=hosting&sel=country:US');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    expect(await screen.findByRole('img', { name: 'Taken down: 75%' })).toBeInTheDocument();
+    unmount();
+    fetchMock.mockClear();
+    authState.user.role = 'sales';
+    renderAt('/observatory?lens=hosting&sel=country:US');
+    expect(await screen.findByText(/roles that manage takedowns/)).toBeInTheDocument();
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+  });
+
+  it('a failing takedown request raises the banner in a takedown view and not elsewhere', async () => {
+    fetchMock.mockImplementation((url: string) => (url.startsWith('/api/observatory/takedowns-geo')
+      ? Promise.resolve({ success: false, error: 'rollup down' })
+      : Promise.resolve({ success: true, data: url.startsWith('/api/observatory/stats') ? okStats : [] })));
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns');
+    expect(await screen.findByTestId('observatory-load-error')).toBeInTheDocument();
+    unmount();
+    renderAt('/observatory?lens=baseline');
+    await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
+    expect(screen.queryByTestId('observatory-load-error')).not.toBeInTheDocument();
+  });
+
+  it('the map gets the SAME model objects while the data is unchanged (no per-poll layer rebuild)', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(lastLens().takedownProviders).not.toBeNull());
+    const a = lastLens().takedownProviders;
+    await act(async () => { await userEvent.click(screen.getByRole('button', { name: 'Hide intelligence panel' })); });
+    await new Promise(r => setTimeout(r, 30));
+    expect(lastLens().takedownProviders).toBe(a);
+  });
+});
+
 describe('ObservatoryV3 country shapes load only for a visible choropleth', () => {
   const fc = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'NL', properties: { n: 'Netherlands' }, geometry: { type: 'Polygon', coordinates: [] } }] };
   it('not for Hosting + a country drawer, yes for Baseline', async () => {

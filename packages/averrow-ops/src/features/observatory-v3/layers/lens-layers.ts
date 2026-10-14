@@ -39,6 +39,8 @@ import { botHover } from '../lib/lens/bot-share';
 import type { CampaignsModel, CampaignArc } from '../lib/lens/campaigns';
 import type { ActorModel, ActorCountry, ActorEdge } from '../lib/lens/actors';
 import { actorNodePx, confidenceBand } from '../lib/lens/actors';
+import type { TakedownCountryModel, TakedownProviderModel } from '../lib/lens/takedowns';
+import { TAKEDOWN_SMALL_COLOR, TAKEDOWN_SMALL_OUTLINE, takedownFacts } from '../lib/lens/takedowns';
 import type { VelocityModel, VelocityPoint } from '../lib/lens/velocity';
 import { VELOCITY_COLOR } from '../lib/lens/velocity';
 import type { MovementModel, MovementHop, MovementPulse } from '../lib/lens/movement';
@@ -105,6 +107,10 @@ export interface LensLayerInput {
   movement: MovementModel | null;
   /** Fast-weaponization nodes: non-null only while the Threats lens' Fast view is on. */
   velocity: VelocityModel | null;
+  /** Takedown success by country (Baseline lens, Takedowns measure). Needs `manage_takedowns`; null otherwise. */
+  takedownCountries: TakedownCountryModel | null;
+  /** The hosting rings with takedown outcomes (Hosting lens, Takedowns measure). Needs `manage_takedowns`; null otherwise. */
+  takedownProviders: TakedownProviderModel | null;
   sel: LensSelection;
   /** Labels that fit at the current camera (placed by the map when it settles). */
   labels: PlacedLabels;
@@ -173,6 +179,12 @@ const noBaselineShapes = memoByModelAndKey((baseline: BaselineModel, countries: 
   }),
 }));
 
+/** Countries whose takedown sample is too small for a rate: outlined grey instead of filled. */
+const takedownSmallShapes = memoByModelAndKey((m: TakedownCountryModel, countries: CountryCollection) => ({
+  type: 'FeatureCollection' as const,
+  features: countries.features.filter(f => m.small.has(String(f.id))),
+}));
+
 const hostingParts = memoByModel((m: HostingModel) => ({
   bullet: m.rings.filter(r => r.bulletproof),
   withTakedown: m.rings.filter(r => r.takedownShare !== null),
@@ -212,6 +224,11 @@ const countryTip = (code: string, model: BaselineModel | null, measure: Measure)
   return { x: 0, y: 0, title: countryName(code) || code, lines };
 };
 
+const takedownTip = (code: string, model: TakedownCountryModel | null): LensHover => {
+  const row = model?.rows.get(code);
+  return { x: 0, y: 0, title: countryName(code) || code, lines: row ? takedownFacts(row) : ['no takedowns submitted in this window'] };
+};
+
 const botTip = (code: string, bot: BotShareModel | null): LensHover => {
   const row = bot?.rows.get(code);
   if (!row) return { x: 0, y: 0, title: countryName(code) || code, lines: ['no Radar bot-share data'] };
@@ -220,10 +237,13 @@ const botTip = (code: string, bot: BotShareModel | null): LensHover => {
 };
 
 export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
-  const { layers, baseline, bot, countries, measure, sel, reducedMotion, pick } = input;
+  const { layers, baseline, bot, countries, measure, sel, reducedMotion, pick, takedownCountries } = input;
   if (!layers.baseline || !countries || countries.features.length === 0) return [];
   const isBot = measure === 'bot';
-  const colors = isBot ? bot?.colors ?? null : baseline ? (measure === 'index' ? baseline.indexColors : baseline.rawColors) : null;
+  const isTakedown = measure === 'takedowns';
+  const colors = isBot ? bot?.colors ?? null
+    : isTakedown ? takedownCountries?.colors ?? null
+      : baseline ? (measure === 'index' ? baseline.indexColors : baseline.rawColors) : null;
   const out: Layer[] = [
     new GeoJsonLayer<{ n: string }>({
       id: 'baseline-countries',
@@ -240,7 +260,7 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
       // The over-index <-> raw <-> bot switch crossfades the fill (deck interpolates the colour attribute).
       transitions: reducedMotion ? undefined : FILL_CROSSFADE,
       updateTriggers: {
-        getFillColor: [measure, isBot ? bot : baseline],
+        getFillColor: [measure, isBot ? bot : isTakedown ? takedownCountries : baseline],
         getLineColor: [measure, bot],
         getLineWidth: [measure, bot],
       },
@@ -248,7 +268,7 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
         const f = info.object;
         if (!f) { pick.hover(null); return; }
         const code = String(f.id);
-        const tip = isBot ? botTip(code, bot) : countryTip(code, baseline, measure);
+        const tip = isBot ? botTip(code, bot) : isTakedown ? takedownTip(code, takedownCountries) : countryTip(code, baseline, measure);
         pick.hover({ ...tip, x: info.x, y: info.y });
       },
       onClick: info => {
@@ -258,7 +278,18 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
       },
     }),
   ];
-  if (!isBot && baseline) {
+  if (isTakedown && takedownCountries) {
+    const shapes = takedownSmallShapes(takedownCountries, countries);
+    if (shapes.features.length > 0) {
+      out.push(new GeoJsonLayer<{ n: string }>({
+        id: 'takedown-small-sample',
+        data: shapes as GeoData,
+        stroked: true, filled: false,
+        getLineColor: TAKEDOWN_SMALL_OUTLINE, getLineWidth: 1.1, lineWidthUnits: 'pixels',
+        pickable: false,
+      }));
+    }
+  } else if (!isBot && baseline) {
     const shapes = noBaselineShapes(baseline, countries);
     if (shapes.features.length > 0) {
       out.push(new GeoJsonLayer<{ n: string }>({
@@ -419,9 +450,12 @@ const TAKEDOWN_COLOR: Rgba = [60, 184, 120, 255];
 const TRACK_COLOR: Rgba = [148, 163, 184, 46];
 
 function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
-  const m = input.hosting;
+  // Takedowns measure: the same rings, with takedown outcomes (same window as the colours) in place of the 90-day field.
+  const tp = input.measure === 'takedowns' ? input.takedownProviders : null;
+  const m = tp ? tp.hosting : input.hosting;
   if (!m || m.rings.length === 0) return [];
   const { sel, reducedMotion, pick, labels } = input;
+  const ringColor = (r: ProviderRing): Rgba => (tp ? tp.colors.get(r.id) ?? TAKEDOWN_SMALL_COLOR : TREND_COLORS[r.trend]);
   const animTime = reducedMotion ? 0 : frame.seconds;
   const { bullet, withTakedown } = hostingParts(m);
   const dimmed = (r: ProviderRing): boolean => sel.providerId !== null && r.id !== sel.providerId;
@@ -433,15 +467,16 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     getPosition: posNode,
     radiusUnits: 'pixels',
     getRadius: (r: ProviderRing) => r.radiusPx,
-    getFillColor: (r: ProviderRing) => withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 14 : 82),
+    // Takedowns measure: the fill IS the success share (sequential green), so it keeps its own alpha.
+    getFillColor: (r: ProviderRing) => (tp ? withAlpha(ringColor(r), dimmed(r) ? 30 : Math.max(ringColor(r)[3], 110)) : withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 14 : 82)),
     stroked: true,
-    getLineColor: (r: ProviderRing) => (r.id === sel.providerId ? AMBER : withAlpha(TREND_COLORS[r.trend], dimmed(r) ? 50 : 235)),
+    getLineColor: (r: ProviderRing) => (r.id === sel.providerId ? AMBER : withAlpha(ringColor(r), dimmed(r) ? 50 : 235)),
     getLineWidth: (r: ProviderRing) => (r.id === sel.providerId ? 3 : 1.5),
     lineWidthUnits: 'pixels',
     pickable: true,
     // Size / colour glide when the numbers move (a 15-minute refetch) and when a ring is picked, instead of snapping.
     transitions: reducedMotion ? undefined : TR_RING,
-    updateTriggers: { getFillColor: sel.providerId, getLineColor: sel.providerId, getLineWidth: sel.providerId },
+    updateTriggers: { getFillColor: [sel.providerId, tp], getLineColor: [sel.providerId, tp], getLineWidth: sel.providerId },
     onHover: (info: PickInfo<ProviderRing>) => pick.hover(info.object
       ? {
         x: info.x, y: info.y, title: info.object.name,
@@ -449,7 +484,9 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
           [info.object.asn, countryName(info.object.country)].filter(Boolean).join(' · '),
           `${info.object.active.toLocaleString()} active · ${info.object.trend7} this week (${info.object.trend})`,
           ...(info.object.bulletproof ? ['bulletproof host'] : []),
-          ...(info.object.takedownShare !== null ? [`${Math.round(info.object.takedownShare * 100)}% of resolved takedowns succeeded`] : []),
+          ...(tp
+            ? (() => { const row = tp.rows.get(info.object.id); return row ? takedownFacts(row) : ['no takedowns submitted in this window']; })()
+            : info.object.takedownShare !== null ? [`${Math.round(info.object.takedownShare * 100)}% of resolved takedowns succeeded`] : []),
         ],
       }
       : null),
