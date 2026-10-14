@@ -195,6 +195,10 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
     // column is assumed to exist in production from that earlier schema.
     // Added here to mirror production; flagged for a follow-up migration.
     raw.exec(`ALTER TABLE infrastructure_clusters ADD COLUMN nexus_brief TEXT`);
+    // The backlog pins its plan with INDEXED BY idx_clusters_status_threat_count
+    // (migration 0301; plans in test/cluster-list-plans.test.ts). The derived
+    // schema materialises no indexes, so create that one.
+    raw.exec(`CREATE INDEX idx_clusters_status_threat_count ON infrastructure_clusters(status, threat_count DESC, id)`);
     const env = makeEnv(raw);
     // Bigger, un-hinted cluster that would otherwise sort first.
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c_big', 'AS1 generic', 999, 'active')`);

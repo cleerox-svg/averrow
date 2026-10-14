@@ -484,6 +484,53 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
+      // GET  /api/internal/nexus/cluster-retirement            — dry-run report
+      // POST /api/internal/nexus/cluster-retirement?dry_run=0&max_clusters=N&max_threats=N
+      // Legacy NEXUS cluster retirement (lib/cluster-retirement.ts). GET is
+      // read-only: legacy (non-`cluster_`) row counts by status, actor-linked
+      // / attributor-processed counts, threats still referencing legacy ids,
+      // and re-point mapping coverage. POST runs ONE bounded batch that moves
+      // threats off legacy / retired cluster ids — re-pointed to the stable
+      // `cluster_asn_<asn>_<type>` row when it exists and is operational,
+      // otherwise released (cluster_id = NULL) for the next NEXUS run. POST
+      // is a DRY RUN unless dry_run=0. Idempotent; loop until data.done.
+      if (url.pathname === '/api/internal/nexus/cluster-retirement' && (request.method === 'GET' || request.method === 'POST')) {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { legacyClusterReport, parseRetirementParams, runClusterRetirementBatch } =
+          await import('./lib/cluster-retirement');
+        if (request.method === 'GET') {
+          return Response.json({ success: true, data: await legacyClusterReport(env.DB) });
+        }
+        const params = parseRetirementParams(url.searchParams);
+        const result = await runClusterRetirementBatch(env.DB, params);
+        if (!result.dry_run) {
+          // One audit row per applied call. Every moved threat is also in
+          // cluster_repoint_log (migration 0305) — the undo record, keyed by
+          // this call's run_at (undo per run_at, newest first).
+          const { audit } = await import('./lib/audit');
+          await audit(env, {
+            action: 'nexus_cluster_repoint',
+            userId: null,
+            resourceType: 'infrastructure_clusters',
+            details: {
+              actor: 'internal',
+              run_at: result.run_at,
+              max_clusters: params.maxClusters,
+              max_threats: params.maxThreats,
+              legacy: result.legacy,
+              retired_stable: result.retired_stable,
+              done: result.done,
+            },
+            request,
+          });
+        }
+        return Response.json({ success: true, data: result });
+      }
+
       // POST /api/internal/dns-queue/prioritize-idp?days=14&limit=500
       // Enqueue / promote IdP-family threats (technique IN
       // IDP_FAMILY_TECHNIQUES) from the last `days` (1..30, default 14)

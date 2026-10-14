@@ -49,6 +49,7 @@ import {
   toIso,
   type IdentityWindow,
 } from "./identityThreats";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 export const DETECTIONS_DEFAULT_LIMIT = 25;
@@ -433,7 +434,8 @@ export async function getIdentityDetection(
          FROM threats t
          LEFT JOIN brands b ON b.id = t.target_brand_id
          LEFT JOIN hosting_providers hp ON hp.id = t.hosting_provider_id
-         LEFT JOIN infrastructure_clusters ic ON ic.id = t.cluster_id
+         LEFT JOIN infrastructure_clusters ic
+                ON ic.id = t.cluster_id AND ${notRetiredClusterSql("ic")}
         WHERE t.id = ?`,
     ).bind(threatId).first<DetailRow>(),
     db.prepare(

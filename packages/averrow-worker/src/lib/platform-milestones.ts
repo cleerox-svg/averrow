@@ -9,7 +9,7 @@
 //                            Lifetime ingest volume. Only goes up. Same number
 //                            the /feeds page surfaces as "TOTAL INGESTED".
 //   3. brands_monitored    — COUNT(*) FROM brands. Brand catalog size.
-//   4. clusters_mapped     — COUNT(*) FROM infrastructure_clusters. NEXUS ops.
+//   4. clusters_mapped     — COUNT(*) of non-retired infrastructure_clusters.
 //   5. providers_cataloged — COUNT(*) FROM hosting_providers.
 //   6. campaigns_tracked   — COUNT(*) FROM campaigns.
 //
@@ -31,6 +31,7 @@
 
 import type { Env } from '../types';
 import { cachedCount, THREATS_TOTAL_TTL_S } from './cached-count';
+import { notRetiredClusterSql } from './cluster-status';
 
 // High-volume counters: threats, lifetime ingest, brand catalog.
 const LARGE_LADDER = [
@@ -138,7 +139,9 @@ const METRICS: readonly MetricDef[] = [
     count: (env) =>
       cachedCount(env, "count.clusters.total", 3600, async () => {
         const row = await env.DB
-          .prepare(`SELECT COUNT(*) AS n FROM infrastructure_clusters`)
+          // Retired rows (superseded legacy duplicates, shared_infra) are
+          // not mapped operations — lib/cluster-status.ts.
+          .prepare(`SELECT COUNT(*) AS n FROM infrastructure_clusters WHERE ${notRetiredClusterSql()}`)
           .first<{ n: number }>();
         return row?.n ?? 0;
       }),

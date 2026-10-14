@@ -429,7 +429,8 @@ operator traceability but no auto-dispatch happens (PR-L:1306).
 Active edges (event-driven):
   Nexus → [pivot_detected]   → Observer    (target_agent='observer'; two triggers
                                              discriminated by payload_json.kind —
-                                             'dormancy' (>80% activity drop, ASN lane)
+                                             'dormancy' (>80% activity drop, ASN lane,
+                                             confidence >= 25 on the ASN-only 0-40 scale)
                                              and 'infra_movement' (bridge-kind cluster
                                              gains new IPs/ASNs/cert-serials vs its
                                              prior-run fingerprint, S2.4/D5b). Same
@@ -748,7 +749,15 @@ for 22 hours. All orchestrator gates now use hour-only checks. If sub-hourly
 scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
 
 ### Execution patterns:
-- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer still runs as the agent module via FC's `scaleAgents` (workflow path exists but is enrichment-only — see `docs/runbooks/workflow-dispatch.md`). Both NEXUS paths finish with a connected-components post-pass (`lib/cluster-components.ts`, S2.4/D5a) that groups the six lanes' per-key `infrastructure_clusters` rows into `component_id`s via specific-evidence bridges only — additive, doesn't touch `threats.cluster_id` or attribution.
+- **Workflow dispatch:** NEXUS runs as a Cloudflare Workflow (`NEXUS_RUN`), dispatched from the orchestrator cron at `hour % 4 === 0` via `dispatchWorkflow()` in `lib/workflow-dispatch.ts` (KV cooldown on platform errors, FC supervisor watches the last-dispatch stamp). The agent module (`agents/nexus.ts`) stays available as the manual trigger fallback at `/api/internal/agents/nexus/run`. Cartographer still runs as the agent module via FC's `scaleAgents` (workflow path exists but is enrichment-only — see `docs/runbooks/workflow-dispatch.md`). Both NEXUS paths finish with a connected-components post-pass (`lib/cluster-components.ts`, S2.4/D5a) that groups the six lanes' per-key `infrastructure_clusters` rows into `component_id`s via specific-evidence bridges only — additive, doesn't touch `threats.cluster_id` or attribution. The six threats-table lanes are ONE implementation in `lib/nexus-threat-lanes.ts`, called by both paths, with parity pinned by `test/nexus-lane-parity.test.ts`. Never re-inline lane SQL into either file.
+  - **Cluster-quality rules (2026-10-14):**
+    - `lib/shared-infra-asns.ts` holds two disjoint lists. `MULTI_TENANT_ASNS` (27) are networks where one IP serves many tenants (CDN, site builders, parking, free hosts, Google's front-end AS15169 and Amazon's primary AS16509, which carries CloudFront/S3-website/Amplify). `SINGLE_TENANT_IAAS_ASNS` (14) are hyperscalers and VPS providers, where an IP is one customer (EC2 AS14618/AS8987; Google Cloud AS396982, whose LB IPs are per customer project). `SHARED_INFRA_ASNS` is their union (41). The ASN and /24 lanes skip the union. The per-IP lane skips only multi-tenant ASNs. The same file holds the only ASN normaliser (`asnKey` + SQL twin `asnKeySql`), shared with the Observatory operations-geo classifier. Don't add a second one.
+    - The ASN lane groups only active threats and skips the IP-reputation types `scanning` and `malicious_ip`, as well as empty types. It does not emit a group that spans more than 150 brands. It normalises ASN strings to `AS<digits>` and caps confidence at 40. Confidence rises with campaign overlap (the main lift), volume and low brand fan-out, never with brand breadth or country.
+    - The per-IP lane excludes hub IPs (more than 150 brands), threats on multi-tenant ASNs, and bogon IPs in reserved / private ranges (`NOT_BOGON_IP_SQL`, tested on `trim(ip_address)` so it agrees with the retire pass). It ranks by threat volume. The /24 lane also excludes bogons.
+    - Names describe the evidence: `AS4837 · malware distribution`, not `CA AS13335 …`.
+    - `country_counts` (migration 0302) holds per-country counts for the top 20 countries.
+    - Rows that are not operations are marked `superseded` (legacy random-UUID duplicates, migration 0303) or `shared_infra`. The NEXUS retire pass mirrors each lane's filter for ASN, per-IP and subnet rows. Every reader excludes retired rows through `notRetiredClusterSql()` (`lib/cluster-status.ts`). A top-N read ordered by `threat_count` uses the positive list `liveClusterStatusSql()` with `ORDER BY +threat_count`; `NOT IN` walks the ~76K superseded rows. On a read whose plan is pinned to another access path, pass `{ unindexed: true }` (unary `+status`). Operations-geo does this for `status=all`, and its `include_shared` never returns retired rows.
+    - Threats still pointing at retired ids move via `POST /api/internal/nexus/cluster-retirement`. It is a bounded batch and runs as a dry run unless `dry_run=0` is passed. Each moved threat is first recorded in `cluster_repoint_log` (migration 0305), so a re-point can be undone per `run_at`, newest first (the POST result and the `audit_log` row both carry `run_at`). Each applied call writes one `audit_log` row.
 - **ctx.waitUntil:** Analyst runs in parallel without blocking the cron mesh (Strategist and
   Sparrow no longer share this mesh — both moved to dedicated `*/6` crons, see Agent
   dispatch table above)
@@ -1462,7 +1471,9 @@ agent_runs                ← Agent execution log
 agent_events              ← Inter-agent event queue
 agent_outputs             ← AI-generated insights
 campaigns                 ← Threat campaign groupings
-infrastructure_clusters   ← NEXUS operation clusters
+infrastructure_clusters   ← NEXUS operation clusters. status 'superseded' / 'shared_infra' = retired, NOT an
+                            operation (lib/cluster-status.ts) — every list/count/attribution read filters them
+                            with notRetiredClusterSql(); country_counts = top-20 {CC: n} (migration 0302)
 organizations             ← Multi-tenant org layer
 org_members               ← Org membership + roles
 investigations            ← Tenant case object (groups signals/threats/takedowns)

@@ -5,6 +5,7 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import { hashToken } from "../lib/hash";
+import { LIVE_CLUSTER_STATUSES, notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 /**
@@ -19,7 +20,7 @@ export const OPERATIONS_HISTORY_TTL_S = 21_600;
 export const OPERATIONS_TOTAL_TTL_S = 3600;
 
 /** `status` filter values the list accepts (the CASE ordering below). Shared with /api/observatory/operations. */
-export const OPERATION_STATUSES: ReadonlySet<string> = new Set(["accelerating", "pivot", "active", "dormant"]);
+export const OPERATION_STATUSES: ReadonlySet<string> = new Set(LIVE_CLUSTER_STATUSES);
 
 /**
  * 14-day daily threat counts per cluster, oldest day first — the same
@@ -84,6 +85,10 @@ export async function handleListOperations(request: Request, env: Env): Promise<
     if (status) {
       conditions.push("ic.status = ?");
       params.push(status);
+    } else {
+      // "all" means every OPERATION — retired rows (superseded legacy
+      // duplicates, shared_infra) are not operations (lib/cluster-status.ts).
+      conditions.push(notRetiredClusterSql("ic"));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -172,6 +177,7 @@ export async function handleOperationsStats(request: Request, env: Env): Promise
                SUM(CASE WHEN status = 'accelerating' THEN 1 ELSE 0 END) AS accelerating,
                SUM(CASE WHEN status = 'dormant' THEN 1 ELSE 0 END) AS dormant
         FROM infrastructure_clusters
+       WHERE ${notRetiredClusterSql()}
       `).first(),
       // status='active' alone over-reports — 48% of "active" campaigns
       // have last_seen older than 7d (audit 2026-05-16). Require a recent

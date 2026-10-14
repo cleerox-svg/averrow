@@ -236,6 +236,9 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
         const [active, all] = ops[0]!.sql.includes("+c.status = 'active'") ? [ops[0]!, ops[1]!] : [ops[1]!, ops[0]!];
         expect(active.sql).toContain("+c.status = 'active'");
         expect(all.sql).not.toContain("c.status = 'active'");
+        // status=all drops retired rows with the same unary-`+` guard, so the
+        // predicate can't pull the planner off the PK range either.
+        expect(all.sql).toContain("+c.status NOT IN ('superseded', 'shared_infra')");
         for (const p of ops) {
           expect(p.plan).toContain("SEARCH c USING INDEX sqlite_autoindex_infrastructure_clusters_1 (id>? AND id<?)");
           expect(p.plan).not.toMatch(/idx_clusters_status|idx_clusters_threat_count/);
@@ -299,12 +302,14 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
 
       it("actors: list counts come from covering per-actor indexes; detail reads are actor-keyed", () => {
         const [list] = find(modes[mode]!, /SELECT a\.id, a\.name, \(SELECT COUNT\(\*\)/);
-        expect(list!.plan).toContain("SEARCH c USING COVERING INDEX idx_clusters_actor (actor_id=?)");
+        // Retired clusters are excluded (lib/cluster-status.ts); migration 0304
+        // keeps the per-actor count covering via (actor_id, status).
+        expect(list!.plan).toContain("SEARCH c USING COVERING INDEX idx_clusters_actor_status (actor_id=?)");
         expect(list!.plan).toContain("SEARCH i USING COVERING INDEX idx_tai_actor (threat_actor_id=?)");
         const [infra] = find(modes[mode]!, /FROM threat_actor_infrastructure WHERE threat_actor_id = \?/);
         expect(infra!.plan).toContain("idx_tai_actor (threat_actor_id=?)");
         const [clusters] = find(modes[mode]!, /FROM infrastructure_clusters WHERE actor_id = \?/);
-        expect(clusters!.plan).toContain("idx_clusters_actor (actor_id=?)");
+        expect(clusters!.plan).toMatch(/idx_clusters_actor(_status)? \(actor_id=\?\)/);
         const [attr] = find(modes[mode]!, /FROM threat_attributions WHERE actor_id = \?/);
         expect(attr!.plan).toContain("idx_attribution_actor (actor_id=?)");
       });

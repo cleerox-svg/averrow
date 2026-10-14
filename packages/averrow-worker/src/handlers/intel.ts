@@ -11,6 +11,7 @@
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, type DbContext } from "../lib/db";
 import { cachedValue } from "../lib/cached-value";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 // ─── Trust Score History ────────────────────────────────────────
@@ -248,6 +249,7 @@ export async function handleIntelCriticalBanner(
           FROM infrastructure_clusters
          WHERE id LIKE 'cluster_ip_%'
            AND first_detected >= datetime('now', '-24 hours')
+           AND ${notRetiredClusterSql()}
          ORDER BY threat_count DESC
          LIMIT 1
       `).first<{

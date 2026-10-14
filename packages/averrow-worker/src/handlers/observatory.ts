@@ -36,6 +36,7 @@ import { cachedValue } from "../lib/cached-value";
 import { readRefreshableCache, writeRefreshableCache } from "../lib/cache-refresh";
 import { getCountryCentroid } from "../lib/country-centroids";
 import { OPERATION_STATUSES } from "./operations";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 /** TTL for the stats tile's distinct-brands count over the brand cube. */
@@ -1136,6 +1137,9 @@ export async function handleObservatoryOperations(request: Request, env: Env): P
     if (status) {
       conditions.push("ic.status = ?");
       params.push(status);
+    } else {
+      // "all" = every operation; retired rows are not (lib/cluster-status.ts).
+      conditions.push(notRetiredClusterSql("ic"));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

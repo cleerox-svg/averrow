@@ -66,6 +66,7 @@
 //      the "min member cluster_id" wording — see the S2.4 report.
 
 import type { D1Database } from '@cloudflare/workers-types';
+import { notRetiredClusterSql } from './cluster-status';
 
 // ─── Cluster taxonomy ─────────────────────────────────────────────────
 
@@ -454,8 +455,20 @@ export async function groupClusterComponents(
             CASE WHEN substr(ltrim(agent_notes, ' ' || char(9) || char(10) || char(13)), 1, 1) = '{'
                  THEN agent_notes END                         AS agent_notes,
             component_id
-       FROM infrastructure_clusters`,
+       FROM infrastructure_clusters
+      WHERE ${notRetiredClusterSql()}`,
   ).all<ClusterRow>()).results ?? [];
+
+  // Retired rows (superseded legacy duplicates, shared_infra) are excluded
+  // above, so a threat that still points at one is an unknown id to
+  // computeComponents (ignored, never glue). Any component_id such a row
+  // carried from before its retirement is cleared here — the diff-write
+  // below only sees the rows read. Seeks idx_clusters_component_id, so a
+  // steady-state run reads and writes ~nothing.
+  const retiredCleared = await db.prepare(
+    `UPDATE infrastructure_clusters SET component_id = NULL
+      WHERE component_id IS NOT NULL AND NOT (${notRetiredClusterSql()})`,
+  ).run();
 
   const clusters: ComponentClusterInput[] = [];
   const currentComponent = new Map<string, string | null>();
@@ -537,7 +550,7 @@ export async function groupClusterComponents(
     componentsFormed: stats.componentsFormed,
     clustersGrouped: stats.clustersGrouped,
     componentIdsWritten: written,
-    componentIdsCleared: cleared,
+    componentIdsCleared: cleared + Number(retiredCleared.meta?.changes ?? 0),
     bridgesSkippedHub: stats.bridgesSkippedHub,
     componentsSkippedOverCap: stats.componentsSkippedOverCap,
     leavesSkippedMultiComponent: stats.leavesSkippedMultiComponent,

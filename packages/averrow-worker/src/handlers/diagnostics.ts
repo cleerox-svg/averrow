@@ -18,6 +18,7 @@ import {
   DNS_DRAINABLE_TTL_S,
 } from "../lib/dns-drainable";
 import { parseNewestFailure } from "../lib/haiku";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import { SHADOW_SIGNAL_WEIGHTS, shadowScoreDelta } from "../lib/page-phishing-scorer";
 import { NRD_RETENTION_LAST_RESULT_KEY, parseNrdRetentionLastResult } from "../lib/nrd-retention";
 import type { Env } from "../types";
@@ -1771,7 +1772,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         (SELECT COUNT(*) FROM brands) AS brands,
         (SELECT COUNT(*) FROM hosting_providers) AS providers,
         (SELECT COUNT(*) FROM campaigns) AS campaigns,
-        (SELECT COUNT(*) FROM infrastructure_clusters) AS clusters,
+        (SELECT COUNT(*) FROM infrastructure_clusters WHERE ${notRetiredClusterSql()}) AS clusters,
+        (SELECT COUNT(*) FROM infrastructure_clusters WHERE NOT (${notRetiredClusterSql()})) AS clusters_retired,
         (SELECT COUNT(*) FROM lookalike_domains) AS lookalike_domains,
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 1) AS feeds_enabled,
         (SELECT COUNT(*) FROM feed_configs WHERE enabled = 0) AS feeds_disabled
@@ -1780,6 +1782,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       providers: number;
       campaigns: number;
       clusters: number;
+      clusters_retired: number;
       lookalike_domains: number;
       feeds_enabled: number;
       feeds_disabled: number;

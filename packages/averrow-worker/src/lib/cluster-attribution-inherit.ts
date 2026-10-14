@@ -28,6 +28,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { recordAttribution, type AttributionSource } from './otx-attribution';
+import { isRetiredClusterStatus } from './cluster-status';
 
 // ─── Pure decision function (no I/O, no clock) ───────────────────────
 
@@ -84,6 +85,8 @@ export interface InheritResult {
   clusters_ambiguous: number;
   /** Clusters skipped because a cluster-level actor already disagrees. */
   clusters_conflict_skipped: number;
+  /** Clusters skipped because their row is retired (superseded / shared_infra). */
+  clusters_retired_skipped: number;
   /** Clusters that produced >=1 inherited member attribution. */
   clusters_inherited: number;
   /** Un-attributed member rows given an inherited attribution. */
@@ -122,6 +125,7 @@ export async function inheritOtxActorsToClusters(
     clusters_scanned: 0,
     clusters_ambiguous: 0,
     clusters_conflict_skipped: 0,
+    clusters_retired_skipped: 0,
     clusters_inherited: 0,
     members_attributed: 0,
     clusters_actor_set: 0,
@@ -172,18 +176,30 @@ export async function inheritOtxActorsToClusters(
   // inheritance and (b) know whether to set actor_id afterwards.
   const winners = [...chosen.keys()];
   const clusterActor = new Map<string, string | null>();
+  const retiredClusters = new Set<string>();
   for (const chunk of chunkArray(winners, IN_CHUNK)) {
+    // Retired rows (superseded legacy duplicates, shared_infra — see
+    // lib/cluster-status.ts) are not operations: never inherit onto them or
+    // fan an actor out to their members.
     const rows = await db.prepare(`
-      SELECT id, actor_id
+      SELECT id, actor_id, status
       FROM infrastructure_clusters
       WHERE id IN (${placeholders(chunk.length)})
-    `).bind(...chunk).all<{ id: string; actor_id: string | null }>();
-    for (const r of rows.results ?? []) clusterActor.set(r.id, r.actor_id);
+    `).bind(...chunk).all<{ id: string; actor_id: string | null; status: string | null }>();
+    for (const r of rows.results ?? []) {
+      if (isRetiredClusterStatus(r.status)) retiredClusters.add(r.id);
+      clusterActor.set(r.id, r.actor_id);
+    }
   }
 
-  // Drop clusters whose cluster-level actor already names someone else.
+  // Drop retired clusters, and clusters whose cluster-level actor already
+  // names someone else.
   const eligible: string[] = [];
   for (const clusterId of winners) {
+    if (retiredClusters.has(clusterId)) {
+      result.clusters_retired_skipped++;
+      continue;
+    }
     const existing = clusterActor.get(clusterId) ?? null;
     const decision = chosen.get(clusterId)!;
     if (existing !== null && existing !== decision.actor_id) {
