@@ -668,8 +668,9 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
         background: 'var(--bg-card-deep)',
         backdropFilter: 'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
-        border: overlay ? '1px solid var(--border-base)' : undefined,
-        borderLeft: '1px solid var(--border-base)',
+        borderStyle: 'solid',
+        borderColor: 'var(--border-base)',
+        borderWidth: overlay ? 1 : '0 0 0 1px',
         boxShadow: overlay ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
