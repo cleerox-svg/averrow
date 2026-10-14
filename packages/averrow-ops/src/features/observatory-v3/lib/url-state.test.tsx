@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { noLayers, lensPreset } from './lenses';
 import {
+  parseSel, selValue,
   parseObservatoryParams, applyObservatoryState, mergeObservatoryState, DEFAULT_STATE,
   nodeKey, arcKey, useObservatoryUrlState,
 } from './url-state';
@@ -17,7 +19,7 @@ describe('parseObservatoryParams', () => {
   it('reads valid params', () => {
     const s = parse('period=30d&source=feeds&mode=heatmap&colorBy=type&layers=nodes,beams');
     expect(s).toMatchObject({ period: '30d', source: 'feeds', mode: 'heatmap', colorBy: 'type' });
-    expect(s.layers).toEqual({ nodes: true, particles: false, beams: true });
+    expect(s.layers).toEqual({ ...noLayers(), nodes: true, beams: true });
   });
 
   it('falls back to defaults for invalid values', () => {
@@ -26,7 +28,7 @@ describe('parseObservatoryParams', () => {
   });
 
   it('layers=none turns every layer off', () => {
-    expect(parse('layers=none').layers).toEqual({ nodes: false, particles: false, beams: false });
+    expect(parse('layers=none').layers).toEqual(noLayers());
   });
 
   it('keeps node/arc only in global mode and validates the node key', () => {
@@ -41,6 +43,54 @@ describe('parseObservatoryParams', () => {
     const s = parse('node=1.00,2.00&arc=a|b|1.0,2.0|low');
     expect(s.node).toBe('1.00,2.00');
     expect(s.arc).toBeNull();
+  });
+});
+
+describe('lens, sel and measure params', () => {
+  it('reads a lens and defaults its layers to the lens preset', () => {
+    const s = parse('lens=hosting');
+    expect(s.lens).toBe('hosting');
+    expect(s.layers).toEqual(lensPreset('hosting'));
+    expect(s.layers.nodes).toBe(false);
+  });
+  it('explicit layers override the preset; unknown lens falls back to threats', () => {
+    expect(parse('lens=operations&layers=nodes,operations').layers).toMatchObject({ nodes: true, operations: true, hosting: false });
+    expect(parse('lens=nope').lens).toBe('threats');
+  });
+  it('lens only exists in global mode', () => {
+    expect(parse('mode=heatmap&lens=hosting').lens).toBe('threats');
+  });
+  it('validates sel (kind, country code shape) and keeps it global-only', () => {
+    expect(parse('sel=country:US').sel).toBe('country:US');
+    expect(parse('sel=country:usa').sel).toBeNull();
+    expect(parse('sel=op:abc-123').sel).toBe('op:abc-123');
+    expect(parse('sel=weird:1').sel).toBeNull();
+    expect(parse('mode=heatmap&sel=country:US').sel).toBeNull();
+  });
+  it('node and arc outrank sel', () => {
+    expect(parse('node=1.00,2.00&sel=country:US')).toMatchObject({ node: '1.00,2.00', sel: null });
+    expect(parse('arc=a|b|1.0,2.0|low&sel=country:US')).toMatchObject({ arc: 'a|b|1.0,2.0|low', sel: null });
+  });
+  it('parseSel / selValue round-trip and reject junk', () => {
+    expect(parseSel(selValue('provider', 'p/1'))).toEqual({ kind: 'provider', id: 'p/1' });
+    expect(parseSel('')).toBeNull();
+    expect(parseSel('op:' + 'x'.repeat(200))).toBeNull();
+  });
+  it('round-trips a lens view and writes only non-defaults', () => {
+    const state = parse('lens=baseline&measure=raw&period=30d&sel=country:DE');
+    const out = applyObservatoryState(new URLSearchParams(), state);
+    expect(out.get('lens')).toBe('baseline');
+    expect(out.has('layers')).toBe(false); // equals the lens preset
+    expect(out.get('measure')).toBe('raw');
+    expect(parseObservatoryParams(out)).toEqual(state);
+  });
+  it('writes layers when they differ from the lens preset', () => {
+    const out = applyObservatoryState(new URLSearchParams(), parse('lens=operations&layers=nodes,operations'));
+    expect(out.get('layers')).toBe('nodes,operations');
+  });
+  it('threats-lens URLs stay backward compatible (no lens param, old layers syntax)', () => {
+    const out = applyObservatoryState(new URLSearchParams(), parse('layers=nodes,beams&node=40.71,-74.01'));
+    expect(out.toString()).toBe('layers=nodes%2Cbeams&node=40.71%2C-74.01');
   });
 });
 
@@ -76,6 +126,28 @@ describe('mergeObservatoryState', () => {
     expect(mergeObservatoryState(selected, { colorBy: 'type' }).node).toBe('1.00,2.00');
     expect(mergeObservatoryState(selected, { period: '7d' }).node).toBe('1.00,2.00');
     expect(mergeObservatoryState(selected, { layers: { beams: true } }).layers.beams).toBe(true);
+  });
+
+  it('choosing a lens resets the layers to its preset and clears the selection', () => {
+    const base = { ...DEFAULT_STATE, sel: 'country:US', layers: { ...DEFAULT_STATE.layers, beams: true } };
+    const next = mergeObservatoryState(base, { lens: 'hosting' });
+    expect(next.layers).toEqual(lensPreset('hosting'));
+    expect(next.sel).toBeNull();
+    // ...unless the same patch says otherwise.
+    expect(mergeObservatoryState(base, { lens: 'hosting', layers: { nodes: true }, sel: 'provider:p1' })).toMatchObject({
+      sel: 'provider:p1', layers: { nodes: true, hosting: false },
+    });
+  });
+
+  it('a lens pick from another map mode returns to the global map; leaving global drops the lens', () => {
+    expect(mergeObservatoryState({ ...DEFAULT_STATE, mode: 'heatmap' }, { lens: 'actors' })).toMatchObject({ mode: 'global', lens: 'actors' });
+    expect(mergeObservatoryState({ ...DEFAULT_STATE, lens: 'hosting' }, { mode: 'bot_density' }).lens).toBe('threats');
+  });
+
+  it('selecting one kind of object clears the others', () => {
+    const withSel = { ...DEFAULT_STATE, sel: 'country:US' };
+    expect(mergeObservatoryState(withSel, { node: '1.00,2.00' })).toMatchObject({ node: '1.00,2.00', sel: null });
+    expect(mergeObservatoryState(selected, { sel: 'op:x' })).toMatchObject({ node: null, sel: 'op:x' });
   });
 
   it('selecting a node clears the arc and vice-versa', () => {

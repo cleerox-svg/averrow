@@ -53,7 +53,8 @@ const COLOR_BY_LABELS: Record<ColorBy, string> = { severity: 'Severity', type: '
 const COLOR_BY_TABS = COLOR_BY_IDS.map(id => ({ id, label: COLOR_BY_LABELS[id] }));
 
 const PANEL_OPEN_MIN_WIDTH = 1280;
-const LAYER_LABELS: Record<LayerId, string> = { nodes: 'Nodes', particles: 'Particles', beams: 'Beams' };
+const THREAT_LAYER_IDS = ['nodes', 'particles', 'beams'] as const;
+const LAYER_LABELS: Record<(typeof THREAT_LAYER_IDS)[number], string> = { nodes: 'Nodes', particles: 'Particles', beams: 'Beams' };
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
 const EMPTY_THREATS: ThreatPoint[] = [];
@@ -105,7 +106,7 @@ function LayerToggleGroup({
 }) {
   return (
     <div role="group" aria-label="Map layers" className="flex gap-2 flex-wrap">
-      {LAYER_IDS.map(id => {
+      {THREAT_LAYER_IDS.map(id => {
         const active = layers[id];
         const paused = id === 'particles' && reducedMotion;
         return (

@@ -12,6 +12,10 @@
 
 import { useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import {
+  LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
+  type LayerToggles, type LensId,
+} from './lenses';
 
 export const PERIOD_IDS = ['24h', '7d', '30d', '90d'] as const;
 export type Period = (typeof PERIOD_IDS)[number];
@@ -25,11 +29,35 @@ export type MapMode = (typeof MAP_MODE_IDS)[number];
 export const COLOR_BY_IDS = ['severity', 'type'] as const;
 export type ColorBy = (typeof COLOR_BY_IDS)[number];
 
-export const LAYER_IDS = ['nodes', 'particles', 'beams'] as const;
-export type LayerId = (typeof LAYER_IDS)[number];
-export type LayerToggles = Record<LayerId, boolean>;
+export { LAYER_IDS, LENS_IDS, type LayerId, type LayerToggles, type LensId } from './lenses';
+
+export const MEASURE_IDS = ['index', 'raw'] as const;
+/** Baseline lens: colour countries by over-index vs Radar, or by raw volume. */
+export type Measure = (typeof MEASURE_IDS)[number];
+
+export const SEL_KINDS = ['country', 'op', 'provider', 'actor', 'campaign', 'move'] as const;
+export type SelKind = (typeof SEL_KINDS)[number];
+const SEL_RE = /^(country|op|provider|actor|campaign|move):(.{1,160})$/;
+const COUNTRY_RE = /^[A-Z]{2}$/;
+
+/** Split a `sel` value into kind + id; null when it isn't a valid selection. */
+export function parseSel(raw: string | null | undefined): { kind: SelKind; id: string } | null {
+  if (!raw) return null;
+  const m = SEL_RE.exec(raw);
+  if (!m) return null;
+  const kind = m[1] as SelKind;
+  const id = m[2];
+  if (kind === 'country' && !COUNTRY_RE.test(id)) return null;
+  return { kind, id };
+}
+
+export function selValue(kind: SelKind, id: string): string {
+  return `${kind}:${id}`;
+}
 
 export interface ObservatoryUrlState {
+  /** Which question the map answers (global mode only). */
+  lens: LensId;
   period: Period;
   source: Source;
   mode: MapMode;
@@ -39,11 +67,19 @@ export interface ObservatoryUrlState {
   node: string | null;
   /** Selected arc key (see `arcKey`) — global mode only. */
   arc: string | null;
+  /**
+   * Any other selection, `kind:id` (country, operation, provider, actor, campaign,
+   * movement) — global mode only. Mutually exclusive with `node` / `arc`.
+   */
+  sel: string | null;
+  /** Baseline lens colouring. */
+  measure: Measure;
 }
 
-export const DEFAULT_LAYERS: LayerToggles = { nodes: true, particles: true, beams: false };
+export const DEFAULT_LAYERS: LayerToggles = lensPreset('threats');
 
 export const DEFAULT_STATE: ObservatoryUrlState = {
+  lens: 'threats',
   period: '7d',
   source: 'all',
   mode: 'global',
@@ -51,10 +87,12 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   layers: DEFAULT_LAYERS,
   node: null,
   arc: null,
+  sel: null,
+  measure: 'index',
 };
 
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc'] as const;
+export const OWNED_KEYS = ['lens', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -63,18 +101,20 @@ function pick<T extends string>(allowed: readonly T[], raw: string | null, fallb
   return raw !== null && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
 }
 
-function parseLayers(raw: string | null): LayerToggles {
-  if (raw === null) return { ...DEFAULT_LAYERS };
-  if (raw === 'none') return { nodes: false, particles: false, beams: false };
-  const on = new Set(raw.split(',').map(s => s.trim()));
-  const known = LAYER_IDS.filter(id => on.has(id));
-  // A value with no recognised ids is garbage — treat as default, not "all off".
-  if (known.length === 0) return { ...DEFAULT_LAYERS };
-  return { nodes: on.has('nodes'), particles: on.has('particles'), beams: on.has('beams') };
+function parseLayers(raw: string | null, lens: LensId): LayerToggles {
+  const preset = lensPreset(lens);
+  if (raw === null) return preset;
+  if (raw === 'none') return noLayers();
+  const on = new Set(raw.split(',').map(x => x.trim()));
+  // A value with no recognised ids is garbage — treat as the lens default, not "all off".
+  if (!LAYER_IDS.some(id => on.has(id))) return preset;
+  const out = noLayers();
+  for (const id of LAYER_IDS) out[id] = on.has(id);
+  return out;
 }
 
-function serializeLayers(l: LayerToggles): string | null {
-  if (LAYER_IDS.every(id => l[id] === DEFAULT_LAYERS[id])) return null;
+function serializeLayers(l: LayerToggles, lens: LensId): string | null {
+  if (sameLayers(l, lensPreset(lens))) return null;
   const on = LAYER_IDS.filter(id => l[id]);
   return on.length === 0 ? 'none' : on.join(',');
 }
@@ -98,21 +138,27 @@ export function arcKey(a: {
 
 export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState {
   const mode = pick(MAP_MODE_IDS, sp.get('mode'), DEFAULT_STATE.mode);
+  const isGlobal = mode === 'global';
+  const rawLens = sp.get('lens');
+  // Lenses only exist on the global map; other modes ignore the param.
+  const lens: LensId = isGlobal && isLensId(rawLens) ? rawLens : 'threats';
   const rawNode = sp.get('node');
   const rawArc = sp.get('arc');
-  const isGlobal = mode === 'global';
+  const nodeOk = isGlobal && !!rawNode && NODE_KEY_RE.test(rawNode);
+  const arcOk = isGlobal && !nodeOk && !!rawArc && rawArc.length <= ARC_KEY_MAX;
+  const parsedSel = isGlobal && !nodeOk && !arcOk ? parseSel(sp.get('sel')) : null;
   return {
+    lens,
     period: pick(PERIOD_IDS, sp.get('period'), DEFAULT_STATE.period),
     source: pick(SOURCE_IDS, sp.get('source'), DEFAULT_STATE.source),
     mode,
     colorBy: pick(COLOR_BY_IDS, sp.get('colorBy'), DEFAULT_STATE.colorBy),
-    layers: parseLayers(sp.get('layers')),
-    // node and arc are mutually exclusive; node wins if both are present.
-    node: isGlobal && rawNode && NODE_KEY_RE.test(rawNode) ? rawNode : null,
-    arc:
-      isGlobal && !(rawNode && NODE_KEY_RE.test(rawNode)) && rawArc && rawArc.length <= ARC_KEY_MAX
-        ? rawArc
-        : null,
+    layers: parseLayers(sp.get('layers'), lens),
+    // node, arc and sel are mutually exclusive; node wins, then arc, then sel.
+    node: nodeOk ? rawNode : null,
+    arc: arcOk ? rawArc : null,
+    sel: parsedSel ? selValue(parsedSel.kind, parsedSel.id) : null,
+    measure: pick(MEASURE_IDS, sp.get('measure'), DEFAULT_STATE.measure),
   };
 }
 
@@ -124,11 +170,15 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   if (state.source !== DEFAULT_STATE.source) out.set('source', state.source);
   if (state.mode !== DEFAULT_STATE.mode) out.set('mode', state.mode);
   if (state.colorBy !== DEFAULT_STATE.colorBy) out.set('colorBy', state.colorBy);
-  const layers = serializeLayers(state.layers);
+  const lens = state.mode === 'global' ? state.lens : 'threats';
+  if (lens !== DEFAULT_STATE.lens) out.set('lens', lens);
+  const layers = serializeLayers(state.layers, lens);
   if (layers) out.set('layers', layers);
+  if (state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
   if (state.mode === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);
+    else if (state.sel) out.set('sel', state.sel);
   }
   return out;
 }
@@ -136,12 +186,15 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
 export type ObservatoryPatch = Partial<Omit<ObservatoryUrlState, 'layers'>> & { layers?: Partial<LayerToggles> };
 
 /**
- * Merge a patch into a state. Changing period / source / mode clears the
- * selection (the selected object belongs to the old view) unless the patch
- * sets one explicitly. Selecting a node clears the arc and vice-versa.
+ * Merge a patch into a state. Changing period / source / mode / lens clears the
+ * selection (the selected object belongs to the old view) unless the patch sets
+ * one explicitly, and choosing a lens resets the layers to that lens's preset
+ * unless the patch sets them. Selecting one kind of object clears the others.
  */
 export function mergeObservatoryState(prev: ObservatoryUrlState, patch: ObservatoryPatch): ObservatoryUrlState {
+  const lensChanged = patch.lens !== undefined && patch.lens !== prev.lens;
   const viewChanged =
+    lensChanged ||
     (patch.period !== undefined && patch.period !== prev.period) ||
     (patch.source !== undefined && patch.source !== prev.source) ||
     (patch.mode !== undefined && patch.mode !== prev.mode);
@@ -150,13 +203,20 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, patch: Observat
     ...patch,
     layers: { ...prev.layers, ...patch.layers },
   };
-  const setsSelection = patch.node !== undefined || patch.arc !== undefined;
+  // Leaving the global map drops the lens (it only exists there); returning starts at Threats.
+  if (patch.mode !== undefined && patch.mode !== 'global' && patch.lens === undefined) next.lens = 'threats';
+  // A lens pick implies the global map.
+  if (lensChanged && patch.mode === undefined && prev.mode !== 'global') next.mode = 'global';
+  if (lensChanged && patch.layers === undefined) next.layers = lensPreset(next.lens);
+  const setsSelection = patch.node !== undefined || patch.arc !== undefined || patch.sel !== undefined;
   if (viewChanged && !setsSelection) {
     next.node = null;
     next.arc = null;
+    next.sel = null;
   }
-  if (patch.node) next.arc = null;
-  else if (patch.arc) next.node = null;
+  if (patch.node) { next.arc = null; next.sel = null; }
+  else if (patch.arc) { next.node = null; next.sel = null; }
+  else if (patch.sel) { next.node = null; next.arc = null; }
   return next;
 }
 

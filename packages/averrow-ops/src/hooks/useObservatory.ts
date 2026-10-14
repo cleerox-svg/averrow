@@ -111,6 +111,8 @@ export const LIVE_FEED_LIMIT = 8;
 
 export const observatoryKeys = {
   all: ['observatory'] as const,
+  /** Phase B lens endpoints share this root so `refreshObservatory` invalidates them too. */
+  lens: (name: string, params: Record<string, string | number | null | undefined> = {}) => ['observatory', 'lens', name, params] as const,
   nodes: (period: string, source: string, limit: number) => ['observatory', 'nodes', { period, source, limit }] as const,
   stats: (period: string, source: string) => ['observatory', 'stats', { period, source }] as const,
   arcs: (period: string, source: string) => ['observatory', 'arcs', { period, source }] as const,
@@ -154,7 +156,7 @@ interface ListOptions extends CommonOptions {
   source?: string;
 }
 
-function shape<T>(q: {
+export function shape<T>(q: {
   data: T | undefined; error: Error | null; isLoading: boolean; isFetching: boolean;
   isPlaceholderData: boolean; refetch: () => Promise<unknown>;
 }): ObservatoryQueryResult<T> {
@@ -168,7 +170,7 @@ function shape<T>(q: {
   };
 }
 
-const POLL = {
+export const POLL = {
   refetchInterval: OBSERVATORY_POLL_MS,
   refetchIntervalInBackground: false,
   staleTime: OBSERVATORY_STALE_MS,
