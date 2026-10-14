@@ -10,8 +10,8 @@
 --   bucketed by threats.created_at like every other cube; country_code NULL
 --   → 'XX' (same key normalisation as threat_cube_geo / _arcs).
 --   Written ONLY by the cube_healer agent (day-chunked [stale sweep, guarded
---   upsert] batches — same atomic pattern as the other cubes) and by
---   buildVelocityCubeForHour (lib/cube-builder.ts). NOT rebuilt by
+--   upsert] batches — same atomic pattern as the other cubes; the source
+--   predicate is VELOCITY_SOURCE_FILTER in lib/cube-builder.ts). NOT rebuilt by
 --   Navigator: flags are stamped after ingest (cube_healer's incremental
 --   stamping page), never at insert time, so the current/previous hour
 --   almost never carries a flag and a 5-min rebuild would be pure read cost.

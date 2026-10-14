@@ -250,8 +250,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threat_cube_velocity"
       ],
       "ai_models_referenced": [],
-      "loc": 662,
-      "last_modified": "2026-10-14T03:49:54.045Z"
+      "loc": 661,
+      "last_modified": "2026-10-14T04:18:15.392Z"
     },
     {
       "name": "curator",

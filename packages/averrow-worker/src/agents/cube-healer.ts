@@ -74,7 +74,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
-import { cubeStaleSweepSQL, type CubeName } from '../lib/cube-builder';
+import { cubeStaleSweepSQL, VELOCITY_SOURCE_FILTER, type CubeName } from '../lib/cube-builder';
 
 // ─── Heal window selection ───────────────────────────────────────
 // Hot vs cold scope (PR-BM): hot covers the most recent 2 days,
@@ -289,9 +289,10 @@ function healSQL(table: CubeName): string {
            OR threat_cube_arcs.source_lng IS NOT excluded.source_lng
       `;
     case 'velocity':
-      // Observatory Phase B (B3, migration 0300). The predicate text matches
-      // idx_threats_velocity_fast_created's partial WHERE so the read is a
-      // covering-index range over the window's FLAGGED rows only.
+      // Observatory Phase B (B3, migration 0300). VELOCITY_SOURCE_FILTER is
+      // the single source predicate shared with the stale sweep, so both
+      // match idx_threats_velocity_fast_created's partial WHERE and read
+      // only the window's FLAGGED rows through the covering index.
       return `
         INSERT INTO threat_cube_velocity
           (hour_bucket, country_code, flag, threat_count, updated_at)
@@ -303,9 +304,7 @@ function healSQL(table: CubeName): string {
           datetime('now')
         FROM threats
         WHERE created_at >= ?1
-          AND created_at < ?2
-          AND status = 'active'
-          AND weaponization_flag IN ('very_fast', 'fast')
+          AND created_at < ?2${VELOCITY_SOURCE_FILTER}
         GROUP BY 1, 2, 3
         ON CONFLICT(hour_bucket, country_code, flag)
         DO UPDATE SET

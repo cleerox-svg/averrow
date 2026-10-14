@@ -126,8 +126,13 @@ interface CubeKeySpec {
 
 const UNKNOWN = (col: string) => `COALESCE(${col}, 'unknown')`;
 
-/** Source predicate of the velocity cube — shared by the builder, the
- *  stale sweep and cube_healer's heal so all three hit the partial index. */
+/** Source predicate of the velocity cube — the SINGLE definition,
+ *  interpolated into both writers: the stale sweep (cubeStaleSweepSQL via
+ *  CUBE_KEY_SPECS.velocity) and cube_healer's guarded upsert (healSQL), so
+ *  both match the partial covering index idx_threats_velocity_fast_created
+ *  (migration 0300). There is no per-hour builder: the cube is heal-only
+ *  (cube_healer), because weaponization flags are stamped after ingest and
+ *  the live hours carry almost none. */
 export const VELOCITY_SOURCE_FILTER = " AND status = 'active' AND weaponization_flag IN ('very_fast', 'fast')";
 
 export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
@@ -163,9 +168,8 @@ export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
       UNKNOWN('severity'), UNKNOWN('source_feed')],
     sourceFilter: " AND status = 'active' AND lat IS NOT NULL AND lng IS NOT NULL AND target_brand_id IS NOT NULL",
   },
-  // Weaponization velocity (B3, migration 0300). The filter text must stay
-  // `status = 'active' AND weaponization_flag IN ('very_fast', 'fast')` so
-  // SQLite matches the partial covering index idx_threats_velocity_fast_created.
+  // Weaponization velocity (B3, migration 0300). Heal-only — see
+  // VELOCITY_SOURCE_FILTER for why there is no per-hour builder.
   velocity: {
     table: 'threat_cube_velocity',
     keyCols: ['country_code', 'flag'],
@@ -817,44 +821,3 @@ export async function countArcsCubeForHour(
   }
 }
 
-/**
- * Build (or rebuild) a single hour of the weaponization-velocity cube
- * (migration 0300).
- *
- * Window: [hourBucket, hourBucket + 1 hour)
- * Source: threats WHERE status='active' AND weaponization_flag IN ('very_fast','fast')
- * Grain : (hour, country_code, flag)
- *
- * NULL country → 'XX' (same normalisation as geo / arcs). Served by the
- * partial covering index idx_threats_velocity_fast_created, so a build reads
- * only the flagged index entries of the hour. Not called by Navigator — the
- * flag is stamped after ingest (cube_healer), so the live hours carry
- * almost no flags; cube_healer heals this cube (see agents/cube-healer.ts).
- * Metadata only — nothing may use it to gate triage.
- */
-export async function buildVelocityCubeForHour(
-  env: Env,
-  hourBucket: string,
-): Promise<CubeBuildResult> {
-  return sweepAndUpsertHour(env, 'velocity', hourBucket, `
-      INSERT INTO threat_cube_velocity
-        (hour_bucket, country_code, flag, threat_count, updated_at)
-      SELECT
-        ?1,
-        COALESCE(country_code, 'XX'),
-        weaponization_flag,
-        COUNT(*),
-        datetime('now')
-      FROM threats
-      WHERE created_at >= ?2
-        AND created_at < ?3
-        AND status = 'active'
-        AND weaponization_flag IN ('very_fast', 'fast')
-      GROUP BY 2, 3
-      ON CONFLICT(hour_bucket, country_code, flag)
-      DO UPDATE SET
-        threat_count = excluded.threat_count,
-        updated_at = excluded.updated_at
-      WHERE threat_cube_velocity.threat_count IS NOT excluded.threat_count
-    `);
-}

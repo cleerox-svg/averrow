@@ -1,7 +1,7 @@
 // Observatory Phase B (B3) — weaponization-velocity cube + incremental
 // stamping + cube_healer wiring (and the Phase A degraded follow-up).
 //
-//   1. buildVelocityCubeForHour / healCube('velocity') against real SQLite:
+//   1. healCube('velocity') (the only writer — the cube is heal-only) against real SQLite:
 //      the cube equals a fresh aggregate of the source; stale groups go
 //   2. EXPLAIN (with ANALYZE stats): the heal + sweep read the window's
 //      FLAGGED rows through the partial covering index, never every active
@@ -16,7 +16,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { buildVelocityCubeForHour, cubeStaleSweepSQL } from "../src/lib/cube-builder";
+import { cubeStaleSweepSQL, VELOCITY_SOURCE_FILTER } from "../src/lib/cube-builder";
 import {
   cubeHealerAgent,
   degradedCubes,
@@ -81,13 +81,13 @@ describe.skipIf(!hasSqlite())("threat_cube_velocity — real SQLite", () => {
     raw.prepare(`INSERT INTO threat_cube_velocity (hour_bucket, country_code, flag, threat_count) VALUES (?, 'CN', 'fast', 9)`).run(H);
     raw.prepare(`INSERT INTO threat_cube_velocity (hour_bucket, country_code, flag, threat_count) VALUES ('2026-10-10 06:00:00', 'ZZ', 'fast', 3)`).run();
 
-    const r = await buildVelocityCubeForHour(env, H);
-    expect(r.error).toBeNull();
+    const r = await healCube(env.DB, "velocity", { start: H, end: "2026-10-10 06:00:00" });
+    expect(r.failures).toEqual([]);
     expect(cube(raw).filter((x) => (x as { hour_bucket: string }).hour_bucket === H)).toEqual([
       { hour_bucket: H, country_code: "RU", flag: "very_fast", threat_count: 2 },
       { hour_bucket: H, country_code: "XX", flag: "fast", threat_count: 1 },
     ]);
-    // The other hour is untouched by an hour build …
+    // The other hour is untouched by a one-hour heal …
     expect(cube(raw)).toContainEqual({ hour_bucket: "2026-10-10 06:00:00", country_code: "ZZ", flag: "fast", threat_count: 3 });
 
     // … and healed by the day-chunked window heal, which equals the source.
@@ -98,6 +98,13 @@ describe.skipIf(!hasSqlite())("threat_cube_velocity — real SQLite", () => {
 
     // Idempotent: a second heal writes nothing.
     expect((await healCube(env.DB, "velocity", w)).rowsWritten).toBe(0);
+  });
+
+  it("heal upsert and stale sweep interpolate the single VELOCITY_SOURCE_FILTER; no hour builder exists", async () => {
+    expect(healSQLForTest("velocity")).toContain(VELOCITY_SOURCE_FILTER);
+    expect(cubeStaleSweepSQL("velocity")).toContain(VELOCITY_SOURCE_FILTER);
+    const builder = await import("../src/lib/cube-builder");
+    expect("buildVelocityCubeForHour" in builder).toBe(false);
   });
 
   it("CHECK rejects a flag outside very_fast / fast", () => {
