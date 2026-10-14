@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import type maplibregl from 'maplibre-gl';
+import type * as maplibregl from 'maplibre-gl';
 import { useIdleSpin, resetSpinSession, hasInteractedThisSession, SPIN_EVENT_KEY, type UseIdleSpinOptions } from './use-idle-spin';
 import { SPIN_DEG_PER_S } from './spin';
 

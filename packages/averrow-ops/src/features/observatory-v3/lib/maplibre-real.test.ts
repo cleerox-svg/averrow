@@ -8,8 +8,9 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 
 vi.hoisted(() => { (window.URL as unknown as { createObjectURL: () => string }).createObjectURL = () => 'blob:stub'; });
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import { setLatRange, resetLatRangeWarning } from './camera';
+import { installTransformAlias, mapTransform } from './maplibre-compat';
 import { GLOBE_SKY, applySky, globeLabelOpacity, projectionSpec, type OcclusionProbe } from './projection';
 
 function fakeGl(canvas: HTMLCanvasElement): WebGLRenderingContext {
@@ -29,7 +30,7 @@ function fakeGl(canvas: HTMLCanvasElement): WebGLRenderingContext {
 }
 
 let map: maplibregl.Map;
-const transform = () => map.transform as unknown as OcclusionProbe & { latRange: [number, number]; _helper: { _latRange: [number, number] | null } };
+const transform = () => mapTransform(map) as OcclusionProbe & { latRange: [number, number]; _helper: { _latRange: [number, number] | null } };
 
 beforeAll(async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -52,7 +53,7 @@ describe('MapLibre transform: the latitude range hack (lib/camera.ts)', () => {
   it('the private field is still where setLatRange writes it, and the public getter reads it back', () => {
     resetLatRangeWarning();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(setLatRange(map.transform, 89.5)).toBe(true);
+    expect(setLatRange(mapTransform(map), 89.5)).toBe(true);
     expect(transform()._helper._latRange).toEqual([-89.5, 89.5]);
     expect(transform().latRange).toEqual([-89.5, 89.5]);
     expect(warn).not.toHaveBeenCalled();
@@ -60,14 +61,14 @@ describe('MapLibre transform: the latitude range hack (lib/camera.ts)', () => {
   });
 
   it('survives a flip to the globe and back (MapLibre copies it across transforms)', () => {
-    setLatRange(map.transform, 89.5);
+    setLatRange(mapTransform(map), 89.5);
     map.setProjection(projectionSpec('globe'));
     expect(map.getProjection().type).toBe('globe');
-    expect(setLatRange(map.transform, 80)).toBe(true);
+    expect(setLatRange(mapTransform(map), 80)).toBe(true);
     expect(transform().latRange).toEqual([-80, 80]);
     map.setProjection(projectionSpec('flat'));
     expect(transform().latRange).toEqual([-80, 80]);
-    setLatRange(map.transform, 85.051129);
+    setLatRange(mapTransform(map), 85.051129);
   });
 });
 
@@ -90,7 +91,7 @@ describe('MapLibre transform: globe occlusion (lib/projection.ts globeLabelOpaci
   it('globeLabelOpacity gives the real probe the last word: far side 0, centre 1, in between thinned', () => {
     map.setProjection(projectionSpec('globe'));
     map.jumpTo({ center: [0, 0], zoom: 1, pitch: 0 });
-    const t = map.transform as unknown as OcclusionProbe;
+    const t = mapTransform(map) as OcclusionProbe;
     expect(globeLabelOpacity([0, 0], [0, 0], t)).toBe(1);
     expect(globeLabelOpacity([0, 0], [170, 0], t)).toBe(0);
     const edge = globeLabelOpacity([0, 0], [64, 0], t);
@@ -106,5 +107,33 @@ describe('MapLibre sky (lib/projection.ts skyFor)', () => {
     expect(map.getSky()).toEqual(GLOBE_SKY);
     applySky(map, 'flat');
     expect(map.getSky()).toBeUndefined();
+  });
+});
+
+describe('MapLibre 6 transform access (lib/maplibre-compat.ts)', () => {
+  it('finds the transform through the camera whether or not the map still has `transform`', () => {
+    const t = mapTransform(map);
+    expect(t).toBeTruthy();
+    expect((map as unknown as { _camera: { transform: unknown } })._camera.transform).toBe(t);
+  });
+
+  it('installTransformAlias gives deck.gl the fields it reads (height) on a map without `transform`, and follows a projection switch', () => {
+    installTransformAlias(map);
+    const aliased = (map as unknown as { transform: { height: number } }).transform;
+    expect(aliased).toBe(mapTransform(map));
+    expect(aliased.height).toBe(600);
+    expect(installTransformAlias(map)).toBe(false); // already there: untouched
+    map.setProjection(projectionSpec('globe'));
+    expect((map as unknown as { transform: unknown }).transform).toBe(mapTransform(map));
+    map.setProjection(projectionSpec('flat'));
+  });
+
+  it('is a no-op on a stub with no camera, and on a map that has its own transform', () => {
+    expect(installTransformAlias({})).toBe(false);
+    expect(installTransformAlias({ transform: {}, _camera: { transform: {} } })).toBe(false);
+    expect(mapTransform(null)).toBeNull();
+    expect(mapTransform({})).toBeNull();
+    const own = {};
+    expect(mapTransform({ transform: own })).toBe(own);
   });
 });

@@ -79,7 +79,7 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
 });
 
 vi.mock('maplibre-gl', () => ({
-  default: { Map: FakeMap, NavigationControl: class {} },
+  Map: FakeMap, NavigationControl: class {}, setWorkerUrl: () => {},
 }));
 vi.mock('@deck.gl/mapbox', () => ({ MapboxOverlay: FakeOverlay }));
 vi.mock('@deck.gl/layers', () => ({ ScatterplotLayer: FakeLayer, PathLayer: FakeLayer, GeoJsonLayer: FakeLayer, TextLayer: FakeLayer }));
@@ -87,7 +87,7 @@ vi.mock('@deck.gl/aggregation-layers', () => ({ HeatmapLayer: FakeLayer }));
 vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
 import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
-import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
+import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, GLOBE_DEPTH_BIAS, GLOBE_START_CENTER } from '../lib/projection';
 import { buildHostingModel } from '../lib/lens/hosting';
 import { resetSpinSession } from '../lib/use-idle-spin';
 import { noLayers } from '../lib/lenses';
@@ -156,6 +156,7 @@ describe('ThreatMapV3 projection: globe', () => {
     const { container: c } = render(<ThreatMapV3 {...base} projection="globe" />);
     expect(lastMap().opts.pitch).toBe(0);
     expect(lastMap().opts.maxZoom).toBe(GLOBE_MAX_ZOOM);
+    expect(lastMap().opts.center).toEqual(GLOBE_START_CENTER); // Americas + Europe + Africa, not Europe alone
     ready();
     expect(lastMap().setProjection).toHaveBeenCalledWith({ type: 'globe' });
     expect(lastMap().setMaxZoom).toHaveBeenCalledWith(GLOBE_MAX_ZOOM);
@@ -258,6 +259,36 @@ describe('ThreatMapV3 projection: switching', () => {
     expect(globeOverlay.finalized).toBe(false);
     expect(globeOverlay.props.layers).toEqual([]);
     expect(lastMap().jumpTo).toHaveBeenLastCalledWith(expect.objectContaining({ pitch: 20, zoom: 2.2 }));
+  });
+
+  it('flipping to the globe from an untouched flat overview opens on the globe default (Americas + Europe + Africa), not on the flat centre', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    expect(toGlobe.center).toEqual(GLOBE_START_CENTER);
+  });
+
+  it('flipping after the person moved the camera keeps their longitude (clamping the latitude), and forgets the move after each flip', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    act(() => { lastMap().emit('movestart', { originalEvent: {} }); }); // a drag / wheel carries an originalEvent
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    const kept = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    expect(kept.center).toEqual([30, 45]); // the fake camera sits at lng 30, lat 70
+    rerender(<ThreatMapV3 {...base} projection="flat" />);
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    const again = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    expect(again.center).toEqual(GLOBE_START_CENTER); // no gesture since the last flip
+  });
+
+  it('a programmatic move (a fit, the idle spin: no originalEvent) does not count as the person moving the camera', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    act(() => { lastMap().emit('movestart', {}); });
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as { center: [number, number] };
+    expect(toGlobe.center).toEqual(GLOBE_START_CENTER);
   });
 
   it('a data change on the globe does not rebuild the overlay (it is updated in place)', () => {

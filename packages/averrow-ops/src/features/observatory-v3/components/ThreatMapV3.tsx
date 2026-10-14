@@ -34,7 +34,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
@@ -54,9 +54,11 @@ import {
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
+import { ensureMapWorker, installTransformAlias, mapTransform } from '../lib/maplibre-compat';
+import { HALO_FULL, haloCellPx, haloViewForZoom, thinForHalos, type HaloView } from '../lib/halo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
-  effectiveProjection, globeBleeds, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
+  effectiveProjection, globeBleeds, globeCanvasBox, GLOBE_ANIMATION_FPS, globeFitZoom, globeStartCamera, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
   GLOBE_BACKDROP, applySky, type OcclusionProbe, type Projection,
 } from '../lib/projection';
 import { useIdleSpin, SPIN_EVENT_KEY } from '../lib/use-idle-spin';
@@ -391,6 +393,10 @@ function ThreatMapV3Inner({
   bleedRef.current = bleed;
   /** The canvas box is changing because of the zoom (not the chrome): the view is kept where it is (see the box effect). */
   const bleedFlipRef = useRef(false);
+  /** The person has dragged / zoomed the camera since the last projection flip (a flip then keeps their position). */
+  const userMovedRef = useRef(false);
+  /** Halo size follows the zoom (smaller toward the world view, where Europe's blooms would otherwise overlap). */
+  const [haloView, setHaloView] = useState<HaloView>(HALO_FULL);
   const box = globeCanvasBox({ left: cameraInsets.left, right: cameraInsets.right }, projection, bleed);
   /** The map canvas's own size (equals `size` on the flat map). */
   const canvasSize = useMemo(
@@ -508,6 +514,19 @@ function ThreatMapV3Inner({
     return () => { map.off('moveend', check); };
   }, [mapLoaded, isGlobe, size.width, size.height, cameraInsets.left, cameraInsets.right]);
 
+  // The halo view is quantised (lib/halo.ts), so this sets state only when the picture would change, not per zoom frame.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const sync = () => setHaloView(prev => {
+      const next = haloViewForZoom(map.getZoom());
+      return next.scale === prev.scale && next.zoom === prev.zoom ? prev : next;
+    });
+    sync();
+    map.on('zoom', sync);
+    return () => { map.off('zoom', sync); };
+  }, [mapLoaded]);
+
   // ─── Map initialization (once per mount; retry remounts) ──
   useEffect(() => {
     const container = mapContainerRef.current;
@@ -515,36 +534,40 @@ function ThreatMapV3Inner({
 
     let map: maplibregl.Map;
     try {
+      ensureMapWorker();
       const ins = latest.current.cameraInsets;
       const globeStart = projectionRef.current === 'globe';
       map = new maplibregl.Map({
         container,
         style: MAP_STYLE,
         center: globeStart
-          ? [15, 18]
+          ? globeStartCamera(container.clientWidth, container.clientHeight, isMobileRef.current).center
           : isMobileRef.current
             ? [-30, 30]
             : [centerLngForFreeArea(10, ins.left, ins.right, 2.2), 25],
         zoom: globeStart
-          ? globeFitZoom(container.clientWidth, container.clientHeight)
+          ? globeStartCamera(container.clientWidth, container.clientHeight, isMobileRef.current).zoom
           : isMobileRef.current ? 0.6 : 2.2,
         pitch: isMobileRef.current || globeStart ? 0 : 20,
         bearing: 0,
-        minZoom: isMobileRef.current ? phoneMinZoom(container.clientWidth) : undefined,
+        // The flat map never zooms out past one world filling the canvas (no repeated Earths); the globe has its own floor.
+        minZoom: globeStart ? undefined : isMobileRef.current ? phoneMinZoom(container.clientWidth) : desktopMinZoom(container.clientWidth),
         maxZoom: maxZoomFor(projectionRef.current),
         canvasContextAttributes: { antialias: true },
         // MUST STAY OFF. maplibre-gl <= 6.4.0 renders the attribution control with innerHTML from the STYLE's
         // `attribution` strings (GHSA-jrc7-96c5-q579, stored XSS): the basemap style is a third-party document
         // fetched at runtime, so enabling the control (or `customAttribution`, or any HTML popup built from data)
         // would run its markup in this origin. Any attribution the basemap's licence needs must be plain text in our
-        // own markup, never this control. Pinned by lib/map-security.test.ts; revisit only after upgrading past the
-        // fixed release (installed: 5.x, affected: <= 6.4.0).
+        // own markup, never this control. Pinned by lib/map-security.test.ts. Installed: 6.14 (the advisory is fixed from
+        // 6.4.1); the control stays off anyway: the credit is our own plain-text markup (MapAttribution).
         attributionControl: false,
       });
     } catch (err) {
       onFatal(`Map initialization failed: ${err instanceof Error ? err.message : 'WebGL unavailable'}`);
       return;
     }
+    // MapLibre 6 dropped `map.transform`, which @deck.gl/mapbox still reads every interleaved frame.
+    installTransformAlias(map);
     mapRef.current = map;
 
     // Set on cleanup. Under React StrictMode (dev) the effect is mounted,
@@ -567,7 +590,11 @@ function ThreatMapV3Inner({
     });
     map.on('idle', () => { if (!disposed) setTileIssue(false); });
     // Only gestures carry an `originalEvent`: a fly, a fit and the idle spin do not.
-    map.on('movestart', (e) => { if (!disposed && (e as { originalEvent?: unknown }).originalEvent) latest.current.onUserCamera?.(); });
+    map.on('movestart', (e) => {
+      if (disposed || !(e as { originalEvent?: unknown }).originalEvent) return;
+      userMovedRef.current = true;
+      latest.current.onUserCamera?.();
+    });
 
     const canvas = map.getCanvas();
     const onContextLost = (e: Event) => {
@@ -653,7 +680,7 @@ function ThreatMapV3Inner({
     // Flat desktop gets the widened range too: "the world covers the canvas vertically" otherwise pins the zoom at
     // ~0.5 and a world-spanning selection cannot fit beside the drawer on a 1024px screen (the globe keeps Mercator's).
     const lat = isMobile || !isGlobe ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
-    setLatRange(map.transform, lat);
+    setLatRange(mapTransform(map), lat);
     // The globe needs no wide-world floor: one planet fits at `globeFitZoom`, and a little less is plenty.
     const floor = isGlobe
       ? Math.max(0, globeFitZoom(canvasSize.width, canvasSize.height) - 0.9)
@@ -859,12 +886,20 @@ function ThreatMapV3Inner({
     capRounded: true,
   }), [tripData, isMobile]);
 
+  // The nodes whose bloom / glow is drawn: all of them at full size; toward the world view the heaviest per screen cell.
+  const haloThinned = useMemo(
+    () => thinForHalos(geoThreats, nodePosition, d => d.threat_count, haloView.zoom, haloCellPx(haloView.scale)),
+    [geoThreats, haloView],
+  );
+
   // Node bloom + glow breathe via PulseExtension: only critical / high nodes have an amplitude,
   // `animTime` (seconds) is the only per-frame input. Reduced motion => amp 0 (static).
   const makeGlow = useCallback((animTime: number): Layer[] => {
     if (mapMode !== 'global' || !showNodes || geoThreats.length === 0) return [];
+    // Toward the world view the halos shrink and only the heaviest node per small screen cell keeps one.
+    const { scale } = haloView;
     const shared = {
-      data: geoThreats,
+      data: haloThinned,
       getPosition: nodePosition,
       getPulsePhase: nodePhase,
       getPulseRate: nodeRate,
@@ -876,14 +911,14 @@ function ThreatMapV3Inner({
     return [
       new ScatterplotLayer<ThreatPoint, PulseExtensionProps<ThreatPoint>>({
         ...shared, id: 'nodes-bloom', getRadius: bloomRadius, getFillColor: bloomColor,
-        radiusMinPixels: 3, radiusMaxPixels: 24,
+        radiusMinPixels: Math.max(1.5, 3 * scale), radiusMaxPixels: Math.round(24 * scale),
       }),
       new ScatterplotLayer<ThreatPoint, PulseExtensionProps<ThreatPoint>>({
         ...shared, id: 'nodes-glow', getRadius: glowRadius, getFillColor: glowColor,
-        radiusMinPixels: 2, radiusMaxPixels: 14,
+        radiusMinPixels: Math.max(1, 2 * scale), radiusMaxPixels: Math.round(14 * scale),
       }),
     ];
-  }, [mapMode, showNodes, geoThreats, reducedMotion]);
+  }, [mapMode, showNodes, geoThreats, haloThinned, haloView, reducedMotion]);
 
   // Impact rings: a fixed 256-slot pool (typed arrays) behind ONE layer; arrivals
   // overwrite the oldest slot and bump `version`, so nothing is reallocated.
@@ -920,8 +955,8 @@ function ThreatMapV3Inner({
   const lensInput = useMemo<LensLayerInput | null>(() => {
     if (!lens || mapMode === 'heatmap') return null;
     const pick: LensPickHandlers = { hover: handlers.hoverLens, click: handlers.clickLens };
-    return { ...lens, labels, reducedMotion, isMobile, pick, projection };
-  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers, projection]);
+    return { ...lens, labels, reducedMotion, isMobile, pick, projection, haloScale: haloView.scale };
+  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers, projection, haloView.scale]);
   const lensBase = useMemo(() => (lensInput ? buildLensBaseLayers(lensInput) : []), [lensInput]);
   const lensAnimating = !!lensInput && policy.ambient && lensNeedsFrame(lensInput, { clockPlaying });
 
@@ -957,7 +992,7 @@ function ThreatMapV3Inner({
     // MapLibre's own occlusion test decides that (right at any pitch); labels also thin out toward the limb.
     const centre = map.getCenter();
     const globe = projectionRef.current === 'globe';
-    const transform = (map as unknown as { transform?: OcclusionProbe }).transform;
+    const transform = mapTransform(map) as OcclusionProbe | null;
     const project: Project = ([lng, lat]) => {
       let fade = 1;
       if (globe) {
@@ -978,7 +1013,7 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
     // The idle spin's own moves are tagged: it refreshes labels on a throttle instead of every frame.
-    const onEnd = (e: { [key: string]: unknown }) => { if (!e[SPIN_EVENT_KEY]) recomputeLabels(); };
+    const onEnd = (e: object) => { if (!(e as { [key: string]: unknown })[SPIN_EVENT_KEY]) recomputeLabels(); };
     map.on('moveend', onEnd);
     return () => { map.off('moveend', onEnd); };
   }, [mapLoaded, recomputeLabels]);
@@ -1095,9 +1130,13 @@ function ThreatMapV3Inner({
     if (prev !== null) {
       // A flip re-frames the world: the globe fits the planet in the canvas, the flat map returns to its overview.
       const c = map.getCenter();
+      const moved = userMovedRef.current;
+      userMovedRef.current = false;
       if (projection === 'globe') {
+        // An untouched flat camera is the overview (Europe-centred): the globe opens on its own default instead.
         const fit = latest.current.canvas;
-        map.jumpTo({ center: [c.lng, Math.max(-45, Math.min(45, c.lat))], zoom: globeFitZoom(fit.width, fit.height), pitch: 0, bearing: 0 });
+        const start = globeStartCamera(fit.width, fit.height, isMobileRef.current);
+        map.jumpTo({ center: moved ? [c.lng, Math.max(-45, Math.min(45, c.lat))] : start.center, zoom: start.zoom, pitch: 0, bearing: 0 });
       } else {
         map.jumpTo({ center: [c.lng, Math.max(-50, Math.min(50, c.lat))], zoom: isMobileRef.current ? 0.6 : 2.2, pitch: isMobileRef.current ? 0 : 20, bearing: 0 });
       }

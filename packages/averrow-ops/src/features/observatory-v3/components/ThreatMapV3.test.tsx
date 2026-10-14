@@ -54,7 +54,7 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
 });
 
 vi.mock('maplibre-gl', () => ({
-  default: { Map: FakeMap, NavigationControl: class {} },
+  Map: FakeMap, NavigationControl: class {}, setWorkerUrl: () => {},
 }));
 vi.mock('@deck.gl/mapbox', () => ({ MapboxOverlay: FakeOverlay }));
 vi.mock('@deck.gl/layers', () => ({ ScatterplotLayer: FakeLayer, PathLayer: FakeLayer, GeoJsonLayer: FakeLayer, TextLayer: FakeLayer }));
@@ -62,6 +62,7 @@ vi.mock('@deck.gl/aggregation-layers', () => ({ HeatmapLayer: FakeLayer }));
 vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
 import { ThreatMapV3, type ThreatMapV3Props } from './ThreatMapV3';
+import { worldFillZoom } from '../lib/camera';
 
 const base: ThreatMapV3Props = {
   threats: [], arcs: [], showBeams: false, showParticles: false, showNodes: true,
@@ -315,17 +316,21 @@ describe('ThreatMapV3 phone zoom floor', () => {
     ready();
     expect(lastMap().transform._helper._latRange).toEqual([-89.5, 89.5]);
   });
-  it('the desktop zoom floor follows the canvas width (not MapLibre\'s vertical-coverage pin)', () => {
+  it('the desktop zoom floor is the world filling the canvas width: no repeated Earths when zooming out', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 776 });
     render(<ThreatMapV3 {...base} />);
+    expect(lastMap().opts.minZoom).toBe(worldFillZoom(776));
     ready();
-    expect(lastMap().setMinZoom.mock.calls.at(-1)![0] as number).toBeLessThan(-0.5);
+    expect(lastMap().setMinZoom.mock.calls.at(-1)![0] as number).toBe(worldFillZoom(776));
+    expect(512 * 2 ** worldFillZoom(776)).toBeGreaterThanOrEqual(776);
   });
-  it('desktop keeps the library default (no phone floor)', () => {
+  it('a wide desktop floors higher than the old 0.5 cap (the world must still fill 1400px)', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1400 });
     render(<ThreatMapV3 {...base} />);
-    expect(lastMap().opts.minZoom).toBeUndefined();
+    expect(lastMap().opts.minZoom as number).toBeGreaterThan(1);
+    expect(lastMap().opts.minZoom).toBe(worldFillZoom(1400));
   });
 });
 
@@ -361,6 +366,15 @@ describe('ThreatMapV3 motion policy', () => {
     ready();
     expect(layerOf('beam-core')).toBeUndefined();
     expect(layerOf('particle-trails')).toBeDefined();
+  });
+
+  it('node blooms and glows are capped smaller toward the world view (the stub camera sits at zoom 2), cores keep their size', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical'), mk('low', 4)]} />);
+    ready();
+    expect(layerOf('nodes-bloom')!.props.radiusMaxPixels as number).toBeLessThan(24);
+    expect(layerOf('nodes-bloom')!.props.radiusMaxPixels as number).toBeGreaterThanOrEqual(10);
+    expect(layerOf('nodes-glow')!.props.radiusMaxPixels as number).toBeLessThan(14);
+    expect(layerOf('nodes-core')!.props.radiusMaxPixels).toBe(9);
   });
 
   it('the derived node subsets are one memoised array shared by every node layer (stable across frames)', () => {
