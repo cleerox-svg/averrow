@@ -31,6 +31,28 @@
 --                                    precedent) — left alone.
 --   agent_outputs                    historical JSON, no FK — left alone.
 --     .related_provider_ids
+--   daily_snapshots                  entity_type='provider' rows keyed by
+--     (entity_id = provider id)      the id (PK (date, entity_type,
+--                                    entity_id)); 63 rows per malformed id
+--                                    in prod — MERGED like the cube (step
+--                                    4b). Brand rows' dominant_hosting_provider
+--                                    holds a provider NAME, not an id —
+--                                    untouched.
+--
+-- ── Prod audit 2026-10-14 (read-only probes) ─────────────────────────
+--   * No malformed row has is_bulletproof = 1 or abuse_contact_id set (0
+--     rows), so nothing is carried onto the canonical row.
+--     reputation_score is set on all 48; twins carry their own and the
+--     scorer recomputes, so it is dropped with the malformed row.
+--   * All 2,997 spaced threats.asn values are 'AS<digits> <name>'; 0 odd
+--     shapes. Step 5 still guards on the AS<digits> prefix.
+--   * Moved active threats per canonical row max out at 141, below Flight
+--     Control's 200 provider-escalation floor — the recount cannot raise a
+--     spurious platform_provider_escalation.
+--   * L1: NEXUS compares each bridge cluster's IPs/ASNs/cert-serials to its
+--     prior-run fingerprint; a cluster whose stored fingerprint held a
+--     spaced asn may emit ONE infra_movement pivot_detected event on the
+--     first run after step 5 normalises threats.asn. One-off, expected.
 --
 -- ── Idempotency / D1 runner notes ────────────────────────────────────
 -- No BEGIN/COMMIT (D1 rejects them). A regular staging table is used, not a
@@ -64,7 +86,8 @@ SELECT id,
        country
 FROM hosting_providers
 WHERE id LIKE 'hp_AS% %'
-  AND substr(id, 4, instr(id, ' ') - 4) GLOB 'AS[0-9]*';
+  AND substr(id, 4, instr(id, ' ') - 4) GLOB 'AS[0-9]*'
+  AND substr(id, 4, instr(id, ' ') - 4) NOT GLOB 'AS*[^0-9]*';
 
 -- 1. Canonical row for malformed rows with no twin. ON CONFLICT DO NOTHING
 --    covers both the id PK and UNIQUE(asn) (incl. two malformed rows that
@@ -123,6 +146,32 @@ DO UPDATE SET
 DELETE FROM threat_cube_provider
 WHERE hosting_provider_id IN (SELECT old_id FROM _hp_malformed_0294);
 
+-- 4b. Merge daily_snapshots provider rows the same way: PK (date,
+--     entity_type, entity_id) collides on a plain UPDATE. Daily counters
+--     add (disjoint threat sets); the canonical row keeps its own
+--     dominant_threat_type and only takes the malformed side's when its own
+--     is NULL. Past days are never recomputed, so deleting instead would
+--     lose history.
+INSERT INTO daily_snapshots
+  (date, entity_type, entity_id, new_threats, active_threats,
+   remediated_threats, dominant_threat_type)
+SELECT s.date, 'provider', m.canonical_id,
+       SUM(s.new_threats), SUM(s.active_threats), SUM(s.remediated_threats),
+       MAX(s.dominant_threat_type)
+FROM daily_snapshots s
+JOIN _hp_malformed_0294 m ON m.old_id = s.entity_id
+WHERE s.entity_type = 'provider'
+GROUP BY s.date, m.canonical_id
+ON CONFLICT(date, entity_type, entity_id) DO UPDATE SET
+  new_threats          = daily_snapshots.new_threats + excluded.new_threats,
+  active_threats       = daily_snapshots.active_threats + excluded.active_threats,
+  remediated_threats   = daily_snapshots.remediated_threats + excluded.remediated_threats,
+  dominant_threat_type = COALESCE(daily_snapshots.dominant_threat_type, excluded.dominant_threat_type);
+
+DELETE FROM daily_snapshots
+WHERE entity_type = 'provider'
+  AND entity_id IN (SELECT old_id FROM _hp_malformed_0294);
+
 -- 5. Normalise threats.asn to the leading token. Plans as a covering scan
 --    of idx_threats_asn (partial, asn IS NOT NULL): ~0.8M index entries,
 --    ~120 ms in prod, 2,997 rows written. One-off.
@@ -130,7 +179,9 @@ UPDATE threats
 SET asn = substr(asn, 1, instr(asn, ' ') - 1)
 WHERE asn IS NOT NULL
   AND asn LIKE '% %'
-  AND instr(asn, ' ') > 1;
+  AND instr(asn, ' ') > 1
+  AND substr(asn, 1, instr(asn, ' ') - 1) GLOB 'AS[0-9]*'
+  AND substr(asn, 1, instr(asn, ' ') - 1) NOT GLOB 'AS*[^0-9]*';
 
 -- 6. Recompute the pre-computed counts for the affected canonical rows,
 --    same definition as lib/provider-counts.ts. trend_7d / trend_30d are

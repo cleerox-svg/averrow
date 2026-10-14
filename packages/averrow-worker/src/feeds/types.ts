@@ -57,7 +57,9 @@ export interface ThreatRow {
   ssl_san_hash?: string | null;     // sha256 hex of the normalized SAN set — computeSanHash()
   // Malware family as reported by the source (migration 0295). Set by
   // ThreatFox; NULL for every other feed. bulkInsertThreats fills it onto
-  // an existing NULL row when the IOC is re-reported.
+  // an existing NULL row when the IOC is re-reported. The single-row
+  // insertThreat path does NOT do that duplicate fill — it only writes the
+  // value on a brand-new row.
   malware_family?: string | null;
 }
 

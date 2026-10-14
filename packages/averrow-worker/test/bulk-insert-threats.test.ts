@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { bulkInsertThreats, THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
+import { bulkInsertThreats, THREAT_INSERT_CHUNK, MALWARE_FAMILY_FILL_CHUNK } from "../src/lib/feedRunner";
 import type { ThreatRow } from "../src/feeds/types";
 import type { D1Database } from "@cloudflare/workers-types";
 
@@ -113,6 +113,14 @@ describe("bulkInsertThreats", () => {
     expect(sqls[0]!.every((s) => /INSERT OR IGNORE INTO threats[\s\S]*malware_family/.test(s))).toBe(true);
     expect(sqls[1]).toEqual(["UPDATE threats SET malware_family = ? WHERE id = ? AND malware_family IS NULL"]);
     expect(binds[binds.length - 1]).toEqual(["Cobalt Strike", "id-1"]);
+  });
+
+  it("batches the malware_family fill at MALWARE_FAMILY_FILL_CHUNK (200), not the insert chunk", async () => {
+    const { db, batchSizes } = makeDb({ newRatio: 0 }); // every insert is a duplicate
+    const rows = makeRows(250).map((r) => ({ ...r, malware_family: "Emotet" }));
+    await bulkInsertThreats(db, rows);
+    expect(MALWARE_FAMILY_FILL_CHUNK).toBe(200);
+    expect(batchSizes).toEqual([50, 50, 50, 50, 50, 200, 50]);
   });
 
   it("issues no fill batch when no row carries a malware family", async () => {

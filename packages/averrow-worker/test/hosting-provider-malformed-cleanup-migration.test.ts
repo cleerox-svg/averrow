@@ -6,8 +6,9 @@
  *
  * Cases: a twin under the canonical id, a twin under a legacy (non-hp_AS)
  * id, a no-twin row (canonical row inserted), threat_cube_provider merge on
- * a colliding PK and a move on a non-colliding one, threats.asn
- * normalisation, count recompute, and a second run being a no-op.
+ * a colliding PK and a move on a non-colliding one, the same for
+ * daily_snapshots provider rows, threats.asn normalisation (and non-AS<digits>
+ * prefixes left alone), count recompute, and a second run being a no-op.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,7 +30,7 @@ function applyMigration(db: SqliteDb): void {
 function openDb(): SqliteDb {
   const db = openDerivedDb([
     "brands", "campaigns", "saas_techniques", "named_threats",
-    "hosting_providers", "threats", "threat_cube_provider",
+    "hosting_providers", "threats", "threat_cube_provider", "daily_snapshots",
   ]);
   db.exec("PRAGMA foreign_keys = ON");
   return db;
@@ -65,6 +66,8 @@ function seed(): SqliteDb {
   t.run("t6", "hp_AS62955 eBay, Inc", null, "active");
   t.run("t7", "hp_AS13335", "AS13335", "active");
   t.run("t8", null, "AS9009 M247 Europe SRL", "active"); // asn-only normalisation
+  t.run("t9", null, "ASX12 Not An ASN", "active");       // non-AS<digits> prefix → untouched
+  t.run("t10", null, "AS12x3 Odd Tail", "active");       // digits then non-digit → untouched
 
   const c = db.prepare(
     `INSERT INTO threat_cube_provider (hour_bucket, hosting_provider_id, threat_type, severity, source_feed, threat_count)
@@ -76,6 +79,22 @@ function seed(): SqliteDb {
   // No canonical row for this bucket → moved.
   c.run("2026-03-15 01:00:00", "hp_AS62955 eBay, Inc", 2);
   c.run("2026-03-15 01:00:00", "hp_AS13335", 5);
+
+  const d = db.prepare(
+    `INSERT INTO daily_snapshots (date, entity_type, entity_id, new_threats, active_threats, remediated_threats,
+       dominant_threat_type, dominant_hosting_provider)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  // Collision: canonical keeps its dominant type, counters add.
+  d.run("2026-10-01", "provider", "hp_AS200350", 1, 5, 2, "phishing", null);
+  d.run("2026-10-01", "provider", "hp_AS200350 Yandex.Cloud LLC", 2, 3, 1, "c2", null);
+  // Collision where the canonical side has no dominant type → takes the malformed one.
+  d.run("2026-10-02", "provider", "hp_AS200350", 0, 1, 0, null, null);
+  d.run("2026-10-02", "provider", "hp_AS200350 Yandex.Cloud LLC", 1, 1, 0, "botnet", null);
+  // No collision → re-keyed to the canonical id.
+  d.run("2026-10-01", "provider", "hp_AS62955 eBay, Inc", 4, 4, 0, "phishing", null);
+  // Brand row whose dominant_hosting_provider is a provider NAME → untouched.
+  d.run("2026-10-01", "brand", "brand_x", 1, 1, 0, "phishing", "Yandex.Cloud LLC");
   return db;
 }
 
@@ -101,7 +120,7 @@ describe.skipIf(!hasSqlite())("migration 0294 — malformed hosting_provider ids
       { id: "hp_digitalocean", name: "DigitalOcean", asn: "AS14061", country: "US", active_threat_count: 1, total_threat_count: 1, trend_7d: 3 },
     ]);
 
-    const threats = all(db, "SELECT id, hosting_provider_id, asn FROM threats ORDER BY id");
+    const threats = all(db, "SELECT id, hosting_provider_id, asn FROM threats ORDER BY CAST(substr(id, 2) AS INTEGER)");
     expect(threats).toEqual([
       { id: "t1", hosting_provider_id: "hp_AS200350", asn: "AS200350" },
       { id: "t2", hosting_provider_id: "hp_AS200350", asn: "AS200350" },
@@ -111,6 +130,19 @@ describe.skipIf(!hasSqlite())("migration 0294 — malformed hosting_provider ids
       { id: "t6", hosting_provider_id: "hp_AS62955", asn: null },
       { id: "t7", hosting_provider_id: "hp_AS13335", asn: "AS13335" },
       { id: "t8", hosting_provider_id: null, asn: "AS9009" },
+      { id: "t9", hosting_provider_id: null, asn: "ASX12 Not An ASN" },
+      { id: "t10", hosting_provider_id: null, asn: "AS12x3 Odd Tail" },
+    ]);
+
+    const snaps = all(db,
+      `SELECT date, entity_type, entity_id, new_threats, active_threats, remediated_threats,
+              dominant_threat_type, dominant_hosting_provider
+         FROM daily_snapshots ORDER BY entity_type, entity_id, date`);
+    expect(snaps).toEqual([
+      { date: "2026-10-01", entity_type: "brand", entity_id: "brand_x", new_threats: 1, active_threats: 1, remediated_threats: 0, dominant_threat_type: "phishing", dominant_hosting_provider: "Yandex.Cloud LLC" },
+      { date: "2026-10-01", entity_type: "provider", entity_id: "hp_AS200350", new_threats: 3, active_threats: 8, remediated_threats: 3, dominant_threat_type: "phishing", dominant_hosting_provider: null },
+      { date: "2026-10-02", entity_type: "provider", entity_id: "hp_AS200350", new_threats: 1, active_threats: 2, remediated_threats: 0, dominant_threat_type: "botnet", dominant_hosting_provider: null },
+      { date: "2026-10-01", entity_type: "provider", entity_id: "hp_AS62955", new_threats: 4, active_threats: 4, remediated_threats: 0, dominant_threat_type: "phishing", dominant_hosting_provider: null },
     ]);
 
     const cube = all(db,
@@ -133,6 +165,7 @@ describe.skipIf(!hasSqlite())("migration 0294 — malformed hosting_provider ids
       all(db, "SELECT * FROM hosting_providers ORDER BY id"),
       all(db, "SELECT id, hosting_provider_id, asn FROM threats ORDER BY id"),
       all(db, "SELECT hour_bucket, hosting_provider_id, threat_count FROM threat_cube_provider ORDER BY 1, 2"),
+      all(db, "SELECT * FROM daily_snapshots ORDER BY 1, 2, 3"),
     ];
     const before = snapshot();
     applyMigration(db);

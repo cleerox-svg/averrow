@@ -195,6 +195,14 @@ async function bumpBrandThreatCount(db: D1Database, brandId: string, n: number):
 export const THREAT_INSERT_CHUNK = 50;
 
 /**
+ * Statements per db.batch() for the malware_family duplicate fill. Each is a
+ * PK-lookup UPDATE that writes only a NULL column, so it can use a much
+ * larger batch than the inserts (well under D1's per-batch statement cap)
+ * to cut round-trips.
+ */
+export const MALWARE_FAMILY_FILL_CHUNK = 200;
+
+/**
  * Bulk-insert threats via chunked `db.batch(INSERT OR IGNORE)` — the
  * canonical platform pattern (CLAUDE.md §8). Replaces the per-row
  * isDuplicate(KV GET)→insertThreat(D1)→markSeen(KV PUT) loop, which does
@@ -280,9 +288,11 @@ export async function bulkInsertThreats(
   // malware_family back-fill for re-reported IOCs — best-effort, never
   // throws, and does not touch the new/duplicate/error accounting. Each
   // UPDATE is a PK lookup that writes only when the column is still NULL.
-  for (let i = 0; i < familyFills.length; i += chunkSize) {
+  for (let i = 0; i < familyFills.length; i += MALWARE_FAMILY_FILL_CHUNK) {
     try {
-      await db.batch(familyFills.slice(i, i + chunkSize).map((r) => buildMalwareFamilyFillStmt(db, r)));
+      await db.batch(
+        familyFills.slice(i, i + MALWARE_FAMILY_FILL_CHUNK).map((r) => buildMalwareFamilyFillStmt(db, r)),
+      );
     } catch (err) {
       console.error(`[bulkInsertThreats] malware_family fill failed:`, err instanceof Error ? err.message : String(err));
     }
