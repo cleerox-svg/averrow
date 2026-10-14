@@ -255,8 +255,13 @@ function severitySums(severityCol: string, countExpr: string): string {
 // representative bridge cluster (component_id = `component_<bridge id>`) when
 // that cluster is among the returned operations, else the first returned
 // bridge-kind member, else the first member. `kind` is the bridge kind
-// (cert_serial | cert_san | per_ip) of the hub/representative; ASN, /24 and
-// registrar clusters never bridge (lib/cluster-components.ts).
+// (cert_serial | cert_san | per_ip) of the hub when the hub is a bridge;
+// otherwise the representative's kind. A cert representative that is not
+// among the returned operations is resolved by one extra PK lookup (its
+// agent_notes cluster_type disambiguates serial vs SAN — the id prefix
+// `cluster_cert_` is shared); when it can't be resolved (row gone /
+// notes unreadable) `kind` is null rather than a guessed cert_serial.
+// ASN, /24 and registrar clusters never bridge (lib/cluster-components.ts).
 export const OPERATIONS_GEO_DEFAULT_LIMIT = 25;
 export const OPERATIONS_GEO_MAX_LIMIT = 50;
 
@@ -280,7 +285,8 @@ export interface OperationGeo {
 export interface ComponentEdge {
   a: string;
   b: string;
-  kind: BridgeKind;
+  /** null when the representative's bridge kind could not be resolved. */
+  kind: BridgeKind | null;
   shared_asns: string[];
 }
 
@@ -316,8 +322,31 @@ function asBridgeKind(kind: ClusterKind): BridgeKind | null {
   return isBridgeKind(kind) ? (kind as BridgeKind) : null;
 }
 
-/** Pure: build components + star edges from shaped operations. */
-export function buildComponents(ops: readonly OperationGeo[]): ComponentGeo[] {
+/** Representative cluster id of a component (`component_<rep id>`), or "". */
+export function componentRepId(componentId: string): string {
+  return componentId.startsWith("component_") ? componentId.slice("component_".length) : "";
+}
+
+/**
+ * Bridge kind of a representative from its id alone, or null when the id
+ * cannot decide it: cert reps (`cluster_cert_`) need agent_notes to tell
+ * serial from SAN, and a non-bridge id has no bridge kind.
+ */
+function repKindFromId(repId: string): BridgeKind | null {
+  if (repId === "" || repId.startsWith("cluster_cert_")) return null;
+  return asBridgeKind(classifyClusterKind(repId, null));
+}
+
+/**
+ * Pure: build components + star edges from shaped operations.
+ * `repKinds` carries the resolved kind of representatives that are NOT among
+ * `ops` (see the handler's extra lookup); without an entry a cert rep's kind
+ * is null, never guessed.
+ */
+export function buildComponents(
+  ops: readonly OperationGeo[],
+  repKinds: ReadonlyMap<string, ClusterKind> = new Map(),
+): ComponentGeo[] {
   const byComponent = new Map<string, OperationGeo[]>();
   for (const op of ops) {
     if (!op.component_id) continue;
@@ -327,19 +356,19 @@ export function buildComponents(ops: readonly OperationGeo[]): ComponentGeo[] {
   }
   const out: ComponentGeo[] = [];
   for (const [componentId, members] of byComponent) {
-    const repId = componentId.startsWith("component_") ? componentId.slice("component_".length) : "";
+    const repId = componentRepId(componentId);
     const hub =
       members.find((m) => m.id === repId) ??
       members.find((m) => isBridgeKind(m.kind)) ??
       members[0]!;
-    // The representative is a bridge cluster by construction; when it is not
-    // in the returned set, classify it from its id (cert → cert_serial).
-    const edgeKind: BridgeKind =
-      asBridgeKind(hub.kind) ?? asBridgeKind(classifyClusterKind(repId, null)) ?? "per_ip";
+    const resolvedRep = repKinds.get(repId);
+    const edgeKind: BridgeKind | null =
+      asBridgeKind(hub.kind) ??
+      (resolvedRep !== undefined ? asBridgeKind(resolvedRep) : repKindFromId(repId));
     const edges: ComponentEdge[] = [];
+    const hubAsns = new Set(hub.asns);
     for (const m of members) {
       if (m.id === hub.id) continue;
-      const hubAsns = new Set(hub.asns);
       edges.push({ a: hub.id, b: m.id, kind: edgeKind, shared_asns: m.asns.filter((x) => hubAsns.has(x)) });
     }
     out.push({
@@ -348,6 +377,29 @@ export function buildComponents(ops: readonly OperationGeo[]): ComponentGeo[] {
       countries: countryList(members.flatMap((m) => m.countries)),
       edges,
     });
+  }
+  return out;
+}
+
+/**
+ * Cert representatives the pure builder can't classify: components with ≥2
+ * returned members (edges exist), no bridge-kind member returned, and a
+ * `cluster_cert_` representative outside the returned set.
+ */
+export function unresolvedCertReps(ops: readonly OperationGeo[]): string[] {
+  const byComponent = new Map<string, OperationGeo[]>();
+  for (const op of ops) {
+    if (!op.component_id) continue;
+    const list = byComponent.get(op.component_id) ?? [];
+    list.push(op);
+    byComponent.set(op.component_id, list);
+  }
+  const out: string[] = [];
+  for (const [componentId, members] of byComponent) {
+    const repId = componentRepId(componentId);
+    if (members.length < 2 || !repId.startsWith("cluster_cert_")) continue;
+    if (members.some((m) => m.id === repId || isBridgeKind(m.kind))) continue;
+    out.push(repId);
   }
   return out;
 }
@@ -394,7 +446,26 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
       `).bind(limit).all<OperationRow>();
       addToTally(tally, rows.meta);
       const operations = (rows.results ?? []).map(shapeOperation);
-      return { data: { operations, components: buildComponents(operations) } };
+      // Resolve cert representatives outside the returned set by PK (at
+      // most one per component, ≤50 → one statement in practice).
+      const repKinds = new Map<string, ClusterKind>();
+      for (const ids of chunk(unresolvedCertReps(operations), LENS_MAX_BINDS)) {
+        const r = await session.prepare(`
+          SELECT id,
+                 CASE WHEN json_valid(agent_notes) THEN json_extract(agent_notes, '$.cluster_type') END AS cluster_type
+          FROM infrastructure_clusters
+          WHERE id IN (${placeholders(ids.length)})
+        `).bind(...ids).all<{ id: string; cluster_type: string | null }>();
+        addToTally(tally, r.meta);
+        // Only a row with a readable cluster_type is resolved; anything
+        // else stays unresolved → kind null (never a defaulted cert_serial).
+        for (const row of r.results ?? []) {
+          if (typeof row.cluster_type === "string" && row.cluster_type !== "") {
+            repKinds.set(row.id, kindOf(row.id, row.cluster_type));
+          }
+        }
+      }
+      return { data: { operations, components: buildComponents(operations, repKinds) } };
     });
 }
 
@@ -408,8 +479,9 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
 // ASN lists (lib/cluster-infra-movement.ts):
 //   infra_movement  from = prev_asn_list, to = new_asn_list
 //   dormancy        from = [prev_asn ?? asn], to = [] (the cluster went dark)
-// v1 payloads carry no lists → from/to empty (counts still come from the v1
-// keys). ASN → country via hosting_providers.asn (≤99 binds per IN query).
+// v1 infra_movement payloads carry no lists → from/to empty (counts still
+// come from the v1 keys); v1 dormancy payloads carry `asn`, so their `from`
+// is filled like v2. ASN → country via hosting_providers.asn (≤99 binds per IN query).
 export const MOVEMENTS_DEFAULT_LIMIT = 50;
 export const MOVEMENTS_MAX_LIMIT = 100;
 
@@ -469,13 +541,16 @@ export function parsePivotRow(row: PivotRow): ParsedPivot {
   const payload_v = typeof p.payload_v === "number" && Number.isFinite(p.payload_v) ? p.payload_v : 1;
   let fromAsns: string[] = [];
   let toAsns: string[] = [];
-  if (payload_v >= 2) {
-    if (kind === "infra_movement") {
+  if (kind === "infra_movement") {
+    // Only v2 infra_movement payloads carry the ASN lists.
+    if (payload_v >= 2) {
       fromAsns = asnList(Array.isArray(p.prev_asn_list) ? p.prev_asn_list : []);
       toAsns = asnList(Array.isArray(p.new_asn_list) ? p.new_asn_list : []);
-    } else {
-      fromAsns = asnList([p.prev_asn ?? p.asn]);
     }
+  } else {
+    // Dormancy has carried `asn` since v1 (v2 adds `prev_asn` = `asn`), so
+    // the origin ASN is available regardless of payload version.
+    fromAsns = asnList([p.prev_asn ?? p.asn]);
   }
   return {
     id: row.id,

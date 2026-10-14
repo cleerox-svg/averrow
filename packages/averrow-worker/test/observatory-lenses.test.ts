@@ -16,6 +16,7 @@ import {
   normalizeCountry,
   aliasList,
   buildComponents,
+  unresolvedCertReps,
   parsePivotRow,
   computeOverindex,
   bucketTimeline,
@@ -198,6 +199,24 @@ describe("buildComponents", () => {
     const b = comps.find((c) => c.component_id === "component_cluster_ip_9.9.9.9")!;
     expect(b.edges).toEqual([]);
   });
+  it("no bridge member returned: kind from the representative — resolved cert kind, per_ip from the id, else null (never a guessed cert_serial)", () => {
+    const members = (cid: string) => [
+      op({ id: "cluster_asn_as1_a", kind: "asn", component_id: cid }),
+      op({ id: "cluster_asn_as2_b", kind: "asn", component_id: cid }),
+    ];
+    const unresolved = buildComponents(members("component_cluster_cert_rep"));
+    expect(unresolved[0]!.edges.map((e) => e.kind)).toEqual([null]);
+    const resolved = buildComponents(members("component_cluster_cert_rep"), new Map([["cluster_cert_rep", "cert_san" as const]]));
+    expect(resolved[0]!.edges.map((e) => e.kind)).toEqual(["cert_san"]);
+    const ip = buildComponents(members("component_cluster_ip_8.8.8.8"));
+    expect(ip[0]!.edges.map((e) => e.kind)).toEqual(["per_ip"]);
+    expect(unresolvedCertReps([...members("component_cluster_cert_rep"), ...members("component_cluster_ip_8.8.8.8")]))
+      .toEqual(["cluster_cert_rep"]);
+    // A returned bridge member or a lone member → nothing to resolve.
+    expect(unresolvedCertReps([op({ id: "cluster_cert_x", kind: "cert_serial", component_id: "component_cluster_cert_rep" }),
+      op({ id: "cluster_asn_as1_a", kind: "asn", component_id: "component_cluster_cert_rep" })])).toEqual([]);
+    expect(unresolvedCertReps([op({ id: "cluster_asn_as1_a", kind: "asn", component_id: "component_cluster_cert_rep" })])).toEqual([]);
+  });
 });
 
 describe("parsePivotRow", () => {
@@ -212,9 +231,9 @@ describe("parsePivotRow", () => {
     const m = parsePivotRow({ id: "e2", created_at: "x", payload_json: JSON.stringify({ kind: "dormancy", cluster_id: "c", asn: "AS8560", prev_asn: "AS8560", payload_v: 2 }) });
     expect(m).toMatchObject({ kind: "dormancy", fromAsns: ["AS8560"], toAsns: [], counts: { new_asns: 0, new_ips: 0, new_serials: 0 } });
   });
-  it("v1 rows: from/to empty (counts from v1 keys); malformed payload → dormancy shell", () => {
+  it("v1 rows: dormancy from = [asn]; infra_movement from/to empty (counts from v1 keys); malformed payload → dormancy shell", () => {
     expect(parsePivotRow({ id: "e3", created_at: "x", payload_json: JSON.stringify({ kind: "dormancy", cluster_id: "c", asn: "AS1" }) }))
-      .toMatchObject({ payload_v: 1, fromAsns: [], toAsns: [] });
+      .toMatchObject({ payload_v: 1, fromAsns: ["AS1"], toAsns: [] });
     expect(parsePivotRow({ id: "e4", created_at: "x", payload_json: JSON.stringify({ kind: "infra_movement", cluster_id: "c", new_ips: 4 }) }))
       .toMatchObject({ payload_v: 1, fromAsns: [], toAsns: [], counts: { new_asns: 0, new_ips: 4, new_serials: 0 } });
     expect(parsePivotRow({ id: "e5", created_at: "x", payload_json: "{oops" })).toMatchObject({ kind: "dormancy", cluster_id: null, payload_v: 1 });
@@ -310,6 +329,25 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     expect(lensKeys(kv)).toHaveLength(2);
   });
 
+  it("operations-geo: a SAN representative outside the returned set is resolved by PK (cert_san, not cert_serial); unreadable → null", async () => {
+    const raw = openDerivedDb(TABLES);
+    // Reps (low threat_count) are NOT returned; the returned members are non-bridge.
+    cluster(raw, { id: "cluster_cert_rep_san", threat_count: 1, component_id: "component_cluster_cert_rep_san", agent_notes: '{"cluster_type":"ssl_san_hash"}' });
+    cluster(raw, { id: "cluster_asn_as1_a", threat_count: 90, component_id: "component_cluster_cert_rep_san" });
+    cluster(raw, { id: "cluster_asn_as2_b", threat_count: 80, component_id: "component_cluster_cert_rep_san" });
+    cluster(raw, { id: "cluster_cert_rep_bad", threat_count: 2, component_id: "component_cluster_cert_rep_bad", agent_notes: "not json" });
+    cluster(raw, { id: "cluster_asn_as3_c", threat_count: 70, component_id: "component_cluster_cert_rep_bad" });
+    cluster(raw, { id: "cluster_asn_as4_d", threat_count: 60, component_id: "component_cluster_cert_rep_bad" });
+    const { env, log } = makeEnv(raw);
+    const b = await body<{ components: Array<{ component_id: string; edges: Array<{ kind: unknown }> }> }>(
+      await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?limit=4"), env));
+    const kinds = Object.fromEntries(b.data.components.map((c) => [c.component_id, c.edges.map((e) => e.kind)]));
+    expect(kinds).toEqual({ component_cluster_cert_rep_san: ["cert_san"], component_cluster_cert_rep_bad: [null] });
+    const lookups = log.filter((l) => /FROM infrastructure_clusters\s+WHERE id IN/.test(l.sql));
+    expect(lookups).toHaveLength(1);
+    expect((lookups[0]!.sql.match(/\?/g) ?? []).length).toBe(2);
+  });
+
   it("movements: window + event_type filter, v1/v2 shapes, ASN→country, cluster_name fallback, 400, keyed", async () => {
     const raw = openDerivedDb(TABLES);
     provider(raw, { id: "hp_1", asn: "AS1", country: "US", active: 1 });
@@ -333,7 +371,7 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
       counts: { new_asns: 1, new_ips: 3, new_serials: 0 },
     });
     expect(b.data[1]).toMatchObject({ kind: "dormancy", cluster_name: "AS8560 typosquatting cluster", from: { asns: ["AS8560"], countries: ["DE"] }, to: { asns: [], countries: [] } });
-    expect(b.data[2]).toMatchObject({ payload_v: 1, from: { asns: [], countries: [] }, cluster_name: null });
+    expect(b.data[2]).toMatchObject({ payload_v: 1, from: { asns: ["AS1"], countries: ["US"] }, to: { asns: [], countries: [] }, cluster_name: null });
 
     const one = await body<unknown[]>(await handleObservatoryMovements(req("/api/observatory/movements?period=30d&limit=1"), env));
     expect(one.data).toHaveLength(1);
