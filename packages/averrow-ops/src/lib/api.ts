@@ -22,6 +22,8 @@ interface ApiResponse<T = unknown> {
   data?: T;
   error?: string;
   total?: number;
+  /** Envelope metadata some endpoints return (e.g. Observatory lenses: `generated_at`, `period`). */
+  meta?: Record<string, unknown>;
   /** HTTP status, set only on non-2xx envelopes so callers can branch (e.g. 409/403). */
   status?: number;
 }

@@ -37,6 +37,7 @@ import { AgentAttribution } from '@/components/ui/AgentAttribution';
 import { relativeTime } from '@/lib/time';
 import { parseStringArray } from '@/lib/safe-json';
 import { PanelErrorBoundary } from './PanelErrorBoundary';
+import { topOrigins } from '../lib/origins';
 
 // ─── Helpers ────────────────────────────────────────────────
 function fmtPeriod(p: string): string {
@@ -218,21 +219,8 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
 }: { period: string; source: string; onSelectNode?: (node: ThreatPoint) => void }) {
   const q = useObservatoryThreats({ period, source });
 
-  const top = useMemo(() => {
-    // Per country: total volume + its busiest node (the keyboard path to selecting it on the map).
-    const byCountry = new Map<string, { count: number; node: ThreatPoint }>();
-    for (const n of q.data ?? []) {
-      if (!n.country_code) continue;
-      const cur = byCountry.get(n.country_code);
-      if (!cur) byCountry.set(n.country_code, { count: n.threat_count, node: n });
-      else {
-        cur.count += n.threat_count;
-        if (n.threat_count > cur.node.threat_count) cur.node = n;
-      }
-    }
-    return [...byCountry.entries()].map(([code, v]) => [code, v.count, v.node] as const).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [q.data]);
-  const max = top[0]?.[1] ?? 1;
+  const top = useMemo(() => topOrigins(q.data), [q.data]);
+  const max = top[0]?.count ?? 1;
 
   return (
     <div>
@@ -245,7 +233,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
         errorText="Origins failed to load"
         emptyText="No geolocated threats in this period"
       >
-        {top.map(([code, count, node]) => {
+        {top.map(({ code, count, node }) => {
           const row = (
             <>
             <span className="text-sm shrink-0" aria-hidden>{countryFlag(code)}</span>
@@ -258,7 +246,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
             </span>
             </>
           );
-          return onSelectNode ? (
+          return onSelectNode && node ? (
             <button
               key={code}
               type="button"
@@ -603,6 +591,8 @@ interface SidePanelProps {
   visible: boolean;
   /** Selects a node on the map (keyboard path from the Top Threat Origins rows). */
   onSelectNode?: (node: ThreatPoint) => void;
+  /** `dock` (default): right column under the toolbar. `overlay`: tablet float over the map. */
+  placement?: 'dock' | 'overlay';
   /**
    * R10 mobile chrome (C2): when true, renders full-width and in-flow
    * (no fixed w-80 / absolute right-dock chrome) so the SAME widget set
@@ -614,7 +604,7 @@ interface SidePanelProps {
   mobile?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false, onSelectNode }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -678,19 +668,22 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, onS
   }
 
   return (
-    // bottom-[76px] reserves the same stats-bar (36) + ticker (40) band as
-    // ObservatoryV3.tsx's map container and stats bar (desktop-only — this
-    // branch never renders on mobile), so the panel's own bottom edge stays
-    // flush with the top of that chrome strip.
+    // top-[60px] sits the panel under the console toolbar; bottom-[76px] reserves the
+    // same stats-bar (36) + ticker (40) band as ObservatoryV3.tsx's map container and
+    // stats bar (desktop-only — this branch never renders on mobile), so the panel's
+    // own bottom edge stays flush with the top of that chrome strip.
     <aside
       aria-label="Intelligence panel"
-      className="absolute top-0 right-0 bottom-[76px] z-20 w-80 flex flex-col overflow-hidden"
+      className={placement === 'overlay'
+        ? 'absolute top-[60px] right-3 bottom-[88px] z-20 w-80 max-w-[calc(100%-24px)] flex flex-col overflow-hidden rounded-xl animate-drawer-in motion-reduce:animate-none'
+        : 'absolute top-[60px] right-0 bottom-[76px] z-20 w-80 flex flex-col overflow-hidden animate-drawer-in motion-reduce:animate-none'}
       style={{
         background: 'var(--bg-card-deep)',
         backdropFilter: 'blur(24px)',
         WebkitBackdropFilter: 'blur(24px)',
+        border: placement === 'overlay' ? '1px solid var(--border-base)' : undefined,
         borderLeft: '1px solid var(--border-base)',
-        boxShadow: 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
+        boxShadow: placement === 'overlay' ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
       <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>

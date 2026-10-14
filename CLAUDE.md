@@ -440,6 +440,8 @@ Telemetry only (target_agent=NULL):
   Sentinel        → [feed_pulled]         — operator sees "new items found"
   Cartographer    → [threats_enriched]    — operator sees enrichment progress
   Nexus           → [nexus_complete]      — operator sees workflow completion
+  cube_healer     → [cubes_healed]        — operator sees the cube heal ran (scope,
+                     rows written, degraded cubes, velocity stamped, takedown cells)
   daily_briefing  → [briefing_generated]  — operator sees the daily platform
                      ops briefing ran (handler-dispatched writer, not an
                      AgentModule — see below)
@@ -1102,10 +1104,13 @@ as `averrow`) did rename — see §2.
 - **threat_cube_brand** — brand aggregates by hour (target_brand_id, threat_type, severity, source_feed)
 - **threat_cube_status** — status aggregates by hour (threat_type, severity, source_feed, status)
 - **threat_cube_arcs** — country × brand arc corridors by hour (country_code, target_brand_id, threat_type, severity, source_feed) with source_lat/source_lng centroid + first_seen/last_seen aggregates. Powers `/api/observatory/arcs` + `/api/observatory/brand-arcs`. Added in PR-Z.
+- **threat_cube_velocity** — fast-weaponization aggregates by hour (country_code, flag `very_fast`|`fast`) over ACTIVE threats' `weaponization_flag` (migration 0300). Powers `/api/observatory/velocity-nodes` + `/timeline?velocity=`. **Heal-only** — NOT rebuilt by Navigator: the flag is stamped after ingest (cube_healer's ≤500-row incremental page, `runVelocityStampPage`, KV keyset cursor over the partial index `idx_threats_velocity_unstamped`; plus the admin backfill), so the live hours carry no flags. cube_healer heals it 2 days hot / **90 days** cold, reading only flagged rows through the partial covering index `idx_threats_velocity_fast_created` (the source predicate `status = 'active' AND weaponization_flag IN ('very_fast', 'fast')` is defined once as `VELOCITY_SOURCE_FILTER` in `lib/cube-builder.ts` and interpolated into both the heal upsert and the stale sweep — change it there only, and keep it equal to the index's partial WHERE or the planner falls back to `idx_threats_status_created`). There is no per-hour builder function for this cube; cube_healer is its only writer. Metadata only — never gates triage.
 - For aggregate counts (by country, provider, brand, severity, type) **always query cubes instead of raw threats table**
 - Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and healed by cube-healer every 6 hours (2-day window; 14 days on the 00:12 UTC run), one atomic `[stale sweep, upsert]` batch per DAY per cube (`healCube` / `healDayChunks`) so a D1 limit rolls back one day, not the whole window
 - Each rebuild (the `build*CubeForHour` builders and cube-healer) is one atomic `db.batch()` of a stale-row sweep (`cubeStaleSweepSQL`, `lib/cube-builder.ts`) plus the guarded upsert, so groups that vanished from the source (threats went inactive or moved group) are deleted instead of keeping their last count. The cube-healer window is hour-snapped (`healWindow`, `agents/cube-healer.ts`): `[top of hour − N days, top of current hour)`.
-- Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`, `buildStatusCubeForHour()`, `buildArcsCubeForHour()`
+- Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`, `buildStatusCubeForHour()`, `buildArcsCubeForHour()` (velocity has none — heal-only, see above)
+- cube-healer finishes a run **degraded** (`AgentResult.degraded` → `agent_runs.status='partial'`, `completed_at` set) when more than half of any cube's day chunks failed; every geo day failing still throws (→ `failed`)
+- **takedown_outcome_daily** (migration 0299) — not an hour cube but a daily rollup: per submission day × `dim` (`country`|`provider`) × key, submitted / taken_down / refused / expired / pending + `median_hours`, rolling 90 days from `takedown_requests` (key from the source threat when `source_type='threat'`, else `unknown`). Rebuilt by cube_healer on its UTC hour-0 tick only (`lib/takedown-outcome-rollup.ts`, hour-only gate) with a guarded upsert + stale sweep. Read by `/api/observatory/takedowns-geo` and the providers-geo `takedown` field — query it instead of grouping `takedown_requests` at request time
 
 ### Pre-computed columns — use them, don't re-derive
 - `brands.threat_count`, `brands.last_threat_seen` — use instead of `COUNT(*) FROM threats WHERE target_brand_id = ?`
@@ -1412,6 +1417,8 @@ threat_cube_geo           ← OLAP cube: hourly geo aggregates
 threat_cube_provider      ← OLAP cube: hourly provider aggregates
 threat_cube_brand         ← OLAP cube: hourly brand aggregates
 threat_cube_arcs          ← OLAP cube: hourly country × brand arc corridors (PR-Z)
+threat_cube_velocity      ← OLAP cube: hourly country × weaponization flag (very_fast|fast), heal-only (migration 0300)
+takedown_outcome_daily    ← Daily takedown outcome rollup by country / provider, rolling 90d, cube_healer hour-0 (migration 0299)
 hosting_providers         ← Provider registry with pre-computed threat counts
 provider_threat_stats     ← Per-period (today/7d/30d/all) provider rollups written by Cartographer
 lookalike_domains         ← Typosquat scanner results

@@ -31,9 +31,15 @@
 // NEVER gate alert-triage / alert-ai-judge. This writer only persists the
 // attribute; nothing here (or downstream) may turn it into a dismissal lever.
 //
-// Not an AgentModule: dispatched from an admin backfill endpoint, so — like
-// `runPhishingSignalWriter` / `runAlertTriageBackfill` — it writes NO
-// `agent_runs` / `agent_events` rows, and there is no cron.
+// Two entry points:
+//   * `runVelocityBackfill` — the operator-driven admin backfill (offset
+//     pagination over the whole computable set). Not an AgentModule, so it
+//     writes NO `agent_runs` / `agent_events` rows.
+//   * `runVelocityStampPage` — the scheduled incremental page (Observatory
+//     Phase B, B3). Called by the cube_healer agent every run (its
+//     `agent_runs` / `agent_events` cover it); ≤500 rows per call over the
+//     partial index idx_threats_velocity_unstamped (migration 0300) with a KV
+//     keyset cursor. No new cron.
 
 import type { Env } from '../types';
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
@@ -228,6 +234,119 @@ export async function runVelocityBackfill(
     limit,
     offset,
     scanned: page.results.length,
+    written: statements.length,
+    by_flag: byFlag,
+  };
+}
+
+// ─── Scheduled incremental stamping (cube_healer, B3) ────────────────────
+
+/** Rows per scheduled stamping page (cube_healer runs 4×/day → ≤2,000/day). */
+export const VELOCITY_STAMP_PAGE_LIMIT = 500;
+/** KV keyset cursor: the last `threats.id` the stamping page visited. */
+export const VELOCITY_STAMP_CURSOR_KEY = 'velocity_stamp:cursor';
+/** Cursor TTL — long enough to survive a skipped day, short enough that a
+ *  stuck cursor self-resets. */
+const VELOCITY_STAMP_CURSOR_TTL_S = 7 * 24 * 60 * 60;
+
+// Unstamped computable rows, keyset-paged by id. Every predicate is the
+// partial index's own WHERE, so SQLite serves it from
+// idx_threats_velocity_unstamped (an id range seek, no sort). Rows stamped by
+// a previous page have left the index; rows whose velocity is not computable
+// stay in it and are walked past once per cursor cycle.
+//
+// Non-computable backlog — measured, deliberately not tracked (2026-10-14,
+// prod trust-radar-v2, read-only): 11,712 rows carry domain_created_at, all
+// still unstamped (0300 not yet applied). Applying the decide-fn guards in
+// SQL (unparseable timestamp, created year < 1985, negative delta, delta >
+// 500,000 h) matched 0 of them. So the rows that would sit in
+// idx_threats_velocity_unstamped forever are ~0 against a 2,000 rows/day
+// page budget, and a `velocity_checked_at` column + replacement partial
+// index would cost a migration for no read saving. Re-check if
+// cube_healer's velocity_stamp `scanned` stays well above `written` once the
+// initial backlog has drained (≈6 days at 2,000/day) — that gap IS the
+// non-computable population being re-walked each cycle.
+const UNSTAMPED_PAGE_SELECT = `
+  SELECT id, domain_created_at, first_seen
+  FROM threats
+  WHERE domain_created_at IS NOT NULL
+    AND weaponization_flag IS NULL
+    AND id > ?
+  ORDER BY id
+  LIMIT ?
+`;
+
+export interface VelocityStampPageResult {
+  /** Cursor the page started from ('' = start of the index). */
+  cursor_from: string;
+  /** Cursor stored for the next run ('' = cycle complete, restart). */
+  cursor_to: string;
+  scanned: number;
+  written: number;
+  by_flag: FlagDistribution;
+}
+
+/**
+ * One bounded incremental stamping page. Reads ≤`limit` unstamped rows after
+ * the KV cursor, stamps the computable ones via `env.DB`, and advances the
+ * cursor (reset to '' when the page comes back short — the next run starts a
+ * fresh cycle and picks up rows whose domain_created_at landed behind the
+ * cursor).
+ *
+ * Reads go to the PRIMARY (`env.DB`), not a replica: the page selects on
+ * `weaponization_flag IS NULL`, and a lagging replica could hand back rows
+ * this run's previous page already stamped (harmless — idempotent — but it
+ * wastes the bounded page). Same choice as the cube heals in this agent.
+ *
+ * Throws only on a D1 error; the caller records it as a diagnostic.
+ */
+export async function runVelocityStampPage(
+  env: Env,
+  limit: number = VELOCITY_STAMP_PAGE_LIMIT,
+): Promise<VelocityStampPageResult> {
+  const bounded = clampLimit(limit);
+  let cursorFrom = '';
+  try {
+    cursorFrom = (await env.CACHE.get(VELOCITY_STAMP_CURSOR_KEY)) ?? '';
+  } catch {
+    cursorFrom = '';
+  }
+  const page = await env.DB.prepare(UNSTAMPED_PAGE_SELECT)
+    .bind(cursorFrom, bounded)
+    .all<CandidateRow>();
+  const rows = page.results ?? [];
+
+  const byFlag = emptyDistribution();
+  const stmt = env.DB.prepare(UPDATE_SQL);
+  const statements: D1PreparedStatement[] = [];
+  for (const row of rows) {
+    const { weaponization_hours, weaponization_flag } = decideWeaponizationVelocity(
+      row.domain_created_at,
+      row.first_seen,
+    );
+    tallyFlag(byFlag, weaponization_flag);
+    if (weaponization_flag !== null) {
+      statements.push(stmt.bind(weaponization_hours, weaponization_flag, row.id));
+    }
+  }
+  for (let i = 0; i < statements.length; i += WRITE_CHUNK) {
+    await env.DB.batch(statements.slice(i, i + WRITE_CHUNK));
+  }
+
+  // Advance only after the writes landed, so a failed batch re-reads the page.
+  const cursorTo = rows.length < bounded ? '' : rows[rows.length - 1]!.id;
+  try {
+    await env.CACHE.put(VELOCITY_STAMP_CURSOR_KEY, cursorTo, {
+      expirationTtl: VELOCITY_STAMP_CURSOR_TTL_S,
+    });
+  } catch {
+    // Best-effort: a lost cursor restarts the cycle from '' — idempotent.
+  }
+
+  return {
+    cursor_from: cursorFrom,
+    cursor_to: cursorTo,
+    scanned: rows.length,
     written: statements.length,
     by_flag: byFlag,
   };

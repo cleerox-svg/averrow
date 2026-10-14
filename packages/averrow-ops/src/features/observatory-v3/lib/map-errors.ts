@@ -4,6 +4,9 @@
  * or losing the WebGL context — leaves nothing to show; everything else must
  * leave the map on screen.
  *
+ * A URL-less error before `style.load` is treated as the style failing (nothing
+ * else is loading yet); an error with a URL is fatal only if it is the style URL.
+ *
  * A sprite / glyph request lives under the style's directory
  * (`.../dark-matter-gl-style/sprite.json`), so matching on the word "style" is
  * wrong: the error is fatal only when the failed request IS the style document.
@@ -38,6 +41,10 @@ export function classifyMapError(e: MapErrorLike, ctx: MapErrorContext): MapErro
     // A request URL is present: it is the style only if it equals the style URL.
     return ctx.styleUrl && sameResource(url, ctx.styleUrl) ? 'fatal' : 'transient';
   }
-  // No URL: a style parse/validation failure surfaces as "Style ..." from MapLibre itself.
-  return /^style\b/i.test(e.error?.message ?? '') ? 'fatal' : 'transient';
+  // No URL and not a tile / source error. Before `style.load` the only request
+  // in flight IS the style document, so a URL-less error here (a network
+  // TypeError "Failed to fetch", or MapLibre's own "Style ..." parse /
+  // validation failure) means the base style is unavailable. An event with no
+  // error payload at all carries nothing to act on.
+  return e.error ? 'fatal' : 'transient';
 }

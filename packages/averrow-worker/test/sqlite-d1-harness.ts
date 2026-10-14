@@ -18,7 +18,9 @@
  */
 
 import { createRequire } from "node:module";
-import { deriveSchema } from "./migration-schema";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { deriveSchema, splitStatements } from "./migration-schema";
 
 type SqliteStatement = {
   all(...p: unknown[]): unknown[];
@@ -51,8 +53,28 @@ export function openDerivedDb(tables: string[], opts: { indexes?: string[] } = {
   return db;
 }
 
+/**
+ * Fresh in-memory DB built by applying EVERY `migrations/*.sql` file in
+ * order — tables AND indexes, exactly as `d1 migrations apply` would on a
+ * fresh database. Use this (not openDerivedDb, which materialises no
+ * indexes) for EXPLAIN QUERY PLAN pins: the planner's choice depends on the
+ * whole index set, and a plan test that omits a competing index can pass
+ * while production picks a worse plan.
+ */
+export function openMigratedDb(): SqliteDb {
+  const db = new DatabaseSync!(":memory:");
+  db.exec("PRAGMA foreign_keys = OFF");
+  const dir = resolve(__dirname, "..", "migrations");
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+    for (const stmt of splitStatements(readFileSync(resolve(dir, file), "utf8"))) db.exec(stmt);
+  }
+  return db;
+}
+
 export interface StatementLogEntry {
   sql: string;
+  /** Bound parameters (reads), so a test can replay EXPLAIN QUERY PLAN. */
+  binds?: unknown[];
   /** Present when SQLite rejected the statement. */
   error?: string;
   /** Row count for SELECTs. */
@@ -78,7 +100,7 @@ export function d1FromSqlite(raw: SqliteDb, opts: D1Options = {}): D1Database {
     try {
       if (kind === "read") {
         const rows = raw.prepare(sql).all(...bound);
-        log.push({ sql, rows: rows.length });
+        log.push({ sql, binds: bound, rows: rows.length });
         return { rows, changes: 0 };
       }
       const r = raw.prepare(sql).run(...bound);

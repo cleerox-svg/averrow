@@ -211,8 +211,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1535,
-      "last_modified": "2026-10-10T01:46:55.352Z"
+      "loc": 1532,
+      "last_modified": "2026-10-14T03:30:57.190Z"
     },
     {
       "name": "ct-monitor",
@@ -232,7 +232,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/agents/cube-healer.ts",
       "entrypoint": "cubeHealerAgent",
       "triggers": [
-        "cron"
+        "cron",
+        "queue"
       ],
       "reads": [
         "CACHE",
@@ -240,15 +241,17 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "writes": [
+        "agent_events",
         "threat_cube_arcs",
         "threat_cube_brand",
         "threat_cube_geo",
         "threat_cube_provider",
-        "threat_cube_status"
+        "threat_cube_status",
+        "threat_cube_velocity"
       ],
       "ai_models_referenced": [],
-      "loc": 523,
-      "last_modified": "2026-10-14T03:07:31.133Z"
+      "loc": 661,
+      "last_modified": "2026-10-14T04:18:15.392Z"
     },
     {
       "name": "curator",
@@ -353,8 +356,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "push_subscriptions"
       ],
       "ai_models_referenced": [],
-      "loc": 3325,
-      "last_modified": "2026-10-14T01:59:29.041Z"
+      "loc": 3343,
+      "last_modified": "2026-10-14T03:30:57.190Z"
     },
     {
       "name": "geo-campaign-assessment",
@@ -1243,8 +1246,8 @@ export const REPO_MANIFEST: RepoInventory = {
       "path": "packages/averrow-worker/src/feeds/threatfox.ts",
       "source_type": "unknown",
       "schedule": null,
-      "loc": 104,
-      "last_modified": "2026-10-10T01:46:55.368Z"
+      "loc": 128,
+      "last_modified": "2026-10-14T03:30:57.194Z"
     },
     {
       "name": "torExitNodes",

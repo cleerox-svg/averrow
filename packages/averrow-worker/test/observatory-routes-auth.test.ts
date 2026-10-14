@@ -18,8 +18,12 @@
 //      never be served to an anonymous caller.
 //   2. A tenant `client` JWT          → 403, same no-handler guarantee.
 //   3. Staff roles (analyst, auditor) → reach the handler (200).
-//   4. The route table registers exactly the seven known paths, so a
+//   4. The route table registers exactly the sixteen known paths, so a
 //      new observatory route can't slip in without this test noticing.
+//   5. Takedown effectiveness needs `manage_takedowns` (same gate as
+//      /api/admin/takedowns/metrics): takedowns-geo is 403 for sales /
+//      support / billing / auditor without running the handler, and 200
+//      for analyst / admin / super_admin.
 
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
@@ -40,7 +44,24 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/stats?period=7d",
   "/api/observatory/heatmap?period=7d",
   "/api/observatory/operations?limit=5",
+  // Phase B lens endpoints (handlers/observatoryLenses.ts)
+  "/api/observatory/operations-geo?status=active&limit=10",
+  "/api/observatory/movements?period=7d",
+  "/api/observatory/providers-geo?limit=50",
+  "/api/observatory/overindex?period=7d",
+  "/api/observatory/campaigns-geo",
+  "/api/observatory/timeline?period=24h",
+  "/api/observatory/actors",
+  "/api/observatory/actors?actor_id=ta_apt28",
+  "/api/observatory/takedowns-geo?period=30d&by=country",
+  "/api/observatory/velocity-nodes?period=7d&flag=very_fast",
 ] as const;
+
+/** Routes that additionally require a StaffPermission (routes/dashboard.ts). */
+const PERMISSION_GATED = new Set(["/api/observatory/takedowns-geo"]);
+
+/** Observatory cache keys: Phase A raw `observatory_*` + Phase B cachedValue `cv:observatory_lens.*`. */
+const isObservatoryKey = (k: string) => k.startsWith("observatory_") || k.startsWith("cv:observatory_");
 
 // A cached payload that would leak a customer brand if it were ever
 // served to the wrong audience. Returned by CACHE.get for every
@@ -85,7 +106,9 @@ function makeHarness(): Harness {
   const cache = {
     async get(key: string): Promise<string | null> {
       cacheReads.push(key);
-      return key.startsWith("observatory_") ? LEAKY_CACHED : null;
+      if (key.startsWith("observatory_")) return LEAKY_CACHED;
+      if (key.startsWith("cv:observatory_")) return JSON.stringify({ v: JSON.parse(LEAKY_CACHED), t: Date.now() });
+      return null;
     },
     async put(): Promise<void> {},
   };
@@ -122,7 +145,7 @@ async function call(path: string, env: Env, auth?: string): Promise<Response> {
 
 describe("/api/observatory/* — staff-only", () => {
   for (const path of OBSERVATORY_PATHS) {
-    it(`${path.split("?")[0]} rejects anonymous callers 401 without running the handler`, async () => {
+    it(`${path} rejects anonymous callers 401 without running the handler`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env);
       expect(res.status).toBe(401);
@@ -131,27 +154,30 @@ describe("/api/observatory/* — staff-only", () => {
       const body = JSON.parse(text) as Record<string, unknown>;
       expect(body.success).toBe(false);
       expect(body).not.toHaveProperty("data");
-      expect(h.cacheReads.filter((k) => k.startsWith("observatory_"))).toEqual([]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
-    it(`${path.split("?")[0]} rejects a tenant client JWT 403 without running the handler`, async () => {
+    it(`${path} rejects a tenant client JWT 403 without running the handler`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env, await bearer("client"));
       expect(res.status).toBe(403);
       const text = await res.text();
       expect(text).not.toContain("Acme");
-      expect(h.cacheReads.filter((k) => k.startsWith("observatory_"))).toEqual([]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
     });
 
-    it(`${path.split("?")[0]} rejects a forged/invalid token 401`, async () => {
+    it(`${path} rejects a forged/invalid token 401`, async () => {
       const h = makeHarness();
       const res = await call(path, h.env, "Bearer not-a-real-jwt");
       expect(res.status).toBe(401);
       expect(await res.text()).not.toContain("Acme");
     });
 
-    for (const role of ["analyst", "auditor", "super_admin"] as UserRole[]) {
-      it(`${path.split("?")[0]} lets staff role '${role}' through to the handler`, async () => {
+    const staffRoles: UserRole[] = PERMISSION_GATED.has(path.split("?")[0]!)
+      ? ["analyst", "admin", "super_admin"]
+      : ["analyst", "auditor", "super_admin"];
+    for (const role of staffRoles) {
+      it(`${path} lets staff role '${role}' through to the handler`, async () => {
         const h = makeHarness();
         const res = await call(path, h.env, await bearer(role));
         expect(res.status).toBe(200);
@@ -159,10 +185,46 @@ describe("/api/observatory/* — staff-only", () => {
     }
   }
 
-  it("registers exactly the seven known observatory paths, all behind requireStaff", () => {
+  for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+    it(`/api/observatory/takedowns-geo rejects '${role}' (no manage_takedowns) 403 without running the handler`, async () => {
+      const h = makeHarness();
+      const res = await call("/api/observatory/takedowns-geo?period=30d&by=country", h.env, await bearer(role));
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body.success).toBe(false);
+      expect(String(body.error)).toContain("manage_takedowns");
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual([]);
+    });
+  }
+
+  it("providers-geo passes the caller's role: non-holders never read the takedown cache entry", async () => {
+    for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/providers-geo?limit=50", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: Array<{ takedown: unknown }> };
+      expect(body.data.every((p) => p.takedown === null)).toBe(true);
+      expect(h.cacheReads).toContain("cv:observatory_lens.providers_geo_base:50:bp0");
+      expect(h.cacheReads.some((k) => k.includes("providers_geo_takedown"))).toBe(false);
+    }
+    for (const role of ["analyst", "admin", "super_admin"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/providers-geo?limit=50", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      expect(h.cacheReads).toContain("cv:observatory_lens.providers_geo_takedown:90d");
+    }
+  });
+
+  it("takedowns-geo is the only permission-gated observatory route, gated on manage_takedowns", () => {
+    const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
+    const gated = [...src.matchAll(/\["(\/api\/observatory\/[a-z-]+)",\s*\w+,\s*"([a-z_]+)"\]/g)].map((m) => [m[1], m[2]]);
+    expect(gated).toEqual([["/api/observatory/takedowns-geo", "manage_takedowns"]]);
+  });
+
+  it("registers exactly the sixteen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const registered = [...src.matchAll(/"(\/api\/observatory\/[a-z-]+)"/g)].map((m) => m[1]).sort();
-    expect(registered).toEqual(OBSERVATORY_PATHS.map((p) => p.split("?")[0]).sort());
+    expect(registered).toEqual([...new Set(OBSERVATORY_PATHS.map((p) => p.split("?")[0]))].sort());
     // No observatory route may be registered directly against a handler
     // (the pre-fix `router.get("/api/observatory/...", (req, env) => handle…)`).
     expect(src).not.toMatch(/router\.get\(\s*"\/api\/observatory\//);

@@ -206,7 +206,7 @@ export function snappedWindowStart(period: ObservatoryPeriod, now: Date = new Da
   return d.toISOString().replace("T", " ").slice(0, 19);
 }
 
-interface SourceFilter {
+export interface SourceFilter {
   sql: string;
   params: unknown[];
 }
@@ -250,7 +250,7 @@ export function sourceFeedCacheSegment(feed: ObservatorySourceFeed | null): stri
 }
 
 /** SQL filter for a canonical source. Allow-listed, so nothing is bound. */
-function buildSourceFilter(feed: ObservatorySourceFeed | null, alias?: string): SourceFilter {
+export function buildSourceFilter(feed: ObservatorySourceFeed | null, alias?: string): SourceFilter {
   if (!feed) return { sql: "", params: [] };
   const col = alias ? `${alias}.source_feed` : "source_feed";
   if (feed === "feeds") return { sql: ` AND ${col} != 'spam_trap'`, params: [] };

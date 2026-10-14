@@ -1,7 +1,7 @@
 // Cube builder — Phase 2 of the Observatory OLAP rollout.
 //
 // Builds one hour bucket at a time into the hour-bucketed cube tables
-// (threat_cube_geo / _provider / _brand / _status / _arcs).
+// (threat_cube_geo / _provider / _brand / _status / _arcs / _velocity).
 //
 // Each build is ONE atomic db.batch() of two statements:
 //   1. a stale-row sweep — DELETE the hour's cube rows whose key no longer
@@ -114,7 +114,7 @@ function extractRowsWritten(meta: D1Result['meta'] | undefined): number {
 // cube-healer), and the source filter. The sweep SQL is generated from the
 // spec so its key definition cannot drift from the upsert's GROUP BY.
 
-export type CubeName = 'geo' | 'provider' | 'brand' | 'status' | 'arcs';
+export type CubeName = 'geo' | 'provider' | 'brand' | 'status' | 'arcs' | 'velocity';
 
 interface CubeKeySpec {
   table: string;
@@ -125,6 +125,15 @@ interface CubeKeySpec {
 }
 
 const UNKNOWN = (col: string) => `COALESCE(${col}, 'unknown')`;
+
+/** Source predicate of the velocity cube — the SINGLE definition,
+ *  interpolated into both writers: the stale sweep (cubeStaleSweepSQL via
+ *  CUBE_KEY_SPECS.velocity) and cube_healer's guarded upsert (healSQL), so
+ *  both match the partial covering index idx_threats_velocity_fast_created
+ *  (migration 0300). There is no per-hour builder: the cube is heal-only
+ *  (cube_healer), because weaponization flags are stamped after ingest and
+ *  the live hours carry almost none. */
+export const VELOCITY_SOURCE_FILTER = " AND status = 'active' AND weaponization_flag IN ('very_fast', 'fast')";
 
 export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
   geo: {
@@ -158,6 +167,14 @@ export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
     keyExprs: ["COALESCE(country_code, 'XX')", 'target_brand_id', UNKNOWN('threat_type'),
       UNKNOWN('severity'), UNKNOWN('source_feed')],
     sourceFilter: " AND status = 'active' AND lat IS NOT NULL AND lng IS NOT NULL AND target_brand_id IS NOT NULL",
+  },
+  // Weaponization velocity (B3, migration 0300). Heal-only — see
+  // VELOCITY_SOURCE_FILTER for why there is no per-hour builder.
+  velocity: {
+    table: 'threat_cube_velocity',
+    keyCols: ['country_code', 'flag'],
+    keyExprs: ["COALESCE(country_code, 'XX')", 'weaponization_flag'],
+    sourceFilter: VELOCITY_SOURCE_FILTER,
   },
 };
 
@@ -803,3 +820,4 @@ export async function countArcsCubeForHour(
     };
   }
 }
+

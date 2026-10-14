@@ -43,7 +43,8 @@ export const CACHE_REFRESH_MARGIN_S = 1800;
 
 /**
  * Refresh-ahead margin for a key with `ttlSeconds`: min(1800, ttl/2). A warm
- * recomputes only once the key's REMAINING TTL drops below this margin.
+ * recomputes only once the key's REMAINING TTL drops below this margin (plus
+ * the jitter skew — see refreshAfterSeconds).
  *
  * The margin is relative so a short key is not recomputed on every warm: a
  * fixed 1800s margin on a 900s key made every warm a recompute (worse than
@@ -56,9 +57,32 @@ export function refreshMarginSeconds(ttlSeconds: number): number {
   return Math.min(CACHE_REFRESH_MARGIN_S, ttlSeconds / 2);
 }
 
-/** Minimum entry age (s) at which a refresh warm recomputes a key with `ttlSeconds`. */
+/**
+ * Upper bound on the jitter skew subtracted from the refresh threshold.
+ *
+ * A warm cadence that equals the margin lands EXACTLY on the threshold: the
+ * A2 warm (every 900s) on an 1800s key reads the entry at age ≈900s, and
+ * the threshold is 1800 − 900 = 900s. The previous write happened a few
+ * hundred ms LATER in its tick than this read happens in the current one
+ * (handler order, cron start jitter), so the age read back is often 899.x s
+ * — a "hit" — and the next warm is 900s later, after the key has already
+ * expired: a cold gap on the live path every other slot. Subtracting a skew
+ * moves the threshold safely below the cadence so an on-threshold warm
+ * always refreshes.
+ */
+export const CACHE_REFRESH_SKEW_S = 60;
+
+/** Skew for a key with `ttlSeconds`: min(60s, ttl/8) — a 60s key keeps a positive threshold. */
+export function refreshSkewSeconds(ttlSeconds: number): number {
+  return Math.min(CACHE_REFRESH_SKEW_S, ttlSeconds / 8);
+}
+
+/**
+ * Minimum entry age (s) at which a refresh warm recomputes a key with
+ * `ttlSeconds`: ttl − margin − skew (never below 0).
+ */
 export function refreshAfterSeconds(ttlSeconds: number): number {
-  return Math.max(0, ttlSeconds - refreshMarginSeconds(ttlSeconds));
+  return Math.max(0, ttlSeconds - refreshMarginSeconds(ttlSeconds) - refreshSkewSeconds(ttlSeconds));
 }
 
 /** Metadata stored alongside a refreshable KV entry. */
