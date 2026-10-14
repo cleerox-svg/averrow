@@ -68,6 +68,7 @@ import {
   isBridgeKind,
   DEFAULT_HUB_FANOUT_THRESHOLD,
 } from './cluster-components';
+import { notRetiredClusterSql } from './cluster-status';
 
 // ─── Tunable thresholds (all flagged for operator confirm — S2.4 report) ─
 
@@ -481,7 +482,8 @@ export async function detectClusterInfraMovement(
             CASE WHEN substr(ltrim(agent_notes, ' ' || char(9) || char(10) || char(13)), 1, 1) = '{'
                  THEN agent_notes END                         AS agent_notes,
             confidence_score, infra_fingerprint, last_movement_pivot_at
-       FROM infrastructure_clusters`,
+       FROM infrastructure_clusters
+      WHERE ${notRetiredClusterSql()}`,
   ).all<ClusterRow>()).results ?? [];
   result.clustersRead = rows.length;
 

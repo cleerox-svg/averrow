@@ -484,6 +484,31 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         return Response.json({ success: true, data: { ...result, seeded } });
       }
 
+      // GET  /api/internal/nexus/cluster-retirement            — dry-run report
+      // POST /api/internal/nexus/cluster-retirement?dry_run=0&max_clusters=N&max_threats=N
+      // Legacy NEXUS cluster retirement (lib/cluster-retirement.ts). GET is
+      // read-only: legacy (non-`cluster_`) row counts by status, actor-linked
+      // / attributor-processed counts, threats still referencing legacy ids,
+      // and re-point mapping coverage. POST runs ONE bounded batch that moves
+      // threats off legacy / retired cluster ids — re-pointed to the stable
+      // `cluster_asn_<asn>_<type>` row when it exists and is operational,
+      // otherwise released (cluster_id = NULL) for the next NEXUS run. POST
+      // is a DRY RUN unless dry_run=0. Idempotent; loop until data.done.
+      if (url.pathname === '/api/internal/nexus/cluster-retirement' && (request.method === 'GET' || request.method === 'POST')) {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { legacyClusterReport, parseRetirementParams, runClusterRetirementBatch } =
+          await import('./lib/cluster-retirement');
+        if (request.method === 'GET') {
+          return Response.json({ success: true, data: await legacyClusterReport(env.DB) });
+        }
+        const result = await runClusterRetirementBatch(env.DB, parseRetirementParams(url.searchParams));
+        return Response.json({ success: true, data: result });
+      }
+
       // POST /api/internal/dns-queue/prioritize-idp?days=14&limit=500
       // Enqueue / promote IdP-family threats (technique IN
       // IDP_FAMILY_TECHNIQUES) from the last `days` (1..30, default 14)

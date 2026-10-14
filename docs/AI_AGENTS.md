@@ -331,12 +331,40 @@ Kill switch: flip the var back to `'draft'`.
 
 Nexus correlates shared infrastructure into `infrastructure_clusters` rows that represent distinct threat actor operations, via a 6-lane precedence pipeline (most-specific first — first lane to claim a threat wins): cert-serial → cert-SAN → per-IP fan-out → /24 subnet → registrar cohort → ASN (mops up leftovers). The cert lanes run first because shared certificate identity is near-conclusive same-operator evidence; the ASN pass runs last even though it's the oldest lane. Pivot detection emits immediate events for Observer.
 
+**One lane implementation (2026-10-14):** the six threats-table lanes live in `lib/nexus-threat-lanes.ts` (`runCertSerialLane` … `runAsnLane`, then `retireNonOperationalLaneClusters`). The workflow wraps each in its own `step.do`; the agent calls the same functions. Parity is pinned by `test/nexus-lane-parity.test.ts`: it checks call order and that neither file contains lane SQL, then runs both paths over identical seeded databases and compares the resulting rows.
+
+**Cluster-quality rules (owner-approved 2026-10-14):**
+- **Shared infrastructure.** `lib/shared-infra-asns.ts` (`SHARED_INFRA_ASNS`) lists 19 networks: CDNs, hyperscalers, mass hosters, parking and site builders. A cluster keyed only on one of these ASNs is not operator evidence. Cert, IP and /24 clusters on them still are. The same file holds the one ASN normaliser (`asnKey`, SQL twin `asnKeySql`) used by the NEXUS lanes, cluster retirement and the Observatory operations-geo classifier.
+- **ASN lane.**
+  - Groups only `status='active'` threats, so `threat_count` matches what can be stamped.
+  - Normalises ASN strings to `AS<digits>`, so `"AS13335 Cloudflare, Inc."` becomes `AS13335`. The stamp matches every raw spelling in the group.
+  - Skips `SHARED_INFRA_ASNS` and the IP-reputation types `scanning` and `malicious_ip`.
+  - Caps confidence at 40 (`computeAsnClusterConfidence`). Score rises with country concentration, campaign overlap and volume, and drops when a group spans more than 50 brands.
+  - The dormancy-pivot gate is now `>= 25`, because the old `> 40` gate can no longer fire. The agent-only `intel_predictive` gate is now `>= 35`, down from 70.
+- **Per-IP lane.**
+  - Candidates need at most `DEFAULT_HUB_FANOUT_THRESHOLD` (150) brands.
+  - Excludes threats on shared-infra ASNs; an unknown ASN still qualifies.
+  - Ranks by threat count.
+  - Confidence comes from volume and single-network hosting. Breadth is no longer rewarded: the score drops when a cluster nears the hub threshold.
+  - The stamp now applies the same filter as the select.
+- **/24 lane.** Uses `SHARED_INFRA_ASNS` in place of the old 5-ASN CDN literal. The stamp now applies the same filter; before, it claimed CDN members the grouping had excluded.
+- **Names describe the evidence** (`lib/cluster-naming.ts`): `AS4837 · malware distribution`, `Cert SAN 85bbc2… · 370 domains`, `IP 203.0.113.7 · 14 brands`, `Subnet 74.115.51.0/24 · 6 IPs`. Names no longer start with an arbitrary country.
+- **`country_counts`** (migration 0302) holds `{CC: n}` for the top 20 countries. Each lane fills it in the same scan by tallying a non-distinct `GROUP_CONCAT(country_code)`. Adding country to the `GROUP BY` instead would break the lanes' `COUNT(DISTINCT …)` aggregates and their HAVING/LIMIT bounds.
+- **Retired statuses** (`lib/cluster-status.ts`):
+  - `superseded`: legacy random-UUID duplicates (migration 0303), plus `cluster_asn_*` rows keyed on a malformed ASN.
+  - `shared_infra`: ASN-only rows on shared infrastructure, IP-reputation rows, and per-IP hub rows.
+  - Each run, `retireNonOperationalLaneClusters` flips stale ASN and per-IP rows to these statuses. A per-IP row that qualifies again is reactivated.
+  - Every reader excludes both statuses: Attributor, Attribution Backlog, Operations, Observatory, actor lenses, components, infra-movement, OTX inheritance, milestones and diagnostics. `test/cluster-retirement.test.ts` checks this statically.
+  - Retired rows keep `actor_id`, counts and notes, so retirement can be undone.
+  - `GET /api/observatory/operations-geo` drops retired rows for both `status` values, and `include_shared=1` does not bring them back. Its request-time `shared_infra`/`hub`/`ip_reputation` flags only catch rows NEXUS has not re-evaluated yet.
+  - Threats still stamped to retired ids are moved by the bounded internal job `POST /api/internal/nexus/cluster-retirement` (`lib/cluster-retirement.ts`). It runs as a dry run unless `dry_run=0` is passed.
+
 **Connected-components post-pass (S2.4 / D5a):** after all six lanes finish, `lib/cluster-components.ts`'s `groupClusterComponents()` runs as a pure-SQL, no-AI post-pass that groups the per-key `infrastructure_clusters` rows a single operator spans (e.g. one cert-serial cluster + one per-IP cluster) into a transitive component, stamping `infrastructure_clusters.component_id`. Edges are **specific-evidence only** — cert-serial / cert-SAN / per-IP clusters may bridge; ASN / /24 / registrar clusters are receive-only leaves and can never connect two bridges (the over-merge trap). A hub-fan-out exclusion (>150 brands) and a 25-cluster component-size cap both fail safe toward under-merge. `component_id` is derived deterministically from the minimum bridge-cluster id, so it's stable run-over-run and identical whether Nexus ran via the agent-module fallback or the `NEXUS_RUN` workflow. Wired identically into both `agents/nexus.ts` and `workflows/nexusRun.ts`. Purely additive: it does not touch `threats.cluster_id` stamping or `lib/cluster-attribution-inherit.ts`, and does not widen the `asns` array the Attributor's `asns.length>=3` auto-Haiku gate reads.
 
 **Infrastructure-movement pivot (S2.4 / D5b):** a second post-pass, `lib/cluster-components.ts`'s sibling `lib/cluster-infra-movement.ts`'s `detectClusterInfraMovement()`, diffs each **bridge-kind** cluster's (cert-serial / cert-SAN / per-IP only — same parity rationale as D5a) current infra set (IPs/ASNs/cert-serials, from member threats) against its stored `infrastructure_clusters.infra_fingerprint` and emits a SECOND `pivot_detected` trigger (`payload_json.kind='infra_movement'`, same event_type/target_agent as the existing dormancy trigger — no new dispatch wiring) when a cluster gains new infra. Flood-controlled: requires a prior fingerprint snapshot, confidence > 40 + hub exclusion, growth thresholds (≥1 new ASN / ≥3 new IPs / ≥2 new serials), 24h per-cluster cooldown, per-run cap of 5, and an over-cap skip (>256 distinct elements in any dimension). Wired identically into both `agents/nexus.ts` and `workflows/nexusRun.ts`. Additive, no AI — does not touch `threats.cluster_id` or the dormancy signal. Migration `0241`.
 
 **Inputs:** Enriched threats, certificates, providers
-**Outputs:** `infrastructure_clusters` rows; `infrastructure_clusters.component_id` (D5a post-pass); `infrastructure_clusters.infra_fingerprint` / `infra_fingerprint_at` / `last_movement_pivot_at` (D5b post-pass); `pivot_detected` event (kind `dormancy` or `infra_movement`). (`cluster_detected` is declared in the event-type union but never emitted anywhere in code — see CLAUDE.md §6.)
+**Outputs:** `infrastructure_clusters` rows (incl. `country_counts`, migration 0302; retired rows flipped to `superseded` / `shared_infra`); `infrastructure_clusters.component_id` (D5a post-pass); `infrastructure_clusters.infra_fingerprint` / `infra_fingerprint_at` / `last_movement_pivot_at` (D5b post-pass); `pivot_detected` event (kind `dormancy` or `infra_movement`). (`cluster_detected` is declared in the event-type union but never emitted anywhere in code — see CLAUDE.md §6.)
 
 ---
 

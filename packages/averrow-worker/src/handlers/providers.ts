@@ -3,6 +3,7 @@
 
 import { json } from "../lib/cors";
 import type { Env } from "../types";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 
 // GET /api/providers/stats (top providers by threat count)
 export async function handleProviderStats(request: Request, env: Env): Promise<Response> {
@@ -305,6 +306,7 @@ export async function handleProviderIntelligence(request: Request, env: Env): Pr
         SELECT COUNT(*) AS total_clusters,
                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_clusters
         FROM infrastructure_clusters
+       WHERE ${notRetiredClusterSql()}
       `).first(),
     ]);
 
@@ -492,6 +494,7 @@ export async function handleListClusters(request: Request, env: Env): Promise<Re
       SELECT id, cluster_name, asns, countries, threat_count, status,
              confidence_score, agent_notes, first_detected, last_seen, last_updated
       FROM infrastructure_clusters
+      WHERE ${notRetiredClusterSql()}
       ORDER BY threat_count DESC
       LIMIT ?
     `).bind(limit).all();
@@ -519,7 +522,7 @@ export async function handleProviderClusters(request: Request, env: Env, provide
       SELECT id, cluster_name, asns, countries, threat_count, status,
              confidence_score, agent_notes, first_detected, last_seen
       FROM infrastructure_clusters
-      WHERE asns LIKE ?
+      WHERE asns LIKE ? AND ${notRetiredClusterSql()}
       ORDER BY threat_count DESC
     `).bind(`%${provider.asn}%`).all();
 

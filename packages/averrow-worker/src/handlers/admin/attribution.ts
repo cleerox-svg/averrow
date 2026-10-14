@@ -15,6 +15,7 @@ import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
+import { notRetiredClusterSql } from "../../lib/cluster-status";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
@@ -77,7 +78,8 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
                attribution_attempted_at, nexus_brief, agent_notes
           FROM infrastructure_clusters
          WHERE actor_id IS NULL
-           AND attribution_dismissed_at IS NULL${like ? " AND (cluster_name LIKE ? OR asns LIKE ? OR countries LIKE ?)" : ""}
+           AND attribution_dismissed_at IS NULL
+           AND ${notRetiredClusterSql()}${like ? " AND (cluster_name LIKE ? OR asns LIKE ? OR countries LIKE ?)" : ""}
          ORDER BY threat_count DESC
          LIMIT ? OFFSET ?
       `);
@@ -114,6 +116,7 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
                     AND attribution_dismissed_at IS NOT NULL
                    THEN 1 ELSE 0 END)                                    AS dismissed
         FROM infrastructure_clusters
+       WHERE ${notRetiredClusterSql()}
       `).first<{
         total_clusters: number;
         unattributed: number;

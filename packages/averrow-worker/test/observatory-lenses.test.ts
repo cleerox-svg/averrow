@@ -419,14 +419,14 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
       edges: [{ a: "cluster_ip_1.2.3.4", b: "cluster_cert_s1", kind: "per_ip", shared_asns: ["AS2"] }],
     }]);
     expect(log.every((l) => !l.error)).toBe(true);
-    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo.v3:active:3:s0"]);
+    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo.v4:active:3:s0"]);
 
     const all = await body<{ operations: OperationGeo[] }>(await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=all&limit=999"), env));
     expect(all.data.operations.map((o) => o.id)).toEqual([
       "cluster_cert_s1", "cluster_ip_1.2.3.4", "cluster_subnet_dormant", "cluster_asn_as9_x",
       "cluster_ip_5.5.5.5", // per-IP with < 10 threats → residue tier
     ]);
-    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo.v3:all:50:s0");
+    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo.v4:all:50:s0");
 
     const bad = await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=dormant"), env);
     expect(bad.status).toBe(400);
@@ -475,6 +475,13 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     cluster(raw, { id: "cluster_ip_8.8.4.4", threat_count: 4 });
     cluster(raw, { id: "cluster_registrar_dormant", threat_count: 300, status: "dormant" });
     cluster(raw, { id: "ffffffff-legacy-member", threat_count: 80_000, component_id: "component_cluster_cert_san1" });
+    // NEXUS-retired stable rows (lib/cluster-status.ts) — not operations, so
+    // absent under every status and under include_shared, and never counted
+    // in meta.excluded / meta.scanned.
+    cluster(raw, { id: "cluster_asn_as13335_phishing", threat_count: 9000, asns: '["AS13335"]', attack_types: '["phishing"]', status: "shared_infra" });
+    cluster(raw, { id: "cluster_ip_9.9.9.9", threat_count: 8000, brand_ids: JSON.stringify(Array.from({ length: 200 }, (_, i) => `b${i}`)), status: "shared_infra" });
+    cluster(raw, { id: "cluster_asn_as13335 cloudflare, inc._phishing", threat_count: 7000, asns: '["AS13335 Cloudflare, Inc."]', status: "superseded" });
+    const retiredIds = ["cluster_asn_as13335_phishing", "cluster_ip_9.9.9.9", "cluster_asn_as13335 cloudflare, inc._phishing"];
     const { env, kv } = makeEnv(raw);
 
     const res = await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo"), env);
@@ -518,18 +525,25 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     expect(all.data.operations.map((o) => o.id)).toContain("cluster_registrar_dormant");
     expect(all.data.operations.every((o) => o.id.startsWith("cluster_"))).toBe(true);
     expect(all.meta).toMatchObject({ scanned: 10 });
+    const allShared = await body<{ operations: OperationGeo[] }>(
+      await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=all&include_shared=1&limit=50"), env));
+    for (const resp of [b, shared, sharedAll, all, allShared]) {
+      expect(resp.data.operations.some((o) => retiredIds.includes(o.id))).toBe(false);
+    }
+    expect(allShared.meta).toMatchObject({ scanned: 10, excluded: { shared_asn: 2, hub_ip: 1, ip_reputation: 1 } });
 
     expect(lensKeys(kv).sort()).toEqual([
-      "cv:observatory_lens.operations_geo.v3:active:25:s0",
-      "cv:observatory_lens.operations_geo.v3:active:4:s1",
-      "cv:observatory_lens.operations_geo.v3:active:50:s1",
-      "cv:observatory_lens.operations_geo.v3:all:25:s0",
+      "cv:observatory_lens.operations_geo.v4:active:25:s0",
+      "cv:observatory_lens.operations_geo.v4:active:4:s1",
+      "cv:observatory_lens.operations_geo.v4:active:50:s1",
+      "cv:observatory_lens.operations_geo.v4:all:25:s0",
+      "cv:observatory_lens.operations_geo.v4:all:50:s1",
     ]);
     for (const bad of ["2", "true", "yes", "-1"]) {
       const r = await handleObservatoryOperationsGeo(req(`/api/observatory/operations-geo?include_shared=${bad}`), env);
       expect(r.status).toBe(400);
     }
-    expect(lensKeys(kv)).toHaveLength(4);
+    expect(lensKeys(kv)).toHaveLength(5);
     expect(OPERATIONS_GEO_SCAN_CAP).toBeGreaterThanOrEqual(1000);
   });
 

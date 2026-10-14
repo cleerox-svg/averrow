@@ -42,6 +42,7 @@ import {
   type ClusterKind,
 } from "../lib/cluster-components";
 import { isSharedInfraAsn } from "../lib/shared-infra-asns";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 import {
   OBSERVATORY_PERIODS,
   type ObservatoryPeriod,
@@ -281,6 +282,16 @@ function severitySums(severityCol: string, countExpr: string): string {
 //                  bridge through).
 //   ip_reputation  asn kind whose primary attack type is scanning /
 //                  malicious_ip (IP-reputation feed noise, not an operation).
+// Retired rows (status superseded / shared_infra, lib/cluster-status.ts) are
+// filtered in SQL for BOTH statuses (`+c.status NOT IN (…)` for status=all,
+// unary + for the same PK-range reason) and are never returned — not even
+// under include_shared. NEXUS retirement (decideLaneRowRetirement,
+// lib/nexus-threat-lanes.ts) covers every population this classifier flags
+// (ASN-only on shared infra, IP-reputation ASN groups, hub per-IP) and also
+// per-IP rows on shared ASNs, so after a NEXUS run the request-time flags below are a backstop
+// for rows NEXUS has not re-evaluated yet; retired rows are kept for audit /
+// reversibility, not as low-evidence operations, and are inspected through
+// the admin cluster views, not this lens.
 // Default excludes all three (counted once each in meta.excluded, first
 // match of shared_asn → hub_ip → ip_reputation); include_shared=1 returns the
 // normal top-`limit` PLUS the excluded rows (top OPERATIONS_GEO_SHARED_CAP by
@@ -636,13 +647,19 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
   const includeShared = sharedFlag === "1";
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), OPERATIONS_GEO_DEFAULT_LIMIT, OPERATIONS_GEO_MAX_LIMIT);
 
-  // `.v3` — shared rows appended under include_shared; older keys
-  // (`operations_geo:<status>:<limit>`) are never read again and expire.
+  // `.v4` — status=all stops returning NEXUS-retired rows (superseded /
+  // shared_infra); `.v3` added include_shared. Older keys are never read
+  // again and expire.
   return serveLens(request, env, "observatory_operations_geo",
-    `${CACHE_NS}.operations_geo.v3:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
+    `${CACHE_NS}.operations_geo.v4:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
     async (session, tally) => {
       // `+c.status`: keep the planner on the PK range (see block comment).
-      const statusFilter = status === "active" ? "AND +c.status = 'active'" : "";
+      // `active` already excludes the retired statuses; `all` excludes them
+      // explicitly (superseded / shared_infra rows are not operations —
+      // lib/cluster-status.ts).
+      const statusFilter = status === "active"
+        ? "AND +c.status = 'active'"
+        : `AND ${notRetiredClusterSql("c", { unindexed: true })}`;
       const rows = await session.prepare(`
         SELECT c.id, c.cluster_name, c.component_id, c.status, c.confidence_score,
                c.threat_count, c.countries, c.asns, c.last_seen, c.last_movement_pivot_at,
@@ -1360,7 +1377,8 @@ export async function handleObservatoryActors(request: Request, env: Env): Promi
       async (session, tally) => {
         const rows = await session.prepare(`
           SELECT a.id, a.name,
-            (SELECT COUNT(*) FROM infrastructure_clusters c WHERE c.actor_id = a.id) AS cluster_count,
+            (SELECT COUNT(*) FROM infrastructure_clusters c
+              WHERE c.actor_id = a.id AND ${notRetiredClusterSql("c")}) AS cluster_count,
             (SELECT COUNT(*) FROM threat_actor_infrastructure i WHERE i.threat_actor_id = a.id) AS infra_count
           FROM threat_actors a
           ORDER BY cluster_count DESC, infra_count DESC, a.name, a.id
@@ -1401,7 +1419,7 @@ export async function handleObservatoryActors(request: Request, env: Env): Promi
         session.prepare(`
           SELECT id, countries, asns, confidence_score
           FROM infrastructure_clusters
-          WHERE actor_id = ?
+          WHERE actor_id = ? AND ${notRetiredClusterSql()}
           ORDER BY threat_count DESC, id
           LIMIT ${ACTOR_CLUSTERS_LIMIT}
         `).bind(actorId).all<{ id: string; countries: string | null; asns: string | null; confidence_score: number | null }>(),
