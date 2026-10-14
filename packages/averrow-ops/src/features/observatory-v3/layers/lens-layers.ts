@@ -5,20 +5,26 @@
  *   - buildLensBaseLayers   — the choropleth, drawn UNDER everything else. Static:
  *                             built in a memo, never per frame.
  *   - buildLensLayers       — everything else, rebuilt each frame with the new
- *                             `seconds` / playhead. Each layer's DATA and accessors
- *                             are stable (they come from memoised models), so a
- *                             frame only changes uniforms (animTime, currentTime).
+ *                             `seconds` / playhead. EVERY layer's `data` array is
+ *                             either a model field or comes out of a memo keyed on
+ *                             (model[, selection]) (see ./memo.ts, ./lens-labels.ts),
+ *                             so its identity is the same on every frame and a frame
+ *                             changes uniforms only (animTime, currentTime).
+ *                             layers/lens-layers.test.ts pins this.
  *
  * Selection never rebuilds geometry: it changes a colour/width accessor through
- * `updateTriggers`, which deck re-evaluates once per selection change.
+ * `updateTriggers`, which deck re-evaluates once per selection change (and eases
+ * over COLOR_TRANSITION_MS via `transitions`).
  *
  * Reduced motion: pulses get amplitude 0, dashes become solid, trails are
- * replaced by static numbered paths. Nothing animates and nothing is hidden.
+ * replaced by static numbered paths, colour transitions are instant. Nothing
+ * animates and nothing is hidden.
  */
 
 import { GeoJsonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
 import { TripsLayer } from '@/lib/trips-layer';
+import type { LngLat } from '@/lib/country-centroids';
 import type { LayerToggles } from '../lib/lenses';
 import type { Measure } from '../lib/url-state';
 import type { Rgba } from '../lib/map-colors';
@@ -27,18 +33,23 @@ import { highlightGroup, isDimmed } from '../lib/lens/operations';
 import type { HostingModel, ProviderRing } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
 import type { BaselineModel } from '../lib/lens/baseline';
-import { NO_DATA_COLOR } from '../lib/lens/baseline';
+import { NO_DATA_COLOR, NO_BASELINE_OUTLINE, formatRatio } from '../lib/lens/baseline';
+import type { BotShareModel } from '../lib/lens/bot-share';
+import { botHover } from '../lib/lens/bot-share';
 import type { CampaignsModel, CampaignArc } from '../lib/lens/campaigns';
 import type { ActorModel, ActorCountry, ActorEdge } from '../lib/lens/actors';
 import { confidenceBand } from '../lib/lens/actors';
 import type { MovementModel, MovementHop, MovementPulse } from '../lib/lens/movement';
 import { HOP_UNITS, hopLabel } from '../lib/lens/movement';
+import { countryCenter } from '../lib/lens/placement';
 import { countryName } from '../lib/country-name';
-import { formatRatio } from '../lib/lens/baseline';
+import { COLOR_TRANSITION_MS } from '../lib/motion';
 import {
   PulseExtension, RingMaskExtension, DashFlowExtension,
   type PulseExtensionProps, type RingMaskExtensionProps, type DashFlowExtensionProps,
 } from '../anim';
+import { memoByModel, memoByModelAndKey } from './memo';
+import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel } from './lens-labels';
 
 // ─── Types shared with ThreatMapV3 ──────────────────────────
 
@@ -61,7 +72,8 @@ export interface LensHover { x: number; y: number; title: string; lines: string[
 /** Stable handler bag (built once per map instance). */
 export interface LensPickHandlers {
   hover: (hover: LensHover | null) => void;
-  click: (pick: LensPick) => boolean;
+  /** `at` is the pointer position, for handlers that pin a tooltip (touch). */
+  click: (pick: LensPick, at?: { x: number; y: number }) => boolean;
 }
 
 export interface LensSelection {
@@ -83,11 +95,15 @@ export interface LensLayerInput {
   hosting: HostingModel | null;
   baseline: BaselineModel | null;
   measure: Measure;
+  /** Radar bot share per country (Baseline lens, Bot share measure). */
+  bot: BotShareModel | null;
   countries: CountryCollection | null;
   campaigns: CampaignsModel | null;
   actors: ActorModel | null;
   movement: MovementModel | null;
   sel: LensSelection;
+  /** Labels that fit at the current camera (placed by the map when it settles). */
+  labels: PlacedLabels;
   reducedMotion: boolean;
   isMobile: boolean;
   pick: LensPickHandlers;
@@ -105,29 +121,81 @@ export interface LensFrame {
 const CYAN: Rgba = [122, 234, 255, 255];
 const AMBER: Rgba = [229, 168, 50, 255];
 const VIOLET: Rgba = [167, 139, 250, 255];
+const SLATE: Rgba = [148, 163, 184, 255];
 const FUCHSIA: Rgba = [240, 171, 252, 255];
 const PINK: Rgba = [244, 114, 182, 255];
 const TEXT_OUTLINE: Rgba = [8, 12, 22, 235];
 const TEXT_COLOR: Rgba = [226, 232, 240, 235];
+const COUNTRY_LINE: Rgba = [148, 163, 184, 46];
+const BOT_ABOVE_LINE: Rgba = [255, 255, 255, 210];
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+/** Label size (px). Nothing on the map is set smaller than 10. */
+const LABEL_PX = 11;
 
 const withAlpha = (c: Rgba, a: number): Rgba => [c[0], c[1], c[2], a];
 const SOLID_DASH = 1e6;
-const DIM = 0.22;
 
 const PULSE_EXT = [new PulseExtension()];
 const MASK_EXT = [new RingMaskExtension()];
 const DASH_EXT = [new DashFlowExtension()];
 
-type PickInfo<T> = PickingInfo<T>;
+// Constant prop objects: the same reference every frame, so deck's shallow prop diff is a no-op.
+const T = COLOR_TRANSITION_MS;
+const FILL_CROSSFADE = { getFillColor: 600 } as const;
+const TR_PATH = { getColor: T, getWidth: T } as const;
+const TR_DOT = { getFillColor: T, getLineColor: T, getLineWidth: T } as const;
+const TR_FILL = { getFillColor: T } as const;
+const TR_RING = { getRadius: 500, getFillColor: 500, getLineColor: T, getLineWidth: T } as const;
+
+type PickInfo<D> = PickingInfo<D>;
 /** The GeoJSON shape GeoJsonLayer accepts (its own `geojson` types aren't a dependency of this package). */
 type GeoData = NonNullable<ConstructorParameters<typeof GeoJsonLayer>[0]>['data'];
 
 function posNode(d: { position: [number, number] }): [number, number] { return d.position; }
 
+// ─── Memoised derived data (never computed in the frame path) ──
+
+const subsetFor = memoByModelAndKey((countries: CountryCollection, code: string) => ({
+  type: 'FeatureCollection' as const,
+  features: countries.features.filter(f => String(f.id) === code),
+}));
+
+/** Countries Radar has no baseline for, as one collection (outlined instead of filled). */
+const noBaselineShapes = memoByModelAndKey((baseline: BaselineModel, countries: CountryCollection) => ({
+  type: 'FeatureCollection' as const,
+  features: countries.features.filter(f => {
+    const row = baseline.rows.get(String(f.id));
+    return !!row && row.ratio === null;
+  }),
+}));
+
+const hostingParts = memoByModel((m: HostingModel) => ({
+  bullet: m.rings.filter(r => r.bulletproof),
+  withTakedown: m.rings.filter(r => r.takedownShare !== null),
+}));
+
+const opsMax = memoByModel((m: OperationsModel) => m.nodes.reduce((x, n) => Math.max(x, n.threats), 0));
+
+const campaignMarkers = memoByModel((m: CampaignsModel) => {
+  // One marker per country, at the country's OWN centroid. (The arc's last vertex can sit on an
+  // unwrapped branch past 180 degrees, so it is not the place to read an endpoint from.)
+  const adversaries = new Map<string, LngLat>();
+  const targets = new Map<string, LngLat>();
+  for (const a of m.arcs) {
+    const from = countryCenter(a.from);
+    const to = countryCenter(a.to);
+    if (from) adversaries.set(a.from, from);
+    if (to) targets.set(a.to, to);
+  }
+  const toList = (map: Map<string, LngLat>) => [...map.entries()].map(([cc, position]) => ({ cc, position }));
+  return { adversaries: toList(adversaries), targets: toList(targets) };
+});
+
+const movementStaticHops = memoByModel((m: MovementModel) => m.hops.filter(h => !h.id.endsWith(':w')));
+
 // ─── Baseline (under everything) ────────────────────────────
 
-const countryTip = (code: string, model: BaselineModel | null, measure: Measure): LensHover | null => {
+const countryTip = (code: string, model: BaselineModel | null, measure: Measure): LensHover => {
   const row = model?.rows.get(code);
   const lines: string[] = [];
   if (row) {
@@ -140,10 +208,18 @@ const countryTip = (code: string, model: BaselineModel | null, measure: Measure)
   return { x: 0, y: 0, title: countryName(code) || code, lines };
 };
 
+const botTip = (code: string, bot: BotShareModel | null): LensHover => {
+  const row = bot?.rows.get(code);
+  if (!row) return { x: 0, y: 0, title: countryName(code) || code, lines: ['no Radar bot-share data'] };
+  const h = botHover(row, bot?.globalAvg ?? null);
+  return { x: 0, y: 0, title: h.title, lines: h.lines };
+};
+
 export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
-  const { layers, baseline, countries, measure, sel, reducedMotion, pick } = input;
+  const { layers, baseline, bot, countries, measure, sel, reducedMotion, pick } = input;
   if (!layers.baseline || !countries || countries.features.length === 0) return [];
-  const colors = baseline ? (measure === 'index' ? baseline.indexColors : baseline.rawColors) : null;
+  const isBot = measure === 'bot';
+  const colors = isBot ? bot?.colors ?? null : baseline ? (measure === 'index' ? baseline.indexColors : baseline.rawColors) : null;
   const out: Layer[] = [
     new GeoJsonLayer<{ n: string }>({
       id: 'baseline-countries',
@@ -151,34 +227,51 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
       stroked: true,
       filled: true,
       getFillColor: f => colors?.get(String(f.id)) ?? NO_DATA_COLOR,
-      getLineColor: [148, 163, 184, 46],
-      getLineWidth: 0.5,
+      getLineColor: f => (isBot && bot?.above.has(String(f.id)) ? BOT_ABOVE_LINE : COUNTRY_LINE),
+      getLineWidth: f => (isBot && bot?.above.has(String(f.id)) ? 1.4 : 0.5),
       lineWidthUnits: 'pixels',
       pickable: true,
       autoHighlight: true,
       highlightColor: [255, 255, 255, 38],
-      // The raw <-> over-index switch crossfades the fill (deck interpolates the colour attribute).
-      transitions: reducedMotion ? undefined : { getFillColor: 600 },
-      updateTriggers: { getFillColor: [measure, baseline] },
+      // The over-index <-> raw <-> bot switch crossfades the fill (deck interpolates the colour attribute).
+      transitions: reducedMotion ? undefined : FILL_CROSSFADE,
+      updateTriggers: {
+        getFillColor: [measure, isBot ? bot : baseline],
+        getLineColor: [measure, bot],
+        getLineWidth: [measure, bot],
+      },
       onHover: info => {
         const f = info.object;
         if (!f) { pick.hover(null); return; }
-        const tip = countryTip(String(f.id), baseline, measure);
-        pick.hover(tip ? { ...tip, x: info.x, y: info.y } : null);
+        const code = String(f.id);
+        const tip = isBot ? botTip(code, bot) : countryTip(code, baseline, measure);
+        pick.hover({ ...tip, x: info.x, y: info.y });
       },
       onClick: info => {
         const f = info.object;
         if (!f) return false;
-        return pick.click({ kind: 'country', id: String(f.id) });
+        return pick.click({ kind: 'country', id: String(f.id) }, { x: info.x, y: info.y });
       },
     }),
   ];
+  if (!isBot && baseline) {
+    const shapes = noBaselineShapes(baseline, countries);
+    if (shapes.features.length > 0) {
+      out.push(new GeoJsonLayer<{ n: string }>({
+        id: 'baseline-no-baseline',
+        data: shapes as GeoData,
+        stroked: true, filled: false,
+        getLineColor: NO_BASELINE_OUTLINE, getLineWidth: 1.1, lineWidthUnits: 'pixels',
+        pickable: false,
+      }));
+    }
+  }
   if (sel.country) {
-    const f = countries.features.filter(x => String(x.id) === sel.country);
-    if (f.length > 0) {
+    const f = subsetFor(countries, sel.country);
+    if (f.features.length > 0) {
       out.push(new GeoJsonLayer<{ n: string }>({
         id: 'baseline-selected',
-        data: { type: 'FeatureCollection', features: f } as GeoData,
+        data: f as GeoData,
         stroked: true, filled: false,
         getLineColor: AMBER, getLineWidth: 2, lineWidthUnits: 'pixels',
         pickable: false,
@@ -197,12 +290,35 @@ function opNodeRadius(n: OpNode, maxThreats: number): number {
   return 6 + 10 * Math.min(1, f);
 }
 
+/** Pixel radius an operation node's bloom is drawn at (edge labels keep clear of it). */
+export function opNodePx(n: OpNode, maxThreats: number): number {
+  return opNodeRadius(n, maxThreats) * 2.1;
+}
+
+/** Largest operation size, the denominator for node radii (memoised). */
+export function opsMaxThreats(m: OperationsModel): number {
+  return opsMax(m);
+}
+
+function labelStyle() {
+  return {
+    sizeUnits: 'pixels' as const,
+    getColor: TEXT_COLOR,
+    outlineWidth: 3,
+    outlineColor: TEXT_OUTLINE,
+    fontFamily: MONO,
+    fontSettings: { sdf: true },
+    characterSet: 'auto' as const,
+    pickable: false,
+  };
+}
+
 function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.operations;
   if (!m || m.nodes.length === 0) return [];
-  const { sel, reducedMotion, pick } = input;
+  const { sel, reducedMotion, pick, labels } = input;
   const group = highlightGroup(m, sel.opId);
-  const maxThreats = m.nodes.reduce((x, n) => Math.max(x, n.threats), 0);
+  const maxThreats = opsMax(m);
   const animTime = reducedMotion ? 0 : frame.seconds;
   const out: Layer[] = [];
 
@@ -222,7 +338,9 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       gap: reducedMotion ? 0 : 1.5,
       speed: reducedMotion ? 0 : 2.4,
       animTime,
+      transitions: reducedMotion ? undefined : TR_PATH,
       updateTriggers: { getColor: group, getWidth: group },
+      // Full evidence lives here (and in the drawer); the map label is the short form.
       onHover: (info: PickInfo<OpEdge>) => pick.hover(info.object
         ? { x: info.x, y: info.y, title: info.object.label, lines: info.object.opIds.map(id => m.byId.get(id)?.name ?? id) }
         : null),
@@ -245,8 +363,9 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
       id: 'ops-bloom',
-      getRadius: (n: OpNode) => opNodeRadius(n, maxThreats) * 2.1,
+      getRadius: (n: OpNode) => opNodePx(n, maxThreats),
       getFillColor: (n: OpNode) => withAlpha(CYAN, isDimmed(n.group, group) ? 6 : 34),
+      transitions: reducedMotion ? undefined : TR_FILL,
       updateTriggers: { ...shared.updateTriggers, getFillColor: group },
     }),
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
@@ -259,6 +378,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getLineWidth: (n: OpNode) => (n.opId === sel.opId ? 2.5 : 1.2),
       lineWidthUnits: 'pixels',
       pickable: true,
+      transitions: reducedMotion ? undefined : TR_DOT,
       updateTriggers: { ...shared.updateTriggers, getFillColor: group, getLineColor: [group, sel.opId], getLineWidth: sel.opId },
       onHover: (info: PickInfo<OpNode>) => pick.hover(info.object
         ? {
@@ -271,27 +391,18 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     }),
   );
 
-  // Edge labels: all of them while there are few, otherwise only the selected component's.
-  const labelled = m.edges.filter(e => (group ? e.group === group : m.edges.length <= 10));
-  if (labelled.length > 0) {
-    out.push(new TextLayer<OpEdge>({
+  // Edge evidence: short ("◆ cert"), one per operation, laid along the edge, de-duplicated in screen space.
+  if (labels.edges.length > 0) {
+    out.push(new TextLayer<PlacedEdgeLabel>({
       id: 'ops-edge-labels',
-      data: labelled,
-      getPosition: (e: OpEdge) => e.midpoint,
-      getText: (e: OpEdge) => e.label,
-      getSize: 11,
-      sizeUnits: 'pixels',
-      getColor: TEXT_COLOR,
-      outlineWidth: 3,
-      outlineColor: TEXT_OUTLINE,
-      fontFamily: MONO,
-      fontSettings: { sdf: true },
-      characterSet: 'auto',
+      ...labelStyle(),
+      data: labels.edges,
+      getPosition: e => e.position,
+      getText: e => e.text,
+      getAngle: e => -e.angle,
+      getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'center',
-      getPixelOffset: [0, -12],
-      pickable: false,
-      updateTriggers: { getText: group },
     }));
   }
   return out;
@@ -301,14 +412,14 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
 const BULLETPROOF_COLOR: Rgba = [248, 113, 113, 235];
 const TAKEDOWN_COLOR: Rgba = [60, 184, 120, 255];
+const TRACK_COLOR: Rgba = [148, 163, 184, 46];
 
 function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.hosting;
   if (!m || m.rings.length === 0) return [];
-  const { sel, reducedMotion, pick } = input;
+  const { sel, reducedMotion, pick, labels } = input;
   const animTime = reducedMotion ? 0 : frame.seconds;
-  const bullet = m.rings.filter(r => r.bulletproof);
-  const withTakedown = m.rings.filter(r => r.takedownShare !== null);
+  const { bullet, withTakedown } = hostingParts(m);
   const dimmed = (r: ProviderRing): boolean => sel.providerId !== null && r.id !== sel.providerId;
   const out: Layer[] = [];
 
@@ -324,8 +435,8 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     getLineWidth: (r: ProviderRing) => (r.id === sel.providerId ? 3 : 1.5),
     lineWidthUnits: 'pixels',
     pickable: true,
-    // Size / colour glide when the numbers move (a 15-minute refetch), instead of snapping.
-    transitions: reducedMotion ? undefined : { getRadius: 500, getFillColor: 500 },
+    // Size / colour glide when the numbers move (a 15-minute refetch) and when a ring is picked, instead of snapping.
+    transitions: reducedMotion ? undefined : TR_RING,
     updateTriggers: { getFillColor: sel.providerId, getLineColor: sel.providerId, getLineWidth: sel.providerId },
     onHover: (info: PickInfo<ProviderRing>) => pick.hover(info.object
       ? {
@@ -372,7 +483,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         radiusUnits: 'pixels',
         getRadius: (r: ProviderRing) => r.radiusPx + 3.5,
         filled: false, stroked: true,
-        getLineColor: [148, 163, 184, 46], getLineWidth: 2.5, lineWidthUnits: 'pixels',
+        getLineColor: TRACK_COLOR, getLineWidth: 2.5, lineWidthUnits: 'pixels',
         pickable: false,
       }),
       new ScatterplotLayer<ProviderRing, RingMaskExtensionProps<ProviderRing>>({
@@ -391,27 +502,20 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     );
   }
 
-  // Name the biggest providers (and the selected one) so the map reads without hovering.
-  const named = m.rings.filter((r, i) => i < 6 || r.id === sel.providerId);
-  out.push(new TextLayer<ProviderRing>({
-    id: 'hosting-labels',
-    data: named,
-    getPosition: posNode,
-    getText: (r: ProviderRing) => r.name,
-    getSize: 10.5,
-    sizeUnits: 'pixels',
-    getColor: TEXT_COLOR,
-    outlineWidth: 3,
-    outlineColor: TEXT_OUTLINE,
-    fontFamily: MONO,
-    fontSettings: { sdf: true },
-    characterSet: 'auto',
-    getTextAnchor: 'middle',
-    getAlignmentBaseline: 'top',
-    getPixelOffset: (r: ProviderRing) => [0, r.radiusPx + 10],
-    pickable: false,
-    updateTriggers: { getText: sel.providerId },
-  }));
+  // Name the biggest providers (and the selected one) that fit without colliding, so the map reads without hovering.
+  if (labels.hosts.length > 0) {
+    out.push(new TextLayer<PlacedHostLabel>({
+      id: 'hosting-labels',
+      ...labelStyle(),
+      data: labels.hosts,
+      getPosition: r => r.position,
+      getText: r => r.text,
+      getSize: LABEL_PX,
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'top',
+      getPixelOffset: r => [0, r.radiusPx + 10],
+    }));
+  }
   return out;
 }
 
@@ -423,16 +527,7 @@ function campaignLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const { sel, reducedMotion, pick } = input;
   const animTime = reducedMotion ? 0 : frame.seconds;
   const dimmed = (a: CampaignArc): boolean => sel.campaignId !== null && a.campaignId !== sel.campaignId;
-
-  // Endpoint markers: adversaries filled, targets hollow (one per country).
-  const adversaries = new Map<string, [number, number]>();
-  const targets = new Map<string, [number, number]>();
-  for (const a of m.arcs) {
-    adversaries.set(a.from, a.path[0]!);
-    targets.set(a.to, a.path[a.path.length - 1]!);
-  }
-  const advList = [...adversaries.entries()].map(([cc, position]) => ({ cc, position }));
-  const tgtList = [...targets.entries()].map(([cc, position]) => ({ cc, position }));
+  const { adversaries, targets } = campaignMarkers(m);
 
   return [
     new PathLayer<CampaignArc, DashFlowExtensionProps<CampaignArc>>({
@@ -450,23 +545,24 @@ function campaignLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       gap: reducedMotion ? 0 : 1.6,
       speed: reducedMotion ? 0 : 1.1,
       animTime,
+      transitions: reducedMotion ? undefined : TR_PATH,
       updateTriggers: { getColor: sel.campaignId, getWidth: sel.campaignId },
       onHover: (info: PickInfo<CampaignArc>) => pick.hover(info.object
         ? { x: info.x, y: info.y, title: info.object.name, lines: [`${countryName(info.object.from)} → ${countryName(info.object.to)}`, 'curated, not observed traffic'] }
         : null),
       onClick: (info: PickInfo<CampaignArc>) => (info.object ? pick.click({ kind: 'campaign', id: info.object.campaignId }) : false),
     }),
-    new ScatterplotLayer<{ cc: string; position: [number, number] }>({
+    new ScatterplotLayer<{ cc: string; position: LngLat }>({
       id: 'campaign-adversaries',
-      data: advList,
+      data: adversaries,
       getPosition: posNode,
       radiusUnits: 'pixels', getRadius: 5,
       getFillColor: withAlpha(PINK, 230),
       pickable: false,
     }),
-    new ScatterplotLayer<{ cc: string; position: [number, number] }>({
+    new ScatterplotLayer<{ cc: string; position: LngLat }>({
       id: 'campaign-targets',
-      data: tgtList,
+      data: targets,
       getPosition: posNode,
       radiusUnits: 'pixels', getRadius: 6,
       filled: false, stroked: true,
@@ -483,7 +579,7 @@ const BAND_ALPHA = { high: 235, medium: 170, low: 105, unknown: 80 } as const;
 function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.actors;
   if (!m || m.empty) return [];
-  const { reducedMotion } = input;
+  const { reducedMotion, pick } = input;
   const animTime = reducedMotion ? 0 : frame.seconds;
   const bandAlpha = (c: ActorCountry): number => BAND_ALPHA[confidenceBand(c.confidence)];
   const radius = (c: ActorCountry): number => 8 + 4 * Math.sqrt(c.items);
@@ -532,31 +628,27 @@ function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getLineWidth: 1.6,
       lineWidthUnits: 'pixels',
       pickable: true,
-      onHover: (info: PickInfo<ActorCountry>) => input.pick.hover(info.object
+      onHover: (info: PickInfo<ActorCountry>) => pick.hover(info.object
         ? {
           x: info.x, y: info.y, title: countryName(info.object.country),
           lines: [`${info.object.items} attributed item${info.object.items === 1 ? '' : 's'}`,
             `confidence: ${confidenceBand(info.object.confidence)}`, ...(info.object.asns.length ? [info.object.asns.slice(0, 3).join(' ')] : [])],
         }
         : null),
+      // Clicking the actor's own footprint keeps the actor selected (an unhandled click would fall
+      // through to the map and clear the selection).
+      onClick: (info: PickInfo<ActorCountry>) => (info.object ? pick.click({ kind: 'actor', id: m.actorId }) : false),
     }),
     new TextLayer<ActorCountry>({
       id: 'actor-labels',
+      ...labelStyle(),
       data: m.countries,
       getPosition: posNode,
       getText: (c: ActorCountry) => `${c.country} · ${confidenceBand(c.confidence)}`,
-      getSize: 10.5,
-      sizeUnits: 'pixels',
-      getColor: TEXT_COLOR,
-      outlineWidth: 3,
-      outlineColor: TEXT_OUTLINE,
-      fontFamily: MONO,
-      fontSettings: { sdf: true },
-      characterSet: 'auto',
+      getSize: LABEL_PX,
       getTextAnchor: 'middle',
       getAlignmentBaseline: 'top',
       getPixelOffset: (c: ActorCountry) => [0, radius(c) + 8],
-      pickable: false,
     }),
   );
   return out;
@@ -574,7 +666,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
   if (m.hops.length > 0) {
     // De-duplicate wrapped twins for the static drawing.
-    const staticHops = m.hops.filter(h => !h.id.endsWith(':w'));
+    const staticHops = movementStaticHops(m);
     out.push(
       // The trail's history: a faint path that stays after the particle has gone by (reads as "was here, moved").
       new PathLayer<MovementHop>({
@@ -586,6 +678,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         widthUnits: 'pixels',
         capRounded: true,
         pickable: true,
+        transitions: reducedMotion ? undefined : TR_PATH,
         updateTriggers: { getColor: [sel.movementId, reducedMotion], getWidth: [sel.movementId, reducedMotion] },
         onHover: (info: PickInfo<MovementHop>) => pick.hover(info.object
           ? {
@@ -616,20 +709,13 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       // Numbered static hops stand in for the animation.
       out.push(new TextLayer<MovementHop>({
         id: 'movement-hop-numbers',
+        ...labelStyle(),
         data: staticHops,
         getPosition: (h: MovementHop) => h.path[Math.floor(h.path.length / 2)]!,
         getText: hopLabel,
         getSize: 12,
-        sizeUnits: 'pixels',
-        getColor: TEXT_COLOR,
-        outlineWidth: 3,
-        outlineColor: TEXT_OUTLINE,
-        fontFamily: MONO,
-        fontSettings: { sdf: true },
-        characterSet: 'auto',
         getTextAnchor: 'middle',
         getAlignmentBaseline: 'center',
-        pickable: false,
       }));
     } else {
       out.push(new TripsLayer({
@@ -637,7 +723,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         data: m.hops,
         getPath: (h: MovementHop) => h.path,
         getTimestamps: (h: MovementHop) => h.timestamps,
-        getColor: [...VIOLET.slice(0, 3), 255],
+        getColor: VIOLET,
         currentTime: frame.t,
         trailLength: HOP_UNITS,
         fadeTrail: true,
@@ -654,9 +740,9 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getPosition: posNode,
       radiusUnits: 'pixels',
       getRadius: (p: MovementPulse) => (p.kind === 'dormant' ? 9 : 8),
-      getFillColor: (p: MovementPulse) => withAlpha(p.kind === 'dormant' ? [148, 163, 184, 255] : VIOLET, dimmedEvent(p.eventId) ? 30 : 150),
+      getFillColor: (p: MovementPulse) => withAlpha(p.kind === 'dormant' ? SLATE : VIOLET, dimmedEvent(p.eventId) ? 30 : 150),
       stroked: true,
-      getLineColor: (p: MovementPulse) => withAlpha(p.kind === 'dormant' ? [148, 163, 184, 255] : VIOLET, dimmedEvent(p.eventId) ? 60 : 240),
+      getLineColor: (p: MovementPulse) => withAlpha(p.kind === 'dormant' ? SLATE : VIOLET, dimmedEvent(p.eventId) ? 60 : 240),
       getLineWidth: 1.4,
       lineWidthUnits: 'pixels',
       pickable: true,
@@ -665,6 +751,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getPulseRate: 2,
       getPulseAmp: reducedMotion ? 0 : 0.22,
       animTime,
+      transitions: reducedMotion ? undefined : TR_DOT,
       updateTriggers: { getFillColor: sel.movementId, getLineColor: sel.movementId, getPulseAmp: reducedMotion },
       onHover: (info: PickInfo<MovementPulse>) => pick.hover(info.object
         ? {
@@ -692,15 +779,23 @@ export function buildLensLayers(input: LensLayerInput, frame: LensFrame): Layer[
   return out;
 }
 
-/** True when any lens layer needs the per-frame loop (pulses, dashes, spins or trails). */
-export function lensNeedsFrame(input: Pick<LensLayerInput, 'layers' | 'operations' | 'hosting' | 'campaigns' | 'actors' | 'movement'>): boolean {
+/**
+ * True when any lens layer needs the per-frame loop (pulses, dashes, spins, or
+ * trails while the replay plays). Static scenes (a choropleth, rings without a
+ * halo, the trails of a paused replay) need no frames at all.
+ */
+export function lensNeedsFrame(
+  input: Pick<LensLayerInput, 'layers' | 'operations' | 'hosting' | 'campaigns' | 'actors' | 'movement'>,
+  opts: { clockPlaying?: boolean } = {},
+): boolean {
   const { layers } = input;
+  const playing = opts.clockPlaying ?? true;
   return !!(
     (layers.operations && input.operations && input.operations.nodes.length > 0) ||
     (layers.hosting && input.hosting && input.hosting.rings.some(r => r.bulletproof)) ||
     (layers.campaigns && input.campaigns && input.campaigns.arcs.length > 0) ||
     (layers.actors && input.actors && !input.actors.empty) ||
-    (layers.movement && input.movement && (input.movement.hops.length > 0 || input.movement.pulses.length > 0))
+    (layers.movement && input.movement && (input.movement.pulses.length > 0 || (playing && input.movement.hops.length > 0)))
   );
 }
 

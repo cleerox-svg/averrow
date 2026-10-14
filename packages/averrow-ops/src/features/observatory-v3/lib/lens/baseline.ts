@@ -14,15 +14,21 @@ import type { Rgba } from '../map-colors';
 export const RATIO_MIN = 0.25;
 export const RATIO_MAX = 4;
 
-/** Diverging stops over t in [0, 1]; t = 0.5 is ratio 1. */
+/**
+ * Diverging stops over t in [0, 1]; t = 0.5 is ratio 1. The neutral stop is a
+ * visible slate (not a navy that disappears into the dark basemap): "normal"
+ * must look like something, with blue and red departing from it.
+ */
 export const OVERINDEX_STOPS: ReadonlyArray<{ t: number; color: Rgba }> = [
   { t: 0, color: [43, 108, 176, 215] },
-  { t: 0.5, color: [38, 52, 84, 190] },
+  { t: 0.5, color: [100, 116, 139, 150] },
   { t: 0.75, color: [194, 65, 12, 215] },
   { t: 1, color: [248, 113, 113, 235] },
 ];
 
-export const NO_BASELINE_COLOR: Rgba = [96, 104, 120, 120];
+/** Outside Radar's top list: a barely-there fill; the shape is drawn as an outline instead (see NO_BASELINE_OUTLINE). */
+export const NO_BASELINE_COLOR: Rgba = [96, 104, 120, 36];
+export const NO_BASELINE_OUTLINE: Rgba = [148, 163, 184, 175];
 export const NO_DATA_COLOR: Rgba = [0, 0, 0, 0];
 
 /** ratio -> t in [0, 1] on log2, clamped to RATIO_MIN … RATIO_MAX. */

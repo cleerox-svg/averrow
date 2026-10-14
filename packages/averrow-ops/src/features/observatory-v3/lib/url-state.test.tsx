@@ -190,6 +190,10 @@ describe('mergeObservatoryState', () => {
     expect(mergeObservatoryState(DEFAULT_STATE, { mode: 'bot_density' })).toMatchObject({ lens: 'baseline', measure: 'bot' });
     expect(mergeObservatoryState(DEFAULT_STATE, { mode: 'heatmap' })).toMatchObject({ lens: 'threats', view: 'heat' });
     expect(mergeObservatoryState({ ...DEFAULT_STATE, view: 'heat' }, { mode: 'global' })).toMatchObject({ lens: 'threats', view: 'points' });
+    // ...and global keeps whatever lens is on (a search pick must not bounce Hosting back to Threats).
+    expect(mergeObservatoryState({ ...DEFAULT_STATE, lens: 'hosting', layers: lensPreset('hosting') }, { mode: 'global', sel: 'country:NL' })).toMatchObject({ lens: 'hosting', sel: 'country:NL' });
+    const bot = { ...DEFAULT_STATE, lens: 'baseline' as const, measure: 'bot' as const, layers: lensPreset('baseline') };
+    expect(mergeObservatoryState(bot, { mode: 'global', sel: 'country:NL' })).toMatchObject({ lens: 'baseline', measure: 'index', sel: 'country:NL' });
     expect(mergeObservatoryState({ ...DEFAULT_STATE, sel: 'country:US' }, { view: 'heat', sel: 'country:DE' }).sel).toBeNull();
   });
 

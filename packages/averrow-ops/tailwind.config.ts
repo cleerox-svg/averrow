@@ -110,6 +110,9 @@ export default {
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
+        // Observatory drawer / sheet entrance (220ms, ease-out); pair with motion-reduce:animate-none.
+        'drawer-in': 'drawerIn 220ms cubic-bezier(0.22, 0.9, 0.3, 1) both',
+        'sheet-in': 'sheetIn 220ms cubic-bezier(0.22, 0.9, 0.3, 1) both',
       },
       keyframes: {
         fadeIn: {
@@ -118,6 +121,14 @@ export default {
         },
         slideUp: {
           '0%': { opacity: '0', transform: 'translateY(12px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        drawerIn: {
+          '0%': { opacity: '0', transform: 'translateX(28px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        sheetIn: {
+          '0%': { opacity: '0', transform: 'translateY(32px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
       },

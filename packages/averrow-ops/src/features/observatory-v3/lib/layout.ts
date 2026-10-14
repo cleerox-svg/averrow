@@ -74,3 +74,39 @@ export function computeLayout({ mapWidth, viewportWidth }: LayoutInput): Observa
     panelStartsOpen: docked,
   };
 }
+
+// ─── Camera insets ──────────────────────────────────────────
+
+/** Replay bar height (it floats above the stats bar). */
+export const TIMELINE_H = 56;
+/** Height of the stats bar + ticker band below the map element: desktop 36 + 40, phone 36 + 72. */
+export const BOTTOM_BAND = { desktop: 76, phone: 108 } as const;
+const TOP_DESKTOP = 8 + TOOLBAR_H + 12;
+/** Phone: summary row (48) + lens strip (48) + gaps. */
+const TOP_PHONE = 8 + 48 + 8 + 48 + 12;
+
+export interface InsetInput {
+  layout: Pick<ObservatoryLayout, 'phone' | 'railWidth'>;
+  /** A panel or drawer occupies the right slot (docked or floating: either way it covers the map). */
+  rightSlotOpen: boolean;
+  showTimeline: boolean;
+  /** Height of the open peek sheet in px (0 = none), measured from the page bottom. */
+  sheetPx: number;
+}
+
+export interface Insets { top: number; right: number; bottom: number; left: number }
+
+/**
+ * What covers each edge of the MAP element, in px, so a camera move frames its
+ * target in the area that is actually left free: the toolbar on top, the rail on
+ * the left, the drawer / panel on the right, the replay bar or the phone sheet at
+ * the bottom.
+ */
+export function cameraInsets(i: InsetInput): Insets {
+  const { layout, rightSlotOpen, showTimeline, sheetPx } = i;
+  const left = layout.railWidth > 0 ? 12 + layout.railWidth + 12 : 12;
+  const right = rightSlotOpen && !layout.phone ? DOCK_WIDTH + 24 : 12;
+  let bottom = showTimeline ? TIMELINE_H + 24 : 12;
+  if (layout.phone && sheetPx > 0) bottom = Math.max(bottom, sheetPx - BOTTOM_BAND.phone + 12);
+  return { top: layout.phone ? TOP_PHONE : TOP_DESKTOP, right, bottom, left };
+}

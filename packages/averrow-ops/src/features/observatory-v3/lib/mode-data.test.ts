@@ -18,8 +18,15 @@ describe('dataNeeds', () => {
   it('heatmap mode fetches heatmap + stats only', () => {
     expect(dataNeeds('heatmap', DEFAULT_LAYERS)).toMatchObject({ nodes: false, arcs: false, heatmap: true, stats: true, bot: false, operations: false, timeline: false });
   });
-  it('bot mode fetches only bot data', () => {
-    expect(dataNeeds('bot_density', DEFAULT_LAYERS)).toMatchObject({ nodes: false, arcs: false, heatmap: false, stats: false, bot: true, live: false });
+  it('bot mode fetches only bot data (and the shapes it is painted on)', () => {
+    expect(dataNeeds('bot_density', DEFAULT_LAYERS)).toMatchObject({ nodes: false, arcs: false, heatmap: false, stats: false, bot: true, live: false, geometry: true });
+  });
+  it('country shapes load only while a choropleth is visible', () => {
+    expect(dataNeeds('global', DEFAULT_LAYERS).geometry).toBe(false);
+    expect(dataNeeds('global', lensPreset('baseline')).geometry).toBe(true);
+    // a country selection on another lens reads the Radar baseline but draws no shapes
+    expect(dataNeeds('global', lensPreset('hosting'), { selection: 'country' })).toMatchObject({ overindex: true, geometry: false });
+    expect(dataNeeds('heatmap', lensPreset('baseline')).geometry).toBe(false);
   });
 });
 

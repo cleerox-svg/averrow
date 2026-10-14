@@ -58,3 +58,30 @@ describe('buildHostingModel', () => {
     expect(m.maxActive).toBe(400);
   });
 });
+
+describe('hosting spread stays over the country', () => {
+  const prov = (i: number) => ({
+    id: `p${i}`, name: `P${i}`, asn: null, country: 'NL', active_threat_count: 100 - i, total_threat_count: 1, trend_7d: 0, trend_30d: 0,
+    is_bulletproof: false, reputation_score: null, takedown: null,
+  });
+  it('40 providers in one country never wander further than MAX_SPREAD_DEG from the centroid', async () => {
+    const { buildHostingModel, MAX_SPREAD_DEG } = await import('./hosting');
+    const { countryCenter } = await import('./placement');
+    const m = buildHostingModel(Array.from({ length: 40 }, (_, i) => prov(i)));
+    const c = countryCenter('NL')!;
+    const lngScale = 1 / Math.max(Math.cos((c[1] * Math.PI) / 180), 0.35);
+    for (const r of m.rings) {
+      expect(Math.abs(r.position[1] - c[1])).toBeLessThanOrEqual(MAX_SPREAD_DEG + 1e-9);
+      expect(Math.abs(r.position[0] - c[0])).toBeLessThanOrEqual(MAX_SPREAD_DEG * lngScale + 1e-9);
+    }
+    expect(new Set(m.rings.map(r => r.position.join(','))).size).toBe(40); // still distinct
+  });
+  it('a small group keeps the roomy spiral', async () => {
+    const { buildHostingModel } = await import('./hosting');
+    const { countryCenter } = await import('./placement');
+    const m = buildHostingModel([prov(0), prov(1)]);
+    const c = countryCenter('NL')!;
+    expect(m.rings[0]!.position).toEqual(c);
+    expect(Math.hypot(m.rings[1]!.position[0] - c[0], m.rings[1]!.position[1] - c[1])).toBeGreaterThan(2);
+  });
+});

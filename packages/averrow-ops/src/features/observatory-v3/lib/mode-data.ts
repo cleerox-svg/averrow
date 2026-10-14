@@ -24,6 +24,8 @@ export interface DataNeeds {
   overindex: boolean;
   campaigns: boolean;
   actors: boolean;
+  /** Country shapes: only while a choropleth (Baseline lens, any measure) is on screen. */
+  geometry: boolean;
   /** Replay histogram (the timeline bar is shown while particles or movement play). */
   timeline: boolean;
   /** Live sonar pings. */
@@ -45,7 +47,7 @@ export interface NeedsOptions {
 const NONE: DataNeeds = {
   nodes: false, arcs: false, heatmap: false, stats: false, bot: false,
   operations: false, movements: false, providers: false, overindex: false, campaigns: false,
-  actors: false, timeline: false, live: false,
+  actors: false, geometry: false, timeline: false, live: false,
 };
 
 export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOptions = {}): DataNeeds {
@@ -66,6 +68,8 @@ export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOption
         overindex: layers.baseline || country,
         campaigns: layers.campaigns || sel === 'campaign' || searching,
         actors: layers.actors || sel === 'actor' || searching,
+        // A country drawer alone does not need the shapes: only a visible choropleth draws them.
+        geometry: layers.baseline,
         timeline: layers.particles || layers.movement,
         live: layers.nodes,
       };
@@ -73,7 +77,8 @@ export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOption
     case 'heatmap':
       return { ...NONE, heatmap: true, stats: true };
     case 'bot_density':
-      return { ...NONE, bot: true };
+      // The Radar bot share is painted on the country shapes.
+      return { ...NONE, bot: true, geometry: true };
   }
 }
 

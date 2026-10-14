@@ -9,6 +9,10 @@
  * component writes a CSS transform (and, only when the bucket changes, the
  * readout text) straight to the DOM.
  *
+ * The bars live on the REPLAY WINDOW ([now - period, now], the one the particles and
+ * movement trails were built for), so the playhead, the bars and the animation agree.
+ * On phones the readout is short ("13 Oct 14:00") and the range line is dropped.
+ *
  * Accessibility: the histogram is a `slider` — Left/Right move one bucket,
  * Shift or Page keys ten, Home/End jump to the ends, Space plays / pauses. Under
  * reduced motion playback is off (scrubbing still works).
@@ -19,8 +23,8 @@ import { Pause, Play } from 'lucide-react';
 import type { AnimationClock } from '../lib/animation-clock';
 import type { TimelineData } from '@/hooks/useObservatoryLenses';
 import {
-  buildHistogram, bucketIndexAt, clockToFrac, formatPlayheadTime, fracToClock, fracToTime, nudgePlayhead,
-  pointerFrac, stackedPaths,
+  buildHistogram, barIndexAt, clockToFrac, formatPlayheadTime, fracToClock, fracToTime, nudgePlayhead,
+  pointerFrac, stackedPaths, windowBuckets, type ReplayWindow,
 } from '../lib/lens/timeline';
 import { CYCLE_LENGTH } from '../lib/trips';
 
@@ -65,6 +69,10 @@ export interface ReplayTimelineProps {
   periodLabel: string;
   /** Set when the histogram is filtered to one country. */
   countryLabel?: string | null;
+  /** The window the particles / trails were built for; bars are placed inside it. */
+  window?: ReplayWindow | null;
+  /** True while the pointer is dragging the playhead (live pings pause meanwhile). */
+  onScrubChange?: (scrubbing: boolean) => void;
   isMobile?: boolean;
   className?: string;
   style?: React.CSSProperties;
@@ -72,9 +80,9 @@ export interface ReplayTimelineProps {
 
 export function ReplayTimeline({
   data, isLoading, error, onRetry, clock, subscribe, playing, speed, onTogglePlay, onSpeed, onSeek,
-  reducedMotion, periodLabel, countryLabel, isMobile = false, className, style,
+  reducedMotion, periodLabel, countryLabel, window: replayWindow, onScrubChange, isMobile = false, className, style,
 }: ReplayTimelineProps) {
-  const hist = useMemo(() => buildHistogram(data), [data]);
+  const hist = useMemo(() => buildHistogram(data, replayWindow), [data, replayWindow]);
   const trackRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const readoutRef = useRef<HTMLSpanElement>(null);
@@ -99,24 +107,23 @@ export function ReplayTimeline({
   }, []);
 
   const paths = useMemo(() => (hist && width > 0 ? stackedPaths(hist, width, HIST_HEIGHT) : null), [hist, width]);
-  const bucketCount = hist?.bars.length ?? 0;
 
   /** Move the playhead marker + readout to clock position t. DOM only. */
   const apply = useCallback((t: number) => {
     const frac = clockToFrac(t, CYCLE_LENGTH);
     const head = headRef.current;
     if (head) head.style.transform = `translate3d(${frac * widthRef.current}px,0,0)`;
-    const idx = bucketCount > 0 ? bucketIndexAt(frac, bucketCount) : 0;
+    const idx = hist ? barIndexAt(frac, hist) : 0;
     if (idx !== lastBucket.current) {
       lastBucket.current = idx;
       if (hist) {
-        const text = formatPlayheadTime(fracToTime(frac, hist), hist.bucketMs);
+        const text = formatPlayheadTime(fracToTime(frac, hist), hist.bucketMs, isMobile);
         if (readoutRef.current) readoutRef.current.textContent = text;
         sliderRef.current?.setAttribute('aria-valuetext', text);
       }
       sliderRef.current?.setAttribute('aria-valuenow', String(Math.round(frac * 100)));
     }
-  }, [hist, bucketCount]);
+  }, [hist, isMobile]);
 
   // Follow the clock; also snap to the current position whenever the layout / data changes.
   useEffect(() => {
@@ -124,6 +131,11 @@ export function ReplayTimeline({
     apply(clock.currentTime);
     return subscribe(apply);
   }, [subscribe, apply, clock, width]);
+
+  // A drag cut short by unmounting must not leave the page believing it is still scrubbing.
+  const scrubCbRef = useRef(onScrubChange);
+  scrubCbRef.current = onScrubChange;
+  useEffect(() => () => { if (draggingRef.current) scrubCbRef.current?.(false); }, []);
 
   const seekFromPointer = useCallback((clientX: number) => {
     const el = trackRef.current;
@@ -137,6 +149,7 @@ export function ReplayTimeline({
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     draggingRef.current = true;
+    onScrubChange?.(true);
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* jsdom / synthetic */ }
     seekFromPointer(e.clientX);
     sliderRef.current?.focus({ preventScroll: true });
@@ -145,12 +158,13 @@ export function ReplayTimeline({
     if (draggingRef.current) seekFromPointer(e.clientX);
   };
   const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (draggingRef.current) onScrubChange?.(false);
     draggingRef.current = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* not captured */ }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const n = Math.max(1, bucketCount);
+    const n = hist ? windowBuckets(hist) : 1;
     let t: number | null = null;
     const coarse = e.shiftKey ? 10 : 1;
     switch (e.key) {
@@ -282,9 +296,11 @@ export function ReplayTimeline({
         <div className="flex items-center justify-between gap-2 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {/* The readout follows the playhead's bucket (written imperatively, never via React state). */}
           <span ref={readoutRef} aria-hidden style={{ color: 'var(--amber-text)', minWidth: 0 }} />
-          <span className="truncate">
-            {hist ? `${formatPlayheadTime(hist.startMs, hist.bucketMs)} – ${formatPlayheadTime(hist.endMs, hist.bucketMs)}` : subtitle}
-          </span>
+          {!isMobile && (
+            <span className="truncate">
+              {hist ? `${formatPlayheadTime(hist.startMs, hist.bucketMs)} – ${formatPlayheadTime(hist.endMs, hist.bucketMs)}` : subtitle}
+            </span>
+          )}
         </div>
       </div>
     </div>

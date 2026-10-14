@@ -16,7 +16,7 @@ import type { ComponentGeo, OperationGeo } from '@/hooks/useObservatoryLenses';
 import { greatCirclePath } from '../../anim/great-circle';
 import { cumulativeDistances } from '../../anim/dash-flow-extension';
 import { phaseForKey } from '../../anim/pulse';
-import { countryCenter, groupIndexes, iso2, placeAround } from './placement';
+import { countryCenter, groupIndexes, groupSizes, iso2, placeAround, stepFor } from './placement';
 import type { LngLat } from '@/lib/country-centroids';
 
 export interface OpNode {
@@ -39,7 +39,10 @@ export interface OpEdge {
   /** Operation ids at either end (a single id for an intra-operation edge). */
   opIds: string[];
   kind: string;
+  /** Full evidence text (tooltip). */
   label: string;
+  /** Glyph + a word or two for the map ("◆ cert", "● IP", "▲ ASN ×3"). */
+  short: string;
   path: LngLat[];
   distances: number[];
   midpoint: LngLat;
@@ -89,6 +92,24 @@ export function edgeLabel(kind: string | null, asns: readonly string[]): string 
   return `${base} · ${shown}${asns.length > 2 ? ` +${asns.length - 2}` : ''}`;
 }
 
+/** Evidence glyphs: distinct shapes, all in the geometric-shapes block every mono font carries. */
+const KIND_GLYPH: Record<string, string> = {
+  cert_serial: '◆', cert_san: '◆', per_ip: '●', subnet: '■', registrar: '◇', asn: '▲',
+};
+const KIND_SHORT: Record<string, string> = {
+  cert_serial: 'cert', cert_san: 'SAN', per_ip: 'IP', subnet: 'subnet', registrar: 'registrar', asn: 'ASN',
+  app_store: 'app store', dark_web: 'dark web',
+};
+
+/** Short map label for an edge: "◆ cert", "● IP", "▲ ASN ×3" (×N = number of shared ASNs, shown for the ASN kind). */
+export function edgeShortLabel(kind: string | null, asns: readonly string[]): string {
+  const k = kind ?? 'other';
+  const glyph = KIND_GLYPH[k] ?? '·';
+  const word = KIND_SHORT[k] ?? (kind === null ? 'link' : kind.replace(/_/g, ' '));
+  const times = k === 'asn' && asns.length > 1 ? ` ×${asns.length}` : '';
+  return `${glyph} ${word}${times}`;
+}
+
 function arcPath(a: LngLat, b: LngLat): { path: LngLat[]; distances: number[]; midpoint: LngLat } {
   const path = greatCirclePath(a, b, 24);
   return { path, distances: cumulativeDistances(path), midpoint: path[Math.floor(path.length / 2)]! };
@@ -121,6 +142,7 @@ export function buildOperationsModel(
   }
 
   const idx = groupIndexes(entries, e => e.country);
+  const sizes = groupSizes(entries, e => e.country);
   const nodes: OpNode[] = entries.map((e, i) => {
     const group = groupOf.get(e.op.id) ?? e.op.id;
     return {
@@ -128,7 +150,7 @@ export function buildOperationsModel(
       opId: e.op.id,
       group,
       country: e.country,
-      position: placeAround(countryCenter(e.country)!, idx[i]!, 1.4),
+      position: placeAround(countryCenter(e.country)!, idx[i]!, stepFor(sizes[i]!, 1.4, 3), 3),
       confidence: normalizeConfidence(e.op.confidence_score),
       threats: e.op.threat_count,
       name: e.op.name ?? e.op.id,
@@ -157,6 +179,7 @@ export function buildOperationsModel(
         opIds: [opId],
         kind: op.kind,
         label: edgeLabel(op.kind, op.asns),
+        short: edgeShortLabel(op.kind, op.asns),
         sharedAsns: op.asns.slice(0, 20),
         ...g,
       });
@@ -176,6 +199,7 @@ export function buildOperationsModel(
         opIds: [e.a, e.b],
         kind: e.kind ?? 'other',
         label: edgeLabel(e.kind, e.shared_asns),
+        short: edgeShortLabel(e.kind, e.shared_asns),
         sharedAsns: e.shared_asns,
         ...g,
       });

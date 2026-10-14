@@ -57,7 +57,7 @@ describe('ArrivalScheduler.collect', () => {
 describe('buildArrivalEvents', () => {
   const path: [number, number][] = [[0, 0], [5, 5], [10, 10]];
   const trip = (start: number, color: [number, number, number, number] = [9, 9, 9, 220]): TripDatum => ({
-    path, timestamps: [start, start + TRIP_SPAN / 2, start + TRIP_SPAN], color,
+    path, timestamps: [start, start + TRIP_SPAN / 2, start + TRIP_SPAN], color, severity: 'high',
   });
 
   it('uses the last timestamp mod the cycle, at the path end, sorted', () => {

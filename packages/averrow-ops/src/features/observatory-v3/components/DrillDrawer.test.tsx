@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { ArcData } from '@/hooks/useObservatory';
@@ -33,10 +33,40 @@ const mount = (target: React.ComponentProps<typeof DrillDrawer>['target'], extra
 describe('DrillDrawer', () => {
   it('shows arc details incl. the approximate-target note and theme-aware severity text', () => {
     mount({ kind: 'arc', arc });
-    expect(screen.getByText('credential harvesting')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'credential harvesting' })).toBeInTheDocument();
     expect(screen.getByText('PayPal')).toBeInTheDocument();
     expect(screen.getByText(/approximate/i)).toBeInTheDocument();
-    expect(screen.getByText('critical').style.color).toBe('var(--sev-critical-text)');
+    expect(screen.getAllByText('critical').some(el => el.style.color === 'var(--sev-critical-text)')).toBe(true);
+  });
+
+  it('opens with a hero: two stat tiles, a status badge and one primary action', () => {
+    mount({ kind: 'operation', id: 'x', op: { id: 'x', name: 'OP ONE', component_id: null, kind: 'cert_serial', status: 'active', confidence_score: 82, threat_count: 420, actor: null, countries: ['NL', 'DE'], asns: ['AS1'], last_seen: null, last_movement_pivot_at: null } });
+    const hero = document.querySelector('[data-hero]') as HTMLElement;
+    expect(hero.querySelectorAll('.ds-stat')).toHaveLength(2);
+    expect(within(hero).getByText('Threats')).toBeInTheDocument();
+    expect(within(hero).getByText('Confidence')).toBeInTheDocument();
+    expect(within(hero).getByText('82%')).toBeInTheDocument();
+    expect(within(hero).getByText('active')).toBeInTheDocument();
+    const cta = within(hero).getByRole('link', { name: 'Open operation →' });
+    expect(cta).toHaveAttribute('href', '/campaigns/x');
+  });
+
+  it('the eyebrow is not repeated as a section title', () => {
+    mount({ kind: 'operation', id: 'x', op: { id: 'x', name: 'OP', component_id: null, kind: 'asn', status: 'active', confidence_score: 50, threat_count: 1, actor: null, countries: ['NL'], asns: [], last_seen: null, last_movement_pivot_at: null } });
+    expect(screen.getAllByText('Operation')).toHaveLength(1); // the eyebrow only
+    mount({ kind: 'provider', id: 'p1', provider: prov });
+    expect(screen.queryAllByRole('heading', { level: 3, name: 'Provider' })).toHaveLength(0);
+  });
+
+  it('chips collapse behind "+N more" after six, and the button reveals the rest', async () => {
+    const countries = ['NL', 'DE', 'FR', 'GB', 'US', 'JP', 'BR', 'IN'];
+    mount({ kind: 'operation', id: 'x', op: { id: 'x', name: 'OP', component_id: null, kind: 'asn', status: 'active', confidence_score: 50, threat_count: 1, actor: null, countries, asns: [], last_seen: null, last_movement_pivot_at: null } });
+    expect(screen.queryByText('Brazil')).not.toBeInTheDocument();
+    expect(screen.queryByText('India')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '+2 more' }));
+    expect(screen.getByText('Brazil')).toBeInTheDocument();
+    expect(screen.getByText('India')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /more/ })).not.toBeInTheDocument();
   });
 
   it('related objects re-target the drawer', async () => {
@@ -45,8 +75,10 @@ describe('DrillDrawer', () => {
     expect(onSelect).toHaveBeenCalledWith({ kind: 'country', code: 'NL' });
   });
 
-  it('closes on Escape and via an accessible close button', async () => {
+  it('closes on Escape and via a close button whose title says so (no "Esc to close" footer)', async () => {
     const { onClose } = mount({ kind: 'country', code: 'DE' });
+    expect(screen.queryByText(/Esc to close/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close details' })).toHaveAttribute('title', 'Close (Esc)');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole('button', { name: 'Close details' }));
@@ -66,6 +98,33 @@ describe('DrillDrawer', () => {
     outer.remove();
   });
 
+  it('when the opener is gone (a side-panel row that unmounted), focus goes to the stable fallback, not <body>', () => {
+    const row = document.createElement('button');
+    const toggle = document.createElement('button');
+    document.body.append(row, toggle);
+    row.focus();
+    const { unmount } = render(
+      <MemoryRouter><DrillDrawer target={{ kind: 'country', code: 'DE' }} data={{}} onClose={vi.fn()} onSelect={vi.fn()} variant="dock" fallbackFocus={() => toggle} /></MemoryRouter>,
+    );
+    expect(screen.getByRole('dialog')).toHaveFocus();
+    row.remove(); // the panel row is replaced by the drawer
+    unmount();
+    expect(toggle).toHaveFocus();
+    toggle.remove();
+  });
+
+  it('opened from the search box: focus returns to the search control, which stays mounted', () => {
+    const search = document.createElement('input');
+    document.body.appendChild(search);
+    search.focus();
+    const { unmount } = render(
+      <MemoryRouter><DrillDrawer target={{ kind: 'country', code: 'DE' }} data={{}} onClose={vi.fn()} onSelect={vi.fn()} variant="overlay" fallbackFocus={() => null} /></MemoryRouter>,
+    );
+    unmount();
+    expect(search).toHaveFocus();
+    search.remove();
+  });
+
   it('a pending lens object shows a loading state, not an error', () => {
     mount({ kind: 'operation', id: 'x', op: null });
     expect(screen.getByText(/Loading operation/)).toBeInTheDocument();
@@ -75,6 +134,15 @@ describe('DrillDrawer', () => {
     mount({ kind: 'actor', id: 'a', name: 'APT' }, { variant: 'sheet' });
     expect(screen.getByText('Loading actor…')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('the dock and the tablet overlay animate in (instant under reduced motion)', () => {
+    const { unmount } = mount({ kind: 'country', code: 'DE' });
+    expect(screen.getByRole('dialog').className).toMatch(/animate-drawer-in/);
+    expect(screen.getByRole('dialog').className).toMatch(/motion-reduce:animate-none/);
+    unmount();
+    mount({ kind: 'country', code: 'DE' }, { variant: 'overlay' });
+    expect(screen.getByRole('dialog').className).toMatch(/rounded-xl/);
   });
 
   describe('takedown outcomes need manage_takedowns', () => {

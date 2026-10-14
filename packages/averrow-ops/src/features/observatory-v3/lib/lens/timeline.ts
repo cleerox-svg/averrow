@@ -3,8 +3,12 @@
  * mapping a pointer / key / clock position <-> time <-> AnimationClock playhead.
  *
  * The clock loops over CYCLE_LENGTH units that represent the whole selected
- * period (the same mapping the particles use), so a fraction f of the bar is
- * f * CYCLE_LENGTH on the clock and startMs + f * (endMs - startMs) in time.
+ * period (the same mapping the particles and the movement trails use), so a
+ * fraction f of the bar is f * CYCLE_LENGTH on the clock and startMs + f *
+ * (endMs - startMs) in time. Pass the REPLAY WINDOW ([now - period, now], the one
+ * the particles were built for) to `buildHistogram` and bars are placed by their
+ * real time inside it, so the playhead, the bars and the particles share a window
+ * instead of the bars being stretched over whatever buckets the server returned.
  */
 
 import type { TimelineData, TimelinePoint } from '@/hooks/useObservatoryLenses';
@@ -31,7 +35,9 @@ export interface Histogram {
   total: number;
 }
 
-export function buildHistogram(data: TimelineData | undefined): Histogram | null {
+export interface ReplayWindow { startMs: number; endMs: number }
+
+export function buildHistogram(data: TimelineData | undefined, window?: ReplayWindow | null): Histogram | null {
   if (!data || !Array.isArray(data.points) || data.points.length === 0) return null;
   const bucketMs = BUCKET_MS[data.bucket] ?? BUCKET_MS['1h'];
   const bars: HistBar[] = [];
@@ -46,7 +52,13 @@ export function buildHistogram(data: TimelineData | undefined): Histogram | null
   }
   if (bars.length === 0) return null;
   bars.sort((a, b) => a.startMs - b.startMs);
-  return { bars, startMs: bars[0]!.startMs, endMs: bars[bars.length - 1]!.startMs + bucketMs, bucketMs, max, total };
+  const aligned = !!window && window.endMs > window.startMs;
+  return {
+    bars,
+    startMs: aligned ? window.startMs : bars[0]!.startMs,
+    endMs: aligned ? window.endMs : bars[bars.length - 1]!.startMs + bucketMs,
+    bucketMs, max, total,
+  };
 }
 
 const clamp01 = (n: number): number => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
@@ -77,6 +89,19 @@ export function bucketIndexAt(frac: number, bucketCount: number): number {
   return Math.min(bucketCount - 1, Math.floor(clamp01(frac) * bucketCount));
 }
 
+/** Index of the bar the playhead is over (by real time, so it stays right when the window is offset from the buckets). */
+export function barIndexAt(frac: number, h: Pick<Histogram, 'bars' | 'startMs' | 'endMs' | 'bucketMs'>): number {
+  if (h.bars.length === 0) return 0;
+  const t = fracToTime(frac, h);
+  const i = Math.floor((t - h.bars[0]!.startMs) / h.bucketMs);
+  return Math.min(h.bars.length - 1, Math.max(0, i));
+}
+
+/** How many buckets the replay window spans (the playhead's keyboard step is one of them). */
+export function windowBuckets(h: Pick<Histogram, 'startMs' | 'endMs' | 'bucketMs'>): number {
+  return Math.max(1, (h.endMs - h.startMs) / h.bucketMs);
+}
+
 /** Move the playhead one bucket (or `coarse` buckets) left / right, clamped to the bar. */
 export function nudgePlayhead(t: number, direction: -1 | 1, bucketCount: number, coarse = 1, cycle: number = CYCLE_LENGTH): number {
   const step = (cycle / Math.max(1, bucketCount)) * coarse;
@@ -99,13 +124,17 @@ export interface PathSet {
 export function stackedPaths(h: Histogram, width: number, height: number, gap = 0.5): PathSet {
   const out: PathSet = { critical: '', high: '', medium: '', low: '', other: '' };
   if (h.max <= 0 || width <= 0 || height <= 0) return out;
-  const n = h.bars.length;
-  const bw = width / n;
-  const w = Math.max(0.5, bw - gap);
+  const span = h.endMs - h.startMs;
+  if (!(span > 0)) return out;
   const scale = (height - 1) / h.max;
   const f = (x: number): string => (Math.round(x * 100) / 100).toString();
-  h.bars.forEach((b, i) => {
-    const x = i * bw + gap / 2;
+  for (const b of h.bars) {
+    // By real time inside the window, clipped to it.
+    const x0 = Math.max(0, ((b.startMs - h.startMs) / span) * width);
+    const x1 = Math.min(width, ((b.startMs + h.bucketMs - h.startMs) / span) * width);
+    if (x1 <= x0) continue;
+    const x = x0 + gap / 2;
+    const w = Math.max(0.5, x1 - x0 - gap);
     let y = height;
     const seg = (key: keyof PathSet, v: number): void => {
       if (v <= 0) return;
@@ -119,14 +148,15 @@ export function stackedPaths(h: Histogram, width: number, height: number, gap = 
     seg('medium', b.medium);
     seg('low', b.low);
     seg('other', Math.max(0, b.total - known));
-  });
+  }
   return out;
 }
 
-export function formatPlayheadTime(ms: number, bucketMs: number): string {
+/** "13 Oct 14:00 UTC"; `short` drops the zone for a tight readout ("13 Oct 14:00"). */
+export function formatPlayheadTime(ms: number, bucketMs: number, short = false): string {
   const d = new Date(ms);
   const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' });
   if (bucketMs >= 86_400_000) return date;
   const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
-  return `${date} ${time} UTC`;
+  return short ? `${date} ${time}` : `${date} ${time} UTC`;
 }

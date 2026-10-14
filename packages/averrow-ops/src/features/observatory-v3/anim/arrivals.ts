@@ -21,6 +21,8 @@ export interface ArrivalEvent {
   color: Rgba;
   /** Stable key of the target (for per-target throttling). */
   key: string;
+  /** Severity of the trip that lands (lets callers keep only the loud ones). */
+  severity?: string;
 }
 
 /**
@@ -41,6 +43,7 @@ export function buildArrivalEvents(trips: readonly TripDatum[], cycleLength: num
       lat: end[1],
       color: trip.color,
       key: `${end[0].toFixed(3)},${end[1].toFixed(3)}`,
+      severity: trip.severity,
     });
   }
   events.sort((a, b) => a.time - b.time);

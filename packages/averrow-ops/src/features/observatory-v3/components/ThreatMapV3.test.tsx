@@ -24,7 +24,11 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     removeControl(c: unknown) { this.controls = this.controls.filter(x => x !== c); }
     resize() {}
     project() { return { x: 100, y: 100 }; }
+    off(ev: string, cb: Handler) { this.handlers.set(ev, (this.handlers.get(ev) ?? []).filter(h => h !== cb)); return this; }
     getZoom() { return 2; }
+    cameraForBounds = vi.fn((b: [[number, number], [number, number]], o: { maxZoom?: number; padding?: Record<string, number> }) => ({
+      center: { lng: (b[0][0] + b[1][0]) / 2, lat: (b[0][1] + b[1][1]) / 2 }, zoom: Math.min(o.maxZoom ?? 22, 3.1), bearing: 0,
+    }));
     flyTo = vi.fn();
     jumpTo = vi.fn();
     remove() { this.removed = true; }
@@ -36,7 +40,11 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     setProps(p: Record<string, unknown>) { this.props = { ...this.props, ...p }; }
     finalize() { this.finalized = true; }
   }
-  class FakeLayer { constructor(public props: Record<string, unknown>) {} }
+  class FakeLayer {
+    constructor(public props: Record<string, unknown>) {}
+    get id() { return this.props.id as string; }
+    clone(over: Record<string, unknown>) { return new FakeLayer({ ...this.props, ...over }); }
+  }
   const maps: FakeMap[] = [];
   const overlays: FakeOverlay[] = [];
   return { maps, overlays, FakeMap, FakeOverlay, FakeLayer };
@@ -185,35 +193,139 @@ describe('ThreatMapV3 layer memoisation', () => {
 
 describe('ThreatMapV3 camera focus', () => {
   const ready = () => act(() => { lastMap().emit('style.load'); });
+  const insets = { top: 64, right: 344, bottom: 80, left: 68 };
+  // jsdom has no layout: give the map a real size so the fit has room.
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1200 });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 700 });
+  });
 
-  it('flies (<= 800ms) to a new focus request, once per id', () => {
-    const { rerender } = render(<ThreatMapV3 {...base} />);
+  it('frames ALL the target (not one point), padded by the overlays, flying <= 800ms on a gentle curve, once per id', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} cameraInsets={insets} />);
     ready();
-    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[10, 20], [40, 50], [-30, 10]] }} />);
+    expect(lastMap().cameraForBounds).toHaveBeenCalledTimes(1);
+    const [bounds, opts] = lastMap().cameraForBounds.mock.calls[0];
+    expect(bounds).toEqual([[-30, 10], [40, 50]]);
+    expect(opts.padding).toEqual(insets);
+    expect(opts.maxZoom).toBeLessThanOrEqual(3.5);
     expect(lastMap().flyTo).toHaveBeenCalledTimes(1);
     const arg = lastMap().flyTo.mock.calls[0][0];
-    expect(arg.center).toEqual([10, 20]);
     expect(arg.duration).toBeLessThanOrEqual(800);
-    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    expect(arg.curve).toBeLessThan(1.42);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[10, 20], [40, 50]] }} />);
     expect(lastMap().flyTo).toHaveBeenCalledTimes(1);
-    rerender(<ThreatMapV3 {...base} focus={{ id: 2, lng: -5, lat: 1 }} />);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 2, points: [[-5, 1]] }} />);
     expect(lastMap().flyTo).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes the short way across the antimeridian and never imposes a zoom floor (it can zoom OUT to fit)', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} cameraInsets={insets} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[178, -17], [-150, 64]] }} />);
+    const [bounds, opts] = lastMap().cameraForBounds.mock.calls[0];
+    expect(bounds[0][0]).toBe(178);
+    expect(bounds[1][0]).toBe(210); // -150 + 360: the 32-degree box across the date line, not the 328-degree one
+    expect(opts).not.toHaveProperty('minZoom');
+  });
+
+  it('a single point lands on the point zoom', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} cameraInsets={insets} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[10, 20]] }} />);
+    expect(lastMap().cameraForBounds.mock.calls[0][1].maxZoom).toBeCloseTo(3.4);
   });
 
   it('jumps instead of flying under reduced motion or when asked to be instant', () => {
     stubMatchMedia(true);
-    const { rerender } = render(<ThreatMapV3 {...base} />);
+    const { rerender } = render(<ThreatMapV3 {...base} cameraInsets={insets} />);
     ready();
-    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: 10, lat: 20 }} />);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[10, 20]] }} />);
     expect(lastMap().flyTo).not.toHaveBeenCalled();
     expect(lastMap().jumpTo).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores a non-finite target (never feeds NaN to the camera)', () => {
-    const { rerender } = render(<ThreatMapV3 {...base} />);
+  it('ignores a target with nothing placeable (never feeds NaN to the camera)', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} cameraInsets={insets} />);
     ready();
-    rerender(<ThreatMapV3 {...base} focus={{ id: 1, lng: NaN, lat: 20 }} />);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 1, points: [[NaN, 20]] }} />);
+    rerender(<ThreatMapV3 {...base} cameraInsets={insets} focus={{ id: 2, points: [] }} />);
     expect(lastMap().flyTo).not.toHaveBeenCalled();
     expect(lastMap().jumpTo).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('ThreatMapV3 motion policy', () => {
+  const mk = (sev: string, lat = 1) => ({ lat, lng: 2, threat_count: 4, top_severity: sev, critical: 0, high: 0, medium: 0, low: 0, country_code: 'US', top_threat_type: 'c2' });
+  const layerOf = (id: string) => (overlays[0].props.layers as Array<{ props: Record<string, unknown> }>).find(l => l.props.id === id);
+  const ready = () => act(() => { lastMap().emit('style.load'); });
+
+  it('only critical and high nodes breathe', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical'), mk('high', 3), mk('medium', 5), mk('low', 7)]} />);
+    ready();
+    const amp = layerOf('nodes-bloom')!.props.getPulseAmp as (d: unknown) => number;
+    expect(amp(mk('critical'))).toBeGreaterThan(0);
+    expect(amp(mk('high'))).toBeGreaterThan(0);
+    expect(amp(mk('medium'))).toBe(0);
+    expect(amp(mk('low'))).toBe(0);
+  });
+
+  it('under reduced motion nothing breathes, and the particles layer stands in as static beams', () => {
+    stubMatchMedia(true);
+    const arc = { sourcePosition: [10, 20] as [number, number], targetPosition: [-70, 40] as [number, number], threat_type: 'phishing', severity: 'high', source_region: 'NL', target_brand: 'b', brand_name: 'B', volume: 3 };
+    render(<ThreatMapV3 {...base} showParticles showBeams={false} threats={[mk('critical')]} arcs={[arc]} />);
+    ready();
+    const amp = layerOf('nodes-bloom')!.props.getPulseAmp as (d: unknown) => number;
+    expect(amp(mk('critical'))).toBe(0);
+    expect(layerOf('beam-core')).toBeDefined();
+    expect(layerOf('particle-trails')).toBeUndefined();
+  });
+
+  it('with motion on and Beams off, the particles layer draws particles and no beams', () => {
+    const arc = { sourcePosition: [10, 20] as [number, number], targetPosition: [-70, 40] as [number, number], threat_type: 'phishing', severity: 'high', source_region: 'NL', target_brand: 'b', brand_name: 'B', volume: 3 };
+    render(<ThreatMapV3 {...base} showParticles showBeams={false} threats={[mk('critical')]} arcs={[arc]} />);
+    ready();
+    expect(layerOf('beam-core')).toBeUndefined();
+    expect(layerOf('particle-trails')).toBeDefined();
+  });
+
+  it('the derived node subsets are one memoised array shared by every node layer (stable across frames)', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical'), mk('low', 4)]} />);
+    ready();
+    const core = layerOf('nodes-core')!.props.data;
+    expect(layerOf('nodes-bloom')!.props.data).toBe(core);
+    expect(layerOf('nodes-glow')!.props.data).toBe(core);
+  });
+
+  it('a scene change (lens / option) cross-fades: both scenes are drawn with opacity, the outgoing one under an out: id', () => {
+    const t = [mk('critical')];
+    const { rerender } = render(<ThreatMapV3 {...base} threats={t} sceneKey="threats|points|index" />);
+    ready();
+    rerender(<ThreatMapV3 {...base} threats={t} showNodes={false} sceneKey="hosting|points|index" />);
+    const layers = overlays[0].props.layers as Array<{ props: Record<string, unknown> }>;
+    const ids = layers.map(l => l.props.id as string);
+    expect(ids.some(id => id.startsWith('out:'))).toBe(true);
+    const outgoing = layers.find(l => (l.props.id as string).startsWith('out:'))!;
+    expect(outgoing.props.pickable).toBe(false);
+    expect(outgoing.props.opacity as number).toBeGreaterThan(0);
+  });
+
+  it('reduced motion: the scene change is instant (no outgoing copy)', () => {
+    stubMatchMedia(true);
+    const t = [mk('critical')];
+    const { rerender } = render(<ThreatMapV3 {...base} threats={t} sceneKey="a" />);
+    ready();
+    rerender(<ThreatMapV3 {...base} threats={t} showNodes={false} sceneKey="b" />);
+    const ids = (overlays[0].props.layers as Array<{ props: Record<string, unknown> }>).map(l => l.props.id as string);
+    expect(ids.some(id => id.startsWith('out:'))).toBe(false);
+  });
+
+  it('live pings use their own colour, not the threat severity colour', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} threats={[mk('critical')]} />);
+    ready();
+    stubMatchMedia(false);
+    rerender(<ThreatMapV3 {...base} threats={[mk('critical')]} pings={{ seq: 1, items: [{ id: 'x', position: [2, 1], color: [200, 60, 60, 235], severity: 'critical', type: 'phishing', country: 'US', domain: null }] }} />);
+    expect(layerOf('live-pings')).toBeDefined();
   });
 });

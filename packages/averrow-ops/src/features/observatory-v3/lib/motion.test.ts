@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  motionPolicy, breatheAmp, isLoudSeverity, fadeProgress, lensFade, PING_COLOR,
+  motionPolicy, breatheAmp, isLoudSeverity, fadeProgress, lensFade, loopNeeded, PING_COLOR,
   LENS_FADE_IN_MS, LENS_FADE_OUT_MS, COLOR_TRANSITION_MS, DRAWER_ENTER_MS,
 } from './motion';
 import { SEVERITY_COLORS, THREAT_TYPE_COLORS } from './map-colors';
@@ -74,5 +74,25 @@ describe('lens cross-fade (clock driven)', () => {
   it('is instant under reduced motion and when nothing changed', () => {
     expect(lensFade(1000, 1000, true)).toEqual({ incoming: 1, outgoing: 0, active: false });
     expect(lensFade(1000, null, false)).toEqual({ incoming: 1, outgoing: 0, active: false });
+  });
+});
+
+describe('loopNeeded: a still picture costs zero frames', () => {
+  const idle = { particles: true, movementRings: false, clockPlaying: false, breathing: false, lensMotion: false, fading: false, hold: false };
+  it('a paused replay with particles but nothing else moving needs no loop', () => {
+    expect(loopNeeded(idle)).toBe(false);
+    expect(loopNeeded({ ...idle, clockPlaying: true })).toBe(true);
+  });
+  it('anything with its own motion keeps it running', () => {
+    expect(loopNeeded({ ...idle, breathing: true })).toBe(true);
+    expect(loopNeeded({ ...idle, lensMotion: true })).toBe(true);
+    expect(loopNeeded({ ...idle, fading: true })).toBe(true);
+  });
+  it('a live ping holds the loop open even when the replay is paused and nothing else animates', () => {
+    expect(loopNeeded({ ...idle, hold: true })).toBe(true);
+  });
+  it('movement rings follow the replay clock', () => {
+    expect(loopNeeded({ ...idle, particles: false, movementRings: true, clockPlaying: false })).toBe(false);
+    expect(loopNeeded({ ...idle, particles: false, movementRings: true, clockPlaying: true })).toBe(true);
   });
 });

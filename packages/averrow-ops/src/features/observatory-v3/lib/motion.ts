@@ -83,3 +83,28 @@ export function lensFade(nowMs: number, startMs: number | null, instant: boolean
     active: true,
   };
 }
+
+export interface LoopInputs {
+  /** Particles + impact rings are on screen. */
+  particles: boolean;
+  /** Movement departures / landings are on screen. */
+  movementRings: boolean;
+  /** The replay clock is advancing. */
+  clockPlaying: boolean;
+  /** At least one critical / high node is breathing. */
+  breathing: boolean;
+  /** A lens layer has motion of its own (pulses, dashes, halo spin, trails of a playing replay). */
+  lensMotion: boolean;
+  /** A lens cross-fade is in flight. */
+  fading: boolean;
+  /** Rings were just spawned (live ping, clock stop): let them finish. */
+  hold: boolean;
+}
+
+/**
+ * Does the map need animation frames right now? A paused replay with nothing breathing, no lens
+ * motion, no fade and no ring in flight is a still picture: zero frames, zero GPU work.
+ */
+export function loopNeeded(i: LoopInputs): boolean {
+  return (i.particles && i.clockPlaying) || (i.movementRings && i.clockPlaying) || i.breathing || i.lensMotion || i.fading || i.hold;
+}

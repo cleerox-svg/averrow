@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { ArcData, ThreatPoint } from '@/hooks/useObservatory';
 import type { OperationGeo, ProviderGeo, Movement, CampaignGeo } from '@/hooks/useObservatoryLenses';
 import {
-  resolveDrill, drillToPatch, drillKey, drillAnchor, drillTitle, isPending, countryFacts, selPatch, type DrillData,
+  resolveDrill, drillToPatch, drillKey, drillTitle, isPending, countryFacts, selPatch, type DrillData,
 } from './drill';
 import { nodeKey, arcKey } from './url-state';
 import { getCountryCentroid } from '@/lib/country-centroids';
@@ -66,24 +66,6 @@ describe('drillToPatch / keys / titles', () => {
     expect(drillTitle({ kind: 'country', code: 'DE' })).toBe('Germany');
     expect(drillTitle({ kind: 'node', node: { ...node, threat_count: 1 } })).toBe('1 threat');
     expect(drillTitle({ kind: 'operation', id: 'zz', op: null })).toBe('Operation zz');
-  });
-});
-
-describe('drillAnchor', () => {
-  it('country and provider anchor on the centroid; node on itself', () => {
-    expect(drillAnchor({ kind: 'country', code: 'NL' })).toEqual(getCountryCentroid('NL'));
-    expect(drillAnchor({ kind: 'provider', id: 'p1', provider: prov })).toEqual(getCountryCentroid('GB'));
-    expect(drillAnchor({ kind: 'node', node })).toEqual([0.1, 51.5]);
-  });
-  it('operation anchors on its first placeable country; unloaded or unplaceable targets give null (no NaN)', () => {
-    expect(drillAnchor({ kind: 'operation', id: 'x', op: { ...op, countries: ['ZZ', 'NL'] } })).toEqual(getCountryCentroid('NL'));
-    expect(drillAnchor({ kind: 'operation', id: 'x', op: null })).toBeNull();
-    expect(drillAnchor({ kind: 'node', node: { ...node, lat: NaN } })).toBeNull();
-    expect(drillAnchor({ kind: 'actor', id: 'a', name: null })).toBeNull();
-  });
-  it('movement anchors on where it landed, falling back to where it left', () => {
-    expect(drillAnchor({ kind: 'movement', id: 'm', movement: move })).toEqual(getCountryCentroid('NL'));
-    expect(drillAnchor({ kind: 'movement', id: 'm', movement: { ...move, to: { asns: [], countries: [] } } })).toEqual(getCountryCentroid('MD'));
   });
 });
 

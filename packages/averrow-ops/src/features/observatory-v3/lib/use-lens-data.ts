@@ -31,9 +31,11 @@ export interface UseLensDataArgs {
   actorId: string | null;
   /** Filter the replay histogram to one country. */
   timelineCountry: string | null;
+  /** Replay window end (ms): movement trails are timed inside [replayNowMs - period, replayNowMs], like the particles. */
+  replayNowMs: number;
 }
 
-export function useLensData({ needs, period, source, actorId, timelineCountry }: UseLensDataArgs) {
+export function useLensData({ needs, period, source, actorId, timelineCountry, replayNowMs }: UseLensDataArgs) {
   const operationsQ = useOperationsGeo({ enabled: needs.operations });
   const movementsQ = useMovements({ enabled: needs.movements, period });
   const providersQ = useProvidersGeo({ enabled: needs.providers });
@@ -42,7 +44,8 @@ export function useLensData({ needs, period, source, actorId, timelineCountry }:
   const actorsQ = useActorList({ enabled: needs.actors });
   const actorDetailQ = useActorDetail(actorId, { enabled: needs.actors });
   const timelineQ = useObservatoryTimeline({ enabled: needs.timeline, period, source, country: timelineCountry });
-  const geometry = useCountryGeometry(needs.overindex);
+  // Shapes load only while a choropleth is visible, never for a country drawer or a lens that draws no shapes.
+  const geometry = useCountryGeometry(needs.geometry);
 
   const operations: readonly OperationGeo[] | undefined = operationsQ.data?.data.operations;
   const components = operationsQ.data?.data.components;
@@ -53,8 +56,8 @@ export function useLensData({ needs, period, source, actorId, timelineCountry }:
 
   const movements: readonly Movement[] | undefined = movementsQ.data?.data;
   const movementModel = useMemo(
-    () => (movements ? buildMovementModel(movements, { nowMs: Date.now(), periodMs: periodToMs(period) }) : null),
-    [movements, period],
+    () => (movements ? buildMovementModel(movements, { nowMs: replayNowMs, periodMs: periodToMs(period) }) : null),
+    [movements, period, replayNowMs],
   );
 
   const providers: readonly ProviderGeo[] | undefined = providersQ.data?.data;

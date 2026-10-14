@@ -233,7 +233,11 @@ export type ObservatoryPatch = Partial<Omit<ObservatoryUrlState, 'layers'>> & {
  */
 export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: ObservatoryPatch): ObservatoryUrlState {
   const { mode, ...rest } = rawPatch;
-  const patch: Omit<ObservatoryPatch, 'mode'> = mode ? { ...LEGACY_MODE_PATCH[mode], ...rest } : rest;
+  // `mode: 'global'` means "leave the heat / bot-share scene" and keeps the lens; the others name a lens + option.
+  const patch: Omit<ObservatoryPatch, 'mode'> =
+    mode === 'global' ? { view: 'points', ...(prev.measure === 'bot' ? { measure: DEFAULT_STATE.measure } : {}), ...rest }
+      : mode ? { ...LEGACY_MODE_PATCH[mode], ...rest }
+        : rest;
   const lensChanged = patch.lens !== undefined && patch.lens !== prev.lens;
   const viewChanged =
     lensChanged ||

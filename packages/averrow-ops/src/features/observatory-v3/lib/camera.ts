@@ -29,7 +29,8 @@ export const FLY_CURVE = 1.2;
 /** Half-size of the box built round a single point so cameraForBounds has something to fit. */
 const POINT_EPS = 0.02;
 
-export interface Insets { top: number; right: number; bottom: number; left: number }
+export type { Insets } from './layout';
+import type { Insets } from './layout';
 export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
 /** A longitude/latitude box. `east` may exceed 180 when the box crosses the antimeridian (west < east always). */

@@ -1,23 +1,27 @@
 /**
- * Legend + status for the lens layers that are switched on. One section per
- * layer: what the marks mean (generated from the same colour tables the WebGL
- * layers use), how many objects are drawn, anything that could not be placed,
- * and an honest empty / loading / error state — an empty lens never reads as
- * "nothing is happening".
+ * Legend sections for the lens layers. One section per layer: what the marks
+ * mean (generated from the same colour tables the WebGL layers use), how many
+ * objects are drawn, anything that could not be placed, and an honest empty /
+ * loading / error state — an empty lens never reads as "nothing is happening".
+ *
+ * The sections are plain blocks: LegendChip composes the right ones for the active
+ * lens inside its single collapsible card.
  */
 
-import { Card } from '@/design-system/components';
 import { Select } from '@averrow/shared/ui';
 import { RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
-import type { LayerId, LayerToggles } from '../lib/lenses';
 import type { Measure } from '../lib/url-state';
 import type { OperationsModel } from '../lib/lens/operations';
 import type { MovementModel } from '../lib/lens/movement';
 import type { HostingModel } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
 import type { BaselineModel } from '../lib/lens/baseline';
-import { OVERINDEX_STOPS, NO_BASELINE_COLOR } from '../lib/lens/baseline';
+import { OVERINDEX_STOPS, NO_BASELINE_OUTLINE } from '../lib/lens/baseline';
+import type { BotShareModel } from '../lib/lens/bot-share';
+import { formatPct } from '../lib/bot-density';
+import { Link } from 'react-router-dom';
+import { tabUrl } from '@/lib/workspaceRoutes';
 import type { CampaignsModel } from '../lib/lens/campaigns';
 import type { ActorModel } from '../lib/lens/actors';
 import type { ActorListItem } from '@/hooks/useObservatoryLenses';
@@ -29,31 +33,30 @@ export interface QueryState {
   refetch: () => Promise<unknown>;
 }
 
-export interface LensLegendProps {
-  layers: LayerToggles;
+export interface LegendSectionProps {
   operations: { model: OperationsModel | null; q: QueryState };
   movement: { model: MovementModel | null; q: QueryState; count: number };
   hosting: { model: HostingModel | null; q: QueryState };
-  baseline: { model: BaselineModel | null; q: QueryState; measure: Measure; snapshotDate: string | null; geometryError: Error | null; period: string | null };
+  baseline: {
+    model: BaselineModel | null; q: QueryState; measure: Measure; snapshotDate: string | null;
+    geometryError: Error | null; period: string | null;
+    bot: { model: BotShareModel | null; q: QueryState };
+  };
   campaigns: { model: CampaignsModel | null; q: QueryState };
   actors: { model: ActorModel | null; list: ActorListItem[]; listQ: QueryState; detailQ: QueryState | null; selectedId: string | null };
-  onMeasure: (m: Measure) => void;
   onPickActor: (id: string | null) => void;
-  /** Collapsed by default on short viewports. */
-  className?: string;
-  style?: React.CSSProperties;
 }
 
 const LABEL = 'font-mono text-[10px] uppercase tracking-wider';
 const TEXT = 'font-mono text-[10px]';
 
-function Swatch({ color, ring, dashed }: { color: string; ring?: boolean; dashed?: boolean }) {
+function Swatch({ color, ring, dashed, square }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean }) {
   return (
     <span
       aria-hidden
       className="inline-block shrink-0"
       style={{
-        width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+        width: 10, height: 10, borderRadius: square ? 2 : '50%', flexShrink: 0,
         background: ring ? 'transparent' : color,
         border: ring || dashed ? `1.5px ${dashed ? 'dashed' : 'solid'} ${color}` : 'none',
         boxShadow: '0 0 0 1px rgba(0,0,0,0.3)',
@@ -66,7 +69,7 @@ function Row({ children, swatch }: { children: ReactNode; swatch: ReactNode }) {
   return <li className={`${TEXT} flex items-center gap-2`} style={{ color: 'var(--text-secondary)' }}>{swatch}<span className="min-w-0">{children}</span></li>;
 }
 
-function Status({ q, empty, emptyText, what }: { q: QueryState; empty: boolean; emptyText: string; what: string }) {
+export function Status({ q, empty, emptyText, what }: { q: QueryState; empty: boolean; emptyText: string; what: string }) {
   if (q.isLoading) return <div role="status" className={TEXT} style={{ color: 'var(--text-tertiary)' }}>Loading {what}…</div>;
   if (q.error) {
     return (
@@ -93,7 +96,7 @@ function Section({ title, children, id }: { title: string; children: ReactNode; 
 
 const css = (c: Rgba): string => rgbCss(c);
 
-function OperationsSection({ s }: { s: LensLegendProps['operations'] }) {
+export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }) {
   const m = s.model;
   return (
     <Section title="Operations" id="lg-ops">
@@ -102,7 +105,7 @@ function OperationsSection({ s }: { s: LensLegendProps['operations'] }) {
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
             <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Operation in a country. Nodes of one operator pulse in unison.</Row>
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Linked by shared evidence (cert, IP, ASN).</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Linked by shared evidence. The label says what: ◆ cert, ● IP, ▲ ASN ×count. Hover a link for the full detail.</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             {m.placedOps.size} operations · {m.nodes.length} country nodes · {m.edges.length} links
@@ -114,7 +117,7 @@ function OperationsSection({ s }: { s: LensLegendProps['operations'] }) {
   );
 }
 
-function MovementSection({ s }: { s: LensLegendProps['movement'] }) {
+export function MovementSection({ s }: { s: LegendSectionProps['movement'] }) {
   const m = s.model;
   const drawn = m ? m.hops.length + m.pulses.length : 0;
   return (
@@ -137,7 +140,7 @@ function MovementSection({ s }: { s: LensLegendProps['movement'] }) {
   );
 }
 
-function HostingSection({ s }: { s: LensLegendProps['hosting'] }) {
+export function HostingSection({ s }: { s: LegendSectionProps['hosting'] }) {
   const m = s.model;
   return (
     <Section title="Hosting providers" id="lg-host">
@@ -161,40 +164,27 @@ function HostingSection({ s }: { s: LensLegendProps['hosting'] }) {
   );
 }
 
-function BaselineSection({ s, onMeasure }: { s: LensLegendProps['baseline']; onMeasure: (m: Measure) => void }) {
+export function BaselineSection({ s }: { s: LegendSectionProps['baseline'] }) {
   const m = s.model;
   const gradient = `linear-gradient(90deg, ${OVERINDEX_STOPS.map(st => `${css(st.color)} ${Math.round(st.t * 100)}%`).join(', ')})`;
+  if (s.measure === 'bot') return <BotShareSection bot={s.bot} />;
   return (
-    <Section title="Radar baseline" id="lg-base">
-      <div role="group" aria-label="Choropleth measure" className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-base)' }}>
-        {([['index', 'Over-index'], ['raw', 'Raw volume']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            aria-pressed={s.measure === id}
-            onClick={() => onMeasure(id)}
-            className="ds-focusable flex-1 font-mono text-[10px] min-h-[30px] max-[899px]:min-h-[44px]"
-            style={{
-              background: s.measure === id ? 'color-mix(in srgb, var(--amber) 15%, transparent)' : 'transparent',
-              color: s.measure === id ? 'var(--amber-text)' : 'var(--text-tertiary)',
-              border: 'none', cursor: 'pointer',
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+    <Section title={s.measure === 'index' ? 'Over-index vs Radar' : 'Raw volume'} id="lg-base">
       <Status q={s.q} what="baseline" empty={!!m && m.rows.size === 0} emptyText="No country data for this period." />
       {s.geometryError && <div role="alert" className={TEXT} style={{ color: 'var(--sev-critical-text)' }}>Country shapes failed to load.</div>}
       {m && m.rows.size > 0 && (
         s.measure === 'index' ? (
           <>
-            <div role="img" aria-label="Colour scale: blue under-index, dark neutral at 1×, red over-index" style={{ height: 8, borderRadius: 4, background: gradient }} />
+            <div className="relative">
+              <div role="img" aria-label="Colour scale: blue under-index, slate at 1×, red over-index" style={{ height: 8, borderRadius: 4, background: gradient }} />
+              {/* 1× tick: where "normal" sits on the scale */}
+              <span aria-hidden className="absolute" style={{ left: '50%', top: -3, width: 2, height: 14, marginLeft: -1, background: 'var(--text-primary)', borderRadius: 1 }} />
+            </div>
             <div className={`${TEXT} flex justify-between`} style={{ color: 'var(--text-secondary)' }}>
               <span>¼× under</span><span>1×</span><span>4× over</span>
             </div>
             <ul className="list-none p-0 m-0">
-              <Row swatch={<Swatch color={css(NO_BASELINE_COLOR)} />}>Grey: outside Radar&apos;s top list, no baseline</Row>
+              <Row swatch={<Swatch color={css(NO_BASELINE_OUTLINE)} ring square />}>Outlined: outside Radar&apos;s top list, no baseline</Row>
             </ul>
             <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
               Our share of threats ÷ Radar&apos;s attack-origin share ({s.period ?? '7d'}).
@@ -213,7 +203,44 @@ function BaselineSection({ s, onMeasure }: { s: LensLegendProps['baseline']; onM
   );
 }
 
-function CampaignsSection({ s }: { s: LensLegendProps['campaigns'] }) {
+function BotShareSection({ bot }: { bot: LegendSectionProps['baseline']['bot'] }) {
+  const m = bot.model;
+  return (
+    <Section title="Bot share of traffic" id="lg-bot">
+      <Status q={bot.q} what="bot share" empty={!!m && m.rows.size === 0} emptyText="No bot-share data yet." />
+      {m && m.rows.size > 0 && (
+        <>
+          <div role="img" aria-label={`Colour scale from ${formatPct(m.domain.minBot)} to ${formatPct(m.domain.maxBot)} bot share`}
+            style={{ height: 8, borderRadius: 4, background: botGradient(m) }} />
+          <div className={`${TEXT} flex justify-between`} style={{ color: 'var(--text-secondary)' }}>
+            <span>{formatPct(m.domain.minBot)}</span><span>{formatPct(m.domain.maxBot)}</span>
+          </div>
+          <ul className="list-none p-0 m-0">
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: 2, background: '#0b1220', border: '1.5px solid rgb(255,255,255)', flexShrink: 0 }} />}>
+              Outlined: above the global average{m.globalAvg != null ? ` (${formatPct(m.globalAvg)})` : ''}
+            </Row>
+          </ul>
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Source: Cloudflare Radar{m.asOf ? ` · as of ${m.asOf}` : ''} · {m.rows.size} countries. ≥ / ≤ marks an estimate bound.
+          </div>
+          <Link to={tabUrl('bot-traffic')} className={`${TEXT} underline`} style={{ color: 'var(--amber-text)' }}>View as table (Bot Traffic tab)</Link>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Low -> mid -> high along the same stops the map uses (read back from the model's own colours). */
+function botGradient(m: BotShareModel): string {
+  const sorted = [...m.rows.values()].sort((a, b) => a.bot_pct - b.bot_pct);
+  const pick = (i: number) => m.colors.get(sorted[Math.max(0, Math.min(sorted.length - 1, i))]!.code)!;
+  const lo = pick(0);
+  const mid = pick(Math.floor(sorted.length / 2));
+  const hi = pick(sorted.length - 1);
+  return `linear-gradient(90deg, ${css(lo)}, ${css(mid)}, ${css(hi)})`;
+}
+
+export function CampaignsSection({ s }: { s: LegendSectionProps['campaigns'] }) {
   const m = s.model;
   return (
     <Section title="Campaigns · curated" id="lg-camp">
@@ -236,7 +263,7 @@ function CampaignsSection({ s }: { s: LensLegendProps['campaigns'] }) {
   );
 }
 
-function ActorsSection({ s, onPickActor }: { s: LensLegendProps['actors']; onPickActor: (id: string | null) => void }) {
+export function ActorsSection({ s, onPickActor }: { s: LegendSectionProps['actors']; onPickActor: (id: string | null) => void }) {
   const m = s.model;
   return (
     <Section title="Actor" id="lg-actor">
@@ -272,30 +299,5 @@ function ActorsSection({ s, onPickActor }: { s: LensLegendProps['actors']; onPic
       )}
       {!s.selectedId && <div className={TEXT} style={{ color: 'var(--text-muted)' }}>Pick an actor to light up its known infrastructure.</div>}
     </Section>
-  );
-}
-
-const ORDER: LayerId[] = ['operations', 'movement', 'hosting', 'baseline', 'campaigns', 'actors'];
-
-export function LensLegend(props: LensLegendProps) {
-  const { layers, className, style } = props;
-  const active = ORDER.filter(id => layers[id]);
-  if (active.length === 0) return null;
-  return (
-    <Card variant="base" padding="10px 12px" role="group" aria-label="Lens legend" className={className} style={style}>
-      <div className="flex flex-col gap-3">
-        {active.map(id => {
-          switch (id) {
-            case 'operations': return <OperationsSection key={id} s={props.operations} />;
-            case 'movement': return <MovementSection key={id} s={props.movement} />;
-            case 'hosting': return <HostingSection key={id} s={props.hosting} />;
-            case 'baseline': return <BaselineSection key={id} s={props.baseline} onMeasure={props.onMeasure} />;
-            case 'campaigns': return <CampaignsSection key={id} s={props.campaigns} />;
-            case 'actors': return <ActorsSection key={id} s={props.actors} onPickActor={props.onPickActor} />;
-            default: return null;
-          }
-        })}
-      </div>
-    </Card>
   );
 }

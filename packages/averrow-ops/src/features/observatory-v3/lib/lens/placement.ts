@@ -19,9 +19,21 @@ export function spreadOffset(index: number, step: number): [number, number] {
   return [r * Math.cos(angle), r * Math.sin(angle)];
 }
 
+/**
+ * Spiral step that keeps a group of `count` items inside `maxRadius` degrees of the
+ * centre. A country with 30 providers must not scatter them into the next country:
+ * the spiral tightens (rings overlap, which is honest) instead of growing.
+ */
+export function stepFor(count: number, step: number, maxRadius: number): number {
+  if (count <= 1) return step;
+  return Math.min(step, maxRadius / Math.sqrt(count - 1));
+}
+
 /** Position of the `index`-th item around a centre (longitude stretched at high latitude, latitude clamped). */
-export function placeAround(center: LngLat, index: number, step = 1.1): LngLat {
-  const [dx, dy] = spreadOffset(index, step);
+export function placeAround(center: LngLat, index: number, step = 1.1, maxRadius = Infinity): LngLat {
+  let [dx, dy] = spreadOffset(index, step);
+  const r = Math.hypot(dx, dy);
+  if (r > maxRadius) { dx *= maxRadius / r; dy *= maxRadius / r; }
   const lngScale = 1 / Math.max(Math.cos((center[1] * Math.PI) / 180), 0.35);
   const lat = Math.max(-80, Math.min(80, center[1] + dy));
   let lng = center[0] + dx * lngScale;
@@ -33,6 +45,13 @@ export function placeAround(center: LngLat, index: number, step = 1.1): LngLat {
 export function countryCenter(code: string | null | undefined): LngLat | null {
   const c = getCountryCentroid(code);
   return c && Number.isFinite(c[0]) && Number.isFinite(c[1]) ? c : null;
+}
+
+/** Size of each item's group (same order as the input). */
+export function groupSizes<T>(items: readonly T[], keyOf: (item: T) => string): number[] {
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(keyOf(item), (counts.get(keyOf(item)) ?? 0) + 1);
+  return items.map(item => counts.get(keyOf(item))!);
 }
 
 /**

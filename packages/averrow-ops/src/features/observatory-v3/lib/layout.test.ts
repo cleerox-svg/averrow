@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { computeLayout, DOCK_MIN_MAP, DOCK_WIDTH, RAIL_WIDTH } from './layout';
+import { computeLayout, cameraInsets, DOCK_MIN_MAP, DOCK_WIDTH, RAIL_WIDTH } from './layout';
 import { useElementWidth } from './use-element-width';
 
 describe('computeLayout: tiers follow the free map width, not the viewport', () => {
@@ -60,5 +60,30 @@ describe('useElementWidth: reacts to resize', () => {
     } finally {
       globalThis.ResizeObserver = OriginalRO;
     }
+  });
+});
+
+describe('cameraInsets: what overlays each edge of the map', () => {
+  const desktop = computeLayout({ mapWidth: 1300, viewportWidth: 1540 });
+  const phone = computeLayout({ mapWidth: 400, viewportWidth: 400 });
+  it('desktop: toolbar on top, rail on the left, docked slot on the right, replay bar below', () => {
+    expect(cameraInsets({ layout: desktop, rightSlotOpen: true, showTimeline: true, sheetPx: 0 })).toEqual({
+      top: 64, left: 68, right: 344, bottom: 80,
+    });
+  });
+  it('nothing open: just the gutters', () => {
+    expect(cameraInsets({ layout: desktop, rightSlotOpen: false, showTimeline: false, sheetPx: 0 })).toEqual({ top: 64, left: 68, right: 12, bottom: 12 });
+  });
+  it('a floating (tablet) panel covers the map just like a docked one', () => {
+    const tablet = computeLayout({ mapWidth: 900, viewportWidth: 1100 });
+    expect(tablet.docked).toBe(false);
+    expect(cameraInsets({ layout: tablet, rightSlotOpen: true, showTimeline: false, sheetPx: 0 }).right).toBe(344);
+  });
+  it('phone: two chrome rows on top, no rail, and the peek sheet becomes the bottom inset', () => {
+    const closed = cameraInsets({ layout: phone, rightSlotOpen: false, showTimeline: false, sheetPx: 0 });
+    expect(closed).toMatchObject({ left: 12, right: 12, bottom: 12 });
+    expect(closed.top).toBeGreaterThan(110);
+    // sheet 300px from the page bottom, the 108px band sits under the map already => 204px of map covered (+12)
+    expect(cameraInsets({ layout: phone, rightSlotOpen: true, showTimeline: false, sheetPx: 300 })).toMatchObject({ right: 12, bottom: 204 });
   });
 });

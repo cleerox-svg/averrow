@@ -124,6 +124,13 @@ export interface TimelinePoint {
   high: number;
   medium: number;
   low: number;
+  /**
+   * Weaponization velocity buckets (hours from registration to first sighting),
+   * present only when the request asked for `velocity=`. Threats counted here are
+   * a subset of `total`.
+   */
+  very_fast?: number;
+  fast?: number;
 }
 
 export interface TimelineData {

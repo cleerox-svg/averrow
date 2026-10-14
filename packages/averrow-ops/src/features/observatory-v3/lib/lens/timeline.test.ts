@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { TimelineData } from '@/hooks/useObservatoryLenses';
 import {
   buildHistogram, fracToClock, clockToFrac, fracToTime, pointerFrac, bucketIndexAt, nudgePlayhead, stackedPaths,
-  formatPlayheadTime, MAX_PLAYHEAD,
+  formatPlayheadTime, MAX_PLAYHEAD, barIndexAt, windowBuckets,
 } from './timeline';
 import { CYCLE_LENGTH } from '../trips';
 
@@ -99,5 +99,49 @@ describe('formatPlayheadTime', () => {
     const ms = Date.parse('2026-10-14T13:00:00Z');
     expect(formatPlayheadTime(ms, 3_600_000)).toBe('14 Oct 13:00 UTC');
     expect(formatPlayheadTime(ms, 86_400_000)).toBe('14 Oct');
+  });
+});
+
+
+describe('replay window alignment (the bars share the particles\' window)', () => {
+  // The particles were built for [now - 4h, now]; the server's first bucket starts a little earlier.
+  const now = Date.parse('2026-10-14T03:30:00Z');
+  const window = { startMs: now - 4 * 3_600_000, endMs: now }; // 23:30 .. 03:30
+  const w = buildHistogram(data, window)!;
+
+  it('takes its span from the window, not from the buckets', () => {
+    expect(w.startMs).toBe(window.startMs);
+    expect(w.endMs).toBe(window.endMs);
+    expect(w.bars).toHaveLength(4);
+    expect(buildHistogram(data, null)!.startMs).toBe(Date.parse('2026-10-14T00:00:00Z'));
+    expect(buildHistogram(data, { startMs: 5, endMs: 5 })!.startMs).toBe(Date.parse('2026-10-14T00:00:00Z')); // an empty window is ignored
+  });
+  it('places each bar by its real time and clips at the window edges', () => {
+    // 4h window over 400px: 100px/hour; the 00:00 bar starts 30min in => x = 50, the 03:00 bar is cut at 03:30 => 350..400
+    const paths = stackedPaths(w, 400, 30, 0);
+    expect(paths.critical).toMatch(/^M50 /);
+    const lastCritical = buildHistogram({ bucket: '1h', points: [pt('2026-10-14T03:00:00Z', 5, 5)] }, window)!;
+    const p = stackedPaths(lastCritical, 400, 30, 0);
+    expect(p.critical).toContain('M350 ');
+    expect(p.critical).toContain('h50'); // clipped half-bar
+  });
+  it('maps the playhead to the right bar by time', () => {
+    // 00:00 bar occupies fractions 0.125..0.375 of the window
+    expect(barIndexAt(0, w)).toBe(0);
+    expect(barIndexAt(0.2, w)).toBe(0);
+    expect(barIndexAt(0.5, w)).toBe(1 + 0); // 01:30 -> the 01:00 bar
+    expect(barIndexAt(0.99, w)).toBe(3);
+    expect(windowBuckets(w)).toBe(4);
+  });
+  it('without a window it is the old uniform layout', () => {
+    const h = buildHistogram(data)!;
+    const uniform = stackedPaths(h, 400, 30, 0);
+    expect(uniform.critical).toMatch(/^M0 /);
+    expect(barIndexAt(0.5, h)).toBe(bucketIndexAt(0.5, 4));
+  });
+  it('a short readout drops the zone', () => {
+    expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 3_600_000)).toBe('13 Oct 14:00 UTC');
+    expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 3_600_000, true)).toBe('13 Oct 14:00');
+    expect(formatPlayheadTime(Date.parse('2026-10-13T14:00:00Z'), 86_400_000, true)).toBe('13 Oct');
   });
 });

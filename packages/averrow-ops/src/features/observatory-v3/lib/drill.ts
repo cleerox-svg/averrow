@@ -14,11 +14,10 @@ import type { ArcData, ThreatPoint } from '@/hooks/useObservatory';
 import type {
   ActorListItem, CampaignGeo, Movement, OperationGeo, OverindexRow, ProviderGeo,
 } from '@/hooks/useObservatoryLenses';
-import type { LngLat } from '@/lib/country-centroids';
 import { countryName } from './country-name';
 import { arcKey, nodeKey, parseSel, selValue, type ObservatoryPatch, type SelKind } from './url-state';
-import { selectionLngLat, type MapSelection } from './selection';
-import { countryCenter, iso2 } from './lens/placement';
+import type { MapSelection } from './selection';
+import { iso2 } from './lens/placement';
 
 export type DrillTarget =
   | { kind: 'node'; node: ThreatPoint }
@@ -129,30 +128,6 @@ export function selPatch(kind: SelKind, id: string): Pick<ObservatoryPatch, 'nod
 
 export function drillFromMapSelection(s: MapSelection): DrillTarget {
   return s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc };
-}
-
-/** Where the camera should go for this target, or null when there is no single sensible point. */
-export function drillAnchor(t: DrillTarget): LngLat | null {
-  switch (t.kind) {
-    case 'node': return selectionLngLat({ kind: 'node', node: t.node });
-    case 'arc': return selectionLngLat({ kind: 'arc', arc: t.arc });
-    case 'country': return countryCenter(t.code);
-    case 'operation': {
-      for (const cc of t.op?.countries ?? []) { const c = countryCenter(cc); if (c) return c; }
-      return null;
-    }
-    case 'provider': return countryCenter(t.provider?.country ?? null);
-    case 'actor': return null;
-    case 'campaign': {
-      for (const cc of t.campaign?.target_countries ?? []) { const c = countryCenter(cc); if (c) return c; }
-      return null;
-    }
-    case 'movement': {
-      const m = t.movement;
-      for (const cc of [...(m?.to.countries ?? []), ...(m?.from.countries ?? [])]) { const c = countryCenter(cc); if (c) return c; }
-      return null;
-    }
-  }
 }
 
 export function drillTitle(t: DrillTarget): string {

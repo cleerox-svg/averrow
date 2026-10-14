@@ -10,11 +10,21 @@
  *     keeps arrays referentially stable across no-change refetches, and click
  *     handlers go through refs, so neither re-creates the layer set.
  *   - ONE rAF loop (anim/use-deck-frame.ts) drives everything animated: particle
- *     trails (TripsLayer currentTime), node heartbeats (PulseExtension) and
- *     impact rings (RingExtension). Per frame only uniforms change; attributes
- *     are re-read only when data changes or a ring is spawned. It runs only
- *     while something is animating, the tab is visible, the map is on screen,
- *     and the user hasn't asked for reduced motion (then: static, no rings).
+ *     trails (TripsLayer currentTime), node heartbeats (PulseExtension), impact
+ *     rings (RingExtension) and the lens layers. Per frame only UNIFORMS change
+ *     (animTime, currentTime, opacity): every layer's `data` is a stable array
+ *     (layers/lens-layers.test.ts pins this for the lens layers), attributes are
+ *     re-read only when data changes or a ring is spawned. The loop runs only
+ *     while something animates: a playing replay with particles, a breathing
+ *     critical / high node, a lens layer with motion, a live ping or a lens
+ *     cross-fade. A paused replay with only static content costs zero frames. It
+ *     also stops when the tab is hidden or the map is off screen, and under
+ *     reduced motion (then: static, with static beams standing in for particles).
+ *   - Labels are placed in SCREEN space (lib/label-placement.ts) when the camera
+ *     settles (`moveend`), never per frame.
+ *   - A scene change (lens / option) cross-fades: the previous scene is kept
+ *     ~200ms and faded out while the new one fades in over 240ms, both read from
+ *     the frame clock (lib/motion.ts), not from a CSS timer.
  *   - Only FATAL errors (base style failed, WebGL context lost) replace the
  *     map; tile/source hiccups leave it up. Retry re-initialises the map.
  */
@@ -25,15 +35,10 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
 import type { Layer, PickingInfo } from '@deck.gl/core';
-import { useTheme } from '@/design-system/hooks';
 import { TripsLayer } from '@/lib/trips-layer';
+import type { LngLat } from '@/lib/country-centroids';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
-import {
-  botColor, botRadius, botDensityDomain, botDensityTooltip, isAboveAverage,
-  resolveScaleStops, RING_COLOR, OUTLINE_COLOR,
-  type BotDensityPoint,
-} from '../lib/bot-density';
 import {
   getSeverityColor, getArcColor, heatmapWeight, sevText, typeLabel, HEATMAP_COLOR_RANGE,
   type ColorBy, type Rgba,
@@ -56,10 +61,22 @@ import {
 } from '../lib/selection';
 import { nodeKey, arcKey, type MapMode } from '../lib/url-state';
 import {
-  buildLensBaseLayers, buildLensLayers, lensNeedsFrame,
+  buildLensBaseLayers, buildLensLayers, lensNeedsFrame, opNodePx, opsMaxThreats,
   type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
 } from '../layers/lens-layers';
+import {
+  edgeLabelSources, hostLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
+  type PlacedLabels, type PlaceInput, type Project,
+} from '../layers/lens-labels';
+import { highlightGroup } from '../lib/lens/operations';
+import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
+import {
+  planCamera, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
+} from '../lib/camera';
+import {
+  motionPolicy, breatheAmp, isLoudSeverity, lensFade, loopNeeded, PING_COLOR, LENS_FADE_IN_MS,
+} from '../lib/motion';
 
 export type { MapMode } from '../lib/url-state';
 
@@ -70,7 +87,6 @@ interface TooltipInfo {
   lens?: LensHover;
   threat?: ThreatPoint;
   arc?: ArcData;
-  bot?: BotDensityPoint;
 }
 
 type Pick<T> = PickingInfo<T>;
@@ -82,6 +98,8 @@ const PICK_RADIUS_TOUCH = 16;
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
+/** The loop keeps running this long after a trigger (ring life) so spawned rings can finish. */
+const LOOP_HOLD_MS = 2800;
 
 // Extensions are stateless; share one instance so deck's extension diff is trivially equal.
 const PULSE_EXT = [new PulseExtension()];
@@ -91,7 +109,8 @@ const RING_EXT = [new RingExtension()];
 // Nodes in the same country + threat type share a phase: a synchronised heartbeat per "operation".
 const nodePhase = (d: ThreatPoint) => phaseForKey(`${d.country_code ?? ''}|${d.top_threat_type ?? ''}`);
 const nodeRate = (d: ThreatPoint) => pulseRateForSeverity(d.top_severity);
-const nodeAmp = (d: ThreatPoint) => pulseAmpForSeverity(d.top_severity);
+/** Only critical / high nodes breathe (lib/motion.ts); everything else is still. */
+const nodeAmp = (d: ThreatPoint) => breatheAmp(d.top_severity, pulseAmpForSeverity, { ambient: true });
 const noAmp = () => 0;
 const bloomRadius = (d: ThreatPoint) => Math.sqrt(Math.max(1, d.threat_count)) * 5400;
 const glowRadius = (d: ThreatPoint) => Math.sqrt(Math.max(1, d.threat_count)) * 2900;
@@ -100,7 +119,7 @@ const glowColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 
 const nodePosition = (d: ThreatPoint): [number, number] => [d.lng, d.lat];
 
 /** Lens data + selection the map draws (everything except per-map concerns the map adds itself). */
-export type LensMapProps = Omit<LensLayerInput, 'reducedMotion' | 'isMobile' | 'pick'>;
+export type LensMapProps = Omit<LensLayerInput, 'reducedMotion' | 'isMobile' | 'pick' | 'labels'>;
 
 /** A batch of live pings. A new `seq` spawns the items' rings once. */
 export interface PingBatch {
@@ -108,17 +127,18 @@ export interface PingBatch {
   items: readonly PingItem[];
 }
 
+/**
+ * Camera request. A NEW `id` frames ALL of `points` (MapLibre flyTo, <= FLY_MS;
+ * jumpTo under reduced motion or `instant`), inside the area the overlays leave free.
+ */
 export interface MapFocus {
   id: number;
-  lng: number;
-  lat: number;
-  zoom?: number;
+  points: ReadonlyArray<LngLat>;
   /** Skip the animation (initial URL restore). */
   instant?: boolean;
 }
 
-/** Fly-to duration cap (ms): long enough to track, short enough never to feel slow. */
-export const FLY_DURATION_MS = 700;
+export { FLY_MS as FLY_DURATION_MS } from '../lib/camera';
 
 // ─── Props ──────────────────────────────────────────────────
 export interface ThreatMapV3Props {
@@ -131,21 +151,18 @@ export interface ThreatMapV3Props {
   mapMode: MapMode;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
   heatmapData?: HeatmapPoint[];
-  /** Bot-density mode only: countries joined to centroids. */
-  botDensity?: BotDensityPoint[];
-  /** Global bot share % (for the above-average marker + tooltip). */
-  botGlobalAvg?: number | null;
+  /** Replay window end (ms). One value for particles, movement and the timeline so they share a window. */
+  replayNowMs?: number;
   /**
-   * Desktop zoom control right inset (px) — the width of whatever overlays
-   * the map's right edge (the open SidePanel), so the control stays visible
-   * and detail cards stay clear of it.
+   * Right inset (px) of the zoom control: the width of whatever docks/overlays the
+   * map's right edge (the open panel / drawer), so the control stays visible.
    */
   controlRightInset?: number;
   /**
-   * Width (px) of the left rail overlaying the map (desktop). Camera moves centre
-   * the target in the free area between it and the right inset, not behind the rail.
+   * What overlays the map on each side (rail, toolbar, drawer, timeline, sheet), px.
+   * Camera moves frame their target in the area that is left free.
    */
-  controlLeftInset?: number;
+  cameraInsets?: Insets;
   /** Currently selected node / arc (resolved against the current data), or null. */
   selection?: MapSelection | null;
   /** Called with a new selection on click/tap, or null to clear (empty-map click). */
@@ -155,21 +172,20 @@ export interface ThreatMapV3Props {
    * passes its own to drive play / pause / speed / seek.
    */
   clock?: AnimationClock;
+  /** Whether the replay is playing (a paused replay with nothing else moving needs no frames). */
+  clockPlaying?: boolean;
   /** Phase B lens data. Omit (or all layers off) for the plain threat map. */
   lens?: LensMapProps;
+  /** Changes when the lens / option changes: triggers the cross-fade. */
+  sceneKey?: string;
   /** A lens object was clicked / tapped on the map. */
   onLensPick?: (pick: LensPick) => void;
   /** New live threats: a sonar ring at each origin (static highlight under reduced motion). */
   pings?: PingBatch | null;
   /** Called every animation frame with the replay playhead (clock units) — for DOM-only readouts, never React state. */
   onPlayhead?: (t: number) => void;
-  /** Bump to repaint once after a seek while the loop is not running (reduced motion / hidden tab). */
+  /** Bump to repaint once after a seek while the loop is not running (reduced motion / hidden tab / paused). */
   seekVersion?: number;
-  /**
-   * Camera request. A NEW `id` flies the map to (lng, lat) (MapLibre flyTo, <= 800ms;
-   * jumpTo under reduced motion or `instant`). Used when the selection did not
-   * come from a click on the map (side panel, search, URL restore).
-   */
   focus?: MapFocus | null;
   /** Notified when the map enters / leaves the fatal fallback (so the page can hide map-dependent overlays). */
   onFatalChange?: (fatal: boolean) => void;
@@ -245,10 +261,10 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
-  mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT,
-  botDensity, botGlobalAvg = null, controlRightInset = 0, controlLeftInset = 0,
-  selection = null, onSelect, clock: clockProp, onFatal, focus = null,
-  lens, onLensPick, pings = null, onPlayhead, seekVersion = 0,
+  mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
+  controlRightInset = 0, cameraInsets = NO_INSETS,
+  selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null,
+  lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -265,22 +281,16 @@ function ThreatMapV3Inner({
   const clock = clockProp ?? ownClock;
 
   const [tooltip, setTooltip] = useState<TooltipInfo | null>(null);
-  /** Country code of the pinned bot-density tooltip, if any. */
+  /** Country code of the pinned bot-share tooltip, if any. */
   const pinnedRef = useRef<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [tileIssue, setTileIssue] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
-  // Colour stops are re-resolved after the theme attribute lands in the DOM.
-  const { resolvedTheme } = useTheme();
-  const [botStops, setBotStops] = useState(resolveScaleStops);
-  useEffect(() => { setBotStops(resolveScaleStops()); }, [resolvedTheme]);
-  const botStopsKey = botStops.map(c => c.join(',')).join('|');
-
   // Stable handler bag: layers close over THIS, never over props, so a parent
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
-  const latest = useRef({ onSelect, controlRightInset, controlLeftInset, onLensPick, onPlayhead });
-  latest.current = { onSelect, controlRightInset, controlLeftInset, onLensPick, onPlayhead };
+  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode });
+  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode };
   const handlers = useMemo(() => ({
     hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
     hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
@@ -298,28 +308,28 @@ function ThreatMapV3Inner({
       latest.current.onSelect?.(sel);
       return true;
     },
-    hoverLens: (hover: LensHover | null) => setTooltip(hover ? { x: hover.x, y: hover.y, lens: hover } : null),
-    clickLens: (pick: LensPick) => {
+    hoverLens: (hover: LensHover | null) => {
+      if (pinnedRef.current) return; // a pinned tooltip stays until dismissed
+      setTooltip(hover ? { x: hover.x, y: hover.y, lens: hover } : null);
+    },
+    clickLens: (pick: LensPick, at?: { x: number; y: number }) => {
+      // Bot-share scene: a tap PINS the country's tooltip (touch has no hover); tap again to dismiss.
+      if (latest.current.mapMode === 'bot_density' && pick.kind === 'country' && at) {
+        if (pinnedRef.current === pick.id) {
+          pinnedRef.current = null;
+          setTooltip(null);
+        } else {
+          const bot = latest.current.lens?.bot;
+          const row = bot?.rows.get(pick.id);
+          const h = row ? botHover(row, bot?.globalAvg ?? null) : { title: pick.id, lines: ['no Radar bot-share data'] };
+          pinnedRef.current = pick.id;
+          setTooltip({ x: at.x, y: at.y, lens: { x: at.x, y: at.y, ...h } });
+        }
+        return true;
+      }
       setTooltip(null);
       latest.current.onLensPick?.(pick);
       return true;
-    },
-    hoverBot: (info: Pick<BotDensityPoint>) => {
-      if (pinnedRef.current) return; // a pinned tooltip stays until dismissed
-      setTooltip(info.object ? { x: info.x, y: info.y, bot: info.object } : null);
-    },
-    // Tap/click pins the tooltip (touch has no hover); tap again to dismiss.
-    clickBot: (info: Pick<BotDensityPoint>) => {
-      const object = info.object;
-      if (!object) return false;
-      if (pinnedRef.current && pinnedRef.current === object.code) {
-        pinnedRef.current = null;
-        setTooltip(null);
-      } else {
-        pinnedRef.current = object.code;
-        setTooltip({ x: info.x, y: info.y, bot: object });
-      }
-      return true; // handled — don't fall through to the map-level dismiss
     },
     // Map-level click: only reached for empty-map clicks (layer handlers return true).
     clickEmpty: (info: PickingInfo) => {
@@ -330,7 +340,7 @@ function ThreatMapV3Inner({
     },
   }), []);
 
-  // Keep the zoom control clear of the SidePanel overlaying the map's right edge.
+  // Keep the zoom control clear of the panel overlaying the map's right edge.
   const applyControlInset = useCallback(() => {
     const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
     if (ctrl) ctrl.style.right = `${latest.current.controlRightInset}px`;
@@ -344,12 +354,13 @@ function ThreatMapV3Inner({
 
     let map: maplibregl.Map;
     try {
+      const ins = latest.current.cameraInsets;
       map = new maplibregl.Map({
         container,
         style: MAP_STYLE,
         center: isMobileRef.current
           ? [-30, 30]
-          : [centerLngForFreeArea(10, latest.current.controlLeftInset, latest.current.controlRightInset, 2.2), 25],
+          : [centerLngForFreeArea(10, ins.left, ins.right, 2.2), 25],
         zoom: isMobileRef.current ? 0.6 : 2.2,
         pitch: isMobileRef.current ? 0 : 20,
         bearing: 0,
@@ -427,7 +438,7 @@ function ThreatMapV3Inner({
     if (!map || !mapLoaded) return;
     if (!isMobile && !navControlRef.current) {
       const ctrl = new maplibregl.NavigationControl({ showCompass: false });
-      // Bottom-right, not top-right: the page's LIVE/refresh cluster owns the top-right corner.
+      // Bottom-right, not top-right: the page's toolbar owns the top edge.
       map.addControl(ctrl, 'bottom-right');
       navControlRef.current = ctrl;
       applyControlInset();
@@ -442,7 +453,7 @@ function ThreatMapV3Inner({
     const el = rootRef.current;
     if (!el) return;
     const update = () => {
-      setSize({ width: el.clientWidth, height: el.clientHeight });
+      setSize(prev => (prev.width === el.clientWidth && prev.height === el.clientHeight ? prev : { width: el.clientWidth, height: el.clientHeight }));
       mapRef.current?.resize();
     };
     update();
@@ -460,6 +471,7 @@ function ThreatMapV3Inner({
   const geoThreats = useMemo(() => threats.filter(hasValidPoint), [threats]);
   const geoArcs = useMemo(() => arcsIn.filter(hasValidArc), [arcsIn]);
   const geoHeat = useMemo(() => heatmapIn.filter(hasValidPoint), [heatmapIn]);
+  const hasLoudNodes = useMemo(() => geoThreats.some(t => isLoudSeverity(t.top_severity)), [geoThreats]);
   const targetNodes = useMemo(() => {
     const byPos = new Map<string, ArcData>();
     for (const a of geoArcs) {
@@ -469,9 +481,17 @@ function ThreatMapV3Inner({
     return Array.from(byPos.values());
   }, [geoArcs]);
 
+  const reducedMotion = usePrefersReducedMotion();
+  const policy = useMemo(
+    () => motionPolicy({ reducedMotion, particlesLayer: showParticles && mapMode === 'global' }),
+    [reducedMotion, showParticles, mapMode],
+  );
+  // Reduced motion: the corridors the particles would have run along stay visible as static beams.
+  const beamsOn = showBeams || policy.staticBeams;
+
   const tripData = useMemo(
-    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period)),
-    [geoArcs, colorBy, isMobile, period],
+    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period), replayNowMs),
+    [geoArcs, colorBy, isMobile, period, replayNowMs],
   );
 
   const selectedNode = selection?.kind === 'node' ? selection.node : null;
@@ -501,30 +521,32 @@ function ThreatMapV3Inner({
         );
       }
 
-      if (showBeams && geoArcs.length > 0) {
+      if (beamsOn && geoArcs.length > 0) {
         const beamWidth = isMobile ? 2.5 : 1;
+        // Reduced motion stands the beams in for the particles, so they are a touch stronger.
+        const lift = policy.staticBeams ? 1.5 : 1;
         layers.push(
           new PathLayer<ArcData>({
             id: 'beam-glow',
             data: geoArcs,
             getPath: getArcPath,
-            getColor: d => getArcColor(d, colorBy, 51),
+            getColor: d => getArcColor(d, colorBy, 51 * lift),
             getWidth: beamWidth,
             widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 4 : 2,
-            updateTriggers: { getColor: colorBy },
+            updateTriggers: { getColor: [colorBy, lift] },
           }),
           new PathLayer<ArcData>({
             id: 'beam-core',
             data: geoArcs,
             getPath: getArcPath,
-            getColor: d => getArcColor(d, colorBy, 76),
+            getColor: d => getArcColor(d, colorBy, 76 * lift),
             getWidth: beamWidth,
             widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 3 : 1,
-            updateTriggers: { getColor: colorBy },
+            updateTriggers: { getColor: [colorBy, lift] },
             pickable: true,
             onHover: handlers.hoverArc,
             onClick: handlers.clickArc,
@@ -532,7 +554,7 @@ function ThreatMapV3Inner({
         );
       }
 
-      if (geoArcs.length > 0 && (showBeams || showNodes)) {
+      if (geoArcs.length > 0 && (beamsOn || showNodes)) {
         // Country-precision targets are only approximate: draw them fainter.
         const approx = (d: ArcData) => d.target_precision === 'country';
         layers.push(
@@ -591,51 +613,22 @@ function ThreatMapV3Inner({
       }));
     }
 
-    // Bot density mode: countries only — no nodes/arcs/particles/heatmap.
-    if (mapMode === 'bot_density' && botDensity && botDensity.length > 0) {
-      const domain = botDensityDomain(botDensity);
-      const minPx = isMobile ? 4 : 5;
-      const maxPx = isMobile ? 20 : 30;
-      layers.push(new ScatterplotLayer<BotDensityPoint>({
-        id: 'bot-density',
-        data: botDensity,
-        getPosition: d => d.position,
-        getRadius: d => botRadius(d.traffic_pct, domain.maxTraffic, minPx, maxPx),
-        radiusUnits: 'pixels',
-        getFillColor: d => botColor(d.bot_pct, domain.minBot, domain.maxBot, botStops),
-        stroked: true,
-        lineWidthUnits: 'pixels',
-        getLineWidth: d => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? 2 : 0.5),
-        getLineColor: d => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? RING_COLOR : OUTLINE_COLOR),
-        updateTriggers: {
-          getFillColor: [botStopsKey, domain.minBot, domain.maxBot],
-          getRadius: [domain.maxTraffic, minPx, maxPx],
-          getLineWidth: [botGlobalAvg],
-          getLineColor: [botGlobalAvg],
-        },
-        pickable: true,
-        onHover: handlers.hoverBot,
-        onClick: handlers.clickBot,
-      }));
-    }
-
     return layers;
     // selectedNode/selectedArc are keyed by id so a data refetch that returns
     // an equal object doesn't rebuild.
   }, [
-    geoThreats, geoArcs, targetNodes, showBeams, showNodes, colorBy, mapMode, geoHeat,
-    botDensity, botGlobalAvg, botStops, botStopsKey, isMobile, handlers, selectedNodeId, selectedArcId,
+    geoThreats, geoArcs, targetNodes, beamsOn, policy.staticBeams, showNodes, colorBy, mapMode, geoHeat,
+    isMobile, handlers, selectedNodeId, selectedArcId,
   ]);
 
-  // Drop any stale hover tooltip when the mode changes (the hovered layer is gone).
-  useEffect(() => { pinnedRef.current = null; setTooltip(null); }, [mapMode]);
+  // Drop any stale hover tooltip when the scene changes (the hovered layer is gone).
+  useEffect(() => { pinnedRef.current = null; setTooltip(null); }, [mapMode, sceneKey]);
 
   // ─── Animation ────────────────────────────────────────────
-  const reducedMotion = usePrefersReducedMotion();
-  const particlesOn = showParticles && mapMode === 'global' && tripData.length > 0 && !reducedMotion;
+  const particlesOn = policy.flow && tripData.length > 0;
   /** Impact rings follow the particles: same toggle, same reduced-motion rule. */
   const ringsOn = particlesOn;
-  const pulseOn = mapMode === 'global' && showNodes && geoThreats.length > 0 && !reducedMotion;
+  const pulseOn = mapMode === 'global' && showNodes && hasLoudNodes && policy.ambient;
 
   const makeTrips = useCallback((currentTime: number) => new TripsLayer({
     id: 'particle-trails',
@@ -650,7 +643,7 @@ function ThreatMapV3Inner({
     capRounded: true,
   }), [tripData, isMobile]);
 
-  // Node bloom + glow breathe via PulseExtension: severity sets rate/amplitude,
+  // Node bloom + glow breathe via PulseExtension: only critical / high nodes have an amplitude,
   // `animTime` (seconds) is the only per-frame input. Reduced motion => amp 0 (static).
   const makeGlow = useCallback((animTime: number): Layer[] => {
     if (mapMode !== 'global' || !showNodes || geoThreats.length === 0) return [];
@@ -680,8 +673,9 @@ function ThreatMapV3Inner({
   // overwrite the oldest slot and bump `version`, so nothing is reallocated.
   const [ringBuffer] = useState(() => new RingBuffer());
   const spawner = useMemo(() => new ImpactRingSpawner(ringBuffer), [ringBuffer]);
+  // Only critical / high arrivals earn a ring: the rest land quietly.
   const scheduler = useMemo(
-    () => new ArrivalScheduler(buildArrivalEvents(tripData, CYCLE_LENGTH), CYCLE_LENGTH),
+    () => new ArrivalScheduler(buildArrivalEvents(tripData, CYCLE_LENGTH).filter(e => isLoudSeverity(e.severity)), CYCLE_LENGTH),
     [tripData],
   );
   // A new data set invalidates old rings (their targets may be gone).
@@ -704,16 +698,56 @@ function ThreatMapV3Inner({
   }), [ringBuffer, isMobile]);
 
   // ─── Phase B lenses ───────────────────────────────────────
+  // Labels that fit at the current camera (placed when it settles, see recomputeLabels).
+  const [labels, setLabels] = useState<PlacedLabels>(NO_LABELS);
+
   const lensInput = useMemo<LensLayerInput | null>(() => {
-    if (!lens || mapMode !== 'global') return null;
+    if (!lens || mapMode === 'heatmap') return null;
     const pick: LensPickHandlers = { hover: handlers.hoverLens, click: handlers.clickLens };
-    return { ...lens, reducedMotion, isMobile, pick };
-  }, [lens, mapMode, reducedMotion, isMobile, handlers]);
+    return { ...lens, labels, reducedMotion, isMobile, pick };
+  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers]);
   const lensBase = useMemo(() => (lensInput ? buildLensBaseLayers(lensInput) : []), [lensInput]);
-  const lensAnimating = !!lensInput && !reducedMotion && lensNeedsFrame(lensInput);
+  const lensAnimating = !!lensInput && policy.ambient && lensNeedsFrame(lensInput, { clockPlaying });
+
+  // Label sources for the lenses that draw labels (memoised on model + selection).
+  const labelInputs = useMemo<PlaceInput | null>(() => {
+    if (!lens || mapMode === 'heatmap') return null;
+    const ops = lens.layers.operations ? lens.operations : null;
+    const host = lens.layers.hosting ? lens.hosting : null;
+    if (!ops && !host) return null;
+    const edges = ops ? edgeLabelSources(ops, highlightGroup(ops, lens.sel.opId) ?? '') : [];
+    const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
+    const maxT = ops ? opsMaxThreats(ops) : 0;
+    const nodes = [
+      ...(ops ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n, maxT) })) : []),
+      ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx })) : []),
+    ];
+    return { edges, hosts, nodes };
+  }, [lens, mapMode]);
+
+  const recomputeLabels = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || !labelInputs || size.width === 0) {
+      setLabels(prev => (prev === NO_LABELS ? prev : NO_LABELS));
+      return;
+    }
+    const project: Project = ([lng, lat]) => {
+      const p = map.project([lng, lat]);
+      return Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null;
+    };
+    const next = placeLensLabels(labelInputs, project, size);
+    setLabels(prev => stablePlacement(prev, next));
+  }, [labelInputs, size]);
+  useEffect(() => { if (mapLoaded) recomputeLabels(); }, [mapLoaded, recomputeLabels]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    map.on('moveend', recomputeLabels);
+    return () => { map.off('moveend', recomputeLabels); };
+  }, [mapLoaded, recomputeLabels]);
 
   // Movement departures / landings: their own ring pool, fed by the replay clock like the particles.
-  const movementOn = !!lensInput && lensInput.layers.movement && !!lensInput.movement && lensInput.movement.ringEvents.length > 0 && !reducedMotion;
+  const movementOn = !!lensInput && lensInput.layers.movement && !!lensInput.movement && lensInput.movement.ringEvents.length > 0 && policy.ambient;
   const [moveBuffer] = useState(() => new RingBuffer(128));
   const moveSpawner = useMemo(() => new ImpactRingSpawner(moveBuffer, { duration: 2.2, cooldown: 0.2, maxPerFrame: 4 }), [moveBuffer]);
   const moveScheduler = useMemo(
@@ -722,7 +756,7 @@ function ThreatMapV3Inner({
   );
   useEffect(() => { moveBuffer.clear(); moveSpawner.reset(); }, [moveScheduler, moveBuffer, moveSpawner]);
 
-  // Live pings: sonar rings at the origin of newly-arrived threats.
+  // Live pings: sonar rings at the origin of newly-arrived threats, in their own colour.
   const [pingBuffer] = useState(() => new RingBuffer(64));
   const pingSpawner = useMemo(() => new ImpactRingSpawner(pingBuffer, { duration: 2.4, cooldown: 0.8, maxPerFrame: 4, alpha: 240 }), [pingBuffer]);
   /** Reduced motion: a brief, non-expanding highlight instead of the sonar ring. */
@@ -744,6 +778,27 @@ function ThreatMapV3Inner({
       ringTo: 1,
       animTime,
     }), []);
+
+  // ─── Scene cross-fade (lens / option change) ──────────────
+  const lastSceneRef = useRef<Layer[]>([]);
+  const outgoingRef = useRef<Layer[]>([]);
+  const fadeStartRef = useRef<number | null>(null);
+  const sceneKeyRef = useRef(sceneKey);
+  const [fading, setFading] = useState(false);
+  if (sceneKeyRef.current !== sceneKey) {
+    // Render-phase on purpose: the outgoing scene must be captured BEFORE the new layers are composed.
+    sceneKeyRef.current = sceneKey;
+    if (!reducedMotion) {
+      outgoingRef.current = lastSceneRef.current;
+      fadeStartRef.current = typeof performance !== 'undefined' ? performance.now() : 0;
+    }
+  }
+  useEffect(() => {
+    if (reducedMotion || fadeStartRef.current === null) return;
+    setFading(true);
+    const timer = setTimeout(() => { setFading(false); outgoingRef.current = []; }, LENS_FADE_IN_MS + 60);
+    return () => clearTimeout(timer);
+  }, [sceneKey, reducedMotion]);
 
   /** Latest animation seconds, so non-frame pushes (data changes) stay in phase. */
   const animSecondsRef = useRef(0);
@@ -769,8 +824,16 @@ function ThreatMapV3Inner({
         pickable: false,
       }));
     }
-    return layers;
-  }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings]);
+    lastSceneRef.current = layers;
+    const fade = lensFade(typeof performance !== 'undefined' ? performance.now() : 0, fadeStartRef.current, reducedMotion);
+    if (!fade.active) return layers;
+    // Cross-fade: the new scene eases in, the old one (kept ~200ms) eases out. `clone` keeps data identity.
+    const mixed = layers.map(l => l.clone({ opacity: fade.incoming }));
+    if (fade.outgoing > 0) {
+      for (const l of outgoingRef.current) mixed.push(l.clone({ id: `out:${l.id}`, opacity: fade.outgoing, pickable: false }));
+    }
+    return mixed;
+  }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings, reducedMotion]);
 
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
@@ -787,6 +850,18 @@ function ThreatMapV3Inner({
     // seekVersion: a scrub while the loop is stopped still repaints the new playhead.
   }, [mapLoaded, compose, clock, handlers, isMobile, seekVersion]);
 
+  // The loop is held open for a while after anything that spawns rings, so they can finish expanding
+  // even when nothing else needs frames (replay paused, no breathing nodes).
+  const [hold, setHold] = useState(false);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdLoop = useCallback(() => {
+    setHold(true);
+    if (holdTimer.current) clearTimeout(holdTimer.current);
+    holdTimer.current = setTimeout(() => { holdTimer.current = null; setHold(false); }, LOOP_HOLD_MS);
+  }, []);
+  useEffect(() => () => { if (holdTimer.current) clearTimeout(holdTimer.current); }, []);
+  useEffect(() => { holdLoop(); }, [clockPlaying, holdLoop]);
+
   // New pings: spawn once per batch.
   const lastPingSeq = useRef(0);
   useEffect(() => {
@@ -795,15 +870,17 @@ function ThreatMapV3Inner({
     const placed = pings.items.filter((p): p is PingItem & { position: [number, number] } => p.position !== null);
     if (placed.length === 0 || mapMode !== 'global') return;
     if (reducedMotion) {
-      setStaticPings(placed.map(p => ({ id: p.id, position: p.position, color: p.color })));
+      setStaticPings(placed.map(p => ({ id: p.id, position: p.position, color: PING_COLOR })));
       const timer = setTimeout(() => setStaticPings([]), 1600);
       return () => clearTimeout(timer);
     }
     pingSpawner.spawn(
-      placed.map(p => ({ time: 0, lng: p.position[0], lat: p.position[1], color: p.color, key: `${p.position[0].toFixed(2)},${p.position[1].toFixed(2)}` })),
+      placed.map(p => ({ time: 0, lng: p.position[0], lat: p.position[1], color: PING_COLOR, key: `${p.position[0].toFixed(2)},${p.position[1].toFixed(2)}` })),
       animSecondsRef.current,
     );
-  }, [pings, pingSpawner, reducedMotion, mapMode]);
+    // The loop may be idle (replay paused, no breathing nodes): keep it up long enough for the ring.
+    holdLoop();
+  }, [pings, pingSpawner, reducedMotion, mapMode, holdLoop]);
 
   // ─── The one animation loop ───────────────────────────────
   const prevPlayheadRef = useRef<number | null>(null);
@@ -835,22 +912,26 @@ function ThreatMapV3Inner({
     overlay.setProps({ layers: compose(frame.seconds, t) });
   }, [ringsOn, movementOn, scheduler, spawner, moveScheduler, moveSpawner, compose]);
 
-  useDeckFrame(clock, mapLoaded && (particlesOn || pulseOn || lensAnimating), onFrame, { targetRef: rootRef });
+  const needsLoop = loopNeeded({
+    particles: particlesOn, movementRings: movementOn, clockPlaying, breathing: pulseOn, lensMotion: lensAnimating, fading, hold,
+  });
+  useDeckFrame(clock, mapLoaded && needsLoop, onFrame, { targetRef: rootRef });
 
-  // ─── Camera fly-to (non-click selections) ─────────────────
+  // ─── Camera: frame ALL of the target in the area the overlays leave free ──
   const focusId = focus?.id ?? null;
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !focus) return;
-    if (!Number.isFinite(focus.lng) || !Number.isFinite(focus.lat)) return;
-    const zoom = Math.max(map.getZoom(), focus.zoom ?? 3);
-    // Aim at the middle of the area the rail and drawer leave free, so the target isn't behind either.
-    const target = {
-      center: [centerLngForFreeArea(focus.lng, latest.current.controlLeftInset, latest.current.controlRightInset, zoom), focus.lat] as [number, number],
-      zoom,
-    };
+    const plan = planCamera(focus.points, size, latest.current.cameraInsets);
+    if (!plan) return; // nothing placeable: select without moving the camera
+    const cam = map.cameraForBounds(
+      [[plan.box.west, plan.box.south], [plan.box.east, plan.box.north]],
+      { padding: plan.padding, maxZoom: plan.maxZoom },
+    );
+    if (!cam) return;
+    const target = { center: cam.center, zoom: cam.zoom, bearing: cam.bearing ?? 0 };
     if (reducedMotion || focus.instant) map.jumpTo(target);
-    else map.flyTo({ ...target, duration: FLY_DURATION_MS, essential: false });
+    else map.flyTo({ ...target, duration: FLY_MS, curve: FLY_CURVE, essential: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per request id
   }, [focusId, mapLoaded]);
 
@@ -909,13 +990,8 @@ function ThreatMapV3Inner({
               {tooltip.lens.lines.map((line, i) => (
                 <div key={i} className="mt-0.5" style={{ color: i === 0 ? 'var(--text-tertiary)' : 'var(--text-muted)' }}>{line}</div>
               ))}
-              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
+              {mapMode !== 'bot_density' && <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>}
             </>
-          )}
-          {tooltip.bot && (
-            <div className="font-mono" style={{ color: 'var(--text-primary)' }}>
-              {botDensityTooltip(tooltip.bot, botGlobalAvg)}
-            </div>
           )}
           {tooltip.arc && (
             <>

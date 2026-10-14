@@ -2,14 +2,24 @@
  * Observatory — GPU-driven threat console.
  *
  * The sole Observatory surface as of #35 Phase D (v2 retired). deck.gl layers
- * over MapLibre, one animation loop (see components/ThreatMapV3.tsx), and — Phase B
- * — a console around it: a LENS switcher (Threats / Operations / Movement / Hosting /
- * Baseline / Campaigns / Actors), a layer rail, search over the loaded data, a
- * drill-in drawer for anything selected, live sonar pings and a replay timeline.
+ * over MapLibre, one animation loop (see components/ThreatMapV3.tsx), and a console
+ * around it built on one idea: a LENS is the single exclusive question the map
+ * answers (Threats / Operations / Movement / Hosting / Baseline / Campaigns /
+ * Actors). Everything else supports it:
  *
- * View state (lens, layers, period, source, mode, colour-by, baseline measure and
- * the selection) lives in the URL — see lib/url-state.ts — so views are shareable
- * and survive reload. Every query is enabled only for the view that renders it
+ *   toolbar     one 44px row: lens strip, "Find on map", period, source, refresh
+ *   rail        slim 44px icon column: the lens's option (Points | Heat,
+ *               Over-index | Raw | Bot share) and threat traffic kept underneath
+ *   legend      one collapsible chip, bottom-left, for whatever is drawn
+ *   right slot  lens-aware intelligence panel, replaced by the drill drawer when
+ *               something is selected (docked >= DOCK_MIN_MAP, floating below it,
+ *               a non-modal peek sheet on phones)
+ *   replay bar  severity histogram + transport on the shared animation clock
+ *
+ * View state (lens, option, layers, period, source, colour-by and the selection)
+ * lives in the URL — see lib/url-state.ts — so views are shareable and survive
+ * reload. Layout decisions use the map's measured width (lib/layout.ts), not the
+ * viewport at mount, and every query is enabled only for the view that renders it
  * (lib/mode-data.ts).
  */
 
@@ -21,101 +31,69 @@ import {
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import { ThreatMapV3, type MapFocus, type PingBatch, type LensMapProps } from './components/ThreatMapV3';
 import { SidePanel } from './components/SidePanel';
-import { BottomSheet } from '@/components/BottomSheet';
-import { Card, Tabs, Button } from '@/design-system/components';
+import { Card, Button } from '@/design-system/components';
 import { ObservatoryLoadError } from './components/ObservatoryLoadError';
 import { EventTicker } from '@/components/observatory/EventTicker';
-import { cn } from '@/lib/cn';
-import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, ChevronDown, Search as SearchIcon } from 'lucide-react';
+import { useTheme } from '@/design-system/hooks';
+import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
-import { BotDensityLegend } from './components/BotDensityLegend';
-import { MapLegend } from './components/MapLegend';
-import { LayerRail, useLayerShortcuts, type LayerStatus } from './components/LayerRail';
-import { LensSwitcher } from './components/LensSwitcher';
+import { ControlRail } from './components/ControlRail';
+import { LensStrip } from './components/LensStrip';
 import { ObservatorySearch } from './components/ObservatorySearch';
 import { DrillDrawer } from './components/DrillDrawer';
-import { LensLegend } from './components/LensLegend';
+import { LegendChip } from './components/LegendChip';
+import { LensPanel } from './components/LensPanel';
+import { PeekSheet } from './components/PeekSheet';
+import { PeriodSegment, SourceSelect, RefreshButton, FiltersPopover, FILTER_LABEL, PERIOD_LABELS, SOURCE_LABELS } from './components/ToolbarControls';
 import { ReplayTimeline, usePlayheadBus } from './components/ReplayTimeline';
-import { buildBotDensityPoints, botDensityDomain, resolveGlobalAvg } from './lib/bot-density';
+import { buildBotDensityPoints, resolveScaleStops, resolveGlobalAvg } from './lib/bot-density';
+import { buildBotShareModel } from './lib/lens/bot-share';
 import {
   useObservatoryUrlState, parseSel, mapModeOf,
-  PERIOD_IDS, SOURCE_IDS, MAP_MODE_IDS, COLOR_BY_IDS,
-  type MapMode, type Period, type Source, type ColorBy, type LayerId, type LensId,
+  type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type ThreatView,
 } from './lib/url-state';
-import { LAYER_IDS } from './lib/lenses';
+import { noLayers, type LayerToggles } from './lib/lenses';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
 import { usePrefersReducedMotion } from './lib/use-motion';
-import { resolveDrill, drillAnchor, isPending, drillToPatch, selPatch, type DrillTarget, type DrillData } from './lib/drill';
+import { resolveDrill, isPending, drillToPatch, selPatch, type DrillTarget, type DrillData } from './lib/drill';
 import { targetPatch, type SearchData, type SearchResult } from './lib/search';
 import { useLensData } from './lib/use-lens-data';
 import { NO_SELECTION, type LensPick, type LensSelection } from './layers/lens-layers';
 import { diffLive, announcePings } from './lib/lens/live';
 import { AnimationClock } from './lib/animation-clock';
-import { CYCLE_LENGTH } from './lib/trips';
+import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
 import { useCanSeeTakedowns } from './lib/use-takedown-access';
-
-const PERIOD_LABELS: Record<Period, string> = { '24h': '24H', '7d': '7D', '30d': '30D', '90d': '90D' };
-const PERIODS = PERIOD_IDS.map(id => ({ id, label: PERIOD_LABELS[id] }));
-
-const MODE_LABELS: Record<MapMode, string> = { global: 'GLOBAL', heatmap: 'HEATMAP', bot_density: 'BOT DENSITY' };
-const MAP_MODES = MAP_MODE_IDS.map(id => ({ id, label: MODE_LABELS[id] }));
-
-const SOURCE_LABELS: Record<Source, string> = { all: 'All Sources', feeds: 'Feeds', spam_trap: 'Spam Trap' };
-const SOURCES = SOURCE_IDS.map(id => ({ id, label: SOURCE_LABELS[id] }));
-
-const COLOR_BY_LABELS: Record<ColorBy, string> = { severity: 'Severity', type: 'Type' };
-const COLOR_BY_TABS = COLOR_BY_IDS.map(id => ({ id, label: COLOR_BY_LABELS[id] }));
-
-const PANEL_OPEN_MIN_WIDTH = 1280;
-/** Width of the docked right slot (intelligence panel or drill drawer). */
-const DOCK_WIDTH = 320;
-/** Replay bar height + its gap above the stats bar. */
-const TIMELINE_H = 56;
-/** Approximate width of the desktop left column (filters, layer rail, legends). */
-const LEFT_RAIL_WIDTH = 332;
+import { computeLayout, cameraInsets, DOCK_WIDTH, TIMELINE_H, BOTTOM_BAND } from './lib/layout';
+import { useElementWidth } from './lib/use-element-width';
+import { useLayerShortcuts } from './lib/use-layer-shortcuts';
+import { drillPoints, type FocusModels } from './lib/camera';
+import { legendSummary } from './lib/legend-summary';
+import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows } from './lib/panel-rows';
+import { lensFootnote } from './lib/footnote';
+import type { LngLat } from '@/lib/country-centroids';
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
+const BOT_LAYERS = { ...noLayers(), baseline: true } as LayerToggles;
 
 // Explicit stacking order for this view's overlay chrome — replaces raw
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
 // one place instead of scattered magic numbers. (ThreatMapV3's own hover
 // tooltip renders above all of these, inside that component.)
-const Z_CHROME = 10;   // top control stack, stats bar, ticker, layer rail
-const Z_PANEL = 20;    // mobile Intel FAB (opens the SidePanel drawer)
+const Z_CHROME = 10;   // toolbar, rail, stats bar, ticker, legend chip, replay bar
+const Z_PANEL = 20;    // mobile Intel FAB (opens the panel sheet)
 const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
-const Z_SEARCH = 40;   // the search results list floats above everything else in the chrome
 
 const PICK_TO_SEL: Record<LensPick['kind'], 'op' | 'provider' | 'country' | 'campaign' | 'move' | 'actor'> = {
   operation: 'op', provider: 'provider', country: 'country', campaign: 'campaign', movement: 'move', actor: 'actor',
 };
-
-function RefreshButton({ onClick, busy, className }: { onClick: () => void; busy: boolean; className?: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="Refresh Observatory data"
-      aria-busy={busy}
-      className={cn('ds-focusable inline-flex items-center justify-center p-1.5 min-w-[28px] min-h-[28px] max-[899px]:min-w-[44px] max-[899px]:min-h-[44px] rounded-md transition-colors motion-reduce:transition-none', className)}
-      style={{
-        background: 'var(--bg-card)',
-        border: '1px solid var(--border-base)',
-        color: busy ? 'var(--amber-text)' : 'var(--text-muted)',
-        cursor: 'pointer',
-      }}
-    >
-      <RefreshCw size={14} className={busy ? 'animate-spin motion-reduce:animate-none' : ''} />
-    </button>
-  );
-}
 
 const qState = (q: { isLoading: boolean; error: Error | null; refetch: () => Promise<unknown> }) => ({
   isLoading: q.isLoading, error: q.error, refetch: q.refetch,
@@ -125,61 +103,48 @@ export function ObservatoryV3() {
   const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
   const canSeeTakedowns = useCanSeeTakedowns();
+  const { resolvedTheme } = useTheme();
   const { state, update } = useObservatoryUrlState();
-  const { period, source, colorBy, layers, lens, measure } = state;
+  const { period, source, colorBy, layers, lens, view, measure } = state;
   const mapMode = mapModeOf(state);
-  const showNodes = layers.nodes;
-  const showParticles = layers.particles;
-  const showBeams = layers.beams;
   const sel = useMemo(() => parseSel(state.sel), [state.sel]);
 
-  // The docked panel is 320px: only start open where the map keeps a usable width beside
-  // the filter card (>= 1280). Narrower desktops start closed; the toggle opens it.
-  const [showPanel, setShowPanel] = useState(() => viewportWidth >= PANEL_OPEN_MIN_WIDTH);
+  // ─── Layout: the MAP's width decides, and it reacts to every resize ──
+  const rootRef = useRef<HTMLDivElement>(null);
+  const mapWidth = useElementWidth(rootRef);
+  const layout = useMemo(() => computeLayout({ mapWidth, viewportWidth }), [mapWidth, viewportWidth]);
+  const phone = layout.phone || isMobile;
+
+  // The right slot: the intelligence panel (a user choice overrides the tier default) or the drill drawer.
+  const [panelPref, setPanelPref] = useState<boolean | null>(null);
   const [mapFatal, setMapFatal] = useState(false);
-  // C1 — mobile-only: the control rows collapse behind a single summary toggle so they don't crowd the map.
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // C2 — mobile-only: bottom-sheet drawer exposing the same SidePanel widgets desktop gets docked on the right.
-  const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [showMobilePanel, setShowMobilePanel] = useState(false);
+  const [sheetPx, setSheetPx] = useState(0);
   /** The search box has been focused: lens lists it searches get loaded. */
   const [searching, setSearching] = useState(false);
 
-  const handleFilterSelect = useCallback((setter: () => void) => {
-    setter();
-    if (collapseTimer.current) clearTimeout(collapseTimer.current);
-    collapseTimer.current = setTimeout(() => setFiltersExpanded(false), 300);
-  }, []);
-
+  // If the viewport crosses back to desktop while a phone-only surface is open, don't let it spring back.
   useEffect(() => {
-    return () => {
-      if (collapseTimer.current) clearTimeout(collapseTimer.current);
-    };
-  }, []);
+    if (!phone) { setShowMobilePanel(false); setMobileSearchOpen(false); }
+  }, [phone]);
 
-  // If the viewport crosses back to desktop while the mobile filter
-  // panel/drawer is open, don't let it silently spring back open.
-  useEffect(() => {
-    if (!isMobile) {
-      setFiltersExpanded(false);
-      setShowMobilePanel(false);
-      setMobileSearchOpen(false);
-    }
-  }, [isMobile]);
-
-  const setPeriod = useCallback((id: string) => update({ period: id as Period }), [update]);
-  const setSource = useCallback((id: string) => update({ source: id as Source }), [update]);
-  const setMapMode = useCallback((id: string) => update({ mode: id as MapMode }), [update]);
-  const setColorBy = useCallback((id: string) => update({ colorBy: id as ColorBy }), [update]);
+  const setPeriod = useCallback((p: Period) => update({ period: p }), [update]);
+  const setSource = useCallback((s: Source) => update({ source: s }), [update]);
   const setLens = useCallback((id: LensId) => update({ lens: id }), [update]);
-  const toggleLayer = useCallback((id: LayerId, next: boolean) => update({ layers: { [id]: next } }), [update]);
+  const setLayers = useCallback((patch: Partial<LayerToggles>) => update({ layers: patch }), [update]);
+  const setView = useCallback((v: ThreatView) => update({ view: v }), [update]);
+  const setMeasure = useCallback((m: Measure) => update({ measure: m }), [update]);
+  const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
+
+  // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
+  const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : layers;
 
   // ─── Data — each query is enabled only for the views that render it ──
   const selectionKind = state.node ? 'node' : state.arc ? 'arc' : sel?.kind ?? null;
   const needs = useMemo(
-    () => dataNeeds(mapMode, layers, { selection: selectionKind, searching }),
-    [mapMode, layers, selectionKind, searching],
+    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching }),
+    [mapMode, mapLayers, selectionKind, searching],
   );
   const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
   const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
@@ -190,22 +155,36 @@ export function ObservatoryV3() {
   const heatmapData = heatmapQ.data ?? EMPTY_HEAT;
   const stats = statsQ.data;
 
+  // One replay window for the particles, the movement trails and the histogram: [now - period, now],
+  // pinned until the data or period changes (not re-read from the wall clock on every render).
+  const [replayNowMs, setReplayNowMs] = useState(() => Date.now());
+  const replayWindow = useMemo(() => ({ startMs: replayNowMs - periodToMs(period), endMs: replayNowMs }), [replayNowMs, period]);
+
   const actorId = sel?.kind === 'actor' ? sel.id : null;
   const L = useLensData({
     needs, period, source, actorId,
     timelineCountry: sel?.kind === 'country' ? sel.id : null,
+    replayNowMs,
   });
 
-  // Bot density mode: fetched only while that mode is active (days=7).
+  // Re-pin the window whenever the period/source changes or fresh arcs / moves arrive.
+  useEffect(() => { setReplayNowMs(Date.now()); }, [period, source, arcsQ.data, L.movements]);
+
+  // Bot share: fetched only while that scene is active (days=7), painted on the country shapes.
   const isBotMode = needs.bot;
   const { data: botData, isLoading: botLoading, error: botError, refetch: refetchBot } = useBotTraffic(7, { enabled: isBotMode });
   const botPoints = useMemo(() => buildBotDensityPoints(botData?.bot_density), [botData?.bot_density]);
-  const botDomain = useMemo(() => botDensityDomain(botPoints), [botPoints]);
+  // Colour stops are tokens read from the DOM: re-resolved after the theme attribute lands.
+  const botStops = useMemo(() => resolveScaleStops(), [resolvedTheme]);
   const botGlobalAvg = resolveGlobalAvg(botData);
   const botAsOf = botData?.as_of?.bot_density ?? null;
+  const botModel = useMemo(
+    () => (isBotMode && botData ? buildBotShareModel(botPoints, botStops, botGlobalAvg, botAsOf) : null),
+    [isBotMode, botData, botPoints, botStops, botGlobalAvg, botAsOf],
+  );
 
-  // The SidePanel (and its toggle / Intel drawer) only exists in the global view.
-  const hasSidePanel = mapMode === 'global';
+  // The intelligence panel exists on the interactive scenes (not under the density heatmap).
+  const hasPanel = mapMode !== 'heatmap';
 
   // Only failures from queries the current view actually uses raise the banner.
   const failures = relevantFailures(needs, {
@@ -214,7 +193,7 @@ export function ObservatoryV3() {
     overindex: L.overindexQ.error, campaigns: L.campaignsQ.error, actors: L.actorsQ.error,
     timeline: L.timelineQ.error,
   });
-  const loadError = failures.length > 0;
+  const loadError = failures.length > 0 || (isBotMode && !!botError);
   const retryFailed = useCallback(() => {
     if (failures.includes('nodes')) void threatsQ.refetch();
     if (failures.includes('stats')) void statsQ.refetch();
@@ -227,7 +206,8 @@ export function ObservatoryV3() {
     if (failures.includes('campaigns')) void L.campaignsQ.refetch();
     if (failures.includes('actors')) void L.actorsQ.refetch();
     if (failures.includes('timeline')) void L.timelineQ.refetch();
-  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ]);
+    if (isBotMode && botError) void refetchBot();
+  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, isBotMode, botError, refetchBot]);
 
   // "Updating" = showing the previous period/source's data while the new one loads.
   const activeQueries = [
@@ -260,7 +240,7 @@ export function ObservatoryV3() {
   }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex]);
 
   const drill = useMemo<DrillTarget | null>(
-    () => (mapMode === 'global' ? resolveDrill({ node: state.node, arc: state.arc, sel: state.sel }, drillData) : null),
+    () => (mapMode !== 'heatmap' && mapMode !== 'bot_density' ? resolveDrill({ node: state.node, arc: state.arc, sel: state.sel }, drillData) : null),
     [mapMode, state.node, state.arc, state.sel, drillData],
   );
 
@@ -282,60 +262,90 @@ export function ObservatoryV3() {
     };
   }, [drill]);
 
-  // ─── Camera ──
+  // ─── Right slot ──
+  const panelOpen = (panelPref ?? layout.panelStartsOpen) && hasPanel;
+  const rightSlot: 'drawer' | 'panel' | null = phone ? null : drill ? 'drawer' : panelOpen ? 'panel' : null;
+  const showTimeline = mapMode === 'global' && needs.timeline;
+
+  // ─── Camera: frame ALL of a target inside the area the overlays leave free ──
+  const insets = useMemo(
+    () => cameraInsets({ layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx: phone ? sheetPx : 0 }),
+    [layout, rightSlot, showTimeline, sheetPx, phone],
+  );
+  const focusModels = useMemo<FocusModels>(
+    () => ({ operations: L.operationsModel, hosting: L.hostingModel, campaigns: L.campaignsModel, movement: L.movementModel, actors: L.actorModel }),
+    [L.operationsModel, L.hostingModel, L.campaignsModel, L.movementModel, L.actorModel],
+  );
   const [focus, setFocus] = useState<MapFocus | null>(null);
   const focusSeq = useRef(0);
-  const focusAt = useCallback((at: [number, number] | null, opts: { instant?: boolean; zoom?: number } = {}) => {
-    if (!at) return; // unplaceable: select without moving the camera
+  const focusPoints = useCallback((points: readonly LngLat[], opts: { instant?: boolean } = {}) => {
+    if (points.length === 0) return; // unplaceable: select without moving the camera
     focusSeq.current += 1;
-    setFocus({ id: focusSeq.current, lng: at[0], lat: at[1], instant: opts.instant ?? false, zoom: opts.zoom });
+    setFocus({ id: focusSeq.current, points, instant: opts.instant ?? false });
+  }, []);
+
+  // What opened the drawer, so focus can come back to a control that still exists (see DrillDrawer).
+  const searchOpenerRef = useRef<HTMLElement | null>(null);
+  const panelToggleRef = useRef<HTMLButtonElement | null>(null);
+  const openerKind = useRef<'search' | 'panel' | null>(null);
+  const fallbackFocus = useCallback((): HTMLElement | null => {
+    const search = searchOpenerRef.current;
+    const panel = panelToggleRef.current;
+    return openerKind.current === 'panel' ? panel ?? search : search ?? panel;
   }, []);
 
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
     update(targetPatch(target, layers));
-    focusAt(drillAnchor(target));
+    focusPoints(drillPoints(target, focusModels));
     setShowMobilePanel(false);
-  }, [update, layers, focusAt]);
+  }, [update, layers, focusPoints, focusModels]);
 
   const closeDrill = useCallback(() => update(drillToPatch(null)), [update]);
 
   // A click on the map selects without moving the camera.
   const handleMapSelect = useCallback((s: MapSelection | null) => {
+    openerKind.current = null;
     update(drillToPatch(s ? (s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc }) : null));
   }, [update]);
   const handleLensPick = useCallback((pick: LensPick) => {
+    openerKind.current = null;
     update(selPatch(PICK_TO_SEL[pick.kind], pick.id));
   }, [update]);
 
   // Keyboard / SR path to node selection: the side panel's Top Threat Origins rows.
   const handleSelectNodeFromPanel = useCallback((node: ThreatPoint) => {
-    const sel2: MapSelection = { kind: 'node', node };
+    openerKind.current = 'panel';
     update(drillToPatch({ kind: 'node', node }));
-    focusAt(selectionLngLat(sel2));
+    const at = selectionLngLat({ kind: 'node', node });
+    focusPoints(at ? [at] : []);
     setShowMobilePanel(false);
-  }, [update, focusAt]);
+  }, [update, focusPoints]);
+  const handlePanelSelect = useCallback((target: DrillTarget) => {
+    openerKind.current = 'panel';
+    selectTarget(target);
+  }, [selectTarget]);
 
   // A shared link that restores a selection frames it once (instantly): the camera
   // otherwise opens on the default world view.
   const restoredRef = useRef(!(state.node || state.arc || state.sel));
   useEffect(() => {
     if (restoredRef.current || !drill) return;
-    const at = drillAnchor(drill);
+    const pts = drillPoints(drill, focusModels);
     // A pending target (its query hasn't returned) has no position yet: wait for it.
-    if (!at && isPending(drill)) return;
+    if (pts.length === 0 && isPending(drill)) return;
     restoredRef.current = true;
-    focusAt(at, { instant: true });
-  }, [drill, focusAt]);
+    focusPoints(pts, { instant: true });
+  }, [drill, focusPoints, focusModels]);
 
-  // An actor has no single point: frame its most heavily attributed country once its infrastructure loads.
+  // An actor has no single point: frame ALL of its attributed countries once its infrastructure loads.
   const actorFocused = useRef<string | null>(null);
   useEffect(() => {
     const m = L.actorModel;
     if (!m || m.empty || actorFocused.current === m.actorId) return;
     actorFocused.current = m.actorId;
-    focusAt(m.countries[0]!.position, { zoom: 2.4 });
-  }, [L.actorModel, focusAt]);
+    focusPoints(m.countries.map(c => c.position));
+  }, [L.actorModel, focusPoints]);
 
   // A shared link may point at something that no longer exists in the fresh
   // data: once the relevant query has settled, drop the dead key from the URL.
@@ -378,10 +388,11 @@ export function ObservatoryV3() {
   const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [seekVersion, setSeekVersion] = useState(0);
+  const scrubbing = useRef(false);
   useEffect(() => { if (playing) clock.play(); else clock.pause(); }, [playing, clock]);
   useEffect(() => { clock.setSpeed(speed); }, [speed, clock]);
   const handleSeek = useCallback((t: number) => { clock.seek(t); setSeekVersion(v => v + 1); }, [clock]);
-  const showTimeline = mapMode === 'global' && needs.timeline;
+  const onScrubChange = useCallback((s: boolean) => { scrubbing.current = s; }, []);
 
   // ─── Live pings + announcement ──
   const liveQ = useObservatoryLive({ source, enabled: needs.live });
@@ -400,8 +411,12 @@ export function ObservatoryV3() {
     const fresh = diffLive(seenLive.current, liveQ.data, livePrimed.current);
     livePrimed.current = true;
     if (fresh.length === 0 || !needs.live) return;
-    pingSeq.current += 1;
-    setPings({ seq: pingSeq.current, items: fresh });
+    // Pings are the one thing that must not compete with scrubbing: while the playhead is
+    // being dragged the sonar rings stay quiet (screen readers still hear the arrival).
+    if (!scrubbing.current) {
+      pingSeq.current += 1;
+      setPings({ seq: pingSeq.current, items: fresh });
+    }
     // Screen readers hear the same event, batched so a burst is one sentence.
     pendingAnnounce.current = [...pendingAnnounce.current, ...fresh];
     if (!announceTimer.current) {
@@ -416,39 +431,19 @@ export function ObservatoryV3() {
 
   // ─── Lens props for the map ──
   const lensMapProps = useMemo<LensMapProps>(() => ({
-    layers,
+    layers: mapLayers,
     operations: L.operationsModel,
     hosting: L.hostingModel,
     baseline: L.baselineModel,
     measure,
+    bot: botModel,
     countries: L.geometry.countries,
     campaigns: L.campaignsModel,
     actors: L.actorModel,
     movement: L.movementModel,
     sel: lensSel,
-  }), [layers, L.operationsModel, L.hostingModel, L.baselineModel, measure, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, lensSel]);
-
-  // ─── Rail counts / status ──
-  const counts = useMemo<Partial<Record<LayerId, number | null>>>(() => ({
-    nodes: threatsQ.data ? threatsQ.data.length : null,
-    particles: arcsQ.data ? arcsQ.data.length : null,
-    beams: arcsQ.data ? arcsQ.data.length : null,
-    operations: L.operationsModel ? L.operationsModel.nodes.length : null,
-    movement: L.movementModel ? L.movementModel.hops.filter(h => !h.id.endsWith(':w')).length + L.movementModel.pulses.length : null,
-    hosting: L.hostingModel ? L.hostingModel.rings.length : null,
-    baseline: L.baselineModel ? L.baselineModel.rows.size : null,
-    campaigns: L.campaignsModel ? L.campaignsModel.arcs.length : null,
-    actors: L.actorModel ? L.actorModel.countries.length : null,
-  }), [threatsQ.data, arcsQ.data, L.operationsModel, L.movementModel, L.hostingModel, L.baselineModel, L.campaignsModel, L.actorModel]);
-  const status = useMemo<Partial<Record<LayerId, LayerStatus>>>(() => {
-    const st = (on: boolean, q: { isLoading: boolean; error: Error | null }): LayerStatus => (!on ? 'idle' : q.error ? 'error' : q.isLoading ? 'loading' : 'idle');
-    return {
-      nodes: st(needs.nodes, threatsQ), particles: st(needs.arcs, arcsQ), beams: st(needs.arcs, arcsQ),
-      operations: st(needs.operations, L.operationsQ), movement: st(needs.movements, L.movementsQ),
-      hosting: st(needs.providers, L.providersQ), baseline: st(needs.overindex, L.overindexQ),
-      campaigns: st(needs.campaigns, L.campaignsQ), actors: st(needs.actors, L.actorsQ),
-    };
-  }, [needs, threatsQ, arcsQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ]);
+  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, lensSel]);
+  const sceneKey = `${lens}|${view}|${measure}`;
 
   // ─── Search ──
   const searchData = useMemo<SearchData>(() => ({
@@ -456,15 +451,17 @@ export function ObservatoryV3() {
     providers: L.providers, actors: L.actorList, campaigns: L.campaigns,
   }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.actorList, L.campaigns]);
   const handleSearchPick = useCallback((r: SearchResult) => {
+    openerKind.current = 'search';
     selectTarget(r.target);
     setMobileSearchOpen(false);
   }, [selectTarget]);
   const activateSearch = useCallback(() => setSearching(true), []);
 
+  const [announceToggle, setAnnounceToggle] = useState('');
   const onShortcut = useLayerShortcuts(useCallback((id: LayerId) => {
-    if (id === 'particles' && reducedMotion) return;
     update({ layers: { [id]: !layers[id] } });
-  }, [update, layers, reducedMotion]), mapMode === 'global');
+    setAnnounceToggle(`${id} ${layers[id] ? 'off' : 'on'}`);
+  }, [update, layers]), mapMode !== 'heatmap');
 
   const onPickActor = useCallback((id: string | null) => {
     if (!id) { update(drillToPatch(null)); return; }
@@ -472,71 +469,155 @@ export function ObservatoryV3() {
     update(selPatch('actor', id));
   }, [update]);
 
-  // Layout geometry
-  const drawerOpen = !isMobile && !!drill;
-  const panelInset = !isMobile && hasSidePanel && (drawerOpen || showPanel) ? DOCK_WIDTH : 0;
-  const rightClear = panelInset > 0 ? panelInset + 16 : 16;
-  const timelineBottom = isMobile ? 116 : 84;
-  const leftColBottom = (isMobile ? 120 : 88) + (showTimeline ? TIMELINE_H + 4 : 0);
-  const lensLayersOn = LAYER_IDS.some(id => id !== 'nodes' && id !== 'particles' && id !== 'beams' && layers[id]);
-  /** Short viewports start with the colour legend collapsed so the rail stays in reach. */
-  const [compactHeight] = useState(() => typeof window !== 'undefined' && window.innerHeight < 960);
-  const threatLayersOn = layers.nodes || layers.particles || layers.beams;
+  // ─── Layout geometry ──
+  const timelineBottom = phone ? 116 : 84;
+  const chipBottom = timelineBottom + (showTimeline ? TIMELINE_H + 8 : 0);
+  const rightClear = rightSlot ? DOCK_WIDTH + (layout.docked ? 16 : 28) : 16;
+  const controlRightInset = rightSlot ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0;
+  const threatLayersOn = mapLayers.nodes || mapLayers.particles || mapLayers.beams;
   const countryLabel = sel?.kind === 'country' ? countryName(sel.id) : null;
+  const motionOn = !reducedMotion && (mapLayers.particles || (mapMode === 'global' && (mapLayers.operations || mapLayers.hosting || mapLayers.campaigns || mapLayers.actors || mapLayers.movement)));
 
-  const lensLegend = (
-    <LensLegend
-      layers={layers}
-      operations={{ model: L.operationsModel, q: qState(L.operationsQ) }}
-      movement={{ model: L.movementModel, q: qState(L.movementsQ), count: L.movements?.length ?? 0 }}
-      hosting={{ model: L.hostingModel, q: qState(L.providersQ) }}
-      baseline={{
-        model: L.baselineModel, q: qState(L.overindexQ), measure,
-        snapshotDate: L.overindexQ.data?.meta.radar_snapshot_date ?? null,
-        geometryError: L.geometry.error, period: L.overindexQ.data?.meta.period ?? null,
-      }}
-      campaigns={{ model: L.campaignsModel, q: qState(L.campaignsQ) }}
-      actors={{
-        model: L.actorModel, list: L.actorList ? [...L.actorList] : [], listQ: qState(L.actorsQ),
-        detailQ: actorId ? qState(L.actorDetailQ) : null, selectedId: actorId,
-      }}
-      onMeasure={m => update({ measure: m })}
-      onPickActor={onPickActor}
+  // ─── Legend chip content ──
+  const legendProps = {
+    lens, layers: mapLayers, view, colorBy, reducedMotion,
+    operations: { model: L.operationsModel, q: qState(L.operationsQ) },
+    movement: { model: L.movementModel, q: qState(L.movementsQ), count: L.movements?.length ?? 0 },
+    hosting: { model: L.hostingModel, q: qState(L.providersQ) },
+    baseline: {
+      model: L.baselineModel, q: qState(L.overindexQ), measure,
+      snapshotDate: L.overindexQ.data?.meta.radar_snapshot_date ?? null,
+      geometryError: L.geometry.error, period: L.overindexQ.data?.meta.period ?? null,
+      bot: { model: botModel, q: { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } },
+    },
+    campaigns: { model: L.campaignsModel, q: qState(L.campaignsQ) },
+    actors: {
+      model: L.actorModel, list: L.actorList ? [...L.actorList] : [], listQ: qState(L.actorsQ),
+      detailQ: actorId ? qState(L.actorDetailQ) : null, selectedId: actorId,
+    },
+    onPickActor,
+  };
+  const summary = legendSummary({
+    lens, view, measure,
+    nodes: threatsQ.data ? threatsQ.data.length : null,
+    threats: threatsQ,
+    operations: { ...L.operationsQ, count: L.operationsModel ? L.operationsModel.placedOps.size : null },
+    movement: { ...L.movementsQ, count: L.movementModel ? L.movementModel.hops.filter(h => !h.id.endsWith(':w')).length + L.movementModel.pulses.length : null, events: L.movements?.length ?? 0 },
+    hosting: { ...L.providersQ, count: L.hostingModel ? L.hostingModel.rings.length : null },
+    baseline: { ...L.overindexQ, count: L.baselineModel ? L.baselineModel.rows.size : null },
+    bot: { isLoading: botLoading, error: botError as Error | null, count: botModel ? botModel.rows.size : null },
+    campaigns: { ...L.campaignsQ, count: L.campaignsModel ? L.campaignsModel.drawn.size : null },
+    actors: { ...L.actorDetailQ, selected: !!actorId, countries: L.actorModel ? L.actorModel.countries.length : null, empty: !!L.actorModel && L.actorModel.empty },
+  });
+
+  // ─── Lens-aware panel content ──
+  const panelSection = useMemo(() => {
+    switch (lens) {
+      case 'hosting': return hostingRows(L.providers);
+      case 'operations': return operationRows(L.operationsQ.data?.data.operations);
+      case 'baseline': return baselineRows(measure, L.overindex, botPoints);
+      case 'campaigns': return campaignRows(L.campaigns);
+      case 'movement': return movementRows(L.movements);
+      case 'actors': return actorRows(L.actorList);
+      default: return null;
+    }
+  }, [lens, measure, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
+  const panelQuery = lens === 'hosting' ? L.providersQ
+    : lens === 'operations' ? L.operationsQ
+      : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : L.overindexQ)
+        : lens === 'campaigns' ? L.campaignsQ
+          : lens === 'movement' ? L.movementsQ
+            : lens === 'actors' ? L.actorsQ : null;
+  // The Actors lens needs its list for the panel even before the legend asks for it.
+  const lensPanel = (placement: 'dock' | 'overlay' | 'sheet') => (
+    panelSection && panelQuery ? (
+      <LensPanel
+        lens={lens}
+        section={panelSection}
+        loading={panelQuery.isLoading}
+        error={!!panelQuery.error}
+        onRetry={() => void panelQuery.refetch()}
+        onSelect={handlePanelSelect}
+        placement={placement}
+      />
+    ) : (
+      <SidePanel
+        period={period}
+        source={source}
+        visible
+        mobile={placement === 'sheet'}
+        placement={placement === 'overlay' ? 'overlay' : 'dock'}
+        onSelectNode={handleSelectNodeFromPanel}
+      />
+    )
+  );
+
+  const filtersBody = (
+    <>
+      <div className="flex flex-col gap-1.5">
+        <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Period</div>
+        <PeriodSegment period={period} onChange={setPeriod} touch={phone} />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
+        <SourceSelect source={source} onChange={setSource} touch={phone} />
+      </div>
+      {isBotMode && (
+        <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+          Period and source don&apos;t apply to bot share (daily Cloudflare Radar data).
+        </div>
+      )}
+    </>
+  );
+
+  const railProps = {
+    lens, layers, view, measure, colorBy, reducedMotion,
+    onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy,
+  };
+
+  const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
+    <ObservatorySearch
+      data={searchData}
+      onPick={handleSearchPick}
+      onActivate={activateSearch}
+      openerRef={searchOpenerRef}
+      {...extra}
     />
   );
 
   // Fills the shell outlet (.v4-page--fill is a flex column) — no vh math, so
   // it tracks the real topbar + safe-area + platform-alert-banner height.
   return (
-    <div className="relative flex-1 min-h-0 overflow-hidden" onKeyDown={onShortcut}>
-      {/* Full-screen map — bottom inset reserves the stats bar + ticker
-          band below (desktop: 36 + 40 = 76; mobile: 36 + 72 = 108). */}
+    <div ref={rootRef} className="relative flex-1 min-h-0 overflow-hidden" onKeyDown={onShortcut} data-tier={layout.tier}>
+      {/* Full-screen map — bottom inset reserves the stats bar + ticker band below. */}
       <div
-        className={cn('absolute inset-0', isMobile ? 'bottom-[108px]' : 'bottom-[76px]')}
+        className="absolute inset-0"
+        style={{ bottom: phone ? BOTTOM_BAND.phone : BOTTOM_BAND.desktop }}
         aria-busy={isInitialLoading || isUpdating}
       >
         <ThreatMapV3
           threats={threats}
           arcs={arcsResolved}
-          showBeams={showBeams}
-          showParticles={showParticles}
-          showNodes={showNodes}
+          showBeams={mapLayers.beams}
+          showParticles={mapLayers.particles}
+          showNodes={mapLayers.nodes}
           colorBy={colorBy}
           mapMode={mapMode}
           period={period}
           heatmapData={heatmapData}
-          botDensity={botPoints}
-          botGlobalAvg={botGlobalAvg}
-          controlRightInset={panelInset}
-          controlLeftInset={!isMobile && mapMode !== 'bot_density' ? LEFT_RAIL_WIDTH + 16 : 0}
+          replayNowMs={replayNowMs}
+          controlRightInset={controlRightInset}
+          cameraInsets={insets}
           selection={selection}
           onSelect={handleMapSelect}
           onFatalChange={setMapFatal}
           focus={focus}
           lens={lensMapProps}
+          sceneKey={sceneKey}
           onLensPick={handleLensPick}
           pings={pings}
           clock={clock}
+          clockPlaying={playing}
           onPlayhead={playhead.publish}
           seekVersion={seekVersion}
         />
@@ -550,8 +631,9 @@ export function ObservatoryV3() {
         )}
       </div>
 
-      {/* New-threat announcements for screen readers (the sonar pings' text twin). */}
+      {/* New-threat announcements and control changes for screen readers. */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announceToggle}</div>
 
       {/* Subtle loading / updating pill over the map (no skeleton). */}
       {!isBotMode && (isInitialLoading || isUpdating) && (
@@ -559,7 +641,7 @@ export function ObservatoryV3() {
           role="status"
           className="absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full font-mono text-[10px] uppercase tracking-wider pointer-events-none"
           style={{
-            top: isMobile ? 112 : 64,
+            top: phone ? 128 : 64,
             zIndex: Z_CHROME,
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
@@ -570,273 +652,87 @@ export function ObservatoryV3() {
         </div>
       )}
 
-      {/* Bot density: loading / error / empty states over the map */}
+      {/* Bot share: loading / error / empty states over the map */}
       {isBotMode && (botLoading || botError || (botData && botPoints.length === 0)) && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: Z_CHROME }}>
           <Card variant="elevated" padding="16px 24px" className="text-center pointer-events-auto" style={{ maxWidth: 280 }}>
             {botLoading ? (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot density&hellip;</div>
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>Loading bot share&hellip;</div>
             ) : botError ? (
               <div role="alert">
                 <div className="flex items-center justify-center gap-2 font-mono text-xs" style={{ color: 'var(--sev-critical-text)' }}>
-                  <AlertTriangle size={13} /> Bot density failed to load
+                  <AlertTriangle size={13} /> Bot share failed to load
                 </div>
                 <div className="mt-2">
                   <Button variant="danger" size="sm" onClick={() => refetchBot()} icon={<RefreshCw size={11} />}>Retry</Button>
                 </div>
               </div>
             ) : (
-              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-density data yet</div>
+              <div role="status" className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>No bot-share data yet</div>
             )}
           </Card>
         </div>
       )}
 
-      {/* ─── Top controls ─────────────────────────────────────── */}
-      {isMobile ? (
-        /* R10 mobile chrome (C1): fold Mode + Period + Source behind a
-           single collapsible summary toggle so 3 stacked rows don't sit
-           on top of the map. Refresh + search ride in-flow beside the summary
-           toggle (no absolute-position overlap possible at any width). The lens
-           strip scrolls horizontally under it. */
-        <div className="absolute top-3 left-0 right-0 flex flex-col gap-1.5 px-4" style={{ zIndex: Z_CHROME }}>
+      {/* ─── Toolbar ────────────────────────────────────────────
+          Desktop / tablet: ONE 44px row. Phone: summary row, then the lens strip. */}
+      {phone ? (
+        <div className="absolute top-2 left-3 right-3 flex flex-col gap-2" style={{ zIndex: Z_CHROME }}>
           <div className="flex items-center gap-2">
+            <FiltersPopover period={period} source={source} touch align="left" className="flex-1 min-w-0" triggerClassName="w-full justify-between">
+              {filtersBody}
+              {mapMode !== 'heatmap' || lens === 'threats' ? (
+                <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
+                  <ControlRail {...railProps} layout="panel" />
+                </div>
+              ) : null}
+            </FiltersPopover>
             <button
               type="button"
-              onClick={() => setFiltersExpanded(prev => !prev)}
-              aria-expanded={filtersExpanded}
-              aria-controls="observatory-mobile-filters"
-              aria-label="Map filters"
-              className="ds-focusable"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                background: 'var(--bg-card)',
-                backdropFilter: 'blur(20px)',
-                WebkitBackdropFilter: 'blur(20px)',
-                border: '1px solid var(--border-base)',
-                borderRadius: 10,
-                padding: '8px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                cursor: 'pointer',
-              }}
+              ref={el => { if (el) searchOpenerRef.current = el; }}
+              onClick={() => { setMobileSearchOpen(o => !o); activateSearch(); }}
+              aria-label="Find on map"
+              aria-expanded={mobileSearchOpen}
+              className="ds-focusable shrink-0 inline-flex items-center justify-center rounded-xl w-12 h-12"
+              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)', color: mobileSearchOpen ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
-              <span className="text-xs font-mono truncate">
-                <span style={{ color: 'var(--amber-text)' }}>{MODE_LABELS[mapMode]}</span>
-                {!isBotMode && (
-                  <>
-                    <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                    <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
-                    <span style={{ color: 'var(--text-tertiary)' }}> · </span>
-                    <span style={{ color: 'var(--amber-text)' }}>{SOURCE_LABELS[source]}</span>
-                  </>
-                )}
-              </span>
-              <ChevronDown
-                className={cn('w-3.5 h-3.5 transition-transform duration-300 motion-reduce:transition-none shrink-0', filtersExpanded && 'rotate-180')}
-                style={{ color: 'var(--text-tertiary)' }}
-              />
+              <SearchIcon size={15} />
             </button>
-            {hasSidePanel && (
-              <button
-                type="button"
-                onClick={() => { setMobileSearchOpen(o => !o); activateSearch(); }}
-                aria-label="Search the map"
-                aria-expanded={mobileSearchOpen}
-                className="ds-focusable shrink-0 inline-flex items-center justify-center rounded-md min-w-[44px] min-h-[44px]"
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: mobileSearchOpen ? 'var(--amber-text)' : 'var(--text-muted)', cursor: 'pointer' }}
-              >
-                <SearchIcon size={14} />
-              </button>
-            )}
-            <RefreshButton onClick={handleRefresh} busy={isFetching} className="shrink-0" />
+            <RefreshButton onClick={handleRefresh} busy={isFetching} touch />
           </div>
-
-          {hasSidePanel && <LensSwitcher lens={lens} onChange={setLens} />}
-
-          {hasSidePanel && mobileSearchOpen && (
-            <div style={{ zIndex: Z_SEARCH }}>
-              <ObservatorySearch data={searchData} onPick={handleSearchPick} onActivate={activateSearch} touch />
-            </div>
+          <LensStrip lens={lens} onChange={setLens} touch />
+          {mobileSearchOpen && (
+            <ObservatorySearch data={searchData} onPick={handleSearchPick} onActivate={activateSearch} touch inline />
           )}
-
-          <div
-            id="observatory-mobile-filters"
-            // Collapsed = out of the tab order and the a11y tree (`inert`, not typed in React 18).
-            {...(filtersExpanded ? {} : ({ inert: '' } as Record<string, string>))}
-            className={cn(
-              'transition-all duration-300 ease-in-out motion-reduce:transition-none',
-              filtersExpanded ? 'max-h-[min(560px,58vh)] overflow-y-auto opacity-100' : 'max-h-0 overflow-hidden opacity-0 invisible',
-            )}
-          >
-            <Card variant="elevated" style={{ marginTop: 4, padding: '8px 14px' }}>
-              {/* VIEW group (map mode) */}
-              <div style={{ padding: '6px 0' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>View</div>
-                <Tabs
-                  tabs={MAP_MODES}
-                  activeTab={mapMode}
-                  onChange={(id) => handleFilterSelect(() => setMapMode(id))}
-                  variant="bar"
-                />
-              </div>
-
-              {isBotMode && (
-                <div className="text-[11px] font-mono" style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)', color: 'var(--text-tertiary)' }}>
-                  Period, source and colour filters don&apos;t apply to bot density (daily Cloudflare Radar data).
-                </div>
-              )}
-              {!isBotMode && (<>
-              {/* TIME group */}
-              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Time</div>
-                <Tabs
-                  tabs={PERIODS}
-                  activeTab={period}
-                  onChange={(id) => handleFilterSelect(() => setPeriod(id))}
-                  variant="bar"
-                />
-              </div>
-
-              {/* COLOR group (global map only — the heatmap ignores it) */}
-              {mapMode === 'global' && (
-                <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                  <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Color</div>
-                  <Tabs
-                    tabs={COLOR_BY_TABS}
-                    activeTab={colorBy}
-                    onChange={(id) => handleFilterSelect(() => setColorBy(id))}
-                    variant="bar"
-                  />
-                </div>
-              )}
-
-              {/* SOURCE group */}
-              <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Source</div>
-                <Tabs
-                  tabs={SOURCES}
-                  activeTab={source}
-                  onChange={(id) => handleFilterSelect(() => setSource(id))}
-                  variant="bar"
-                />
-              </div>
-              </>)}
-
-              {/* LAYERS group (global map only) */}
-              {mapMode === 'global' && (
-                <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>
-                  <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>Layers</div>
-                  <LayerRail layers={layers} reducedMotion={reducedMotion} onToggle={toggleLayer} counts={counts} status={status} touch />
-                </div>
-              )}
-
-              {mapMode === 'global' && lensLayersOn && (
-                <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-base)' }}>{lensLegend}</div>
-              )}
-            </Card>
-          </div>
         </div>
       ) : (
         <>
-          {/* Row 1: lens switcher + search */}
-          {hasSidePanel && (
-            <div
-              className="absolute top-3 left-4 flex items-start gap-2"
-              style={{ zIndex: Z_CHROME, right: rightClear + 44 }}
-            >
-              <LensSwitcher lens={lens} onChange={setLens} className="shrink" />
-              <ObservatorySearch
-                data={searchData}
-                onPick={handleSearchPick}
-                onActivate={activateSearch}
-                className="flex-1 min-w-[150px] max-w-[300px]"
-              />
+          <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_CHROME, height: 44 }} data-toolbar>
+            <LensStrip lens={lens} onChange={setLens} className="flex-1" />
+            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[220px] shrink-0' })}
+            {layout.filtersInPopover ? (
+              <FiltersPopover period={period} source={source}>{filtersBody}</FiltersPopover>
+            ) : (
+              <>
+                <PeriodSegment period={period} onChange={setPeriod} />
+                <SourceSelect source={source} onChange={setSource} />
+              </>
+            )}
+            <RefreshButton onClick={handleRefresh} busy={isFetching} />
+          </div>
+
+          {/* Rail: the lens's option + threat traffic underneath. */}
+          {(mapMode !== 'heatmap' || lens === 'threats') && (
+            <div className="absolute left-3" style={{ top: 60, zIndex: Z_CHROME }}>
+              <ControlRail {...railProps} />
             </div>
           )}
-
-          {/* Left column: filters, layer rail, legends. Scrolls when the viewport is short. */}
-          <div
-            className="absolute left-4 flex flex-col gap-2 pointer-events-none overflow-y-auto"
-            style={{
-              zIndex: Z_CHROME, top: hasSidePanel ? 60 : 12, bottom: leftColBottom, width: LEFT_RAIL_WIDTH, maxWidth: 'calc(100% - 32px)',
-              scrollbarWidth: 'thin', paddingBottom: 2,
-            }}
-          >
-            <Card variant="base" padding="10px" className="flex flex-col gap-1.5 shrink-0 pointer-events-auto">
-              {/* Mode tabs */}
-              <Tabs tabs={MAP_MODES} activeTab={mapMode} onChange={setMapMode} variant="bar" />
-              {isBotMode && (
-                <div className="font-mono text-[10px] max-w-[220px]" style={{ color: 'var(--text-tertiary)' }}>
-                  Period, source and colour filters don&apos;t apply &mdash; daily Cloudflare Radar data.
-                </div>
-              )}
-              {/* Period + color-by row */}
-              {!isBotMode && (
-                <div className="flex items-center gap-2">
-                  <Tabs tabs={PERIODS} activeTab={period} onChange={setPeriod} variant="bar" />
-                  {mapMode === 'global' && (
-                    <Tabs tabs={COLOR_BY_TABS} activeTab={colorBy} onChange={setColorBy} variant="bar" />
-                  )}
-                </div>
-              )}
-              {/* Source filter row — mirrors v2 Observatory.tsx SOURCES tabs */}
-              {!isBotMode && <Tabs tabs={SOURCES} activeTab={source} onChange={setSource} variant="bar" />}
-            </Card>
-
-            {mapMode === 'global' && (
-              <LayerRail
-                layers={layers}
-                reducedMotion={reducedMotion}
-                onToggle={toggleLayer}
-                counts={counts}
-                status={status}
-                defaultCollapsed={viewportWidth < 1200}
-                className="pointer-events-auto"
-              />
-            )}
-
-            {mapMode === 'global' && lensLayersOn && <div className="pointer-events-auto shrink-0">{lensLegend}</div>}
-
-            {/* Legends */}
-            {mapMode === 'global' && threatLayersOn && (
-              <MapLegend mode="global" colorBy={colorBy} defaultCollapsed={lensLayersOn || compactHeight} style={{ position: 'static', width: '100%', pointerEvents: 'auto', flexShrink: 0 }} />
-            )}
-            {mapMode === 'heatmap' && (
-              <MapLegend mode="heatmap" colorBy={colorBy} style={{ position: 'static', width: '100%', pointerEvents: 'auto', flexShrink: 0 }} />
-            )}
-            {isBotMode && botPoints.length > 0 && (
-              <BotDensityLegend
-                domain={botDomain}
-                globalAvg={botGlobalAvg}
-                asOf={botAsOf}
-                countries={botPoints.length}
-                style={{ position: 'static', width: '100%', pointerEvents: 'auto', flexShrink: 0 }}
-              />
-            )}
-          </div>
         </>
-      )}
-
-      {/* ─── Top-right: Refresh (desktop) ──────────────────────────
-          The page-level LIVE badge lives in the shell top bar (ShellV4), so it is not
-          repeated here. Mobile gets Refresh in-flow next to the summary toggle. */}
-      {!isMobile && (
-        <div
-          className="absolute top-3 flex items-center gap-2"
-          style={{ right: rightClear, zIndex: Z_CHROME }}
-        >
-          <RefreshButton onClick={handleRefresh} busy={isFetching} />
-        </div>
       )}
 
       {/* ─── Load-error banner ──────────────────────────────────
           Only failures from queries the current view uses. */}
       {loadError && (
-        // Right offset clears the docked panel / drawer (w-80 = 320px) + its inset gap;
-        // a flat 16 when it is closed, on mobile, or in heatmap mode.
         <ObservatoryLoadError
           onRetry={retryFailed}
           right={rightClear}
@@ -844,22 +740,12 @@ export function ObservatoryV3() {
         />
       )}
 
-      {/* Mobile legends keep their own floating spot (the desktop ones live in the left column). */}
-      {isMobile && mapMode === 'global' && threatLayersOn && (
-        <MapLegend mode="global" colorBy={colorBy} defaultCollapsed style={{ left: 16, bottom: 120 + (showTimeline ? TIMELINE_H + 4 : 0), zIndex: Z_CHROME }} />
-      )}
-      {isMobile && mapMode === 'heatmap' && (
-        <MapLegend mode="heatmap" colorBy={colorBy} defaultCollapsed style={{ left: 16, bottom: 120, zIndex: Z_CHROME }} />
-      )}
-      {isMobile && isBotMode && botPoints.length > 0 && (
-        <BotDensityLegend
-          domain={botDomain}
-          globalAvg={botGlobalAvg}
-          asOf={botAsOf}
-          countries={botPoints.length}
-          style={{ left: 16, bottom: 120, zIndex: Z_CHROME }}
-        />
-      )}
+      {/* ─── Legend chip (one per view) ─────────────────────── */}
+      <LegendChip
+        {...legendProps}
+        summary={summary}
+        style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
+      />
 
       {/* ─── Replay timeline ─────────────────────────────────────
           Drives the same clock as the particles and movement trails. */}
@@ -876,11 +762,13 @@ export function ObservatoryV3() {
           onTogglePlay={() => setPlaying(p => !p)}
           onSpeed={setSpeed}
           onSeek={handleSeek}
+          onScrubChange={onScrubChange}
+          window={replayWindow}
           reducedMotion={reducedMotion}
           periodLabel={periodLabel}
           countryLabel={countryLabel}
-          isMobile={isMobile}
-          style={{ position: 'absolute', left: 16, right: isMobile ? 16 : rightClear + 52, bottom: timelineBottom, height: TIMELINE_H, zIndex: Z_CHROME }}
+          isMobile={phone}
+          style={{ position: 'absolute', left: 12, right: phone ? 12 : rightClear + 44, bottom: timelineBottom, height: TIMELINE_H, zIndex: Z_CHROME }}
         />
       )}
 
@@ -891,7 +779,7 @@ export function ObservatoryV3() {
       <div
         className="absolute left-0 right-0 flex items-center justify-between px-4"
         style={{
-          bottom: isMobile ? 72 : 40,
+          bottom: phone ? 72 : 40,
           height: 36,
           background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
@@ -902,7 +790,7 @@ export function ObservatoryV3() {
         <div className="flex items-center gap-4">
           {isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              {/* Bot mode fetches the 7-day Radar window (useBotTraffic(7)). */}
+              {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
               <span style={{ color: 'var(--amber-text)' }}>7D</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
@@ -927,49 +815,43 @@ export function ObservatoryV3() {
           )}
         </div>
         <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {mapMode === 'global' && (showParticles || lensLayersOn) && (
-            reducedMotion
-              ? <span>Motion reduced</span>
-              : <span style={{ color: 'var(--sev-info-text)' }}>GPU {showParticles ? 'particles' : 'layers'} active</span>
+          {lensFootnote({ lens, reducedMotion, motionOn }) && (
+            <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn })}</span>
           )}
         </div>
       </div>
 
       {/* ─── Event ticker ─────────────────────────────────────────
           EventTicker doesn't self-position; it fills whatever box this
-          wrapper gives it, and this wrapper is panel-aware (`right` inset)
-          exactly like the ticker's siblings. Desktop 40 / mobile 72 (touch
-          target sizing) match the stats-bar `bottom` offset and the map's
-          bottom inset above. */}
+          wrapper gives it. Desktop 40 / mobile 72 (touch target sizing)
+          match the stats-bar `bottom` offset and the map's bottom inset above. */}
       <div
-        className="absolute bottom-0 left-0"
-        style={{
-          height: isMobile ? 72 : 40,
-          right: panelInset,
-          zIndex: Z_CHROME,
-        }}
+        className="absolute bottom-0 left-0 right-0"
+        style={{ height: phone ? 72 : 40, zIndex: Z_CHROME }}
       >
         <EventTicker />
       </div>
 
-      {/* ─── Right slot (desktop): the drill drawer while something is selected, else the intelligence panel ── */}
-      {!isMobile && drill && (
-        <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="dock" canSeeTakedowns={canSeeTakedowns} />
+      {/* ─── Right slot (desktop / tablet): the drill drawer while something is selected, else the lens-aware panel ── */}
+      {!phone && drill && (
+        <DrillDrawer
+          target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget}
+          variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus}
+        />
       )}
-      {!isMobile && (
-        <SidePanel period={period} source={source} visible={showPanel && hasSidePanel && !drill} onSelectNode={handleSelectNodeFromPanel} />
-      )}
+      {!phone && !drill && panelOpen && lensPanel(layout.docked ? 'dock' : 'overlay')}
 
       {/* Panel toggle (the drawer has its own close button and Escape) */}
-      {!isMobile && hasSidePanel && !drill && (
+      {!phone && hasPanel && !drill && (
         <button
           type="button"
-          onClick={() => setShowPanel(!showPanel)}
-          aria-label={showPanel ? 'Hide intelligence panel' : 'Show intelligence panel'}
-          aria-expanded={showPanel}
+          ref={panelToggleRef}
+          onClick={() => setPanelPref(!panelOpen)}
+          aria-label={panelOpen ? 'Hide intelligence panel' : 'Show intelligence panel'}
+          aria-expanded={panelOpen}
           className="ds-focusable absolute top-1/2 transform -translate-y-1/2"
           style={{
-            ...(showPanel ? { right: '320px' } : { right: 0 }),
+            right: panelOpen ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0,
             background: 'var(--bg-card)',
             backdropFilter: 'blur(20px)',
             border: '1px solid var(--border-base)',
@@ -980,20 +862,22 @@ export function ObservatoryV3() {
             zIndex: Z_TOGGLE,
           }}
         >
-          {showPanel ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+          {panelOpen ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
         </button>
       )}
 
-      {/* ─── Intel FAB (mobile) — opens the bottom-sheet drawer ── */}
-      {isMobile && hasSidePanel && (
+      {/* ─── Phone: Intel FAB + peek sheets (non-modal: the map stays live above them) ── */}
+      {phone && hasPanel && !drill && !showMobilePanel && (
         <button
           type="button"
+          ref={panelToggleRef}
           onClick={() => setShowMobilePanel(true)}
           aria-label="Open intelligence panel"
-          className="ds-focusable absolute flex items-center gap-1.5 font-mono text-[10px] font-bold uppercase tracking-wide"
+          className="ds-focusable absolute flex items-center gap-1.5 font-mono text-[11px] font-bold uppercase tracking-wide"
           style={{
-            bottom: 120 + (showTimeline ? TIMELINE_H + 4 : 0),
-            right: 16,
+            bottom: chipBottom,
+            right: 12,
+            minHeight: 44,
             padding: '9px 16px',
             borderRadius: 999,
             background: 'var(--bg-card)',
@@ -1006,49 +890,32 @@ export function ObservatoryV3() {
             zIndex: Z_PANEL,
           }}
         >
-          <PanelRightOpen size={13} />
+          <SlidersHorizontal size={13} />
           Intel
         </button>
       )}
-
-      {/* ─── Drill drawer (mobile): a bottom sheet over the map ── */}
-      {isMobile && (
-        <BottomSheet open={!!drill} onClose={closeDrill}>
-          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} />}
-        </BottomSheet>
+      {phone && (
+        <PeekSheet open={!!drill} onClose={closeDrill} label={drill ? `${drill.kind} details` : 'Details'} onHeight={setSheetPx}>
+          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} />}
+        </PeekSheet>
       )}
-
-      {/* ─── Intel drawer (mobile) — reuses the existing BottomSheet
-          primitive (Esc-to-close + body-scroll-lock for free). BottomSheet
-          owns the single scroll container, so the title row below is made
-          sticky rather than adding a second scroll container. */}
-      {isMobile && hasSidePanel && (
-        <BottomSheet open={showMobilePanel} onClose={() => setShowMobilePanel(false)}>
-          <div
-            className="flex items-center justify-between px-4 pb-2"
-            style={{
-              position: 'sticky',
-              top: 0,
-              zIndex: 1,
-              background: 'var(--bg-card-deep)',
-              borderBottom: '1px solid var(--border-base)',
-            }}
-          >
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
-              Intelligence
-            </span>
+      {phone && hasPanel && (
+        <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={setSheetPx}>
+          <div className="flex items-center justify-between px-4 pb-1">
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
             <button
               type="button"
               onClick={() => setShowMobilePanel(false)}
               aria-label="Close intelligence panel"
+              title="Close"
               className="ds-focusable inline-flex items-center justify-center min-w-[44px] min-h-[44px]"
               style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
             >
               <PanelRightClose size={14} />
             </button>
           </div>
-          <SidePanel period={period} source={source} visible mobile onSelectNode={handleSelectNodeFromPanel} />
-        </BottomSheet>
+          {lensPanel('sheet')}
+        </PeekSheet>
       )}
     </div>
   );
