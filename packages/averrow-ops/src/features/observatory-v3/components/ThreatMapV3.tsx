@@ -1,33 +1,56 @@
 /**
  * ThreatMapV3 — GPU-driven particle animation via deck.gl TripsLayer.
  *
- * Design notes (vs. the retired v2 map):
- *   - Particles use TripsLayer with a single `currentTime` uniform (zero CPU per frame)
- *   - MapboxOverlay runs in overlaid mode (interleaved=false) so particle redraws
- *     don't force basemap redraws
- *   - WebGL context loss is handled gracefully with recovery UI
- *   - Mobile caps particle count at 500 and reduces trail length
- *   - Beams are off by default (toggleable)
- *   - Data equality check prevents unnecessary layer rebuilds on refetch
+ * Design notes:
+ *   - Particles use TripsLayer with a single `currentTime` uniform driven by a
+ *     frame-rate-independent AnimationClock (lib/animation-clock.ts).
+ *   - MapboxOverlay runs in overlaid mode (interleaved=false) so particle
+ *     redraws don't force basemap redraws.
+ *   - Layers are memoised on DATA IDENTITY. TanStack Query's structural sharing
+ *     keeps arrays referentially stable across no-change refetches, and click
+ *     handlers go through refs, so neither re-creates the layer set.
+ *   - The rAF loop only runs while particles are visible, the tab is visible,
+ *     the map is on screen, and the user hasn't asked for reduced motion.
+ *   - Only FATAL errors (base style failed, WebGL context lost) replace the
+ *     map; tile/source hiccups leave it up. Retry re-initialises the map.
  */
 
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { useTheme } from '@/design-system/hooks';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { ScatterplotLayer, PathLayer } from '@deck.gl/layers';
-import { TripsLayer } from '@/lib/trips-layer';
 import { HeatmapLayer } from '@deck.gl/aggregation-layers';
+import type { Layer, PickingInfo } from '@deck.gl/core';
+import { useTheme } from '@/design-system/hooks';
+import { TripsLayer } from '@/lib/trips-layer';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import type { ThreatPoint, ArcData, HeatmapPoint } from '@/hooks/useObservatory';
 import {
   botColor, botRadius, botDensityDomain, botDensityTooltip, isAboveAverage,
   resolveScaleStops, RING_COLOR, OUTLINE_COLOR,
   type BotDensityPoint,
 } from '../lib/bot-density';
+import {
+  getSeverityColor, getArcColor, heatmapWeight, sevText, typeLabel, HEATMAP_COLOR_RANGE,
+  type ColorBy, type Rgba,
+} from '../lib/map-colors';
+import {
+  buildTripData, getArcPath, periodToMs, trailLengthFor, CYCLE_LENGTH,
+  type TripDatum,
+} from '../lib/trips';
+import { AnimationClock } from '../lib/animation-clock';
+import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
+import { hasValidPoint, hasValidArc } from '../lib/geo';
+import { usePrefersReducedMotion, usePageVisible, useInView } from '../lib/use-motion';
+import {
+  selectionKey, selectionLngLat, type MapSelection,
+} from '../lib/selection';
+import { nodeKey, arcKey, type MapMode } from '../lib/url-state';
+import { MapDetailCard } from './MapDetailCard';
+
+export type { MapMode } from '../lib/url-state';
 
 // ─── Types ──────────────────────────────────────────────────
-export type MapMode = 'global' | 'heatmap' | 'bot_density';
-
 interface TooltipInfo {
   x: number;
   y: number;
@@ -36,252 +59,24 @@ interface TooltipInfo {
   bot?: BotDensityPoint;
 }
 
-// ─── Color helpers ──────────────────────────────────────────
-const SEVERITY_COLORS: Record<string, [number, number, number, number]> = {
-  critical: [200, 60,  60,  255],
-  high:     [251, 146, 60,  220],
-  medium:   [250, 204, 21,  180],
-  low:      [120, 160, 200, 160],
-  info:     [90,  128, 168, 140],
-};
+type Pick<T> = PickingInfo<T>;
 
-const THREAT_TYPE_COLORS: Record<string, [number, number, number, number]> = {
-  phishing:               [200, 60,  60,  220],
-  credential_harvesting:  [251, 146, 60,  220],
-  malware_distribution:   [167, 139, 250, 220],
-  c2:                     [239, 68,  68,  255],
-  malicious_ip:           [120, 160, 200, 180],
-  web_attack:             [251, 113, 133, 200],
-  brute_force:            [250, 204, 21,  200],
-  spam_botnet_c2:         [34,  211, 238, 220],
-  typosquatting:          [220, 170, 50,  200],
-  scanning:               [120, 160, 200, 180],
-  impersonation:          [232, 146, 60,  220],
-};
-
-function getSeverityColor(severity: string, alpha?: number): [number, number, number, number] {
-  const c = SEVERITY_COLORS[severity?.toLowerCase()] || SEVERITY_COLORS.info;
-  return alpha != null ? [c[0], c[1], c[2], alpha] : c;
-}
-
-function getTypeColor(type: string, alpha?: number): [number, number, number, number] {
-  const c = THREAT_TYPE_COLORS[type] || [120, 160, 200, 180];
-  return alpha != null ? [c[0], c[1], c[2], alpha] : c;
-}
-
-function getArcColor(
-  d: { severity?: string | null; threat_type?: string | null },
-  colorMode: 'severity' | 'type',
-  alpha?: number,
-): [number, number, number, number] {
-  if (colorMode === 'severity') return getSeverityColor(d.severity ?? 'medium', alpha);
-  return getTypeColor(d.threat_type ?? 'phishing', alpha);
-}
-
-// Theme-aware severity TEXT colors (tooltip labels only — the WebGL layers
-// above keep using getSeverityColor's RGBA tuples, which must stay fixed).
-const SEV_TEXT: Record<string, string> = {
-  critical: 'var(--sev-critical-text)',
-  high: 'var(--sev-high-text)',
-  medium: 'var(--sev-medium-text)',
-  low: 'var(--sev-low-text)',
-  info: 'var(--sev-info-text)',
-};
-
-// ─── Bezier helpers ─────────────────────────────────────────
-function computeBezierPath(srcLng: number, srcLat: number, tgtLng: number, tgtLat: number, segments = 30): [number, number][] {
-  const midLng = (srcLng + tgtLng) / 2;
-  const midLat = (srcLat + tgtLat) / 2;
-  const dist = Math.sqrt(Math.pow(tgtLng - srcLng, 2) + Math.pow(tgtLat - srcLat, 2));
-  const controlLng = midLng;
-  const controlLat = midLat + dist * 0.3;
-  const path: [number, number][] = [];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const mt = 1 - t;
-    path.push([
-      mt * mt * srcLng + 2 * mt * t * controlLng + t * t * tgtLng,
-      mt * mt * srcLat + 2 * mt * t * controlLat + t * t * tgtLat,
-    ]);
-  }
-  return path;
-}
-
-// ─── Map style ──────────────────────────────────────────────
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-
-// ─── TripsLayer data builder ────────────────────────────────
-// Timeline replay model: the selected period (24h / 7d / 30d) is mapped
-// onto the animation CYCLE_LENGTH. Each arc has a "life window" within
-// the cycle, corresponding to when its threats actually occurred.
-// Arcs fade in when their window starts and fade out when it ends.
-//
-// Result: arcs appear/disappear organically across the timeline, with
-// only 15-25% of arcs active at any given moment. No more all-at-once
-// bombardment.
-
-// CYCLE_LENGTH: one full "replay" of the selected period.
-// At 1.0 units/frame × 60fps = 60 units/sec, 3600 units = ~60 sec per cycle.
-const CYCLE_LENGTH = 3600;
-
-// TRIP_SPAN: time for one particle to traverse a single arc.
-// 180 units = ~3 seconds per traversal.
-const TRIP_SPAN = 180;
-
-// Minimum/maximum life window for an arc within the cycle (as fraction).
-// High-volume arcs "stay alive" longer; low-volume arcs appear as brief bursts.
-const MIN_LIFE_RATIO = 0.08;   // 8% of cycle = ~5 seconds
-const MAX_LIFE_RATIO = 0.35;   // 35% of cycle = ~21 seconds
-
-const MOBILE_MAX_PARTICLES = 800;
-const DESKTOP_MAX_PARTICLES = 6000;
-
-interface TripDatum {
-  path: [number, number][];
-  timestamps: number[];
-  color: [number, number, number, number];
-}
-
-// Deterministic hash of arc identity — stable "random" value per arc
-function hashArc(arc: ArcData): number {
-  const str = `${arc.threat_type ?? ''}|${arc.brand_name ?? arc.target_brand ?? ''}|${arc.sourcePosition[0].toFixed(1)},${arc.sourcePosition[1].toFixed(1)}`;
-  let h = 0;
-  for (let i = 0; i < str.length; i++) {
-    h = ((h << 5) - h) + str.charCodeAt(i);
-    h |= 0; // force int32
-  }
-  return Math.abs(h);
-}
-
-/**
- * Compute the arc's life window within the animation cycle.
- * If the arc has real timestamps, map them proportionally onto the cycle.
- * If not, fall back to hash-based positioning.
- */
-function computeLifeWindow(
-  arc: ArcData,
-  windowStartMs: number,
-  windowEndMs: number,
-): { start: number; duration: number } {
-  // Volume drives life duration — high-volume arcs feel more persistent
-  const volumeRatio = Math.min(1, Math.sqrt((arc.volume || 1)) / 10);
-  const lifeRatio = MIN_LIFE_RATIO + (MAX_LIFE_RATIO - MIN_LIFE_RATIO) * volumeRatio;
-  const duration = lifeRatio * CYCLE_LENGTH;
-
-  // If backend provided real timestamps, map them onto the cycle
-  if (arc.first_seen && arc.last_seen && windowEndMs > windowStartMs) {
-    const firstMs = new Date(arc.first_seen).getTime();
-    const lastMs = new Date(arc.last_seen).getTime();
-    const spanMs = windowEndMs - windowStartMs;
-
-    // Fraction of the window where this arc's threats occurred (0 to 1)
-    const startFrac = Math.max(0, Math.min(1, (firstMs - windowStartMs) / spanMs));
-    const endFrac = Math.max(0, Math.min(1, (lastMs - windowStartMs) / spanMs));
-
-    // Center the life window on the midpoint of this arc's activity
-    const activityCenter = (startFrac + endFrac) / 2;
-    const start = activityCenter * CYCLE_LENGTH - duration / 2;
-    return {
-      start: ((start % CYCLE_LENGTH) + CYCLE_LENGTH) % CYCLE_LENGTH,
-      duration,
-    };
-  }
-
-  // Fallback: use hash for stable "random" placement
-  const hash = hashArc(arc);
-  const maxStart = Math.max(1, CYCLE_LENGTH - duration);
-  return { start: hash % maxStart, duration };
-}
-
-function buildTripData(
-  arcs: ArcData[],
-  colorBy: 'severity' | 'type',
-  isMobile: boolean,
-  periodMs: number,
-): TripDatum[] {
-  const trips: TripDatum[] = [];
-  let totalParticles = 0;
-  const maxParticles = isMobile ? MOBILE_MAX_PARTICLES : DESKTOP_MAX_PARTICLES;
-  const perArcCap = isMobile ? 8 : 15;
-
-  const now = Date.now();
-  const windowStart = now - periodMs;
-
-  for (const arc of arcs) {
-    if (totalParticles >= maxParticles) break;
-    const path = computeBezierPath(
-      arc.sourcePosition[0], arc.sourcePosition[1],
-      arc.targetPosition[0], arc.targetPosition[1],
-    );
-    const color = getArcColor(arc, colorBy, 220);
-
-    // Number of particles scales with volume, capped per-arc
-    const numParticles = Math.min(
-      Math.max(2, Math.ceil((arc.volume || 1) * 0.6)),
-      perArcCap,
-    );
-
-    // Compute this arc's life window within the cycle
-    const { start, duration } = computeLifeWindow(arc, windowStart, now);
-
-    // Severity-based speed variation (still keep this — adds organic feel)
-    const sevSpeedMultiplier =
-      arc.severity === 'critical' ? 1.20
-      : arc.severity === 'high' ? 1.08
-      : arc.severity === 'low' ? 0.85
-      : 1.0;
-    const tripSpan = TRIP_SPAN / sevSpeedMultiplier;
-
-    // Spread particles across the life window
-    // Leave TRIP_SPAN headroom at the end so the last particle completes before window ends
-    const effectiveDuration = Math.max(TRIP_SPAN, duration - tripSpan);
-
-    // Seamless loop: duplicate every arc's burst at +CYCLE_LENGTH/2 (wrapped).
-    // This guarantees activity uniformly distributed across the cycle regardless
-    // of where the arc's real-world timestamps placed its life window. Without
-    // this offset, arcs clustering at one end of the cycle (e.g. all in the last
-    // 6 hours of a 7-day window) leave the other half visibly empty — causing a
-    // pause at the wrap boundary.
-    const phaseOffsets = [0, CYCLE_LENGTH / 2];
-
-    for (let j = 0; j < numParticles; j++) {
-      if (totalParticles >= maxParticles) break;
-      const offsetWithinLife = (j / Math.max(1, numParticles - 1)) * effectiveDuration;
-
-      for (const phaseOffset of phaseOffsets) {
-        if (totalParticles >= maxParticles) break;
-        const tripStart = ((start + offsetWithinLife + phaseOffset) % CYCLE_LENGTH);
-        trips.push({
-          path,
-          timestamps: path.map((_, idx) => tripStart + (idx / (path.length - 1)) * tripSpan),
-          color,
-        });
-        totalParticles++;
-      }
-    }
-  }
-  return trips;
-}
-
-// Map period string → duration in ms
-function periodToMs(period: string): number {
-  switch (period) {
-    case '24h': return 24 * 60 * 60 * 1000;
-    case '7d':  return 7 * 24 * 60 * 60 * 1000;
-    case '30d': return 30 * 24 * 60 * 60 * 1000;
-    case '90d': return 90 * 24 * 60 * 60 * 1000;
-    default: return 7 * 24 * 60 * 60 * 1000;
-  }
-}
+/** Pointer-pick tolerance in px: nodes render as 1.5-9px dots, far below a usable hit target. */
+const PICK_RADIUS_FINE = 8;
+const PICK_RADIUS_TOUCH = 16;
+const EMPTY_THREATS: ThreatPoint[] = [];
+const EMPTY_ARCS: ArcData[] = [];
+const EMPTY_HEAT: HeatmapPoint[] = [];
 
 // ─── Props ──────────────────────────────────────────────────
-interface ThreatMapV3Props {
+export interface ThreatMapV3Props {
   threats: ThreatPoint[];
   arcs: ArcData[];
   showBeams: boolean;
   showParticles: boolean;
   showNodes: boolean;
-  colorBy: 'severity' | 'type';
+  colorBy: ColorBy;
   mapMode: MapMode;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
   heatmapData?: HeatmapPoint[];
@@ -291,53 +86,63 @@ interface ThreatMapV3Props {
   botGlobalAvg?: number | null;
   /**
    * Desktop zoom control right inset (px) — the width of whatever overlays
-   * the map's right edge (the open SidePanel), so the control stays visible.
+   * the map's right edge (the open SidePanel), so the control stays visible
+   * and detail cards stay clear of it.
    */
   controlRightInset?: number;
-  onArcClick?: (arc: ArcData, x: number, y: number) => void;
+  /** Currently selected node / arc (resolved against the current data), or null. */
+  selection?: MapSelection | null;
+  /** Called with a new selection on click/tap, or null to clear (empty-map click). */
+  onSelect?: (selection: MapSelection | null) => void;
+  /**
+   * Animation clock. Defaults to an internal one; Phase B's replay timeline
+   * passes its own to drive play / pause / speed / seek.
+   */
+  clock?: AnimationClock;
+  /** Notified when the map enters / leaves the fatal fallback (so the page can hide map-dependent overlays). */
+  onFatalChange?: (fatal: boolean) => void;
 }
 
 // ─── Error boundary ─────────────────────────────────────────
-interface MapErrorState { hasError: boolean; error: Error | null }
-
 class MapErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
-  MapErrorState
+  { hasError: boolean }
 > {
-  constructor(props: { children: React.ReactNode; fallback: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: Error): MapErrorState {
-    return { hasError: true, error };
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
   render() {
-    if (this.state.hasError) return this.props.fallback;
-    return this.props.children;
+    return this.state.hasError ? this.props.fallback : this.props.children;
   }
 }
 
 function MapFallback({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center w-full h-full" style={{ background: 'var(--bg-page)' }}>
+    <div
+      role="alert"
+      className="flex flex-col items-center justify-center w-full h-full"
+      style={{ background: 'var(--bg-page)' }}
+    >
       <div className="font-mono text-xs uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
         Map Unavailable
       </div>
-      <div className="text-sm mb-4 max-w-md text-center" style={{ color: 'var(--text-tertiary)' }}>
+      <div className="text-sm mb-4 max-w-md text-center px-4" style={{ color: 'var(--text-tertiary)' }}>
         {message}
       </div>
       {onRetry && (
         <button
+          type="button"
           onClick={onRetry}
-          className="font-mono text-xs px-4 py-2 rounded-lg"
+          className="ds-focusable font-mono text-xs px-4 py-2 rounded-lg"
           style={{
-            background: 'rgba(229,168,50,0.15)',
-            border: '1px solid rgba(229,168,50,0.30)',
+            background: 'color-mix(in srgb, var(--amber) 15%, transparent)',
+            border: '1px solid var(--amber-border)',
             color: 'var(--amber-text)',
             cursor: 'pointer',
           }}
         >
-          Reload Map
+          Retry
         </button>
       )}
     </div>
@@ -345,258 +150,401 @@ function MapFallback({ message, onRetry }: { message: string; onRetry?: () => vo
 }
 
 // ─── Main component ─────────────────────────────────────────
-export function ThreatMapV3(props: ThreatMapV3Props) {
-  const [contextLost, setContextLost] = useState(false);
+export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
+  // `fatal` is set only for unrecoverable failures. Retrying bumps `initKey`,
+  // which remounts the inner component and builds a brand-new map instance
+  // (the old one was already torn down by the inner cleanup on unmount).
+  const [fatal, setFatal] = useState<string | null>(null);
+  const [initKey, setInitKey] = useState(0);
+  const retry = useCallback(() => {
+    setFatal(null);
+    setInitKey(k => k + 1);
+  }, []);
+  useEffect(() => { onFatalChange?.(fatal !== null); }, [fatal, onFatalChange]);
 
-  if (contextLost) {
-    return <MapFallback message="WebGL context was lost. This can happen on mobile with large datasets." onRetry={() => setContextLost(false)} />;
-  }
+  if (fatal) return <MapFallback message={fatal} onRetry={retry} />;
 
   return (
-    <MapErrorBoundary fallback={<MapFallback message="The map failed to initialize." />}>
-      <ThreatMapV3Inner {...props} onContextLost={() => setContextLost(true)} />
+    <MapErrorBoundary key={initKey} fallback={<MapFallback message="The map failed to initialize." onRetry={retry} />}>
+      <ThreatMapV3Inner {...props} onFatal={setFatal} />
     </MapErrorBoundary>
   );
 }
 
 function ThreatMapV3Inner({
-  threats, arcs, showBeams, showParticles, showNodes, colorBy,
-  mapMode, period, heatmapData = [],
+  threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
+  mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT,
   botDensity, botGlobalAvg = null, controlRightInset = 0,
-  onArcClick, onContextLost,
-}: ThreatMapV3Props & { onContextLost: () => void }) {
+  selection = null, onSelect, clock: clockProp, onFatal,
+}: ThreatMapV3Props & { onFatal: (message: string) => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const deckRef = useRef<any>(null);
+  const deckRef = useRef<MapboxOverlay | null>(null);
+  const navControlRef = useRef<maplibregl.NavigationControl | null>(null);
+  const styleLoadedRef = useRef(false);
 
-  // Keep the zoom control clear of the SidePanel overlaying the map's right
-  // edge. Also applied right after the control is added (map init), since
-  // the map is created after this effect's first run.
-  const controlRightInsetRef = useRef(controlRightInset);
-  controlRightInsetRef.current = controlRightInset;
-  const applyControlInset = useCallback(() => {
-    const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
-    if (ctrl) ctrl.style.right = `${controlRightInsetRef.current}px`;
-  }, []);
-  useEffect(applyControlInset, [controlRightInset, applyControlInset]);
-  const animFrameRef = useRef<number | null>(null);
-  const currentTimeRef = useRef(0);
+  const { isMobile } = useBreakpoint();
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+
+  const [ownClock] = useState(() => new AnimationClock({ cycleLength: CYCLE_LENGTH }));
+  const clock = clockProp ?? ownClock;
+
   const [tooltip, setTooltip] = useState<TooltipInfo | null>(null);
   /** Country code of the pinned bot-density tooltip, if any. */
   const pinnedRef = useRef<string | null>(null);
-  // Colour stops are re-resolved after the theme attribute lands in the DOM
-  // (effect order: useTheme's effect runs first), so layers repaint on dark<->light.
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [tileIssue, setTileIssue] = useState(false);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [anchor, setAnchor] = useState<{ key: string; x: number; y: number } | null>(null);
+
+  // Colour stops are re-resolved after the theme attribute lands in the DOM.
   const { resolvedTheme } = useTheme();
   const [botStops, setBotStops] = useState(resolveScaleStops);
   useEffect(() => { setBotStops(resolveScaleStops()); }, [resolvedTheme]);
   const botStopsKey = botStops.map(c => c.join(',')).join('|');
-  const [mapLoaded, setMapLoaded] = useState(false);
-  const [mapError, setMapError] = useState<string | null>(null);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
-  // Track previous data to skip rebuilds on identical refetch
-  const prevThreatsLenRef = useRef(0);
-  const prevArcsLenRef = useRef(0);
+  // Stable handler bag: layers close over THIS, never over props, so a parent
+  // re-render (e.g. onSelect identity) can't invalidate the layer set.
+  const latest = useRef({ onSelect, controlRightInset });
+  latest.current = { onSelect, controlRightInset };
+  const handlers = useMemo(() => ({
+    hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
+    hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
+    clickNode: (info: Pick<ThreatPoint>) => {
+      if (!info.object) return false;
+      const sel: MapSelection = { kind: 'node', node: info.object };
+      setAnchor({ key: selectionKey(sel), x: info.x, y: info.y });
+      setTooltip(null);
+      latest.current.onSelect?.(sel);
+      return true;
+    },
+    clickArc: (info: Pick<ArcData>) => {
+      if (!info.object) return false;
+      const sel: MapSelection = { kind: 'arc', arc: info.object };
+      setAnchor({ key: selectionKey(sel), x: info.x, y: info.y });
+      setTooltip(null);
+      latest.current.onSelect?.(sel);
+      return true;
+    },
+    hoverBot: (info: Pick<BotDensityPoint>) => {
+      if (pinnedRef.current) return; // a pinned tooltip stays until dismissed
+      setTooltip(info.object ? { x: info.x, y: info.y, bot: info.object } : null);
+    },
+    // Tap/click pins the tooltip (touch has no hover); tap again to dismiss.
+    clickBot: (info: Pick<BotDensityPoint>) => {
+      const object = info.object;
+      if (!object) return false;
+      if (pinnedRef.current && pinnedRef.current === object.code) {
+        pinnedRef.current = null;
+        setTooltip(null);
+      } else {
+        pinnedRef.current = object.code;
+        setTooltip({ x: info.x, y: info.y, bot: object });
+      }
+      return true; // handled — don't fall through to the map-level dismiss
+    },
+    // Map-level click: only reached for empty-map clicks (layer handlers return true).
+    clickEmpty: (info: PickingInfo) => {
+      if (info.object) return;
+      pinnedRef.current = null;
+      setTooltip(null);
+      latest.current.onSelect?.(null);
+    },
+  }), []);
 
-  // ─── Map initialization (once) ────────────────────────────
+  // Keep the zoom control clear of the SidePanel overlaying the map's right edge.
+  const applyControlInset = useCallback(() => {
+    const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
+    if (ctrl) ctrl.style.right = `${latest.current.controlRightInset}px`;
+  }, []);
+  useEffect(applyControlInset, [controlRightInset, applyControlInset]);
+
+  // ─── Map initialization (once per mount; retry remounts) ──
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    const container = mapContainerRef.current;
+    if (!container || mapRef.current) return;
 
+    let map: maplibregl.Map;
     try {
-      const map = new maplibregl.Map({
-        container: mapContainerRef.current,
+      map = new maplibregl.Map({
+        container,
         style: MAP_STYLE,
-        center: isMobile ? [-30, 30] : [10, 25],
-        zoom: isMobile ? 0.6 : 2.2,
-        pitch: isMobile ? 0 : 20,
+        center: isMobileRef.current ? [-30, 30] : [10, 25],
+        zoom: isMobileRef.current ? 0.6 : 2.2,
+        pitch: isMobileRef.current ? 0 : 20,
         bearing: 0,
-        minZoom: isMobile ? 0.5 : undefined,
+        minZoom: isMobileRef.current ? 0.5 : undefined,
         maxZoom: 12,
         antialias: true,
         attributionControl: false,
       });
-
-      map.on('error', (e) => setMapError(e.error?.message || 'Map rendering error'));
-
-      // Bottom-right, not top-right: the page's LIVE/refresh cluster owns the
-      // top-right corner whenever the SidePanel is closed, and the two
-      // overlapped. Its right inset tracks the SidePanel (effect below).
-      if (!isMobile) {
-        map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
-        applyControlInset();
-      }
-      mapRef.current = map;
-
-      // WebGL context loss handling
-      const canvas = map.getCanvas();
-      canvas.addEventListener('webglcontextlost', (e) => {
-        e.preventDefault();
-        onContextLost();
-      });
-
-      if (map.loaded()) setMapLoaded(true);
-      else map.once('load', () => setMapLoaded(true));
-
-      return () => {
-        if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-        setMapLoaded(false);
-        if (deckRef.current && mapRef.current) {
-          try { mapRef.current.removeControl(deckRef.current); } catch { /* safe */ }
-          deckRef.current = null;
-        }
-        map.remove();
-        mapRef.current = null;
-      };
     } catch (err) {
-      setMapError(err instanceof Error ? err.message : 'Failed to initialize map');
+      onFatal(`Map initialization failed: ${err instanceof Error ? err.message : 'WebGL unavailable'}`);
+      return;
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    mapRef.current = map;
 
-  // ─── Pre-compute trip data for TripsLayer (memoized on arcs change) ───
+    // Set on cleanup. Under React StrictMode (dev) the effect is mounted,
+    // cleaned up and mounted again; `map.remove()` in that first cleanup
+    // dispatches `webglcontextlost` on the OLD canvas. Events from a disposed
+    // instance must never reach onFatal or they replace the healthy second map.
+    let disposed = false;
+
+    map.on('error', (e) => {
+      if (disposed) return;
+      const verdict = classifyMapError(e as unknown as MapErrorLike, {
+        styleLoaded: styleLoadedRef.current,
+        styleUrl: MAP_STYLE,
+      });
+      if (verdict === 'fatal') {
+        onFatal(`Map initialization failed: ${e.error?.message || 'base map style unavailable'}`);
+      } else {
+        setTileIssue(true);
+      }
+    });
+    map.on('idle', () => { if (!disposed) setTileIssue(false); });
+
+    const canvas = map.getCanvas();
+    const onContextLost = (e: Event) => {
+      if (disposed) return;
+      e.preventDefault();
+      onFatal('WebGL context was lost. This can happen on mobile with large datasets.');
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost);
+
+    // `style.load`, not `load`: `load` also waits for sprite / tiles, so a
+    // recoverable sprite 404 would leave the map "not loaded" forever.
+    const markLoaded = () => {
+      if (disposed) return;
+      styleLoadedRef.current = true;
+      setMapLoaded(true);
+    };
+    if (map.isStyleLoaded()) markLoaded();
+    else map.once('style.load', markLoaded);
+
+    return () => {
+      disposed = true;
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      // Runs on unmount AND on the fatal path (onFatal swaps this component
+      // for the fallback), so the WebGL context and deck resources are always released.
+      setMapLoaded(false);
+      styleLoadedRef.current = false;
+      const overlay = deckRef.current;
+      deckRef.current = null;
+      navControlRef.current = null;
+      if (overlay) {
+        try { map.removeControl(overlay as unknown as maplibregl.IControl); } catch { /* already removed */ }
+        try { overlay.finalize(); } catch { /* already finalized */ }
+      }
+      try { map.remove(); } catch { /* map failed mid-init */ }
+      mapRef.current = null;
+    };
+  }, [onFatal]);
+
+  // Zoom control follows the breakpoint (it was only ever added at first render).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    if (!isMobile && !navControlRef.current) {
+      const ctrl = new maplibregl.NavigationControl({ showCompass: false });
+      // Bottom-right, not top-right: the page's LIVE/refresh cluster owns the top-right corner.
+      map.addControl(ctrl, 'bottom-right');
+      navControlRef.current = ctrl;
+      applyControlInset();
+    } else if (isMobile && navControlRef.current) {
+      map.removeControl(navControlRef.current);
+      navControlRef.current = null;
+    }
+  }, [isMobile, mapLoaded, applyControlInset]);
+
+  // Track container size (resize, rotation, side-panel toggles) and keep the GL canvas in sync.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const update = () => {
+      setSize({ width: el.clientWidth, height: el.clientHeight });
+      mapRef.current?.resize();
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update);
+      return () => window.removeEventListener('resize', update);
+    }
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // ─── Derived, identity-memoised data ──────────────────────
+  // 0 is a valid coordinate: exclude only non-finite values and null island (0,0).
+  const geoThreats = useMemo(() => threats.filter(hasValidPoint), [threats]);
+  const geoArcs = useMemo(() => arcsIn.filter(hasValidArc), [arcsIn]);
+  const geoHeat = useMemo(() => heatmapIn.filter(hasValidPoint), [heatmapIn]);
+  const targetNodes = useMemo(() => {
+    const byPos = new Map<string, ArcData>();
+    for (const a of geoArcs) {
+      const k = a.targetPosition.join(',');
+      if (!byPos.has(k)) byPos.set(k, a);
+    }
+    return Array.from(byPos.values());
+  }, [geoArcs]);
+
   const tripData = useMemo(
-    () => buildTripData(arcs, colorBy, isMobile, periodToMs(period)),
-    [arcs, colorBy, isMobile, period],
+    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period)),
+    [geoArcs, colorBy, isMobile, period],
   );
 
-  // ─── Build static layers ──────────────────────────────────
-  const buildStaticLayers = useCallback(() => {
-    const layers: any[] = [];
+  const selectedNode = selection?.kind === 'node' ? selection.node : null;
+  const selectedArc = selection?.kind === 'arc' ? selection.arc : null;
+  const selectedNodeId = selectedNode ? nodeKey(selectedNode) : null;
+  const selectedArcId = selectedArc ? arcKey(selectedArc) : null;
+
+  // ─── Static layers (rebuilt only when their data / style inputs change) ──
+  const staticLayers = useMemo(() => {
+    const layers: Layer[] = [];
 
     if (mapMode === 'global') {
-      const filteredThreats = threats.filter(t => t.lat && t.lng);
-
-      // Source nodes: triple pass
-      if (showNodes && filteredThreats.length > 0) {
+      if (showNodes && geoThreats.length > 0) {
         layers.push(
-          new ScatterplotLayer({
+          new ScatterplotLayer<ThreatPoint>({
             id: 'nodes-bloom',
-            data: filteredThreats,
-            getPosition: (d: any) => [d.lng, d.lat],
-            getRadius: (d: any) => Math.sqrt(Math.max(1, d.threat_count)) * 5400,
-            getFillColor: (d: any) => getSeverityColor(d.top_severity || 'low', 6),
+            data: geoThreats,
+            getPosition: d => [d.lng, d.lat],
+            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 5400,
+            getFillColor: d => getSeverityColor(d.top_severity || 'low', 6),
             radiusMinPixels: 3, radiusMaxPixels: 24,
           }),
-          new ScatterplotLayer({
+          new ScatterplotLayer<ThreatPoint>({
             id: 'nodes-glow',
-            data: filteredThreats,
-            getPosition: (d: any) => [d.lng, d.lat],
-            getRadius: (d: any) => Math.sqrt(Math.max(1, d.threat_count)) * 2900,
-            getFillColor: (d: any) => getSeverityColor(d.top_severity || 'low', 12),
+            data: geoThreats,
+            getPosition: d => [d.lng, d.lat],
+            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 2900,
+            getFillColor: d => getSeverityColor(d.top_severity || 'low', 12),
             radiusMinPixels: 2, radiusMaxPixels: 14,
           }),
-          new ScatterplotLayer({
+          new ScatterplotLayer<ThreatPoint>({
             id: 'nodes-core',
-            data: filteredThreats,
-            getPosition: (d: any) => [d.lng, d.lat],
-            getRadius: (d: any) => Math.sqrt(Math.max(1, d.threat_count)) * 1440,
-            getFillColor: (d: any) => getSeverityColor(d.top_severity?.toLowerCase() || 'low'),
+            data: geoThreats,
+            getPosition: d => [d.lng, d.lat],
+            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 1440,
+            getFillColor: d => getSeverityColor(d.top_severity?.toLowerCase() || 'low'),
             stroked: true, filled: true,
             radiusMinPixels: 1.5, radiusMaxPixels: 9,
             pickable: true,
-            onHover: ({ object, x, y }: any) => setTooltip(object ? { x, y, threat: object } : null),
+            onHover: handlers.hover,
+            onClick: handlers.clickNode,
           }),
         );
       }
 
-      // Bezier beams (off by default, toggled on)
-      if (showBeams && arcs.length > 0) {
-        const arcDataWithPaths = arcs.map(a => ({
-          ...a,
-          bezierPath: computeBezierPath(
-            a.sourcePosition[0], a.sourcePosition[1],
-            a.targetPosition[0], a.targetPosition[1],
-          ),
-        }));
-
+      if (showBeams && geoArcs.length > 0) {
+        const beamWidth = isMobile ? 2.5 : 1;
         layers.push(
-          new PathLayer({
+          new PathLayer<ArcData>({
             id: 'beam-glow',
-            data: arcDataWithPaths,
-            getPath: (d: any) => d.bezierPath,
-            getColor: (d: any) => getArcColor(d, colorBy, 51),
-            getWidth: isMobile ? 2.5 : 1,
-            widthUnits: 'pixels' as const,
+            data: geoArcs,
+            getPath: getArcPath,
+            getColor: d => getArcColor(d, colorBy, 51),
+            getWidth: beamWidth,
+            widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 4 : 2,
             updateTriggers: { getColor: colorBy },
           }),
-          new PathLayer({
+          new PathLayer<ArcData>({
             id: 'beam-core',
-            data: arcDataWithPaths,
-            getPath: (d: any) => d.bezierPath,
-            getColor: (d: any) => getArcColor(d, colorBy, 76),
-            getWidth: isMobile ? 2.5 : 1,
-            widthUnits: 'pixels' as const,
+            data: geoArcs,
+            getPath: getArcPath,
+            getColor: d => getArcColor(d, colorBy, 76),
+            getWidth: beamWidth,
+            widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 3 : 1,
             updateTriggers: { getColor: colorBy },
             pickable: true,
-            onHover: ({ object, x, y }: any) => setTooltip(object ? { x, y, arc: object } : null),
-            onClick: ({ object, x, y }: any) => { if (object && onArcClick) onArcClick(object, x, y); },
+            onHover: handlers.hoverArc,
+            onClick: handlers.clickArc,
           }),
         );
       }
 
-      // Target rings
-      if (arcs.length > 0 && (showBeams || showNodes)) {
-        const targetMap = new Map<string, ArcData>();
-        arcs.forEach(a => { const k = a.targetPosition.join(','); if (!targetMap.has(k)) targetMap.set(k, a); });
-        const targetNodes = Array.from(targetMap.values());
-
+      if (geoArcs.length > 0 && (showBeams || showNodes)) {
+        // Country-precision targets are only approximate: draw them fainter.
+        const approx = (d: ArcData) => d.target_precision === 'country';
         layers.push(
-          new ScatterplotLayer({
+          new ScatterplotLayer<ArcData>({
             id: 'targets-ring',
             data: targetNodes,
-            getPosition: (d: any) => d.targetPosition,
+            getPosition: d => d.targetPosition,
             getRadius: 12000,
-            getFillColor: [255, 255, 255, 6] as [number, number, number, number],
-            getLineColor: [255, 255, 255, 40] as [number, number, number, number],
+            getFillColor: d => [255, 255, 255, approx(d) ? 3 : 6] as Rgba,
+            getLineColor: d => [255, 255, 255, approx(d) ? 20 : 40] as Rgba,
             lineWidthMinPixels: 1, stroked: true, radiusMinPixels: 3, radiusMaxPixels: 14,
           }),
-          new ScatterplotLayer({
+          new ScatterplotLayer<ArcData>({
             id: 'targets-core',
             data: targetNodes,
-            getPosition: (d: any) => d.targetPosition,
+            getPosition: d => d.targetPosition,
             getRadius: 3600,
-            getFillColor: [255, 255, 255, 45] as [number, number, number, number],
+            getFillColor: d => [255, 255, 255, approx(d) ? 25 : 45] as Rgba,
             radiusMinPixels: 1.5, radiusMaxPixels: 5,
           }),
         );
       }
+
+      // Selection highlight
+      if (selectedNode) {
+        layers.push(new ScatterplotLayer<ThreatPoint>({
+          id: 'selection-node',
+          data: [selectedNode],
+          getPosition: d => [d.lng, d.lat],
+          radiusUnits: 'pixels',
+          getRadius: 14,
+          stroked: true, filled: false,
+          lineWidthUnits: 'pixels', getLineWidth: 2,
+          getLineColor: [229, 168, 50, 255],
+        }));
+      }
+      if (selectedArc) {
+        layers.push(new PathLayer<ArcData>({
+          id: 'selection-arc',
+          data: [selectedArc],
+          getPath: getArcPath,
+          getColor: [229, 168, 50, 230],
+          getWidth: 2.5, widthUnits: 'pixels',
+        }));
+      }
     }
 
-    // Heatmap mode
-    if (mapMode === 'heatmap' && heatmapData.length > 0) {
-      layers.push(new (HeatmapLayer as any)({
+    if (mapMode === 'heatmap' && geoHeat.length > 0) {
+      layers.push(new HeatmapLayer<HeatmapPoint>({
         id: 'heatmap-layer',
-        data: heatmapData,
-        getPosition: (d: any) => [d.lng, d.lat],
-        getWeight: (d: any) => ({ critical: 5, high: 3, medium: 2, low: 1 }[d.severity as string] ?? 1),
-        radiusPixels: 80, intensity: 2, threshold: 0.05, aggregation: 'SUM' as const,
-        colorRange: [
-          [0, 212, 255, 0], [0, 212, 255, 80], [0, 212, 255, 160],
-          [251, 146, 60, 180], [200, 60, 60, 220], [255, 50, 50, 255],
-        ],
+        data: geoHeat,
+        getPosition: d => [d.lng, d.lat],
+        getWeight: heatmapWeight,
+        radiusPixels: 80, intensity: 2, threshold: 0.05, aggregation: 'SUM',
+        colorRange: HEATMAP_COLOR_RANGE.map(c => [c[0], c[1], c[2], c[3]] as [number, number, number, number]),
       }));
     }
 
     // Bot density mode: countries only — no nodes/arcs/particles/heatmap.
     if (mapMode === 'bot_density' && botDensity && botDensity.length > 0) {
       const domain = botDensityDomain(botDensity);
-      const stops = botStops;
       const minPx = isMobile ? 4 : 5;
       const maxPx = isMobile ? 20 : 30;
-      layers.push(new ScatterplotLayer({
+      layers.push(new ScatterplotLayer<BotDensityPoint>({
         id: 'bot-density',
         data: botDensity,
-        getPosition: (d: BotDensityPoint) => d.position,
-        getRadius: (d: BotDensityPoint) => botRadius(d.traffic_pct, domain.maxTraffic, minPx, maxPx),
+        getPosition: d => d.position,
+        getRadius: d => botRadius(d.traffic_pct, domain.maxTraffic, minPx, maxPx),
         radiusUnits: 'pixels',
-        getFillColor: (d: BotDensityPoint) => botColor(d.bot_pct, domain.minBot, domain.maxBot, stops),
+        getFillColor: d => botColor(d.bot_pct, domain.minBot, domain.maxBot, botStops),
         stroked: true,
         lineWidthUnits: 'pixels',
-        getLineWidth: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? 2 : 0.5),
-        getLineColor: (d: BotDensityPoint) => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? RING_COLOR : OUTLINE_COLOR),
+        getLineWidth: d => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? 2 : 0.5),
+        getLineColor: d => (isAboveAverage(d.bot_pct, botGlobalAvg, d.bound) ? RING_COLOR : OUTLINE_COLOR),
         updateTriggers: {
           getFillColor: [botStopsKey, domain.minBot, domain.maxBot],
           getRadius: [domain.maxTraffic, minPx, maxPx],
@@ -604,143 +552,103 @@ function ThreatMapV3Inner({
           getLineColor: [botGlobalAvg],
         },
         pickable: true,
-        onHover: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => {
-          if (pinnedRef.current) return; // a pinned tooltip stays until dismissed
-          setTooltip(object ? { x, y, bot: object } : null);
-        },
-        // Tap/click pins the tooltip (touch has no hover); tap again to dismiss.
-        onClick: ({ object, x, y }: { object?: BotDensityPoint | null; x: number; y: number }) => {
-          if (!object) return false;
-          if (pinnedRef.current && pinnedRef.current === object.code) {
-            pinnedRef.current = null;
-            setTooltip(null);
-          } else {
-            pinnedRef.current = object.code;
-            setTooltip({ x, y, bot: object });
-          }
-          return true; // handled — don't fall through to the map-level dismiss
-        },
+        onHover: handlers.hoverBot,
+        onClick: handlers.clickBot,
       }));
     }
 
     return layers;
-  }, [threats, arcs, showBeams, showNodes, colorBy, mapMode, heatmapData, botDensity, botGlobalAvg, botStops, botStopsKey, onArcClick, isMobile]);
+    // selectedNode/selectedArc are keyed by id so a data refetch that returns
+    // an equal object doesn't rebuild.
+  }, [
+    geoThreats, geoArcs, targetNodes, showBeams, showNodes, colorBy, mapMode, geoHeat,
+    botDensity, botGlobalAvg, botStops, botStopsKey, isMobile, handlers, selectedNodeId, selectedArcId,
+  ]);
 
   // Drop any stale hover tooltip when the mode changes (the hovered layer is gone).
   useEffect(() => { pinnedRef.current = null; setTooltip(null); }, [mapMode]);
 
-  // Tap on empty map (or any non-density object) dismisses a pinned tooltip.
-  const dismissPinned = useCallback(() => {
-    if (pinnedRef.current) {
-      pinnedRef.current = null;
-      setTooltip(null);
-    }
-  }, []);
+  // ─── Animation gating ─────────────────────────────────────
+  const reducedMotion = usePrefersReducedMotion();
+  const pageVisible = usePageVisible();
+  const inView = useInView(rootRef);
+  const particlesOn = showParticles && mapMode === 'global' && tripData.length > 0 && !reducedMotion;
+  const running = particlesOn && pageVisible && inView && mapLoaded;
 
-  // ─── Update overlay + start particle animation ────────────
+  const makeTrips = useCallback((currentTime: number) => new TripsLayer({
+    id: 'particle-trails',
+    data: tripData,
+    getPath: (d: TripDatum) => d.path,
+    getTimestamps: (d: TripDatum) => d.timestamps,
+    getColor: (d: TripDatum) => d.color,
+    currentTime,
+    trailLength: trailLengthFor(isMobile),
+    fadeTrail: true,
+    widthMinPixels: isMobile ? 1.5 : 2,
+    capRounded: true,
+  }), [tripData, isMobile]);
+
+  // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
-    if (!mapLoaded || !mapRef.current) return;
-
-    // Skip rebuild if data hasn't actually changed (refetch returned same size)
-    const threatsChanged = threats.length !== prevThreatsLenRef.current;
-    const arcsChanged = arcs.length !== prevArcsLenRef.current;
-    prevThreatsLenRef.current = threats.length;
-    prevArcsLenRef.current = arcs.length;
-
-    const staticLayers = buildStaticLayers();
-
-    // Build initial layer set (static + trips if particles enabled)
-    const allLayers = showParticles && tripData.length > 0 && mapMode === 'global'
-      ? [
-          ...staticLayers,
-          new TripsLayer({
-            id: 'particle-trails',
-            data: tripData,
-            getPath: (d: TripDatum) => d.path,
-            getTimestamps: (d: TripDatum) => d.timestamps,
-            getColor: (d: TripDatum) => d.color,
-            currentTime: currentTimeRef.current,
-            // Trail length tied to TRIP_SPAN — longer trail = more visible tail per particle
-            trailLength: isMobile ? TRIP_SPAN * 0.35 : TRIP_SPAN * 0.50,
-            fadeTrail: true,
-            widthMinPixels: isMobile ? 1.5 : 2,
-            capRounded: true,
-          }),
-        ]
-      : staticLayers;
-
+    const map = mapRef.current;
+    if (!mapLoaded || !map) return;
+    const layers = particlesOn ? [...staticLayers, makeTrips(clock.currentTime)] : staticLayers;
     if (deckRef.current) {
-      deckRef.current.setProps({ layers: allLayers, onClick: dismissPinned });
-    } else if (allLayers.length > 0) {
-      const overlay = new MapboxOverlay({ interleaved: false, layers: allLayers, onClick: dismissPinned });
-      mapRef.current.addControl(overlay as any);
+      deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+    } else if (layers.length > 0) {
+      const overlay = new MapboxOverlay({ interleaved: false, layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+      map.addControl(overlay as unknown as maplibregl.IControl);
       deckRef.current = overlay;
     }
+  }, [mapLoaded, staticLayers, particlesOn, makeTrips, clock, handlers, isMobile]);
 
-    // ─── Particle animation loop (GPU-driven via currentTime) ───
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
-      animFrameRef.current = null;
-    }
-
-    if (showParticles && tripData.length > 0 && mapMode === 'global' && deckRef.current) {
-      const staticLayersRef = staticLayers; // stable for this effect lifecycle
-
-      function animate() {
-        // 1.0 units per frame × 60fps = 60 units/sec
-        // With CYCLE_LENGTH=1200, full cycle takes ~20 seconds
-        // With TRIP_SPAN=300, each particle traversal takes ~5 seconds
-        currentTimeRef.current = (currentTimeRef.current + 1.0) % CYCLE_LENGTH;
-
-        if (deckRef.current) {
-          deckRef.current.setProps({
-            layers: [
-              ...staticLayersRef,
-              new TripsLayer({
-                id: 'particle-trails',
-                data: tripData,             // Same reference — no buffer recompute
-                getPath: (d: TripDatum) => d.path,
-                getTimestamps: (d: TripDatum) => d.timestamps,
-                getColor: (d: TripDatum) => d.color,
-                currentTime: currentTimeRef.current,  // Only this changes
-                // Trail length tied to TRIP_SPAN — longer trail = more visible tail per particle
-            trailLength: isMobile ? TRIP_SPAN * 0.35 : TRIP_SPAN * 0.50,
-                fadeTrail: true,
-                widthMinPixels: isMobile ? 1.5 : 2,
-                capRounded: true,
-              }),
-            ],
-          });
-        }
-
-        animFrameRef.current = requestAnimationFrame(animate);
-      }
-
-      animFrameRef.current = requestAnimationFrame(animate);
-    }
-
-    return () => {
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-        animFrameRef.current = null;
-      }
+  // ─── Particle animation loop ──────────────────────────────
+  useEffect(() => {
+    if (!running) return;
+    clock.resync(); // don't count the time we were paused / hidden / offscreen
+    let raf = 0;
+    const frame = (ts: number) => {
+      const t = clock.tick(ts); // wall-clock delta based, frame-rate independent
+      deckRef.current?.setProps({ layers: [...staticLayers, makeTrips(t)] });
+      raf = requestAnimationFrame(frame);
     };
-  }, [mapLoaded, buildStaticLayers, showParticles, tripData, mapMode, isMobile]);
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [running, clock, staticLayers, makeTrips]);
 
-  if (mapError) {
-    return <MapFallback message={`Map initialization failed: ${mapError}`} onRetry={() => window.location.reload()} />;
-  }
+  // ─── Detail-card anchor: use the click point, else project the selection ──
+  const selKey = selection ? selectionKey(selection) : null;
+  useEffect(() => {
+    if (!selection || !selKey) return;
+    if (anchor?.key === selKey) return;
+    const map = mapRef.current;
+    if (!mapLoaded || !map) return;
+    const p = map.project(selectionLngLat(selection));
+    setAnchor({ key: selKey, x: p.x, y: p.y });
+  }, [selKey, mapLoaded]);
+
+  const cardAnchor = selection && anchor?.key === selKey ? anchor : null;
 
   return (
-    <div className="relative w-full h-full">
+    <div ref={rootRef} className="relative w-full h-full">
       <div ref={mapContainerRef} className="absolute inset-0" />
 
-      {tooltip && (
+      {tileIssue && (
         <div
-          aria-live="polite"
+          role="status"
+          className="absolute left-1/2 -translate-x-1/2 top-3 px-3 py-1 rounded-full font-mono text-[10px] pointer-events-none"
+          style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)', zIndex: 30 }}
+        >
+          Some map tiles are loading slowly
+        </div>
+      )}
+
+      {tooltip && !selection && (
+        <div
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
-            left: tooltip.x + 10, top: tooltip.y + 10,
+            left: Math.max(4, Math.min(tooltip.x + 10, size.width - 260)),
+            top: Math.max(4, Math.min(tooltip.y + 10, size.height - 110)),
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
             backdropFilter: 'blur(12px)',
@@ -752,10 +660,11 @@ function ThreatMapV3Inner({
                 {tooltip.threat.threat_count} threats
               </div>
               <div style={{ color: 'var(--text-tertiary)' }} className="mt-1">
-                <span className="capitalize">{tooltip.threat.top_threat_type?.replace(/_/g, ' ') || 'Mixed'}</span>
+                <span className="capitalize">{typeLabel(tooltip.threat.top_threat_type) || 'Mixed'}</span>
                 {tooltip.threat.top_severity && (
-                  <> {' \u00b7 '}
-                    <span className="uppercase" style={{ color: SEV_TEXT[tooltip.threat.top_severity?.toLowerCase() ?? ''] ?? 'var(--sev-low-text)' }}>
+                  <>
+                    {' · '}
+                    <span className="uppercase" style={{ color: sevText(tooltip.threat.top_severity) }}>
                       {tooltip.threat.top_severity}
                     </span>
                   </>
@@ -764,9 +673,10 @@ function ThreatMapV3Inner({
               {tooltip.threat.country_code && (
                 <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{tooltip.threat.country_code}</div>
               )}
-              <div className="mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 C:{tooltip.threat.critical} H:{tooltip.threat.high} M:{tooltip.threat.medium} L:{tooltip.threat.low}
               </div>
+              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
             </>
           )}
           {tooltip.bot && (
@@ -777,9 +687,11 @@ function ThreatMapV3Inner({
           {tooltip.arc && (
             <>
               <div className="font-mono font-bold capitalize" style={{ color: 'var(--text-primary)' }}>
-                {tooltip.arc.threat_type?.replace(/_/g, ' ')}
+                {typeLabel(tooltip.arc.threat_type)}
               </div>
-              <div className="mt-1" style={{ color: 'var(--text-tertiary)' }}>{tooltip.arc.volume} threat{tooltip.arc.volume > 1 ? 's' : ''}</div>
+              <div className="mt-1" style={{ color: 'var(--text-tertiary)' }}>
+                {tooltip.arc.volume} threat{tooltip.arc.volume === 1 ? '' : 's'}
+              </div>
               {tooltip.arc.brand_name && (
                 <div className="mt-1" style={{ color: 'var(--amber-text)' }}>Target: {tooltip.arc.brand_name}</div>
               )}
@@ -789,6 +701,15 @@ function ThreatMapV3Inner({
             </>
           )}
         </div>
+      )}
+
+      {selection && cardAnchor && (
+        <MapDetailCard
+          selection={selection}
+          anchor={cardAnchor}
+          bounds={{ width: size.width, height: size.height, rightInset: controlRightInset }}
+          onClose={() => latest.current.onSelect?.(null)}
+        />
       )}
     </div>
   );

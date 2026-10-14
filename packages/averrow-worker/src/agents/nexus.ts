@@ -30,7 +30,7 @@ import {
 } from "../lib/intel-templates";
 import { updateProviderTrends } from "../lib/provider-trends";
 import { groupClusterComponents } from "../lib/cluster-components";
-import { detectClusterInfraMovement } from "../lib/cluster-infra-movement";
+import { detectClusterInfraMovement, buildDormancyPivotPayload } from "../lib/cluster-infra-movement";
 // Shared with workflows/nexusRun.ts — both paths upsert the same
 // `infrastructure_clusters` rows, so id slug AND display name must be
 // computed by the same code. See lib/cluster-naming.ts.
@@ -1085,7 +1085,7 @@ export async function runNexus(db: D1Database, env: Env): Promise<{
           VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)
         `).bind(
           crypto.randomUUID(),
-          JSON.stringify({ kind: 'dormancy', cluster_id: clusterId, asn: cluster.asn, cluster_name: clusterName })
+          JSON.stringify(buildDormancyPivotPayload(clusterId, cluster.asn, clusterName))
         ).run();
       } catch (err) {
         console.error('[nexus] pivot event emit error:', err);

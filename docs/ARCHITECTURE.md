@@ -211,14 +211,14 @@ Default page loads (no search, no filter, page 1) use reduced-dimension cache ke
 
 ### Cache Pre-Warming (Navigator)
 
-The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a slower cadence below) pre-warms KV caches by calling handler functions with synthetic requests. Each warm uses the exact query string a live client sends, so it writes the KV key that client reads (21 requests across 4 phases; the list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts`, pinned by `test/navigator-warm-targets.test.ts`):
+The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a slower cadence below) pre-warms KV caches by calling handler functions with synthetic requests. Each warm uses the exact query string a live client sends, so it writes the KV key that client reads (22 requests across 4 phases; the list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts`, pinned by `test/navigator-warm-targets.test.ts`):
 
 - **Phase A** (every 10 min): Observatory 7d nodes, arcs, stats + side-panel live feed (`limit=8`) + side-panel active operations (`/api/v1/operations?limit=4&offset=0&status=active`) (5)
-- **Phase A2** (every 15 min): Observatory 24h + 30d nodes, arcs, stats (6)
+- **Phase A2** (every 15 min): Observatory 24h + 30d nodes, arcs, stats + heatmap 7d (`/api/observatory/heatmap?period=7d`, a non-default mode, so budget-gated) (7)
 - **Phase B** (every 15 min): Dashboard overview (MCP smoke probe), Agents list, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (super_admin variant) (6)
 - **Phase C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`?status=active`) + stats (4)
 
-A2/B/C are skipped when the D1 read budget is over the soft-cap. Observatory handlers normalise `source_feed` absent / empty / `all` to one `all` key segment — the ops client sends `source_feed=` for "All Sources". The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for every `isPlatformStaff` role — PR-F: staff are global, tenant isolation lives in `/tenant` + `/api/orgs/:orgId/*`).
+A2/B/C are skipped when the D1 read budget is over the soft-cap. Under the soft-cap, warm requests are marked with `markCacheRefresh` (`lib/cache-refresh.ts`, an in-process WeakSet marker — not a header, so it cannot be spoofed over HTTP); the Observatory handlers treat a marked request as refresh-ahead and recompute the key once its remaining TTL drops below `min(1800s, ttl/2)` (`refreshMarginSeconds`), so the landing-page keys never lapse between warms while a fresh key is still served from cache (nodes/stats/heatmap carry a 30-min TTL: the 10-min Phase A warm recomputes them every other tick). Over the soft-cap, Phase A still runs but unmarked — plain fill-on-miss, no forced recompute. Other handlers always only fill misses. Observatory handlers normalise `source_feed` absent / empty / `all` to one `all` key segment; only `feeds` / `spam_trap` are otherwise accepted (anything else → 400, no key, no query). The brands-list and dashboard-overview warms write the `global` scope key, which every staff role reads (`getOrgScope` returns null for every `isPlatformStaff` role — PR-F: staff are global, tenant isolation lives in `/tenant` + `/api/orgs/:orgId/*`).
 
 ### Counter cache (`lib/cached-count.ts`)
 
@@ -309,7 +309,7 @@ hour-only time gates, never minute gates (see the cron-audit rule in CLAUDE.md �
 
 | Cron | Dispatches | Purpose |
 |------|------------|---------|
-| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (21 page-load requests) |
+| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (22 page-load requests) |
 | `7 * * * *` | orchestrator | Feed ingestion, Flight Control, agent mesh dispatch (see below) |
 | `8 * * * *` | enricher | Domain geo / brand logo / sector / firmographic enrichment (own budget since PR-E) |
 | `9 * * * *` | cartographer | Guaranteed hourly maintenance run (own budget since PR-F); FC scaleAgents adds instances for backlog drain |

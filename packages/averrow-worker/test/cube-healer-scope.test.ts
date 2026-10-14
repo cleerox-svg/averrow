@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 import {
   pickHealScope,
   healSQLForTest,
+  healWindow,
   HOT_HEAL_WINDOW_DAYS,
   COLD_HEAL_WINDOW_DAYS,
 } from "../src/agents/cube-healer";
@@ -43,30 +44,35 @@ describe("pickHealScope", () => {
 describe("healSQL window selection", () => {
   const tables = ["geo", "provider", "brand", "status", "arcs"] as const;
 
-  it("hot scope embeds the 2-day window literal", () => {
+  it("window is bound (?1 / ?2), never an unsnapped datetime('now', '-N days') literal", () => {
     for (const t of tables) {
-      const sql = healSQLForTest(t, "hot");
-      expect(sql).toContain(`datetime('now', '-${HOT_HEAL_WINDOW_DAYS} days')`);
-      expect(sql).not.toContain(`datetime('now', '-${COLD_HEAL_WINDOW_DAYS} days')`);
+      const sql = healSQLForTest(t);
+      expect(sql).toContain("created_at >= ?1");
+      expect(sql).toContain("created_at < ?2");
+      expect(sql).not.toMatch(/datetime\('now',\s*'-\d+ days'\)/);
     }
   });
 
-  it("cold scope embeds the 14-day window literal", () => {
-    for (const t of tables) {
-      const sql = healSQLForTest(t, "cold");
-      expect(sql).toContain(`datetime('now', '-${COLD_HEAL_WINDOW_DAYS} days')`);
-      expect(sql).not.toContain(`datetime('now', '-${HOT_HEAL_WINDOW_DAYS} days')`);
-    }
+  it("healWindow snaps BOTH bounds to the top of the hour", () => {
+    const w = healWindow(new Date("2026-05-21T06:12:34.567Z"), HOT_HEAL_WINDOW_DAYS);
+    expect(w.end).toBe("2026-05-21 06:00:00");
+    expect(w.start).toBe("2026-05-19 06:00:00");
+    // An unsnapped start (06:12:34) would rebuild the oldest hour from a
+    // partial slice of its threats and overwrite the full count.
+    expect(w.start.endsWith(":00:00")).toBe(true);
   });
 
-  it("hot and cold differ only in the window literal", () => {
-    for (const t of tables) {
-      const hot = healSQLForTest(t, "hot");
-      const cold = healSQLForTest(t, "cold");
-      const hotNormalized = hot.replace(`-${HOT_HEAL_WINDOW_DAYS} days`, "WINDOW");
-      const coldNormalized = cold.replace(`-${COLD_HEAL_WINDOW_DAYS} days`, "WINDOW");
-      expect(hotNormalized).toBe(coldNormalized);
-    }
+  it("healWindow cold scope spans exactly COLD_HEAL_WINDOW_DAYS whole hours", () => {
+    const w = healWindow(new Date("2026-05-21T00:12:00Z"), COLD_HEAL_WINDOW_DAYS);
+    expect(w.end).toBe("2026-05-21 00:00:00");
+    expect(w.start).toBe("2026-05-07 00:00:00");
+    const hours = (Date.parse(w.end.replace(" ", "T") + "Z") - Date.parse(w.start.replace(" ", "T") + "Z")) / 3_600_000;
+    expect(hours).toBe(COLD_HEAL_WINDOW_DAYS * 24);
+  });
+
+  it("healWindow is exact on an hour boundary (no extra hour)", () => {
+    const w = healWindow(new Date("2026-05-21T12:00:00.000Z"), 1);
+    expect(w).toEqual({ start: "2026-05-20 12:00:00", end: "2026-05-21 12:00:00" });
   });
 
   it("every cube targets the correct destination table (PR-BO: INSERT INTO + UPSERT)", () => {
@@ -74,14 +80,14 @@ describe("healSQL window selection", () => {
     // DO UPDATE WHERE. INSERT OR REPLACE always mutates 1 row per
     // existing bucket; the new shape skips the mutation entirely when
     // the aggregate hasn't changed.
-    expect(healSQLForTest("geo", "hot")).toContain("INSERT INTO threat_cube_geo");
-    expect(healSQLForTest("provider", "hot")).toContain("INSERT INTO threat_cube_provider");
-    expect(healSQLForTest("brand", "hot")).toContain("INSERT INTO threat_cube_brand");
-    expect(healSQLForTest("status", "hot")).toContain("INSERT INTO threat_cube_status");
-    expect(healSQLForTest("arcs", "hot")).toContain("INSERT INTO threat_cube_arcs");
+    expect(healSQLForTest("geo")).toContain("INSERT INTO threat_cube_geo");
+    expect(healSQLForTest("provider")).toContain("INSERT INTO threat_cube_provider");
+    expect(healSQLForTest("brand")).toContain("INSERT INTO threat_cube_brand");
+    expect(healSQLForTest("status")).toContain("INSERT INTO threat_cube_status");
+    expect(healSQLForTest("arcs")).toContain("INSERT INTO threat_cube_arcs");
 
     for (const t of ["geo", "provider", "brand", "status", "arcs"] as const) {
-      expect(healSQLForTest(t, "hot")).not.toContain("INSERT OR REPLACE");
+      expect(healSQLForTest(t)).not.toContain("INSERT OR REPLACE");
     }
   });
 
@@ -91,7 +97,7 @@ describe("healSQL window selection", () => {
     // bucket; UPSERT with `WHERE existing IS NOT excluded` writes 0
     // when the aggregate is unchanged.
     for (const t of ["geo", "provider", "brand", "status", "arcs"] as const) {
-      const sql = healSQLForTest(t, "hot");
+      const sql = healSQLForTest(t);
       expect(sql).toMatch(/ON CONFLICT\(/);
       expect(sql).toMatch(/DO UPDATE SET/);
       // IS NOT (not !=) so NULL on either side compares correctly.
@@ -101,19 +107,19 @@ describe("healSQL window selection", () => {
   });
 
   it("PR-BO: ON CONFLICT target matches each cube's PRIMARY KEY columns", () => {
-    expect(healSQLForTest("geo", "hot")).toContain(
+    expect(healSQLForTest("geo")).toContain(
       "ON CONFLICT(hour_bucket, lat_bucket, lng_bucket, country_code, threat_type, severity, source_feed)",
     );
-    expect(healSQLForTest("provider", "hot")).toContain(
+    expect(healSQLForTest("provider")).toContain(
       "ON CONFLICT(hour_bucket, hosting_provider_id, threat_type, severity, source_feed)",
     );
-    expect(healSQLForTest("brand", "hot")).toContain(
+    expect(healSQLForTest("brand")).toContain(
       "ON CONFLICT(hour_bucket, target_brand_id, threat_type, severity, source_feed)",
     );
-    expect(healSQLForTest("status", "hot")).toContain(
+    expect(healSQLForTest("status")).toContain(
       "ON CONFLICT(hour_bucket, threat_type, severity, source_feed, status)",
     );
-    expect(healSQLForTest("arcs", "hot")).toContain(
+    expect(healSQLForTest("arcs")).toContain(
       "ON CONFLICT(hour_bucket, country_code, target_brand_id, threat_type, severity, source_feed)",
     );
   });
@@ -122,29 +128,29 @@ describe("healSQL window selection", () => {
     // Arcs has mutable aggregates beyond threat_count — the centroid
     // (source_lat/lng) and last_seen MAX both shift as new threats
     // land in a bucket. Comparing only threat_count would let drift
-    // accumulate silently. first_seen is intentionally NOT in the
-    // WHERE because MIN(created_at) is stable for any fixed hour
-    // (the floor can only move later via row deletion, which
-    // doesn't happen).
-    const sql = healSQLForTest("arcs", "hot");
+    // accumulate silently. first_seen is compared too: the bucket only
+    // counts ACTIVE threats, so the earliest one going inactive moves
+    // MIN(created_at) later.
+    const sql = healSQLForTest("arcs");
+    expect(sql).toContain("threat_cube_arcs.first_seen IS NOT excluded.first_seen");
     expect(sql).toContain("threat_cube_arcs.last_seen IS NOT excluded.last_seen");
     expect(sql).toContain("threat_cube_arcs.source_lat IS NOT excluded.source_lat");
     expect(sql).toContain("threat_cube_arcs.source_lng IS NOT excluded.source_lng");
   });
 
   it("status heal has NO status='active' filter (only reconciles status mutations)", () => {
-    const sql = healSQLForTest("status", "hot");
+    const sql = healSQLForTest("status");
     expect(sql).not.toMatch(/AND status = 'active'/);
   });
 
   it("geo/provider/brand/arcs healers all filter on status='active'", () => {
     for (const t of ["geo", "provider", "brand", "arcs"] as const) {
-      expect(healSQLForTest(t, "hot")).toContain("AND status = 'active'");
+      expect(healSQLForTest(t)).toContain("AND status = 'active'");
     }
   });
 
   it("arcs heal aggregates source_lat/source_lng + first_seen/last_seen", () => {
-    const sql = healSQLForTest("arcs", "cold");
+    const sql = healSQLForTest("arcs");
     expect(sql).toContain("ROUND(AVG(lat), 1)");
     expect(sql).toContain("ROUND(AVG(lng), 1)");
     expect(sql).toContain("MIN(created_at)");

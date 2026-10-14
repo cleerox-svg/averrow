@@ -18,8 +18,8 @@ export const OPERATIONS_HISTORY_TTL_S = 21_600;
 /** Cluster total count (cachedCount). */
 export const OPERATIONS_TOTAL_TTL_S = 3600;
 
-/** `status` filter values the list accepts (the CASE ordering below). */
-const OPERATION_STATUSES = new Set(["accelerating", "pivot", "active", "dormant"]);
+/** `status` filter values the list accepts (the CASE ordering below). Shared with /api/observatory/operations. */
+export const OPERATION_STATUSES: ReadonlySet<string> = new Set(["accelerating", "pivot", "active", "dormant"]);
 
 /**
  * 14-day daily threat counts per cluster, oldest day first — the same

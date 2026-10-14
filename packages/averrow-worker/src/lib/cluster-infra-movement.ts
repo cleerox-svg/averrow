@@ -312,6 +312,76 @@ function emptyNew(): NewElements {
   return { newAsns: [], newIps: [], newSerials: [] };
 }
 
+// ─── pivot_detected payload (v2 — Observatory migration trails) ───────────
+//
+// payload_v 2 adds ADDITIVE keys so the Observatory can draw from-hosting →
+// to-hosting trails. Every v1 key keeps its exact name + value (Observer
+// never reads the payload; the orchestrator spreads it into the run input).
+// Countries are NOT resolved here — the read path joins ASNs to
+// hosting_providers.asn at query time.
+
+/** Current pivot_detected payload schema version (both kinds). */
+export const PIVOT_PAYLOAD_VERSION = 2;
+
+/** Max ASNs carried per list in a pivot payload — keeps payload_json small
+ *  (the fingerprint itself may hold up to DEFAULT_MAX_FINGERPRINT_ELEMENTS). */
+export const PIVOT_ASN_LIST_CAP = 10;
+
+/** Dedupe + sort + cap an ASN list for a pivot payload. Deterministic. */
+export function capAsnList(asns: readonly string[], cap: number = PIVOT_ASN_LIST_CAP): string[] {
+  return normalizeElements(asns, cap);
+}
+
+export interface InfraMovementPivotPayload {
+  kind: 'infra_movement';
+  cluster_id: string;
+  cluster_name: string | null;
+  new_asns: number;
+  new_ips: number;
+  new_serials: number;
+  new_asn_list: string[];
+  prev_asn_list: string[];
+  payload_v: number;
+}
+
+/** Pure builder for the infra_movement pivot payload. `prior` is the stored
+ *  fingerprint BEFORE this run overwrites it (null → prev_asn_list = []).
+ *  Legacy count keys are the UNCAPPED lengths, identical to v1. */
+export function buildInfraMovementPivotPayload(
+  clusterId: string,
+  clusterName: string | null,
+  newElements: NewElements,
+  prior: InfraFingerprint | null,
+): InfraMovementPivotPayload {
+  return {
+    kind: 'infra_movement',
+    cluster_id: clusterId,
+    cluster_name: clusterName,
+    new_asns: newElements.newAsns.length,
+    new_ips: newElements.newIps.length,
+    new_serials: newElements.newSerials.length,
+    new_asn_list: capAsnList(newElements.newAsns),
+    prev_asn_list: capAsnList(prior?.a ?? []),
+    payload_v: PIVOT_PAYLOAD_VERSION,
+  };
+}
+
+/** Pure builder for the ASN-lane dormancy pivot payload. A dormant ASN
+ *  cluster has a single ASN, so `prev_asn` = `asn` (the hosting it was last
+ *  seen on). `cluster_name` is included only when the caller supplied it,
+ *  so each emit site keeps its exact v1 key set. */
+export function buildDormancyPivotPayload(
+  clusterId: string,
+  asn: string,
+  clusterName?: string,
+): Record<string, unknown> {
+  const base: Record<string, unknown> = { kind: 'dormancy', cluster_id: clusterId, asn };
+  if (clusterName !== undefined) base.cluster_name = clusterName;
+  base.prev_asn = asn;
+  base.payload_v = PIVOT_PAYLOAD_VERSION;
+  return base;
+}
+
 // ─── I/O orchestration (thin wrapper — SQL + diff-writes + emit) ──────────
 
 interface ClusterRow {
@@ -458,6 +528,8 @@ export async function detectClusterInfraMovement(
     row: ClusterRow;
     decision: MovementDecision;
     current: InfraFingerprint;
+    /** Stored fingerprint before step 6 overwrites it (payload v2). */
+    prior: InfraFingerprint | null;
   }
   const emitCandidates: Candidate[] = [];
   const fingerprintWrites: Array<{ id: string; fp: string }> = [];
@@ -488,7 +560,7 @@ export async function detectClusterInfraMovement(
       case 'below_confidence_floor': result.suppressedLowConfidence++; break;
       case 'in_cooldown': result.suppressedCooldown++; break;
       case 'insufficient_growth': result.suppressedInsufficient++; break;
-      case 'movement': emitCandidates.push({ row, decision, current }); break;
+      case 'movement': emitCandidates.push({ row, decision, current, prior }); break;
     }
 
     // Diff-write: only stage when the serialized fingerprint actually
@@ -519,21 +591,19 @@ export async function detectClusterInfraMovement(
   //    event_type + target_agent='observer' as dormancy — no new wiring.
   const nowIso = new Date(nowMs).toISOString();
   for (const cand of toEmit) {
-    const { row, decision } = cand;
+    const { row, decision, prior } = cand;
     try {
       await db.prepare(
         `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority)
          VALUES (?, 'pivot_detected', 'nexus', 'observer', ?, 1)`,
       ).bind(
         crypto.randomUUID(),
-        JSON.stringify({
-          kind: 'infra_movement',
-          cluster_id: row.id,
-          cluster_name: row.cluster_name ?? null,
-          new_asns: decision.newElements.newAsns.length,
-          new_ips: decision.newElements.newIps.length,
-          new_serials: decision.newElements.newSerials.length,
-        }),
+        JSON.stringify(buildInfraMovementPivotPayload(
+          row.id,
+          row.cluster_name ?? null,
+          decision.newElements,
+          prior,
+        )),
       ).run();
       await db.prepare(
         `UPDATE infrastructure_clusters SET last_movement_pivot_at = ? WHERE id = ?`,

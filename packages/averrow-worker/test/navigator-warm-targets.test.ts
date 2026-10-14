@@ -10,8 +10,9 @@
 // What this pins:
 //   1. The exact warm list (phase + path + query string).
 //   2. Observatory handlers collapse absent / empty / `all` source_feed to
-//      one cache key and treat it as "no filter" in SQL; a real feed value
-//      gets its own key and a filter.
+//      one cache key and treat it as "no filter" in SQL; `feeds` /
+//      `spam_trap` get their own key and filter; any other value is a 400
+//      that reads no KV key and runs no SQL.
 //   3. For every warm whose consumer sends query params, the KV key the
 //      warm reads/writes equals the key the consumer's request reads.
 //      The client query strings are duplicated as LITERALS below (no
@@ -28,13 +29,15 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { NAVIGATOR_WARM_TARGETS } from "../src/cron/navigator";
+import { NAVIGATOR_WARM_TARGETS, warmRequest } from "../src/cron/navigator";
+import { isCacheRefresh } from "../src/lib/cache-refresh";
 import {
   handleObservatoryNodes,
   handleObservatoryArcs,
   handleObservatoryStats,
   handleObservatoryLive,
-  normalizeSourceFeed,
+  handleObservatoryHeatmap,
+  parseObservatorySourceFeed,
 } from "../src/handlers/observatory";
 import { handleListOperations } from "../src/handlers/operations";
 import { handleListBrands } from "../src/handlers/brands";
@@ -122,6 +125,7 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "A /api/observatory/stats?period=7d",
       "A /api/observatory/live?limit=8",
       "A /api/v1/operations?limit=4&offset=0&status=active",
+      "A2 /api/observatory/heatmap?period=7d",
       "A2 /api/observatory/nodes?period=24h",
       "A2 /api/observatory/arcs?period=24h",
       "A2 /api/observatory/stats?period=24h",
@@ -147,6 +151,18 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
     expect(paths.some((p) => p.startsWith("/api/dashboard/top-brands"))).toBe(false);
   });
 
+  it("heatmap is not a Phase A (un-budget-gated) warm", () => {
+    const heat = NAVIGATOR_WARM_TARGETS.filter((t) => t.path.startsWith("/api/observatory/heatmap"));
+    expect(heat.map((t) => t.phase)).toEqual(["A2"]);
+  });
+
+  it("warm requests are refresh-marked only while under the D1 budget soft-cap", () => {
+    expect(isCacheRefresh(warmRequest("/api/observatory/nodes?period=7d", false))).toBe(true);
+    // Over budget → plain fill-on-miss request, no forced recompute.
+    expect(isCacheRefresh(warmRequest("/api/observatory/nodes?period=7d", true))).toBe(false);
+    expect(warmRequest("/api/observatory/nodes?period=7d", true).url).toBe("https://averrow.com/api/observatory/nodes?period=7d");
+  });
+
   it("every target names its consumer and paths are unique", () => {
     for (const t of NAVIGATOR_WARM_TARGETS) expect(t.consumer.length).toBeGreaterThan(0);
     const paths = NAVIGATOR_WARM_TARGETS.map((t) => t.path);
@@ -156,14 +172,17 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
 
 // ─── 2. Observatory source_feed normalisation ───────────────────────
 
-describe("normalizeSourceFeed", () => {
-  it("collapses absent, empty and 'all' to null; keeps real feeds", () => {
-    expect(normalizeSourceFeed(null)).toBeNull();
-    expect(normalizeSourceFeed("")).toBeNull();
-    expect(normalizeSourceFeed("all")).toBeNull();
-    expect(normalizeSourceFeed("spam_trap")).toBe("spam_trap");
-    expect(normalizeSourceFeed("feeds")).toBe("feeds");
-    expect(normalizeSourceFeed("urlhaus")).toBe("urlhaus");
+describe("parseObservatorySourceFeed", () => {
+  it("collapses absent, empty and 'all' to null; keeps feeds / spam_trap; rejects everything else", () => {
+    expect(parseObservatorySourceFeed(null)).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("")).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("all")).toEqual({ ok: true, feed: null });
+    expect(parseObservatorySourceFeed("spam_trap")).toEqual({ ok: true, feed: "spam_trap" });
+    expect(parseObservatorySourceFeed("feeds")).toEqual({ ok: true, feed: "feeds" });
+    // No caller sends a raw feed id — it is rejected, not bound.
+    for (const bad of ["urlhaus", "ALL", "Feeds", " spam_trap", "spam_trap ", "x".repeat(41), "a:b", "'; DROP"]) {
+      expect(parseObservatorySourceFeed(bad), bad).toEqual({ ok: false });
+    }
   });
 });
 
@@ -172,6 +191,7 @@ const SOURCE_FEED_HANDLERS: Array<{ name: string; handler: Handler; base: string
   { name: "arcs", handler: handleObservatoryArcs, base: "/api/observatory/arcs?period=7d", prefix: "observatory_arcs:7d:" },
   { name: "stats", handler: handleObservatoryStats, base: "/api/observatory/stats?period=7d", prefix: "observatory_stats:7d:" },
   { name: "live", handler: handleObservatoryLive, base: "/api/observatory/live?limit=8", prefix: "observatory_live:" },
+  { name: "heatmap", handler: handleObservatoryHeatmap, base: "/api/observatory/heatmap?period=7d", prefix: "observatory_heatmap:7d:" },
 ];
 
 describe("observatory handlers — source_feed cache key", () => {
@@ -193,16 +213,36 @@ describe("observatory handlers — source_feed cache key", () => {
       expect(spam).toContain("spam_trap");
     });
 
-    it(`${name}: empty source_feed applies no SQL filter; a real feed does`, async () => {
+    it(`${name}: empty source_feed applies no SQL filter; feeds / spam_trap do, unbound`, async () => {
       const empty = makeHarness(false);
       await handler(req(`${base}&source_feed=`), empty.env);
       expect(empty.sql.length).toBeGreaterThan(0);
       expect(empty.sql.some((s) => /source_feed\s*(=|!=)/.test(s))).toBe(false);
 
-      const real = makeHarness(false);
-      await handler(req(`${base}&source_feed=urlhaus`), real.env);
-      expect(real.sql.some((s) => /source_feed\s*=\s*\?/.test(s))).toBe(true);
-      expect(real.binds.some((b) => b.includes("urlhaus"))).toBe(true);
+      const spam = makeHarness(false);
+      await handler(req(`${base}&source_feed=spam_trap`), spam.env);
+      expect(spam.sql.some((s) => /source_feed\s*=\s*'spam_trap'/.test(s))).toBe(true);
+
+      const feeds = makeHarness(false);
+      await handler(req(`${base}&source_feed=feeds`), feeds.env);
+      expect(feeds.sql.some((s) => /source_feed\s*!=\s*'spam_trap'/.test(s))).toBe(true);
+      // The filter is a literal — the source value is never a bind.
+      for (const h of [spam, feeds]) {
+        expect(h.binds.some((b) => b.includes("spam_trap") || b.includes("feeds"))).toBe(false);
+      }
+    });
+
+    it(`${name}: an unknown source_feed is a 400 — no KV key read, no SQL`, async () => {
+      for (const bad of ["urlhaus", "nope", "ALL"]) {
+        const hit = makeHarness(true);
+        const res = await handler(req(`${base}&source_feed=${encodeURIComponent(bad)}`), hit.env);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toMatchObject({ success: false });
+        expect(hit.cacheReads).toEqual([]);
+        const miss = makeHarness(false);
+        await handler(req(`${base}&source_feed=${encodeURIComponent(bad)}`), miss.env);
+        expect(miss.sql).toEqual([]);
+      }
     });
   }
 });
@@ -214,19 +254,26 @@ describe("observatory handlers — source_feed cache key", () => {
  * only where a handler would key on it (none do today), but the literals
  * are kept byte-for-byte to what the client builds.
  */
+const OBS_HOOK = "averrow-ops/src/hooks/useObservatory.ts (buildObservatoryUrl drops undefined params; sourceParam('all') → undefined)";
 const CLIENT_REQUESTS: Array<{ warm: string; client: string; source: string; handler: Handler }> = [
-  // useObservatoryQuery.buildUrl keeps insertion order: period, source_feed, limit.
-  { warm: "/api/observatory/nodes?period=7d", client: "/api/observatory/nodes?period=7d&source_feed=&limit=2000", source: "averrow-ops/src/hooks/useObservatory.ts:54-57", handler: handleObservatoryNodes },
-  { warm: "/api/observatory/arcs?period=7d", client: "/api/observatory/arcs?period=7d&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:78-81", handler: handleObservatoryArcs },
-  { warm: "/api/observatory/stats?period=7d", client: "/api/observatory/stats?period=7d&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:66-69", handler: handleObservatoryStats },
-  { warm: "/api/observatory/nodes?period=24h", client: "/api/observatory/nodes?period=24h&source_feed=&limit=2000", source: "averrow-ops/src/hooks/useObservatory.ts:54-57", handler: handleObservatoryNodes },
-  { warm: "/api/observatory/arcs?period=24h", client: "/api/observatory/arcs?period=24h&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:78-81", handler: handleObservatoryArcs },
-  { warm: "/api/observatory/stats?period=24h", client: "/api/observatory/stats?period=24h&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:66-69", handler: handleObservatoryStats },
-  { warm: "/api/observatory/nodes?period=30d", client: "/api/observatory/nodes?period=30d&source_feed=&limit=2000", source: "averrow-ops/src/hooks/useObservatory.ts:54-57", handler: handleObservatoryNodes },
-  { warm: "/api/observatory/arcs?period=30d", client: "/api/observatory/arcs?period=30d&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:78-81", handler: handleObservatoryArcs },
-  { warm: "/api/observatory/stats?period=30d", client: "/api/observatory/stats?period=30d&source_feed=", source: "averrow-ops/src/hooks/useObservatory.ts:66-69", handler: handleObservatoryStats },
-  // SidePanel LiveFeedWidget.
-  { warm: "/api/observatory/live?limit=8", client: "/api/observatory/live?limit=8", source: "averrow-ops/src/features/observatory-v3/components/SidePanel.tsx:481", handler: handleObservatoryLive },
+  // TanStack hooks: buildObservatoryUrl keeps insertion order (period,
+  // source_feed, limit) and DROPS source_feed for "all".
+  { warm: "/api/observatory/nodes?period=7d", client: "/api/observatory/nodes?period=7d&limit=2000", source: OBS_HOOK, handler: handleObservatoryNodes },
+  { warm: "/api/observatory/arcs?period=7d", client: "/api/observatory/arcs?period=7d", source: OBS_HOOK, handler: handleObservatoryArcs },
+  { warm: "/api/observatory/stats?period=7d", client: "/api/observatory/stats?period=7d", source: OBS_HOOK, handler: handleObservatoryStats },
+  { warm: "/api/observatory/heatmap?period=7d", client: "/api/observatory/heatmap?period=7d&limit=10000", source: OBS_HOOK, handler: handleObservatoryHeatmap },
+  { warm: "/api/observatory/nodes?period=24h", client: "/api/observatory/nodes?period=24h&limit=2000", source: OBS_HOOK, handler: handleObservatoryNodes },
+  { warm: "/api/observatory/arcs?period=24h", client: "/api/observatory/arcs?period=24h", source: OBS_HOOK, handler: handleObservatoryArcs },
+  { warm: "/api/observatory/stats?period=24h", client: "/api/observatory/stats?period=24h", source: OBS_HOOK, handler: handleObservatoryStats },
+  { warm: "/api/observatory/nodes?period=30d", client: "/api/observatory/nodes?period=30d&limit=2000", source: OBS_HOOK, handler: handleObservatoryNodes },
+  { warm: "/api/observatory/arcs?period=30d", client: "/api/observatory/arcs?period=30d", source: OBS_HOOK, handler: handleObservatoryArcs },
+  { warm: "/api/observatory/stats?period=30d", client: "/api/observatory/stats?period=30d", source: OBS_HOOK, handler: handleObservatoryStats },
+  // Legacy client spelling (`source_feed=` for All Sources, old
+  // useObservatoryQuery) and the explicit `all` spelling still share the key.
+  { warm: "/api/observatory/nodes?period=7d", client: "/api/observatory/nodes?period=7d&source_feed=&limit=2000", source: "legacy useObservatoryQuery", handler: handleObservatoryNodes },
+  { warm: "/api/observatory/heatmap?period=7d", client: "/api/observatory/heatmap?period=7d&source_feed=all", source: "explicit all", handler: handleObservatoryHeatmap },
+  // SidePanel LiveFeedWidget → useObservatoryLive (LIVE_FEED_LIMIT = 8).
+  { warm: "/api/observatory/live?limit=8", client: "/api/observatory/live?limit=8", source: OBS_HOOK, handler: handleObservatoryLive },
   // useOperations: URLSearchParams({limit, offset}) then .set('status').
   { warm: "/api/v1/operations?limit=4&offset=0&status=active", client: "/api/v1/operations?limit=4&offset=0&status=active", source: "averrow-ops/src/features/observatory-v3/components/SidePanel.tsx:310 + hooks/useOperations.ts:44-46", handler: handleListOperations },
   { warm: "/api/v1/operations?limit=12&offset=0", client: "/api/v1/operations?limit=12&offset=0", source: "averrow-ops/src/features/campaigns/Campaigns.tsx:681 + hooks/useOperations.ts:44-46", handler: handleListOperations },
@@ -293,7 +340,7 @@ interface SourceCheck {
  */
 const OPS = "averrow-ops/src";
 const USE_OBS = `${OPS}/hooks/useObservatory.ts`;
-const OBS_V3 = `${OPS}/features/observatory-v3/ObservatoryV3.tsx`;
+const URL_STATE = `${OPS}/features/observatory-v3/lib/url-state.ts`;
 const SIDE_PANEL = `${OPS}/features/observatory-v3/components/SidePanel.tsx`;
 const USE_OPS = `${OPS}/hooks/useOperations.ts`;
 const USE_BRANDS = `${OPS}/hooks/useBrands.ts`;
@@ -304,25 +351,34 @@ const MCP = "averrow-mcp/src/index.ts";
 const closedLiteral = (path: string) =>
   new RegExp(`['"\`]${path.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}['"\`]`);
 
-/** Observatory hook: endpoint + `source_feed` sent empty for the `all` view. */
-const observatoryHook = (endpoint: string): SourceCheck => ({
+/**
+ * Observatory hook: endpoint + `source_feed` OMITTED for the `all` view
+ * (sourceParam('all') → undefined, dropped by buildObservatoryUrl) — the
+ * handlers key absent source_feed as `all`, like the warm.
+ */
+const observatoryHook = (endpoint: string, extra: RegExp[] = []): SourceCheck => ({
   file: USE_OBS,
   present: [
     closedLiteral(endpoint),
-    // `source_feed: source === 'all' ? '' : source` — the empty value the
-    // handlers normalise to the `all` key segment.
-    /\bsource_feed\s*:\s*source\s*===\s*['"]all['"]\s*\?\s*(''|"")/,
+    /\bsource_feed\s*:\s*sourceParam\(\s*source\s*\)/,
+    /!source\s*\|\|\s*source\s*===\s*['"]all['"]\s*\?\s*undefined\b/,
     /\bsource\s*=\s*['"]all['"]/,
     /\bperiod\s*=\s*['"]7d['"]/,
+    ...extra,
   ],
 });
 
-/** ObservatoryV3 period toggle offers `period` (7d is the default state). */
+/** Nodes: default limit 2000 — the handler's default, so the warm needs no limit. */
+const NODES_LIMIT = [/\bNODES_MAX_LIMIT\s*=\s*2_?000\b/, /\blimit\s*=\s*NODES_MAX_LIMIT\b/];
+/** Heatmap: default limit 10000 — the handler's default. */
+const HEATMAP_LIMIT = [/\bHEATMAP_DEFAULT_LIMIT\s*=\s*10_?000\b/, /\blimit\s*=\s*HEATMAP_DEFAULT_LIMIT\b/];
+
+/** Period ids offered by the page (7d is the default state). */
 const observatoryPeriod = (period: string): SourceCheck => ({
-  file: OBS_V3,
+  file: URL_STATE,
   present: period === "7d"
-    ? [/useState\(\s*['"]7d['"]\s*\)/]
-    : [new RegExp(`\\bid\\s*:\\s*['"]${period}['"]`)],
+    ? [/\bperiod\s*:\s*['"]7d['"]/]
+    : [new RegExp(`PERIOD_IDS\\s*=\\s*\\[[^\\]]*['"]${period}['"]`)],
 });
 
 const useOperationsHook: SourceCheck = {
@@ -342,12 +398,22 @@ const SOURCE_CHECKS: Record<string, SourceCheck[]> = {
     (["7d", "24h", "30d"] as const).flatMap((period) =>
       (["nodes", "arcs", "stats"] as const).map((kind) => [
         `/api/observatory/${kind}?period=${period}`,
-        [observatoryHook(`/api/observatory/${kind}`), observatoryPeriod(period)],
+        [observatoryHook(`/api/observatory/${kind}`, kind === "nodes" ? NODES_LIMIT : []), observatoryPeriod(period)],
       ]),
     ),
   ),
+  "/api/observatory/heatmap?period=7d": [observatoryHook("/api/observatory/heatmap", HEATMAP_LIMIT), observatoryPeriod("7d")],
   "/api/observatory/live?limit=8": [
-    { file: SIDE_PANEL, present: [/\/api\/observatory\/live\?limit=8\b/] },
+    {
+      file: USE_OBS,
+      present: [closedLiteral("/api/observatory/live"), /\bLIVE_FEED_LIMIT\s*=\s*8\b/, /\blimit\s*=\s*LIVE_FEED_LIMIT\b/],
+    },
+    {
+      file: SIDE_PANEL,
+      present: [/useObservatoryLive\(/],
+      // No explicit limit → LIVE_FEED_LIMIT, which the warm sends.
+      absent: [/useObservatoryLive\(\s*\{[^}]*\blimit\s*:/],
+    },
   ],
   "/api/v1/operations?limit=4&offset=0&status=active": [
     {
@@ -462,10 +528,12 @@ describe("client source still sends what each warm mirrors", () => {
   // matching check now reports it. Guards against regexes that silently
   // match anything.
   const MUTATIONS: Array<{ warm: string; file: string; from: RegExp; to: string }> = [
-    { warm: "/api/observatory/live?limit=8", file: SIDE_PANEL, from: /live\?limit=8/, to: "live?limit=10" },
-    { warm: "/api/observatory/nodes?period=7d", file: USE_OBS, from: /source_feed:/g, to: "feed:" },
-    { warm: "/api/observatory/stats?period=7d", file: USE_OBS, from: /\? '' : source/g, to: "? 'all' : source" },
-    { warm: "/api/observatory/arcs?period=30d", file: OBS_V3, from: /id: '30d'/, to: "id: '90d'" },
+    { warm: "/api/observatory/live?limit=8", file: USE_OBS, from: /LIVE_FEED_LIMIT = 8/, to: "LIVE_FEED_LIMIT = 10" },
+    { warm: "/api/observatory/nodes?period=7d", file: USE_OBS, from: /source_feed: sourceParam/g, to: "feed: sourceParam" },
+    { warm: "/api/observatory/stats?period=7d", file: USE_OBS, from: /\? undefined : source/g, to: "? 'all' : source" },
+    { warm: "/api/observatory/nodes?period=7d", file: USE_OBS, from: /NODES_MAX_LIMIT = 2_?000/, to: "NODES_MAX_LIMIT = 500" },
+    { warm: "/api/observatory/heatmap?period=7d", file: USE_OBS, from: /HEATMAP_DEFAULT_LIMIT = 10_?000/, to: "HEATMAP_DEFAULT_LIMIT = 5_000" },
+    { warm: "/api/observatory/arcs?period=30d", file: URL_STATE, from: /'30d'/, to: "'60d'" },
     { warm: "/api/v1/operations?limit=4&offset=0&status=active", file: SIDE_PANEL, from: /status: 'active', limit: 4/, to: "status: 'active', limit: 5" },
     { warm: "/api/v1/operations?limit=4&offset=0&status=active", file: USE_OPS, from: /params\.set\('status'/, to: "params.set('state'" },
     { warm: "/api/v1/operations?limit=12&offset=0", file: `${OPS}/features/campaigns/Campaigns.tsx`, from: /: 12 \}/, to: ": 20 }" },

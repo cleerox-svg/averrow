@@ -28,6 +28,7 @@ interface Call {
 
 function makeEnv() {
   const calls: Call[] = [];
+  const batches: Call[][] = [];
   const env = {
     DB: {
       prepare(sql: string) {
@@ -36,14 +37,26 @@ function makeEnv() {
             const record: Call = { sql, bindArgs };
             calls.push(record);
             return {
+              __call: record,
               run: async () => ({ meta: { changes: 0, rows_written: 0 }, success: true }),
             };
           },
         };
       },
+      async batch(stmts: Array<{ __call: Call }>) {
+        batches.push(stmts.map((s) => s.__call));
+        return stmts.map(() => ({ meta: { changes: 0, rows_written: 0 }, success: true }));
+      },
     },
   } as unknown as Parameters<typeof buildGeoCubeForHour>[0];
-  return { env, calls };
+  return { env, calls, batches };
+}
+
+/** The upsert statement of a build (the batch is [sweep, upsert]). */
+function upsertOf(calls: Call[]): Call {
+  const c = calls.find((x) => x.sql.includes("INSERT INTO"));
+  if (!c) throw new Error("no upsert statement");
+  return c;
 }
 
 describe("cube-builder UPSERT WITH WHERE (PR-BO)", () => {
@@ -58,49 +71,49 @@ describe("cube-builder UPSERT WITH WHERE (PR-BO)", () => {
   it("buildGeoCubeForHour emits INSERT INTO + UPSERT (no INSERT OR REPLACE)", async () => {
     const { env, calls } = makeEnv();
     await buildGeoCubeForHour(env, "2026-05-22 16:00:00");
-    expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain("INSERT INTO threat_cube_geo");
-    expect(calls[0].sql).not.toContain("INSERT OR REPLACE");
-    expect(calls[0].sql).toContain(tableConflictCols.geo);
-    expect(calls[0].sql).toContain("DO UPDATE SET");
-    expect(calls[0].sql).toContain("threat_cube_geo.threat_count IS NOT excluded.threat_count");
+    expect(calls.length).toBe(2);
+    expect(upsertOf(calls).sql).toContain("INSERT INTO threat_cube_geo");
+    expect(upsertOf(calls).sql).not.toContain("INSERT OR REPLACE");
+    expect(upsertOf(calls).sql).toContain(tableConflictCols.geo);
+    expect(upsertOf(calls).sql).toContain("DO UPDATE SET");
+    expect(upsertOf(calls).sql).toContain("threat_cube_geo.threat_count IS NOT excluded.threat_count");
   });
 
   it("buildProviderCubeForHour emits INSERT INTO + UPSERT", async () => {
     const { env, calls } = makeEnv();
     await buildProviderCubeForHour(env, "2026-05-22 16:00:00");
-    expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain("INSERT INTO threat_cube_provider");
-    expect(calls[0].sql).not.toContain("INSERT OR REPLACE");
-    expect(calls[0].sql).toContain(tableConflictCols.provider);
-    expect(calls[0].sql).toContain("threat_cube_provider.threat_count IS NOT excluded.threat_count");
+    expect(calls.length).toBe(2);
+    expect(upsertOf(calls).sql).toContain("INSERT INTO threat_cube_provider");
+    expect(upsertOf(calls).sql).not.toContain("INSERT OR REPLACE");
+    expect(upsertOf(calls).sql).toContain(tableConflictCols.provider);
+    expect(upsertOf(calls).sql).toContain("threat_cube_provider.threat_count IS NOT excluded.threat_count");
   });
 
   it("buildBrandCubeForHour emits INSERT INTO + UPSERT", async () => {
     const { env, calls } = makeEnv();
     await buildBrandCubeForHour(env, "2026-05-22 16:00:00");
-    expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain("INSERT INTO threat_cube_brand");
-    expect(calls[0].sql).not.toContain("INSERT OR REPLACE");
-    expect(calls[0].sql).toContain(tableConflictCols.brand);
-    expect(calls[0].sql).toContain("threat_cube_brand.threat_count IS NOT excluded.threat_count");
+    expect(calls.length).toBe(2);
+    expect(upsertOf(calls).sql).toContain("INSERT INTO threat_cube_brand");
+    expect(upsertOf(calls).sql).not.toContain("INSERT OR REPLACE");
+    expect(upsertOf(calls).sql).toContain(tableConflictCols.brand);
+    expect(upsertOf(calls).sql).toContain("threat_cube_brand.threat_count IS NOT excluded.threat_count");
   });
 
   it("buildStatusCubeForHour emits INSERT INTO + UPSERT", async () => {
     const { env, calls } = makeEnv();
     await buildStatusCubeForHour(env, "2026-05-22 16:00:00");
-    expect(calls.length).toBe(1);
-    expect(calls[0].sql).toContain("INSERT INTO threat_cube_status");
-    expect(calls[0].sql).not.toContain("INSERT OR REPLACE");
-    expect(calls[0].sql).toContain(tableConflictCols.status);
-    expect(calls[0].sql).toContain("threat_cube_status.threat_count IS NOT excluded.threat_count");
+    expect(calls.length).toBe(2);
+    expect(upsertOf(calls).sql).toContain("INSERT INTO threat_cube_status");
+    expect(upsertOf(calls).sql).not.toContain("INSERT OR REPLACE");
+    expect(upsertOf(calls).sql).toContain(tableConflictCols.status);
+    expect(upsertOf(calls).sql).toContain("threat_cube_status.threat_count IS NOT excluded.threat_count");
   });
 
   it("buildArcsCubeForHour emits INSERT INTO + multi-column UPSERT", async () => {
     const { env, calls } = makeEnv();
     await buildArcsCubeForHour(env, "2026-05-22 16:00:00");
-    expect(calls.length).toBe(1);
-    const sql = calls[0].sql;
+    expect(calls.length).toBe(2);
+    const sql = upsertOf(calls).sql;
     expect(sql).toContain("INSERT INTO threat_cube_arcs");
     expect(sql).not.toContain("INSERT OR REPLACE");
     expect(sql).toContain(tableConflictCols.arcs);
@@ -128,7 +141,7 @@ describe("cube-builder UPSERT WITH WHERE (PR-BO)", () => {
     const { env: e5, calls: c5 } = makeEnv();
     await buildArcsCubeForHour(e5, "2026-05-22 16:00:00");
 
-    for (const sql of [c1[0].sql, c2[0].sql, c3[0].sql, c4[0].sql, c5[0].sql]) {
+    for (const sql of [upsertOf(c1).sql, upsertOf(c2).sql, upsertOf(c3).sql, upsertOf(c4).sql, upsertOf(c5).sql]) {
       expect(sql).toMatch(/IS NOT excluded\./);
       // Make sure we didn't accidentally use the buggy != form.
       expect(sql).not.toMatch(/!= excluded\./);

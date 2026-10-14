@@ -3,9 +3,16 @@
  *
  * Runs 6-hourly via the "12 *\/6 * * *" cron. Performs a bulk rebuild of
  * threat_cube_geo, threat_cube_provider, threat_cube_brand,
- * threat_cube_status, and threat_cube_arcs via INSERT OR REPLACE ...
- * SELECT ... GROUP BY, bounding drift from cartographer's retroactive
- * enrichment within that window.
+ * threat_cube_status, and threat_cube_arcs over an hour-snapped window.
+ * Per cube and per DAY of the window, one atomic db.batch() of [stale-row
+ * sweep, guarded upsert] (healCube / healDayChunks): a D1 limit on one day
+ * rolls back that day only, and the other days still commit. The sweep
+ * (cubeStaleSweepSQL, lib/cube-builder.ts) deletes window rows whose key
+ * vanished from the source (threats went inactive or moved group); the
+ * upsert rewrites only the groups whose aggregate changed.
+ * Together they make every healed hour exactly equal to the source,
+ * bounding drift from cartographer's retroactive enrichment AND from
+ * status changes within that window.
  *
  * Two-window strategy (PR-BM, 2026-05-21):
  *   - **Hot heal** (default, 3 of 4 daily ticks): 2-day window.
@@ -35,10 +42,12 @@
  *   permanent drift that Phase 4.1's parity_checker first detected (3.64% on
  *   the 30-day geo cube, 2.88% on provider).
  *
- * Scope — EXCLUDES the current partial hour (Phase 3's territory). The "prev
- * hour" overlap with Navigator is intentional and safe because INSERT OR
- * REPLACE is idempotent. The bulk SQL is verbatim from the manual test that
- * proved exact parity against the raw threats table.
+ * Scope — [window start, top of the current hour): EXCLUDES the current
+ * partial hour (Phase 3's territory). The window start is snapped to the top
+ * of an hour too — an unsnapped `datetime('now','-N days')` rebuilt the
+ * oldest hour from a PARTIAL slice of its threats and overwrote that hour's
+ * full count with the smaller number. The "prev hour" overlap with Navigator
+ * is intentional and safe because both writers are idempotent.
  *
  * Lifecycle (Phase 2.3 of agent audit):
  *   The agent_runs row is now managed by executeAgent() per
@@ -56,6 +65,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
+import { cubeStaleSweepSQL, type CubeName } from '../lib/cube-builder';
 
 // ─── Heal window selection ───────────────────────────────────────
 // Hot vs cold scope (PR-BM): hot covers the most recent 2 days,
@@ -77,35 +87,33 @@ export function pickHealScope(scheduledTime: Date): 'hot' | 'cold' {
   return scheduledTime.getUTCHours() === 0 ? 'cold' : 'hot';
 }
 
-// ─── Heal SQL ────────────────────────────────────────────────────
-// Window is the only parameter; built once per execute() call and
-// substituted into the literal SQL. SQLite's datetime() can't accept
-// a bind param in the modifier slot ('-N days'), so we build the
-// fragment as a string. Window is selected from a closed set
-// (HOT/COLD constants) — never operator input — so the string
-// concat is safe.
+// ─── Heal window ─────────────────────────────────────────────────
 
-function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', windowDays: number): string {
-  const windowFragment = `'-${windowDays} days'`;
-  // PR-BO (2026-05-22): switched INSERT OR REPLACE → INSERT ... ON
-  // CONFLICT(pk) DO UPDATE SET ... WHERE <existing IS NOT excluded>.
+/**
+ * Hour-snapped heal window: [top of (now's hour) − days, top of now's hour).
+ * Both bounds are 'YYYY-MM-DD HH:00:00' strings, bound as ?1 / ?2 into the
+ * sweep and the upsert so the two statements cover the identical window.
+ * Exported for unit testing.
+ */
+export function healWindow(now: Date, windowDays: number): { start: string; end: string } {
+  const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours());
+  const startMs = endMs - windowDays * 24 * 60 * 60 * 1000;
+  const fmt = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+  return { start: fmt(startMs), end: fmt(endMs) };
+}
+
+// ─── Heal SQL ────────────────────────────────────────────────────
+// Binds: ?1 = window start, ?2 = window end (see healWindow).
+
+function healSQL(table: CubeName): string {
+  // PR-BO (2026-05-22): INSERT ... ON CONFLICT(pk) DO UPDATE SET ... WHERE
+  // <existing IS NOT excluded> — unchanged buckets cost 0 row mutations
+  // (INSERT OR REPLACE billed 2 per bucket). Use `IS NOT` (not `!=`) so
+  // NULL on either side compares correctly — source_lat/source_lng/
+  // first_seen/last_seen can legitimately be NULL on arcs.
   //
-  // INSERT OR REPLACE always writes one row per group: it deletes the
-  // existing row and inserts a new one — billed as 2 row mutations per
-  // unchanged bucket. With most hour-buckets stable between heals
-  // (cartographer's retroactive enrichment is concentrated in the most
-  // recent 24-48h, so older buckets in the 14-day cold window are ~95%
-  // stable), the rewrites were wasted I/O.
-  //
-  // UPSERT WITH WHERE: on conflict, evaluates `WHERE <existing IS NOT
-  // excluded>`; if every aggregate column matches, the row mutation
-  // is skipped entirely (0 row mutations). Net savings depend on how
-  // many buckets are stable per heal but should track ~90% reduction
-  // on cold heals, ~70-80% on hot.
-  //
-  // Use `IS NOT` (not `!=`) so NULL on either side compares correctly —
-  // important for cubes where source_lat/source_lng/first_seen/last_seen
-  // can legitimately be NULL.
+  // The upsert alone never removes a group; the paired cubeStaleSweepSQL
+  // statement (same batch) does.
   switch (table) {
     case 'geo':
       return `
@@ -123,8 +131,8 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           COUNT(*),
           datetime('now')
         FROM threats
-        WHERE created_at >= datetime('now', ${windowFragment})
-          AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+        WHERE created_at >= ?1
+          AND created_at < ?2
           AND status = 'active'
           AND lat IS NOT NULL
           AND lng IS NOT NULL
@@ -149,8 +157,8 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           COUNT(*),
           datetime('now')
         FROM threats
-        WHERE created_at >= datetime('now', ${windowFragment})
-          AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+        WHERE created_at >= ?1
+          AND created_at < ?2
           AND status = 'active'
           AND hosting_provider_id IS NOT NULL
         GROUP BY 1, 2, 3, 4, 5
@@ -174,8 +182,8 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           COUNT(*),
           datetime('now')
         FROM threats
-        WHERE created_at >= datetime('now', ${windowFragment})
-          AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+        WHERE created_at >= ?1
+          AND created_at < ?2
           AND status = 'active'
           AND target_brand_id IS NOT NULL
         GROUP BY 1, 2, 3, 4, 5
@@ -203,8 +211,8 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           COUNT(*),
           datetime('now')
         FROM threats
-        WHERE created_at >= datetime('now', ${windowFragment})
-          AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+        WHERE created_at >= ?1
+          AND created_at < ?2
         GROUP BY 1, 2, 3, 4, 5
         ON CONFLICT(hour_bucket, threat_type, severity, source_feed, status)
         DO UPDATE SET
@@ -231,8 +239,8 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           MAX(created_at),
           datetime('now')
         FROM threats
-        WHERE created_at >= datetime('now', ${windowFragment})
-          AND created_at < strftime('%Y-%m-%d %H:00:00', datetime('now'))
+        WHERE created_at >= ?1
+          AND created_at < ?2
           AND status = 'active'
           AND lat IS NOT NULL
           AND lng IS NOT NULL
@@ -247,6 +255,7 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
           last_seen = excluded.last_seen,
           updated_at = excluded.updated_at
         WHERE threat_cube_arcs.threat_count IS NOT excluded.threat_count
+           OR threat_cube_arcs.first_seen IS NOT excluded.first_seen
            OR threat_cube_arcs.last_seen IS NOT excluded.last_seen
            OR threat_cube_arcs.source_lat IS NOT excluded.source_lat
            OR threat_cube_arcs.source_lng IS NOT excluded.source_lng
@@ -254,11 +263,87 @@ function healSQL(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', window
   }
 }
 
-// Exported for unit testing — assert the right window literal lands
-// in the SQL for each scope.
-export function healSQLForTest(table: 'geo' | 'provider' | 'brand' | 'status' | 'arcs', scope: 'hot' | 'cold'): string {
-  const days = scope === 'cold' ? COLD_HEAL_WINDOW_DAYS : HOT_HEAL_WINDOW_DAYS;
-  return healSQL(table, days);
+// Exported for unit testing.
+export function healSQLForTest(table: CubeName): string {
+  return healSQL(table);
+}
+
+/**
+ * Split an hour-snapped heal window into day-sized [start, end) chunks,
+ * oldest first. Every chunk boundary stays hour-snapped (the window start
+ * is, and each chunk is exactly 24h); the last chunk is shorter when the
+ * window is not a whole number of days. Exported for unit testing.
+ */
+export function healDayChunks(window: { start: string; end: string }): Array<{ start: string; end: string }> {
+  const toMs = (s: string) => Date.parse(s.replace(' ', 'T') + 'Z');
+  const fmt = (ms: number) => new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const startMs = toMs(window.start);
+  const endMs = toMs(window.end);
+  const chunks: Array<{ start: string; end: string }> = [];
+  for (let ms = startMs; ms < endMs; ms += DAY_MS) {
+    chunks.push({ start: fmt(ms), end: fmt(Math.min(ms + DAY_MS, endMs)) });
+  }
+  return chunks;
+}
+
+export interface HealChunkFailure {
+  start: string;
+  end: string;
+  error: string;
+}
+
+export interface HealCubeResult {
+  rowsWritten: number;
+  /** Day chunks attempted. */
+  chunks: number;
+  /** Day chunks whose batch failed (rolled back); the others committed. */
+  failures: HealChunkFailure[];
+}
+
+/**
+ * Heal one cube over [start, end), one DAY at a time. Each day is its own
+ * atomic batch of [stale-row sweep, guarded upsert] bound to that day, so a
+ * D1 statement/duration limit on a large window rolls back one day, not the
+ * whole 14-day heal (the former single-batch shape lost every upsert when
+ * the sweep or upsert over 14 days hit a limit). A failed day is recorded
+ * and the remaining days still run. Never throws. Exported for unit testing.
+ */
+export async function healCube(
+  db: D1Database,
+  table: CubeName,
+  window: { start: string; end: string },
+): Promise<HealCubeResult> {
+  const chunks = healDayChunks(window);
+  const result: HealCubeResult = { rowsWritten: 0, chunks: chunks.length, failures: [] };
+  for (const chunk of chunks) {
+    try {
+      const results = await db.batch([
+        db.prepare(cubeStaleSweepSQL(table)).bind(chunk.start, chunk.end),
+        db.prepare(healSQL(table)).bind(chunk.start, chunk.end),
+      ]);
+      result.rowsWritten += results.reduce((sum, r) => sum + (r?.meta?.changes ?? 0), 0);
+    } catch (err) {
+      result.failures.push({ ...chunk, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return result;
+}
+
+/** Diagnostic for a cube heal that lost one or more day chunks. */
+export function healFailureOutput(table: CubeName, r: HealCubeResult, rowsLanded: number): AgentOutputEntry {
+  return {
+    type: 'diagnostic',
+    summary: `cube_healer ${table} heal failed for ${r.failures.length}/${r.chunks} day(s) (${rowsLanded} rows so far)`,
+    severity: 'high',
+    details: {
+      error: r.failures[0]?.error ?? null,
+      stage: table,
+      rowsLanded,
+      failedDays: r.failures,
+      daysAttempted: r.chunks,
+    },
+  };
 }
 
 // ─── Agent module ────────────────────────────────────────────────
@@ -266,7 +351,7 @@ export function healSQLForTest(table: 'geo' | 'provider' | 'brand' | 'status' | 
 export const cubeHealerAgent: AgentModule = {
   name: 'cube_healer',
   displayName: 'Cube Healer',
-  description: 'OLAP cube maintenance — periodic 30-day rebuild + brand summaries',
+  description: 'OLAP cube maintenance — 6-hourly 2-day heal (14-day once a day) + brand summaries',
   color: '#0EA5E9',
   trigger: 'scheduled',
   requiresApproval: false,
@@ -309,85 +394,31 @@ export const cubeHealerAgent: AgentModule = {
     const scheduledTime = scheduledTimeRaw ? new Date(scheduledTimeRaw) : new Date();
     const scope = pickHealScope(scheduledTime);
     const windowDays = scope === 'cold' ? COLD_HEAL_WINDOW_DAYS : HOT_HEAL_WINDOW_DAYS;
+    // Snapped to the top of the hour at execute() time (wall clock, not the
+    // cron tick) so the upper bound always excludes the current partial hour.
+    const window = healWindow(new Date(), windowDays);
 
-    // ── Geo heal ────────────────────────────────────────────────
-    // If geo throws here we let it propagate up to executeAgent(),
-    // which marks status='failed' — matching the legacy "first query
-    // throws → status: 'failed'" contract.
-    const geoResult = await env.DB.prepare(healSQL('geo', windowDays)).run();
-    rowsWritten += geoResult.meta?.changes ?? 0;
-
-    // ── Provider heal ───────────────────────────────────────────
-    // If provider throws after geo succeeded, capture as partial-failure
-    // diagnostic. Don't propagate — the rest of the chain still has work
-    // to do and the geo cube is already healed. (executeAgent will mark
-    // status='success' but the diagnostic agent_output row carries the
-    // error for forensic visibility.)
-    try {
-      const providerResult = await env.DB.prepare(healSQL('provider', windowDays)).run();
-      rowsWritten += providerResult.meta?.changes ?? 0;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer provider heal failed (geo succeeded, ${rowsWritten} rows landed)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'provider', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Brand heal ──────────────────────────────────────────────
-    try {
-      const brandResult = await env.DB.prepare(healSQL('brand', windowDays)).run();
-      rowsWritten += brandResult.meta?.changes ?? 0;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer brand heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'brand', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Status heal ─────────────────────────────────────────────
-    // Status cube has no dimension filter and no status filter, so
-    // this is the only path that reconciles status mutations
-    // (active → down → remediated) for older hour buckets.
-    try {
-      const statusResult = await env.DB.prepare(healSQL('status', windowDays)).run();
-      rowsWritten += statusResult.meta?.changes ?? 0;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer status heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'status', rowsLanded: rowsWritten },
-      });
-    }
-
-    // ── Arcs heal (PR-Z) ────────────────────────────────────────
-    // Country × brand × type × severity slice for the Observatory
-    // globe arcs. Same partial-failure handling as the others —
-    // arcs failure doesn't kill the whole heal cycle.
-    try {
-      const arcsResult = await env.DB.prepare(healSQL('arcs', windowDays)).run();
-      rowsWritten += arcsResult.meta?.changes ?? 0;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      partialFailures.push({
-        type: 'diagnostic',
-        summary: `cube_healer arcs heal failed (${rowsWritten} rows so far)`,
-        severity: 'high',
-        details: { error: errMsg, stage: 'arcs', rowsLanded: rowsWritten },
-      });
+    // ── Cube heals (geo, provider, brand, status, arcs) ─────────
+    // Each cube heals day by day (healCube). A failed day becomes a
+    // partial-failure diagnostic and the remaining days and cubes still
+    // run. Geo keeps its legacy "catastrophic" contract: when EVERY geo day
+    // fails, throw up to executeAgent() (→ status='failed'). Status is the
+    // only path that reconciles status mutations (active → down →
+    // remediated) for older hour buckets; arcs feeds the Observatory globe.
+    for (const table of ['geo', 'provider', 'brand', 'status', 'arcs'] as const) {
+      const r = await healCube(env.DB, table, window);
+      rowsWritten += r.rowsWritten;
+      if (r.failures.length === 0) continue;
+      if (table === 'geo' && r.failures.length === r.chunks) {
+        throw new Error(`cube_healer geo heal failed for every day: ${r.failures[0]?.error ?? "unknown error"}`);
+      }
+      partialFailures.push(healFailureOutput(table, r, rowsWritten));
     }
 
     // ── Dark web + app store brand summaries ───────────────────
     // Brand-keyed (not hour-bucketed) summary tables — one row per brand
     // counting "all active mentions / listings". Rebuilt from scratch
-    // each tick; same atomic INSERT OR REPLACE shape as the cubes above.
+    // each tick via a guarded upsert (see lib/cube-builder.ts).
     try {
       const { buildDarkWebBrandSummary, buildAppStoreBrandSummary } = await import('../lib/cube-builder');
       const dwResult = await buildDarkWebBrandSummary(env);
@@ -484,7 +515,7 @@ export const cubeHealerAgent: AgentModule = {
       itemsProcessed: rowsWritten,
       itemsCreated: rowsWritten,
       itemsUpdated: 0,
-      output: { rowsWritten, partialFailureCount: partialFailures.length, scope, windowDays, brandDrift },
+      output: { rowsWritten, partialFailureCount: partialFailures.length, scope, windowDays, windowStart: window.start, windowEnd: window.end, brandDrift },
       agentOutputs: partialFailures,
     };
   },
