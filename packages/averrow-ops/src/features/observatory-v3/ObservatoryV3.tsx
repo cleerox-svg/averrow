@@ -458,6 +458,13 @@ export function ObservatoryV3() {
   // resolved by turning `shared=1` on in the URL (replacing the entry), once per id, rather than dropped.
   const sharedRetried = useRef<string | null>(null);
   const sharedPending = useRef(false);
+  // Auto-widening is for deep links only. A manual toggle-off while an operation is selected marks that id as already
+  // handled, so the effect never flips shared back on: the selection stays if the narrower set still holds it, else
+  // it is dropped with the usual dead-key path.
+  const toggleShared = useCallback(() => {
+    if (state.shared && sel?.kind === 'op') sharedRetried.current = sel.id;
+    update({ shared: !state.shared });
+  }, [state.shared, sel, update]);
   useEffect(() => {
     if (drill) return;
     if (state.shared) sharedPending.current = false;
@@ -684,7 +691,7 @@ export function ObservatoryV3() {
             {excludedTotal > 0 && <span role="status">{lowEvidenceNote(excludedTotal, state.shared, L.operationsQ.data?.meta?.shared_returned)}</span>}
             <button
               type="button"
-              onClick={() => update({ shared: !state.shared })}
+              onClick={toggleShared}
               aria-pressed={state.shared}
               className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
               style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
