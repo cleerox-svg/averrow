@@ -552,7 +552,7 @@ while every agent reported `success`. Rules that came out of it:
 
 ### Cron schedule (wrangler.toml):
 ```
-navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 21 page-load requests)
+navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 22 page-load requests)
                               (independent agent; FC monitors health but does not dispatch;
                                historical agent_runs rows use agent_id='fast_tick')
                               (UTC hour 0, hour-only gate: dns-queue reaper + nrd_domains tiered
@@ -584,7 +584,7 @@ strategist:   10 */6 * * * (every 6h at :10 — relocated from orchestrator in P
                              the hour%6===0 inline-await dispatch was routinely starved
                              by analyst's 113s ahead of it)
 sparrow:      11 */6 * * * (every 6h at :11 — same rationale as strategist)
-cube-healer:  12 */6 * * *  (every 6 hours at :12 — 30-day bulk cube rebuild)
+cube-healer:  12 */6 * * *  (every 6 hours at :12 — 2-day hot heal; the 00:12 UTC run is a 14-day cold heal)
 app_store:    13 */6 * * * (every 6h at :13 — dedicated cron PR-Q)
 dark_web:     14 */6 * * * (every 6h at :14 — dedicated cron PR-Q)
 social:       15 */6 * * * (every 6h at :15 — dispatches social_discovery + social_monitor
@@ -1103,7 +1103,8 @@ as `averrow`) did rename — see §2.
 - **threat_cube_status** — status aggregates by hour (threat_type, severity, source_feed, status)
 - **threat_cube_arcs** — country × brand arc corridors by hour (country_code, target_brand_id, threat_type, severity, source_feed) with source_lat/source_lng centroid + first_seen/last_seen aggregates. Powers `/api/observatory/arcs` + `/api/observatory/brand-arcs`. Added in PR-Z.
 - For aggregate counts (by country, provider, brand, severity, type) **always query cubes instead of raw threats table**
-- Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and full 30-day rebuild every 6 hours by cube-healer
+- Cubes are rebuilt every 5 min (current + prev hour) by Navigator, and healed by cube-healer every 6 hours (2-day window; 14 days on the 00:12 UTC run)
+- Each rebuild (the `build*CubeForHour` builders and cube-healer) is one atomic `db.batch()` of a stale-row sweep (`cubeStaleSweepSQL`, `lib/cube-builder.ts`) plus the guarded upsert, so groups that vanished from the source (threats went inactive or moved group) are deleted instead of keeping their last count. The cube-healer window is hour-snapped (`healWindow`, `agents/cube-healer.ts`): `[top of hour − N days, top of current hour)`.
 - Cube builder: `src/lib/cube-builder.ts` — `buildGeoCubeForHour()`, `buildProviderCubeForHour()`, `buildBrandCubeForHour()`, `buildStatusCubeForHour()`, `buildArcsCubeForHour()`
 
 ### Pre-computed columns — use them, don't re-derive
@@ -1263,10 +1264,10 @@ behind a feature flag.
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard
-- Navigator pre-warms 21 page-load requests across 4 minute-gated phases. The
+- Navigator pre-warms 22 page-load requests across 4 minute-gated phases. The
   list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
   consumer; pinned by `test/navigator-warm-targets.test.ts`):
-  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
+  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + heatmap + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
   - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats
@@ -1276,6 +1277,7 @@ behind a feature flag.
   the client's literal query string, and normalise "no filter" spellings in the
   handler (e.g. observatory `source_feed` absent / `''` / `all` → one `all` key
   segment via `sourceFeedCacheSegment`). A warm on a key nothing reads is pure D1 spend.
+- **Observatory warms refresh keys near expiry, not just fill misses.** Navigator marks each synthetic request with `markCacheRefresh` (`lib/cache-refresh.ts`); observatory handlers read via `readRefreshableCache` and recompute once an entry is within `CACHE_REFRESH_MARGIN_S` (1800s) of expiry, rewriting it with `writeRefreshableCache` (stamps `cachedAt` in KV metadata). The marker is a module-private `WeakSet` on the Request object — not a header or query param — so an HTTP caller can't force a recompute.
 - Cache keys must encode all query parameters for correctness
 - **Org-scoped keys must use `scopeCacheSegment(scope)`** (`lib/scope-cache-key.ts`) for the scope segment — `global` for a null scope, else `org:<org_id>:<digest of the full sorted brand set>`. Never key on a slice/prefix of `scope.brand_ids` (the old `slice(0, 3)` key leaked cached data across orgs sharing their first 3 brands).
 - Default page loads (no search/filter, page 1) use reduced-dimension cache keys for higher hit rate
