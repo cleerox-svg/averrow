@@ -893,11 +893,8 @@ export const cartographerAgent: AgentModule = {
     let emailScanned = 0;
     let emailErrors = 0;
     try {
-      // Backfill canonical_domain from name for Tranco imports where domain is missing
-      await env.DB.prepare(`
-        UPDATE brands SET canonical_domain = LOWER(name)
-        WHERE source = 'tranco_import' AND (canonical_domain IS NULL OR canonical_domain = '')
-      `).run();
+      // (The old Tranco canonical_domain fix-up was removed: brands.canonical_domain is
+      // NOT NULL + UNIQUE, so it matched nothing and full-scanned brands every run.)
 
       // Include brands without canonical_domain by falling back to name
       const brandsToScan = await env.DB.prepare(`

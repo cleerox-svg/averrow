@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 
 vi.mock("../src/lib/brand-count-reconciler", () => ({
   reconcileBrandThreatCounts: vi.fn(async () => ({ brandsChecked: 3, drifted: 2, fixed: 2 })),
@@ -17,9 +17,12 @@ import {
   UNDO_CONFIRM_TOKEN,
   type LinkRow,
 } from "../src/lib/brand-link-cleanup";
-import { fuzzyMatchBrandDetailed } from "../src/lib/brandDetect";
+import { fuzzyMatchBrandDetailed, resetBrandCatalogCacheForTest } from "../src/lib/brandDetect";
 import { handleBrandLinkCleanup } from "../src/handlers/admin/brand-link-cleanup";
 import type { Env } from "../src/types";
+
+// loadBrandsCached memoizes the catalog per isolate; each test stubs its own.
+beforeEach(() => resetBrandCatalogCacheForTest());
 
 let rid = 0;
 function row(over: Partial<LinkRow>): LinkRow {

@@ -46,7 +46,7 @@
 import type { Env } from "../../types";
 import {
   fuzzyMatchBrandDetailed,
-  loadBrands,
+  loadBrandsCached,
   matchBrandAsLeftoverTarget,
   matchBrandToHost,
   normalizeBrand,
@@ -259,14 +259,14 @@ export async function runIdpReattribution(
     changed: 0, skipped_logged: 0, next_cursor: list.at(-1)?.rid ?? opts.cursor, done: list.length < opts.limit,
   };
 
-  let catalog: BrandRow[] | null = null;
+  let catalog: readonly BrandRow[] | null = null;
   const changes: Array<{ row: ReattributionRow; d: ReattributionDecision }> = [];
   for (const row of list) {
     // Cheap pre-pass: the scope / official-host / literal checks need no
     // catalog. A row that passes them always re-runs with the matcher.
     let d = decideReattribution(row, () => null, scope);
     if (d.action !== "keep" || d.keptBecause === "customer_tier") {
-      catalog ??= await loadBrands(env.DB);
+      catalog ??= await loadBrandsCached(env);
       const cat = catalog;
       d = decideReattribution(row, (h) => fuzzyMatchBrandDetailed(h, cat), scope);
     }

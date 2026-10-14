@@ -7,7 +7,8 @@
 
 import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
-import { GEO_UNMAPPED_POPULATION_SQL, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
+import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
@@ -1324,25 +1325,34 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // from 60s → 300s after the cache hit-rate stayed at ~22% (the
     // diagnostics endpoint's own short-TTL counters were dominating
     // the miss ring and re-firing scans every minute).
+    //
+    // INDEXED BY idx_threats_carto_phase0 (migration 0110: enriched_at IS
+    // NULL AND ip_address IS NOT NULL AND ip_address != '' AND
+    // enrichment_attempts < 5) on both queue counts: each WHERE repeats that
+    // predicate term for term, so the partial index (~1K rows) is always
+    // usable. Without the hint the planner picks an `ip_address > ?` range
+    // on idx_threats_ip_source_feed (~1.35M rows) — measured with EXPLAIN
+    // QUERY PLAN in prod, 2026-10-14. Keep the WHERE implying the index
+    // predicate; an unusable hint re-runs unhinted (withIndexHintFallback).
     const cartoQueueP = cachedCount(env, 'count.threats.carto_queue', 300, async () => {
-      const row = await env.DB.prepare(`
-        SELECT COUNT(*) AS n FROM threats
+      const row = await withIndexHintFallback(`
+        SELECT COUNT(*) AS n FROM threats INDEXED BY idx_threats_carto_phase0
         WHERE enriched_at IS NULL
           AND ip_address IS NOT NULL AND ip_address != ''
           AND enrichment_attempts < 5
           ${PRIVATE_IP_SQL_FILTER}
-      `).first<{ n: number }>();
+      `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
     }).then((n) => ({ n }));
 
     // Cartographer queue WITHOUT private IP filter (for comparison — shows inflation)
     const cartoQueueRawP = cachedCount(env, 'count.threats.carto_queue_raw', 300, async () => {
-      const row = await env.DB.prepare(`
-        SELECT COUNT(*) AS n FROM threats
+      const row = await withIndexHintFallback(`
+        SELECT COUNT(*) AS n FROM threats INDEXED BY idx_threats_carto_phase0
         WHERE enriched_at IS NULL
           AND ip_address IS NOT NULL AND ip_address != ''
           AND enrichment_attempts < 5
-      `).first<{ n: number }>();
+      `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
     }).then((n) => ({ n }));
 
@@ -1361,11 +1371,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // Cache key bumped to .v2 alongside the semantic change so a stale
     // payload can't serve the old definition for a TTL after deploy.
     const cartoExhaustedP = cachedCount(env, 'count.threats.carto_exhausted.v2', 300, async () => {
-      const row = await env.DB.prepare(`
-        SELECT COUNT(*) AS n FROM threats
+      const row = await withIndexHintFallback(`
+        SELECT COUNT(*) AS n FROM ${GEO_UNMAPPED_THREATS_FROM}
         WHERE ${GEO_UNMAPPED_POPULATION_SQL}
           AND ${GEO_TERMINAL_SQL}
-      `).first<{ n: number }>();
+      `, (q) => env.DB.prepare(q).first<{ n: number }>());
       return row?.n ?? 0;
     }).then((n) => ({ n }));
 
@@ -1415,15 +1425,16 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     //
     // Same predicate + population as the headline above, so this list
     // sums to `cartographer_exhausted` (modulo the LIMIT 15 tail).
-    const cartoExhaustedByFeedP = env.DB.prepare(`
+    const cartoExhaustedByFeedP = withIndexHintFallback(`
       SELECT source_feed, threat_type, COUNT(*) AS n
-        FROM threats
+        FROM ${GEO_UNMAPPED_THREATS_FROM}
        WHERE ${GEO_UNMAPPED_POPULATION_SQL}
          AND ${GEO_TERMINAL_SQL}
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 15
-    `).all<{ source_feed: string; threat_type: string; n: number }>();
+    `,
+      (q) => env.DB.prepare(q).all<{ source_feed: string; threat_type: string; n: number }>());
 
     // Alerts table growth by brand tier (NX2 tier-gate visibility).
     // The createAlert tier gate skips inserts when brands.tier='tracked'

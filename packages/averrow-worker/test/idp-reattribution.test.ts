@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import {
   decideReattribution,
   handleIdpReattribution,
@@ -6,9 +6,12 @@ import {
   runIdpReattribution,
   type ReattributionRow,
 } from "../src/handlers/admin/idpReattribution";
-import { fuzzyMatchBrandDetailed, type BrandRow } from "../src/lib/brandDetect";
+import { fuzzyMatchBrandDetailed, resetBrandCatalogCacheForTest, type BrandRow } from "../src/lib/brandDetect";
 import { decideLink, type LinkRow } from "../src/lib/brand-link-cleanup";
 import type { Env } from "../src/types";
+
+// loadBrandsCached memoizes the catalog per isolate; each test stubs its own.
+beforeEach(() => resetBrandCatalogCacheForTest());
 
 const CATALOG: BrandRow[] = [
   { id: "b_okta", name: "Okta", canonical_domain: "okta.com", tier: "monitored" },

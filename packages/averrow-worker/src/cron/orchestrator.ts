@@ -1128,14 +1128,24 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     logger.error('threat_feed_scan_email_security_error', { error: err instanceof Error ? err.message : String(err) });
   }
 
-  // Email grade change detection — compare latest scan with previous grade
+  // Email grade change detection — compare latest scan with previous grade.
+  // Only recently scanned brands can carry a NEW grade change, so a 23h window
+  // bounds the join to that set (plan: SEARCH b USING idx_brands_email_scan_due
+  // + idx_ess_brand_scanned) instead of joining all brands × email_security_scans
+  // (~535K rows) with a correlated MAX subquery every hourly tick (~33M D1
+  // reads/day, measured 2026-10-14). 23h is wide enough to survive a long
+  // orchestrator outage, and stays under the 24h dedupe below so a change seen
+  // on several ticks inside the window never alerts twice. Side effect,
+  // intended: a change is no longer re-detected for up to 7 days (until the
+  // next scan), so it stops re-alerting once the 24h dedupe lapses.
   try {
     const gradeChanges = await env.DB.prepare(`
       SELECT b.id AS brand_id, b.name, b.email_security_grade AS current_grade,
              ess.email_security_grade AS previous_grade
       FROM brands b
       JOIN email_security_scans ess ON ess.brand_id = b.id
-      WHERE b.email_security_grade IS NOT NULL
+      WHERE b.email_security_scanned_at >= datetime('now', '-23 hours')
+        AND b.email_security_grade IS NOT NULL
         AND ess.email_security_grade IS NOT NULL
         AND b.email_security_grade != ess.email_security_grade
         AND ess.scanned_at < b.email_security_scanned_at

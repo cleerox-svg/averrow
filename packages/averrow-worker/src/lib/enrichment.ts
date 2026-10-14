@@ -251,7 +251,7 @@ export async function runEnrichmentPipeline(env: Env): Promise<EnrichmentResult>
 
   // ─── Stage 4: Brand Auto-Detection ────────────────────────────
   try {
-    const brandResult = await enrichBrands(env.DB);
+    const brandResult = await enrichBrands(env.DB, env.CACHE);
     result.brandsMatched = brandResult.matched;
     // Threats tagged IdP-family only AFTER insert (weak lure + newly known
     // brand, tagIdpAfterBrandMatch) never pass through the reconciler's

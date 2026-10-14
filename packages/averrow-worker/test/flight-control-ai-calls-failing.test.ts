@@ -88,7 +88,8 @@ describe.skipIf(!hasSqlite())("Flight Control: platform_ai_calls_failing conjunc
   const emit = vi.mocked(emitPlatformNotification);
 
   beforeEach(() => {
-    raw = openDerivedDb(TABLES);
+    // FC pins these two partial indexes with INDEXED BY (D1 read-spend fix).
+    raw = openDerivedDb(TABLES, { indexes: ["idx_threats_carto_phase0", "idx_threats_stuck_geo"] });
     log = [];
     emit.mockClear();
     vi.spyOn(console, "error").mockImplementation(() => {});

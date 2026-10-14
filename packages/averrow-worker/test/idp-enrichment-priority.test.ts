@@ -198,7 +198,7 @@ describe("VT slice error backoff", () => {
 describe("late IdP tags reach the DNS priority lane", () => {
   it("enrichment Stage 4 promotes after a brand-match pass that matched rows", () => {
     const src = readFileSync(resolve(__dirname, "..", "src", "lib", "enrichment.ts"), "utf8");
-    const stage = src.indexOf("await enrichBrands(env.DB)");
+    const stage = src.indexOf("await enrichBrands(env.DB");
     const block = src.slice(stage, stage + 1200);
     expect(block).toMatch(/if \(brandResult\.matched > 0 && env\.DNS_QUEUE_DB\)/);
     expect(block).toContain("prioritizeIdpDns(env, 7, 200)");

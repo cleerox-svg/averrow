@@ -8,12 +8,16 @@
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 
 vi.mock("../src/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 
 import { GENERIC_SCAN_WINDOW, runBrandLinkCleanup, type CleanupBatchResult } from "../src/lib/brand-link-cleanup";
 import type { Env } from "../src/types";
+import { resetBrandCatalogCacheForTest } from "../src/lib/brandDetect";
+
+// loadBrandsCached memoizes the catalog per isolate; each test stubs its own.
+beforeEach(() => resetBrandCatalogCacheForTest());
 
 interface RawStmt { all(...p: unknown[]): unknown[]; run(...p: unknown[]): { changes: number | bigint } }
 interface RawDb { exec(sql: string): void; prepare(sql: string): RawStmt }
