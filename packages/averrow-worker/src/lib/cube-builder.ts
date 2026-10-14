@@ -1,7 +1,7 @@
 // Cube builder — Phase 2 of the Observatory OLAP rollout.
 //
 // Builds one hour bucket at a time into the hour-bucketed cube tables
-// (threat_cube_geo / _provider / _brand / _status / _arcs).
+// (threat_cube_geo / _provider / _brand / _status / _arcs / _velocity).
 //
 // Each build is ONE atomic db.batch() of two statements:
 //   1. a stale-row sweep — DELETE the hour's cube rows whose key no longer
@@ -114,7 +114,7 @@ function extractRowsWritten(meta: D1Result['meta'] | undefined): number {
 // cube-healer), and the source filter. The sweep SQL is generated from the
 // spec so its key definition cannot drift from the upsert's GROUP BY.
 
-export type CubeName = 'geo' | 'provider' | 'brand' | 'status' | 'arcs';
+export type CubeName = 'geo' | 'provider' | 'brand' | 'status' | 'arcs' | 'velocity';
 
 interface CubeKeySpec {
   table: string;
@@ -125,6 +125,10 @@ interface CubeKeySpec {
 }
 
 const UNKNOWN = (col: string) => `COALESCE(${col}, 'unknown')`;
+
+/** Source predicate of the velocity cube — shared by the builder, the
+ *  stale sweep and cube_healer's heal so all three hit the partial index. */
+export const VELOCITY_SOURCE_FILTER = " AND status = 'active' AND weaponization_flag IN ('very_fast', 'fast')";
 
 export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
   geo: {
@@ -158,6 +162,15 @@ export const CUBE_KEY_SPECS: Record<CubeName, CubeKeySpec> = {
     keyExprs: ["COALESCE(country_code, 'XX')", 'target_brand_id', UNKNOWN('threat_type'),
       UNKNOWN('severity'), UNKNOWN('source_feed')],
     sourceFilter: " AND status = 'active' AND lat IS NOT NULL AND lng IS NOT NULL AND target_brand_id IS NOT NULL",
+  },
+  // Weaponization velocity (B3, migration 0300). The filter text must stay
+  // `status = 'active' AND weaponization_flag IN ('very_fast', 'fast')` so
+  // SQLite matches the partial covering index idx_threats_velocity_fast_created.
+  velocity: {
+    table: 'threat_cube_velocity',
+    keyCols: ['country_code', 'flag'],
+    keyExprs: ["COALESCE(country_code, 'XX')", 'weaponization_flag'],
+    sourceFilter: VELOCITY_SOURCE_FILTER,
   },
 };
 
@@ -802,4 +815,46 @@ export async function countArcsCubeForHour(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * Build (or rebuild) a single hour of the weaponization-velocity cube
+ * (migration 0300).
+ *
+ * Window: [hourBucket, hourBucket + 1 hour)
+ * Source: threats WHERE status='active' AND weaponization_flag IN ('very_fast','fast')
+ * Grain : (hour, country_code, flag)
+ *
+ * NULL country → 'XX' (same normalisation as geo / arcs). Served by the
+ * partial covering index idx_threats_velocity_fast_created, so a build reads
+ * only the flagged index entries of the hour. Not called by Navigator — the
+ * flag is stamped after ingest (cube_healer), so the live hours carry
+ * almost no flags; cube_healer heals this cube (see agents/cube-healer.ts).
+ * Metadata only — nothing may use it to gate triage.
+ */
+export async function buildVelocityCubeForHour(
+  env: Env,
+  hourBucket: string,
+): Promise<CubeBuildResult> {
+  return sweepAndUpsertHour(env, 'velocity', hourBucket, `
+      INSERT INTO threat_cube_velocity
+        (hour_bucket, country_code, flag, threat_count, updated_at)
+      SELECT
+        ?1,
+        COALESCE(country_code, 'XX'),
+        weaponization_flag,
+        COUNT(*),
+        datetime('now')
+      FROM threats
+      WHERE created_at >= ?2
+        AND created_at < ?3
+        AND status = 'active'
+        AND weaponization_flag IN ('very_fast', 'fast')
+      GROUP BY 2, 3
+      ON CONFLICT(hour_bucket, country_code, flag)
+      DO UPDATE SET
+        threat_count = excluded.threat_count,
+        updated_at = excluded.updated_at
+      WHERE threat_cube_velocity.threat_count IS NOT excluded.threat_count
+    `);
 }

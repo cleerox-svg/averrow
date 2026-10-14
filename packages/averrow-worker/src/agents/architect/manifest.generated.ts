@@ -244,11 +244,12 @@ export const REPO_MANIFEST: RepoInventory = {
         "threat_cube_brand",
         "threat_cube_geo",
         "threat_cube_provider",
-        "threat_cube_status"
+        "threat_cube_status",
+        "threat_cube_velocity"
       ],
       "ai_models_referenced": [],
-      "loc": 523,
-      "last_modified": "2026-10-14T03:07:31.133Z"
+      "loc": 637,
+      "last_modified": "2026-10-14T03:40:09.148Z"
     },
     {
       "name": "curator",

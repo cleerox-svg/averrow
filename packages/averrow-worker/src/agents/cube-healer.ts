@@ -57,11 +57,20 @@
  *   agentOutputs as severity='high' diagnostics; only a catastrophic
  *   geo-cube failure throws upstream (→ status='failed').
  *
- *   The "partial" status that the legacy runCubeHealer() set manually
- *   on per-cube failures is downgraded to 'success' in agent_runs but
- *   surfaced as a diagnostic agent_output row (severity='high'). When
- *   AgentResult gains a `partial: boolean` field in Phase 4, we'll
- *   restore the strict partial semantic.
+ *   A cube with a few failed days still finishes 'success' with a
+ *   diagnostic agent_output row (severity='high'). When MORE THAN HALF of
+ *   any cube's days fail, the run returns AgentResult.degraded →
+ *   executeAgent finalizes agent_runs.status='partial' (completed_at set),
+ *   so a mostly-stale cube never reads as a healthy run.
+ *
+ * Observatory Phase B additions (no new cron — all inside this agent):
+ *   - threat_cube_velocity (B3, migration 0300) healed with the other
+ *     cubes; its cold window is 90 days (VELOCITY_COLD_HEAL_WINDOW_DAYS),
+ *     read through a partial covering index.
+ *   - incremental velocity stamping: one ≤500-row page per run
+ *     (lib/velocity-writer.ts runVelocityStampPage) before the heals.
+ *   - takedown_outcome_daily (B2, migration 0299): rebuilt on the cold
+ *     (UTC hour 0) tick only — hour-only gate, per the cron-audit rule.
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from '../lib/agentRunner';
@@ -74,6 +83,25 @@ import { cubeStaleSweepSQL, type CubeName } from '../lib/cube-builder';
 
 export const HOT_HEAL_WINDOW_DAYS = 2;
 export const COLD_HEAL_WINDOW_DAYS = 14;
+/**
+ * Velocity cube cold window (B3). Wider than the other cubes' 14 days because
+ * the flag is stamped AFTER ingest (incremental page below, plus the admin
+ * backfill), so old hours keep changing, and /velocity-nodes serves up to
+ * 90d. Affordable because the heal reads only the flagged rows through the
+ * partial covering index idx_threats_velocity_fast_created (0300).
+ */
+export const VELOCITY_COLD_HEAL_WINDOW_DAYS = 90;
+
+/** A cube with more than this fraction of its day chunks failed finishes
+ *  the run degraded ('partial'), not 'success'. */
+export const DEGRADED_FAILED_DAY_FRACTION = 0.5;
+
+/** Pure: the cubes whose failed-day fraction exceeds the degraded threshold. */
+export function degradedCubes(results: ReadonlyArray<{ table: CubeName; failed: number; chunks: number }>): CubeName[] {
+  return results
+    .filter((r) => r.chunks > 0 && r.failed / r.chunks > DEGRADED_FAILED_DAY_FRACTION)
+    .map((r) => r.table);
+}
 
 /**
  * Decide whether the current tick should run a cold (full 14d) or hot (2d) heal.
@@ -260,6 +288,31 @@ function healSQL(table: CubeName): string {
            OR threat_cube_arcs.source_lat IS NOT excluded.source_lat
            OR threat_cube_arcs.source_lng IS NOT excluded.source_lng
       `;
+    case 'velocity':
+      // Observatory Phase B (B3, migration 0300). The predicate text matches
+      // idx_threats_velocity_fast_created's partial WHERE so the read is a
+      // covering-index range over the window's FLAGGED rows only.
+      return `
+        INSERT INTO threat_cube_velocity
+          (hour_bucket, country_code, flag, threat_count, updated_at)
+        SELECT
+          strftime('%Y-%m-%d %H:00:00', created_at),
+          COALESCE(country_code, 'XX'),
+          weaponization_flag,
+          COUNT(*),
+          datetime('now')
+        FROM threats
+        WHERE created_at >= ?1
+          AND created_at < ?2
+          AND status = 'active'
+          AND weaponization_flag IN ('very_fast', 'fast')
+        GROUP BY 1, 2, 3
+        ON CONFLICT(hour_bucket, country_code, flag)
+        DO UPDATE SET
+          threat_count = excluded.threat_count,
+          updated_at = excluded.updated_at
+        WHERE threat_cube_velocity.threat_count IS NOT excluded.threat_count
+      `;
   }
 }
 
@@ -351,7 +404,7 @@ export function healFailureOutput(table: CubeName, r: HealCubeResult, rowsLanded
 export const cubeHealerAgent: AgentModule = {
   name: 'cube_healer',
   displayName: 'Cube Healer',
-  description: 'OLAP cube maintenance — 6-hourly 2-day heal (14-day once a day) + brand summaries',
+  description: 'OLAP cube maintenance — 6-hourly 2-day heal (14-day once a day; velocity 90-day) + velocity stamping + daily takedown outcome rollup + brand summaries',
   color: '#0EA5E9',
   trigger: 'scheduled',
   requiresApproval: false,
@@ -370,7 +423,10 @@ export const cubeHealerAgent: AgentModule = {
     { kind: 'd1_table', name: 'threat_cube_provider' },
     { kind: 'd1_table', name: 'threat_cube_status' },
     { kind: 'd1_table', name: 'threat_cube_arcs' },
-    // Also writes brands.threat_count via lib/brand-count-reconciler.ts —
+    { kind: 'd1_table', name: 'threat_cube_velocity' },
+    // Also writes threats.weaponization_* (lib/velocity-writer.ts) and
+    // takedown_outcome_daily (lib/takedown-outcome-rollup.ts) — not declared
+    // for the same reason as below. Also writes brands.threat_count via lib/brand-count-reconciler.ts —
     // not declared here because the resource-drift check extracts only SQL
     // in this file (same as the dark-web/app-store summaries above).
   ],
@@ -397,22 +453,72 @@ export const cubeHealerAgent: AgentModule = {
     // Snapped to the top of the hour at execute() time (wall clock, not the
     // cron tick) so the upper bound always excludes the current partial hour.
     const window = healWindow(new Date(), windowDays);
+    const velocityWindow = scope === 'cold'
+      ? healWindow(new Date(), VELOCITY_COLD_HEAL_WINDOW_DAYS)
+      : window;
 
-    // ── Cube heals (geo, provider, brand, status, arcs) ─────────
+    // ── Velocity stamping (B3) ──────────────────────────────────
+    // One bounded incremental page (≤500 rows, KV keyset cursor over the
+    // partial index idx_threats_velocity_unstamped) BEFORE the cube heals,
+    // so the velocity heal below already counts what this page stamped.
+    // Every run (no time gate). Metadata only — never gates triage.
+    let velocityStamp: { scanned: number; written: number; cursorReset: boolean } | null = null;
+    try {
+      const { runVelocityStampPage } = await import('../lib/velocity-writer');
+      const r = await runVelocityStampPage(env);
+      velocityStamp = { scanned: r.scanned, written: r.written, cursorReset: r.cursor_to === '' };
+      rowsWritten += r.written;
+    } catch (err) {
+      partialFailures.push({
+        type: 'diagnostic',
+        summary: 'cube_healer velocity stamping page failed',
+        severity: 'medium',
+        details: { error: err instanceof Error ? err.message : String(err), stage: 'velocity_stamp', rowsLanded: rowsWritten },
+      });
+    }
+
+    // ── Cube heals (geo, provider, brand, status, arcs, velocity) ─
     // Each cube heals day by day (healCube). A failed day becomes a
     // partial-failure diagnostic and the remaining days and cubes still
     // run. Geo keeps its legacy "catastrophic" contract: when EVERY geo day
-    // fails, throw up to executeAgent() (→ status='failed'). Status is the
-    // only path that reconciles status mutations (active → down →
-    // remediated) for older hour buckets; arcs feeds the Observatory globe.
-    for (const table of ['geo', 'provider', 'brand', 'status', 'arcs'] as const) {
-      const r = await healCube(env.DB, table, window);
+    // fails, throw up to executeAgent() (→ status='failed'). When MORE THAN
+    // HALF of any cube's days fail, the run finishes degraded (→
+    // status='partial', AgentResult.degraded) instead of 'success' — that
+    // cube is mostly stale and the run must not read as healthy. Status is
+    // the only path that reconciles status mutations (active → down →
+    // remediated) for older hour buckets; arcs feeds the Observatory globe;
+    // velocity uses its own (90-day on cold) window.
+    const healOutcomes: Array<{ table: CubeName; failed: number; chunks: number }> = [];
+    for (const table of ['geo', 'provider', 'brand', 'status', 'arcs', 'velocity'] as const) {
+      const r = await healCube(env.DB, table, table === 'velocity' ? velocityWindow : window);
       rowsWritten += r.rowsWritten;
+      healOutcomes.push({ table, failed: r.failures.length, chunks: r.chunks });
       if (r.failures.length === 0) continue;
       if (table === 'geo' && r.failures.length === r.chunks) {
         throw new Error(`cube_healer geo heal failed for every day: ${r.failures[0]?.error ?? "unknown error"}`);
       }
       partialFailures.push(healFailureOutput(table, r, rowsWritten));
+    }
+    const mostlyFailed = degradedCubes(healOutcomes);
+
+    // ── Takedown outcome rollup (B2) ────────────────────────────
+    // Once per UTC day, on the cold (hour-0, 00:12) tick only. HOUR-only gate
+    // via pickHealScope — never a minute check (CLAUDE.md §6 cron-audit rule).
+    let takedownRollup: { sourceRows: number; cells: number; rowsWritten: number; staleDeleted: number } | null = null;
+    if (scope === 'cold') {
+      try {
+        const { runTakedownOutcomeRollup } = await import('../lib/takedown-outcome-rollup');
+        const r = await runTakedownOutcomeRollup(env);
+        takedownRollup = { sourceRows: r.sourceRows, cells: r.cells, rowsWritten: r.rowsWritten, staleDeleted: r.staleDeleted };
+        rowsWritten += r.rowsWritten;
+      } catch (err) {
+        partialFailures.push({
+          type: 'diagnostic',
+          summary: 'cube_healer takedown outcome rollup failed',
+          severity: 'high',
+          details: { error: err instanceof Error ? err.message : String(err), stage: 'takedown_outcome_rollup', rowsLanded: rowsWritten },
+        });
+      }
     }
 
     // ── Dark web + app store brand summaries ───────────────────
@@ -515,8 +621,16 @@ export const cubeHealerAgent: AgentModule = {
       itemsProcessed: rowsWritten,
       itemsCreated: rowsWritten,
       itemsUpdated: 0,
-      output: { rowsWritten, partialFailureCount: partialFailures.length, scope, windowDays, windowStart: window.start, windowEnd: window.end, brandDrift },
+      output: {
+        rowsWritten, partialFailureCount: partialFailures.length, scope, windowDays,
+        windowStart: window.start, windowEnd: window.end, brandDrift,
+        velocityWindowStart: velocityWindow.start, velocityStamp, takedownRollup,
+        degradedCubes: mostlyFailed,
+      },
       agentOutputs: partialFailures,
+      ...(mostlyFailed.length > 0
+        ? { degraded: { reason: `cube heal failed for more than half the days of: ${mostlyFailed.join(', ')}` } }
+        : {}),
     };
   },
 };
