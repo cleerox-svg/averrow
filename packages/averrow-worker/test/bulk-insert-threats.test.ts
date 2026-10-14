@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { bulkInsertThreats, THREAT_INSERT_CHUNK } from "../src/lib/feedRunner";
+import { bulkInsertThreats, THREAT_INSERT_CHUNK, MALWARE_FAMILY_FILL_CHUNK } from "../src/lib/feedRunner";
 import type { ThreatRow } from "../src/feeds/types";
 import type { D1Database } from "@cloudflare/workers-types";
 
@@ -86,6 +86,47 @@ describe("bulkInsertThreats", () => {
     expect(r.itemsDuplicate).toBe(20); // residual = 100 - 30 - 50
     expect(r.itemsNew + r.itemsDuplicate + r.itemsError).toBe(100);
     errSpy.mockRestore();
+  });
+
+  it("fills malware_family only for duplicates that carry one, without touching accounting", async () => {
+    const sqls: string[][] = [];
+    const binds: unknown[][] = [];
+    let call = 0;
+    const db = {
+      prepare(sql: string) {
+        return { bind(...args: unknown[]) { binds.push(args); return { __sql: sql }; } };
+      },
+      async batch(stmts: Array<{ __sql: string }>) {
+        sqls.push(stmts.map((s) => s.__sql));
+        // First batch = inserts: row 0 new, rows 1-3 duplicates.
+        if (call++ === 0) return stmts.map((_, k) => ({ meta: { changes: k === 0 ? 1 : 0 } }));
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    } as unknown as D1Database;
+    const rows = makeRows(4);
+    rows[0]!.malware_family = "Emotet";      // new → set by the INSERT, no fill
+    rows[1]!.malware_family = "Cobalt Strike"; // duplicate → filled
+    rows[3]!.malware_family = null;           // duplicate, no family → no fill
+    const r = await bulkInsertThreats(db, rows);
+    expect(r).toEqual({ itemsNew: 1, itemsDuplicate: 3, itemsError: 0 });
+    expect(sqls).toHaveLength(2);
+    expect(sqls[0]!.every((s) => /INSERT OR IGNORE INTO threats[\s\S]*malware_family/.test(s))).toBe(true);
+    expect(sqls[1]).toEqual(["UPDATE threats SET malware_family = ? WHERE id = ? AND malware_family IS NULL"]);
+    expect(binds[binds.length - 1]).toEqual(["Cobalt Strike", "id-1"]);
+  });
+
+  it("batches the malware_family fill at MALWARE_FAMILY_FILL_CHUNK (200), not the insert chunk", async () => {
+    const { db, batchSizes } = makeDb({ newRatio: 0 }); // every insert is a duplicate
+    const rows = makeRows(250).map((r) => ({ ...r, malware_family: "Emotet" }));
+    await bulkInsertThreats(db, rows);
+    expect(MALWARE_FAMILY_FILL_CHUNK).toBe(200);
+    expect(batchSizes).toEqual([50, 50, 50, 50, 50, 200, 50]);
+  });
+
+  it("issues no fill batch when no row carries a malware family", async () => {
+    const { db, batchSizes } = makeDb({ newRatio: 0 });
+    await bulkInsertThreats(db, makeRows(10));
+    expect(batchSizes).toEqual([10]);
   });
 
   it("honors a custom chunk size", async () => {

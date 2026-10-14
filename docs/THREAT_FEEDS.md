@@ -152,7 +152,7 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
 | **URLhaus** | `urlhaus.ts` | abuse.ch | Malware distribution URLs |
-| **ThreatFox** | `threatfox.ts` | abuse.ch | IOCs (URLs, domains, IPs, hashes) |
+| **ThreatFox** | `threatfox.ts` | abuse.ch | IOCs (URLs, domains, IPs; hashes skipped). Stores the malware family in `threats.malware_family` (migration 0295: `malware_printable`, else `malware`; "Unknown malware" → NULL; a re-reported IOC fills a NULL value) |
 | **Feodo** | `feodo.ts` | abuse.ch | Botnet C2 server tracking |
 | **MalwareBazaar** | `malwarebazaar.ts` | abuse.ch | Malware sample metadata |
 | **SSL Blacklist** | `sslbl.ts` | abuse.ch | Malicious SSL certificates |

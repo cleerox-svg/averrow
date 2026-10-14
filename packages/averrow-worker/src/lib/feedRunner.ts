@@ -88,9 +88,9 @@ function buildThreatInsertStmt(
         target_brand_id, hosting_provider_id, ip_address, asn, country_code,
         registrar, status, confidence_score, campaign_id, ioc_value, severity,
         is_private_ip, technique, impersonated_idp, named_threat_id,
-        ssl_cert_serial, ssl_cert_issuer, ssl_san_hash,
+        ssl_cert_serial, ssl_cert_issuer, ssl_san_hash, malware_family,
         first_seen, last_seen, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
              datetime('now'), datetime('now'), datetime('now'))`
   ).bind(
     threat.id,
@@ -116,7 +116,23 @@ function buildThreatInsertStmt(
     threat.ssl_cert_serial ?? null,
     threat.ssl_cert_issuer ?? null,
     threat.ssl_san_hash ?? null,
+    threat.malware_family ?? null,
   );
+}
+
+/**
+ * Fill `malware_family` onto an existing row that does not have one yet —
+ * used for an IOC re-reported after the row was first inserted without a
+ * family (e.g. before migration 0295). Kept separate from the INSERT OR
+ * IGNORE so the insert's meta.changes still means "new row" (an upsert
+ * would report the fill as a change and count a duplicate as new), and so
+ * IGNORE keeps its exact semantics for every feed. Only called for rows
+ * that carry a family, so feeds that never set one pay nothing.
+ */
+function buildMalwareFamilyFillStmt(db: D1Database, threat: ThreatRow): D1PreparedStatement {
+  return db.prepare(
+    "UPDATE threats SET malware_family = ? WHERE id = ? AND malware_family IS NULL",
+  ).bind(threat.malware_family ?? null, threat.id);
 }
 
 export async function insertThreat(db: D1Database, threat: ThreatRow): Promise<boolean> {
@@ -179,6 +195,14 @@ async function bumpBrandThreatCount(db: D1Database, brandId: string, n: number):
 export const THREAT_INSERT_CHUNK = 50;
 
 /**
+ * Statements per db.batch() for the malware_family duplicate fill. Each is a
+ * PK-lookup UPDATE that writes only a NULL column, so it can use a much
+ * larger batch than the inserts (well under D1's per-batch statement cap)
+ * to cut round-trips.
+ */
+export const MALWARE_FAMILY_FILL_CHUNK = 200;
+
+/**
  * Bulk-insert threats via chunked `db.batch(INSERT OR IGNORE)` — the
  * canonical platform pattern (CLAUDE.md §8). Replaces the per-row
  * isDuplicate(KV GET)→insertThreat(D1)→markSeen(KV PUT) loop, which does
@@ -217,6 +241,9 @@ export async function bulkInsertThreats(
   // all chunks — bounded by the number of distinct brands in the payload,
   // never a full-table scan. See insertThreat for the same rationale.
   const brandBumps = new Map<string, number>();
+  // Duplicates (insert ignored) that carry a malware family — the existing
+  // row may predate it; filled after the inserts, only where still NULL.
+  const familyFills: ThreatRow[] = [];
   for (let i = 0; i < stmts.length; i += chunkSize) {
     const chunk = stmts.slice(i, i + chunkSize);
     try {
@@ -224,6 +251,9 @@ export async function bulkInsertThreats(
       for (let k = 0; k < results.length; k++) {
         const changed = results[k]?.meta?.changes ?? 0;
         itemsNew += changed;
+        if (changed === 0 && rows[i + k]?.malware_family) {
+          familyFills.push(rows[i + k]!);
+        }
         if (changed > 0) {
           const brandId = rows[i + k]?.target_brand_id;
           if (brandId) brandBumps.set(brandId, (brandBumps.get(brandId) ?? 0) + changed);
@@ -252,6 +282,19 @@ export async function bulkInsertThreats(
       );
     } catch (err) {
       console.error(`[bulkInsertThreats] brand threat_count flush failed:`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // malware_family back-fill for re-reported IOCs — best-effort, never
+  // throws, and does not touch the new/duplicate/error accounting. Each
+  // UPDATE is a PK lookup that writes only when the column is still NULL.
+  for (let i = 0; i < familyFills.length; i += MALWARE_FAMILY_FILL_CHUNK) {
+    try {
+      await db.batch(
+        familyFills.slice(i, i + MALWARE_FAMILY_FILL_CHUNK).map((r) => buildMalwareFamilyFillStmt(db, r)),
+      );
+    } catch (err) {
+      console.error(`[bulkInsertThreats] malware_family fill failed:`, err instanceof Error ? err.message : String(err));
     }
   }
 

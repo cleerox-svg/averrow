@@ -55,6 +55,12 @@ export interface ThreatRow {
   ssl_cert_serial?: string | null;  // cert serial number as reported by the source
   ssl_cert_issuer?: string | null;  // issuer O/CN (or fingerprint from calidog)
   ssl_san_hash?: string | null;     // sha256 hex of the normalized SAN set — computeSanHash()
+  // Malware family as reported by the source (migration 0295). Set by
+  // ThreatFox; NULL for every other feed. bulkInsertThreats fills it onto
+  // an existing NULL row when the IOC is re-reported. The single-row
+  // insertThreat path does NOT do that duplicate fill — it only writes the
+  // value on a brand-new row.
+  malware_family?: string | null;
 }
 
 /** Helper to generate a deterministic ID from source + IOC to prevent duplicates */

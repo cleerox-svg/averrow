@@ -418,7 +418,8 @@ describe("abuse-mailbox technique precedence (real SQLite)", async () => {
       malicious_domain TEXT, target_brand_id TEXT, hosting_provider_id TEXT, ip_address TEXT, asn TEXT,
       country_code TEXT, registrar TEXT, status TEXT, confidence_score INTEGER, campaign_id TEXT, ioc_value TEXT,
       severity TEXT, is_private_ip INTEGER, technique TEXT, impersonated_idp TEXT, named_threat_id TEXT,
-      ssl_cert_serial TEXT, ssl_cert_issuer TEXT, ssl_san_hash TEXT, first_seen TEXT, last_seen TEXT, created_at TEXT)`);
+      ssl_cert_serial TEXT, ssl_cert_issuer TEXT, ssl_san_hash TEXT, malware_family TEXT,
+      first_seen TEXT, last_seen TEXT, created_at TEXT)`);
     const DB = {
       prepare: (q: string) => ({
         bind: (...a: unknown[]) => ({

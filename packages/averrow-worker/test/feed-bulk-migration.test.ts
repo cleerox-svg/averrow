@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { openphish } from "../src/feeds/openphish";
 import { urlhaus } from "../src/feeds/urlhaus";
-import { threatfox } from "../src/feeds/threatfox";
+import { threatfox, malwareFamily } from "../src/feeds/threatfox";
 import { feodo } from "../src/feeds/feodo";
 import { tweetfeed } from "../src/feeds/tweetfeed";
 import type { Env } from "../src/types";
@@ -23,6 +23,7 @@ const COL_IP = 7;
 const COL_STATUS = 11;
 const COL_IOC_VALUE = 14;
 const COL_SEVERITY = 15;
+const COL_MALWARE_FAMILY = 23;
 
 function makeEnv(): { env: Env; threatBinds: unknown[][] } {
   const threatBinds: unknown[][] = [];
@@ -81,6 +82,7 @@ describe("openphish (bulk)", () => {
     expect(threatBinds.map((b) => b[COL_MAL_URL])).toEqual(["http://a.com/x", "https://b.com"]);
     expect(threatBinds[0]![COL_THREAT_TYPE]).toBe("phishing");
     expect(threatBinds[0]![COL_SOURCE_FEED]).toBe("openphish");
+    expect(threatBinds[0]![COL_MALWARE_FAMILY]).toBeNull(); // only ThreatFox sets it
   });
 });
 
@@ -125,6 +127,32 @@ describe("threatfox (bulk)", () => {
     const ip = threatBinds.find((b) => b[COL_IP] === "1.2.3.4")!; // port stripped
     expect(ip[COL_THREAT_TYPE]).toBe("c2");
     expect(ip[COL_SEVERITY]).toBe("high"); // conf 75
+  });
+
+  it("keeps the malware family: printable name first, malpedia key fallback, unknown → null", async () => {
+    mockFetch({
+      query_status: "ok",
+      data: [
+        { id: 1, ioc: "cs.example", ioc_type: "domain", threat_type: "botnet_cc", malware: "win.cobalt_strike", malware_printable: "Cobalt Strike", confidence_level: 100 },
+        { id: 2, ioc: "keyonly.example", ioc_type: "domain", threat_type: "botnet_cc", malware: "win.remcos", confidence_level: 100 },
+        { id: 3, ioc: "unk.example", ioc_type: "domain", threat_type: "payload_delivery", malware: "unknown", malware_printable: "Unknown malware", confidence_level: 50 },
+        { id: 4, ioc: "none.example", ioc_type: "domain", threat_type: "payload_delivery", confidence_level: 50 },
+      ],
+    });
+    const { env, threatBinds } = makeEnv();
+    await threatfox.ingest({ env, feedName: "threatfox", feedUrl: "https://x" });
+    const fam = (d: string) => threatBinds.find((b) => b[COL_MAL_DOMAIN] === d)![COL_MALWARE_FAMILY];
+    expect(fam("cs.example")).toBe("Cobalt Strike");
+    expect(fam("keyonly.example")).toBe("win.remcos");
+    expect(fam("unk.example")).toBeNull();
+    expect(fam("none.example")).toBeNull();
+  });
+
+  it("malwareFamily trims, skips blanks and the unknown placeholders", () => {
+    expect(malwareFamily("  Emotet ", "win.emotet")).toBe("Emotet");
+    expect(malwareFamily("", "win.emotet")).toBe("win.emotet");
+    expect(malwareFamily("Unknown malware", "unknown")).toBeNull();
+    expect(malwareFamily(null, undefined)).toBeNull();
   });
 });
 
