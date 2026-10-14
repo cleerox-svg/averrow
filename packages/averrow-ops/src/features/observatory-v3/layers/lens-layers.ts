@@ -338,13 +338,20 @@ export function opsMaxThreats(m: OperationsModel): number {
   return opsMax(m);
 }
 
+/** A label colour at the label's `fade` (limb fade on the globe); the shared constant when fully opaque. */
+const fadedText = (base: Rgba) => (d: object): Rgba => {
+  const fade = (d as { fade?: number }).fade;
+  return fade === undefined || fade >= 1 ? base : [base[0], base[1], base[2], Math.round(base[3] * Math.max(0, fade))];
+};
+const TEXT_COLOR_AT = fadedText(TEXT_COLOR);
+
 function labelStyle(projection: Projection = 'flat') {
   return {
     ...(projection === 'globe' ? { parameters: GLOBE_SCREEN_SPACE_PARAMETERS } : null),
     sizeUnits: 'pixels' as const,
-    getColor: TEXT_COLOR,
+    getColor: TEXT_COLOR_AT,
     outlineWidth: 3,
-    outlineColor: TEXT_OUTLINE,
+    outlineColor: TEXT_OUTLINE, // a layer-wide prop in deck.gl (not an accessor): the dark halo stays, only the fill fades
     fontFamily: MONO,
     fontSettings: { sdf: true },
     characterSet: 'auto' as const,

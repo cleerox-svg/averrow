@@ -55,8 +55,8 @@ import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
-  effectiveProjection, globeCanvasBox, globeFitZoom, globeOverlayProps, maxZoomFor, onNearSide, overlayInterleaved, projectionSpec,
-  FLAT_SKY, GLOBE_BACKDROP, GLOBE_SKY, type Projection,
+  effectiveProjection, globeCanvasBox, globeFitZoom, globeLabelOpacity, globeOverlayProps, maxZoomFor, overlayInterleaved, projectionSpec,
+  FLAT_SKY, GLOBE_BACKDROP, GLOBE_SKY, type OcclusionProbe, type Projection,
 } from '../lib/projection';
 import { useIdleSpin, SPIN_EVENT_KEY } from '../lib/use-idle-spin';
 import {
@@ -844,12 +844,18 @@ function ThreatMapV3Inner({
       return;
     }
     // On the globe `project` also answers for points on the far side (behind the planet): they are not placeable.
+    // MapLibre's own occlusion test decides that (right at any pitch); labels also thin out toward the limb.
     const centre = map.getCenter();
     const globe = projectionRef.current === 'globe';
+    const transform = (map as unknown as { transform?: OcclusionProbe }).transform;
     const project: Project = ([lng, lat]) => {
-      if (globe && !onNearSide([centre.lng, centre.lat], [lng, lat])) return null;
+      let fade = 1;
+      if (globe) {
+        fade = globeLabelOpacity([centre.lng, centre.lat], [lng, lat], transform);
+        if (fade <= 0) return null;
+      }
       const p = map.project([lng, lat]);
-      return Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null;
+      return Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y, fade } : null;
     };
     const next = placeLensLabels(labelInputs, project, canvasSize);
     setLabels(prev => stablePlacement(prev, next));

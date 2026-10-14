@@ -100,14 +100,45 @@ export const GLOBE_SKY: SkySpecification = {
 export const FLAT_SKY: SkySpecification = { 'atmosphere-blend': 0 };
 
 /**
- * Angular radius (degrees from the view centre) beyond which a point is not given a label: past the
- * horizon it is behind the planet, and just inside it the text would be squashed against the limb.
+ * Label visibility on the globe has two parts (the projector in ThreatMapV3 combines them):
+ *   1. HARD occlusion: MapLibre's own `transform.isLocationOccluded` (exact for any pitch / zoom / bearing; a point
+ *      behind the planet is never labelled);
+ *   2. SOFT limb fade: text squashed against the horizon reads badly even while the point is still visible, so a
+ *      label's opacity falls off with its angular distance from the view centre, from full at `LABEL_FADE_START_DEG`
+ *      to gone at `LABEL_FADE_END_DEG`. (Centre distance is only an approximation of "how close to the limb" once the
+ *      camera is pitched, which is why it is never the occlusion test.)
  */
-export const HORIZON_DEG = 72;
+export const LABEL_FADE_START_DEG = 52;
+export const LABEL_FADE_END_DEG = 74;
 
-/** True when `point` is on the hemisphere facing the camera, which looks at `center`. */
-export function onNearSide(center: LngLat, point: LngLat): boolean {
-  return greatCircleAngle(center, point) * (180 / Math.PI) < HORIZON_DEG;
+/** Opacity (0..1) for a label `angleDeg` from the view centre: 1 inside the start, 0 past the end, smooth between. */
+export function limbFade(angleDeg: number): number {
+  if (!Number.isFinite(angleDeg)) return 0;
+  const t = (LABEL_FADE_END_DEG - angleDeg) / (LABEL_FADE_END_DEG - LABEL_FADE_START_DEG);
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
+}
+
+/** Angular distance in degrees between the view centre and a point. */
+export function centreAngleDeg(center: LngLat, point: LngLat): number {
+  return greatCircleAngle(center, point) * (180 / Math.PI);
+}
+
+/** The minimal slice of MapLibre's transform the label projector needs (absent on test doubles and old builds). */
+export interface OcclusionProbe {
+  isLocationOccluded?: (lngLat: { lng: number; lat: number }) => boolean;
+}
+
+/**
+ * Opacity for a label anchored at `point` on the globe, or 0 when it must not be drawn. `transform` is
+ * `map.transform`; guarded because it is not part of MapLibre's documented API: without it the fade alone applies.
+ */
+export function globeLabelOpacity(center: LngLat, point: LngLat, transform?: OcclusionProbe | null): number {
+  try {
+    if (typeof transform?.isLocationOccluded === 'function' && transform.isLocationOccluded({ lng: point[0], lat: point[1] })) return 0;
+  } catch { /* an unsupported transform: fall back to the fade */ }
+  return limbFade(centreAngleDeg(center, point));
 }
 
 /**

@@ -111,9 +111,10 @@ export const actorLabelSources = memoByModel((m: ActorModel): ActorLabelSource[]
 
 // ─── Stage 2: placement ─────────────────────────────────────
 
-export interface PlacedEdgeLabel { id: string; text: string; position: LngLat; angle: number }
-export interface PlacedHostLabel { id: string; text: string; position: LngLat; radiusPx: number }
-export interface PlacedActorLabel { id: string; text: string; position: LngLat; radiusPx: number }
+/** `fade` (0..1, default 1) is the label's opacity: below 1 only near the globe's limb (see lib/projection.ts `limbFade`). */
+export interface PlacedEdgeLabel { id: string; text: string; position: LngLat; angle: number; fade?: number }
+export interface PlacedHostLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
+export interface PlacedActorLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
 export interface PlacedLabels {
   edges: PlacedEdgeLabel[];
   hosts: PlacedHostLabel[];
@@ -122,7 +123,8 @@ export interface PlacedLabels {
 
 export const NO_LABELS: PlacedLabels = { edges: [], hosts: [], actors: [] };
 
-export type Project = (p: LngLat) => { x: number; y: number } | null;
+/** Screen position of a point, or null when it cannot be labelled. `fade` (0..1, default 1): limb fade on the globe. */
+export type Project = (p: LngLat) => { x: number; y: number; fade?: number } | null;
 
 export interface PlaceInput {
   edges: readonly EdgeLabelSource[];
@@ -146,6 +148,7 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
 
   const edgeCands: LabelCandidate[] = [];
   const edgeById = new Map<string, EdgeLabelSource>();
+  const edgeFade = new Map<string, number>();
   for (const e of input.edges) {
     const mid = project(e.position);
     const a = project(e.before);
@@ -161,18 +164,21 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
       angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
     });
     edgeById.set(e.id, e);
+    edgeFade.set(e.id, mid.fade ?? 1);
   }
   const edges = placeLabels(edgeCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_EDGE_LABELS, obstacles })
     .map(p => {
       const src = edgeById.get(p.id)!;
-      return { id: p.id, text: src.text, position: src.position, angle: p.angle } satisfies PlacedEdgeLabel;
+      return { id: p.id, text: src.text, position: src.position, angle: p.angle, fade: edgeFade.get(p.id) ?? 1 } satisfies PlacedEdgeLabel;
     });
 
   const hostCands: LabelCandidate[] = [];
   const hostById = new Map<string, HostLabelSource>();
+  const hostFade = new Map<string, number>();
   for (const h of input.hosts) {
     const p = project(h.position);
     if (!p) continue;
+    hostFade.set(h.id, p.fade ?? 1);
     hostCands.push({ id: h.id, text: h.text, x: p.x, y: p.y, dy: h.radiusPx + 10, priority: h.priority });
     hostById.set(h.id, h);
   }
@@ -184,16 +190,18 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
   const hosts = placeLabels(hostCands, { width: size.width, height: size.height, charPx: 6.4, heightPx: LABEL_H, max: MAX_HOST_LABELS, obstacles: hostObstacles })
     .map(p => {
       const src = hostById.get(p.id)!;
-      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx } satisfies PlacedHostLabel;
+      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: hostFade.get(p.id) ?? 1 } satisfies PlacedHostLabel;
     });
 
   // Actor country markers: their names get the same treatment (no clipping at the edge, no collisions
   // with the edge / provider labels already placed).
   const actorCands: LabelCandidate[] = [];
   const actorById = new Map<string, ActorLabelSource>();
+  const actorFade = new Map<string, number>();
   for (const a of input.actors ?? []) {
     const p = project(a.position);
     if (!p) continue;
+    actorFade.set(a.id, p.fade ?? 1);
     actorCands.push({ id: a.id, text: a.text, x: p.x, y: p.y, dy: a.radiusPx + 10, priority: a.priority });
     actorById.set(a.id, a);
   }
@@ -204,13 +212,15 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
   const actors = placeLabels(actorCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_ACTOR_LABELS, obstacles: actorObstacles })
     .map(p => {
       const src = actorById.get(p.id)!;
-      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx } satisfies PlacedActorLabel;
+      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: actorFade.get(p.id) ?? 1 } satisfies PlacedActorLabel;
     });
 
   return { edges, hosts, actors };
 }
 
 const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1];
+/** A fade differing by < 5% is not visible: it must not replace the placement (and re-upload the labels). */
+const sameFade = (a: number, b: number): boolean => Math.round(a * 20) === Math.round(b * 20);
 
 /**
  * Keep the previous object when nothing visible changed, so layer `data` identity survives no-op camera moves.
@@ -221,15 +231,15 @@ const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1
 export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedLabels {
   const edgesSame = prev.edges.length === next.edges.length && prev.edges.every((e, i) => {
     const n = next.edges[i]!;
-    return e.id === n.id && e.text === n.text && samePos(e.position, n.position) && Math.round(e.angle) === Math.round(n.angle);
+    return e.id === n.id && e.text === n.text && samePos(e.position, n.position) && Math.round(e.angle) === Math.round(n.angle) && sameFade(e.fade ?? 1, n.fade ?? 1);
   });
   const hostsSame = prev.hosts.length === next.hosts.length && prev.hosts.every((h, i) => {
     const n = next.hosts[i]!;
-    return h.id === n.id && h.text === n.text && h.radiusPx === n.radiusPx && samePos(h.position, n.position);
+    return h.id === n.id && h.text === n.text && h.radiusPx === n.radiusPx && samePos(h.position, n.position) && sameFade(h.fade ?? 1, n.fade ?? 1);
   });
   const actorsSame = prev.actors.length === next.actors.length && prev.actors.every((a, i) => {
     const n = next.actors[i]!;
-    return a.id === n.id && a.text === n.text && a.radiusPx === n.radiusPx && samePos(a.position, n.position);
+    return a.id === n.id && a.text === n.text && a.radiusPx === n.radiusPx && samePos(a.position, n.position) && sameFade(a.fade ?? 1, n.fade ?? 1);
   });
   return edgesSame && hostsSame && actorsSame ? prev : next;
 }

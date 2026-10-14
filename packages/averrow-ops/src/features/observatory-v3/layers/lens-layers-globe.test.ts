@@ -76,3 +76,18 @@ describe('text labels on the globe draw without the depth test', () => {
     expect(GLOBE_SCREEN_SPACE_PARAMETERS).toEqual({ depthCompare: 'always', depthWriteEnabled: false, cullMode: 'none' });
   });
 });
+
+describe('label fade near the globe\'s limb', () => {
+  const colorOf = (l: unknown, d: object) => (l as { props: { getColor: (d: object) => number[] } }).props.getColor(d);
+
+  it('a label with a fade below 1 draws at that fraction of its opacity; an opaque one keeps the shared constant', () => {
+    const l = labelLayers(input({ projection: 'globe' }))[0]!;
+    const opaque = colorOf(l, { fade: 1 });
+    const half = colorOf(l, { fade: 0.5 });
+    expect(half.slice(0, 3)).toEqual(opaque.slice(0, 3));
+    expect(half[3]).toBe(Math.round(opaque[3]! * 0.5));
+    expect(colorOf(l, { fade: 0 })[3]).toBe(0);
+    expect(colorOf(l, {})).toBe(opaque); // no fade at all (the flat map, other lenses): the same array every time
+    expect(colorOf(l, { fade: 1 })).toBe(opaque);
+  });
+});

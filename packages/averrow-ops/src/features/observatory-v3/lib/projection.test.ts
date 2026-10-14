@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   DEFAULT_PROJECTION, PROJECTION_IDS, isProjection, effectiveProjection, overlayInterleaved, projectionSpec, maxZoomFor,
-  globeFitZoom, globeCanvasBox, onNearSide, globeOverlayProps, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY, HORIZON_DEG,
+  globeFitZoom, globeCanvasBox, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY,
   GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE,
 } from './projection';
 
@@ -86,20 +86,54 @@ describe('globeCanvasBox: the globe is centred in what the chrome leaves free', 
   });
 });
 
-describe('onNearSide: which points face the camera', () => {
-  it('the view centre and its neighbourhood are near; the antipode and the far hemisphere are not', () => {
-    const c: [number, number] = [20, 10];
-    expect(onNearSide(c, [20, 10])).toBe(true);
-    expect(onNearSide(c, [60, 30])).toBe(true);
-    expect(onNearSide(c, [-160, -10])).toBe(false);
-    expect(onNearSide(c, [-120, 40])).toBe(false);
+describe('limbFade: labels thin out toward the limb', () => {
+  it('is full inside the start angle, gone past the end, monotone and smooth between', () => {
+    expect(limbFade(0)).toBe(1);
+    expect(limbFade(LABEL_FADE_START_DEG)).toBe(1);
+    expect(limbFade(LABEL_FADE_END_DEG)).toBe(0);
+    expect(limbFade(89)).toBe(0);
+    let prev = 1;
+    for (let a = LABEL_FADE_START_DEG; a <= LABEL_FADE_END_DEG; a += 2) {
+      const f = limbFade(a);
+      expect(f).toBeLessThanOrEqual(prev);
+      prev = f;
+    }
+    const mid = limbFade((LABEL_FADE_START_DEG + LABEL_FADE_END_DEG) / 2);
+    expect(mid).toBeGreaterThan(0.4);
+    expect(mid).toBeLessThan(0.6);
   });
-  it('the horizon sits inside 90 degrees so labels never hug the limb', () => {
-    expect(HORIZON_DEG).toBeLessThan(90);
-    expect(onNearSide([0, 0], [HORIZON_DEG + 2, 0])).toBe(false);
-    expect(onNearSide([0, 0], [HORIZON_DEG - 2, 0])).toBe(true);
+  it('the fade ends well inside the horizon, so text is never squashed against the limb', () => {
+    expect(LABEL_FADE_END_DEG).toBeLessThan(90);
+    expect(LABEL_FADE_START_DEG).toBeLessThan(LABEL_FADE_END_DEG);
+  });
+  it('a non-finite angle is hidden', () => {
+    expect(limbFade(NaN)).toBe(0);
+  });
+});
+
+describe('globeLabelOpacity: occlusion is MapLibre\'s, the fade is ours', () => {
+  const c: [number, number] = [20, 10];
+  it('without a transform the fade alone applies: the centre is full, the antipode is gone', () => {
+    expect(globeLabelOpacity(c, [20, 10])).toBe(1);
+    expect(globeLabelOpacity(c, [-160, -10])).toBe(0);
   });
   it('is longitude-wrap safe', () => {
-    expect(onNearSide([179, 0], [-179, 0])).toBe(true);
+    expect(globeLabelOpacity([179, 0], [-179, 0])).toBe(1);
+  });
+  it('a point MapLibre says is occluded is hidden even when it is close to the view centre (a pitched camera)', () => {
+    const isLocationOccluded = vi.fn(() => true);
+    expect(globeLabelOpacity(c, [25, 12], { isLocationOccluded })).toBe(0);
+    expect(isLocationOccluded).toHaveBeenCalledWith({ lng: 25, lat: 12 });
+  });
+  it('a visible point keeps its fade', () => {
+    expect(globeLabelOpacity(c, [25, 12], { isLocationOccluded: () => false })).toBe(1);
+    const near = globeLabelOpacity([0, 0], [63, 0], { isLocationOccluded: () => false });
+    expect(near).toBeGreaterThan(0);
+    expect(near).toBeLessThan(1);
+  });
+  it('a transform that throws or lacks the method falls back to the fade', () => {
+    expect(globeLabelOpacity(c, [20, 10], { isLocationOccluded: () => { throw new Error('nope'); } })).toBe(1);
+    expect(globeLabelOpacity(c, [20, 10], {})).toBe(1);
+    expect(globeLabelOpacity(c, [20, 10], null)).toBe(1);
   });
 });

@@ -84,6 +84,9 @@ vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
 import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
 import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
+import { buildHostingModel } from '../lib/lens/hosting';
+import { noLayers } from '../lib/lenses';
+import { NO_SELECTION } from '../layers/lens-layers';
 
 const node = { lat: 1, lng: 2, threat_count: 1, top_severity: 'low', critical: 0, high: 0, medium: 0, low: 1, country_code: 'US', top_threat_type: 'c2' };
 const arc = {
@@ -451,5 +454,50 @@ describe('ThreatMapV3 overlay lifecycle: contexts and listeners do not accumulat
     (bare as unknown as { getContext: () => unknown }).getContext = () => null;
     expect(() => releaseOwnedGl(bare)).not.toThrow();
     expect(() => releaseOwnedGl(null)).not.toThrow();
+  });
+});
+
+describe('ThreatMapV3 globe: label placement asks MapLibre whether a point is behind the planet', () => {
+  const provider = (id: string, country: string) => ({
+    id, name: id, asn: 'AS1', country, active_threat_count: 10, total_threat_count: 10, trend_7d: 1, trend_30d: 1,
+    is_bulletproof: false, reputation_score: null, takedown: null,
+  });
+  const lens = {
+    layers: { ...noLayers(), hosting: true },
+    operations: null, hosting: buildHostingModel([provider('nl', 'NL'), provider('us', 'US')]),
+    baseline: null, measure: 'index' as const, bot: null, countries: null, campaigns: null, velocity: null,
+    takedownCountries: null, takedownProviders: null, actors: null, movement: null, sel: NO_SELECTION,
+  };
+  const placed = (): string[] => {
+    const l = layerOf(overlays.at(-1)!, 'hosting-labels');
+    return l ? (l.props.data as Array<{ id: string }>).map(d => d.id).sort() : [];
+  };
+  // The fake map is centred on lng 30 / lat 70; MapLibre says everything west of Greenwich is behind the planet.
+  const occludeWest = (m: ReturnType<typeof lastMap>) => {
+    m.project = (([lng, lat]: [number, number]) => ({ x: 600 + lng * 3, y: 350 - lat * 3 })) as never; // distinct screen spots
+    (m.transform as Record<string, unknown>).isLocationOccluded = vi.fn((ll: { lng: number }) => ll.lng < 0);
+  };
+
+  it('a point MapLibre reports as occluded gets no label, however close it is to the view centre', () => {
+    render(<ThreatMapV3 {...base} projection="globe" lens={lens as never} />);
+    occludeWest(lastMap());
+    ready();
+    expect(placed()).toEqual(['nl']);
+    expect((lastMap().transform as unknown as { isLocationOccluded: ReturnType<typeof vi.fn> }).isLocationOccluded).toHaveBeenCalled();
+  });
+
+  it('without the probe (an older build) the limb fade alone applies and nothing throws', () => {
+    render(<ThreatMapV3 {...base} projection="globe" lens={lens as never} />);
+    lastMap().project = (([lng, lat]: [number, number]) => ({ x: 600 + lng * 3, y: 350 - lat * 3 })) as never;
+    ready();
+    expect(placed()).toContain('nl');
+  });
+
+  it('the flat map never asks: every anchor is placed', () => {
+    render(<ThreatMapV3 {...base} lens={lens as never} />);
+    occludeWest(lastMap());
+    ready();
+    expect(placed()).toEqual(['nl', 'us']);
+    expect((lastMap().transform as unknown as { isLocationOccluded: ReturnType<typeof vi.fn> }).isLocationOccluded).not.toHaveBeenCalled();
   });
 });
