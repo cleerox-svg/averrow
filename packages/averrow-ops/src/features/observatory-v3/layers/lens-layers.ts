@@ -31,6 +31,7 @@ import { GLOBE_SCREEN_SPACE_PARAMETERS, type Projection } from '../lib/projectio
 import type { Rgba } from '../lib/map-colors';
 import type { OperationsModel, OpNode, OpEdge } from '../lib/lens/operations';
 import { visibleEdges, nodeInFootprint } from '../lib/lens/operations';
+import { PrimaryPathLayer, PrimaryTextLayer } from './primary-copy';
 import { globeEdgePath } from '../lib/lens/operations-globe';
 import {
   opCountRange, opNodeRadius, opNodePx, opNodesDrawOrder, opEdgeStyle, maxPairOps, OP_EDGE_UNDERLAY,
@@ -58,7 +59,7 @@ import {
   type PulseExtensionProps, type RingMaskExtensionProps, type DashFlowExtensionProps,
 } from '../anim';
 import { memoByModel, memoByModelAndKey } from './memo';
-import type { PlacedLabels, PlacedEdgeLabel, PlacedHostLabel, PlacedActorLabel, PlacedNodeLabel } from './lens-labels';
+import { NODE_LABEL_GAP, type PlacedLabels, type PlacedEdgeLabel, type PlacedHostLabel, type PlacedActorLabel, type PlacedNodeLabel } from './lens-labels';
 
 // ─── Types shared with ThreatMapV3 ──────────────────────────
 
@@ -367,9 +368,6 @@ function labelStyle(projection: Projection = 'flat') {
 
 const OP_ALPHA_BASE = 130;
 
-/** Gap, px, between a country node's core and its "DE 37" label. */
-const NODE_LABEL_GAP = 4;
-
 /** Dimmed (outside the selected footprint) node core: low, but still a visible, pickable dot. */
 const OP_DIM_CORE_ALPHA = 70;
 
@@ -407,7 +405,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 
   // Links: ONE animated idea, on the selected / top operations only; a previewed row's links are static and thin.
   if (preview.length > 0) {
-    out.push(new PathLayer<OpEdge>({
+    out.push(new PrimaryPathLayer<OpEdge>({
       id: 'ops-edges-preview',
       data: preview,
       getPath: pathOf,
@@ -421,7 +419,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   if (main.length > 0) {
     // A faint solid line under the dashed flow: the gaps in the dashes would otherwise break a thin, light link.
     if (!reducedMotion) {
-      out.push(new PathLayer<OpEdge>({
+      out.push(new PrimaryPathLayer<OpEdge>({
         id: 'ops-edges-under',
         data: main,
         getPath: pathOf,
@@ -435,7 +433,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         onClick: edgeClick,
       }));
     }
-    out.push(new PathLayer<OpEdge, DashFlowExtensionProps<OpEdge>>({
+    out.push(new PrimaryPathLayer<OpEdge, DashFlowExtensionProps<OpEdge>>({
       id: 'ops-edges',
       data: main,
       getPath: pathOf,
@@ -514,14 +512,14 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getText: l => l.text,
       getSize: LABEL_PX,
       getTextAnchor: 'middle',
-      getAlignmentBaseline: 'top',
-      getPixelOffset: l => [0, l.radiusPx + NODE_LABEL_GAP],
+      getAlignmentBaseline: (l: PlacedNodeLabel) => (l.above ? 'bottom' : 'top'),
+      getPixelOffset: (l: PlacedNodeLabel) => [0, (l.radiusPx + NODE_LABEL_GAP) * (l.above ? -1 : 1)],
     }));
   }
 
   // Edge evidence: short ("◆ cert"), one per operation, laid along the edge, de-duplicated in screen space.
   if (labels.edges.length > 0) {
-    out.push(new TextLayer<PlacedEdgeLabel>({
+    out.push(new PrimaryTextLayer<PlacedEdgeLabel>({
       id: 'ops-edge-labels',
       ...labelStyle(input.projection),
       data: labels.edges,

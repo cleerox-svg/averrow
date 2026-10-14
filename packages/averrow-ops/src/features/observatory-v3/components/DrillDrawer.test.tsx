@@ -11,7 +11,7 @@ vi.mock('@/hooks/useObservatoryLenses', async orig => ({
   useActorDetail: () => ({ data: undefined, error: null, isLoading: true, refetch: vi.fn() }),
 }));
 
-import { DrillDrawer, shouldHandleEscape } from './DrillDrawer';
+import { DrillDrawer, shouldHandleEscape, uniqueCountries } from './DrillDrawer';
 
 const arc: ArcData = {
   sourcePosition: [10, 20], targetPosition: [-100, 40], threat_type: 'credential_harvesting', severity: 'critical',
@@ -67,6 +67,16 @@ describe('DrillDrawer', () => {
     expect(screen.getByText('Brazil')).toBeInTheDocument();
     expect(screen.getByText('India')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /more/ })).not.toBeInTheDocument();
+  });
+
+  it('a country listed twice (or in two cases) is ONE chip, and the count is of countries', () => {
+    const countries = ['NL', 'DE', 'nl', 'DE', 'NL'];
+    mount({ kind: 'operation', id: 'x', op: { id: 'x', name: 'OP', component_id: null, kind: 'asn', status: 'active', confidence_score: 50, threat_count: 1, actor: null, countries, asns: [], last_seen: null, last_movement_pivot_at: null } });
+    expect(screen.getAllByText('Netherlands')).toHaveLength(1);
+    expect(screen.getAllByText('Germany')).toHaveLength(1);
+    expect(screen.getByText('Countries · 2')).toBeInTheDocument();
+    expect(uniqueCountries(['DE', 'de', 'xx', 'XX', 'xx'])).toEqual(['DE', 'xx']);
+    expect(uniqueCountries([])).toEqual([]);
   });
 
   it('related objects re-target the drawer', async () => {

@@ -597,7 +597,7 @@ describe('ThreatMapV3: the Flat | Globe toggle lives in the map\'s zoom cluster'
     expect(el.className).toContain('maplibregl-ctrl-group');
     const ctrl = lastMap().controls.find(c => (c as { element?: HTMLElement }).element === el)!;
     expect(lastMap().positions.get(ctrl)).toBe('bottom-right');
-    expect(mounted(el).getByRole('button', { name: 'Switch to globe' })).toHaveAttribute('aria-pressed', 'false');
+    expect(mounted(el).getByRole('button', { name: 'Globe view' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('there is no toggle without a handler', () => {
@@ -727,7 +727,7 @@ describe('ThreatMapV3 globe: inset only while the whole planet fits', () => {
   });
 });
 
-describe('ThreatMapV3: the Operations lens keeps the world copies and draws each arc once', () => {
+describe('ThreatMapV3: the Operations lens keeps the world copies on', () => {
   const lens = (operations: boolean) => ({
     layers: { ...noLayers(), operations },
     operations: null, hosting: null, baseline: null, measure: 'index' as const, bot: null, countries: null, campaigns: null, velocity: null,
@@ -739,17 +739,5 @@ describe('ThreatMapV3: the Operations lens keeps the world copies and draws each
     rerender(<ThreatMapV3 {...base} lens={lens(false) as never} />);
     rerender(<ThreatMapV3 {...base} lens={lens(true) as never} />);
     expect(lastMap().setRenderWorldCopies).not.toHaveBeenCalled();
-  });
-  it('hands deck a layerFilter that skips the arc layers in every copy but the primary one (flat map)', () => {
-    render(<ThreatMapV3 {...base} lens={lens(true) as never} />);
-    ready();
-    const map = lastMap() as unknown as { getRenderWorldCopies?: () => boolean };
-    map.getRenderWorldCopies = () => true;
-    const filter = overlays.at(-1)!.props.layerFilter as (c: { layer: { id: string }; viewport: { subViewports: unknown } }) => boolean;
-    expect(typeof filter).toBe('function');
-    const offsetCopy = { subViewports: null };
-    expect(filter({ layer: { id: 'ops-edges' }, viewport: offsetCopy })).toBe(false);
-    expect(filter({ layer: { id: 'ops-edges' }, viewport: { subViewports: [] } })).toBe(true);
-    expect(filter({ layer: { id: 'ops-core' }, viewport: offsetCopy })).toBe(true);
   });
 });

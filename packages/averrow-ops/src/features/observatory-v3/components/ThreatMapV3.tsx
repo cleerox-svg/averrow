@@ -79,7 +79,7 @@ import {
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { visibleEdges } from '../lib/lens/operations';
-import { primaryCopyFilter } from '../lib/world-copies';
+import { setRepeatState } from '../lib/world-copies';
 import { opCountRange, opNodePx } from '../lib/lens/operations-draw';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
@@ -1096,13 +1096,12 @@ function ThreatMapV3Inner({
     map.once('idle', () => recomputeLabelsRef.current());
   }, [projection, mapLoaded]);
 
-  // Flat Operations arcs are one polyline in the primary world copy, and deck repeats every layer in each visible
-  // copy: a deck `layerFilter` draws those arcs (and their labels) in the primary copy only. The map's world copies
-  // stay ON (turning them off clamps the longitude: no panning across the Pacific, see lib/world-copies.ts).
-  const layerFilter = useMemo(() => primaryCopyFilter(() => ({
-    flat: projectionRef.current === 'flat',
-    renderWorldCopies: mapRef.current?.getRenderWorldCopies?.() ?? false,
-  })), []);
+  // Flat Operations arcs are one polyline in the primary world copy, and deck repeats every layer in each visible copy:
+  // those layers skip the offset copies themselves (layers/primary-copy.ts). The map's world copies stay ON (turning
+  // them off clamps the longitude: no panning across the Pacific, see lib/world-copies.ts).
+  useEffect(() => {
+    setRepeatState({ flat: projection === 'flat', renderWorldCopies: mapRef.current?.getRenderWorldCopies?.() ?? false });
+  }, [projection, mapLoaded]);
 
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
@@ -1120,13 +1119,13 @@ function ThreatMapV3Inner({
     }
     let overlay = slots[kind];
     if (overlay) {
-      overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius, layerFilter });
+      overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius });
     } else if (layers.length > 0) {
       const interleaved = kind === 'globe';
       overlay = new MapboxOverlay({
         interleaved,
         ...(interleaved ? globeOverlayProps() : {}),
-        layers, onClick: handlers.clickEmpty, pickingRadius, layerFilter });
+        layers, onClick: handlers.clickEmpty, pickingRadius });
       map.addControl(overlay as unknown as maplibregl.IControl);
       slots[kind] = overlay;
     }

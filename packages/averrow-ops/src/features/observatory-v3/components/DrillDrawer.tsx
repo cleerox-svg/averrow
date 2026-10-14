@@ -103,6 +103,19 @@ function Pill({ children, onClick, title }: { children: ReactNode; onClick?: () 
   );
 }
 
+/** A country list once per country: the API can send 'DE' and 'de' (or a code twice), and a chip per entry repeats the name. */
+export function uniqueCountries(list: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of list) {
+    const key = iso2(raw) ?? raw;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(raw);
+  }
+  return out;
+}
+
 /** Chips: the first `max`, then "+N more" (a button) that reveals the rest. */
 function Pills({ children, max = 6 }: { children: ReactNode; max?: number }) {
   const items = (Array.isArray(children) ? children : [children]).flat().filter(Boolean) as ReactNode[];
@@ -377,9 +390,9 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
             : 'unattributed'}
         </KV>
       </Section>
-      <Section title={`Countries · ${op.countries.length}`}>
+      <Section title={`Countries · ${uniqueCountries(op.countries).length}`}>
         <Pills>
-          {op.countries.map(cc => {
+          {uniqueCountries(op.countries).map(cc => {
             const code = iso2(cc);
             return code
               ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill>
@@ -556,7 +569,7 @@ function CampaignBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'campai
   if (!c) return <Note>Loading campaign…</Note>;
   const row = (list: string[]) => (
     <Pills>
-      {list.map(cc => {
+      {uniqueCountries(list).map(cc => {
         const code = iso2(cc);
         return code ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill> : <Pill key={cc}>{cc}</Pill>;
       })}
@@ -593,7 +606,7 @@ function MovementBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'moveme
       {e.countries.length === 0 && e.asns.length === 0 ? <Note>Not recorded for this event.</Note> : (
         <>
           <Pills>
-            {e.countries.map(cc => {
+            {uniqueCountries(e.countries).map(cc => {
               const code = iso2(cc);
               return code ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill> : <Pill key={cc}>{cc}</Pill>;
             })}

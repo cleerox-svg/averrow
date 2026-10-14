@@ -4,6 +4,8 @@ import { noLayers } from '../lib/lenses';
 import { buildOperationsModel, aggregateEdges, visibleEdges } from '../lib/lens/operations';
 import { opCountRange, opNodeRadius, opNodePx, opNodesDrawOrder, opEdgeStyle, maxPairOps, MAX_NODE_LABELS } from '../lib/lens/operations-draw';
 import { globeEdgePath } from '../lib/lens/operations-globe';
+import { PrimaryPathLayer, PrimaryTextLayer } from './primary-copy';
+import { setRepeatState } from '../lib/world-copies';
 import { buildLensLayers, NO_SELECTION, type LensLayerInput } from './lens-layers';
 import { NO_LABELS, edgeLabelSources, opNodeLabelSources, placeLensLabels, stablePlacement, type Project } from './lens-labels';
 
@@ -130,6 +132,7 @@ describe('country node labels ("DE 37")', () => {
     expect(src.length).toBe(MAX_NODE_LABELS);
     const top = [...model.nodes].sort((a, b) => b.opCount - a.opCount || b.threats - a.threats || a.country.localeCompare(b.country))[0]!;
     expect(src[0]).toMatchObject({ id: top.country, text: `${top.country} ${top.opCount}` });
+    expect(src[0]!.radiusPx).toBeCloseTo(opNodePx(top.opCount, opCountRange(model)), 9); // below the bloom
     expect(opNodeLabelSources(model)).toBe(src); // memoised
   });
   it('are placed with the edge words, never on top of another node, and carry the limb fade', () => {
@@ -144,11 +147,28 @@ describe('country node labels ("DE 37")', () => {
       const ep = flat(e.position)!;
       for (const l of out.opNodes!) {
         const lp = flat(l.position)!;
-        const cy = lp.y + l.radiusPx + 4 + 7;
+        const cy = lp.y + l.radiusPx + 2 + 7;
         const near = Math.abs(ep.x - lp.x) < (e.text.length * 6.6 + l.text.length * 6.6) / 2 && Math.abs(ep.y - cy) < 14;
         expect(near).toBe(false);
       }
     }
+  });
+  it('a name that does not fit under its node is tried above it, and is flagged so the layer anchors it there', () => {
+    const [top] = src;
+    const at = flat(top!.position)!;
+    // a neighbouring node's bloom sits right under the busiest node: the "below" box is taken, "above" is free
+    const blocker = { position: top!.position, radiusPx: 0, id: 'blocker' };
+    const under: Project = p => (p === blocker.position ? { x: at.x, y: at.y } : flat(p));
+    const nodes = [
+      { position: top!.position, radiusPx: top!.radiusPx, id: top!.id },
+      { position: [top!.position[0] + 0.0001, top!.position[1] - 12] as [number, number], radiusPx: 40, id: 'blocker' },
+    ];
+    const out = placeLensLabels({ opNodes: [top!], edges: [], hosts: [], nodes }, under, size);
+    expect(out.opNodes).toHaveLength(1);
+    expect(out.opNodes![0]!.above).toBe(true);
+    const layer = layerProps(base({ operations: true }, { labels: { ...NO_LABELS, opNodes: out.opNodes } }), 'ops-node-labels')!;
+    expect((layer.getAlignmentBaseline as (l: unknown) => string)(out.opNodes![0])).toBe('bottom');
+    expect((layer.getPixelOffset as (l: unknown) => number[])(out.opNodes![0])[1]).toBeLessThan(0);
   });
   it('a label that would run off the canvas is dropped, not clipped', () => {
     const nodes = model.nodes.map(n => ({ position: n.position, radiusPx: 8, id: n.country }));
@@ -166,7 +186,7 @@ describe('country node labels ("DE 37")', () => {
     const labels = { ...NO_LABELS, opNodes: [{ id: 'DE', text: 'DE 3', position: [10, 51] as [number, number], radiusPx: 9 }] };
     const p = layerProps(base({ operations: true }, { labels }), 'ops-node-labels')!;
     expect(p.data).toBe(labels.opNodes);
-    expect((p.getPixelOffset as (l: unknown) => number[])(labels.opNodes[0])).toEqual([0, 13]);
+    expect((p.getPixelOffset as (l: unknown) => number[])(labels.opNodes[0])).toEqual([0, 11]); // below the bloom, never inside it
     expect(layerProps(base({ operations: true }), 'ops-node-labels')).toBeUndefined();
   });
 });
@@ -195,5 +215,26 @@ describe('edge labels on the globe sit on the great-circle arc that is drawn', (
   it('is memoised per projection', () => {
     expect(edgeLabelSources(edges, '', 'globe')).toBe(edgeLabelSources(edges, '', 'globe'));
     expect(edgeLabelSources(edges, '', 'globe')).not.toBe(edgeLabelSources(edges, '', 'flat'));
+  });
+});
+
+describe('the arcs and their labels skip the offset world copies', () => {
+  const labels = { ...NO_LABELS, edges: [{ id: 'e', text: '◆ cert', position: [0, 0] as [number, number], angle: 0 }] };
+  const layers = buildLensLayers(base({ operations: true }, { labels }), { seconds: 1, t: 1 });
+  it('are the primary-copy layer classes', () => {
+    for (const id of ['ops-edges', 'ops-edges-under']) expect(layers.find(l => l.id === id)).toBeInstanceOf(PrimaryPathLayer);
+    expect(layers.find(l => l.id === 'ops-edge-labels')).toBeInstanceOf(PrimaryTextLayer);
+  });
+  it('the nodes (points repeat correctly) are NOT restricted', () => {
+    expect(layers.find(l => l.id === 'ops-core')).not.toBeInstanceOf(PrimaryPathLayer);
+  });
+  it('the text layer wraps its sublayer classes so they skip the offset copies too', () => {
+    class Fake { _drawLayer(): void {} }
+    const t = layers.find(l => l.id === 'ops-edge-labels') as unknown as { getSubLayerClass: (id: string, c: unknown) => new (p: unknown) => { _drawLayer: (a: unknown) => void } };
+    const Sub = t.getSubLayerClass('characters', Fake);
+    expect(Sub).not.toBe(Fake);
+    expect(t.getSubLayerClass('characters', Fake)).toBe(Sub); // cached
+    expect(new Sub({})).toBeInstanceOf(Fake);
+    setRepeatState({ flat: false, renderWorldCopies: false });
   });
 });

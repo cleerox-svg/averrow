@@ -83,14 +83,11 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                   <span className="min-w-0 flex-1 text-left">
                     <span className="flex items-center gap-1.5 min-w-0">
                       {row.linked && <LinkedGlyph />}
-                      <span className="block text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
+                      <span className="block text-xs font-medium truncate min-w-0" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
+                      {/* The tier badge never truncates: the NAME gives way, so the evidence stays readable. */}
+                      {row.badge && <span className="shrink-0"><Badge context="nexus" size="xs" label={row.badge} /></span>}
                     </span>
-                    {(row.badge || row.secondary) && (
-                      <span className="flex items-center gap-1.5 min-w-0 mt-0.5">
-                        {row.badge && <Badge context="nexus" size="xs" label={row.badge} />}
-                        {row.secondary && <span className="block font-mono text-[11px] truncate min-w-0" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
-                      </span>
-                    )}
+                    {row.secondary && <span className="block font-mono text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
                   </span>
                   {row.trailing && (
                     <span className="font-mono text-xs font-bold tabular-nums shrink-0" style={{ color: TONE[row.tone ?? 'neutral'] }}>{row.trailing}</span>

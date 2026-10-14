@@ -79,6 +79,7 @@ import { linkedOperationIds } from './lib/lens/operations';
 import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
 import { takedownPeriod } from '@/hooks/useObservatoryLenses';
 import { lensFootnote } from './lib/footnote';
+import { MapAttribution } from './components/MapAttribution';
 import type { LngLat } from '@/lib/country-centroids';
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
@@ -661,7 +662,7 @@ export function ObservatoryV3() {
               className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
               style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
-              {state.shared ? 'Hide shared infrastructure' : 'Show shared infrastructure'}
+              Show shared infrastructure
             </button>
           </div>
         ) : undefined}
@@ -920,17 +921,17 @@ export function ObservatoryV3() {
           keep this in sync with that wrapper's `height` (desktop 40,
           mobile 72 — see the ticker wrapper below for why). */}
       <div
-        className="absolute left-0 right-0 flex items-center justify-between px-4"
+        className="absolute left-0 right-0 flex flex-wrap items-center justify-between gap-x-4 px-4 py-0.5"
         style={{
           bottom: layout.statsBottom,
-          height: 36,
+          minHeight: 36,
           background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
           borderTop: '1px solid var(--border-base)',
           zIndex: Z_CHROME,
         }}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 min-w-0">
           {fast ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
               <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
@@ -965,10 +966,11 @@ export function ObservatoryV3() {
             </div>
           )}
         </div>
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="font-mono text-[10px] flex flex-wrap items-center justify-end gap-x-3 min-w-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
           {lensFootnote({ lens, reducedMotion, motionOn, fast }) && (
             <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn, fast })}</span>
           )}
+          <MapAttribution />
         </div>
       </div>
 

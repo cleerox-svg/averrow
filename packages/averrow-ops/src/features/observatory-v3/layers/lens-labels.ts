@@ -14,7 +14,7 @@
 import type { LngLat } from '@/lib/country-centroids';
 import type { OpEdge, OperationsModel } from '../lib/lens/operations';
 import { globeEdgePath } from '../lib/lens/operations-globe';
-import { opCountRange, opNodeRadius, MAX_NODE_LABELS } from '../lib/lens/operations-draw';
+import { opCountRange, opNodePx, MAX_NODE_LABELS } from '../lib/lens/operations-draw';
 import type { Projection } from '../lib/projection';
 import type { HostingModel } from '../lib/lens/hosting';
 import { confidenceBand, actorNodePx, type ActorModel } from '../lib/lens/actors';
@@ -44,10 +44,11 @@ export interface NodeLabelSource {
   id: string;
   text: string;
   position: LngLat;
-  /** The node's core radius, px (the label sits below it). */
+  /**
+   * The node's BLOOM radius, px: the label sits just below it. (Inside the bloom the glyph tops are cut off by the
+   * translucent disc drawn before the text.)
+   */
   radiusPx: number;
-  /** The node's bloom, px: other labels keep clear of it. */
-  bloomPx: number;
   priority: number;
 }
 
@@ -121,8 +122,7 @@ export const opNodeLabelSources = memoByModel((m: OperationsModel): NodeLabelSou
     .sort((a, b) => b.opCount - a.opCount || b.threats - a.threats || a.country.localeCompare(b.country))
     .slice(0, MAX_NODE_LABELS)
     .map(n => {
-      const r = opNodeRadius(n.opCount, range);
-      return { id: n.country, text: `${n.country} ${n.opCount}`, position: n.position, radiusPx: r, bloomPx: r * 2.1, priority: n.opCount * 1e6 + n.threats };
+      return { id: n.country, text: `${n.country} ${n.opCount}`, position: n.position, radiusPx: opNodePx(n.opCount, range), priority: n.opCount * 1e6 + n.threats };
     });
 });
 
@@ -151,7 +151,8 @@ export const actorLabelSources = memoByModel((m: ActorModel): ActorLabelSource[]
 export interface PlacedEdgeLabel { id: string; text: string; position: LngLat; angle: number; fade?: number }
 export interface PlacedHostLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
 export interface PlacedActorLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
-export interface PlacedNodeLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number }
+/** `above`: the name did not fit under its node and sits over it instead. */
+export interface PlacedNodeLabel { id: string; text: string; position: LngLat; radiusPx: number; fade?: number; above?: boolean }
 export interface PlacedLabels {
   /** Operation country nodes ("DE 37"); absent = none. */
   opNodes?: PlacedNodeLabel[];
@@ -178,8 +179,8 @@ export interface PlaceInput {
 
 const CHAR_PX = 6.6; // 11px mono
 const LABEL_H = 14;
-/** Gap, px, between a node's core and its label: the same constant the layer offsets the text by. */
-export const NODE_LABEL_GAP = 4;
+/** Gap, px, between a node's bloom and its label: the same constant the layer offsets the text by. */
+export const NODE_LABEL_GAP = 2;
 
 /** Greedy screen-space placement of both label sets at the current camera. */
 export function placeLensLabels(input: PlaceInput, project: Project, size: { width: number; height: number }): PlacedLabels {
@@ -189,28 +190,37 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     if (p) obstacles.push({ x: p.x, y: p.y, r: n.radiusPx + 2, id: n.id });
   }
 
-  // Country names first: they carry the identity of a node, the evidence words only describe a link.
-  const nodeCands: LabelCandidate[] = [];
-  const nodeById = new Map<string, NodeLabelSource>();
+  // Country names first: they carry the identity of a node, the evidence words only describe a link. Below the node by
+  // default; a name that does not fit below (a neighbour's bloom, an arc's label) gets one more try, above it.
+  const nodeCands = (above: boolean): LabelCandidate[] => {
+    const out: LabelCandidate[] = [];
+    for (const n of input.opNodes ?? []) {
+      const p = project(n.position);
+      if (!p) continue;
+      const dy = (n.radiusPx + NODE_LABEL_GAP + LABEL_H / 2) * (above ? -1 : 1);
+      out.push({ id: n.id, text: n.text, x: p.x, y: p.y, dy, priority: n.priority });
+    }
+    return out;
+  };
+  const nodeById = new Map<string, NodeLabelSource>((input.opNodes ?? []).map(n => [n.id, n]));
   const nodeFade = new Map<string, number>();
-  for (const n of input.opNodes ?? []) {
-    const p = project(n.position);
-    if (!p) continue;
-    nodeFade.set(n.id, p.fade ?? 1);
-    nodeCands.push({ id: n.id, text: n.text, x: p.x, y: p.y, dy: n.radiusPx + NODE_LABEL_GAP + LABEL_H / 2, priority: n.priority });
-    nodeById.set(n.id, n);
-  }
-  const opNodes = placeLabels(nodeCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_NODE_LABELS, obstacles })
-    .map(p => {
-      const src = nodeById.get(p.id)!;
-      return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: nodeFade.get(p.id) ?? 1 } satisfies PlacedNodeLabel;
-    });
-  // ...and the edge words keep clear of the names that were placed.
-  const nodeLabelBoxes: Obstacle[] = opNodes.flatMap(l => {
+  for (const n of input.opNodes ?? []) { const p = project(n.position); if (p) nodeFade.set(n.id, p.fade ?? 1); }
+  const nodeOpts = { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_NODE_LABELS };
+  const boxOf = (l: { position: LngLat; radiusPx: number; text: string }, above: boolean): Obstacle | null => {
     const p = project(l.position);
-    return p ? [{ x: p.x, y: p.y + l.radiusPx + NODE_LABEL_GAP + LABEL_H / 2, r: (l.text.length * CHAR_PX) / 2 }] : [];
-  });
-  obstacles.push(...nodeLabelBoxes);
+    return p ? { x: p.x, y: p.y + (l.radiusPx + NODE_LABEL_GAP + LABEL_H / 2) * (above ? -1 : 1), r: (l.text.length * CHAR_PX) / 2 } : null;
+  };
+  const placedNode = (id: string, above: boolean): PlacedNodeLabel => {
+    const src = nodeById.get(id)!;
+    return { id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: nodeFade.get(id) ?? 1, ...(above ? { above: true } : null) };
+  };
+  const below = placeLabels(nodeCands(false), { ...nodeOpts, obstacles }).map(p => placedNode(p.id, false));
+  const belowBoxes = below.flatMap(l => boxOf(l, false) ?? []);
+  const retry = nodeCands(true).filter(c => !below.some(l => l.id === c.id));
+  const aboveLabels = retry.length === 0 ? [] : placeLabels(retry, { ...nodeOpts, max: MAX_NODE_LABELS - below.length, obstacles: obstacles.concat(belowBoxes) }).map(p => placedNode(p.id, true));
+  const opNodes = [...below, ...aboveLabels].sort((x, y) => nodeById.get(y.id)!.priority - nodeById.get(x.id)!.priority);
+  // ...and the edge words keep clear of the names that were placed.
+  obstacles.push(...opNodes.flatMap(l => boxOf(l, !!l.above) ?? []));
 
   const edgeCands: LabelCandidate[] = [];
   const edgeById = new Map<string, EdgeLabelSource>();
@@ -297,7 +307,7 @@ const sameFade = (a: number, b: number): boolean => Math.round(a * 20) === Math.
 export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedLabels {
   const nodesSame = (prev.opNodes ?? []).length === (next.opNodes ?? []).length && (prev.opNodes ?? []).every((l, i) => {
     const n = next.opNodes![i]!;
-    return l.id === n.id && l.text === n.text && l.radiusPx === n.radiusPx && samePos(l.position, n.position) && sameFade(l.fade ?? 1, n.fade ?? 1);
+    return l.id === n.id && l.text === n.text && l.radiusPx === n.radiusPx && !!l.above === !!n.above && samePos(l.position, n.position) && sameFade(l.fade ?? 1, n.fade ?? 1);
   });
   const edgesSame = prev.edges.length === next.edges.length && prev.edges.every((e, i) => {
     const n = next.edges[i]!;

@@ -275,6 +275,41 @@ describe('ObservatoryV3 disabled controls explain themselves in text', () => {
   });
 });
 
+describe('ObservatoryV3: basemap attribution is always on screen (the map control is off for GHSA-jrc7-96c5-q579)', () => {
+  const assertCredit = () => {
+    const credit = screen.getByTestId('map-attribution');
+    const osm = within(credit).getByRole('link', { name: '© OpenStreetMap contributors' });
+    const carto = within(credit).getByRole('link', { name: '© CARTO' });
+    expect(osm).toHaveAttribute('href', 'https://www.openstreetmap.org/copyright');
+    expect(carto).toHaveAttribute('href', 'https://carto.com/attributions');
+    for (const a of [osm, carto]) {
+      expect(a).toHaveAttribute('target', '_blank');
+      expect(a.getAttribute('rel')).toContain('noopener');
+      expect(a.getAttribute('rel')).toContain('noreferrer');
+      expect(a.className).toContain('ds-focusable');
+    }
+    expect(credit).toBeVisible();
+  };
+  const paths = [
+    ...['threats', 'operations', 'movement', 'hosting', 'baseline', 'campaigns', 'actors'].flatMap(l => [`lens=${l}`, `lens=${l}&proj=globe`]),
+    'view=fast', 'mode=heatmap', 'mode=heatmap&proj=globe', 'mode=bot_density',
+  ];
+  it.each(paths)('desktop: %s', async q => {
+    renderAt(`/observatory?${q}`);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeInTheDocument());
+    assertCredit();
+  });
+  it.each(['lens=operations', 'lens=hosting&proj=globe', 'view=fast'])('phone width: %s (wraps, never hidden or removed)', async q => {
+    window.innerWidth = 400;
+    renderAt(`/observatory?${q}`);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeInTheDocument());
+    assertCredit();
+    // wrapping, not clipping: the container may wrap and the links never shrink to nothing
+    expect(screen.getByTestId('map-attribution').className).toContain('flex-wrap');
+    window.innerWidth = 1440;
+  });
+});
+
 describe('ObservatoryV3: entering a lens frames what it draws, once', () => {
   const opsData = [
     { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
@@ -357,10 +392,13 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
     renderAt('/observatory?lens=operations');
     expect(await screen.findByText('4 shared-infrastructure clusters hidden')).toBeInTheDocument();
     expect(urls().some(u => u.includes('include_shared'))).toBe(false);
+    // one fixed label; aria-pressed carries the state (a label that flips AND a pressed state read as a double negative)
+    expect(screen.getByRole('button', { name: 'Show shared infrastructure' })).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(screen.getByRole('button', { name: 'Show shared infrastructure' }));
     await waitFor(() => expect(search).toContain('shared=1'));
     await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
-    expect(screen.getByRole('button', { name: 'Hide shared infrastructure' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Show shared infrastructure' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: 'Hide shared infrastructure' })).not.toBeInTheDocument();
   });
 
   it('a shared=1 link opens with them included', async () => {

@@ -2,7 +2,8 @@
  * Flat | Globe: ONE toggle button, living in the map's zoom cluster (bottom-right, or top-right on phones where there
  * is no zoom control). It is a map control, not a lens control: it is there in every lens and view.
  *
- *   - label "Switch to globe" / "Switch to flat map" (what pressing it does), `aria-pressed` = the globe is on;
+ *   - a FIXED label ("Globe view") whose `aria-pressed` says whether the globe is on: a label that flips with the state
+ *     ("Switch to flat map") AND a pressed state read as a double negative to a screen reader;
  *   - it reads the REQUESTED projection (the URL's `proj`), so the preference survives views that cannot draw it;
  *   - the density Heat view has no globe variant (deck.gl's HeatmapLayer aggregates in screen space): the button is
  *     disabled and says so IN TEXT next to it (a tooltip does not exist on touch), and the change is announced when
@@ -27,8 +28,8 @@ export interface ProjectionToggleProps {
 }
 
 export function toggleLabel(projection: Projection, flatOnly: boolean): string {
-  if (flatOnly) return 'Switch to globe (unavailable: heat view is flat-only)';
-  return projection === 'globe' ? 'Switch to flat map' : 'Switch to globe';
+  void projection; // the label does not depend on it: the pressed state carries it
+  return flatOnly ? 'Globe view (unavailable: heat view is flat-only)' : 'Globe view';
 }
 
 export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch = false }: ProjectionToggleProps) {
@@ -69,7 +70,7 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
         aria-pressed={globe}
         aria-disabled={flatOnly || undefined}
         aria-describedby={flatOnly ? reasonId : undefined}
-        title={flatOnly ? HEAT_FLAT_ONLY : globe ? 'Switch to flat map' : 'Switch to globe'}
+        title={flatOnly ? HEAT_FLAT_ONLY : 'Globe view'}
         onClick={flatOnly ? undefined : () => { const next: Projection = globe ? 'flat' : 'globe'; onToggle(next); say(next === 'globe' ? 'Projection: globe' : 'Projection: flat map'); }}
         className="ds-focusable"
         style={{

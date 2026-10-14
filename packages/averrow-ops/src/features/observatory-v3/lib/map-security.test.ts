@@ -33,4 +33,28 @@ describe('map HTML-injection surface (GHSA-jrc7-96c5-q579)', () => {
     expect(src).toContain('GHSA-jrc7-96c5-q579');
     expect(stripComments(src)).not.toMatch(/attributionControl:\s*true/);
   });
+
+  it('the credit the control would have shown is plain text in our own markup: two fixed literals, never read from the style', () => {
+    const [, attr] = code.find(([path]) => path.endsWith('components/MapAttribution.tsx'))!;
+    const src = stripComments(attr);
+    expect(src).toContain("'https://www.openstreetmap.org/copyright'");
+    expect(src).toContain("'https://carto.com/attributions'");
+    expect(src).toContain('© OpenStreetMap contributors');
+    expect(src).toContain('© CARTO');
+    expect(src).toMatch(/target="_blank"/);
+    expect(src).toMatch(/rel="noopener noreferrer"/);
+    expect(src).not.toMatch(/\bstyle\.|getStyle|attribution\s*[:=]\s*[a-z]/i); // nothing is taken from the style document
+    expect(src).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
+  });
+
+  it('the page renders it unconditionally in the stats bar (not inside a lens / view branch)', () => {
+    const [, page] = code.find(([path]) => path === 'ObservatoryV3.tsx')!;
+    const src = stripComments(page);
+    const at = src.indexOf('<MapAttribution');
+    expect(at).toBeGreaterThan(0);
+    expect(src.match(/<MapAttribution/g)).toHaveLength(1);
+    // the statements around it are the footnote's JSX, with no ternary / && opening an unclosed branch for it
+    const before = src.slice(src.lastIndexOf('<div', at), at);
+    expect(before).not.toMatch(/\?\s*\(?\s*$|&&\s*\(?\s*$/);
+  });
 });
