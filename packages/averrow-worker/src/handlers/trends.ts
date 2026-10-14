@@ -321,6 +321,13 @@ export async function handleTrendProviderMomentum(request: Request, env: Env): P
 }
 
 // GET /api/trends/nexus-active
+// infrastructure_clusters has no created_at (prod's table: first_detected /
+// last_updated / last_seen), so `created_at` in the response is
+// first_detected under the old field name (contract pinned against prod's
+// DDL in test/infrastructure-clusters-prod-schema.test.ts). The single
+// `status = 'active'` equality + retired_reason IS NULL seeks the live-rows
+// partial index idx_clusters_live_status_threat_count already in
+// threat_count order (plan pinned in test/cluster-list-plans.test.ts).
 export async function handleTrendNexusActive(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   try {
@@ -331,7 +338,7 @@ export async function handleTrendNexusActive(request: Request, env: Env): Promis
           WHEN agent_notes LIKE '%PIVOT%' THEN 'critical'
           ELSE 'medium'
         END AS severity,
-        created_at
+        first_detected AS created_at
       FROM infrastructure_clusters
       WHERE status = 'active'
         AND ${notRetiredClusterSql()}

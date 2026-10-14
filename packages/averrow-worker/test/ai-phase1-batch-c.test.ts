@@ -192,12 +192,6 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
   });
 
   it("Attribution Backlog ranks hinted clusters first and flags them", async () => {
-    // KNOWN SCHEMA GAP: the backlog handler (pre-existing) SELECTs
-    // `nexus_brief`, which no migration declares — `infrastructure_clusters`
-    // predates migrations (0136 is CREATE TABLE IF NOT EXISTS) and the
-    // column is assumed to exist in production from that earlier schema.
-    // Added here to mirror production; flagged for a follow-up migration.
-    raw.exec(`ALTER TABLE infrastructure_clusters ADD COLUMN nexus_brief TEXT`);
     // The backlog pins its plan with INDEXED BY idx_clusters_live_status_threat_count
     // (migration 0306, partial: WHERE retired_reason IS NULL; plans in
     // test/cluster-list-plans.test.ts). The derived schema materialises no

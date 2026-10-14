@@ -15,7 +15,7 @@ import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
-import { liveClusterStatusSql } from "../../lib/cluster-status";
+import { isRetiredCluster, liveClusterStatusSql, notRetiredClusterSql } from "../../lib/cluster-status";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
@@ -214,6 +214,11 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
 // (source='manual', confidence='confirmed'). Dismiss stamps
 // attribution_dismissed_at so the backlog stops surfacing the row.
 
+/** 409 for an attribute / dismiss call on a retired (non-operation) cluster. */
+function retiredClusterResponse(origin: string | null): Response {
+  return json({ success: false, error: "Cluster is retired (not an operation)" }, 409, origin);
+}
+
 export async function handleAttributeCluster(
   request: Request,
   env: Env,
@@ -232,21 +237,28 @@ export async function handleAttributeCluster(
 
   const [cluster, actor] = await Promise.all([
     env.DB.prepare(
-      "SELECT id, cluster_name FROM infrastructure_clusters WHERE id = ?",
-    ).bind(clusterId).first<{ id: string; cluster_name: string | null }>(),
+      "SELECT id, cluster_name, retired_reason FROM infrastructure_clusters WHERE id = ?",
+    ).bind(clusterId).first<{ id: string; cluster_name: string | null; retired_reason: string | null }>(),
     env.DB.prepare(
       "SELECT id, name FROM threat_actors WHERE id = ?",
     ).bind(actorId).first<{ id: string; name: string }>(),
   ]);
   if (!cluster) return json({ success: false, error: "Cluster not found" }, 404, origin);
+  // A retired row (superseded duplicate / shared infrastructure —
+  // lib/cluster-status.ts) is not an operation: never attribute it, or the
+  // actor would be fanned out to its threats through a cluster no list shows.
+  if (isRetiredCluster(cluster.retired_reason)) return retiredClusterResponse(origin);
   if (!actor)   return json({ success: false, error: "Threat actor not found" }, 404, origin);
 
-  await env.DB.prepare(
+  // Re-checked in the write: a retire pass between the read and here leaves
+  // the row untouched (0 changes → 409) instead of attributing it.
+  const upd = await env.DB.prepare(
     `UPDATE infrastructure_clusters
         SET actor_id = ?, attribution_attempted_at = datetime('now'),
             attribution_dismissed_at = NULL
-      WHERE id = ?`,
+      WHERE id = ? AND ${notRetiredClusterSql()}`,
   ).bind(actorId, clusterId).run();
+  if ((upd.meta?.changes ?? 0) === 0) return retiredClusterResponse(origin);
 
   // Fan out to the cluster's threats — same shape the attributor agent
   // writes, but source='manual' + confidence='confirmed' (a human said so).
@@ -297,9 +309,15 @@ export async function handleDismissClusterAttribution(
   const res = await env.DB.prepare(
     `UPDATE infrastructure_clusters
         SET attribution_dismissed_at = datetime('now')
-      WHERE id = ? AND actor_id IS NULL`,
+      WHERE id = ? AND actor_id IS NULL AND ${notRetiredClusterSql()}`,
   ).bind(clusterId).run();
   if ((res.meta?.changes ?? 0) === 0) {
+    // Tell a retired row apart from a missing / attributed one (by-id read,
+    // only on the failure path).
+    const row = await env.DB.prepare(
+      "SELECT retired_reason FROM infrastructure_clusters WHERE id = ?",
+    ).bind(clusterId).first<{ retired_reason: string | null }>();
+    if (row && isRetiredCluster(row.retired_reason)) return retiredClusterResponse(origin);
     return json({ success: false, error: "Cluster not found (or already attributed)" }, 404, origin);
   }
 

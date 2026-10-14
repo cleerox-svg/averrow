@@ -1,14 +1,16 @@
 // Cluster list reads ordered by threat_count — query-plan pins on the fully
 // migrated schema at production shape.
 //
-// GET /api/providers/clusters (handleListClusters) and the attribution
-// backlog (handleAttributionBacklog) read the top-N clusters by
-// threat_count. ~76K retired legacy rows (retired_reason='superseded',
+// GET /api/providers/clusters (handleListClusters), the attribution
+// backlog (handleAttributionBacklog), GET /api/providers/:id/clusters
+// (handleProviderClusters), GET /api/trends/nexus-active and the critical
+// banner's mass-impersonation read (handleIntelCriticalBanner) read
+// clusters by threat_count. ~76K retired legacy rows (retired_reason='superseded',
 // migration 0303) keep status 'active' / 'dormant' — the prod CHECK allows
 // no other status — and their frozen counts dominate any threat_count
 // order, so neither idx_clusters_threat_count nor 0301's full
 // (status, threat_count) index can skip them.
-// liveClusterStatusSql() (`status IN ('active', 'dormant', 'accelerating',
+// liveClusterStatusSql() (`status IN ('active', 'dormant', 'disrupted', 'accelerating',
 // 'pivot') AND retired_reason IS NULL`) + `ORDER BY +threat_count DESC`
 // makes the planner seek the PARTIAL live-rows index (migration 0306) per
 // status and sort only the few hundred live rows. Each plan is taken from
@@ -18,12 +20,18 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { hasSqlite, openMigratedDb, d1FromSqlite, fakeKv, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
-import { handleListClusters, handleProviderIntelligence } from "../src/handlers/providers";
+import { handleListClusters, handleProviderIntelligence, handleProviderClusters } from "../src/handlers/providers";
 import { handleAttributionBacklog } from "../src/handlers/admin/attribution";
+import { handleIntelCriticalBanner } from "../src/handlers/intel";
+import { handleTrendNexusActive } from "../src/handlers/trends";
 import type { Env } from "../src/types";
 
 const LEGACY = 76_220;
 const STABLE = 780;
+/** cluster_ip_* rows (per-IP lane), every 3rd one retired. */
+const IP_ROWS = 60;
+/** Banner read: the PK range over cluster_ip_* ids, or a live-only partial index. */
+const BANNER_PLAN = /SEARCH infrastructure_clusters USING INDEX (sqlite_autoindex_infrastructure_clusters_1 \(id>\? AND id<\?\)|idx_clusters_live_status_threat_count|idx_clusters_actor_live)/;
 
 function seed(db: SqliteDb): void {
   let x = 7;
@@ -47,6 +55,16 @@ function seed(db: SqliteDb): void {
     s.run(`cluster_asn_${i}`, `stable ${i}`, Math.floor(rnd() ** 4 * 3000), status, retired,
       rnd() < 0.05 ? "ta_1" : null);
   }
+  // Per-IP rows for the critical-banner read. The retired ones carry the
+  // biggest counts, so a plan that ignored retirement would return one.
+  const ip = db.prepare(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason, asns, brand_ids)
+    VALUES (?, ?, ?, 'active', ?, '["AS9009"]', ?)`);
+  const brands = JSON.stringify(Array.from({ length: 120 }, (_, k) => `b${k}`));
+  for (let i = 0; i < IP_ROWS; i++) {
+    const retired = i % 3 === 0;
+    ip.run(`cluster_ip_203.0.113.${i}`, `IP ${i}`, retired ? 90_000 + i : 100 + i, retired ? "shared_infra" : null, brands);
+  }
+  db.prepare("INSERT INTO hosting_providers (id, name, asn) VALUES ('hp_cu', 'China Unicom', 'AS4837')").run();
   db.exec("COMMIT");
 }
 
@@ -58,9 +76,13 @@ function makeEnv(raw: SqliteDb): { env: Env; log: StatementLogEntry[] } {
 
 interface Planned { sql: string; plan: string; rows: number }
 
+type ClusterBody = { data: Array<{ id: string; status: string; threat_count: number }> };
+
 async function planReads(raw: SqliteDb): Promise<{
   list: Planned; backlog: Planned; backlogTotals: Planned; intelCount: Planned;
-  listBody: { data: Array<{ id: string; status: string; threat_count: number }> };
+  providerClusters: Planned; trendsNexus: Planned; bannerIp: Planned;
+  listBody: ClusterBody; providerBody: ClusterBody; trendsBody: ClusterBody;
+  bannerBody: { data: { events: Array<{ kind: string; link: string }> } };
 }> {
   const { env, log } = makeEnv(raw);
   const res = await handleListClusters(new Request("https://averrow.com/api/providers/clusters?limit=30"), env);
@@ -70,6 +92,15 @@ async function planReads(raw: SqliteDb): Promise<{
   expect(bres.status, await bres.clone().text()).toBe(200);
   const ires = await handleProviderIntelligence(new Request("https://averrow.com/api/providers/intelligence"), env);
   expect(ires.status, await ires.clone().text()).toBe(200);
+  const pres = await handleProviderClusters(new Request("https://averrow.com/api/providers/hp_cu/clusters"), env, "hp_cu");
+  expect(pres.status, await pres.clone().text()).toBe(200);
+  const providerBody = await pres.json() as ClusterBody;
+  const tres = await handleTrendNexusActive(new Request("https://averrow.com/api/trends/nexus-active"), env);
+  expect(tres.status, await tres.clone().text()).toBe(200);
+  const trendsBody = await tres.json() as ClusterBody;
+  const bnres = await handleIntelCriticalBanner(new Request("https://averrow.com/api/intel/critical-banner"), env);
+  expect(bnres.status, await bnres.clone().text()).toBe(200);
+  const bannerBody = await bnres.json() as { data: { events: Array<{ kind: string; link: string }> } };
   const explain = (e: StatementLogEntry): Planned => ({
     sql: e.sql,
     rows: e.rows ?? 0,
@@ -82,11 +113,14 @@ async function planReads(raw: SqliteDb): Promise<{
     return explain(hits[0]!);
   };
   return {
-    list: pick(/SELECT id, cluster_name, asns, countries, threat_count, status, confidence_score/),
+    list: pick(/first_detected, last_seen, last_updated FROM infrastructure_clusters/),
     backlog: pick(/attribution_attempted_at, nexus_brief, agent_notes FROM infrastructure_clusters/),
     backlogTotals: pick(/AS dismissed FROM infrastructure_clusters INDEXED BY/),
     intelCount: pick(/AS active_clusters FROM infrastructure_clusters/),
-    listBody,
+    providerClusters: pick(/agent_notes, first_detected, last_seen FROM infrastructure_clusters WHERE .* AND asns LIKE \?/),
+    trendsNexus: pick(/first_detected AS created_at FROM infrastructure_clusters/),
+    bannerIp: pick(/FROM infrastructure_clusters WHERE id >= 'cluster_ip_'/),
+    listBody, providerBody, trendsBody, bannerBody,
   };
 }
 
@@ -95,13 +129,9 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
   const modes: Record<string, Awaited<ReturnType<typeof planReads>>> = {};
 
   beforeAll(async () => {
+    // last_updated (handleListClusters) and nexus_brief (attribution
+    // backlog) come from 0136's base table, which mirrors prod's columns.
     raw = openMigratedDb();
-    // Prod's infrastructure_clusters predates migrations (0136 header) and
-    // carries last_updated (selected by handleListClusters and
-    // operations.ts) and nexus_brief (attribution backlog); no migration
-    // adds them, so a fresh migrated DB lacks both.
-    raw.exec("ALTER TABLE infrastructure_clusters ADD COLUMN last_updated TEXT");
-    raw.exec("ALTER TABLE infrastructure_clusters ADD COLUMN nexus_brief TEXT");
     seed(raw);
     modes["no stats"] = await planReads(raw);
     raw.exec("ANALYZE");
@@ -113,7 +143,7 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
       for (const which of ["list", "backlog", "backlogTotals", "intelCount"] as const) {
         it(`${which}: seeks the live statuses on the partial live-rows index, never walks a full index or scans`, () => {
           const p = modes[mode]![which];
-          expect(p.sql).toContain("status IN ('active', 'dormant', 'accelerating', 'pivot') AND retired_reason IS NULL");
+          expect(p.sql).toContain("status IN ('active', 'dormant', 'disrupted', 'accelerating', 'pivot') AND retired_reason IS NULL");
           if (which === "list" || which === "backlog") expect(p.sql).toMatch(/ORDER BY \+threat_count DESC/);
           expect(p.plan).toMatch(/SEARCH infrastructure_clusters USING (COVERING )?INDEX idx_clusters_live_status_threat_count \(status=\?\)/);
           expect(p.plan).not.toContain("idx_clusters_threat_count");
@@ -122,6 +152,49 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
           expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
         });
       }
+
+      it("providerClusters (GET /api/providers/:id/clusters): seeks the partial live-rows index, then LIKE-filters", () => {
+        const p = modes[mode]!.providerClusters;
+        expect(p.sql).toContain("status IN ('active', 'dormant', 'disrupted', 'accelerating', 'pivot') AND retired_reason IS NULL");
+        expect(p.sql).toMatch(/ORDER BY \+threat_count DESC/);
+        expect(p.plan).toMatch(/SEARCH infrastructure_clusters USING INDEX idx_clusters_live_status_threat_count \(status=\?\)/);
+        expect(p.plan).not.toContain("idx_clusters_threat_count");
+        expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
+      });
+
+      it("trendsNexus (GET /api/trends/nexus-active): seeks the partial live-rows index for status='active', in index order", () => {
+        const p = modes[mode]!.trendsNexus;
+        // One status equality: the (status, threat_count DESC) partial index
+        // already yields threat_count order, so no `+` and no sort.
+        expect(p.plan).toBe("SEARCH infrastructure_clusters USING INDEX idx_clusters_live_status_threat_count (status=?)");
+        expect(p.plan).not.toContain("idx_clusters_threat_count");
+        expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
+      });
+
+      it("bannerIp (critical-banner mass-impersonation read): a bounded cluster_ip_* seek, never the threat_count walk", () => {
+        const p = modes[mode]!.bannerIp;
+        expect(p.sql).toMatch(/ORDER BY \+threat_count DESC/);
+        expect(p.plan).toMatch(BANNER_PLAN);
+        expect(p.plan).not.toContain("idx_clusters_threat_count");
+        expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
+      });
+
+      it("provider clusters / trends / banner return live operations only", () => {
+        const { providerBody, trendsBody, bannerBody } = modes[mode]!;
+        const retired = new Set((raw.prepare(
+          "SELECT id FROM infrastructure_clusters WHERE retired_reason IS NOT NULL",
+        ).all() as Array<{ id: string }>).map((r) => r.id));
+        expect(providerBody.data.length).toBeGreaterThan(100);
+        for (const r of [...providerBody.data, ...trendsBody.data]) expect(retired.has(r.id), r.id).toBe(false);
+        // disrupted operations are live (lib/cluster-status.ts LIVE_CLUSTER_STATUSES)
+        expect(providerBody.data.some((r) => r.status === "disrupted")).toBe(true);
+        const pc = providerBody.data.map((r) => r.threat_count);
+        expect(pc).toEqual([...pc].sort((a, b) => b - a));
+        expect(trendsBody.data.length).toBe(5);
+        const ipEvent = bannerBody.data.events.find((e) => e.kind === "mass_impersonation_ip");
+        // Highest LIVE per-IP row (the retired ones carry bigger counts).
+        expect(ipEvent?.link).toBe(`/operations/${encodeURIComponent(`cluster_ip_203.0.113.${IP_ROWS - 1}`)}`);
+      });
 
       it("the seek reads only live rows (retired legacy rows are never visited)", () => {
         // Rows the partial index holds = the live population, not 77K —
@@ -144,7 +217,7 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
           "SELECT id FROM infrastructure_clusters WHERE retired_reason IS NOT NULL",
         ).all() as Array<{ id: string }>).map((r) => r.id));
         for (const r of listBody.data) {
-          expect(["active", "dormant", "accelerating", "pivot"]).toContain(r.status);
+          expect(["active", "dormant", "disrupted", "accelerating", "pivot"]).toContain(r.status);
           expect(retired.has(r.id), r.id).toBe(false);
         }
         const counts = listBody.data.map((r) => r.threat_count);

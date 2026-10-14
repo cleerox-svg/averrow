@@ -11,8 +11,11 @@
  *                  `cluster_asn_<asn>_<type>` row is the live one. NEXUS also
  *                  supersedes `cluster_asn_*` rows keyed on a malformed ASN
  *                  string ("AS13335 Cloudflare, Inc.") now that the lane
- *                  normalises ASNs (lib/nexus-threat-lanes.ts). Nothing ever
- *                  clears it.
+ *                  normalises ASNs (lib/nexus-threat-lanes.ts). Only the ASN
+ *                  lane clears it: when it re-emits a canonical
+ *                  `cluster_asn_*` id it rewrites asns / attack_types and
+ *                  sets retired_reason = NULL (legacy UUID ids can never
+ *                  collide with a lane id, so they stay superseded).
  *   shared_infra — ASN / per-IP / subnet rows that are not operator
  *                  evidence: on shared infrastructure (lib/shared-infra-
  *                  asns.ts — either list for ASN and /24 rows, multi-tenant
@@ -84,8 +87,20 @@ export function retiredClusterSql(alias?: string): string {
  * infrastructure_clusters.status. 'accelerating' / 'pivot' are accepted by
  * the Operations / Observatory status filters but the prod CHECK means they
  * can never be stored; they stay listed so those filters keep validating.
+ *
+ * 'disrupted' (decision 2026-10-14): a disrupted operation was taken down,
+ * but it is still a real operation — liveness is retired_reason, not
+ * status. It is listed so the positive-list readers (liveClusterStatusSql)
+ * return exactly the rows notRetiredClusterSql readers return for every
+ * status the prod CHECK can store; leaving it out made the top-N lists
+ * silently drop disrupted operations that every other reader showed.
+ * The partial index idx_clusters_live_status_threat_count (0306) is keyed
+ * on status with WHERE retired_reason IS NULL, so it already holds
+ * disrupted rows; the planner simply seeks one more status value. The
+ * public proof counter (lib/public-proof.ts LIVE_OPERATION_STATUSES) is a
+ * separate, deliberately narrower "currently active" list.
  */
-export const LIVE_CLUSTER_STATUSES: readonly string[] = ["active", "dormant", "accelerating", "pivot"];
+export const LIVE_CLUSTER_STATUSES: readonly string[] = ["active", "dormant", "disrupted", "accelerating", "pivot"];
 
 /**
  * Positive-list twin of notRetiredClusterSql:

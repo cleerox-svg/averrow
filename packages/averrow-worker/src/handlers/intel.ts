@@ -243,14 +243,18 @@ export async function handleIntelCriticalBanner(
     } catch { /* skip */ }
 
     // 3. New mass-impersonation IP cluster (PR-D fan-out clusters).
+    // PK range instead of `id LIKE 'cluster_ip_%'` (LIKE can't use the
+    // BINARY text PK) and `+threat_count` so the planner never walks
+    // idx_clusters_threat_count through ~76K retired rows to find the first
+    // live cluster_ip_* row. Plan pinned in test/cluster-list-plans.test.ts.
     try {
       const massImp = await env.DB.prepare(`
         SELECT id, cluster_name, brand_ids, threat_count, first_detected
           FROM infrastructure_clusters
-         WHERE id LIKE 'cluster_ip_%'
+         WHERE id >= 'cluster_ip_' AND id < 'cluster_ip\`'
            AND first_detected >= datetime('now', '-24 hours')
            AND ${notRetiredClusterSql()}
-         ORDER BY threat_count DESC
+         ORDER BY +threat_count DESC
          LIMIT 1
       `).first<{
         id: string;

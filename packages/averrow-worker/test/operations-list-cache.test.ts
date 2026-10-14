@@ -64,10 +64,6 @@ const LEGACY_SQL = (where: string) => `
 
 function seed(): SqliteDb {
   const raw = openDerivedDb(["infrastructure_clusters", "threat_actors", "threats"]);
-  // The handler selects ic.last_updated, which prod's pre-migration table
-  // carries but no migration in this repo adds (0136 is CREATE IF NOT
-  // EXISTS over an existing table). Added here so the query runs.
-  raw.exec("ALTER TABLE infrastructure_clusters ADD COLUMN last_updated TEXT");
   raw.prepare("INSERT INTO threat_actors (id, name) VALUES ('ta1', 'Actor One')").run();
   const ic = raw.prepare(
     `INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason, confidence_score, actor_id, last_updated)
