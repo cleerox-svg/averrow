@@ -117,6 +117,16 @@ const qState = (q: { isLoading: boolean; error: Error | null; refetch: () => Pro
   isLoading: q.isLoading, error: q.error, refetch: q.refetch,
 });
 
+const LOW_EVIDENCE = 'low-evidence clusters';
+/** The Operations panel's count line: what is held back (or, with the toggle on, how many of those are shown). */
+export function lowEvidenceNote(total: number, shown: boolean, returned: number | null | undefined): string {
+  if (!shown) return `${total.toLocaleString()} ${total === 1 ? 'low-evidence cluster' : LOW_EVIDENCE} hidden (shared hosting, hub IPs, scanning)`;
+  const n = Math.min(returned ?? total, total);
+  return n >= total
+    ? `${total.toLocaleString()} ${total === 1 ? 'low-evidence cluster' : LOW_EVIDENCE} shown (shared hosting, hub IPs, scanning)`
+    : `${n.toLocaleString()} of ${total.toLocaleString()} ${LOW_EVIDENCE} shown (largest first)`;
+}
+
 export function ObservatoryV3() {
   const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
@@ -444,13 +454,27 @@ export function ObservatoryV3() {
     campaign: !L.campaignsQ.isFetching && L.campaignsQ.data !== undefined,
     move: !L.movementsQ.isFetching && L.movementsQ.data !== undefined,
   };
+  // ...except a link to an operation the default view hides (shared hosting / hub / scanning): that one is
+  // resolved by turning `shared=1` on in the URL (replacing the entry), once per id, rather than dropped.
+  const sharedRetried = useRef<string | null>(null);
+  const sharedPending = useRef(false);
   useEffect(() => {
     if (drill) return;
+    if (state.shared) sharedPending.current = false;
+    else if (sel?.kind === 'op' && settled.op) {
+      if (sharedRetried.current !== sel.id) {
+        sharedRetried.current = sel.id;
+        sharedPending.current = true;
+        update({ shared: true });
+        return;
+      }
+      if (sharedPending.current) return; // the URL update has not landed yet: do not drop the key under it
+    }
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));
     else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) update(drillToPatch(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `settled` is derived from the listed query states
-  }, [drill, state.node, state.arc, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
+  }, [drill, state.node, state.arc, state.shared, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
 
   // "Threat Landscape Clear" — only when verified for THIS view.
   const overlayKind = mapFatal ? null : clearOverlayKind({
@@ -654,7 +678,7 @@ export function ObservatoryV3() {
         onPreview={lens === 'operations' ? onPanelPreview : undefined}
         aside={lens === 'operations' && (excludedTotal > 0 || state.shared) ? (
           <div className="flex flex-col gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {excludedTotal > 0 && <span role="status">{`${excludedTotal.toLocaleString()} shared-infrastructure ${excludedTotal === 1 ? 'cluster' : 'clusters'} hidden`}</span>}
+            {excludedTotal > 0 && <span role="status">{lowEvidenceNote(excludedTotal, state.shared, L.operationsQ.data?.meta?.shared_returned)}</span>}
             <button
               type="button"
               onClick={() => update({ shared: !state.shared })}
@@ -662,7 +686,7 @@ export function ObservatoryV3() {
               className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
               style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
-              Show shared infrastructure
+              Show low-evidence clusters
             </button>
           </div>
         ) : undefined}

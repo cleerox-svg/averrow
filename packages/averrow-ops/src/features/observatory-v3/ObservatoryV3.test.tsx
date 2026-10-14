@@ -383,22 +383,56 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
     expect(await screen.findByText('shared cert')).toBeInTheDocument();
     expect(screen.getByText(/60% conf · shared infra/)).toBeInTheDocument();
     expect(screen.getByText('same ASN')).toBeInTheDocument();
-    expect(screen.queryByText(/clusters hidden/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Show shared infrastructure' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/low-evidence clusters? hidden/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show low-evidence clusters' })).not.toBeInTheDocument();
   });
 
   it('a muted line counts the hidden clusters; the toggle sets shared=1 and requests include_shared=1', async () => {
     routeOps({ shared_asn: 3, hub_ip: 1, ip_reputation: 0 });
     renderAt('/observatory?lens=operations');
-    expect(await screen.findByText('4 shared-infrastructure clusters hidden')).toBeInTheDocument();
+    expect(await screen.findByText('4 low-evidence clusters hidden (shared hosting, hub IPs, scanning)')).toBeInTheDocument();
     expect(urls().some(u => u.includes('include_shared'))).toBe(false);
     // one fixed label; aria-pressed carries the state (a label that flips AND a pressed state read as a double negative)
-    expect(screen.getByRole('button', { name: 'Show shared infrastructure' })).toHaveAttribute('aria-pressed', 'false');
-    await userEvent.click(screen.getByRole('button', { name: 'Show shared infrastructure' }));
+    expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(screen.getByRole('button', { name: 'Show low-evidence clusters' }));
     await waitFor(() => expect(search).toContain('shared=1'));
     await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
-    expect(screen.getByRole('button', { name: 'Show shared infrastructure' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByRole('button', { name: 'Hide shared infrastructure' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: 'Hide low-evidence clusters' })).not.toBeInTheDocument();
+  });
+
+  it('with the toggle on the line says how many of the hidden clusters are shown', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 70, hub_ip: 0, ip_reputation: 0 }, shared_returned: 50 } });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations&shared=1');
+    expect(await screen.findByText('50 of 70 low-evidence clusters shown (largest first)')).toBeInTheDocument();
+  });
+
+  it('a link to an operation the default view hides turns shared=1 on (once) so the selection resolves', async () => {
+    const hidden = { ...opsData[1]!, id: 'o9', name: 'Hidden hub', shared_infra: true };
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) {
+        const withShared = url.includes('include_shared=1');
+        return Promise.resolve({ success: true, data: { operations: withShared ? [...opsData, hidden] : opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 1 }, shared_returned: withShared ? 1 : 0 } });
+      }
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations&sel=op:o9');
+    await waitFor(() => expect(search).toContain('shared=1'));
+    await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
+    await waitFor(() => expect(decodeURIComponent(search)).toContain('sel=op:o9'));
+    expect(await screen.findByText('Hidden hub')).toBeInTheDocument();
+  });
+
+  it('a link to an operation that does not exist even with shared on is dropped (no loop)', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations&sel=op:nope');
+    await waitFor(() => expect(search).not.toContain('nope'));
+    expect(urls().filter(u => u.startsWith('/api/observatory/operations-geo')).length).toBeLessThanOrEqual(2);
   });
 
   it('a shared=1 link opens with them included', async () => {

@@ -224,6 +224,8 @@ export interface LensMeta {
   dropped_no_centroid: number | null;
   /** operations-geo only: clusters left out by the backend's shared-infrastructure filters (optional: absent before it ships). */
   excluded?: { shared_asn?: number; hub_ip?: number; ip_reputation?: number } | null;
+  /** operations-geo only: how many of the excluded rows this response carries (include_shared=1; else 0). */
+  shared_returned?: number | null;
 }
 
 export interface LensPayload<T> {
@@ -244,6 +246,7 @@ export function readLensMeta(raw: unknown): LensMeta {
     source_feed: str(m.source_feed),
     country: str(m.country),
     dropped_no_centroid: typeof m.dropped_no_centroid === 'number' ? m.dropped_no_centroid : null,
+    ...(typeof m.shared_returned === 'number' && m.shared_returned >= 0 ? { shared_returned: m.shared_returned } : null),
     ...(m.excluded && typeof m.excluded === 'object' ? { excluded: readExcluded(m.excluded as Record<string, unknown>) } : null),
   };
 }
