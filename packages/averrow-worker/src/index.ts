@@ -505,7 +505,27 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         if (request.method === 'GET') {
           return Response.json({ success: true, data: await legacyClusterReport(env.DB) });
         }
-        const result = await runClusterRetirementBatch(env.DB, parseRetirementParams(url.searchParams));
+        const params = parseRetirementParams(url.searchParams);
+        const result = await runClusterRetirementBatch(env.DB, params);
+        if (!result.dry_run) {
+          // One audit row per applied call. Every moved threat is also in
+          // cluster_repoint_log (migration 0305) — the undo record.
+          const { audit } = await import('./lib/audit');
+          await audit(env, {
+            action: 'nexus_cluster_repoint',
+            userId: null,
+            resourceType: 'infrastructure_clusters',
+            details: {
+              actor: 'internal',
+              max_clusters: params.maxClusters,
+              max_threats: params.maxThreats,
+              legacy: result.legacy,
+              retired_stable: result.retired_stable,
+              done: result.done,
+            },
+            request,
+          });
+        }
         return Response.json({ success: true, data: result });
       }
 

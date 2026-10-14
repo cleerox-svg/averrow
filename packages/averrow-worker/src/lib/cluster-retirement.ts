@@ -9,14 +9,14 @@
  * nation-state attributions on Cloudflare clusters) and ≥880 threats whose
  * `cluster_id` still points at one of them.
  *
- * Retirement is in three parts, all reversible:
+ * Retirement is in three parts:
  *   1. migrations/0303 flips every legacy row to status='superseded'
  *      (actor_id, counts and notes are left intact — flip status back to
  *      undo). Every reader excludes it (lib/cluster-status.ts).
  *   2. NEXUS itself (lib/nexus-threat-lanes.ts retireNonOperationalLaneClusters)
  *      supersedes stable `cluster_asn_*` rows keyed on a malformed ASN and
- *      parks ASN-only / hub per-IP rows on shared infrastructure as
- *      'shared_infra'.
+ *      parks ASN / per-IP / subnet rows that are not operator evidence as
+ *      'shared_infra' (status flip only — undone by flipping it back).
  *   3. This module moves THREATS off retired rows, in bounded batches driven
  *      by `POST /api/internal/nexus/cluster-retirement` (dry-run by default):
  *        - a legacy / superseded ASN row maps to the stable id the current
@@ -28,6 +28,14 @@
  *          NULL) so the next NEXUS run can let a specific lane claim it.
  *      This is deliberately not in the migration: it writes the threats
  *      table, which is large, and needs per-batch bounds.
+ *      The UPDATE overwrites threats.cluster_id, so it is NOT reversible by
+ *      itself: every moved threat is first recorded in `cluster_repoint_log`
+ *      (migration 0305: threat_id, old_cluster_id, new_cluster_id, run_at),
+ *      in the same db.batch as the move, so the re-point can be undone from
+ *      that table (`UPDATE threats SET cluster_id = l.old_cluster_id FROM
+ *      cluster_repoint_log l WHERE threats.id = l.threat_id AND
+ *      threats.cluster_id IS l.new_cluster_id`). Each applied (non-dry-run)
+ *      call also writes one audit_log row with its counts (index.ts route).
  *
  * Legacy-id predicate: an id that does not start with `cluster_` is exactly
  * `id < 'cluster_' OR id >= 'cluster`'` ('`' is the code point after '_'),
@@ -59,13 +67,23 @@ function chunk<T>(xs: readonly T[], n: number): T[][] {
 
 const ph = (n: number): string => Array.from({ length: n }, () => "?").join(", ");
 
-function firstJsonString(v: string | null | undefined): string | null {
+function firstJsonElement(v: string | null | undefined): unknown {
   if (!v) return null;
   try {
     const parsed: unknown = JSON.parse(v);
-    if (Array.isArray(parsed) && typeof parsed[0] === "string" && parsed[0] !== "") return parsed[0];
+    if (Array.isArray(parsed)) return parsed[0] ?? null;
   } catch { /* malformed → undeterminable */ }
   return null;
+}
+
+function firstJsonString(v: string | null | undefined): string | null {
+  const first = firstJsonElement(v);
+  return typeof first === "string" && first !== "" ? first : null;
+}
+
+/** asns[0] as a canonical `AS<digits>` key — a JSON number (`[13335]`) counts. */
+function firstJsonAsn(v: string | null | undefined): string | null {
+  return asnKey(firstJsonElement(v));
 }
 
 export type LegacyMappingReason =
@@ -83,9 +101,8 @@ export function legacyTargetClusterId(
   asnsJson: string | null | undefined,
   attackTypesJson: string | null | undefined,
 ): { target: string | null; reason: LegacyMappingReason } {
-  const rawAsn = firstJsonString(asnsJson);
+  const asn = firstJsonAsn(asnsJson);
   const type = firstJsonString(attackTypesJson);
-  const asn = asnKey(rawAsn);
   if (asn === null || type === null) return { target: null, reason: "unparseable" };
   if (isSharedInfraAsn(asn)) return { target: null, reason: "shared_infra" };
   if (IP_REPUTATION_THREAT_TYPES.includes(type)) return { target: null, reason: "ip_reputation" };
@@ -322,12 +339,20 @@ export function parseRetirementParams(sp: URLSearchParams): RetirementBatchOptio
 /**
  * One bounded batch. Phase 1: threats pointing at LEGACY (non-`cluster_`)
  * ids. Phase 2: threats pointing at retired STABLE rows (superseded
- * malformed-ASN rows, shared_infra rows). Each source id is moved with
- * `UPDATE … WHERE id IN (SELECT id … WHERE cluster_id = ? LIMIT ?)` — an
- * index seek, capped by the remaining per-call threat budget — and guarded
- * on the old cluster_id, so a concurrent NEXUS stamp is never overwritten.
+ * malformed-ASN rows, shared_infra rows). Each source id is moved by ONE
+ * db.batch (atomic) of two statements:
+ *   1. `INSERT INTO cluster_repoint_log SELECT id, cluster_id, <target>, now
+ *      FROM threats WHERE cluster_id = ? LIMIT <remaining budget>` — an index
+ *      seek on (cluster_id, created_at) recording exactly what will move;
+ *   2. `UPDATE threats SET cluster_id = <target> WHERE cluster_id = ? AND id
+ *      IN (SELECT threat_id FROM cluster_repoint_log WHERE old_cluster_id = ?
+ *      AND run_at = <this call>)` — moves exactly the rows this call logged,
+ *      and never overwrites a concurrent NEXUS stamp.
  * Idempotent: moved threats leave the source set; a rerun after completion
- * writes nothing and reports done.
+ * writes nothing and reports done. The per-phase counters (cluster_ids /
+ * repoint / release) count only source ids actually handled this call — an
+ * id skipped because the threat budget ran out is left for the next call
+ * and is not counted (dry runs evaluate every planned id).
  */
 export async function runClusterRetirementBatch(
   db: D1Database,
@@ -361,8 +386,13 @@ export async function runClusterRetirementBatch(
     { plan: retiredPlan, counts: retiredCounts, out: result.retired_stable },
   ];
 
+  // One run_at per call (ms precision): the UPDATE moves exactly the rows
+  // THIS call logged, even if an undo put earlier-logged threats back.
+  const runAt = new Date().toISOString().replace("T", " ").slice(0, 23);
   for (const { plan, counts, out } of phases) {
     for (const entry of plan) {
+      // Budget exhausted: leave this id for the next call, uncounted.
+      if (!opts.dryRun && budget <= 0) continue;
       const n = counts.get(entry.cluster_id) ?? 0;
       out.cluster_ids++;
       if (entry.action === "repoint") out.repoint++;
@@ -373,13 +403,19 @@ export async function runClusterRetirementBatch(
         else out.threats_released += n;
         continue;
       }
-      if (budget <= 0) continue;
-      const res = await db.prepare(
-        `UPDATE threats SET cluster_id = ?
-          WHERE cluster_id = ?
-            AND id IN (SELECT id FROM threats WHERE cluster_id = ? LIMIT ?)`,
-      ).bind(entry.target, entry.cluster_id, entry.cluster_id, budget).run();
-      const moved = Number(res.meta?.changes ?? 0);
+      const [, upd] = await db.batch([
+        db.prepare(
+          `INSERT INTO cluster_repoint_log (threat_id, old_cluster_id, new_cluster_id, run_at)
+           SELECT id, cluster_id, ?, ? FROM threats WHERE cluster_id = ? LIMIT ?`,
+        ).bind(entry.target, runAt, entry.cluster_id, budget),
+        db.prepare(
+          `UPDATE threats SET cluster_id = ?
+            WHERE cluster_id = ?
+              AND id IN (SELECT threat_id FROM cluster_repoint_log
+                          WHERE old_cluster_id = ? AND run_at = ?)`,
+        ).bind(entry.target, entry.cluster_id, entry.cluster_id, runAt),
+      ]);
+      const moved = Number(upd?.meta?.changes ?? 0);
       budget -= moved;
       if (entry.action === "repoint") out.threats_repointed += moved;
       else out.threats_released += moved;

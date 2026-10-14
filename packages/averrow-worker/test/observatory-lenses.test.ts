@@ -233,7 +233,11 @@ describe("shared-infra ASNs", () => {
     expect(isSharedInfraAsn("AS13335 Cloudflare, Inc.")).toBe(true);
     expect(isSharedInfraAsn("AS133350")).toBe(false);
     expect(isSharedInfraAsn("AS9009")).toBe(false);
-    expect(SHARED_INFRA_ASNS.size).toBe(19);
+    // Union of MULTI_TENANT_ASNS (26) + SINGLE_TENANT_IAAS_ASNS (15): an
+    // ASN-kind cluster on either is not operator evidence.
+    expect(SHARED_INFRA_ASNS.size).toBe(41);
+    expect(isSharedInfraAsn("AS16509")).toBe(true);
+    expect(isSharedInfraAsn("AS27647")).toBe(true);
     for (const k of SHARED_INFRA_ASNS) expect(asnKey(k)).toBe(k);
   });
 });

@@ -19,22 +19,30 @@
  * Lane run-order precedence (MOST-SPECIFIC FIRST — every stamp carries a
  * `cluster_id IS NULL` guard, so the first lane to claim a threat owns it):
  *   cert-serial → cert-SAN → per-IP → /24 subnet → registrar → ASN.
- * Then `retireNonOperationalLaneClusters` flips stale ASN / per-IP rows that
- * no longer qualify as operator evidence. Callers must keep that order.
+ * Then `retireNonOperationalLaneClusters` flips stale ASN / per-IP / subnet
+ * rows that no longer qualify as operator evidence. Callers must keep that
+ * order.
  *
  * 2026-10-14 cluster-quality fix (owner-approved):
- *   - ASN lane: skips SHARED_INFRA_ASNS and IP-reputation threat types
- *     (scanning / malicious_ip), groups ACTIVE threats only (threat_count now
- *     equals what can be stamped), normalises malformed ASN strings
- *     ("AS13335 Cloudflare, Inc." → "AS13335"), and caps ASN-only confidence
- *     at ASN_CONFIDENCE_CAP — it rises with specificity (country
- *     concentration, campaign overlap), never with brand breadth.
+ *   - Shared infrastructure is two sets (lib/shared-infra-asns.ts):
+ *     MULTI_TENANT_ASNS (one IP serves many tenants — CDN, site builders,
+ *     parking, free hosts) and SINGLE_TENANT_IAAS_ASNS (hyperscalers / VPS —
+ *     the ASN is a landlord but an IP is one customer). ASN and /24 lanes
+ *     skip both; the per-IP lane skips only multi-tenant.
+ *   - ASN lane: skips IP-reputation threat types (scanning / malicious_ip)
+ *     and empty / NULL types, groups ACTIVE threats only (threat_count counts
+ *     every active threat on the ASN + type — more-specific lanes may already
+ *     own some of them, so it can exceed what this lane stamps), normalises
+ *     malformed ASN strings ("AS13335 Cloudflare, Inc." → "AS13335"), never
+ *     emits a group whose brand fan-out exceeds the hub threshold, and caps
+ *     ASN-only confidence at ASN_CONFIDENCE_CAP — it rises with campaign
+ *     overlap, volume and targeting (few brands), never with brand breadth.
  *   - Per-IP lane: candidates capped at the component hub threshold, threats
- *     on shared-infra ASNs excluded, ranked by threat volume; confidence no
- *     longer rewards brand breadth.
- *   - /24 lane: the 5-ASN CDN literal is replaced by SHARED_INFRA_ASNS, and
- *     the stamp now mirrors the filter (it used to claim CDN-hosted members
- *     the grouping had excluded).
+ *     on multi-tenant ASNs and bogon / private / sinkhole IPs excluded,
+ *     ranked by threat volume; confidence no longer rewards brand breadth.
+ *   - /24 lane: the 5-ASN CDN literal is replaced by SHARED_INFRA_ASNS (both
+ *     sets), bogon / private ranges are excluded, and the stamp mirrors the
+ *     filter (it used to claim CDN-hosted members the grouping had excluded).
  *   - Every lane writes `country_counts` (migration 0302) from its existing
  *     scan — see tallyCountries — and evidence-first names
  *     (lib/cluster-naming.ts).
@@ -42,7 +50,14 @@
  * Pure SQL + deterministic JS. No AI.
  */
 
-import { SHARED_INFRA_ASNS, SHARED_INFRA_ASNS_SQL_LIST, asnKey, asnKeySql } from "./shared-infra-asns";
+import {
+  MULTI_TENANT_ASNS,
+  MULTI_TENANT_ASNS_SQL_LIST,
+  SHARED_INFRA_ASNS,
+  SHARED_INFRA_ASNS_SQL_LIST,
+  asnKey,
+  asnKeySql,
+} from "./shared-infra-asns";
 import { DEFAULT_HUB_FANOUT_THRESHOLD } from "./cluster-components";
 import { buildDormancyPivotPayload } from "./cluster-infra-movement";
 import {
@@ -57,7 +72,7 @@ import {
 import { SHARED_INFRA_CLUSTER_STATUS, SUPERSEDED_CLUSTER_STATUS } from "./cluster-status";
 
 // ─── ASN normalisation ────────────────────────────────────────────────
-// asnKey / asnKeySql / isSharedInfraAsn / SHARED_INFRA_ASNS live in
+// asnKey / asnKeySql / the shared-infra ASN sets live in
 // lib/shared-infra-asns.ts — the single normaliser shared with the
 // Observatory operations-geo classifier and cluster retirement.
 
@@ -70,9 +85,55 @@ import { SHARED_INFRA_CLUSTER_STATUS, SUPERSEDED_CLUSTER_STATUS } from "./cluste
 export const IP_REPUTATION_THREAT_TYPES: readonly string[] = ["scanning", "malicious_ip"];
 const IP_REP_SQL_LIST = IP_REPUTATION_THREAT_TYPES.map((t) => `'${t}'`).join(", ");
 
-/** Threat row is NOT on a shared-infra ASN (unknown / unparseable ASN passes). */
+/**
+ * Threat row is NOT on a shared-infra ASN of either kind (unknown /
+ * unparseable ASN passes). The ASN-grouping lanes' guard (/24).
+ */
 const NOT_SHARED_ASN_SQL =
   `(asn IS NULL OR COALESCE(${asnKeySql("asn")}, '') NOT IN (${SHARED_INFRA_ASNS_SQL_LIST}))`;
+
+/**
+ * Threat row is NOT on a multi-tenant ASN (IaaS and unknown ASNs pass). The
+ * per-IP lane's guard: on a hyperscaler / VPS an IP is one customer.
+ */
+const NOT_MULTI_TENANT_ASN_SQL =
+  `(asn IS NULL OR COALESCE(${asnKeySql("asn")}, '') NOT IN (${MULTI_TENANT_ASNS_SQL_LIST}))`;
+
+// ─── Bogon / private / sinkhole IPs ───────────────────────────────────
+//
+// A "shared IP" of 127.0.0.1, 0.0.0.0, 10.x or a CGNAT address is a feed's
+// sinkhole / placeholder / resolver artefact, not hosting — hundreds of
+// unrelated domains resolve there. Excluded from the per-IP and /24 lanes
+// (SELECT and stamp alike) and retired by the lane retire pass.
+// 0/8, 10/8, 127/8, 169.254/16, 192.168/16 are plain prefixes; 172.16/12 and
+// 100.64/10 check the second octet numerically. isBogonIpv4 is the JS twin
+// (test/nexus-threat-lanes.test.ts runs both over the same samples).
+
+const SECOND_OCTET_SQL = "CAST(substr(ip_address, 5, instr(substr(ip_address, 5), '.') - 1) AS INTEGER)";
+
+/** `ip_address` is NOT a bogon / private / CGNAT / link-local IPv4. */
+export const NOT_BOGON_IP_SQL = `(ip_address NOT LIKE '0.%'
+            AND ip_address NOT LIKE '10.%'
+            AND ip_address NOT LIKE '127.%'
+            AND ip_address NOT LIKE '169.254.%'
+            AND ip_address NOT LIKE '192.168.%'
+            AND NOT (ip_address LIKE '172.%' AND ${SECOND_OCTET_SQL} BETWEEN 16 AND 31)
+            AND NOT (ip_address LIKE '100.%' AND ${SECOND_OCTET_SQL} BETWEEN 64 AND 127))`;
+
+/** JS twin of NOT_BOGON_IP_SQL (negated): true for a bogon / private IPv4. */
+export function isBogonIpv4(ip: string): boolean {
+  const lower = ip.toLowerCase();
+  if (["0.", "10.", "127.", "169.254.", "192.168."].some((p) => lower.startsWith(p))) return true;
+  const octet2 = (): number => {
+    const rest = ip.slice(4);
+    const dot = rest.indexOf(".");
+    const n = parseInt(dot === -1 ? "" : rest.slice(0, dot), 10);
+    return Number.isFinite(n) ? n : 0;
+  };
+  if (ip.startsWith("172.")) { const o = octet2(); return o >= 16 && o <= 31; }
+  if (ip.startsWith("100.")) { const o = octet2(); return o >= 64 && o <= 127; }
+  return false;
+}
 
 const ASN_NORM_SQL = asnKeySql("asn");
 
@@ -121,26 +182,33 @@ export const ASN_PREDICTIVE_MIN_CONFIDENCE = 35;
 
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
+/** ASN group targeting at most this many brands counts as targeted. */
+export const ASN_TARGETED_MAX_BRANDS = 5;
+
 /**
  * ASN-lane confidence. ASN-only evidence is weak: a whole provider's address
- * space. It starts low and rises only with SPECIFICITY — the group is
- * concentrated in one or few countries, its members already overlap known
- * campaigns, it has sustained volume. Brand breadth is NOT rewarded (the old
- * `brands * 5` term drove every widely-shared ASN to 100); a single ASN
- * hitting more than 50 brands is commodity hosting and costs confidence.
+ * space. It starts low and rises only with SPECIFICITY — its members already
+ * overlap known campaigns (the main lift), it has sustained volume, it is
+ * targeted (few brands). Country concentration is NOT a signal: an ASN is
+ * almost always one country's address space, so "one country" was a
+ * tautological bonus. Brand breadth is NOT rewarded (the old `brands * 5`
+ * term drove every widely-shared ASN to 100); a single ASN hitting more than
+ * 50 brands is commodity hosting and costs confidence.
+ *
+ * Scale: 15 base, +15 (>= 2 campaigns) / +5 (1 campaign), +5 (>= 50
+ * threats), +5 (<= ASN_TARGETED_MAX_BRANDS brands), -10 (> 50 brands);
+ * clamped to [5, ASN_CONFIDENCE_CAP]. Every bonus together reaches the cap.
  */
 export function computeAsnClusterConfidence(s: {
   threats: number;
   campaigns: number;
   brands: number;
-  distinctCountries: number;
 }): number {
   let c = 15;
-  if (s.distinctCountries === 1) c += 10;
-  else if (s.distinctCountries >= 2 && s.distinctCountries <= 3) c += 5;
-  if (s.campaigns >= 2) c += 10;
+  if (s.campaigns >= 2) c += 15;
   else if (s.campaigns === 1) c += 5;
   if (s.threats >= 50) c += 5;
+  if (s.brands >= 1 && s.brands <= ASN_TARGETED_MAX_BRANDS) c += 5;
   if (s.brands > 50) c -= 10;
   return clamp(c, 5, ASN_CONFIDENCE_CAP);
 }
@@ -172,15 +240,33 @@ function splitList(v: string | null | undefined): string[] {
   return (v ?? "").split(",").filter(Boolean);
 }
 
-function parseJsonStringArray(v: string | null | undefined): string[] {
+function parseJsonArray(v: string | null | undefined): unknown[] {
   if (!v) return [];
   try {
     const parsed: unknown = JSON.parse(v);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x): x is string => typeof x === "string" && x.length > 0);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
+}
+
+function parseJsonStringArray(v: string | null | undefined): string[] {
+  return parseJsonArray(v).filter((x): x is string => typeof x === "string" && x.length > 0);
+}
+
+/**
+ * A cluster's `asns` JSON → canonical `AS<digits>` keys. Accepts every form
+ * asnKey does, INCLUDING bare JSON numbers (`[13335]`) — a string-only
+ * filter used to drop those, so a numeric shared-infra ASN escaped retirement.
+ */
+export function parseJsonAsnArray(v: string | null | undefined): string[] {
+  return parseJsonArray(v).map(asnKey).filter((a): a is string => a !== null);
+}
+
+/** Raw stamp variants (strings, or numbers when a source stored one). */
+function parseJsonScalarArray(v: string | null | undefined): Array<string | number> {
+  return parseJsonArray(v).filter((x): x is string | number =>
+    (typeof x === "string" && x.length > 0) || (typeof x === "number" && Number.isFinite(x)));
 }
 
 interface ClusterUpsert {
@@ -444,8 +530,12 @@ export async function runCertSanLane(db: D1Database): Promise<LaneResult> {
 //   - candidates must sit at or under DEFAULT_HUB_FANOUT_THRESHOLD brands
 //     (the same threshold lib/cluster-components uses — a cluster over it
 //     can't bridge anyway);
-//   - threats whose ASN is a known shared-infra network are excluded (an
-//     unknown ASN still qualifies — the IP itself is the evidence);
+//   - threats whose ASN is a MULTI-TENANT network (CDN / site builder /
+//     parking / free host) are excluded. Hyperscaler / VPS (IaaS) IPs stay
+//     eligible: one IaaS IP is normally one customer, and the hub cap above
+//     drops the few that aren't. An unknown ASN still qualifies — the IP
+//     itself is the evidence;
+//   - bogon / private / sinkhole IPs are excluded (NOT_BOGON_IP_SQL);
 //   - ranking is by threat volume, then breadth.
 
 export const PER_IP_LANE_SQL = `
@@ -462,8 +552,9 @@ export const PER_IP_LANE_SQL = `
        WHERE status = 'active'
          AND ip_address IS NOT NULL
          AND ip_address NOT IN ('', '0.0.0.0')
+         AND ${NOT_BOGON_IP_SQL}
          AND target_brand_id IS NOT NULL
-         AND ${NOT_SHARED_ASN_SQL}
+         AND ${NOT_MULTI_TENANT_ASN_SQL}
        GROUP BY ip_address
       HAVING brand_count >= 3 AND threat_count >= 5 AND brand_count <= ?
        ORDER BY threat_count DESC, brand_count DESC
@@ -472,7 +563,8 @@ export const PER_IP_LANE_SQL = `
 export const PER_IP_STAMP_SQL = `UPDATE threats SET cluster_id = ?
           WHERE ip_address = ? AND status = 'active'
             AND target_brand_id IS NOT NULL AND cluster_id IS NULL
-            AND ${NOT_SHARED_ASN_SQL}`;
+            AND ${NOT_BOGON_IP_SQL}
+            AND ${NOT_MULTI_TENANT_ASN_SQL}`;
 
 export async function runPerIpLane(db: D1Database): Promise<LaneResult> {
   const rows = (await db.prepare(PER_IP_LANE_SQL).bind(DEFAULT_HUB_FANOUT_THRESHOLD).all<{
@@ -527,11 +619,12 @@ export async function runPerIpLane(db: D1Database): Promise<LaneResult> {
 // index-backed). Catches an actor spreading across a contiguous block — a
 // signal the per-IP lane (one IP) and the ASN lane (whole provider) miss.
 // Shared-infra guard: a /24 on a CDN / hyperscaler is co-tenancy noise, so
-// members on SHARED_INFRA_ASNS are excluded (this replaced a 5-ASN literal —
-// Cloudflare, Fastly, CloudFront, Akamai, Google — with the full shared list,
-// adding e.g. AWS GA, Azure, DigitalOcean, OVH, Hetzner, Vultr, Sedo,
-// Squarespace). distinct_ips >= 2 distinguishes it from the per-IP lane;
-// brand_count <= hub threshold is the over-merge guard.
+// members on SHARED_INFRA_ASNS (multi-tenant AND IaaS — on a VPS provider a
+// /24 is many customers) are excluded (this replaced a 5-ASN literal —
+// Cloudflare, Fastly, CloudFront, Akamai, Google — with both shared lists).
+// Bogon / private ranges are excluded too. distinct_ips >= 2 distinguishes
+// it from the per-IP lane; brand_count <= hub threshold is the over-merge
+// guard.
 
 export const SUBNET_LANE_SQL = `
       SELECT ip_subnet24                            AS subnet24,
@@ -547,6 +640,7 @@ export const SUBNET_LANE_SQL = `
         FROM threats
        WHERE status = 'active'
          AND ip_subnet24 IS NOT NULL
+         AND ${NOT_BOGON_IP_SQL}
          AND target_brand_id IS NOT NULL
          AND ${NOT_SHARED_ASN_SQL}
        GROUP BY ip_subnet24
@@ -557,6 +651,7 @@ export const SUBNET_LANE_SQL = `
 export const SUBNET_STAMP_SQL = `UPDATE threats SET cluster_id = ?
           WHERE ip_subnet24 = ? AND status = 'active'
             AND target_brand_id IS NOT NULL AND cluster_id IS NULL
+            AND ${NOT_BOGON_IP_SQL}
             AND ${NOT_SHARED_ASN_SQL}`;
 
 /** One notch below per-IP: a /24 is looser evidence than one shared IP. */
@@ -714,12 +809,18 @@ export async function runRegistrarLane(db: D1Database): Promise<LaneResult> {
 //
 // The coarsest key (a whole provider), hence lowest precedence: its stamp
 // only claims threats no specific lane already owns. Groups ACTIVE threats
-// only, so threat_count equals the population the stamp can claim (the old
-// lane grouped every status but stamped only unclaimed rows —
-// cluster_asn_as13335_malware_distribution reported 65,048 while 9,275 were
-// stamped). The group key is the NORMALISED ASN; the stamp matches the raw
-// asn spellings that normalise to it (`asn IN (…)`, index-backed by
-// (asn, threat_type)).
+// only (the old lane grouped every status — cluster_asn_as13335_malware_
+// distribution reported 65,048 while 9,275 were stamped). threat_count is
+// every active threat on the ASN + type, INCLUDING ones a more-specific lane
+// already claimed, so it can exceed what this lane's stamp writes. The group
+// key is the NORMALISED ASN; the stamp matches the raw asn spellings that
+// normalise to it (`asn IN (…)`, index-backed by (asn, threat_type)).
+//
+// Skipped: shared-infra ASNs of either kind, IP-reputation types, NULL / ''
+// types (a '' type slugs to `_unknown`, which the retire pass supersedes as a
+// missing type — the lane would reactivate it every run), and any group whose
+// brand fan-out exceeds the hub threshold (ASN_MAX_BRAND_FANOUT): one ASN
+// carrying > 150 brands' impersonations is a landlord, not an operator.
 
 export const ASN_LANE_SQL = `
       SELECT asn_norm                                AS asn,
@@ -742,14 +843,19 @@ export const ASN_LANE_SQL = `
             FROM threats
            WHERE status = 'active'
              AND asn IS NOT NULL
+             AND threat_type IS NOT NULL
+             AND threat_type != ''
              AND threat_type NOT IN (${IP_REP_SQL_LIST})
         )
        WHERE asn_norm IS NOT NULL
          AND asn_norm NOT IN (${SHARED_INFRA_ASNS_SQL_LIST})
        GROUP BY asn_norm, threat_type
-      HAVING COUNT(*) >= 10
+      HAVING COUNT(*) >= 10 AND COUNT(DISTINCT target_brand_id) <= ?
        ORDER BY threats DESC
        LIMIT 100`;
+
+/** An ASN group over this brand fan-out is not emitted (and an existing row is retired). */
+export const ASN_MAX_BRAND_FANOUT = DEFAULT_HUB_FANOUT_THRESHOLD;
 
 /** D1 caps bound parameters at 100 per statement; the stamp binds 2 + the variants. */
 const ASN_STAMP_VARIANT_CHUNK = 90;
@@ -777,7 +883,7 @@ export interface AsnLaneResult extends LaneResult {
 }
 
 export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
-  const rows = (await db.prepare(ASN_LANE_SQL).all<{
+  const rows = (await db.prepare(ASN_LANE_SQL).bind(ASN_MAX_BRAND_FANOUT).all<{
     asn: string;
     threat_type: string;
     campaigns: number;
@@ -805,7 +911,6 @@ export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
       threats: row.threats,
       campaigns: row.campaigns,
       brands: row.brands,
-      distinctCountries: countries.length,
     });
     // Deterministic id from the natural key (normalised asn + threat_type).
     // Same format the pre-2026-09 random-UUID legacy rows are re-pointed to
@@ -837,7 +942,7 @@ export async function runAsnLane(db: D1Database): Promise<AsnLaneResult> {
 
       // Stamp: mops up only threats no more-specific lane claimed. Matches
       // every raw spelling that normalised to this group key.
-      const variants = parseJsonStringArray(row.raw_asns);
+      const variants = parseJsonScalarArray(row.raw_asns);
       for (let i = 0; i < variants.length; i += ASN_STAMP_VARIANT_CHUNK) {
         const chunk = variants.slice(i, i + ASN_STAMP_VARIANT_CHUNK);
         await db.prepare(
@@ -887,7 +992,7 @@ export function asnClusterId(asn: string, threatType: string | null): string {
   return `cluster_asn_${slugifyKey(asn)}_${slugifyKey(threatType)}`;
 }
 
-// ─── Retire stale ASN / per-IP rows ───────────────────────────────────
+// ─── Retire stale ASN / per-IP / subnet rows ──────────────────────────
 
 export interface RetireResult {
   rowsScanned: number;
@@ -899,13 +1004,21 @@ export interface RetireResult {
  * Decide whether an existing lane row should stop being an operation.
  * Pure — unit-tested. Returns the new status, or null to leave it alone.
  *
+ * Mirrors each lane's filter, so a row the lane would emit is never retired
+ * (no retire / reactivate loop):
+ *
  *   cluster_asn_*: superseded when its id is not the id the lane would now
  *     compute from its own (asn, type) — a row keyed on a malformed ASN
- *     string or a NULL type, which the normalised lane can never refresh;
- *     shared_infra when its ASN is shared infrastructure or its type is an
- *     IP-reputation type.
+ *     string or a NULL / '' type, which the normalised lane can never
+ *     refresh; shared_infra when its ASN is shared infrastructure (either
+ *     set), its type is an IP-reputation type, or its brand fan-out exceeds
+ *     ASN_MAX_BRAND_FANOUT.
  *   cluster_ip_*: shared_infra when its brand fan-out exceeds the hub
- *     threshold or any of its ASNs is shared infrastructure.
+ *     threshold, its IP is a bogon / private address, or any of its ASNs is
+ *     MULTI-TENANT. An IaaS ASN is NOT a reason: the per-IP lane keeps those.
+ *   cluster_subnet_*: shared_infra when its brand fan-out exceeds the hub
+ *     threshold, the /24 is bogon / private, or any of its ASNs is shared
+ *     infrastructure (either set).
  */
 export function decideLaneRowRetirement(row: {
   id: string;
@@ -913,8 +1026,12 @@ export function decideLaneRowRetirement(row: {
   attack_types: string | null;
   brand_fanout: number;
 }): { status: string; reason: string } | null {
+  const fanoutRetire = (what: string) => ({
+    status: SHARED_INFRA_CLUSTER_STATUS,
+    reason: `SHARED INFRA: ${what} serves ${row.brand_fanout} brands (> ${DEFAULT_HUB_FANOUT_THRESHOLD} hub threshold) — a landlord, not an operator.`,
+  });
   if (row.id.startsWith("cluster_asn_")) {
-    const asn = asnKey(parseJsonStringArray(row.asns)[0] ?? null);
+    const asn = parseJsonAsnArray(row.asns)[0] ?? null;
     const type = parseJsonStringArray(row.attack_types)[0] ?? null;
     if (asn === null || type === null || asnClusterId(asn, type) !== row.id) {
       return {
@@ -934,20 +1051,36 @@ export function decideLaneRowRetirement(row: {
         reason: `SHARED INFRA: ${type} sightings grouped by ASN are IP reputation, not an operation.`,
       };
     }
+    if (row.brand_fanout > ASN_MAX_BRAND_FANOUT) return fanoutRetire(`ASN ${asn}`);
     return null;
   }
   if (row.id.startsWith("cluster_ip_")) {
-    if (row.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD) {
-      return {
-        status: SHARED_INFRA_CLUSTER_STATUS,
-        reason: `SHARED INFRA: IP serves ${row.brand_fanout} brands (> ${DEFAULT_HUB_FANOUT_THRESHOLD} hub threshold) — parking / anycast / platform hosting.`,
-      };
+    if (row.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD) return fanoutRetire("IP");
+    const ip = row.id.slice("cluster_ip_".length);
+    if (isBogonIpv4(ip)) {
+      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${ip} is a bogon / private / sinkhole address.` };
     }
-    const shared = parseJsonStringArray(row.asns).map(asnKey).find((a) => a !== null && SHARED_INFRA_ASNS.has(a));
+    const shared = parseJsonAsnArray(row.asns).find((a) => MULTI_TENANT_ASNS.has(a));
     if (shared) {
       return {
         status: SHARED_INFRA_CLUSTER_STATUS,
-        reason: `SHARED INFRA: IP on ${shared} (shared infrastructure).`,
+        reason: `SHARED INFRA: IP on ${shared} (multi-tenant: one IP serves many unrelated sites).`,
+      };
+    }
+    return null;
+  }
+  if (row.id.startsWith("cluster_subnet_")) {
+    if (row.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD) return fanoutRetire("/24");
+    // Id is slugifyKey("a.b.c.") = "a_b_c" — rebuild a representative IP.
+    const subnetIp = `${row.id.slice("cluster_subnet_".length).split("_").join(".")}.0`;
+    if (isBogonIpv4(subnetIp)) {
+      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${subnetIp}/24 is a bogon / private range.` };
+    }
+    const shared = parseJsonAsnArray(row.asns).find((a) => SHARED_INFRA_ASNS.has(a));
+    if (shared) {
+      return {
+        status: SHARED_INFRA_CLUSTER_STATUS,
+        reason: `SHARED INFRA: /24 on ${shared} (shared infrastructure — a /24 there is many tenants).`,
       };
     }
   }
@@ -955,11 +1088,11 @@ export function decideLaneRowRetirement(row: {
 }
 
 /**
- * Flip existing ASN / per-IP rows that the reworked lanes no longer emit
- * (they would otherwise stay 'active' forever with frozen counts and keep
- * reaching the Attributor, Observatory and Operations). Reads only the two
- * id ranges by PRIMARY KEY (`cluster_asn_*`, `cluster_ip_*` — hundreds of
- * rows), never the threats table. Idempotent: only active/dormant rows are
+ * Flip existing ASN / per-IP / subnet rows that the reworked lanes no longer
+ * emit (they would otherwise stay 'active' forever with frozen counts and
+ * keep reaching the Attributor, Observatory and Operations). Reads only the
+ * three id ranges by PRIMARY KEY (`cluster_asn_*`, `cluster_ip_*`,
+ * `cluster_subnet_*` — hundreds of rows), never the threats table. Idempotent: only active/dormant rows are
  * considered, so a rerun writes nothing. Threats still stamped to a retired
  * row are released by the bounded admin job (lib/cluster-retirement.ts), not
  * here, to keep the NEXUS run's write budget flat.
@@ -970,7 +1103,8 @@ export async function retireNonOperationalLaneClusters(db: D1Database): Promise<
             CASE WHEN json_valid(brand_ids) THEN json_array_length(brand_ids) ELSE 0 END AS brand_fanout
        FROM infrastructure_clusters
       WHERE ((id >= 'cluster_asn_' AND id < 'cluster_asn\`')
-          OR (id >= 'cluster_ip_' AND id < 'cluster_ip\`'))
+          OR (id >= 'cluster_ip_' AND id < 'cluster_ip\`')
+          OR (id >= 'cluster_subnet_' AND id < 'cluster_subnet\`'))
         AND status IN ('active', 'dormant')`,
   ).all<{ id: string; asns: string | null; attack_types: string | null; brand_fanout: number }>()).results ?? [];
 

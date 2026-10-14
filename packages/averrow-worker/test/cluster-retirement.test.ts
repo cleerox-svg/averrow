@@ -12,7 +12,14 @@ import {
   runClusterRetirementBatch,
   parseRetirementParams,
 } from "../src/lib/cluster-retirement";
-import { notRetiredClusterSql, isRetiredClusterStatus, RETIRED_CLUSTER_STATUSES } from "../src/lib/cluster-status";
+import {
+  notRetiredClusterSql,
+  liveClusterStatusSql,
+  isRetiredClusterStatus,
+  RETIRED_CLUSTER_STATUSES,
+  LIVE_CLUSTER_STATUSES,
+} from "../src/lib/cluster-status";
+import { OPERATION_STATUSES } from "../src/handlers/operations";
 import { groupClusterComponents } from "../src/lib/cluster-components";
 import { inheritOtxActorsToClusters } from "../src/lib/cluster-attribution-inherit";
 
@@ -31,6 +38,13 @@ describe("legacyTargetClusterId", () => {
   it("shared-infra ASNs and IP-reputation types release instead of mapping", () => {
     expect(legacyTargetClusterId('["AS13335 Cloudflare, Inc."]', '["phishing"]').reason).toBe("shared_infra");
     expect(legacyTargetClusterId('["AS4134"]', '["scanning"]').reason).toBe("ip_reputation");
+  });
+
+  it("numeric asns entries map (JSON number → AS<digits>)", () => {
+    expect(legacyTargetClusterId("[4837]", '["phishing"]'))
+      .toEqual({ target: "cluster_asn_as4837_phishing", reason: "mapped" });
+    expect(legacyTargetClusterId("[13335]", '["phishing"]').reason).toBe("shared_infra");
+    expect(legacyTargetClusterId('["AS16509"]', '["phishing"]').reason).toBe("shared_infra"); // IaaS: ASN-only too
   });
 
   it("unparseable rows release", () => {
@@ -61,6 +75,13 @@ describe("cluster-status helpers", () => {
     for (const s of RETIRED_CLUSTER_STATUSES) expect(isRetiredClusterStatus(s)).toBe(true);
     expect(isRetiredClusterStatus("active")).toBe(false);
     expect(isRetiredClusterStatus(null)).toBe(false);
+  });
+
+  it("liveClusterStatusSql is the positive list: every operation status, no retired one", () => {
+    expect(liveClusterStatusSql()).toBe("status IN ('active', 'dormant', 'accelerating', 'pivot')");
+    expect(liveClusterStatusSql("ic")).toBe("ic.status IN ('active', 'dormant', 'accelerating', 'pivot')");
+    expect(new Set(LIVE_CLUSTER_STATUSES)).toEqual(OPERATION_STATUSES);
+    for (const s of LIVE_CLUSTER_STATUSES) expect(isRetiredClusterStatus(s)).toBe(false);
   });
 });
 
@@ -93,6 +114,15 @@ describe.skipIf(!hasSqlite())("migration 0303 — supersede legacy clusters", ()
     expect(kept[0]).toEqual({ actor_id: "actor_apt", threat_count: 10 });
     apply(); // idempotent
     for (const id of legacy) expect(status(id)).toBe("superseded");
+  });
+
+  it("0305 adds cluster_repoint_log with an old_cluster_id-leading index", () => {
+    const raw = openMigratedDb();
+    const cols = (raw.prepare("PRAGMA table_info(cluster_repoint_log)").all() as Array<{ name: string; notnull: number }>);
+    expect(cols.map((c) => c.name)).toEqual(["threat_id", "old_cluster_id", "new_cluster_id", "run_at"]);
+    expect(cols.find((c) => c.name === "new_cluster_id")!.notnull).toBe(0);
+    const idx = raw.prepare("PRAGMA index_info(idx_cluster_repoint_log_old)").all() as Array<{ name: string }>;
+    expect(idx.map((c) => c.name)).toEqual(["old_cluster_id", "run_at"]);
   });
 
   it("0302 adds country_counts; 0304 adds the (actor_id, status) index", () => {
@@ -186,6 +216,48 @@ describe.skipIf(!hasSqlite())("legacy cluster report + re-point batch", () => {
     const again = await runClusterRetirementBatch(db, { dryRun: false });
     expect(again.legacy.cluster_ids + again.retired_stable.cluster_ids).toBe(0);
     expect(again.done).toBe(true);
+  });
+
+  it("apply records every moved threat in cluster_repoint_log, and the log undoes the move", async () => {
+    const before = raw.prepare("SELECT id, cluster_id FROM threats ORDER BY id").all();
+    const r = await runClusterRetirementBatch(db, { dryRun: false });
+    const moved = r.legacy.threats_repointed + r.legacy.threats_released
+      + r.retired_stable.threats_repointed + r.retired_stable.threats_released;
+    const log = raw.prepare(
+      "SELECT threat_id, old_cluster_id, new_cluster_id, run_at FROM cluster_repoint_log ORDER BY threat_id",
+    ).all() as Array<{ threat_id: string; old_cluster_id: string; new_cluster_id: string | null; run_at: string }>;
+    expect(log).toHaveLength(moved);
+    expect(moved).toBe(16);
+    const t1 = log.find((l) => l.threat_id === "t1_0")!;
+    expect(t1).toMatchObject({ old_cluster_id: L1, new_cluster_id: "cluster_asn_as4837_malware_distribution" });
+    expect(log.find((l) => l.threat_id === "t2_0")).toMatchObject({ old_cluster_id: L2, new_cluster_id: null });
+    expect(new Set(log.map((l) => l.run_at)).size).toBe(1); // one run_at per call
+    // Untouched threats are not logged.
+    expect(log.some((l) => l.threat_id === "t_ok" || l.threat_id === "t_none")).toBe(false);
+    // Each logged row matches the threat's new state...
+    for (const l of log) expect(clusterOf(l.threat_id)).toBe(l.new_cluster_id);
+    // ...and the documented undo restores the pre-run state exactly.
+    raw.exec(`UPDATE threats SET cluster_id = l.old_cluster_id
+                FROM cluster_repoint_log l
+               WHERE threats.id = l.threat_id AND threats.cluster_id IS l.new_cluster_id`);
+    expect(raw.prepare("SELECT id, cluster_id FROM threats ORDER BY id").all()).toEqual(before);
+  });
+
+  it("dry run writes no cluster_repoint_log rows", async () => {
+    await runClusterRetirementBatch(db, { dryRun: true });
+    expect((raw.prepare("SELECT COUNT(*) AS n FROM cluster_repoint_log").all()[0] as { n: number }).n).toBe(0);
+  });
+
+  it("counters skip source ids left untouched because the budget ran out", async () => {
+    const r = await runClusterRetirementBatch(db, { dryRun: false, maxThreats: 3 });
+    const handled = r.legacy.cluster_ids + r.retired_stable.cluster_ids;
+    const logged = (raw.prepare("SELECT COUNT(DISTINCT old_cluster_id) AS n FROM cluster_repoint_log").all()[0] as { n: number }).n;
+    // 5 source ids have threats; a 3-threat budget reaches at most 2 of them.
+    expect(handled).toBe(logged);
+    expect(handled).toBeLessThan(5);
+    expect(r.legacy.repoint + r.legacy.release).toBe(r.legacy.cluster_ids);
+    expect(r.retired_stable.repoint + r.retired_stable.release).toBe(r.retired_stable.cluster_ids);
+    expect(r.plan_sample.length).toBe(handled);
   });
 
   it("respects the per-call threat budget and finishes over several calls", async () => {
@@ -294,6 +366,7 @@ function walk(dir: string): string[] {
 const SAFE = [
   /notRetiredClusterSql\(/,
   /status = 'active'/,
+  /liveClusterStatusSql\(/,                         // positive live-status list
   /status IN \(\$\{statusPlaceholders\}\)/,        // public-proof LIVE_OPERATION_STATUSES
   /WHERE (\w+\.)?id = \?/,                          // by-id
   /WHERE id IN \(/,                                 // by-id batch

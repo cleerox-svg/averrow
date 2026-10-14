@@ -15,7 +15,7 @@ import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
-import { notRetiredClusterSql } from "../../lib/cluster-status";
+import { liveClusterStatusSql } from "../../lib/cluster-status";
 import { getReadSession, getDbContext } from "../../lib/db";
 import { computeFeedSeverity } from "../../lib/feed-severity";
 import type { AuthContext } from "../../middleware/auth";
@@ -72,15 +72,21 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
 
     // Search matches the human-visible identifiers: name, ASNs, countries.
     const like = q ? `%${q.replace(/[%_]/g, "")}%` : null;
+    // Live statuses as a POSITIVE list, pinned to the (status, threat_count)
+    // index: ~76K superseded legacy rows sit in this table, and with
+    // ANALYZE stats (stat1 averages rows per status, hiding that skew) the
+    // planner otherwise full-scans it for both statements. INDEXED BY makes
+    // each read four index seeks + the few hundred live rows.
+    // test/cluster-list-plans.test.ts pins the plans with and without stats.
     const listStmt = env.DB.prepare(`
         SELECT id, cluster_name, asns, countries, threat_count,
                confidence_score, status, first_detected, last_seen,
                attribution_attempted_at, nexus_brief, agent_notes
-          FROM infrastructure_clusters
+          FROM infrastructure_clusters INDEXED BY idx_clusters_status_threat_count
          WHERE actor_id IS NULL
            AND attribution_dismissed_at IS NULL
-           AND ${notRetiredClusterSql()}${like ? " AND (cluster_name LIKE ? OR asns LIKE ? OR countries LIKE ?)" : ""}
-         ORDER BY threat_count DESC
+           AND ${liveClusterStatusSql()}${like ? " AND (cluster_name LIKE ? OR asns LIKE ? OR countries LIKE ?)" : ""}
+         ORDER BY +threat_count DESC
          LIMIT ? OFFSET ?
       `);
     const [rowsRes, totalsRes] = await Promise.all([
@@ -115,8 +121,8 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
           SUM(CASE WHEN actor_id IS NULL
                     AND attribution_dismissed_at IS NOT NULL
                    THEN 1 ELSE 0 END)                                    AS dismissed
-        FROM infrastructure_clusters
-       WHERE ${notRetiredClusterSql()}
+        FROM infrastructure_clusters INDEXED BY idx_clusters_status_threat_count
+       WHERE ${liveClusterStatusSql()}
       `).first<{
         total_clusters: number;
         unattributed: number;

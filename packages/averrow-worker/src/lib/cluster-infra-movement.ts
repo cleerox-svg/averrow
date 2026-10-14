@@ -40,8 +40,9 @@
 //       (first observation) NEVER emits; it only records its baseline.
 //   (b) SIGNIFICANCE GATE — movement fires only on meaningful growth:
 //       >=1 new ASN OR >=MIN_NEW_IPS new IPs OR >=MIN_NEW_SERIALS new
-//       cert-serials, AND confidence_score > CONFIDENCE_FLOOR (mirrors the
-//       dormancy pivot's `confidence > 40`). Hub clusters (brand fan-out >
+//       cert-serials, AND confidence_score > CONFIDENCE_FLOOR (see
+//       DEFAULT_CONFIDENCE_FLOOR for the per-kind scales it gates). Hub
+//       clusters (brand fan-out >
 //       HUB_FANOUT_THRESHOLD) are excluded entirely — a shared-infra hub's
 //       churn is not one operator moving.
 //   (c) PER-CLUSTER COOLDOWN — a cluster that emitted movement is not
@@ -82,7 +83,25 @@ export const DEFAULT_MIN_NEW_SERIALS = 2;
  *  moved to new hosting — the canonical register-then-move signal; a single
  *  one is enough. */
 export const DEFAULT_MIN_NEW_ASNS = 1;
-/** Mirrors the dormancy pivot's `confidence > 40` significance floor. */
+/**
+ * Significance floor (`confidence_score > floor`). It no longer mirrors the
+ * dormancy pivot: that gate moved to ASN_PIVOT_MIN_CONFIDENCE (>= 25) on the
+ * ASN-only 5–40 scale, and ASN clusters are not a bridge kind, so they never
+ * reach this gate. The kinds that do (isBridgeKind):
+ *   - cert serial / SAN: 85–100 — always above the floor;
+ *   - per-IP: 30–80 since 2026-10-14 (lib/nexus-threat-lanes.ts
+ *     computePerIpConfidence). Volume-driven, not breadth-driven, so
+ *     3–9-brand IPs now score 60–80 and PASS, where the old breadth scale
+ *     (3–9 brands = 40) failed them. Kept at 40 deliberately (2026-10-14):
+ *     the per-IP lane now admits only targeted, non-multi-tenant,
+ *     non-bogon IPs under the hub cap, so a small-fan-out IP is the
+ *     strongest operator signal the lane produces, not the weakest; no
+ *     single floor on the new scale could separate 3–9 from 10–25 brands
+ *     anyway (both get the same <= 25-brand term). What still fails is the
+ *     most hub-like profile (> 75 brands, low volume, several ASNs = 40).
+ *     Flood protection stays with the prior-snapshot, cooldown and
+ *     per-run-cap guards.
+ */
 export const DEFAULT_CONFIDENCE_FLOOR = 40;
 /** Per-cluster re-emit cooldown. */
 export const DEFAULT_COOLDOWN_HOURS = 24;

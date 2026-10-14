@@ -1,37 +1,80 @@
-// Averrow — shared-infrastructure ASNs (CDN / hyperscale cloud / mass hoster
-// / parking) and the ONE ASN normaliser the platform uses.
+// Averrow — shared-infrastructure ASNs and the ONE ASN normaliser the
+// platform uses.
 //
-// Hundreds of unrelated operators park phishing on these networks, so an
-// ASN-ONLY cluster on one of them (NEXUS's `cluster_asn_<asn>_<type>` lane)
-// groups strangers by landlord: it is NOT operator evidence. Clusters with
-// SPECIFIC evidence that merely sit on these networks — a shared cert
-// serial / SAN, a single IP, a /24 — still are, and must not be filtered by
-// this list alone.
+// Two DISJOINT sets, because "shared" means two different things depending
+// on the evidence key:
 //
-// Consumers (all read THIS list and THIS normaliser — no second copy):
-//   - NEXUS lanes (lib/nexus-threat-lanes.ts): the ASN lane skips these
-//     networks, the per-IP and /24 lanes exclude their members (the /24
-//     lane's old 5-ASN literal is gone), and asnKeySql is the SQL twin used
-//     to group / filter threats.asn in-query.
+//   MULTI_TENANT_ASNS — networks where a SINGLE IP serves many unrelated
+//     tenants: CDN / anycast front-ends (Cloudflare, Akamai, Fastly, Google
+//     Cloud LB, Azure Front Door), site builders (Wix, Weebly, Squarespace),
+//     free / mass shared hosting (InfinityFree, Hostinger, IONOS, Strato,
+//     Gandi, Render), parking (Sedo, Above / Trellian, Network Solutions),
+//     registrar hosting (Namecheap, Tucows), WordPress.com, Sucuri's WAF and
+//     IPFS gateways. On these an IP is not an operator, so they are excluded
+//     from EVERY NEXUS lane keyed on IP / subnet / ASN.
+//
+//   SINGLE_TENANT_IAAS_ASNS — hyperscalers and VPS providers (AWS, Google,
+//     DigitalOcean, OVH, Hetzner, Vultr, Linode, Alibaba, Tencent, Oracle,
+//     UCloud). The whole ASN is a landlord — grouping by it, or by a /24 of
+//     it, groups strangers — but an individual IP is normally ONE customer's
+//     VM, so one IP hosting several brands' impersonations IS operator
+//     evidence. Excluded from the ASN and /24 lanes ONLY; the per-IP lane
+//     keeps them and relies on its <= hub-threshold brand cap to drop the
+//     few genuinely shared IPs (e.g. AWS Global Accelerator parking).
+//
+// SHARED_INFRA_ASNS is their union ("not usable as an ASN- or subnet-level
+// key") and keeps its old meaning for existing callers.
+//
+// Clusters with SPECIFIC evidence that merely sit on these networks — a
+// shared cert serial / SAN — are still operator evidence and must not be
+// filtered by these lists.
+//
+// Consumers (all read THESE lists and THIS normaliser — no second copy):
+//   - NEXUS lanes (lib/nexus-threat-lanes.ts): ASN lane and /24 lane skip
+//     SHARED_INFRA_ASNS (union); the per-IP lane skips MULTI_TENANT_ASNS
+//     only. asnKeySql is the SQL twin used to group / filter threats.asn.
+//   - NEXUS retire pass (lib/nexus-threat-lanes.ts
+//     retireNonOperationalLaneClusters) mirrors the same split.
 //   - Legacy-cluster retirement (lib/cluster-retirement.ts): ASN-only rows on
-//     these networks retire to status 'shared_infra'.
+//     the union release their threats instead of re-pointing them.
 //   - GET /api/observatory/operations-geo (handlers/observatoryLenses.ts):
-//     the evidence-tier classifier's `shared_infra` exclusion.
+//     the evidence-tier classifier's `shared_infra` exclusion (ASN kind,
+//     union).
 
-/** Canonical `AS<digits>` keys. */
-export const SHARED_INFRA_ASNS: ReadonlySet<string> = new Set<string>([
+/** One IP serves many unrelated tenants. Canonical `AS<digits>` keys. */
+export const MULTI_TENANT_ASNS: ReadonlySet<string> = new Set<string>([
   // Cloudflare (incl. Spectrum / WARP)
   "AS13335", "AS209242",
-  // Amazon (AWS, us-east, Global Accelerator / EU)
-  "AS16509", "AS14618", "AS8987",
-  // Google (incl. Cloud, Firebase / App Engine)
-  "AS15169", "AS396982", "AS19527",
-  // Microsoft (Azure)
-  "AS8075",
-  // Akamai / Linode
-  "AS20940", "AS16625", "AS63949",
+  // Akamai
+  "AS16625", "AS20940",
   // Fastly
   "AS54113",
+  // Google Cloud load balancing; Google's Firebase / App Engine front-ends
+  "AS396982", "AS19527",
+  // Microsoft (Azure Front Door / shared front-ends)
+  "AS8075",
+  // Site builders: Weebly, Wix, Squarespace
+  "AS27647", "AS58182", "AS53831",
+  // WordPress.com (Automattic)
+  "AS2635",
+  // Sucuri WAF / reverse proxy
+  "AS30148",
+  // IPFS gateways (Protocol Labs)
+  "AS40680",
+  // Free / mass shared hosting: iFastNet (InfinityFree), Hostinger, IONOS,
+  // Strato, Gandi, Render
+  "AS34119", "AS47583", "AS8560", "AS6724", "AS29169", "AS397273",
+  // Registrar hosting / parking: Namecheap, Tucows, Network Solutions,
+  // Trellian / Above, Sedo
+  "AS22612", "AS15348", "AS32491", "AS40034", "AS133618", "AS47846",
+]);
+
+/** Whole-ASN landlord, but one IP is normally one customer. */
+export const SINGLE_TENANT_IAAS_ASNS: ReadonlySet<string> = new Set<string>([
+  // Amazon (AWS, us-east, EU)
+  "AS16509", "AS14618", "AS8987",
+  // Google (Compute)
+  "AS15169",
   // DigitalOcean
   "AS14061",
   // OVH
@@ -40,21 +83,42 @@ export const SHARED_INFRA_ASNS: ReadonlySet<string> = new Set<string>([
   "AS24940",
   // Vultr (Choopa)
   "AS20473",
-  // Sedo (parking)
-  "AS47846",
-  // Squarespace
-  "AS53831",
+  // Linode (Akamai Cloud)
+  "AS63949",
+  // Alibaba Cloud
+  "AS45102", "AS37963",
+  // Tencent Cloud
+  "AS132203", "AS45090",
+  // Oracle Cloud
+  "AS31898",
+  // UCloud
+  "AS135377",
+]);
+
+/** Union — not usable as an ASN-level or /24-level grouping key. */
+export const SHARED_INFRA_ASNS: ReadonlySet<string> = new Set<string>([
+  ...MULTI_TENANT_ASNS,
+  ...SINGLE_TENANT_IAAS_ASNS,
 ]);
 
 for (const a of SHARED_INFRA_ASNS) {
-  // The list is interpolated into SQL text (SHARED_INFRA_ASNS_SQL_LIST);
+  // The lists are interpolated into SQL text (the *_SQL_LIST constants);
   // refuse anything that is not a canonical ASN so the literal can never
   // carry SQL.
   if (!/^AS[0-9]+$/.test(a)) throw new Error(`SHARED_INFRA_ASNS: non-canonical entry ${a}`);
+  if (MULTI_TENANT_ASNS.has(a) && SINGLE_TENANT_IAAS_ASNS.has(a)) {
+    throw new Error(`SHARED_INFRA_ASNS: ${a} is in both MULTI_TENANT_ASNS and SINGLE_TENANT_IAAS_ASNS`);
+  }
 }
 
-/** `'AS13335', 'AS209242', …` — for `NOT IN (…)` predicates in NEXUS SQL. */
-export const SHARED_INFRA_ASNS_SQL_LIST: string = [...SHARED_INFRA_ASNS].map((a) => `'${a}'`).join(", ");
+const sqlList = (s: ReadonlySet<string>): string => [...s].map((a) => `'${a}'`).join(", ");
+
+/** `'AS13335', …` (union) — for `NOT IN (…)` in the ASN and /24 lanes. */
+export const SHARED_INFRA_ASNS_SQL_LIST: string = sqlList(SHARED_INFRA_ASNS);
+/** `'AS13335', …` (multi-tenant only) — for `NOT IN (…)` in the per-IP lane. */
+export const MULTI_TENANT_ASNS_SQL_LIST: string = sqlList(MULTI_TENANT_ASNS);
+/** `'AS16509', …` (IaaS only). */
+export const SINGLE_TENANT_IAAS_ASNS_SQL_LIST: string = sqlList(SINGLE_TENANT_IAAS_ASNS);
 
 /**
  * ASN value → canonical `AS<digits>`, or null when it can't be determined.
@@ -89,8 +153,14 @@ export function asnKeySql(col: string): string {
     + ` WHEN length(${t}) > 0 AND ltrim(${t}, '0123456789') = '' THEN 'AS' || ${t} END)`;
 }
 
-/** True when the (raw, any accepted form) ASN is a shared-infra network. */
+/** True when the (raw, any accepted form) ASN is in either shared set. */
 export function isSharedInfraAsn(raw: unknown): boolean {
   const k = asnKey(raw);
   return k !== null && SHARED_INFRA_ASNS.has(k);
+}
+
+/** True when the (raw, any accepted form) ASN is a multi-tenant network. */
+export function isMultiTenantAsn(raw: unknown): boolean {
+  const k = asnKey(raw);
+  return k !== null && MULTI_TENANT_ASNS.has(k);
 }

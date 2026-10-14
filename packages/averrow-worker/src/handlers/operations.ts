@@ -5,7 +5,7 @@ import { newTally, addToTally, recordD1Reads } from "../lib/analytics";
 import { cachedCount } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import { hashToken } from "../lib/hash";
-import { notRetiredClusterSql } from "../lib/cluster-status";
+import { LIVE_CLUSTER_STATUSES, notRetiredClusterSql } from "../lib/cluster-status";
 import type { Env } from "../types";
 
 /**
@@ -20,7 +20,7 @@ export const OPERATIONS_HISTORY_TTL_S = 21_600;
 export const OPERATIONS_TOTAL_TTL_S = 3600;
 
 /** `status` filter values the list accepts (the CASE ordering below). Shared with /api/observatory/operations. */
-export const OPERATION_STATUSES: ReadonlySet<string> = new Set(["accelerating", "pivot", "active", "dormant"]);
+export const OPERATION_STATUSES: ReadonlySet<string> = new Set(LIVE_CLUSTER_STATUSES);
 
 /**
  * 14-day daily threat counts per cluster, oldest day first — the same
