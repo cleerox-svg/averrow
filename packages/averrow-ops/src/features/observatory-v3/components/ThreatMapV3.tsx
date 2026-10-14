@@ -206,6 +206,36 @@ export interface ThreatMapV3Props {
   onFatalChange?: (fatal: boolean) => void;
 }
 
+// ─── Overlay lifecycle ──────────────────────────────────────
+
+/** The two ways the deck.gl overlay is attached: a separate canvas over the flat map, or interleaved into the globe's GL context. */
+type OverlayKind = 'flat' | 'globe';
+type OverlaySlots = Record<OverlayKind, MapboxOverlay | null>;
+
+/**
+ * Release a canvas's WebGL context NOW instead of waiting for GC. ONLY ever call this on a canvas an overlay
+ * owns: never the map's own canvas (the interleaved overlay draws into that).
+ */
+export function releaseOwnedGl(canvas: HTMLCanvasElement | null | undefined): void {
+  if (!canvas) return;
+  try {
+    const gl = (canvas.getContext('webgl2') ?? canvas.getContext('webgl')) as WebGL2RenderingContext | WebGLRenderingContext | null;
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  } catch { /* context already gone, or a canvas without WebGL */ }
+  try { canvas.remove(); } catch { /* detached */ }
+}
+
+/** Remove and finalize an overlay for good (map unmount); a separate-canvas overlay also gives its GL context back. */
+function disposeOverlay(map: maplibregl.Map, overlay: MapboxOverlay, kind: OverlayKind): void {
+  let ownCanvas: HTMLCanvasElement | null = null;
+  if (kind === 'flat') {
+    try { ownCanvas = overlay.getCanvas(); } catch { /* never attached */ }
+  }
+  try { map.removeControl(overlay as unknown as maplibregl.IControl); } catch { /* already removed */ }
+  try { overlay.finalize(); } catch { /* already finalized */ }
+  releaseOwnedGl(ownCanvas);
+}
+
 // ─── Error boundary ─────────────────────────────────────────
 class MapErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback: React.ReactNode },
@@ -296,8 +326,26 @@ function ThreatMapV3Inner({
   const isGlobe = projection === 'globe';
   const projectionRef = useRef(projection);
   projectionRef.current = projection;
-  /** Whether the live deck overlay was built interleaved (it is rebuilt when the projection flips this). */
+  /**
+   * The deck.gl overlays, one per kind, built lazily and then PARKED (layers emptied) when the other kind is active,
+   * never finalized until the map goes. Interleaving is a constructor-time choice, so a flip needs the other kind, but
+   * destroying and re-creating them leaks: deck.gl 9.2 / luma.gl 9.2 leave per-instance residue that a finalize does not
+   * clear (heap-snapshot verified, 10 flat <-> globe round trips = 12 live WebGL contexts and ~1 MB of retained heap per trip):
+   *   - luma's CanvasContext registers an anonymous one-shot `matchMedia('(resolution: ...)')` listener that `destroy()`
+   *     never removes, which keeps the whole device + its canvas (+ that GL context) reachable;
+   *   - `getDeckInstance` registers an anonymous `map.on('render')` closure over the deck that `removeDeckInstance` never
+   *     removes (so a finalized globe deck, its layers and accessors stay referenced by the map).
+   * Creating each kind at most once per map bounds both to one instance each.
+   */
+  const overlaysRef = useRef<OverlaySlots>({ flat: null, globe: null });
+  /** Whether the ACTIVE overlay is the interleaved (globe) one. */
   const overlayInterleavedRef = useRef(false);
+  /**
+   * True only while the map-click path below invokes the layers' own `onClick` handlers. On the globe (interleaved
+   * deck) deck's native tap recogniser is NOT trusted to deliver a click (see `onMapClick`), so a click that
+   * arrives through it is ignored and the one from `map.on('click')` is the only one acted on.
+   */
+  const dispatchingClickRef = useRef(false);
 
   const [ownClock] = useState(() => new AnimationClock({ cycleLength: CYCLE_LENGTH }));
   const clock = clockProp ?? ownClock;
@@ -320,10 +368,13 @@ function ThreatMapV3Inner({
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
   const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: { width: 0, height: 0 } });
   latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: canvasSize };
+  /** A click deck.gl delivered itself while the interleaved (globe) overlay is up: dropped, `onMapClick` owns clicks there. */
+  const deckNativeClick = useCallback(() => overlayInterleavedRef.current && !dispatchingClickRef.current, []);
   const handlers = useMemo(() => ({
     hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
     hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
     clickNode: (info: Pick<ThreatPoint>) => {
+      if (deckNativeClick()) return true;
       if (!info.object) return false;
       const sel: MapSelection = { kind: 'node', node: info.object };
       setTooltip(null);
@@ -331,6 +382,7 @@ function ThreatMapV3Inner({
       return true;
     },
     clickArc: (info: Pick<ArcData>) => {
+      if (deckNativeClick()) return true;
       if (!info.object) return false;
       const sel: MapSelection = { kind: 'arc', arc: info.object };
       setTooltip(null);
@@ -342,6 +394,7 @@ function ThreatMapV3Inner({
       setTooltip(hover ? { x: hover.x, y: hover.y, lens: hover } : null);
     },
     clickLens: (pick: LensPick, at?: { x: number; y: number }) => {
+      if (deckNativeClick()) return true;
       // Bot-share scene: a tap PINS the country's tooltip (touch has no hover); tap again to dismiss.
       if (latest.current.mapMode === 'bot_density' && pick.kind === 'country' && at) {
         if (pinnedRef.current === pick.id) {
@@ -362,12 +415,13 @@ function ThreatMapV3Inner({
     },
     // Map-level click: only reached for empty-map clicks (layer handlers return true).
     clickEmpty: (info: PickingInfo) => {
+      if (deckNativeClick()) return;
       if (info.object) return;
       pinnedRef.current = null;
       setTooltip(null);
       latest.current.onSelect?.(null);
     },
-  }), []);
+  }), [deckNativeClick]);
 
   // Keep the zoom control clear of the panel overlaying the map's right edge.
   const applyControlInset = useCallback(() => {
@@ -457,13 +511,13 @@ function ThreatMapV3Inner({
       // for the fallback), so the WebGL context and deck resources are always released.
       setMapLoaded(false);
       styleLoadedRef.current = false;
-      const overlay = deckRef.current;
+      const slots = overlaysRef.current;
+      overlaysRef.current = { flat: null, globe: null };
       deckRef.current = null;
       navControlRef.current = null;
-      if (overlay) {
-        try { map.removeControl(overlay as unknown as maplibregl.IControl); } catch { /* already removed */ }
-        try { overlay.finalize(); } catch { /* already finalized */ }
-      }
+      if (slots.globe) disposeOverlay(map, slots.globe, 'globe');
+      if (slots.flat) disposeOverlay(map, slots.flat, 'flat');
+      overlayInterleavedRef.current = false;
       try { map.remove(); } catch { /* map failed mid-init */ }
       mapRef.current = null;
     };
@@ -942,27 +996,61 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!mapLoaded || !map) return;
     const layers = compose(animSecondsRef.current, clock.currentTime);
-    const interleaved = overlayInterleaved(projection);
-    // Interleaving is fixed when the overlay is built: a projection flip that changes it rebuilds the overlay.
-    if (deckRef.current && overlayInterleavedRef.current !== interleaved) {
-      const old = deckRef.current;
+    const kind: OverlayKind = overlayInterleaved(projection) ? 'globe' : 'flat';
+    const slots = overlaysRef.current;
+    const pickingRadius = isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE;
+    // The other kind is parked, not destroyed (see overlaysRef): empty, and with no handler of its own.
+    const parked = slots[kind === 'globe' ? 'flat' : 'globe'];
+    if (parked && deckRef.current === parked) {
+      parked.setProps({ layers: [], onClick: undefined });
       deckRef.current = null;
-      try { map.removeControl(old as unknown as maplibregl.IControl); } catch { /* already removed */ }
-      try { old.finalize(); } catch { /* already finalized */ }
     }
-    if (deckRef.current) {
-      deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+    let overlay = slots[kind];
+    if (overlay) {
+      overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius });
     } else if (layers.length > 0) {
-      const overlay = new MapboxOverlay({
+      const interleaved = kind === 'globe';
+      overlay = new MapboxOverlay({
         interleaved,
         ...(interleaved ? globeOverlayProps() : {}),
-        layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+        layers, onClick: handlers.clickEmpty, pickingRadius });
       map.addControl(overlay as unknown as maplibregl.IControl);
-      deckRef.current = overlay;
-      overlayInterleavedRef.current = interleaved;
+      slots[kind] = overlay;
     }
+    deckRef.current = overlay;
+    overlayInterleavedRef.current = kind === 'globe';
     // seekVersion: a scrub while the loop is stopped still repaints the new playhead.
   }, [mapLoaded, compose, clock, handlers, isMobile, seekVersion, projection]);
+
+  // Globe clicks. On the flat map deck's overlay is fed by MapLibre's own mouse events, so a click is a MapLibre
+  // `click` (any press length, small movement tolerance). The INTERLEAVED overlay listens to the canvas itself
+  // (mjolnir.js), whose tap recogniser gives up after 250 ms and resolves the target from the last hover pick, so a long
+  // press or a hover-then-click on a still pointer selected nothing. Route the globe through the same MapLibre `click`
+  // and pick at the click point, then run the same handlers deck would (layer first; the empty-map handler when no layer
+  // takes it), so a selection is identical in both modes. deck's own deliveries are dropped meanwhile (deckNativeClick).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const onMapClick = (e: maplibregl.MapMouseEvent) => {
+      const overlay = deckRef.current;
+      if (!overlay || !overlayInterleavedRef.current) return;
+      let info: PickingInfo | null = null;
+      try {
+        info = overlay.pickObject({ x: e.point.x, y: e.point.y, radius: isMobileRef.current ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+      } catch { /* deck not ready: treated as an empty click */ }
+      dispatchingClickRef.current = true;
+      try {
+        const layer = info?.layer;
+        const layerHandler = layer && (layer.onClick ?? layer.props.onClick);
+        const handled = !!(info && layerHandler && layerHandler.call(layer, info, { srcEvent: e.originalEvent } as never));
+        if (!handled) handlers.clickEmpty(info ?? ({ object: null } as PickingInfo));
+      } finally {
+        dispatchingClickRef.current = false;
+      }
+    };
+    map.on('click', onMapClick);
+    return () => { map.off('click', onMapClick); };
+  }, [mapLoaded, handlers]);
 
   // Idle spin (globe only): drifts when nobody is interacting; stops on any input. Held while anything is selected.
   const lensSelected = !!lens && Object.values(lens.sel).some(Boolean);

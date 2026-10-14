@@ -27,8 +27,10 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
     off(ev: string, cb: Handler) { this.handlers.set(ev, (this.handlers.get(ev) ?? []).filter(h => h !== cb)); return this; }
     isStyleLoaded() { return false; }
     getCanvas() { return this.canvas; }
-    addControl(c: unknown) { this.controls.push(c); }
-    removeControl(c: unknown) { this.controls = this.controls.filter(x => x !== c); }
+    addControl(c: unknown) { this.controls.push(c); (c as { onAdd?: (m: unknown) => void }).onAdd?.(this); }
+    removeControl(c: unknown) { this.controls = this.controls.filter(x => x !== c); (c as { onRemove?: () => void }).onRemove?.(); }
+    /** MapLibre's Evented keeps its listeners here (deck-utils' anonymous render listener lands in it). */
+    get _listeners() { return Object.fromEntries(this.handlers); }
     project() { return { x: 100, y: 100 }; }
     getZoom() { return 2; }
     getCenter() { return { lng: 30, lat: 70 }; }
@@ -41,7 +43,24 @@ const { maps, overlays, FakeMap, FakeOverlay, FakeLayer } = vi.hoisted(() => {
   class FakeOverlay {
     finalized = false;
     props: Record<string, unknown>;
-    constructor(props: Record<string, unknown>) { this.props = props; overlays.push(this); }
+    /** The overlay's OWN canvas (only the separate-canvas flat overlay has one). */
+    ownCanvas = document.createElement('canvas');
+    loseContext = vi.fn();
+    contextTypes: string[] = [];
+    pickObject = vi.fn((): unknown => null);
+    constructor(props: Record<string, unknown>) {
+      this.props = props; overlays.push(this);
+      (this.ownCanvas as unknown as { getContext: (t: string) => unknown }).getContext = (t: string) => {
+        this.contextTypes.push(t);
+        return t === 'webgl2' ? { getExtension: (n: string) => (n === 'WEBGL_lose_context' ? { loseContext: this.loseContext } : null) } : null;
+      };
+    }
+    onAdd(map: { on: (ev: string, cb: () => void) => void }) {
+      // deck-utils getDeckInstance: an anonymous `render` listener that removeDeckInstance never removes.
+      if (this.props.interleaved) map.on('render', () => {});
+    }
+    onRemove() {}
+    getCanvas() { return this.props.interleaved ? null : this.ownCanvas; }
     setProps(p: Record<string, unknown>) { this.props = { ...this.props, ...p }; }
     finalize() { this.finalized = true; }
   }
@@ -63,7 +82,7 @@ vi.mock('@deck.gl/layers', () => ({ ScatterplotLayer: FakeLayer, PathLayer: Fake
 vi.mock('@deck.gl/aggregation-layers', () => ({ HeatmapLayer: FakeLayer }));
 vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
-import { ThreatMapV3, type ThreatMapV3Props } from './ThreatMapV3';
+import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV3';
 import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, FLAT_SKY, GLOBE_DEPTH_BIAS } from '../lib/projection';
 
 const node = { lat: 1, lng: 2, threat_count: 1, top_severity: 'low', critical: 0, high: 0, medium: 0, low: 1, country_code: 'US', top_threat_type: 'c2' };
@@ -197,7 +216,7 @@ describe('ThreatMapV3 projection: globe', () => {
 });
 
 describe('ThreatMapV3 projection: switching', () => {
-  it('flat -> globe -> flat rebuilds the overlay (interleaving is fixed at construction), re-frames the camera and swaps the sky', () => {
+  it('flat -> globe -> flat builds each overlay kind ONCE, parks the other (empty, no handler), re-frames the camera and swaps the sky', () => {
     const { rerender } = render(<ThreatMapV3 {...base} />);
     ready();
     expect(overlays).toHaveLength(1);
@@ -207,11 +226,15 @@ describe('ThreatMapV3 projection: switching', () => {
     expect(lastMap().setProjection).toHaveBeenLastCalledWith({ type: 'globe' });
     expect(lastMap().setMaxZoom).toHaveBeenLastCalledWith(GLOBE_MAX_ZOOM);
     expect(lastMap().setSky).toHaveBeenLastCalledWith(GLOBE_SKY);
-    expect(flatOverlay.finalized).toBe(true);
     expect(overlays).toHaveLength(2);
-    expect(overlays[1]!.props.interleaved).toBe(true);
-    expect(lastMap().controls).toContain(overlays[1]);
-    expect(lastMap().controls).not.toContain(flatOverlay);
+    const globeOverlay = overlays[1]!;
+    expect(globeOverlay.props.interleaved).toBe(true);
+    expect((globeOverlay.props.layers as unknown[]).length).toBeGreaterThan(0);
+    // The flat overlay is parked, not destroyed: nothing draws or picks through it.
+    expect(flatOverlay.finalized).toBe(false);
+    expect(flatOverlay.props.layers).toEqual([]);
+    expect(flatOverlay.props.onClick).toBeUndefined();
+    expect(lastMap().controls).toContain(flatOverlay);
     expect(lastMap().jumpTo).toHaveBeenLastCalledWith(expect.objectContaining({ pitch: 0, bearing: 0 }));
     const toGlobe = lastMap().jumpTo.mock.calls.at(-1)![0] as { zoom: number; center: [number, number] };
     expect(toGlobe.zoom).toBeGreaterThan(0);
@@ -221,9 +244,11 @@ describe('ThreatMapV3 projection: switching', () => {
     expect(lastMap().setProjection).toHaveBeenLastCalledWith({ type: 'mercator' });
     expect(lastMap().setMaxZoom).toHaveBeenLastCalledWith(FLAT_MAX_ZOOM);
     expect(lastMap().setSky).toHaveBeenLastCalledWith(FLAT_SKY);
-    expect(overlays[1]!.finalized).toBe(true);
-    expect(overlays).toHaveLength(3);
-    expect(overlays[2]!.props.interleaved).toBe(false);
+    expect(overlays).toHaveLength(2); // reused, not rebuilt
+    expect((flatOverlay.props.layers as unknown[]).length).toBeGreaterThan(0);
+    expect(flatOverlay.props.onClick).toBeDefined();
+    expect(globeOverlay.finalized).toBe(false);
+    expect(globeOverlay.props.layers).toEqual([]);
     expect(lastMap().jumpTo).toHaveBeenLastCalledWith(expect.objectContaining({ pitch: 20, zoom: 2.2 }));
   });
 
@@ -299,5 +324,132 @@ describe('ThreatMapV3 projection: idle spin wiring', () => {
     ready();
     frame(100); frame(5000); frame(5100);
     expect(spinMoves()).toHaveLength(0);
+  });
+});
+
+describe('ThreatMapV3 globe: clicks go through MapLibre like the flat map', () => {
+  const onSelect = vi.fn();
+  beforeEach(() => { onSelect.mockClear(); });
+  const pick = (o: InstanceType<typeof FakeOverlay>, id: string, object: unknown) => {
+    const layer = layerOf(o, id)!;
+    return { layer, object, x: 10, y: 20 };
+  };
+  const click = () => act(() => { lastMap().emit('click', { point: { x: 10, y: 20 }, originalEvent: {} }); });
+
+  it('a map click on the globe picks at the click point and selects the node, whatever the press length', () => {
+    render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
+    ready();
+    const o = overlays[0]!;
+    o.pickObject.mockReturnValue(pick(o, 'nodes-core', node));
+    click();
+    expect(o.pickObject).toHaveBeenCalledWith(expect.objectContaining({ x: 10, y: 20, radius: expect.any(Number) }));
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'node', node });
+  });
+
+  it('an arc is selected the same way', () => {
+    render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
+    ready();
+    const o = overlays[0]!;
+    o.pickObject.mockReturnValue(pick(o, 'beam-core', arc));
+    click();
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'arc', arc });
+  });
+
+  it('an empty click clears the selection (the empty-map handler)', () => {
+    render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
+    ready();
+    overlays[0]!.pickObject.mockReturnValue(null);
+    click();
+    expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it('a pick failure is an empty click, not a crash', () => {
+    render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
+    ready();
+    overlays[0]!.pickObject.mockImplementation(() => { throw new Error('deck not ready'); });
+    click();
+    expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it('deck\'s own tap delivery on the interleaved overlay is dropped (exactly one selection per click)', () => {
+    render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
+    ready();
+    const o = overlays[0]!;
+    const info = pick(o, 'nodes-core', node);
+    const native = info.layer.props.onClick as (i: unknown) => boolean;
+    expect(native(info)).toBe(true); // swallowed: deck must not fall through to the root handler either
+    (o.props.onClick as (i: unknown) => void)({ object: null });
+    expect(onSelect).not.toHaveBeenCalled();
+    o.pickObject.mockReturnValue(info);
+    click();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('the flat map is untouched: the map click does not pick, deck\'s own delivery selects', () => {
+    render(<ThreatMapV3 {...base} onSelect={onSelect} />);
+    ready();
+    const o = overlays[0]!;
+    click();
+    expect(o.pickObject).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    const info = pick(o, 'nodes-core', node);
+    expect((info.layer.props.onClick as (i: unknown) => boolean)(info)).toBe(true);
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'node', node });
+  });
+});
+
+describe('ThreatMapV3 overlay lifecycle: contexts and listeners do not accumulate', () => {
+  it('ten flat <-> globe round trips build exactly two overlays (one per kind), however many trips', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    for (let i = 0; i < 10; i++) {
+      rerender(<ThreatMapV3 {...base} projection="globe" />);
+      rerender(<ThreatMapV3 {...base} projection="flat" />);
+    }
+    expect(overlays).toHaveLength(2);
+    expect(overlays.filter(o => !o.props.interleaved)).toHaveLength(1);
+    expect(overlays.some(o => o.finalized)).toBe(false);
+    expect(lastMap().controls.filter(c => c instanceof FakeOverlay)).toHaveLength(2);
+    // and the deck.gl `render` listener (anonymous, never removed upstream) was registered once, not once per trip
+    expect((lastMap().handlers.get('render') ?? []).length).toBe(1);
+  });
+
+  it('only the active overlay carries layers; the parked one is empty', () => {
+    const { rerender } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    rerender(<ThreatMapV3 {...base} projection="flat" />);
+    rerender(<ThreatMapV3 {...base} projection="globe" threats={[{ ...node }]} />);
+    const [flat, globe] = overlays;
+    expect((globe!.props.layers as unknown[]).length).toBeGreaterThan(0);
+    expect(flat!.props.layers).toEqual([]);
+  });
+
+  it('on unmount every overlay is finalized and a separate-canvas overlay gives its GL context back; the map\'s canvas is never touched', () => {
+    const { rerender, unmount } = render(<ThreatMapV3 {...base} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} projection="globe" />);
+    const [flat, globe] = overlays;
+    const mapCanvasContext = vi.spyOn(lastMap().canvas, 'getContext');
+    unmount();
+    expect(flat!.finalized).toBe(true);
+    expect(globe!.finalized).toBe(true);
+    expect(flat!.loseContext).toHaveBeenCalledTimes(1);
+    expect(globe!.loseContext).not.toHaveBeenCalled();
+    expect(globe!.contextTypes).toEqual([]);
+    expect(mapCanvasContext).not.toHaveBeenCalled();
+  });
+
+  it('releaseOwnedGl loses the context and tolerates a canvas without WebGL', () => {
+    const lose = vi.fn();
+    const canvas = document.createElement('canvas');
+    (canvas as unknown as { getContext: () => unknown }).getContext = () => ({ getExtension: () => ({ loseContext: lose }) });
+    releaseOwnedGl(canvas);
+    expect(lose).toHaveBeenCalledTimes(1);
+    const bare = document.createElement('canvas');
+    (bare as unknown as { getContext: () => unknown }).getContext = () => null;
+    expect(() => releaseOwnedGl(bare)).not.toThrow();
+    expect(() => releaseOwnedGl(null)).not.toThrow();
   });
 });
