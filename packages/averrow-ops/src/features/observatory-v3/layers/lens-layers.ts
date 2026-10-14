@@ -381,6 +381,13 @@ const splitOpEdges = memoByModelAndKey((edges: OpEdge[], key: string) => {
   return { main, preview };
 });
 
+/** Pair arcs carrying the hovered operation (memoised per visible set + id). */
+const hoverEdges = memoByModelAndKey((edges: OpEdge[], id: string) => edges.filter(e => e.opIds.includes(id)));
+
+/** While a row is hovered the other arcs fade to this share of their alpha; the hovered ones gain this much width. */
+const OP_HOVER_EDGE_FADE = 0.3;
+const OP_HOVER_EDGE_BOOST = 1.6;
+
 function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.operations;
   if (!m || m.nodes.length === 0) return [];
@@ -396,6 +403,12 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const widest = maxPairOps(visible);
   const edgeStyle = (e: OpEdge) => opEdgeStyle(e.opCount, widest);
   const { main, preview } = splitOpEdges(visible, `${selOp ?? ''}#${m.topOpIds.join(',')}`);
+  // A hovered panel row: transient focus on that operation's footprint (same idea as selection, no data rebuild:
+  // `hiEdges` is memoised per (visible set, id) and everything else only changes accessors via updateTriggers).
+  const hi = sel.previewOpId && m.countriesOf.has(sel.previewOpId) ? sel.previewOpId : null;
+  const hiEdges = hi ? hoverEdges(visible, hi) : [];
+  const hiHub = hi ? m.countriesOf.get(hi)![0]! : null;
+  const edgeFade = (e: OpEdge): number => (hi && !e.opIds.includes(hi) ? OP_HOVER_EDGE_FADE : 1);
   const pathOf = (e: OpEdge) => (globe ? globeEdgePath(e).path : e.path);
   const distOf = (e: OpEdge) => (globe ? globeEdgePath(e).distances : e.distances);
   const edgeHover = (info: PickInfo<OpEdge>) => pick.hover(info.object
@@ -423,12 +436,12 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         id: 'ops-edges-under',
         data: main,
         getPath: pathOf,
-        getColor: (e: OpEdge) => withAlpha(CYAN, Math.round(edgeStyle(e).alpha * OP_EDGE_UNDERLAY)),
+        getColor: (e: OpEdge) => withAlpha(CYAN, Math.round(edgeStyle(e).alpha * OP_EDGE_UNDERLAY * edgeFade(e))),
         getWidth: (e: OpEdge) => edgeStyle(e).width,
         widthUnits: 'pixels',
         capRounded: true,
         pickable: true,
-        updateTriggers: { getPath: globe, getColor: widest, getWidth: widest },
+        updateTriggers: { getPath: globe, getColor: [widest, hi], getWidth: widest },
         onHover: edgeHover,
         onClick: edgeClick,
       }));
@@ -438,7 +451,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       data: main,
       getPath: pathOf,
       getDashDistances: distOf,
-      getColor: (e: OpEdge) => withAlpha(CYAN, edgeStyle(e).alpha),
+      getColor: (e: OpEdge) => withAlpha(CYAN, Math.round(edgeStyle(e).alpha * edgeFade(e))),
       getWidth: (e: OpEdge) => edgeStyle(e).width,
       widthUnits: 'pixels',
       capRounded: true,
@@ -449,14 +462,32 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       speed: reducedMotion ? 0 : 2.4,
       animTime,
       transitions: reducedMotion ? undefined : TR_PATH,
-      updateTriggers: { getPath: globe, getDashDistances: globe, getColor: widest, getWidth: widest },
+      updateTriggers: { getPath: globe, getDashDistances: globe, getColor: [widest, hi], getWidth: widest },
       // Full evidence lives here (and in the drawer); the map label is the short form.
       onHover: edgeHover,
       onClick: edgeClick,
     }));
   }
 
-  const dim = (n: OpNode): boolean => !nodeInFootprint(n, selOp);
+  // The hovered operation's own pair arcs, brightened and widened over whatever is drawn (pairs already on the map
+  // included, which is why a preview that only ADDED missing links was invisible on most rows).
+  if (hiEdges.length > 0) {
+    out.push(new PrimaryPathLayer<OpEdge>({
+      id: 'ops-edges-hi',
+      data: hiEdges,
+      getPath: pathOf,
+      getColor: () => withAlpha(CYAN, 255),
+      getWidth: (e: OpEdge) => edgeStyle(e).width + OP_HOVER_EDGE_BOOST,
+      widthUnits: 'pixels',
+      capRounded: true,
+      pickable: false,
+      updateTriggers: { getPath: globe, getWidth: widest },
+    }));
+  }
+
+  // Selection wins the dimming unless a row is hovered: then the hovered footprint is the bright one.
+  const focusOp = hi ?? selOp;
+  const dim = (n: OpNode): boolean => !nodeInFootprint(n, focusOp);
   const shared = {
     data: nodes,
     getPosition: posNode,
@@ -473,9 +504,9 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       ...shared,
       id: 'ops-bloom',
       getRadius: (n: OpNode) => opNodePx(n.opCount, range),
-      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 6 : 34),
+      getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? 6 : hi ? 70 : 34),
       transitions: reducedMotion ? undefined : TR_FILL,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: selOp },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp },
     }),
     new ScatterplotLayer<OpNode, PulseExtensionProps<OpNode>>({
       ...shared,
@@ -483,12 +514,12 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       getRadius: (n: OpNode) => opNodeRadius(n.opCount, range),
       getFillColor: (n: OpNode) => withAlpha(CYAN, dim(n) ? OP_DIM_CORE_ALPHA : Math.round(OP_ALPHA_BASE + 110 * (n.confidence ?? 0.5))),
       stroked: true,
-      getLineColor: (n: OpNode) => (n.country === sel.country ? AMBER : withAlpha(CYAN, dim(n) ? 40 : 255)),
-      getLineWidth: (n: OpNode) => (n.country === sel.country ? 2.5 : 1.2),
+      getLineColor: (n: OpNode) => (n.country === sel.country || n.country === hiHub ? AMBER : withAlpha(CYAN, dim(n) ? 40 : 255)),
+      getLineWidth: (n: OpNode) => (n.country === hiHub ? 3 : n.country === sel.country ? 2.5 : 1.2),
       lineWidthUnits: 'pixels',
       pickable: true,
       transitions: reducedMotion ? undefined : TR_DOT,
-      updateTriggers: { ...shared.updateTriggers, getFillColor: selOp, getLineColor: [selOp, sel.country], getLineWidth: sel.country },
+      updateTriggers: { ...shared.updateTriggers, getFillColor: focusOp, getLineColor: [focusOp, sel.country, hiHub], getLineWidth: [sel.country, hiHub] },
       onHover: (info: PickInfo<OpNode>) => pick.hover(info.object
         ? {
           x: info.x, y: info.y, title: countryName(info.object.country),

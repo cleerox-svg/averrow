@@ -583,6 +583,34 @@ describe('Operations lens on a realistic day (50 operations x 15 countries)', ()
     expect((props(find(i, 'ops-edges')).extensions as unknown[]).length).toBe(1);
     expect(ids(realInput())).not.toContain('ops-edges-preview');
   });
+  it('hovering a row whose pairs are ALREADY drawn still highlights it: boosted arcs, hub ring, others dimmed', () => {
+    const hov = 'op3'; // a top operation: all of its pairs are already in the default set
+    const base = realInput();
+    const i = realInput({ sel: { ...NO_SELECTION, previewOpId: hov } });
+    const hi = props(find(i, 'ops-edges-hi'));
+    const hiData = hi.data as Array<{ opIds: string[]; opCount: number }>;
+    expect(hiData.length).toBeGreaterThan(0);
+    expect(hiData.every(e => e.opIds.includes(hov))).toBe(true);
+    expect(ids(base)).not.toContain('ops-edges-hi');
+    expect((hi.getWidth as (e: unknown) => number)(hiData[0])).toBeGreaterThan((props(find(i, 'ops-edges')).getWidth as (e: unknown) => number)(hiData[0]));
+    // Other arcs fade, this operation's do not.
+    const colorOf = (layer: string, e: unknown) => (props(find(i, layer)).getColor as (e: unknown) => number[])(e)[3]!;
+    const own = hiData[0]!;
+    const other = { opIds: ['op40'], opCount: own.opCount };
+    expect(colorOf('ops-edges', other)).toBeLessThan(colorOf('ops-edges', own));
+    // Nodes outside the footprint dim, the lead country is ringed.
+    const core = props(find(i, 'ops-core'));
+    const nodes = core.data as Array<{ country: string; opIds: string[] }>;
+    const inside = nodes.find(n => n.opIds.includes(hov))!;
+    const outside = nodes.find(n => !n.opIds.includes(hov));
+    const fill = core.getFillColor as (n: unknown) => number[];
+    if (outside) expect(fill(outside)[3]).toBeLessThan(fill(inside)[3]!);
+    const hub = model.countriesOf.get(hov)![0]!;
+    expect((core.getLineWidth as (n: unknown) => number)(nodes.find(n => n.country === hub))).toBe(3);
+    // No data rebuild per hover: the same arrays as the un-hovered default.
+    expect(props(find(i, 'ops-core')).data).toBe(props(find(base, 'ops-core')).data);
+    expect(props(find(i, 'ops-edges')).data).toBe(props(find(base, 'ops-edges')).data);
+  });
   it('arc width and opacity grow with the operations sharing the pair', () => {
     const e = props(find(realInput(), 'ops-edges'));
     const [light, heavy] = [{ opCount: 1 }, { opCount: 9 }];
