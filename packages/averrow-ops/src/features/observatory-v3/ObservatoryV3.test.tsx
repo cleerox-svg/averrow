@@ -138,6 +138,84 @@ describe('ObservatoryV3 URL state', () => {
   });
 });
 
+describe('ObservatoryV3 lenses', () => {
+  const op = { id: 'op1', name: 'OP ONE', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 5, actor: null, countries: ['NL', 'MD'], asns: ['AS1'], last_seen: null, last_movement_pivot_at: null };
+
+  it('the threats lens fetches no lens endpoint; a lens fetches only its own (and the threat queries stop)', async () => {
+    renderAt('/observatory');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    for (const p of ['operations-geo', 'movements', 'providers-geo', 'overindex', 'campaigns-geo', 'actors']) expect(called('/api/observatory/' + p)).toBe(false);
+    expect(called('/api/observatory/timeline')).toBe(true); // replay bar follows the particles
+  });
+
+  it('the hosting lens loads providers only', async () => {
+    renderAt('/observatory?lens=hosting');
+    await waitFor(() => expect(called('/api/observatory/providers-geo')).toBe(true));
+    expect(called('/api/observatory/nodes')).toBe(false);
+    expect(called('/api/observatory/arcs')).toBe(false);
+    expect(called('/api/observatory/operations-geo')).toBe(false);
+    expect(called('/api/observatory/timeline')).toBe(false);
+  });
+
+  it('choosing a lens writes it to the URL and passes the lens data to the map', async () => {
+    route({ '/api/observatory/operations-geo': { operations: [op], components: [] }, '/api/observatory/stats': okStats });
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('tab', { name: 'Operations' }));
+    await waitFor(() => expect(search).toContain('lens=operations'));
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.operations?.nodes).toHaveLength(2));
+    expect(mapProps.mock.calls.at(-1)![0].lens.layers).toMatchObject({ operations: true, nodes: false });
+  });
+
+  it('a shared sel= link opens the drawer once its data loads, and Escape closes it', async () => {
+    route({ '/api/observatory/operations-geo': { operations: [op], components: [] }, '/api/observatory/stats': okStats });
+    renderAt('/observatory?lens=operations&sel=op:op1');
+    const dlg = await screen.findByRole('dialog', { name: /Operation details/ });
+    await waitFor(() => expect(dlg).toHaveTextContent('OP ONE'));
+    expect(mapProps.mock.calls.at(-1)![0].focus).toMatchObject({ instant: true });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(search).not.toContain('sel='));
+  });
+
+  it('drops a sel= key whose object no longer exists once the data has loaded', async () => {
+    route({ '/api/observatory/operations-geo': { operations: [], components: [] }, '/api/observatory/stats': okStats });
+    renderAt('/observatory?lens=operations&sel=op:gone');
+    await waitFor(() => expect(search).not.toContain('sel='));
+    expect(screen.queryByRole('dialog', { name: /Operation details/ })).not.toBeInTheDocument();
+  });
+
+  it('a country selection loads the data its drawer reads', async () => {
+    renderAt('/observatory?lens=hosting&sel=country:NL');
+    await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
+    expect(called('/api/observatory/operations-geo')).toBe(true);
+    expect(called('/api/observatory/nodes')).toBe(true);
+    expect(urls().find(u => u.startsWith('/api/observatory/timeline'))).toBeUndefined(); // hosting has no replay bar
+  });
+
+  it('a lens failure raises the banner for that lens only', async () => {
+    route({ '/api/observatory/providers-geo': new Error('down'), '/api/observatory/stats': okStats });
+    renderAt('/observatory?lens=hosting');
+    expect(await screen.findByTestId('observatory-load-error')).toBeInTheDocument();
+  });
+
+  it('search focus loads the lists it searches', async () => {
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('combobox', { name: 'Search the map' }));
+    await waitFor(() => expect(called('/api/observatory/operations-geo')).toBe(true));
+    expect(called('/api/observatory/providers-geo')).toBe(true);
+    expect(called('/api/observatory/actors')).toBe(true);
+  });
+
+  it('takedown outcomes are neutral for roles without manage_takedowns', async () => {
+    authState.user.role = 'sales';
+    const prov = { id: 'p1', name: 'Host', asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 9, trend_7d: 1, trend_30d: 2, is_bulletproof: false, reputation_score: null, takedown: null };
+    route({ '/api/observatory/providers-geo': [prov], '/api/observatory/stats': okStats });
+    renderAt('/observatory?lens=hosting&sel=provider:p1');
+    expect(await screen.findByText(/roles that manage takedowns/)).toBeInTheDocument();
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+    authState.user.role = 'super_admin';
+  });
+});
+
 describe('ObservatoryV3 refresh', () => {
   it('the refresh button refetches the page data', async () => {
     renderAt('/observatory');

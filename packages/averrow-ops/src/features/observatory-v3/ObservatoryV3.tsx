@@ -49,7 +49,7 @@ import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
 import { usePrefersReducedMotion } from './lib/use-motion';
-import { resolveDrill, drillAnchor, drillToPatch, selPatch, type DrillTarget, type DrillData } from './lib/drill';
+import { resolveDrill, drillAnchor, isPending, drillToPatch, selPatch, type DrillTarget, type DrillData } from './lib/drill';
 import { targetPatch, type SearchData, type SearchResult } from './lib/search';
 import { useLensData } from './lib/use-lens-data';
 import { NO_SELECTION, type LensPick, type LensSelection } from './layers/lens-layers';
@@ -320,8 +320,11 @@ export function ObservatoryV3() {
   const restoredRef = useRef(!(state.node || state.arc || state.sel));
   useEffect(() => {
     if (restoredRef.current || !drill) return;
+    const at = drillAnchor(drill);
+    // A pending target (its query hasn't returned) has no position yet: wait for it.
+    if (!at && isPending(drill)) return;
     restoredRef.current = true;
-    focusAt(drillAnchor(drill), { instant: true });
+    focusAt(at, { instant: true });
   }, [drill, focusAt]);
 
   // An actor has no single point: frame its most heavily attributed country once its infrastructure loads.
