@@ -152,10 +152,10 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     const b = project(e.after);
     const f = project(e.from);
     const t = project(e.to);
-    if (!mid || !a || !b || !f || !t) continue;
+    if (!mid || !a || !b) continue;
     // An edge too short to carry its text between two nodes gets no label (the tooltip has it).
-    const len = Math.hypot(t.x - f.x, t.y - f.y);
-    if (len < e.text.length * CHAR_PX + 28) continue;
+    // An end the projection cannot place (past the globe's horizon) means the edge is long, not short.
+    if (f && t && Math.hypot(t.x - f.x, t.y - f.y) < e.text.length * CHAR_PX + 28) continue;
     edgeCands.push({
       id: e.id, text: e.text, x: mid.x, y: mid.y, priority: e.priority,
       angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,

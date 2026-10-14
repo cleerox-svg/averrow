@@ -11,6 +11,8 @@
 import type { ArcData } from '@/hooks/useObservatory';
 import { parseUtc } from '@/lib/time';
 import { getArcColor, type ColorBy, type Rgba } from './map-colors';
+import { EARTH_RADIUS_M, greatCirclePath3D } from '../anim/great-circle';
+import type { Projection } from './projection';
 
 /** One full replay of the selected period, in timeline units (60 u/s => 60s). */
 export const CYCLE_LENGTH = 3600;
@@ -21,8 +23,11 @@ export const MAX_LIFE_RATIO = 0.35;
 export const MOBILE_MAX_PARTICLES = 800;
 export const DESKTOP_MAX_PARTICLES = 6000;
 
+/** A polyline of [lng, lat] (flat) or [lng, lat, altitude m] (globe) points. */
+export type ArcPath = Array<[number, number] | [number, number, number]>;
+
 export interface TripDatum {
-  path: [number, number][];
+  path: ArcPath;
   timestamps: number[];
   color: Rgba;
   /** Severity of the arc (only critical / high arrivals earn an impact ring). */
@@ -56,6 +61,11 @@ export function computeBezierPath(
 }
 
 const pathCache = new WeakMap<ArcData, [number, number][]>();
+const globePathCache = new WeakMap<ArcData, ArcPath>();
+
+/** Globe arcs: a true great circle that rises to this share of the Earth radius for an antipodal pair. */
+export const GLOBE_ARC_LIFT = 0.14;
+const GLOBE_ARC_SEGMENTS = 48;
 
 /**
  * Bezier path for an arc, memoised on the arc object. TanStack's structural
@@ -69,6 +79,25 @@ export function getArcPath(arc: ArcData): [number, number][] {
     pathCache.set(arc, p);
   }
   return p;
+}
+
+/**
+ * Globe path for an arc: the TRUE great circle between the two points (the flat map's bezier is a
+ * Mercator-plane curve and would not hug the sphere), lifted off the surface so it reads as a
+ * trajectory and never sinks into the planet. Memoised on the arc object like `getArcPath`.
+ */
+export function getGlobeArcPath(arc: ArcData): ArcPath {
+  let p = globePathCache.get(arc);
+  if (!p) {
+    p = greatCirclePath3D(arc.sourcePosition, arc.targetPosition, GLOBE_ARC_SEGMENTS, EARTH_RADIUS_M * GLOBE_ARC_LIFT);
+    globePathCache.set(arc, p);
+  }
+  return p;
+}
+
+/** The path the projection draws: the bezier on the flat map, the lifted great circle on the globe. */
+export function arcPathFor(arc: ArcData, projection: Projection): ArcPath {
+  return projection === 'globe' ? getGlobeArcPath(arc) : getArcPath(arc);
 }
 
 // ─── Life window ────────────────────────────────────────────
@@ -126,6 +155,7 @@ export function buildTripData(
   isMobile: boolean,
   periodMs: number,
   now: number = Date.now(),
+  projection: Projection = 'flat',
 ): TripDatum[] {
   const trips: TripDatum[] = [];
   let logical = 0;
@@ -136,7 +166,7 @@ export function buildTripData(
 
   for (const arc of arcs) {
     if (logical >= maxParticles) break;
-    const path = getArcPath(arc);
+    const path = arcPathFor(arc, projection);
     const color = getArcColor(arc, colorBy, 220);
     const numParticles = Math.min(Math.max(2, Math.ceil((arc.volume || 1) * 0.6)), perArcCap);
     const { start, duration } = computeLifeWindow(arc, windowStart, now);

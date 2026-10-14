@@ -11,7 +11,7 @@ import { CYCLE_LENGTH } from '../lib/trips';
 
 const railProps = (over: Partial<ControlRailProps> = {}): ControlRailProps => ({
   lens: 'threats', layers: lensPreset('threats'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
-  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(), ...over,
+  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(), projection: 'flat', onProjection: vi.fn(), ...over,
 });
 
 describe('ControlRail', () => {
@@ -24,9 +24,10 @@ describe('ControlRail', () => {
     expect(within(traffic).getByRole('button', { name: 'Nodes + Flow' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(traffic).getByRole('button', { name: 'Off' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Beams' })).toHaveAttribute('aria-pressed', 'false');
-    // a slim column, not a nine-row list
+    // a slim column of icon buttons, not a nine-row list: Points | Heat | Fast,
+    // Off | Nodes | Nodes + Flow, Beams, Colour, then Flat | Globe = 10
     expect(screen.queryByRole('group', { name: 'Map layers' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button').length).toBeLessThanOrEqual(9);
+    expect(screen.getAllByRole('button').length).toBeLessThanOrEqual(10);
   });
   it('traffic buttons set the nodes / particles flags; Beams toggles on its own', async () => {
     const onLayers = vi.fn();

@@ -55,6 +55,7 @@ import {
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type ThreatView,
 } from './lib/url-state';
 import { noLayers, type LayerToggles } from './lib/lenses';
+import { effectiveProjection, type Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
@@ -169,6 +170,7 @@ export function ObservatoryV3() {
   const setView = useCallback((v: ThreatView) => update({ view: v }), [update]);
   const setMeasure = useCallback((m: Measure) => update({ measure: m }), [update]);
   const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
+  const setProjection = useCallback((proj: Projection) => update({ proj }), [update]);
 
   // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
   const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : fast ? FAST_LAYERS : layers;
@@ -644,6 +646,7 @@ export function ObservatoryV3() {
   const railProps = {
     lens, layers, view, measure, colorBy, reducedMotion,
     onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy, canSeeTakedowns,
+    projection: effectiveProjection(state.proj, mapMode), onProjection: setProjection, globeAvailable: mapMode !== 'heatmap',
   };
 
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
@@ -674,6 +677,7 @@ export function ObservatoryV3() {
           showNodes={mapLayers.nodes}
           colorBy={colorBy}
           mapMode={mapMode}
+          projection={state.proj}
           period={period}
           heatmapData={heatmapData}
           replayNowMs={replayNowMs}

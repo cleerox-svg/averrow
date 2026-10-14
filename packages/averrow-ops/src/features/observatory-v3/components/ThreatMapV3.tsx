@@ -4,8 +4,11 @@
  * Design notes:
  *   - Particles use TripsLayer with a single `currentTime` uniform driven by a
  *     frame-rate-independent AnimationClock (lib/animation-clock.ts).
- *   - MapboxOverlay runs in overlaid mode (interleaved=false) so particle
- *     redraws don't force basemap redraws.
+ *   - MapboxOverlay runs in overlaid mode (interleaved=false) on the FLAT map so
+ *     particle redraws don't force basemap redraws. On the GLOBE it is interleaved
+ *     (lib/projection.ts): deck then draws in MapLibre's own GL context, which is what
+ *     gives the sphere its horizon clipping and depth. The overlay is rebuilt when the
+ *     projection changes (interleaving is a constructor-time choice).
  *   - Layers are memoised on DATA IDENTITY. TanStack Query's structural sharing
  *     keeps arrays referentially stable across no-change refetches, and click
  *     handlers go through refs, so neither re-creates the layer set.
@@ -44,13 +47,18 @@ import {
   type ColorBy, type Rgba,
 } from '../lib/map-colors';
 import {
-  buildTripData, getArcPath, periodToMs, trailLengthFor, CYCLE_LENGTH,
+  buildTripData, arcPathFor, periodToMs, trailLengthFor, CYCLE_LENGTH,
   type TripDatum,
 } from '../lib/trips';
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
 import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
+import {
+  effectiveProjection, globeCanvasBox, globeFitZoom, globeOverlayProps, maxZoomFor, onNearSide, overlayInterleaved, projectionSpec,
+  FLAT_SKY, GLOBE_BACKDROP, GLOBE_SKY, type Projection,
+} from '../lib/projection';
+import { useIdleSpin, SPIN_EVENT_KEY } from '../lib/use-idle-spin';
 import {
   useDeckFrame, PulseExtension, RingExtension, RingBuffer, ringBufferLayerProps, ImpactRingSpawner,
   ArrivalScheduler, buildArrivalEvents, phaseForKey, pulseRateForSeverity, pulseAmpForSeverity,
@@ -72,7 +80,7 @@ import { highlightGroup } from '../lib/lens/operations';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
 import {
-  planCamera, phoneMinZoom, DEFAULT_MIN_ZOOM, WORLD_LAT_LIMIT, PHONE_LAT_LIMIT, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
+  planCamera, phoneMinZoom, setLatRange, DEFAULT_MIN_ZOOM, WORLD_LAT_LIMIT, PHONE_LAT_LIMIT, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
 } from '../lib/camera';
 import {
   motionPolicy, breatheAmp, isLoudSeverity, lensFade, loopNeeded, splitFade, PING_COLOR, LENS_FADE_IN_MS,
@@ -119,7 +127,7 @@ const glowColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 
 const nodePosition = (d: ThreatPoint): [number, number] => [d.lng, d.lat];
 
 /** Lens data + selection the map draws (everything except per-map concerns the map adds itself). */
-export type LensMapProps = Omit<LensLayerInput, 'reducedMotion' | 'isMobile' | 'pick' | 'labels'>;
+export type LensMapProps = Omit<LensLayerInput, 'reducedMotion' | 'isMobile' | 'pick' | 'labels' | 'projection'>;
 
 /** A batch of live pings. A new `seq` spawns the items' rings once. */
 export interface PingBatch {
@@ -149,6 +157,13 @@ export interface ThreatMapV3Props {
   showNodes: boolean;
   colorBy: ColorBy;
   mapMode: MapMode;
+  /**
+   * Requested projection (default flat). The map draws `effectiveProjection(projection, mapMode)`:
+   * the density heatmap has no globe variant and stays flat.
+   */
+  projection?: Projection;
+  /** Quiet time (ms) before the globe starts to drift; defaults to SPIN_IDLE_MS (tests and kiosks override it). */
+  spinIdleMs?: number;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
   heatmapData?: HeatmapPoint[];
   /** Replay window end (ms). One value for particles, movement and the timeline so they share a window. */
@@ -261,7 +276,7 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
-  mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
+  mapMode, projection: requestedProjection = 'flat', spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
   controlRightInset = 0, cameraInsets = NO_INSETS,
   selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null,
   lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
@@ -277,6 +292,13 @@ function ThreatMapV3Inner({
   const isMobileRef = useRef(isMobile);
   isMobileRef.current = isMobile;
 
+  const projection = effectiveProjection(requestedProjection, mapMode);
+  const isGlobe = projection === 'globe';
+  const projectionRef = useRef(projection);
+  projectionRef.current = projection;
+  /** Whether the live deck overlay was built interleaved (it is rebuilt when the projection flips this). */
+  const overlayInterleavedRef = useRef(false);
+
   const [ownClock] = useState(() => new AnimationClock({ cycleLength: CYCLE_LENGTH }));
   const clock = clockProp ?? ownClock;
 
@@ -286,11 +308,18 @@ function ThreatMapV3Inner({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [tileIssue, setTileIssue] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
+  // Globe: the canvas is the area the chrome leaves free, so the planet is centred in it (see globeCanvasBox).
+  const box = globeCanvasBox({ left: cameraInsets.left, right: cameraInsets.right }, projection);
+  /** The map canvas's own size (equals `size` on the flat map). */
+  const canvasSize = useMemo(
+    () => (box.left === 0 && box.right === 0 ? size : { width: Math.max(0, size.width - box.left - box.right), height: size.height }),
+    [size, box.left, box.right],
+  );
 
   // Stable handler bag: layers close over THIS, never over props, so a parent
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
-  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode });
-  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode };
+  const latest = useRef({ onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: { width: 0, height: 0 } });
+  latest.current = { onSelect, controlRightInset, cameraInsets, onLensPick, onPlayhead, lens, mapMode, canvas: canvasSize };
   const handlers = useMemo(() => ({
     hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
     hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
@@ -343,9 +372,12 @@ function ThreatMapV3Inner({
   // Keep the zoom control clear of the panel overlaying the map's right edge.
   const applyControlInset = useCallback(() => {
     const ctrl = mapContainerRef.current?.querySelector<HTMLElement>('.maplibregl-ctrl-bottom-right');
-    if (ctrl) ctrl.style.right = `${latest.current.controlRightInset}px`;
+    // On the globe the canvas already ends where the panel starts.
+    if (ctrl) ctrl.style.right = projectionRef.current === 'globe' ? '0px' : `${latest.current.controlRightInset}px`;
   }, []);
-  useEffect(applyControlInset, [controlRightInset, applyControlInset]);
+  useEffect(applyControlInset, [controlRightInset, projection, applyControlInset]);
+  // The canvas box changed (panel opened, globe on / off): the GL canvas must follow.
+  useEffect(() => { mapRef.current?.resize(); }, [box.left, box.right]);
 
   // ─── Map initialization (once per mount; retry remounts) ──
   useEffect(() => {
@@ -355,18 +387,23 @@ function ThreatMapV3Inner({
     let map: maplibregl.Map;
     try {
       const ins = latest.current.cameraInsets;
+      const globeStart = projectionRef.current === 'globe';
       map = new maplibregl.Map({
         container,
         style: MAP_STYLE,
-        center: isMobileRef.current
-          ? [-30, 30]
-          : [centerLngForFreeArea(10, ins.left, ins.right, 2.2), 25],
-        zoom: isMobileRef.current ? 0.6 : 2.2,
-        pitch: isMobileRef.current ? 0 : 20,
+        center: globeStart
+          ? [15, 18]
+          : isMobileRef.current
+            ? [-30, 30]
+            : [centerLngForFreeArea(10, ins.left, ins.right, 2.2), 25],
+        zoom: globeStart
+          ? globeFitZoom(container.clientWidth, container.clientHeight)
+          : isMobileRef.current ? 0.6 : 2.2,
+        pitch: isMobileRef.current || globeStart ? 0 : 20,
         bearing: 0,
         minZoom: isMobileRef.current ? phoneMinZoom(container.clientWidth) : undefined,
-        maxZoom: 12,
-        antialias: true,
+        maxZoom: maxZoomFor(projectionRef.current),
+        canvasContextAttributes: { antialias: true },
         attributionControl: false,
       });
     } catch (err) {
@@ -455,9 +492,13 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!map || !mapLoaded || size.width === 0) return;
     const lat = isMobile ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
-    if (map.transform) map.transform.latRange = [-lat, lat];
-    if (typeof map.setMinZoom === 'function') map.setMinZoom(isMobile ? phoneMinZoom(size.width) : DEFAULT_MIN_ZOOM);
-  }, [isMobile, mapLoaded, size.width]);
+    setLatRange(map.transform, lat);
+    // The globe needs no wide-world floor: one planet fits at `globeFitZoom`, and a little less is plenty.
+    const floor = isGlobe
+      ? Math.max(0, globeFitZoom(canvasSize.width, canvasSize.height) - 0.9)
+      : isMobile ? phoneMinZoom(size.width) : DEFAULT_MIN_ZOOM;
+    if (typeof map.setMinZoom === 'function') map.setMinZoom(floor);
+  }, [isMobile, mapLoaded, size.width, canvasSize.width, canvasSize.height, isGlobe]);
 
   // Track container size (resize, rotation, side-panel toggles) and keep the GL canvas in sync.
   useEffect(() => {
@@ -501,8 +542,8 @@ function ThreatMapV3Inner({
   const beamsOn = showBeams || policy.staticBeams;
 
   const tripData = useMemo(
-    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period), replayNowMs),
-    [geoArcs, colorBy, isMobile, period, replayNowMs],
+    () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period), replayNowMs, projection),
+    [geoArcs, colorBy, isMobile, period, replayNowMs, projection],
   );
 
   const selectedNode = selection?.kind === 'node' ? selection.node : null;
@@ -513,6 +554,8 @@ function ThreatMapV3Inner({
   // ─── Static layers (rebuilt only when their data / style inputs change) ──
   const staticLayers = useMemo(() => {
     const layers: Layer[] = [];
+    // The flat map draws the bezier corridor; the globe draws the true great circle, lifted off the surface.
+    const arcPath = (d: ArcData) => arcPathFor(d, projection);
 
     if (mapMode === 'global') {
       if (showNodes && geoThreats.length > 0) {
@@ -540,24 +583,24 @@ function ThreatMapV3Inner({
           new PathLayer<ArcData>({
             id: 'beam-glow',
             data: geoArcs,
-            getPath: getArcPath,
+            getPath: arcPath,
             getColor: d => getArcColor(d, colorBy, 51 * lift),
             getWidth: beamWidth,
             widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 4 : 2,
-            updateTriggers: { getColor: [colorBy, lift] },
+            updateTriggers: { getColor: [colorBy, lift], getPath: projection },
           }),
           new PathLayer<ArcData>({
             id: 'beam-core',
             data: geoArcs,
-            getPath: getArcPath,
+            getPath: arcPath,
             getColor: d => getArcColor(d, colorBy, 76 * lift),
             getWidth: beamWidth,
             widthUnits: 'pixels',
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 3 : 1,
-            updateTriggers: { getColor: [colorBy, lift] },
+            updateTriggers: { getColor: [colorBy, lift], getPath: projection },
             pickable: true,
             onHover: handlers.hoverArc,
             onClick: handlers.clickArc,
@@ -606,7 +649,8 @@ function ThreatMapV3Inner({
         layers.push(new PathLayer<ArcData>({
           id: 'selection-arc',
           data: [selectedArc],
-          getPath: getArcPath,
+          getPath: arcPath,
+          updateTriggers: { getPath: projection },
           getColor: [229, 168, 50, 230],
           getWidth: 2.5, widthUnits: 'pixels',
         }));
@@ -629,7 +673,7 @@ function ThreatMapV3Inner({
     // an equal object doesn't rebuild.
   }, [
     geoThreats, geoArcs, targetNodes, beamsOn, policy.staticBeams, showNodes, colorBy, mapMode, geoHeat,
-    isMobile, handlers, selectedNodeId, selectedArcId,
+    isMobile, handlers, selectedNodeId, selectedArcId, projection,
   ]);
 
   // Drop any stale hover tooltip when the scene changes (the hovered layer is gone).
@@ -715,8 +759,8 @@ function ThreatMapV3Inner({
   const lensInput = useMemo<LensLayerInput | null>(() => {
     if (!lens || mapMode === 'heatmap') return null;
     const pick: LensPickHandlers = { hover: handlers.hoverLens, click: handlers.clickLens };
-    return { ...lens, labels, reducedMotion, isMobile, pick };
-  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers]);
+    return { ...lens, labels, reducedMotion, isMobile, pick, projection };
+  }, [lens, mapMode, labels, reducedMotion, isMobile, handlers, projection]);
   const lensBase = useMemo(() => (lensInput ? buildLensBaseLayers(lensInput) : []), [lensInput]);
   const lensAnimating = !!lensInput && policy.ambient && lensNeedsFrame(lensInput, { clockPlaying });
 
@@ -741,23 +785,32 @@ function ThreatMapV3Inner({
 
   const recomputeLabels = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !labelInputs || size.width === 0) {
+    if (!map || !labelInputs || canvasSize.width === 0) {
       setLabels(prev => (prev === NO_LABELS ? prev : NO_LABELS));
       return;
     }
+    // On the globe `project` also answers for points on the far side (behind the planet): they are not placeable.
+    const centre = map.getCenter();
+    const globe = projectionRef.current === 'globe';
     const project: Project = ([lng, lat]) => {
+      if (globe && !onNearSide([centre.lng, centre.lat], [lng, lat])) return null;
       const p = map.project([lng, lat]);
       return Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y } : null;
     };
-    const next = placeLensLabels(labelInputs, project, size);
+    const next = placeLensLabels(labelInputs, project, canvasSize);
     setLabels(prev => stablePlacement(prev, next));
-  }, [labelInputs, size]);
+  }, [labelInputs, canvasSize]);
+  /** The latest placement, for callbacks that outlive a render (the post-flip `idle` handler). */
+  const recomputeLabelsRef = useRef(recomputeLabels);
+  recomputeLabelsRef.current = recomputeLabels;
   useEffect(() => { if (mapLoaded) recomputeLabels(); }, [mapLoaded, recomputeLabels]);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
-    map.on('moveend', recomputeLabels);
-    return () => { map.off('moveend', recomputeLabels); };
+    // The idle spin's own moves are tagged: it refreshes labels on a throttle instead of every frame.
+    const onEnd = (e: { [key: string]: unknown }) => { if (!e[SPIN_EVENT_KEY]) recomputeLabels(); };
+    map.on('moveend', onEnd);
+    return () => { map.off('moveend', onEnd); };
   }, [mapLoaded, recomputeLabels]);
 
   // Movement departures / landings: their own ring pool, fed by the replay clock like the particles.
@@ -855,20 +908,68 @@ function ThreatMapV3Inner({
     return mixed;
   }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings, reducedMotion]);
 
+  // ─── Projection: flat <-> globe ───────────────────────────
+  // Declared BEFORE the overlay effect: the overlay reads the map's projection when it is built.
+  const appliedProjection = useRef<Projection | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapLoaded) return;
+    const prev = appliedProjection.current;
+    if (prev === projection) return;
+    appliedProjection.current = projection;
+    // First run on the flat map: nothing to change, the map is built flat.
+    if (prev === null && projection === 'flat') return;
+    map.setProjection(projectionSpec(projection));
+    map.setMaxZoom(maxZoomFor(projection));
+    if (projection === 'globe') map.setSky(GLOBE_SKY);
+    else map.setSky(FLAT_SKY);
+    if (prev !== null) {
+      // A flip re-frames the world: the globe fits the planet in the canvas, the flat map returns to its overview.
+      const c = map.getCenter();
+      if (projection === 'globe') {
+        const fit = latest.current.canvas;
+        map.jumpTo({ center: [c.lng, Math.max(-45, Math.min(45, c.lat))], zoom: globeFitZoom(fit.width, fit.height), pitch: 0, bearing: 0 });
+      } else {
+        map.jumpTo({ center: [c.lng, Math.max(-50, Math.min(50, c.lat))], zoom: isMobileRef.current ? 0.6 : 2.2, pitch: isMobileRef.current ? 0 : 20, bearing: 0 });
+      }
+    }
+    // Screen-space labels were placed under the previous projection: place them again once the new one has drawn.
+    map.once('idle', () => recomputeLabelsRef.current());
+  }, [projection, mapLoaded]);
+
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
     const map = mapRef.current;
     if (!mapLoaded || !map) return;
     const layers = compose(animSecondsRef.current, clock.currentTime);
+    const interleaved = overlayInterleaved(projection);
+    // Interleaving is fixed when the overlay is built: a projection flip that changes it rebuilds the overlay.
+    if (deckRef.current && overlayInterleavedRef.current !== interleaved) {
+      const old = deckRef.current;
+      deckRef.current = null;
+      try { map.removeControl(old as unknown as maplibregl.IControl); } catch { /* already removed */ }
+      try { old.finalize(); } catch { /* already finalized */ }
+    }
     if (deckRef.current) {
       deckRef.current.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
     } else if (layers.length > 0) {
-      const overlay = new MapboxOverlay({ interleaved: false, layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
+      const overlay = new MapboxOverlay({
+        interleaved,
+        ...(interleaved ? globeOverlayProps() : {}),
+        layers, onClick: handlers.clickEmpty, pickingRadius: isMobile ? PICK_RADIUS_TOUCH : PICK_RADIUS_FINE });
       map.addControl(overlay as unknown as maplibregl.IControl);
       deckRef.current = overlay;
+      overlayInterleavedRef.current = interleaved;
     }
     // seekVersion: a scrub while the loop is stopped still repaints the new playhead.
-  }, [mapLoaded, compose, clock, handlers, isMobile, seekVersion]);
+  }, [mapLoaded, compose, clock, handlers, isMobile, seekVersion, projection]);
+
+  // Idle spin (globe only): drifts when nobody is interacting; stops on any input. Held while anything is selected.
+  const lensSelected = !!lens && Object.values(lens.sel).some(Boolean);
+  const { poke: pokeSpin } = useIdleSpin({
+    mapRef, targetRef: rootRef, projection, ready: mapLoaded, reducedMotion,
+    held: selection !== null || lensSelected, idleMs: spinIdleMs, onDrift: recomputeLabels,
+  });
 
   // The loop is held open for a while after anything that spawns rings, so they can finish expanding
   // even when nothing else needs frames (replay paused, no breathing nodes).
@@ -944,7 +1045,11 @@ function ThreatMapV3Inner({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !focus) return;
-    const plan = planCamera(focus.points, size, latest.current.cameraInsets);
+    pokeSpin(); // a requested camera move is an interaction: the globe waits before drifting again
+    // On the globe the canvas already excludes the left / right chrome: only top and bottom remain as insets.
+    const ci = latest.current.cameraInsets;
+    const globeNow = projectionRef.current === 'globe';
+    const plan = planCamera(focus.points, latest.current.canvas, globeNow ? { ...ci, left: 0, right: 0 } : ci);
     if (!plan) return; // nothing placeable: select without moving the camera
     const cam = map.cameraForBounds(
       [[plan.box.west, plan.box.south], [plan.box.east, plan.box.north]],
@@ -958,8 +1063,13 @@ function ThreatMapV3Inner({
   }, [focusId, mapLoaded]);
 
   return (
-    <div ref={rootRef} className="relative w-full h-full">
-      <div ref={mapContainerRef} className="absolute inset-0" />
+    <div ref={rootRef} className="relative w-full h-full" style={isGlobe ? { background: GLOBE_BACKDROP } : undefined}>
+      <div
+        ref={mapContainerRef}
+        className="absolute inset-y-0"
+        data-projection={projection}
+        style={{ left: box.left, right: box.right }}
+      />
 
       {tileIssue && (
         <div
@@ -975,7 +1085,8 @@ function ThreatMapV3Inner({
         <div
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
-            ...clampCardPosition({ x: tooltip.x, y: tooltip.y }, { width: 260, height: 110 }, { width: size.width, height: size.height }, 4, 10),
+            // Pointer coordinates are the canvas's: on the globe the canvas starts `box.left` into this box.
+            ...clampCardPosition({ x: tooltip.x + box.left, y: tooltip.y }, { width: 260, height: 110 }, { width: size.width, height: size.height }, 4, 10),
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
             backdropFilter: 'blur(12px)',

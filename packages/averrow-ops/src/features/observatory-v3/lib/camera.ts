@@ -214,3 +214,22 @@ export function drillPoints(t: DrillTarget, m: FocusModels): LngLat[] {
     }
   }
 }
+
+/** The slice of MapLibre 5's transform that holds the latitude range (private: there is no public setter that keeps lngRange null). */
+interface LatRangeHolder {
+  _helper?: { _latRange?: [number, number] | null };
+}
+
+/**
+ * Set the latitude range the map may show. MapLibre 5 made `transform.latRange` a read-only getter over
+ * `transform._helper._latRange`, and `setMaxBounds` also pins the longitude range (which would stop the world
+ * wrapping), so the range is written to the helper directly. Guarded: when the shape is not there (a future
+ * major, a stub) nothing happens and the library default applies. Returns whether it was applied.
+ * MapLibre copies the range across projection switches (`transform.apply`), so it survives flat <-> globe.
+ */
+export function setLatRange(transform: unknown, lat: number): boolean {
+  const helper = (transform as LatRangeHolder | null | undefined)?._helper;
+  if (!helper || !('_latRange' in helper)) return false;
+  helper._latRange = [-lat, lat];
+  return true;
+}

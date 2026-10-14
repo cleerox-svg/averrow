@@ -13,7 +13,8 @@ import { buildVelocityModel, VELOCITY_FILLING } from '../lib/lens/velocity';
 
 const railProps = (over: Partial<ControlRailProps> = {}): ControlRailProps => ({
   lens: 'threats', layers: lensPreset('threats'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
-  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(), ...over,
+  onLayers: vi.fn(), onView: vi.fn(), onMeasure: vi.fn(), onColorBy: vi.fn(),
+  projection: 'flat', onProjection: vi.fn(), ...over,
 });
 
 describe('ControlRail: Fast weaponization view', () => {

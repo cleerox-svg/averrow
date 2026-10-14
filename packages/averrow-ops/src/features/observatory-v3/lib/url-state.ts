@@ -10,7 +10,9 @@
  * the interactive scenes (not the density heatmap or the bot-share choropleth).
  * A lens is the one question the map answers; `view` (Threats: Points | Heat) and
  * `measure` (Baseline: Over-index | Raw | Bot share) are that lens's option. Old
- * `mode=heatmap` / `mode=bot_density` links still parse and are rewritten. Params that aren't ours are left untouched.
+ * `mode=heatmap` / `mode=bot_density` links still parse and are rewritten. `proj=globe` picks the globe projection
+ * (flat is the default and is never written); it is a standing view setting, independent of the lens and the selection.
+ * Params that aren't ours are left untouched.
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
@@ -19,6 +21,7 @@ import {
   LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
   type LayerToggles, type LensId,
 } from './lenses';
+import { DEFAULT_PROJECTION, PROJECTION_IDS, type Projection } from './projection';
 
 export const PERIOD_IDS = ['24h', '7d', '30d', '90d'] as const;
 export type Period = (typeof PERIOD_IDS)[number];
@@ -103,6 +106,8 @@ export interface ObservatoryUrlState {
   sel: string | null;
   /** Baseline / Hosting lens option (see `measuresFor`). Always `index` on other lenses. */
   measure: Measure;
+  /** Map projection: the flat map (default) or the globe (`proj=globe`). Independent of the lens. */
+  proj: Projection;
 }
 
 /** The scene the map draws for a state. */
@@ -132,10 +137,11 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   arc: null,
   sel: null,
   measure: 'index',
+  proj: DEFAULT_PROJECTION,
 };
 
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure'] as const;
+export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -211,6 +217,8 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     arc: arcOk ? rawArc : null,
     sel: parsedSel ? selValue(parsedSel.kind, parsedSel.id) : null,
     measure,
+    // Absent / unknown = flat, so every pre-globe link keeps opening on the flat map.
+    proj: pick(PROJECTION_IDS, sp.get('proj'), DEFAULT_STATE.proj),
   };
 }
 
@@ -226,6 +234,7 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   const layers = serializeLayers(state.layers, state.lens);
   if (layers) out.set('layers', layers);
   if (measuresFor(state.lens).includes(state.measure) && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
+  if (state.proj !== DEFAULT_STATE.proj) out.set('proj', state.proj);
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);

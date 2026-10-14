@@ -27,6 +27,7 @@ import { TripsLayer } from '@/lib/trips-layer';
 import type { LngLat } from '@/lib/country-centroids';
 import type { LayerToggles } from '../lib/lenses';
 import type { Measure } from '../lib/url-state';
+import { GLOBE_SCREEN_SPACE_PARAMETERS, type Projection } from '../lib/projection';
 import type { Rgba } from '../lib/map-colors';
 import type { OperationsModel, OpNode, OpEdge } from '../lib/lens/operations';
 import { highlightGroup, isDimmed } from '../lib/lens/operations';
@@ -117,6 +118,8 @@ export interface LensLayerInput {
   reducedMotion: boolean;
   isMobile: boolean;
   pick: LensPickHandlers;
+  /** The projection the layers are drawn in (default flat): the globe draws text without the depth test. */
+  projection?: Projection;
 }
 
 export interface LensFrame {
@@ -335,8 +338,9 @@ export function opsMaxThreats(m: OperationsModel): number {
   return opsMax(m);
 }
 
-function labelStyle() {
+function labelStyle(projection: Projection = 'flat') {
   return {
+    ...(projection === 'globe' ? { parameters: GLOBE_SCREEN_SPACE_PARAMETERS } : null),
     sizeUnits: 'pixels' as const,
     getColor: TEXT_COLOR,
     outlineWidth: 3,
@@ -430,7 +434,7 @@ function opLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   if (labels.edges.length > 0) {
     out.push(new TextLayer<PlacedEdgeLabel>({
       id: 'ops-edge-labels',
-      ...labelStyle(),
+      ...labelStyle(input.projection),
       data: labels.edges,
       getPosition: e => e.position,
       getText: e => e.text,
@@ -547,7 +551,7 @@ function hostingLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   if (labels.hosts.length > 0) {
     out.push(new TextLayer<PlacedHostLabel>({
       id: 'hosting-labels',
-      ...labelStyle(),
+      ...labelStyle(input.projection),
       data: labels.hosts,
       getPosition: r => r.position,
       getText: r => r.text,
@@ -685,7 +689,7 @@ function actorLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   if (labels.actors.length > 0) {
     out.push(new TextLayer<PlacedActorLabel>({
       id: 'actor-labels',
-      ...labelStyle(),
+      ...labelStyle(input.projection),
       data: labels.actors,
       getPosition: a => a.position,
       getText: a => a.text,
@@ -753,7 +757,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
       // Numbered static hops stand in for the animation.
       out.push(new TextLayer<MovementHop>({
         id: 'movement-hop-numbers',
-        ...labelStyle(),
+        ...labelStyle(input.projection),
         data: staticHops,
         getPosition: (h: MovementHop) => h.path[Math.floor(h.path.length / 2)]!,
         getText: hopLabel,

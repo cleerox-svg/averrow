@@ -1,0 +1,152 @@
+/**
+ * Map projection: Flat (Web Mercator, the analyst default) or Globe (MapLibre 5 globe).
+ *
+ * Pure decisions, unit-tested without a map:
+ *   - which projection actually applies (`effectiveProjection`): the density heatmap is
+ *     a screen-space aggregation that deck.gl cannot draw on a globe, so it stays flat;
+ *   - how the deck.gl overlay is attached (`overlayInterleaved`): the globe draws deck
+ *     INTERLEAVED in MapLibre's own GL context (one depth buffer and the globe's clipping
+ *     for free), the flat map keeps the cheaper separate overlay canvas;
+ *   - the MapLibre projection spec and the sky that makes the globe read as a planet;
+ *   - the zoom ceiling: MapLibre's `globe` blends into Mercator between zoom 11 and 12,
+ *     and deck.gl's GlobeView would no longer match the transform there;
+ *   - which side of the planet a point is on (labels on the far side are not placed).
+ */
+
+import { _GlobeView } from '@deck.gl/core';
+import type { MapboxOverlayProps } from '@deck.gl/mapbox';
+import type { SkySpecification } from 'maplibre-gl';
+import type { LngLat } from '@/lib/country-centroids';
+import { greatCircleAngle } from '../anim/great-circle';
+import type { MapMode } from './url-state';
+
+export const PROJECTION_IDS = ['flat', 'globe'] as const;
+export type Projection = (typeof PROJECTION_IDS)[number];
+
+export const DEFAULT_PROJECTION: Projection = 'flat';
+
+export function isProjection(v: string | null | undefined): v is Projection {
+  return v != null && (PROJECTION_IDS as readonly string[]).includes(v);
+}
+
+export const PROJECTION_LABEL: Record<Projection, string> = { flat: 'Flat map', globe: 'Globe' };
+
+/**
+ * The projection the map really draws for what was asked. The density heatmap (deck.gl
+ * HeatmapLayer) aggregates in screen space and has no globe variant, so it is flat.
+ */
+export function effectiveProjection(requested: Projection, mapMode: MapMode): Projection {
+  return requested === 'globe' && mapMode === 'heatmap' ? 'flat' : requested;
+}
+
+/** Globe: interleaved with the basemap's GL context. Flat: separate overlay canvas (cheaper, no basemap redraws). */
+export function overlayInterleaved(projection: Projection): boolean {
+  return projection === 'globe';
+}
+
+/** The MapLibre projection spec. `globe` is the shorthand that blends to Mercator at zoom 11-12. */
+export function projectionSpec(projection: Projection): { type: 'globe' | 'mercator' } {
+  return { type: projection === 'globe' ? 'globe' : 'mercator' };
+}
+
+/**
+ * Highest zoom on the globe. MapLibre's `globe` interpolates to Mercator between zoom 11 and 12 while
+ * the deck.gl overlay stays on a globe viewport until 12: stop at the start of the blend.
+ */
+export const GLOBE_MAX_ZOOM = 11;
+export const FLAT_MAX_ZOOM = 12;
+export const maxZoomFor = (projection: Projection): number => (projection === 'globe' ? GLOBE_MAX_ZOOM : FLAT_MAX_ZOOM);
+
+/**
+ * MapLibre's globe is drawn smaller than the orthographic 512 * 2^z / pi px (perspective: the camera is a
+ * finite distance away); measured on the rendered limb it is ~85% of that.
+ */
+export const GLOBE_APPARENT_SCALE = 0.85;
+
+/** Zoom at which the planet spans `fill` of the canvas's shorter side (the toolbar / timeline overlap the rest). */
+export function globeFitZoom(width: number, height: number, fill = 0.72): number {
+  const side = Math.min(width, height);
+  if (!(side > 0)) return 1.2;
+  return Math.max(0, Math.log2((side * fill * Math.PI) / (512 * GLOBE_APPARENT_SCALE)));
+}
+
+/**
+ * Horizontal room the console's chrome takes (rail on the left, panel / drawer on the right). The flat map
+ * runs underneath it, but a globe is a disc: it is centred in what is left by giving the CANVAS that box
+ * (deck.gl's globe viewport has no `padding`, so MapLibre's own padding would put the overlay out of register).
+ */
+export function globeCanvasBox(insets: { left: number; right: number }, projection: Projection): { left: number; right: number } {
+  return projection === 'globe' ? { left: Math.max(0, insets.left), right: Math.max(0, insets.right) } : { left: 0, right: 0 };
+}
+
+/** Backdrop behind the planet: deep space, whatever the page theme. */
+export const GLOBE_BACKDROP = '#04070f';
+
+/**
+ * Atmosphere for the dark basemap: a cool limb glow and a fade to space, strongest when the
+ * whole planet is in view and gone once zoomed in (the blend is zoom-driven by MapLibre).
+ */
+export const GLOBE_SKY: SkySpecification = {
+  'sky-color': '#0a1530',
+  'sky-horizon-blend': 0.7,
+  'horizon-color': '#1d6fa5',
+  'horizon-fog-blend': 0.6,
+  'fog-color': '#0d2a4a',
+  'fog-ground-blend': 0.35,
+  'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 4, 1, 7, 0],
+};
+
+/** The sky for flat mode: no atmosphere at all (blend 0) so the flat map is exactly as before. */
+export const FLAT_SKY: SkySpecification = { 'atmosphere-blend': 0 };
+
+/**
+ * Angular radius (degrees from the view centre) beyond which a point is not given a label: past the
+ * horizon it is behind the planet, and just inside it the text would be squashed against the limb.
+ */
+export const HORIZON_DEG = 72;
+
+/** True when `point` is on the hemisphere facing the camera, which looks at `center`. */
+export function onNearSide(center: LngLat, point: LngLat): boolean {
+  return greatCircleAngle(center, point) * (180 / Math.PI) < HORIZON_DEG;
+}
+
+/**
+ * Mesh resolution (degrees) deck.gl cuts flat features into on the globe (default 10). Country
+ * polygons are triangulated flat inside each cell, so a 10 degree cell sinks ~24 km under the
+ * surface in the middle and the basemap hides it: choropleth fills came out as ragged strips along
+ * the borders. At 1 degree the chord sag is ~0.2 km.
+ */
+export const GLOBE_RESOLUTION_DEG = 1;
+/**
+ * Depth bias pulling the overlay toward the camera, so what is left of that sag (and anything lying
+ * exactly on the surface) wins the depth test against the basemap instead of z-fighting with it.
+ * -4 left hatching in disc centres; -40 is clean (measured in the browser at zoom 2-4).
+ */
+export const GLOBE_DEPTH_BIAS = -40;
+
+/**
+ * The deck layers still TEST against the basemap's depth (that is what hides the far side of the
+ * planet and what the bias above is for) but do not WRITE depth: coplanar layers (a node's bloom,
+ * glow and core are discs on the same tangent plane) fought each other per pixel into a hatch
+ * pattern. They are drawn in layer order instead, as on the flat map's overlay.
+ */
+export const GLOBE_DEPTH_WRITE = false;
+
+/**
+ * Layers whose geometry is offset in SCREEN pixels from a point on the surface (text labels) cannot use
+ * the depth test on a globe: the offset fragments land on a different part of the curved surface, which is
+ * nearer the camera than the anchor's depth, so the basemap hides them (and the globe's back-face culling
+ * drops the glyph quads outright). They draw unconditionally instead; that is safe because their anchors
+ * are only placed on the near side (`onNearSide`).
+ */
+export const GLOBE_SCREEN_SPACE_PARAMETERS = { depthCompare: 'always', depthWriteEnabled: false, cullMode: 'none' } as const;
+
+/** The deck.gl overlay props that only the globe needs (interleaved mode). */
+export function globeOverlayProps(): Pick<MapboxOverlayProps, 'views' | 'parameters'> {
+  return {
+    // The id is the one MapboxOverlay looks its view up by.
+    // DeckProps types `views` as `null` unless the props are generic over the view; a GlobeView is what it takes.
+    views: new _GlobeView({ id: 'mapbox', resolution: GLOBE_RESOLUTION_DEG }) as unknown as MapboxOverlayProps['views'],
+    parameters: { depthBias: GLOBE_DEPTH_BIAS, depthWriteEnabled: GLOBE_DEPTH_WRITE },
+  };
+}
