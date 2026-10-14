@@ -72,21 +72,27 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
 
     // Search matches the human-visible identifiers: name, ASNs, countries.
     const like = q ? `%${q.replace(/[%_]/g, "")}%` : null;
-    // Live statuses as a POSITIVE list, pinned to the (status, threat_count)
-    // index: ~76K superseded legacy rows sit in this table, and with
-    // ANALYZE stats (stat1 averages rows per status, hiding that skew) the
-    // planner otherwise full-scans it for both statements. INDEXED BY makes
-    // each read four index seeks + the few hundred live rows.
+    // Live clusters (positive status list AND retired_reason IS NULL),
+    // pinned to the PARTIAL live-rows index: ~76K retired legacy rows sit in
+    // this table with status 'active' / 'dormant' (retirement is the
+    // retired_reason column, not a status — lib/cluster-status.ts), so a
+    // (status, threat_count) seek on 0301's full index would walk all of
+    // them, and with ANALYZE stats the planner otherwise full-scans the
+    // table. idx_clusters_live_status_threat_count (migration 0306, WHERE
+    // retired_reason IS NULL) holds only live rows, so each read is four
+    // index seeks over the few hundred live rows. liveClusterStatusSql()
+    // carries the `retired_reason IS NULL` term that makes the partial index
+    // usable (INDEXED BY on a partial index whose WHERE the query does not
+    // imply is a hard "no query solution" error).
     // test/cluster-list-plans.test.ts pins the plans with and without stats.
-    // Both statements below name idx_clusters_status_threat_count (migration
-    // 0301): dropping or renaming that index turns them into a hard
-    // "no such index" error, so it must stay even though other readers
-    // (observatory operations-geo) deliberately avoid it.
+    // Both statements name the index: dropping or renaming it turns them
+    // into a hard "no such index" error, so it must stay even though other
+    // readers (observatory operations-geo) deliberately avoid it.
     const listStmt = env.DB.prepare(`
         SELECT id, cluster_name, asns, countries, threat_count,
                confidence_score, status, first_detected, last_seen,
                attribution_attempted_at, nexus_brief, agent_notes
-          FROM infrastructure_clusters INDEXED BY idx_clusters_status_threat_count
+          FROM infrastructure_clusters INDEXED BY idx_clusters_live_status_threat_count
          WHERE actor_id IS NULL
            AND attribution_dismissed_at IS NULL
            AND ${liveClusterStatusSql()}${like ? " AND (cluster_name LIKE ? OR asns LIKE ? OR countries LIKE ?)" : ""}
@@ -125,7 +131,7 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
           SUM(CASE WHEN actor_id IS NULL
                     AND attribution_dismissed_at IS NOT NULL
                    THEN 1 ELSE 0 END)                                    AS dismissed
-        FROM infrastructure_clusters INDEXED BY idx_clusters_status_threat_count
+        FROM infrastructure_clusters INDEXED BY idx_clusters_live_status_threat_count
        WHERE ${liveClusterStatusSql()}
       `).first<{
         total_clusters: number;

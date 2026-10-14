@@ -94,8 +94,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "infrastructure_clusters"
       ],
       "ai_models_referenced": [],
-      "loc": 182,
-      "last_modified": "2026-10-10T01:46:55.351Z"
+      "loc": 185,
+      "last_modified": "2026-10-14T19:15:12.262Z"
     },
     {
       "name": "auto-seeder",

@@ -70,14 +70,20 @@ function seed(): SqliteDb {
   raw.exec("ALTER TABLE infrastructure_clusters ADD COLUMN last_updated TEXT");
   raw.prepare("INSERT INTO threat_actors (id, name) VALUES ('ta1', 'Actor One')").run();
   const ic = raw.prepare(
-    `INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, confidence_score, actor_id, last_updated)
-     VALUES (?, ?, ?, ?, 70, ?, '2026-10-01 00:00:00')`,
+    `INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason, confidence_score, actor_id, last_updated)
+     VALUES (?, ?, ?, ?, ?, 70, ?, '2026-10-01 00:00:00')`,
   );
-  ic.run("c-acc", "Accel", 5, "accelerating", "ta1");
-  ic.run("c-act-big", "Active big", 50, "active", null);
-  ic.run("c-act-small", "Active small", 3, "active", null);
-  ic.run("c-empty", "No recent threats", 9, "active", null);
-  ic.run("c-dorm", "Dormant", 99, "dormant", null);
+  // Statuses stay inside prod's CHECK (active / dormant / disrupted) — the
+  // derived schema enforces it. 'accelerating' / 'pivot' can never be stored.
+  ic.run("c-acc", "Accel", 5, "active", null, "ta1");
+  ic.run("c-act-big", "Active big", 50, "active", null, null);
+  ic.run("c-act-small", "Active small", 3, "active", null, null);
+  ic.run("c-empty", "No recent threats", 9, "active", null, null);
+  ic.run("c-dorm", "Dormant", 99, "dormant", null, null);
+  ic.run("c-disrupted", "Disrupted", 7, "disrupted", null, null);
+  // Retired rows keep a live status; every response must still omit them.
+  ic.run("c-retired-legacy", "Legacy copy", 5000, "active", "superseded", "ta1");
+  ic.run("c-retired-shared", "Shared infra", 4000, "dormant", "shared_infra", null);
   const t = raw.prepare(
     `INSERT INTO threats (id, source_feed, threat_type, malicious_domain, cluster_id, created_at)
      VALUES (?, 'test', 'phishing', 'x.example', ?, ?)`,
@@ -99,7 +105,7 @@ function seed(): SqliteDb {
 }
 
 function legacyResponse(raw: SqliteDb, status: string | null, limit: number, offset: number) {
-  const where = status ? "WHERE ic.status = ?" : "";
+  const where = status ? "WHERE ic.retired_reason IS NULL AND ic.status = ?" : "WHERE ic.retired_reason IS NULL";
   const binds = status ? [status, limit, offset] : [limit, offset];
   const rows = raw.prepare(LEGACY_SQL(where)).all(...binds) as Array<Record<string, unknown>>;
   const total = raw.prepare(`SELECT COUNT(*) AS n FROM infrastructure_clusters ic ${where}`)

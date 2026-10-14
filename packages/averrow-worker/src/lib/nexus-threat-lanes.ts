@@ -69,7 +69,7 @@ import {
   subnetClusterName,
   registrarClusterName,
 } from "./cluster-naming";
-import { SHARED_INFRA_CLUSTER_STATUS, SUPERSEDED_CLUSTER_STATUS } from "./cluster-status";
+import { SHARED_INFRA_RETIRED_REASON, SUPERSEDED_RETIRED_REASON, type ClusterRetiredReason } from "./cluster-status";
 
 // ─── ASN normalisation ────────────────────────────────────────────────
 // asnKey / asnKeySql / the shared-infra ASN sets live in
@@ -317,19 +317,27 @@ const UPSERT_SET = `cluster_name = excluded.cluster_name,
             agent_notes = excluded.agent_notes`;
 
 /**
- * Upsert for the specific lanes. Status is left alone EXCEPT a row that
- * retireNonOperationalLaneClusters parked as shared_infra and that qualifies
- * again (e.g. a per-IP row whose fan-out dropped back under the hub
- * threshold) — the lane's filter just re-admitted it, so it is reactivated.
+ * Reactivation on upsert: a row retireNonOperationalLaneClusters parked as
+ * `shared_infra` that a lane emits again (e.g. a per-IP row whose fan-out
+ * dropped back under the hub threshold — the lane's filter just re-admitted
+ * it) gets retired_reason cleared. `superseded` is NEVER cleared: legacy
+ * superseded ids don't start `cluster_`, so no lane can collide with one,
+ * and the guard makes that hold even if one did. Retirement never changed
+ * `status` (prod CHECK: active / dormant / disrupted — lib/cluster-status.ts),
+ * so a reactivated row simply keeps its status.
  */
+const UPSERT_CLEAR_SHARED_INFRA = `retired_reason = CASE
+                WHEN infrastructure_clusters.retired_reason = '${SHARED_INFRA_RETIRED_REASON}' THEN NULL
+                ELSE infrastructure_clusters.retired_reason END`;
+
+/** Upsert for the specific lanes. Status is left alone. */
 const UPSERT_KEEP_STATUS_SQL = `
           INSERT INTO infrastructure_clusters (
             ${UPSERT_COLUMNS}
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             ${UPSERT_SET},
-            status = CASE WHEN infrastructure_clusters.status = '${SHARED_INFRA_CLUSTER_STATUS}'
-                          THEN excluded.status ELSE infrastructure_clusters.status END`;
+            ${UPSERT_CLEAR_SHARED_INFRA}`;
 
 /** Upsert for the ASN lane, which owns active ↔ dormant (pivot) status. */
 const UPSERT_LANE_STATUS_SQL = `
@@ -338,7 +346,8 @@ const UPSERT_LANE_STATUS_SQL = `
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             ${UPSERT_SET},
-            status = excluded.status`;
+            status = excluded.status,
+            ${UPSERT_CLEAR_SHARED_INFRA}`;
 
 async function upsertCluster(db: D1Database, c: ClusterUpsert, ownsStatus: boolean): Promise<void> {
   await db.prepare(ownsStatus ? UPSERT_LANE_STATUS_SQL : UPSERT_KEEP_STATUS_SQL).bind(
@@ -1016,7 +1025,8 @@ export interface RetireResult {
 
 /**
  * Decide whether an existing lane row should stop being an operation.
- * Pure — unit-tested. Returns the new status, or null to leave it alone.
+ * Pure — unit-tested. Returns the retired_reason to set (status is never
+ * touched — lib/cluster-status.ts), or null to leave the row alone.
  *
  * Mirrors each lane's filter, so a row the lane would emit is never retired
  * (no retire / reactivate loop):
@@ -1039,9 +1049,9 @@ export function decideLaneRowRetirement(row: {
   asns: string | null;
   attack_types: string | null;
   brand_fanout: number;
-}): { status: string; reason: string } | null {
-  const fanoutRetire = (what: string) => ({
-    status: SHARED_INFRA_CLUSTER_STATUS,
+}): { retiredReason: ClusterRetiredReason; reason: string } | null {
+  const fanoutRetire = (what: string): { retiredReason: ClusterRetiredReason; reason: string } => ({
+    retiredReason: SHARED_INFRA_RETIRED_REASON,
     reason: `SHARED INFRA: ${what} serves ${row.brand_fanout} brands (> ${DEFAULT_HUB_FANOUT_THRESHOLD} hub threshold) — a landlord, not an operator.`,
   });
   if (row.id.startsWith("cluster_asn_")) {
@@ -1049,19 +1059,19 @@ export function decideLaneRowRetirement(row: {
     const type = parseJsonStringArray(row.attack_types)[0] ?? null;
     if (asn === null || type === null || asnClusterId(asn, type) !== row.id) {
       return {
-        status: SUPERSEDED_CLUSTER_STATUS,
+        retiredReason: SUPERSEDED_RETIRED_REASON,
         reason: "SUPERSEDED: ASN cluster keyed on a malformed ASN or missing type; the normalised lane writes the canonical row.",
       };
     }
     if (SHARED_INFRA_ASNS.has(asn)) {
       return {
-        status: SHARED_INFRA_CLUSTER_STATUS,
+        retiredReason: SHARED_INFRA_RETIRED_REASON,
         reason: `SHARED INFRA: ASN-only evidence on ${asn} (shared infrastructure) is not operator evidence.`,
       };
     }
     if (IP_REPUTATION_THREAT_TYPES.includes(type)) {
       return {
-        status: SHARED_INFRA_CLUSTER_STATUS,
+        retiredReason: SHARED_INFRA_RETIRED_REASON,
         reason: `SHARED INFRA: ${type} sightings grouped by ASN are IP reputation, not an operation.`,
       };
     }
@@ -1072,12 +1082,12 @@ export function decideLaneRowRetirement(row: {
     if (row.brand_fanout > DEFAULT_HUB_FANOUT_THRESHOLD) return fanoutRetire("IP");
     const ip = row.id.slice("cluster_ip_".length);
     if (isBogonIpv4(ip)) {
-      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${ip} is a bogon address (reserved / private range).` };
+      return { retiredReason: SHARED_INFRA_RETIRED_REASON, reason: `SHARED INFRA: ${ip} is a bogon address (reserved / private range).` };
     }
     const shared = parseJsonAsnArray(row.asns).find((a) => MULTI_TENANT_ASNS.has(a));
     if (shared) {
       return {
-        status: SHARED_INFRA_CLUSTER_STATUS,
+        retiredReason: SHARED_INFRA_RETIRED_REASON,
         reason: `SHARED INFRA: IP on ${shared} (multi-tenant: one IP serves many unrelated sites).`,
       };
     }
@@ -1088,12 +1098,12 @@ export function decideLaneRowRetirement(row: {
     // Id is slugifyKey("a.b.c.") = "a_b_c" — rebuild a representative IP.
     const subnetIp = `${row.id.slice("cluster_subnet_".length).split("_").join(".")}.0`;
     if (isBogonIpv4(subnetIp)) {
-      return { status: SHARED_INFRA_CLUSTER_STATUS, reason: `SHARED INFRA: ${subnetIp}/24 is a bogon / private range.` };
+      return { retiredReason: SHARED_INFRA_RETIRED_REASON, reason: `SHARED INFRA: ${subnetIp}/24 is a bogon / private range.` };
     }
     const shared = parseJsonAsnArray(row.asns).find((a) => SHARED_INFRA_ASNS.has(a));
     if (shared) {
       return {
-        status: SHARED_INFRA_CLUSTER_STATUS,
+        retiredReason: SHARED_INFRA_RETIRED_REASON,
         reason: `SHARED INFRA: /24 on ${shared} (shared infrastructure — a /24 there is many tenants).`,
       };
     }
@@ -1102,12 +1112,13 @@ export function decideLaneRowRetirement(row: {
 }
 
 /**
- * Flip existing ASN / per-IP / subnet rows that the reworked lanes no longer
- * emit (they would otherwise stay 'active' forever with frozen counts and
- * keep reaching the Attributor, Observatory and Operations). Reads only the
- * three id ranges by PRIMARY KEY (`cluster_asn_*`, `cluster_ip_*`,
- * `cluster_subnet_*` — hundreds of rows), never the threats table. Idempotent: only active/dormant rows are
- * considered, so a rerun writes nothing. Threats still stamped to a retired
+ * Retire existing ASN / per-IP / subnet rows that the reworked lanes no
+ * longer emit (they would otherwise stay live forever with frozen counts and
+ * keep reaching the Attributor, Observatory and Operations) by setting
+ * retired_reason. `status` is never written here. Reads only the three id
+ * ranges by PRIMARY KEY (`cluster_asn_*`, `cluster_ip_*`, `cluster_subnet_*`
+ * — hundreds of rows), never the threats table. Idempotent: only rows with
+ * retired_reason IS NULL are considered, so a rerun writes nothing. Threats still stamped to a retired
  * row are released by the bounded admin job (lib/cluster-retirement.ts), not
  * here, to keep the NEXUS run's write budget flat.
  */
@@ -1119,7 +1130,7 @@ export async function retireNonOperationalLaneClusters(db: D1Database): Promise<
       WHERE ((id >= 'cluster_asn_' AND id < 'cluster_asn\`')
           OR (id >= 'cluster_ip_' AND id < 'cluster_ip\`')
           OR (id >= 'cluster_subnet_' AND id < 'cluster_subnet\`'))
-        AND status IN ('active', 'dormant')`,
+        AND retired_reason IS NULL`,
   ).all<{ id: string; asns: string | null; attack_types: string | null; brand_fanout: number }>()).results ?? [];
 
   const result: RetireResult = { rowsScanned: rows.length, markedSharedInfra: 0, markedSuperseded: 0 };
@@ -1128,10 +1139,10 @@ export async function retireNonOperationalLaneClusters(db: D1Database): Promise<
     const decision = decideLaneRowRetirement(row);
     if (!decision) continue;
     stmts.push(db.prepare(
-      `UPDATE infrastructure_clusters SET status = ?, agent_notes = ?
-        WHERE id = ? AND status IN ('active', 'dormant')`,
-    ).bind(decision.status, decision.reason, row.id));
-    if (decision.status === SUPERSEDED_CLUSTER_STATUS) result.markedSuperseded++;
+      `UPDATE infrastructure_clusters SET retired_reason = ?, agent_notes = ?
+        WHERE id = ? AND retired_reason IS NULL`,
+    ).bind(decision.retiredReason, decision.reason, row.id));
+    if (decision.retiredReason === SUPERSEDED_RETIRED_REASON) result.markedSuperseded++;
     else result.markedSharedInfra++;
   }
   for (let i = 0; i < stmts.length; i += 50) await db.batch(stmts.slice(i, i + 50));

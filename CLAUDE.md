@@ -756,7 +756,7 @@ scheduling is needed, use Navigator (`*/5`) or add a dedicated cron trigger.
     - The per-IP lane excludes hub IPs (more than 150 brands), threats on multi-tenant ASNs, and bogon IPs in reserved / private ranges (`NOT_BOGON_IP_SQL`, tested on `trim(ip_address)` so it agrees with the retire pass). It ranks by threat volume. The /24 lane also excludes bogons.
     - Names describe the evidence: `AS4837 · malware distribution`, not `CA AS13335 …`.
     - `country_counts` (migration 0302) holds per-country counts for the top 20 countries.
-    - Rows that are not operations are marked `superseded` (legacy random-UUID duplicates, migration 0303) or `shared_infra`. The NEXUS retire pass mirrors each lane's filter for ASN, per-IP and subnet rows. Every reader excludes retired rows through `notRetiredClusterSql()` (`lib/cluster-status.ts`). A top-N read ordered by `threat_count` uses the positive list `liveClusterStatusSql()` with `ORDER BY +threat_count`; `NOT IN` walks the ~76K superseded rows. On a read whose plan is pinned to another access path, pass `{ unindexed: true }` (unary `+status`). Operations-geo does this for `status=all`, and its `include_shared` never returns retired rows.
+    - Rows that are not operations carry `infrastructure_clusters.retired_reason` (migration 0303; NULL = live): `superseded` (legacy random-UUID duplicates, set by 0303, plus `cluster_asn_*` rows keyed on a malformed ASN) or `shared_infra`. **Retirement never touches `status`** — prod's CHECK allows only `active`/`dormant`/`disrupted` (see §8), so a retired row keeps its status and a bare `status = 'active'` filter INCLUDES ~70K retired rows. The NEXUS retire pass mirrors each lane's filter for ASN, per-IP and subnet rows and sets `retired_reason`; a lane upsert clears `shared_infra` when the row qualifies again and never clears `superseded`. Every reader excludes retired rows through `notRetiredClusterSql()` (`retired_reason IS NULL`, `lib/cluster-status.ts`), status filter or not (`test/cluster-retirement.test.ts` audits this statically). A top-N read ordered by `threat_count` uses `liveClusterStatusSql()` (positive status list AND `retired_reason IS NULL`) with `ORDER BY +threat_count`, which seeks the partial live-rows index `idx_clusters_live_status_threat_count` (0306); the Attribution Backlog pins it with `INDEXED BY`. Both indexes that mention `retired_reason` (0304 `idx_clusters_actor_live` (actor_id, retired_reason), 0306) are partial `WHERE retired_reason IS NULL`, so any plan the planner picks reads live rows only; a bound `?status=` filter is written `+ic.status` so it can't fall back to `idx_clusters_status`. On a read whose plan is pinned to another access path, pass `{ unindexed: true }` (unary `+retired_reason`). Operations-geo does this for both statuses, and its `include_shared` never returns retired rows.
     - Threats still pointing at retired ids move via `POST /api/internal/nexus/cluster-retirement`. It is a bounded batch and runs as a dry run unless `dry_run=0` is passed. Each moved threat is first recorded in `cluster_repoint_log` (migration 0305), so a re-point can be undone per `run_at`, newest first (the POST result and the `audit_log` row both carry `run_at`). Each applied call writes one `audit_log` row.
 - **ctx.waitUntil:** Analyst runs in parallel without blocking the cron mesh (Strategist and
   Sparrow no longer share this mesh — both moved to dedicated `*/6` crons, see Agent
@@ -1471,9 +1471,15 @@ agent_runs                ← Agent execution log
 agent_events              ← Inter-agent event queue
 agent_outputs             ← AI-generated insights
 campaigns                 ← Threat campaign groupings
-infrastructure_clusters   ← NEXUS operation clusters. status 'superseded' / 'shared_infra' = retired, NOT an
-                            operation (lib/cluster-status.ts) — every list/count/attribution read filters them
-                            with notRetiredClusterSql(); country_counts = top-20 {CC: n} (migration 0302)
+infrastructure_clusters   ← NEXUS operation clusters. retired_reason 'superseded' / 'shared_infra' = retired, NOT
+                            an operation (migration 0303; lib/cluster-status.ts) — every list/count/attribution
+                            read filters them with notRetiredClusterSql() (retired_reason IS NULL), even when it
+                            also filters status. PROD TABLE PREDATES MIGRATIONS and carries
+                            CHECK (status IN ('active','dormant','disrupted')): NEVER write or add another
+                            status value (the first 0303 did and failed the deploy); widening the CHECK needs a
+                            table rebuild (unsafe under D1's enforced FKs). 0136 reproduces the CHECK so
+                            fresh DBs and every migration-derived test schema reject a bad status.
+                            country_counts = top-20 {CC: n} (migration 0302)
 organizations             ← Multi-tenant org layer
 org_members               ← Org membership + roles
 investigations            ← Tenant case object (groups signals/threats/takedowns)

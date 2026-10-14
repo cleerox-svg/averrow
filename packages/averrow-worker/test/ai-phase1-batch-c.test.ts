@@ -146,6 +146,9 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c_otx', 'AS9009 cluster', 2, 'active')`);
     // c_hint: free text names an actor (attacker-controlled), no OTX evidence.
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, agent_notes, threat_count, status) VALUES ('c_hint', 'Lazarus Group apps', 'developer_name=Lazarus Group', 5, 'active')`);
+    // c_legacy: retired (superseded) but status 'active' — the attributor
+    // must never pick it up (stamped list below excludes it).
+    raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason) VALUES ('c_legacy', 'AS9009 legacy copy', 900, 'active', 'superseded')`);
     raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t1','otx','phishing','active','c_otx')`);
     raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t2','feedx','phishing','active','c_otx')`);
     raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t3','appstore','phishing','active','c_hint')`);
@@ -195,18 +198,22 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
     // column is assumed to exist in production from that earlier schema.
     // Added here to mirror production; flagged for a follow-up migration.
     raw.exec(`ALTER TABLE infrastructure_clusters ADD COLUMN nexus_brief TEXT`);
-    // The backlog pins its plan with INDEXED BY idx_clusters_status_threat_count
-    // (migration 0301; plans in test/cluster-list-plans.test.ts). The derived
-    // schema materialises no indexes, so create that one.
-    raw.exec(`CREATE INDEX idx_clusters_status_threat_count ON infrastructure_clusters(status, threat_count DESC, id)`);
+    // The backlog pins its plan with INDEXED BY idx_clusters_live_status_threat_count
+    // (migration 0306, partial: WHERE retired_reason IS NULL; plans in
+    // test/cluster-list-plans.test.ts). The derived schema materialises no
+    // indexes, so create that one exactly as the migration does.
+    raw.exec(`CREATE INDEX idx_clusters_live_status_threat_count ON infrastructure_clusters(status, threat_count DESC, id) WHERE retired_reason IS NULL`);
     const env = makeEnv(raw);
     // Bigger, un-hinted cluster that would otherwise sort first.
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c_big', 'AS1 generic', 999, 'active')`);
+    // A retired (superseded) row with a live status never reaches the backlog.
+    raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason) VALUES ('c_retired', 'Lazarus Group legacy', 5000, 'active', 'superseded')`);
     const res = await handleAttributionBacklog(new Request("https://x/api/admin/agents/attribution-backlog"), env);
     const body = await res.json() as { error?: string; data: { items: Array<{ id: string; actor_hint: boolean }> } };
     expect(body.error).toBeUndefined();
     expect(body.data.items[0]).toMatchObject({ id: "c_hint", actor_hint: true });
     expect(body.data.items.find((i) => i.id === "c_big")?.actor_hint).toBe(false);
+    expect(body.data.items.some((i) => i.id === "c_retired")).toBe(false);
     // Read-only: ranking never attributes.
     const hint = raw.prepare(`SELECT actor_id FROM infrastructure_clusters WHERE id = 'c_hint'`).all() as Array<{ actor_id: string | null }>;
     expect(hint[0]!.actor_id).toBeNull();

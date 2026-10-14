@@ -262,15 +262,16 @@ function severitySums(severityCol: string, countExpr: string): string {
 // per (ASN, threat_type) group per run, so prod holds ~70K ACTIVE frozen
 // UUID copies (~768 per group) that swamp any `ORDER BY threat_count` —
 // the whole top-12 was copies of one AS13335 malware cluster. Those legacy
-// rows are never returned (status=all included). The status predicate is
-// written `+c.status` so the planner can't take idx_clusters_status /
-// idx_clusters_status_threat_count (migration 0301, now unused HERE) and
-// walk tens of thousands of legacy rows; the PK range reads the ~780-row
-// stable population instead (pinned in test/observatory-lens-plans.test.ts).
-// Do NOT drop idx_clusters_status_threat_count as unused: the Attribution
-// Backlog (handlers/admin/attribution.ts) pins it with `INDEXED BY`, and an
-// INDEXED BY naming a missing index is a hard "no such index" error, not a
-// plan fallback.
+// rows are never returned (status=all included). The status and
+// retired_reason predicates are written `+c.status` / `+c.retired_reason`
+// so the planner can't take idx_clusters_status / the status-threat_count
+// indexes (0301, 0306 — both unused HERE) and walk tens of thousands of
+// legacy rows; the PK range reads the ~780-row stable population instead
+// (pinned in test/observatory-lens-plans.test.ts).
+// Do NOT drop idx_clusters_live_status_threat_count as unused: the
+// Attribution Backlog (handlers/admin/attribution.ts) pins it with
+// `INDEXED BY`, and an INDEXED BY naming a missing index is a hard "no such
+// index" error, not a plan fallback.
 // There is no SQL ORDER BY: the whole range (≤ OPERATIONS_GEO_SCAN_CAP rows)
 // is classified and ranked in JS, then `limit` is applied AFTER filtering.
 //
@@ -286,10 +287,11 @@ function severitySums(severityCol: string, countExpr: string): string {
 //                  bridge through).
 //   ip_reputation  asn kind whose primary attack type is scanning /
 //                  malicious_ip (IP-reputation feed noise, not an operation).
-// Retired rows (status superseded / shared_infra, lib/cluster-status.ts) are
-// filtered in SQL for BOTH statuses (`+c.status NOT IN (…)` for status=all,
-// unary + for the same PK-range reason) and are never returned — not even
-// under include_shared. NEXUS retirement (decideLaneRowRetirement,
+// Retired rows (retired_reason superseded / shared_infra, lib/cluster-status.ts)
+// are filtered in SQL for BOTH statuses (`+c.retired_reason IS NULL`, unary +
+// for the same PK-range reason) and are never returned — not even under
+// include_shared. Retirement does not change status, so status=active needs
+// the predicate too. NEXUS retirement (decideLaneRowRetirement,
 // lib/nexus-threat-lanes.ts) covers every population this classifier flags
 // (ASN-only on shared infra, IP-reputation ASN groups, hub per-IP) and also
 // per-IP rows on shared ASNs, so after a NEXUS run the request-time flags below are a backstop
@@ -651,19 +653,20 @@ export async function handleObservatoryOperationsGeo(request: Request, env: Env)
   const includeShared = sharedFlag === "1";
   const limit = parseObservatoryLimit(url.searchParams.get("limit"), OPERATIONS_GEO_DEFAULT_LIMIT, OPERATIONS_GEO_MAX_LIMIT);
 
-  // `.v4` — status=all stops returning NEXUS-retired rows (superseded /
-  // shared_infra); `.v3` added include_shared. Older keys are never read
-  // again and expire.
+  // `.v4` — status=all stops returning NEXUS-retired rows (retired_reason
+  // superseded / shared_infra); `.v3` added include_shared. Older keys are
+  // never read again and expire.
   return serveLens(request, env, "observatory_operations_geo",
     `${CACHE_NS}.operations_geo.v4:${status}:${limit}:s${sharedFlag}`, LENS_TTL_S.operationsGeo, undefined,
     async (session, tally) => {
-      // `+c.status`: keep the planner on the PK range (see block comment).
-      // `active` already excludes the retired statuses; `all` excludes them
-      // explicitly (superseded / shared_infra rows are not operations —
-      // lib/cluster-status.ts).
+      // Unary `+`: keep the planner on the PK range (see block comment).
+      // Retired rows (retired_reason set) are not operations
+      // (lib/cluster-status.ts) and keep their status, so both modes
+      // exclude them explicitly.
+      const retiredFilter = `AND ${notRetiredClusterSql("c", { unindexed: true })}`;
       const statusFilter = status === "active"
-        ? "AND +c.status = 'active'"
-        : `AND ${notRetiredClusterSql("c", { unindexed: true })}`;
+        ? `AND +c.status = 'active' ${retiredFilter}`
+        : retiredFilter;
       const rows = await session.prepare(`
         SELECT c.id, c.cluster_name, c.component_id, c.status, c.confidence_score,
                c.threat_count, c.countries, c.asns, c.last_seen, c.last_movement_pivot_at,

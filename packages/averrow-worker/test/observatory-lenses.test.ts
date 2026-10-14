@@ -92,12 +92,13 @@ function cluster(raw: SqliteDb, c: {
   id: string; name?: string; status?: string; threat_count: number; countries?: string | null; asns?: string | null;
   component_id?: string | null; actor_id?: string | null; agent_notes?: string | null; confidence?: number;
   last_movement_pivot_at?: string | null; brand_ids?: string | null; attack_types?: string | null;
+  retired_reason?: string | null;
 }) {
   raw.prepare(`INSERT INTO infrastructure_clusters
-    (id, cluster_name, status, threat_count, countries, asns, component_id, actor_id, agent_notes, confidence_score, last_movement_pivot_at,
+    (id, cluster_name, status, retired_reason, threat_count, countries, asns, component_id, actor_id, agent_notes, confidence_score, last_movement_pivot_at,
      brand_ids, attack_types)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-    c.id, c.name ?? `${c.id} name`, c.status ?? "active", c.threat_count,
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    c.id, c.name ?? `${c.id} name`, c.status ?? "active", c.retired_reason ?? null, c.threat_count,
     c.countries === undefined ? "[]" : c.countries, c.asns === undefined ? "[]" : c.asns,
     c.component_id ?? null, c.actor_id ?? null, c.agent_notes ?? null, c.confidence ?? 50, c.last_movement_pivot_at ?? null,
     c.brand_ids === undefined ? "[]" : c.brand_ids, c.attack_types === undefined ? "[]" : c.attack_types);
@@ -479,12 +480,14 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     cluster(raw, { id: "cluster_ip_8.8.4.4", threat_count: 4 });
     cluster(raw, { id: "cluster_registrar_dormant", threat_count: 300, status: "dormant" });
     cluster(raw, { id: "ffffffff-legacy-member", threat_count: 80_000, component_id: "component_cluster_cert_san1" });
-    // NEXUS-retired stable rows (lib/cluster-status.ts) — not operations, so
-    // absent under every status and under include_shared, and never counted
-    // in meta.excluded / meta.scanned.
-    cluster(raw, { id: "cluster_asn_as13335_phishing", threat_count: 9000, asns: '["AS13335"]', attack_types: '["phishing"]', status: "shared_infra" });
-    cluster(raw, { id: "cluster_ip_9.9.9.9", threat_count: 8000, brand_ids: JSON.stringify(Array.from({ length: 200 }, (_, i) => `b${i}`)), status: "shared_infra" });
-    cluster(raw, { id: "cluster_asn_as13335 cloudflare, inc._phishing", threat_count: 7000, asns: '["AS13335 Cloudflare, Inc."]', status: "superseded" });
+    // NEXUS-retired stable rows (retired_reason, lib/cluster-status.ts) —
+    // not operations, so absent under every status and under include_shared,
+    // and never counted in meta.excluded / meta.scanned. Retirement keeps
+    // status, so they carry live statuses (prod CHECK: active / dormant /
+    // disrupted).
+    cluster(raw, { id: "cluster_asn_as13335_phishing", threat_count: 9000, asns: '["AS13335"]', attack_types: '["phishing"]', retired_reason: "shared_infra" });
+    cluster(raw, { id: "cluster_ip_9.9.9.9", threat_count: 8000, brand_ids: JSON.stringify(Array.from({ length: 200 }, (_, i) => `b${i}`)), status: "dormant", retired_reason: "shared_infra" });
+    cluster(raw, { id: "cluster_asn_as13335 cloudflare, inc._phishing", threat_count: 7000, asns: '["AS13335 Cloudflare, Inc."]', retired_reason: "superseded" });
     const retiredIds = ["cluster_asn_as13335_phishing", "cluster_ip_9.9.9.9", "cluster_asn_as13335 cloudflare, inc._phishing"];
     const { env, kv } = makeEnv(raw);
 

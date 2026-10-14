@@ -10,13 +10,15 @@
  * `cluster_id` still points at one of them.
  *
  * Retirement is in three parts:
- *   1. migrations/0303 flips every legacy row to status='superseded'
- *      (actor_id, counts and notes are left intact — flip status back to
- *      undo). Every reader excludes it (lib/cluster-status.ts).
+ *   1. migrations/0303 sets retired_reason='superseded' on every legacy row
+ *      (status, actor_id, counts and notes are left intact — set
+ *      retired_reason back to NULL to undo). Every reader excludes it
+ *      (lib/cluster-status.ts).
  *   2. NEXUS itself (lib/nexus-threat-lanes.ts retireNonOperationalLaneClusters)
  *      supersedes stable `cluster_asn_*` rows keyed on a malformed ASN and
  *      parks ASN / per-IP / subnet rows that are not operator evidence as
- *      'shared_infra' (status flip only — undone by flipping it back).
+ *      retired_reason='shared_infra' (status untouched — undone by clearing
+ *      retired_reason).
  *   3. This module moves THREATS off retired rows, in bounded batches driven
  *      by `POST /api/internal/nexus/cluster-retirement` (dry-run by default):
  *        - a legacy / superseded ASN row maps to the stable id the current
@@ -71,7 +73,7 @@
 
 import { asnClusterId, IP_REPUTATION_THREAT_TYPES } from "./nexus-threat-lanes";
 import { asnKey, isSharedInfraAsn } from "./shared-infra-asns";
-import { SHARED_INFRA_CLUSTER_STATUS, SUPERSEDED_CLUSTER_STATUS, isRetiredClusterStatus } from "./cluster-status";
+import { SHARED_INFRA_RETIRED_REASON, SUPERSEDED_RETIRED_REASON, isRetiredCluster } from "./cluster-status";
 
 /** Legacy (non-`cluster_`) predicate over infrastructure_clusters.id. */
 export const LEGACY_CLUSTER_ID_SQL = "(id < 'cluster_' OR id >= 'cluster`')";
@@ -142,37 +144,46 @@ export interface RepointPlanEntry {
   reason: LegacyMappingReason | "target_missing" | "target_retired" | "retired_shared_infra";
 }
 
+/** A source cluster row as the planner reads it. */
+interface ClusterSourceRow {
+  id: string;
+  asns: string | null;
+  attack_types: string | null;
+  retired_reason: string | null;
+}
+
 /**
  * Resolve each source cluster row to repoint/release. A mapped target is
  * only used when that row exists and is operational. Bounded IN() reads.
  */
 async function planForRows(
   db: D1Database,
-  rows: Array<{ id: string; asns: string | null; attack_types: string | null; status: string | null }>,
+  rows: ClusterSourceRow[],
 ): Promise<RepointPlanEntry[]> {
   const prelim = rows.map((r) => {
     // A shared_infra row's threats are always released: the row's own key
     // is not operator evidence, so there is nothing to re-point them to.
-    if (r.status === SHARED_INFRA_CLUSTER_STATUS) {
+    if (r.retired_reason === SHARED_INFRA_RETIRED_REASON) {
       return { id: r.id, target: null, reason: "retired_shared_infra" as const };
     }
     const m = legacyTargetClusterId(r.asns, r.attack_types);
     return { id: r.id, target: m.target, reason: m.reason };
   });
   const targets = [...new Set(prelim.map((p) => p.target).filter((t): t is string => t !== null))];
-  const targetStatus = new Map<string, string | null>();
+  // target id → its retired_reason (NULL = operational).
+  const targetRetired = new Map<string, string | null>();
   for (const ids of chunk(targets, IN_CHUNK)) {
     const res = await db.prepare(
-      `SELECT id, status FROM infrastructure_clusters WHERE id IN (${ph(ids.length)})`,
-    ).bind(...ids).all<{ id: string; status: string | null }>();
-    for (const r of res.results ?? []) targetStatus.set(r.id, r.status);
+      `SELECT id, retired_reason FROM infrastructure_clusters WHERE id IN (${ph(ids.length)})`,
+    ).bind(...ids).all<{ id: string; retired_reason: string | null }>();
+    for (const r of res.results ?? []) targetRetired.set(r.id, r.retired_reason);
   }
   return prelim.map((p): RepointPlanEntry => {
     if (p.target === null) return { cluster_id: p.id, action: "release", target: null, reason: p.reason };
-    if (!targetStatus.has(p.target)) {
+    if (!targetRetired.has(p.target)) {
       return { cluster_id: p.id, action: "release", target: null, reason: "target_missing" };
     }
-    if (isRetiredClusterStatus(targetStatus.get(p.target))) {
+    if (isRetiredCluster(targetRetired.get(p.target))) {
       return { cluster_id: p.id, action: "release", target: null, reason: "target_retired" };
     }
     return { cluster_id: p.id, action: "repoint", target: p.target, reason: "mapped" };
@@ -182,18 +193,18 @@ async function planForRows(
 async function loadClusterRows(
   db: D1Database,
   ids: string[],
-): Promise<Array<{ id: string; asns: string | null; attack_types: string | null; status: string | null }>> {
-  const out: Array<{ id: string; asns: string | null; attack_types: string | null; status: string | null }> = [];
+): Promise<ClusterSourceRow[]> {
+  const out: ClusterSourceRow[] = [];
   for (const part of chunk(ids, IN_CHUNK)) {
     const res = await db.prepare(
-      `SELECT id, asns, attack_types, status FROM infrastructure_clusters WHERE id IN (${ph(part.length)})`,
-    ).bind(...part).all<{ id: string; asns: string | null; attack_types: string | null; status: string | null }>();
+      `SELECT id, asns, attack_types, retired_reason FROM infrastructure_clusters WHERE id IN (${ph(part.length)})`,
+    ).bind(...part).all<ClusterSourceRow>();
     out.push(...(res.results ?? []));
   }
   // A threat can reference a cluster id with no row at all (deleted by the
   // 0143 dedup, etc.) — plan it as unparseable → release.
   const seen = new Set(out.map((r) => r.id));
-  for (const id of ids) if (!seen.has(id)) out.push({ id, asns: null, attack_types: null, status: null });
+  for (const id of ids) if (!seen.has(id)) out.push({ id, asns: null, attack_types: null, retired_reason: null });
   return out;
 }
 
@@ -214,7 +225,10 @@ async function threatCountsByCluster(db: D1Database, ids: string[]): Promise<Map
 export interface LegacyClusterReport {
   legacy_rows: {
     total: number;
+    /** Legacy rows by `status` (active / dormant / disrupted — untouched by retirement). */
     by_status: Record<string, number>;
+    /** Legacy rows by retired_reason (`live` = NULL, i.e. not yet retired by 0303). */
+    by_retired_reason: Record<string, number>;
     actor_linked: number;
     attributor_processed: number;
   };
@@ -237,18 +251,22 @@ export interface LegacyClusterReport {
  */
 export async function legacyClusterReport(db: D1Database): Promise<LegacyClusterReport> {
   const statusRows = (await db.prepare(
-    `SELECT status, COUNT(*) AS n,
+    `SELECT status, retired_reason, COUNT(*) AS n,
             SUM(CASE WHEN actor_id IS NOT NULL THEN 1 ELSE 0 END) AS actor_linked,
             SUM(CASE WHEN attribution_attempted_at IS NOT NULL THEN 1 ELSE 0 END) AS attempted
        FROM infrastructure_clusters
       WHERE ${LEGACY_CLUSTER_ID_SQL}
-      GROUP BY status`,
-  ).all<{ status: string | null; n: number; actor_linked: number; attempted: number }>()).results ?? [];
+      GROUP BY status, retired_reason`,
+  ).all<{ status: string | null; retired_reason: string | null; n: number; actor_linked: number; attempted: number }>()).results ?? [];
 
   const byStatus: Record<string, number> = {};
+  const byRetiredReason: Record<string, number> = {};
   let total = 0, actorLinked = 0, attempted = 0;
   for (const r of statusRows) {
-    byStatus[r.status ?? "null"] = r.n;
+    const s = r.status ?? "null";
+    const rr = r.retired_reason ?? "live";
+    byStatus[s] = (byStatus[s] ?? 0) + r.n;
+    byRetiredReason[rr] = (byRetiredReason[rr] ?? 0) + r.n;
     total += r.n;
     actorLinked += r.actor_linked ?? 0;
     attempted += r.attempted ?? 0;
@@ -281,32 +299,34 @@ export async function legacyClusterReport(db: D1Database): Promise<LegacyCluster
   for (const n of (await threatCountsByCluster(db, retired.map((r) => r.id))).values()) retiredThreats += n;
 
   return {
-    legacy_rows: { total, by_status: byStatus, actor_linked: actorLinked, attributor_processed: attempted },
+    legacy_rows: {
+      total, by_status: byStatus, by_retired_reason: byRetiredReason,
+      actor_linked: actorLinked, attributor_processed: attempted,
+    },
     legacy_threat_refs: { threats: refs?.n ?? 0, distinct_cluster_ids: refs?.ids ?? 0 },
     mapping: { clusters_evaluated: evaluated.length, truncated, clusters: mapClusters, threats: mapThreats },
     retired_stable_rows: {
-      superseded: retired.filter((r) => r.status === SUPERSEDED_CLUSTER_STATUS).length,
-      shared_infra: retired.filter((r) => r.status === SHARED_INFRA_CLUSTER_STATUS).length,
+      superseded: retired.filter((r) => r.retired_reason === SUPERSEDED_RETIRED_REASON).length,
+      shared_infra: retired.filter((r) => r.retired_reason === SHARED_INFRA_RETIRED_REASON).length,
       threats_referencing: retiredThreats,
     },
   };
 }
 
 /**
- * Retired rows with a STABLE (`cluster_`) id — superseded malformed-ASN rows
- * and shared_infra rows. PK range over the stable ids (a few thousand at
- * most); `+status` keeps the planner off idx_clusters_status, which would
- * walk the ~76K superseded legacy rows first.
+ * Retired rows (retired_reason IS NOT NULL) with a STABLE (`cluster_`) id —
+ * superseded malformed-ASN rows and shared_infra rows. PK range over the
+ * stable ids (a few thousand at most); `+retired_reason` keeps the planner
+ * on that range (no index leads with retired_reason today; the unary `+`
+ * keeps it that way if one is added).
  */
-async function listRetiredStableRows(
-  db: D1Database,
-): Promise<Array<{ id: string; asns: string | null; attack_types: string | null; status: string | null }>> {
+async function listRetiredStableRows(db: D1Database): Promise<ClusterSourceRow[]> {
   return (await db.prepare(
-    `SELECT id, asns, attack_types, status FROM infrastructure_clusters
+    `SELECT id, asns, attack_types, retired_reason FROM infrastructure_clusters
       WHERE id >= 'cluster_' AND id < 'cluster\`'
-        AND +status IN ('${SUPERSEDED_CLUSTER_STATUS}', '${SHARED_INFRA_CLUSTER_STATUS}')
+        AND +retired_reason IS NOT NULL
       ORDER BY id`,
-  ).all<{ id: string; asns: string | null; attack_types: string | null; status: string | null }>()).results ?? [];
+  ).all<ClusterSourceRow>()).results ?? [];
 }
 
 // ─── Bounded re-point / release batch ─────────────────────────────────

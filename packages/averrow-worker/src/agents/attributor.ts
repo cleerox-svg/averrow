@@ -15,7 +15,8 @@
  *   * A human, via the Attribution Backlog (handlers/admin/attribution.ts).
  *
  * Per run the agent:
- *   1. Pulls up to CLUSTER_BATCH pending clusters (status='active',
+ *   1. Pulls up to CLUSTER_BATCH pending clusters (status='active', not
+ *      retired — retired_reason IS NULL, lib/cluster-status.ts —
  *      actor_id IS NULL, outside the RETRY_COOLDOWN_DAYS window) and
  *      stamps `attribution_attempted_at` so the backlog's
  *      attempted/never-attempted split stays meaningful.
@@ -30,6 +31,7 @@
 
 import type { AgentModule, AgentResult, AgentContext } from "../lib/agentRunner";
 import { inheritOtxActorsToClusters } from "../lib/cluster-attribution-inherit";
+import { notRetiredClusterSql } from "../lib/cluster-status";
 
 const CLUSTER_BATCH = 25;
 const RETRY_COOLDOWN_DAYS = 7;
@@ -137,12 +139,13 @@ export const attributorAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env } = ctx;
 
-    // Pull pending clusters: status='active', actor_id IS NULL, and either
+    // Pull pending clusters: status='active', not retired, actor_id IS NULL, and either
     // never attempted OR last attempt was more than RETRY_COOLDOWN_DAYS ago.
     const pending = await env.DB.prepare(`
       SELECT id
       FROM infrastructure_clusters
       WHERE status = 'active'
+        AND ${notRetiredClusterSql()}
         AND actor_id IS NULL
         AND (attribution_attempted_at IS NULL OR attribution_attempted_at < datetime('now', ?))
       ORDER BY threat_count DESC, last_seen DESC
