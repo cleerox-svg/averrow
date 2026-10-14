@@ -432,6 +432,7 @@ describe('ObservatoryV3 Operations: shared infrastructure and row previews', () 
     routeOps();
     renderAt('/observatory?lens=operations&sel=op:nope');
     await waitFor(() => expect(search).not.toContain('nope'));
+    await waitFor(() => expect(search).not.toContain('shared=1')); // the automatic widening is undone with the drop
     expect(urls().filter(u => u.startsWith('/api/observatory/operations-geo')).length).toBeLessThanOrEqual(2);
   });
 

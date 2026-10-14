@@ -472,7 +472,10 @@ export function ObservatoryV3() {
     }
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));
-    else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) update(drillToPatch(null));
+    else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) {
+      // A link we widened to shared=1 that still does not resolve: undo the widening with the drop (predictable URL).
+      update(sel.kind === 'op' && sharedRetried.current === sel.id && state.shared ? { ...drillToPatch(null), shared: false } : drillToPatch(null));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `settled` is derived from the listed query states
   }, [drill, state.node, state.arc, state.shared, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
 

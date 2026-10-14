@@ -84,7 +84,7 @@ import { opCountRange, opNodePx } from '../lib/lens/operations-draw';
 import { botHover } from '../lib/lens/bot-share';
 import type { PingItem } from '../lib/lens/live';
 import {
-  planCamera, phoneMinZoom, setLatRange, DEFAULT_MIN_ZOOM, WORLD_LAT_LIMIT, PHONE_LAT_LIMIT, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
+  planCamera, phoneMinZoom, desktopMinZoom, setLatRange, WORLD_LAT_LIMIT, PHONE_LAT_LIMIT, FLY_MS, FLY_CURVE, NO_INSETS, type Insets,
 } from '../lib/camera';
 import {
   motionPolicy, breatheAmp, isLoudSeverity, lensFade, loopNeeded, splitFade, PING_COLOR, LENS_FADE_IN_MS,
@@ -104,6 +104,8 @@ interface TooltipInfo {
 type Pick<T> = PickingInfo<T>;
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+/** The dark basemap's own background, whatever the page theme: what shows beyond the poles when a world-spanning target zooms out. */
+const FLAT_BACKDROP = '#0e0e0e';
 /** Pointer-pick tolerance in px: nodes render as 1.5-9px dots, far below a usable hit target. */
 const PICK_RADIUS_FINE = 8;
 const PICK_RADIUS_TOUCH = 16;
@@ -642,12 +644,14 @@ function ThreatMapV3Inner({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || size.width === 0) return;
-    const lat = isMobile ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
+    // Flat desktop gets the widened range too: "the world covers the canvas vertically" otherwise pins the zoom at
+    // ~0.5 and a world-spanning selection cannot fit beside the drawer on a 1024px screen (the globe keeps Mercator's).
+    const lat = isMobile || !isGlobe ? PHONE_LAT_LIMIT : WORLD_LAT_LIMIT;
     setLatRange(map.transform, lat);
     // The globe needs no wide-world floor: one planet fits at `globeFitZoom`, and a little less is plenty.
     const floor = isGlobe
       ? Math.max(0, globeFitZoom(canvasSize.width, canvasSize.height) - 0.9)
-      : isMobile ? phoneMinZoom(size.width) : DEFAULT_MIN_ZOOM;
+      : isMobile ? phoneMinZoom(size.width) : desktopMinZoom(canvasSize.width || size.width);
     if (typeof map.setMinZoom === 'function') map.setMinZoom(floor);
   }, [isMobile, mapLoaded, size.width, canvasSize.width, canvasSize.height, isGlobe]);
 
@@ -1268,7 +1272,7 @@ function ThreatMapV3Inner({
   }, [focusId, mapLoaded]);
 
   return (
-    <div ref={rootRef} className="relative w-full h-full" style={isGlobe ? { background: GLOBE_BACKDROP } : undefined}>
+    <div ref={rootRef} className="relative w-full h-full" style={{ background: isGlobe ? GLOBE_BACKDROP : FLAT_BACKDROP }}>
       <div
         ref={mapContainerRef}
         className="absolute inset-y-0"

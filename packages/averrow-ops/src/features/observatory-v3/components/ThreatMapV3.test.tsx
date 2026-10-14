@@ -308,12 +308,19 @@ describe('ThreatMapV3 phone zoom floor', () => {
     expect(lastMap().transform._helper._latRange[1]).toBeGreaterThan(89);
     expect(lastMap().transform._helper._latRange[0]).toBeLessThan(-89);
   });
-  it('desktop keeps MapLibre\'s own latitude range', () => {
+  it('flat desktop gets the widened latitude range too (a world-spanning selection must fit beside the drawer at 1024px)', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1400 });
     render(<ThreatMapV3 {...base} />);
     ready();
-    expect(lastMap().transform._helper._latRange).toEqual([-85.051129, 85.051129]);
+    expect(lastMap().transform._helper._latRange).toEqual([-89.5, 89.5]);
+  });
+  it('the desktop zoom floor follows the canvas width (not MapLibre\'s vertical-coverage pin)', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 776 });
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    expect(lastMap().setMinZoom.mock.calls.at(-1)![0] as number).toBeLessThan(-0.5);
   });
   it('desktop keeps the library default (no phone floor)', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1400 });

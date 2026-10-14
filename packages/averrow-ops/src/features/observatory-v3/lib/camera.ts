@@ -50,6 +50,17 @@ export function phoneMinZoom(canvasWidth: number): number {
   return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX)));
 }
 
+/**
+ * Lowest zoom a desktop flat map may reach: the world never needs to be narrower than ~30% of the canvas. Below
+ * the vertical-coverage floor (~0.5 on a 700px-tall canvas) this is what lets a world-spanning target (US to
+ * Japan) fit the free strip left of the open drawer on a 1024px screen; capped at the phone's 0.5 so a wide
+ * canvas keeps a sensible floor.
+ */
+export function desktopMinZoom(canvasWidth: number): number {
+  if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
+  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2((0.3 * canvasWidth) / WORLD_PX)));
+}
+
 /** Mercator's own latitude limit (MapLibre's default `latRange`). */
 export const WORLD_LAT_LIMIT = 85.051129;
 /**

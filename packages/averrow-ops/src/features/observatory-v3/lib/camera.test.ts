@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, desktopMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
 import { buildOperationsModel } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
@@ -8,6 +8,16 @@ import { buildHostingModel } from './lens/hosting';
 import type { CampaignGeo, Movement, OperationGeo, ProviderGeo, ActorDetail } from '@/hooks/useObservatoryLenses';
 
 const EMPTY: FocusModels = { operations: null, hosting: null, campaigns: null, movement: null, actors: null };
+
+describe('desktopMinZoom: low enough that a world-spanning target fits beside the open drawer', () => {
+  it('is capped at 0.5 on a wide canvas and drops with the canvas width, never below MapLibre\'s floor', () => {
+    expect(desktopMinZoom(3000)).toBe(0.5);
+    expect(desktopMinZoom(776)).toBeLessThan(-0.5); // 1024px screen: the world must fit in ~440px of free width
+    expect(desktopMinZoom(776)).toBeLessThan(desktopMinZoom(1192));
+    expect(desktopMinZoom(10)).toBe(DEFAULT_MIN_ZOOM);
+    expect(desktopMinZoom(0)).toBe(0.5);
+  });
+});
 
 describe('phoneMinZoom: derived from the canvas so a world-spanning target can fit', () => {
   // zoom at which a lng span (deg) exactly fills `free` px: world = 512 * 2^z px wide
