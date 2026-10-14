@@ -1,0 +1,78 @@
+import { describe, it, expect } from 'vitest';
+import {
+  motionPolicy, breatheAmp, isLoudSeverity, fadeProgress, lensFade, PING_COLOR,
+  LENS_FADE_IN_MS, LENS_FADE_OUT_MS, COLOR_TRANSITION_MS, DRAWER_ENTER_MS,
+} from './motion';
+import { SEVERITY_COLORS, THREAT_TYPE_COLORS } from './map-colors';
+import { pulseAmpForSeverity } from '../anim';
+
+describe('motionPolicy', () => {
+  it('full motion: the particles layer means flow, no static stand-in', () => {
+    expect(motionPolicy({ reducedMotion: false, particlesLayer: true })).toEqual({ flow: true, staticBeams: false, ambient: true, instant: false });
+  });
+  it('reduced motion: particles become static beams instead of dead dots', () => {
+    expect(motionPolicy({ reducedMotion: true, particlesLayer: true })).toEqual({ flow: false, staticBeams: true, ambient: false, instant: true });
+  });
+  it('no particles layer: no flow and no stand-in either way', () => {
+    expect(motionPolicy({ reducedMotion: true, particlesLayer: false }).staticBeams).toBe(false);
+    expect(motionPolicy({ reducedMotion: false, particlesLayer: false }).flow).toBe(false);
+  });
+});
+
+describe('only critical and high nodes breathe', () => {
+  const policy = { ambient: true };
+  it('flags loud severities', () => {
+    expect(isLoudSeverity('critical')).toBe(true);
+    expect(isLoudSeverity('HIGH')).toBe(true);
+    for (const s of ['medium', 'low', 'info', null, undefined, '']) expect(isLoudSeverity(s)).toBe(false);
+  });
+  it('amplitude is zero for the rest, and zero for everyone under reduced motion', () => {
+    expect(breatheAmp('critical', pulseAmpForSeverity, policy)).toBeGreaterThan(0);
+    expect(breatheAmp('high', pulseAmpForSeverity, policy)).toBeGreaterThan(0);
+    expect(breatheAmp('medium', pulseAmpForSeverity, policy)).toBe(0);
+    expect(breatheAmp('low', pulseAmpForSeverity, policy)).toBe(0);
+    expect(breatheAmp('critical', pulseAmpForSeverity, { ambient: false })).toBe(0);
+  });
+});
+
+describe('pings', () => {
+  it('use a colour that is not any severity or threat-type colour', () => {
+    const key = (c: number[]) => c.slice(0, 3).join(',');
+    const used = new Set([...Object.values(SEVERITY_COLORS), ...Object.values(THREAT_TYPE_COLORS)].map(key));
+    expect(used.has(key(PING_COLOR))).toBe(false);
+  });
+});
+
+describe('lens cross-fade (clock driven)', () => {
+  it('constants match the brief', () => {
+    expect(LENS_FADE_IN_MS).toBe(240);
+    expect(LENS_FADE_OUT_MS).toBe(200);
+    expect(COLOR_TRANSITION_MS).toBe(250);
+    expect(DRAWER_ENTER_MS).toBe(220);
+  });
+  it('eases 0 -> 1', () => {
+    expect(fadeProgress(1000, 1000, 240)).toBe(0);
+    expect(fadeProgress(1240, 1000, 240)).toBe(1);
+    expect(fadeProgress(1120, 1000, 240)).toBeGreaterThan(0.5); // ease-out is front-loaded
+    expect(fadeProgress(900, 1000, 240)).toBe(0);
+    expect(fadeProgress(5, 0, 0)).toBe(1);
+  });
+  it('starts with the old scene fully visible and the new one hidden', () => {
+    expect(lensFade(1000, 1000, false)).toEqual({ incoming: 0, outgoing: 1, active: true });
+  });
+  it('drops the outgoing scene after ~200ms and finishes the incoming at 240ms', () => {
+    const mid = lensFade(1100, 1000, false);
+    expect(mid.active).toBe(true);
+    expect(mid.outgoing).toBeGreaterThan(0);
+    expect(mid.outgoing).toBeLessThan(1);
+    const late = lensFade(1210, 1000, false);
+    expect(late.outgoing).toBe(0);
+    expect(late.incoming).toBeLessThan(1);
+    expect(late.active).toBe(true);
+    expect(lensFade(1241, 1000, false)).toEqual({ incoming: 1, outgoing: 0, active: false });
+  });
+  it('is instant under reduced motion and when nothing changed', () => {
+    expect(lensFade(1000, 1000, true)).toEqual({ incoming: 1, outgoing: 0, active: false });
+    expect(lensFade(1000, null, false)).toEqual({ incoming: 1, outgoing: 0, active: false });
+  });
+});
