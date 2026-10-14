@@ -453,6 +453,30 @@ exhausted before the `threat_briefings` INSERT could land).
 
 ---
 
+### Daily Snapshots (`daily_snapshots`) — handler, not an `AgentModule`
+
+| Property | Value |
+|----------|-------|
+| **File** | `packages/averrow-worker/src/handlers/dailySnapshots.ts` (`runDailySnapshotsCron`) + `src/lib/snapshots.ts` |
+| **Trigger** | Scheduled — dedicated cron `28 0,12 * * *` (`cron/orchestrator.ts`, exact `event.cron` match above the mesh guard). Manual force-regenerate: `POST /api/snapshots/generate` (`handleDailySnapshots`, not instrumented) |
+| **Purpose** | Per-day brand + provider rows in `daily_snapshots` (new / active / remediated counts, dominant type/provider) |
+
+Handler-dispatched writer following the `daily_briefing` pattern: an
+`agent_runs` row (`agent_id='daily_snapshots'`) at start, completed with
+`completed_at` + `records_processed` (`success`; `partial` + `error_message`
+when one entity type failed; `failed` when both did), then a telemetry
+`agent_events` row (`snapshots_generated`, `target_agent=NULL`, payload has
+the per-type outcome). Each type is probed with a PK-prefix
+`SELECT 1 … LIMIT 1` and generated only when absent, so the 12:28 fire is a
+repair pass for a type the 00:28 fire lost. Pure SQL — no AI call. Moved off
+the hourly orchestrator tail on 2026-10-14 (see `CLAUDE.md §6`).
+
+**Inputs:** `threats`, `hosting_providers` (names for `dominant_hosting_provider`)
+**Outputs:** `daily_snapshots` rows; `agent_runs` + `agent_events` (`snapshots_generated`)
+**Consumer:** Flight Control provider-escalation watcher (yesterday's provider row)
+
+---
+
 ### Trustbot
 
 | Property | Value |

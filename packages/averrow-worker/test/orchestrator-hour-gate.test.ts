@@ -202,9 +202,11 @@ const ctx = {
   passThroughOnException: () => {},
 } as unknown as ExecutionContext;
 
-/** `dailySnapshotCount` controls the answer to the daily_snapshots
- *  COUNT(*) query so tests can isolate the `hour === 0` branch of the
- *  `hour === 0 || no-snapshot-yet` OR-gate from its fallback branch. */
+/** `dailySnapshotCount` answers any daily_snapshots COUNT(*) probe. The
+ *  hourly mesh no longer issues one (snapshots moved to the dedicated
+ *  `28 0,12 * * *` cron) — kept so a regression that re-adds the probe
+ *  still gets a deterministic answer while the tests below fail on the
+ *  generator spy. */
 function makeEnv(opts: { dailySnapshotCount?: number } = {}): Env {
   const dailySnapshotCount = opts.dailySnapshotCount ?? 1;
 
@@ -298,26 +300,24 @@ describe("S3.4b — orchestrator hour-gate dispatch table (src/cron/orchestrator
     }
   });
 
-  it("hour===0 fires observer + daily assessments + the brand-candidates aggregator, and forces the snapshot generator even when a snapshot already exists today", async () => {
+  it("hour===0 fires observer + daily assessments + the brand-candidates aggregator", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
-    const env = makeEnv({ dailySnapshotCount: 5 }); // a snapshot already exists — only hour===0 should still force a run
+    const env = makeEnv({ dailySnapshotCount: 5 });
 
     await handleScheduled(eventAtHour(0), env, ctx);
 
     expect(executeAgentCalls).toContain("observer");
     expect(runDailyAssessmentsSpy).toHaveBeenCalledTimes(1);
     expect(aggregateBrandCandidatesSpy).toHaveBeenCalledTimes(1);
-    expect(generateDailySnapshotsSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("the hour===0 gates stay quiet at the adjacent hours 1 and 23 (no off-by-one, no wrap-around leak), and the snapshot generator is skipped once a snapshot already exists for the day", async () => {
+  it("the hour===0 gates stay quiet at the adjacent hours 1 and 23 (no off-by-one, no wrap-around leak)", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
 
     for (const hour of [1, 23]) {
       executeAgentCalls.length = 0;
       runDailyAssessmentsSpy.mockClear();
       aggregateBrandCandidatesSpy.mockClear();
-      generateDailySnapshotsSpy.mockClear();
 
       const env = makeEnv({ dailySnapshotCount: 3 });
       // eslint-disable-next-line no-await-in-loop
@@ -326,17 +326,19 @@ describe("S3.4b — orchestrator hour-gate dispatch table (src/cron/orchestrator
       expect(executeAgentCalls).not.toContain("observer");
       expect(runDailyAssessmentsSpy).not.toHaveBeenCalled();
       expect(aggregateBrandCandidatesSpy).not.toHaveBeenCalled();
-      expect(generateDailySnapshotsSpy).not.toHaveBeenCalled();
     }
   });
 
-  it("the snapshot generator still fires off-hour when no snapshot exists yet for the day (the OR branch of `hour === 0 || no-snapshot-yet`)", async () => {
+  it("the hourly mesh never generates daily snapshots — not at hour 0, not when none exist yet (moved to the dedicated `28 0,12 * * *` cron)", async () => {
     const { handleScheduled } = await import("../src/cron/orchestrator");
-    const env = makeEnv({ dailySnapshotCount: 0 });
 
-    await handleScheduled(eventAtHour(9), env, ctx);
-
-    expect(generateDailySnapshotsSpy).toHaveBeenCalledTimes(1);
+    for (const hour of [0, 9]) {
+      generateDailySnapshotsSpy.mockClear();
+      const env = makeEnv({ dailySnapshotCount: 0 });
+      // eslint-disable-next-line no-await-in-loop
+      await handleScheduled(eventAtHour(hour), env, ctx);
+      expect([hour, generateDailySnapshotsSpy.mock.calls.length]).toEqual([hour, 0]);
+    }
   });
 
   it("hour===6 fires the observer briefing (tranco import) + seed_strategist + threat narratives (narrator)", async () => {

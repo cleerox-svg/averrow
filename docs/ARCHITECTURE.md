@@ -341,7 +341,7 @@ Inside `runThreatFeedScan` + `handleScheduled`, gated hour-only:
 - NEXUS: `hour % 4 === 0` (dispatched as the `NEXUS_RUN` Workflow)
 - Observer: `hour === 0` · Observer briefing + Narrator: `hour === 6`
 - Pathfinder: `hour === 3` (KV throttle, once per 7 days)
-- GeoIP refresh: Sunday `hour === 2` · Daily snapshots: `hour === 0`
+- GeoIP refresh: Sunday `hour === 2` · Daily snapshots: NOT in the hourly tick — dedicated `28 0,12 * * *` cron (`handlers/dailySnapshots.ts`)
 
 ### Navigator (`src/cron/navigator.ts`)
 

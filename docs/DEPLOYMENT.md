@@ -273,7 +273,8 @@ The orchestrator (`src/cron/orchestrator.ts`) routes jobs using hour-only gates 
 | Event-dispatched | Sentinel (when `totalNew > 0`), Watchdog (when new social mentions land) |
 | Every 4 hours (0/4/8/12/16/20) | NEXUS Workflow |
 | Every 6 hours (0/6/12/18) | Strategist, Sparrow, Social discovery, Social monitor, Sentinel social assessment |
-| Hour 0 | Observer, daily brand assessments, daily snapshots |
+| Hour 0 | Observer, daily brand assessments |
+| Dedicated `28 0,12 * * *` | Daily snapshots (brand + provider; 12:28 repairs a missing type) |
 | Hour 3 | Pathfinder (KV throttle to 7 days) |
 | Hour 6 | Observer briefing (Tranco import + Seed Strategist), Narrator threat narratives |
 | Hour 13 | Daily briefing email |
