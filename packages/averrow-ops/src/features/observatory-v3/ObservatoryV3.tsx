@@ -68,8 +68,9 @@ import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
 import { useCanSeeTakedowns } from './lib/use-takedown-access';
-import { computeLayout, cameraInsets, DOCK_WIDTH, TIMELINE_H, BOTTOM_BAND } from './lib/layout';
-import { useElementWidth } from './lib/use-element-width';
+import { computeLayout, cameraInsets, chipPlacement, initialSheetPx, DOCK_WIDTH, TIMELINE_H } from './lib/layout';
+import { useElementSize } from './lib/use-element-width';
+import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
 import { drillPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
@@ -87,9 +88,12 @@ const BOT_LAYERS = { ...noLayers(), baseline: true } as LayerToggles;
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
 // one place instead of scattered magic numbers. (ThreatMapV3's own hover
 // tooltip renders above all of these, inside that component.)
-const Z_CHROME = 10;   // toolbar, rail, stats bar, ticker, legend chip, replay bar
-const Z_PANEL = 20;    // mobile Intel FAB (opens the panel sheet)
+const Z_CHROME = 10;   // rail, stats bar, ticker, legend chip, replay bar
+const Z_PANEL = 20;    // intel panel / drill drawer (their own z-20) and the mobile Intel FAB
+const Z_TOOLBAR = 22;  // toolbar row: ABOVE the panel / drawer, so its filters + search popovers open over them
 const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
+
+type SheetKey = 'drill' | 'panel';
 
 const PICK_TO_SEL: Record<LensPick['kind'], 'op' | 'provider' | 'country' | 'campaign' | 'move' | 'actor'> = {
   operation: 'op', provider: 'provider', country: 'country', campaign: 'campaign', movement: 'move', actor: 'actor',
@@ -111,8 +115,9 @@ export function ObservatoryV3() {
 
   // ─── Layout: the MAP's width decides, and it reacts to every resize ──
   const rootRef = useRef<HTMLDivElement>(null);
-  const mapWidth = useElementWidth(rootRef);
-  const layout = useMemo(() => computeLayout({ mapWidth, viewportWidth }), [mapWidth, viewportWidth]);
+  const { width: mapWidth, height: rootHeight } = useElementSize(rootRef);
+  const viewportHeight = useViewportHeight();
+  const layout = useMemo(() => computeLayout({ mapWidth, viewportWidth, viewportHeight }), [mapWidth, viewportWidth, viewportHeight]);
   const phone = layout.phone || isMobile;
 
   // The right slot: the intelligence panel (a user choice overrides the tier default) or the drill drawer.
@@ -120,7 +125,14 @@ export function ObservatoryV3() {
   const [mapFatal, setMapFatal] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
-  const [sheetPx, setSheetPx] = useState(0);
+  // The phone sheet that is open and its settled height (px from the page bottom). Keyed so a sheet
+  // that is closing can't leak its height into the one opening in the same commit.
+  const [sheetRep, setSheetRep] = useState<{ key: SheetKey | null; px: number }>({ key: null, px: 0 });
+  const reportSheet = useCallback((key: SheetKey) => (px: number) => {
+    setSheetRep(prev => (px > 0 ? (prev.key === key && prev.px === px ? prev : { key, px }) : prev.key === key ? { key: null, px: 0 } : prev));
+  }, []);
+  const onDrillSheetHeight = useMemo(() => reportSheet('drill'), [reportSheet]);
+  const onPanelSheetHeight = useMemo(() => reportSheet('panel'), [reportSheet]);
   /** The search box has been focused: lens lists it searches get loaded. */
   const [searching, setSearching] = useState(false);
 
@@ -265,12 +277,19 @@ export function ObservatoryV3() {
   // ─── Right slot ──
   const panelOpen = (panelPref ?? layout.panelStartsOpen) && hasPanel;
   const rightSlot: 'drawer' | 'panel' | null = phone ? null : drill ? 'drawer' : panelOpen ? 'panel' : null;
-  const showTimeline = mapMode === 'global' && needs.timeline;
+  // A short (landscape) phone has no room for the replay bar.
+  const showTimeline = mapMode === 'global' && needs.timeline && !layout.compact;
 
   // ─── Camera: frame ALL of a target inside the area the overlays leave free ──
+  // The sheet a selection is about to open has not mounted yet when the camera plans its first move:
+  // until it reports its real height, plan for the height it opens at.
+  // A 30% peek of a landscape phone is ~100px: barely the handle. Open at the half snap there.
+  const sheetInitialSnap = layout.compact ? 1 : 0;
+  const sheetKey: SheetKey | null = phone ? (drill ? 'drill' : showMobilePanel && hasPanel ? 'panel' : null) : null;
+  const sheetPx = sheetKey === null ? 0 : sheetRep.key === sheetKey && sheetRep.px > 0 ? sheetRep.px : initialSheetPx(rootHeight, sheetInitialSnap);
   const insets = useMemo(
-    () => cameraInsets({ layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx: phone ? sheetPx : 0 }),
-    [layout, rightSlot, showTimeline, sheetPx, phone],
+    () => cameraInsets({ layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx }),
+    [layout, rightSlot, showTimeline, sheetPx],
   );
   const focusModels = useMemo<FocusModels>(
     () => ({ operations: L.operationsModel, hosting: L.hostingModel, campaigns: L.campaignsModel, movement: L.movementModel, actors: L.actorModel }),
@@ -293,6 +312,8 @@ export function ObservatoryV3() {
     const panel = panelToggleRef.current;
     return openerKind.current === 'panel' ? panel ?? search : search ?? panel;
   }, []);
+
+  const restorePanelFocus = useCallback(() => panelToggleRef.current, []);
 
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
@@ -461,7 +482,7 @@ export function ObservatoryV3() {
   const onShortcut = useLayerShortcuts(useCallback((id: LayerId) => {
     update({ layers: { [id]: !layers[id] } });
     setAnnounceToggle(`${id} ${layers[id] ? 'off' : 'on'}`);
-  }, [update, layers]), mapMode !== 'heatmap');
+  }, [update, layers]), mapMode === 'global');
 
   const onPickActor = useCallback((id: string | null) => {
     if (!id) { update(drillToPatch(null)); return; }
@@ -470,8 +491,10 @@ export function ObservatoryV3() {
   }, [update]);
 
   // ─── Layout geometry ──
-  const timelineBottom = phone ? 116 : 84;
-  const chipBottom = timelineBottom + (showTimeline ? TIMELINE_H + 8 : 0);
+  const timelineBottom = layout.bottomBand + 8;
+  const { bottom: chipBottom, maxPanel: legendMaxPanel } = chipPlacement({
+    rootHeight, wantBottom: timelineBottom + (showTimeline ? TIMELINE_H + 8 : 0), topInset: layout.topInset,
+  });
   const rightClear = rightSlot ? DOCK_WIDTH + (layout.docked ? 16 : 28) : 16;
   const controlRightInset = rightSlot ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0;
   const threatLayersOn = mapLayers.nodes || mapLayers.particles || mapLayers.beams;
@@ -592,7 +615,7 @@ export function ObservatoryV3() {
       {/* Full-screen map — bottom inset reserves the stats bar + ticker band below. */}
       <div
         className="absolute inset-0"
-        style={{ bottom: phone ? BOTTOM_BAND.phone : BOTTOM_BAND.desktop }}
+        style={{ bottom: layout.bottomBand }}
         aria-busy={isInitialLoading || isUpdating}
       >
         <ThreatMapV3
@@ -641,7 +664,7 @@ export function ObservatoryV3() {
           role="status"
           className="absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full font-mono text-[10px] uppercase tracking-wider pointer-events-none"
           style={{
-            top: phone ? 128 : 64,
+            top: layout.topInset,
             zIndex: Z_CHROME,
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
@@ -677,9 +700,9 @@ export function ObservatoryV3() {
       {/* ─── Toolbar ────────────────────────────────────────────
           Desktop / tablet: ONE 44px row. Phone: summary row, then the lens strip. */}
       {phone ? (
-        <div className="absolute top-2 left-3 right-3 flex flex-col gap-2" style={{ zIndex: Z_CHROME }}>
+        <div className="absolute top-2 left-3 right-3 flex flex-col gap-2" style={{ zIndex: Z_TOOLBAR }}>
           <div className="flex items-center gap-2">
-            <FiltersPopover period={period} source={source} touch align="left" className="flex-1 min-w-0" triggerClassName="w-full">
+            <FiltersPopover period={period} source={source} touch align="left" className={layout.compact ? 'shrink-0' : 'flex-1 min-w-0'} triggerClassName={layout.compact ? undefined : 'w-full'}>
               {filtersBody}
               {mapMode !== 'heatmap' || lens === 'threats' ? (
                 <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
@@ -687,6 +710,8 @@ export function ObservatoryV3() {
                 </div>
               ) : null}
             </FiltersPopover>
+            {/* Short viewport: the lens strip shares the row (one 48px band of chrome instead of two). */}
+            {layout.compact && <LensStrip lens={lens} onChange={setLens} touch className="flex-1" />}
             <button
               type="button"
               ref={el => { if (el) searchOpenerRef.current = el; }}
@@ -700,14 +725,14 @@ export function ObservatoryV3() {
             </button>
             <RefreshButton onClick={handleRefresh} busy={isFetching} touch />
           </div>
-          <LensStrip lens={lens} onChange={setLens} touch />
+          {!layout.compact && <LensStrip lens={lens} onChange={setLens} touch />}
           {mobileSearchOpen && (
             <ObservatorySearch data={searchData} onPick={handleSearchPick} onActivate={activateSearch} touch inline />
           )}
         </div>
       ) : (
         <>
-          <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_CHROME, height: 44 }} data-toolbar>
+          <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_TOOLBAR, height: 44 }} data-toolbar>
             <LensStrip lens={lens} onChange={setLens} className="flex-1" />
             {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[190px] shrink-0' })}
             {layout.filtersInPopover ? (
@@ -745,6 +770,7 @@ export function ObservatoryV3() {
       {!(phone && (drill || showMobilePanel)) && <LegendChip
         {...legendProps}
         summary={summary}
+        maxPanelHeight={legendMaxPanel}
         style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
       />}
 
@@ -780,7 +806,7 @@ export function ObservatoryV3() {
       <div
         className="absolute left-0 right-0 flex items-center justify-between px-4"
         style={{
-          bottom: phone ? 72 : 40,
+          bottom: layout.statsBottom,
           height: 36,
           background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
@@ -826,12 +852,14 @@ export function ObservatoryV3() {
           EventTicker doesn't self-position; it fills whatever box this
           wrapper gives it. Desktop 40 / mobile 72 (touch target sizing)
           match the stats-bar `bottom` offset and the map's bottom inset above. */}
-      <div
-        className="absolute bottom-0 left-0 right-0"
-        style={{ height: phone ? 72 : 40, zIndex: Z_CHROME }}
-      >
-        <EventTicker />
-      </div>
+      {!layout.compact && (
+        <div
+          className="absolute bottom-0 left-0 right-0"
+          style={{ height: layout.statsBottom, zIndex: Z_CHROME }}
+        >
+          <EventTicker />
+        </div>
+      )}
 
       {/* ─── Right slot (desktop / tablet): the drill drawer while something is selected, else the lens-aware panel ── */}
       {!phone && drill && (
@@ -896,13 +924,13 @@ export function ObservatoryV3() {
         </button>
       )}
       {phone && (
-        <PeekSheet open={!!drill} onClose={closeDrill} label={drill ? `${drill.kind} details` : 'Details'} onHeight={setSheetPx}>
+        <PeekSheet open={!!drill} onClose={closeDrill} label={drill ? `${drill.kind} details` : 'Details'} onHeight={onDrillSheetHeight} restoreFocus={fallbackFocus} initialSnap={sheetInitialSnap}>
           {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} />}
         </PeekSheet>
       )}
       {phone && hasPanel && (
-        <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={setSheetPx}>
-          <div className="flex items-center justify-between px-4 pb-1">
+        <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={onPanelSheetHeight} restoreFocus={restorePanelFocus} initialSnap={sheetInitialSnap}>
+          <div className="sticky top-0 z-[1] flex items-center justify-between px-4 pb-1" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>
             <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
             <button
               type="button"

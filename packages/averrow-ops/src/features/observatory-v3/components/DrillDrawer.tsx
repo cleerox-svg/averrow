@@ -624,7 +624,7 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
   );
 
   const header = (
-    <div className="flex items-start justify-between gap-2 mb-3">
+    <div className={cn('flex items-start justify-between gap-2', variant !== 'sheet' && 'mb-3')}>
       <div className="min-w-0">
         <div className={LABEL} style={{ color: 'var(--text-tertiary)' }}>{drillEyebrow(target)}</div>
         <h2 className="font-mono text-sm font-bold m-0 mt-0.5 capitalize break-words" style={{ color: 'var(--text-primary)' }} aria-busy={isPending(target)}>
@@ -646,9 +646,10 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
 
   if (variant === 'sheet') {
     return (
-      <div ref={ref} role="group" aria-label={`${drillEyebrow(target)} details`} tabIndex={-1} className="outline-none p-4">
-        {header}
-        {body}
+      <div ref={ref} role="group" aria-label={`${drillEyebrow(target)} details`} tabIndex={-1} className="outline-none">
+        {/* Sticky: the close button stays reachable however far the body is scrolled. */}
+        <div className="sticky top-0 z-[1] px-4 pt-2 pb-3" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>{header}</div>
+        <div className="px-4 pb-4">{body}</div>
       </div>
     );
   }

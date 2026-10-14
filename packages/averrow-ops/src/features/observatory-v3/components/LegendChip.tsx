@@ -29,6 +29,8 @@ export interface LegendChipProps extends LegendSectionProps {
   /** One-line state shown on the closed chip. */
   summary: { text: string; tone: 'ok' | 'loading' | 'error' | 'empty' };
   reducedMotion: boolean;
+  /** Tallest the expanded panel may grow (px), so it never reaches the top chrome on a short viewport. */
+  maxPanelHeight?: number;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -87,7 +89,7 @@ function HeatKey() {
 }
 
 export function LegendChip(props: LegendChipProps) {
-  const { lens, layers, view, colorBy, summary, reducedMotion, className, style } = props;
+  const { lens, layers, view, colorBy, summary, reducedMotion, maxPanelHeight, className, style } = props;
   const id = useId();
   // The Actors lens starts open: its legend holds the "choose an actor" control.
   const [open, setOpen] = useState(() => lens === 'actors' && !props.actors.selectedId);
@@ -122,6 +124,7 @@ export function LegendChip(props: LegendChipProps) {
           WebkitBackdropFilter: 'blur(20px)',
           border: '1px solid var(--border-base)',
           boxShadow: 'var(--card-shadow-elevated)',
+          ...(maxPanelHeight ? { maxHeight: `min(58vh, 440px, ${maxPanelHeight}px)` } : null),
         }}
       >
         {sections}

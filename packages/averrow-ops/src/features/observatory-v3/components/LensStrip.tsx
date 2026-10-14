@@ -54,11 +54,11 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
     return () => { el.removeEventListener('scroll', measure); ro?.disconnect(); };
   }, [measure]);
 
-  // The active tab is always in view (a deep link to ?lens=actors on a phone).
+  // The active tab is always in view, centred so it is not under the edge fade (a deep link to ?lens=actors on a phone).
   useEffect(() => {
     const tab = tabRefs.current.get(lens);
     if (tab && typeof tab.scrollIntoView === 'function') {
-      tab.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: reduced ? 'auto' : 'smooth' });
+      tab.scrollIntoView({ inline: 'center', block: 'nearest', behavior: reduced ? 'auto' : 'smooth' });
     }
   }, [lens, reduced]);
 

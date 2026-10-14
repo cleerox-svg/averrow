@@ -149,7 +149,7 @@ export function FiltersPopover({
         role="dialog"
         aria-label="Filters"
         hidden={!open}
-        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden', align === 'right' ? 'right-0' : 'left-0')}
+        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] max-h-[calc(100dvh-140px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden', align === 'right' ? 'right-0' : 'left-0')}
         style={{ background: 'var(--bg-card-deep)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)' }}
       >
         {children}

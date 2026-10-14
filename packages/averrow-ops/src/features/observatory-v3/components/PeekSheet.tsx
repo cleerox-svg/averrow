@@ -4,7 +4,13 @@
  * no focus trap: the map above it stays live. `role="dialog"` WITHOUT `aria-modal`.
  *
  * It reports its height so the map can frame its target in what is left above it
- * (camera bottom inset), instead of flying the target under the sheet.
+ * (camera bottom inset), instead of flying the target under the sheet. The height is
+ * the SETTLED one (snap fraction x area), reported when the snap or the area changes,
+ * never per drag frame, so the page doesn't re-render while a finger is moving the sheet.
+ *
+ * Focus: it takes focus when it opens (the control that opened it may unmount, like the
+ * Intel button) and gives it back on close: to the opener, or to `restoreFocus()` when
+ * that is gone, never to <body>.
  *
  * Added alongside the shared modal BottomSheet rather than changing it: other
  * screens depend on that one's scrim / scroll lock / modality.
@@ -24,10 +30,12 @@ export interface PeekSheetProps {
   onHeight?: (px: number) => void;
   /** Initial snap each time it opens (default the peek). */
   initialSnap?: SnapIndex;
+  /** A stable control to focus on close when the opener no longer exists. */
+  restoreFocus?: () => HTMLElement | null;
   children: ReactNode;
 }
 
-export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, children }: PeekSheetProps) {
+export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, restoreFocus, children }: PeekSheetProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [snap, setSnap] = useState<SnapIndex>(initialSnap);
   const [drag, setDrag] = useState<number | null>(null); // live height fraction while dragging
@@ -36,19 +44,49 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, chi
   onCloseRef.current = onClose;
   const onHeightRef = useRef(onHeight);
   onHeightRef.current = onHeight;
+  const restoreRef = useRef(restoreFocus);
+  restoreRef.current = restoreFocus;
+  const openerRef = useRef<Element | null>(null);
 
-  useEffect(() => { if (open) setSnap(initialSnap); }, [open, initialSnap]);
+  // A (re)opened sheet starts at its initial snap BEFORE it paints: reset on close, and again as it opens.
+  useLayoutEffect(() => {
+    setSnap(initialSnap);
+    setDrag(null);
+  }, [open, initialSnap]);
 
-  // Report the real height (it follows the snap and the area's size).
+  // Report the settled height: snap fraction x the area it sits in (what the CSS height resolves to).
+  // Re-reported when the area resizes (rotation, URL bar); never while a drag is in flight.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!open || !el) { onHeightRef.current?.(0); return; }
-    const report = () => onHeightRef.current?.(el.offsetHeight);
+    const area = () => el.parentElement?.clientHeight ?? 0;
+    const report = () => onHeightRef.current?.(Math.round(snapFraction(snap) * area()));
     report();
-    if (typeof ResizeObserver === 'undefined') return () => onHeightRef.current?.(0);
-    const ro = new ResizeObserver(report);
-    ro.observe(el);
-    return () => { ro.disconnect(); onHeightRef.current?.(0); };
+    const parent = el.parentElement;
+    const ro = typeof ResizeObserver !== 'undefined' && parent ? new ResizeObserver(report) : null;
+    if (ro && parent) ro.observe(parent);
+    return () => { ro?.disconnect(); onHeightRef.current?.(0); };
+  }, [open, snap]);
+
+  // Focus in on open, back on close. The opener is read in a layout effect: it runs before the
+  // content's own effects, and before anything inside the sheet can take focus.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = ref.current;
+    openerRef.current = el && !el.contains(document.activeElement) ? document.activeElement : null;
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const el = ref.current;
+    // The content (a drill drawer) may already have claimed focus.
+    if (el && !el.contains(document.activeElement)) el.focus({ preventScroll: true });
+    return () => {
+      const cur = document.activeElement;
+      if (cur && cur !== document.body && !el?.contains(cur)) return; // focus went somewhere deliberate
+      const prev = openerRef.current;
+      const target = prev instanceof HTMLElement && prev !== document.body && prev.isConnected ? prev : restoreRef.current?.();
+      if (target && target.isConnected) target.focus({ preventScroll: true });
+    };
   }, [open]);
 
   useEffect(() => {
@@ -119,6 +157,8 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, chi
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        // Enter / Space click the button with detail 0 (a pointer tap is handled on pointer-up).
+        onClick={e => { if (e.detail === 0) setSnap(s => nextSnap(s)); }}
         onKeyDown={e => {
           if (e.key === 'ArrowUp') { e.preventDefault(); setSnap(s => Math.min(2, s + 1) as SnapIndex); }
           else if (e.key === 'ArrowDown') { e.preventDefault(); setSnap(s => Math.max(0, s - 1) as SnapIndex); }

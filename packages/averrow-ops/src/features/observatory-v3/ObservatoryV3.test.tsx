@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -590,5 +590,118 @@ describe('ObservatoryV3 phone (< 900px)', () => {
     expect(document.querySelector('.bg-black\\/60')).toBeNull(); // no scrim
     expect(await within(sheet).findByText('OP ONE')).toBeInTheDocument();
     expect(mapProps.mock.calls.at(-1)![0].cameraInsets.top).toBeGreaterThan(100);
+  });
+});
+
+describe('ObservatoryV3 review round: stacking, short phones, sheet camera, bot-share keys', () => {
+  const heightDesc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  const innerHeight = window.innerHeight;
+  afterEach(() => {
+    if (heightDesc) Object.defineProperty(HTMLElement.prototype, 'clientHeight', heightDesc); else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+    window.innerHeight = innerHeight;
+  });
+  const op = { id: 'op1', name: 'OP ONE', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 5, actor: null, countries: ['NL', 'MD'], asns: ['AS1'], last_seen: null, last_movement_pivot_at: null };
+
+  it('the toolbar stacks ABOVE the intel panel / drill drawer (z-20), so its popovers open over them on tablet widths', async () => {
+    renderAt('/observatory?lens=hosting');
+    const bar = await waitFor(() => {
+      const el = document.querySelector('[data-toolbar]') as HTMLElement;
+      expect(el).not.toBeNull();
+      return el;
+    });
+    const panel = await waitFor(() => {
+      const el = document.querySelector('[class*="z-20"]') as HTMLElement;
+      expect(el).not.toBeNull();
+      return el;
+    });
+    expect(panel.className).toMatch(/\bz-20\b/);
+    expect(Number(bar.style.zIndex)).toBeGreaterThan(20);
+    // ...but under the panel toggle and the load-error banner (z 30)
+    expect(Number(bar.style.zIndex)).toBeLessThan(30);
+  });
+
+  it('phone toolbar is also above the panel layer', async () => {
+    window.innerWidth = 400;
+    renderAt('/observatory');
+    const summary = await screen.findByRole('button', { name: /^Filters: 7D/ });
+    const bar = summary.closest('div[style*="z-index"]') as HTMLElement;
+    expect(Number(bar.style.zIndex)).toBeGreaterThan(20);
+  });
+
+  describe('landscape phone (844 x 390)', () => {
+    beforeEach(() => { window.innerWidth = 844; window.innerHeight = 390; });
+
+    it('lens strip, filters, search and refresh share ONE row, and the top chrome is one row tall', async () => {
+      renderAt('/observatory');
+      const summary = await screen.findByRole('button', { name: /^Filters: 7D/ });
+      const strip = screen.getByRole('tablist', { name: 'Observatory lens' });
+      expect(summary.parentElement!.parentElement).toBe(strip.parentElement!.parentElement);
+      expect(screen.getByRole('button', { name: 'Find on map' }).parentElement).toBe(strip.parentElement!.parentElement);
+      for (const t of within(strip).getAllByRole('tab')) expect(t.className).toMatch(/min-h-\[44px\]/);
+      await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].cameraInsets.top).toBeLessThan(80));
+    });
+
+    it('no replay bar and no ticker band: the map keeps its height', async () => {
+      renderAt('/observatory');
+      await screen.findByRole('tablist', { name: 'Observatory lens' });
+      expect(screen.queryByRole('slider')).toBeNull();
+      const mapBox = screen.getByTestId('map').parentElement as HTMLElement;
+      expect(mapBox.style.bottom).toBe('36px'); // stats bar only; a tall phone reserves 108
+    });
+
+    it('the sheets open at the half snap (a 30% peek of 320px is only the handle), and the first camera plan reserves that', async () => {
+      Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 320 });
+      route({ '/api/observatory/operations-geo': { operations: [op], components: [] }, '/api/observatory/stats': okStats });
+      renderAt('/observatory?lens=operations&sel=op:op1');
+      const sheet = await screen.findByRole('dialog', { name: /details/i });
+      expect(sheet.style.height).toBe('60%');
+      await waitFor(() => expect(mapProps.mock.calls.some(c => c[0].focus != null)).toBe(true));
+      const first = mapProps.mock.calls.map(c => c[0]).find(p => p.focus != null);
+      expect(first.cameraInsets.bottom).toBe(Math.round(0.6 * 320) - 36 + 12);
+    });
+
+    it('a tall phone still gets the two-row chrome', async () => {
+      window.innerHeight = 844; window.innerWidth = 400;
+      renderAt('/observatory');
+      const summary = await screen.findByRole('button', { name: /^Filters: 7D/ });
+      const strip = screen.getByRole('tablist', { name: 'Observatory lens' });
+      expect(summary.parentElement!.parentElement).not.toBe(strip.parentElement!.parentElement);
+      expect((screen.getByTestId('map').parentElement as HTMLElement).style.bottom).toBe('108px');
+    });
+  });
+
+  it('phone: the FIRST camera plan for a selection already reserves the peek sheet (it has not mounted yet)', async () => {
+    window.innerWidth = 400;
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => 800 });
+    route({ '/api/observatory/operations-geo': { operations: [op], components: [] }, '/api/observatory/stats': okStats });
+    renderAt('/observatory?lens=operations&sel=op:op1');
+    await screen.findByRole('dialog', { name: /details/i });
+    await waitFor(() => expect(mapProps.mock.calls.some(c => c[0].focus != null)).toBe(true));
+    const firstFocus = mapProps.mock.calls.map(c => c[0]).find(p => p.focus != null);
+    // 30% of 800 = 240px sheet, 108px band already under the map, +12 gutter
+    expect(firstFocus.cameraInsets.bottom).toBe(240 - 108 + 12);
+  });
+
+  it('phone: focus moves into the Intel sheet when it opens (the Intel button unmounts) and comes back to the button on close', async () => {
+    window.innerWidth = 400;
+    renderAt('/observatory?lens=hosting');
+    const fab = await screen.findByRole('button', { name: 'Open intelligence panel' });
+    await userEvent.click(fab);
+    const sheet = await screen.findByRole('dialog', { name: 'Intelligence panel' });
+    expect(sheet).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Intelligence panel' })).toBeNull());
+    expect(screen.getByRole('button', { name: 'Open intelligence panel' })).toHaveFocus();
+  });
+
+  it('the number keys do nothing in the bot-share scene (the layers they would toggle are not the ones on screen)', async () => {
+    getMock.mockResolvedValue({ success: true, data: { source: 'cloudflare_radar', latest: null, series: [], top_locations: [], top_asns: [], categories: [], bot_density: [], last_fetch: { status: null, last_success_at: null, last_error: null } } });
+    renderAt('/observatory?lens=baseline&measure=bot');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].mapMode).toBe('bot_density'));
+    screen.getByRole('button', { name: 'Refresh Observatory data' }).focus();
+    await userEvent.keyboard('7');
+    await userEvent.keyboard('1');
+    expect(search).not.toContain('layers=');
+    expect(mapProps.mock.calls.at(-1)![0].lens.layers.baseline).toBe(true); // baseline never switched off by a hidden-layer toggle
   });
 });

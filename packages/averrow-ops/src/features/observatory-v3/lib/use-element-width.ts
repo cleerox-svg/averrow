@@ -25,3 +25,22 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>): number {
   }, [ref]);
   return width;
 }
+
+/** Live width + height of an element (same observer rules as `useElementWidth`). */
+export function useElementSize(ref: RefObject<HTMLElement | null>): { width: number; height: number } {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  useIsoLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setSize(prev => (prev.width === el.clientWidth && prev.height === el.clientHeight ? prev : { width: el.clientWidth, height: el.clientHeight }));
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return size;
+}

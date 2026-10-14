@@ -117,7 +117,7 @@ describe('LensStrip', () => {
     const { rerender } = render(<LensStrip lens="threats" onChange={vi.fn()} />);
     spy.mockClear();
     rerender(<LensStrip lens="actors" onChange={vi.fn()} />);
-    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ inline: 'nearest' }));
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ inline: 'center' }));
     expect(spy.mock.contexts.at(-1)).toBe(screen.getByRole('tab', { name: 'Actors' }));
     Element.prototype.scrollIntoView = orig;
   });
