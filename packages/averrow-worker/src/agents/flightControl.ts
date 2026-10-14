@@ -51,6 +51,7 @@ import { getWorkflowAgentStats } from "../lib/workflow-agent-stats";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { evaluateGeoipStall, type GeoipStallWatch } from "../lib/geoip-stall";
 import { parseCronIntervalMs } from "../lib/feedRunner";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { cachedCount } from "../lib/cached-count";
 import {
   countDnsCandidatesInThreats,
@@ -858,16 +859,24 @@ export const flightControlAgent: AgentModule = {
       // within 5 min hit cache. ~24 ticks/day × 230K rows/query =
       // ~5.5M rows/day eliminated.
       const stuckCount = await cachedCount(env, 'count.threats.enriched_no_geo', 300, async () => {
-        const row = await db.prepare(
+        const row = await withIndexHintFallback(
           // ip_address != '' added so the predicate matches the partial index
           // idx_threats_stuck_geo (0174): ... WHERE lat IS NULL AND ip_address
           // IS NOT NULL AND ip_address != ''. Without it SQLite can't prove the
           // query predicate implies the index predicate and full-scans threats.
           // Empty-string ip_address rows aren't real IPs, so excluding them is
           // semantically correct for "enriched but geo-pending".
-          `SELECT COUNT(*) AS n FROM threats
-            WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL AND ip_address != ''`
-        ).first<{ n: number }>();
+          // INDEXED BY: implying the predicate wasn't enough — the planner
+          // still picked an `ip_address > ?` range on
+          // idx_threats_ip_source_feed (~1.35M rows) over this ~5.5K-row
+          // partial index (EXPLAIN QUERY PLAN in prod, 2026-10-14; ~40M
+          // reads/day). Keep the WHERE implying the index predicate, or the
+          // hint fails and withIndexHintFallback re-runs it unhinted (full cost).
+          `SELECT COUNT(*) AS n FROM threats INDEXED BY idx_threats_stuck_geo
+            WHERE enriched_at IS NOT NULL AND lat IS NULL AND ip_address IS NOT NULL AND ip_address != ''`,
+          // Unusable hint → same count unhinted, so the stuck-pile alert still fires.
+          (q) => db.prepare(q).first<{ n: number }>(),
+        );
         return row?.n ?? 0;
       });
       const STUCK_THRESHOLD = 100;
@@ -2175,7 +2184,9 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
       wasCached = false;
       try {
         const targetDb = altDb ?? db;
-        const r = await targetDb.prepare(sql).first<{ count: number }>();
+        // INDEXED BY hints fail soft: an unusable hint re-runs unhinted
+        // instead of throwing out of measureBacklogs' Promise.all.
+        const r = await withIndexHintFallback(sql, (q) => targetDb.prepare(q).first<{ count: number }>());
         return r?.count ?? 0;
       } catch (err) {
         if (suppressErrors) return 0;
@@ -2233,8 +2244,15 @@ async function measureBacklogs(env: Env, db: D1Database): Promise<Backlog> {
     //
     // Key renamed alongside the predicate change so the cutover doesn't
     // serve up to 65 min of the old, differently-scoped value.
+    //
+    // INDEXED BY: even with the predicate implied, the planner picked an
+    // `ip_address > ?` range on idx_threats_ip_source_feed (~1.35M rows)
+    // over this ~1K-row partial index (EXPLAIN QUERY PLAN in prod,
+    // 2026-10-14). The WHERE must keep implying idx_threats_carto_phase0's
+    // predicate (migration 0110), or cacheCount's withIndexHintFallback
+    // re-runs it unhinted (correct, full cost).
     cacheCount('backlog.cartographer.drainable', BACKLOG_TTL_LIVE_S, `
-      SELECT COUNT(*) as count FROM threats
+      SELECT COUNT(*) as count FROM threats INDEXED BY idx_threats_carto_phase0
       WHERE enriched_at IS NULL
         AND ip_address IS NOT NULL AND ip_address != ''
         AND enrichment_attempts < 5

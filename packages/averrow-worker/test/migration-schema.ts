@@ -26,8 +26,11 @@
  * the `_v3` definition renamed, not the 0003 original. Replaying the dance
  * is the only way to land on the shape production actually has.
  *
- * Data statements (INSERT/UPDATE), indexes and triggers are ignored: the
- * tests seed their own rows, and query plans are not under test.
+ * Data statements (INSERT/UPDATE) and triggers are ignored: the tests seed
+ * their own rows. Indexes are ignored too, EXCEPT the ones a caller names
+ * in `opts.indexes` — needed when the code under test pins one with
+ * `INDEXED BY` (SQLite fails "no such index" without it). Opt-in by name so
+ * UNIQUE indexes never start rejecting a test's seed rows by accident.
  *
  * Directory scan, not a hand-listed set, so a migration added later is
  * picked up automatically.
@@ -108,8 +111,10 @@ const IDENT = String.raw`["'\`]?([A-Za-z_][A-Za-z0-9_]*)["'\`]?`;
  * Throws if a requested table is never created (a vacuous schema would turn
  * "no such column" back into "no such table").
  */
-export function deriveSchema(tables: string[]): DerivedSchema {
+export function deriveSchema(tables: string[], opts: { indexes?: string[] } = {}): DerivedSchema {
   const state = new Map<string, TableState>();
+  const wantedIndexes = new Set(opts.indexes ?? []);
+  const indexDdl = new Map<string, string>();
   const touchedBy = new Map<string, Set<string>>();
   const note = (table: string, file: string): void => {
     if (!touchedBy.has(table)) touchedBy.set(table, new Set());
@@ -127,6 +132,16 @@ export function deriveSchema(tables: string[]): DerivedSchema {
           state.set(name, { create: stmt, alters: [] });
           note(name, file);
         }
+        continue;
+      }
+      m = new RegExp(String.raw`^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?${IDENT}\s`, "i").exec(stmt);
+      if (m) {
+        if (wantedIndexes.has(m[1]!)) indexDdl.set(m[1]!, stmt);
+        continue;
+      }
+      m = new RegExp(String.raw`^DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?${IDENT}\s*$`, "i").exec(stmt);
+      if (m) {
+        indexDdl.delete(m[1]!);
         continue;
       }
       m = new RegExp(String.raw`^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?${IDENT}\s*$`, "i").exec(stmt);
@@ -174,6 +189,11 @@ export function deriveSchema(tables: string[]): DerivedSchema {
     ddl.push(`${st.create};`, ...st.alters.map((a) => `${a};`));
     columns[t] = parseColumns(st);
     sources[t] = [...(touchedBy.get(t) ?? [])];
+  }
+  for (const name of wantedIndexes) {
+    const stmt = indexDdl.get(name);
+    if (!stmt) throw new Error(`deriveSchema: index "${name}" is never created in migrations/ (or was dropped without being re-created)`);
+    ddl.push(`${stmt};`);
   }
   return { ddl, columns, sources };
 }

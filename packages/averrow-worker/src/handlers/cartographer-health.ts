@@ -7,11 +7,13 @@
 import { json } from "../lib/cors";
 import {
   GEO_UNMAPPED_POPULATION_SQL,
+  GEO_UNMAPPED_THREATS_FROM,
   GEO_TERMINAL_SQL,
   GEO_AWAITING_MMDB_SQL,
   GEO_PHASE0_ELIGIBLE_SQL,
 } from "../lib/geo-exhaustion";
 import type { Env } from "../types";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 
 /** GET /api/admin/cartographer-health    (JWT super-admin auth)
  *  GET /api/internal/cartographer-health  (AVERROW_INTERNAL_SECRET auth) */
@@ -116,14 +118,14 @@ export async function handleCartographerHealth(request: Request, env: Env): Prom
     //
     // Same single scan as before (conditional SUMs over one predicate),
     // so this costs no extra D1 reads.
-    const queueP = env.DB.prepare(`
+    const queueP = withIndexHintFallback(`
       SELECT
         SUM(CASE WHEN ${GEO_PHASE0_ELIGIBLE_SQL} THEN 1 ELSE 0 END) AS queue_active,
         SUM(CASE WHEN ${GEO_AWAITING_MMDB_SQL} THEN 1 ELSE 0 END) AS awaiting_mmdb,
         SUM(CASE WHEN ${GEO_TERMINAL_SQL} THEN 1 ELSE 0 END) AS exhausted
-      FROM threats
+      FROM ${GEO_UNMAPPED_THREATS_FROM}
       WHERE ${GEO_UNMAPPED_POPULATION_SQL}
-    `).first<{ queue_active: number; awaiting_mmdb: number; exhausted: number }>();
+    `, (q) => env.DB.prepare(q).first<{ queue_active: number; awaiting_mmdb: number; exhausted: number }>());
 
     // ─── Stuck pile (pre-fix orphans) ─────────────────────────────
     // Threats with enriched_at stamped but no lat — partial-geo bug from

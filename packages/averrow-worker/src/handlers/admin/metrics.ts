@@ -13,10 +13,12 @@ import { HOT_PATH_HAIKU } from "../../lib/ai-models";
 import { enrichThreatsGeo, PRIVATE_IP_SQL_FILTER } from "../../lib/geoip";
 import {
   GEO_UNMAPPED_POPULATION_SQL,
+  GEO_UNMAPPED_THREATS_FROM,
   GEO_TERMINAL_SQL,
   GEO_AWAITING_MMDB_SQL,
 } from "../../lib/geo-exhaustion";
 import { fuzzyMatchBrand } from "../../lib/brandDetect";
+import { withIndexHintFallback } from "../../lib/indexed-by-fallback";
 import { cachedCount } from "../../lib/cached-count";
 import { cachedValue } from "../../lib/cached-value";
 import { getReadSession, getDbContext } from "../../lib/db";
@@ -660,24 +662,24 @@ export async function handleMetricsGeoCoverage(
     //
     // Still one scan with conditional SUMs over one predicate; the
     // `>= 5` outer filter keeps the scanned row-set bounded.
-    env.DB.prepare(`
+    withIndexHintFallback(`
       SELECT
         SUM(CASE WHEN ${GEO_TERMINAL_SQL} THEN 1 ELSE 0 END) AS exhausted,
         SUM(CASE WHEN ${GEO_AWAITING_MMDB_SQL} THEN 1 ELSE 0 END) AS awaiting_mmdb
-        FROM threats
+        FROM ${GEO_UNMAPPED_THREATS_FROM}
        WHERE ${GEO_UNMAPPED_POPULATION_SQL}
          AND enrichment_attempts >= 5
-    `).first<{ exhausted: number; awaiting_mmdb: number }>(),
+    `, (q) => env.DB.prepare(q).first<{ exhausted: number; awaiting_mmdb: number }>()),
 
-    env.DB.prepare(`
+    withIndexHintFallback(`
       SELECT source_feed, threat_type, COUNT(*) AS n
-        FROM threats
+        FROM ${GEO_UNMAPPED_THREATS_FROM}
        WHERE ${GEO_UNMAPPED_POPULATION_SQL}
          AND ${GEO_TERMINAL_SQL}
        GROUP BY source_feed, threat_type
        ORDER BY n DESC
        LIMIT 10
-    `).all<{ source_feed: string; threat_type: string; n: number }>(),
+    `, (q) => env.DB.prepare(q).all<{ source_feed: string; threat_type: string; n: number }>()),
   ]);
 
   const data = {

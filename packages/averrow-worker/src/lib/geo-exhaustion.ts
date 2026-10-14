@@ -87,6 +87,25 @@ export const GEO_UNMAPPED_POPULATION_SQL = `
   ${PRIVATE_IP_SQL_FILTER}
 `;
 
+/**
+ * `FROM` target for every query filtered by GEO_UNMAPPED_POPULATION_SQL:
+ * `threats` pinned to the partial index `idx_threats_phase0_public`
+ * (migration 0175: `enriched_at IS NULL AND is_private_ip = 0 AND
+ * ip_address IS NOT NULL AND ip_address != ''`). The population above
+ * implies that predicate term for term (PRIVATE_IP_SQL_FILTER is
+ * `AND is_private_ip = 0`), so the index is always usable.
+ *
+ * Why INDEXED BY: the planner prefers an `ip_address > ?` range on
+ * idx_threats_ip_source_feed (~1.35M rows) over this ~2K-row partial
+ * index — measured with EXPLAIN QUERY PLAN in prod, 2026-10-14 (~28M
+ * reads/day across these surfaces). INVARIANT: if the population ever
+ * stops implying the index predicate, INDEXED BY raises "no query
+ * solution" — change both together. Callers wrap these queries in
+ * withIndexHintFallback (lib/indexed-by-fallback.ts), so a broken hint
+ * degrades to the unhinted (expensive) plan instead of failing.
+ */
+export const GEO_UNMAPPED_THREATS_FROM = `threats INDEXED BY idx_threats_phase0_public`;
+
 /** Terminal: Phase 0 is out of ip-api budget AND Phase 0.5 has been
  *  consulted. No cartographer phase will meaningfully retry this row. */
 export const GEO_TERMINAL_SQL =

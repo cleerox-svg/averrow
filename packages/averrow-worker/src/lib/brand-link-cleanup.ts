@@ -53,7 +53,7 @@ import {
   isGenericBrandName,
   isMatchableInput,
   matchGenericBrand,
-  loadBrands,
+  loadBrandsCached,
   matchBrandToHost,
   normalizeBrand,
   levenshtein,
@@ -441,7 +441,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   };
 
   // The catalog (100K+ rows) is loaded only if some link needs a re-match.
-  let catalog: BrandRow[] | null = null;
+  let catalog: readonly BrandRow[] | null = null;
   let catalogIds: Set<string> | null = null;
   const rematchCatalog = (haystacks: string[]) => {
     if (!catalog) throw new Error("catalog not loaded");
@@ -456,7 +456,7 @@ async function runValidate(env: Env, opts: CleanupOptions): Promise<CleanupBatch
   for (const row of rows.results) {
     let d = decide(row, () => null, false);
     if (d.action === "clear" && d.reason !== "non_hostname") {
-      catalog ??= await loadBrands(env.DB);
+      catalog ??= await loadBrandsCached(env);
       d = decide(row, rematchCatalog, true);
     }
     decisions.push({ row, d });

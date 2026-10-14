@@ -1593,9 +1593,9 @@ function ownerLabelOf(canonical: string): string | null {
 // Built once per brands array — callers load the catalog once per run and
 // match hundreds of threats against it. First brand in array order wins a
 // key, matching the old first-hit semantics.
-const indexCache = new WeakMap<BrandRow[], BrandIndex>();
+const indexCache = new WeakMap<readonly BrandRow[], BrandIndex>();
 
-function indexBrands(brands: BrandRow[]): BrandIndex {
+function indexBrands(brands: readonly BrandRow[]): BrandIndex {
   const cached = indexCache.get(brands);
   if (cached) return cached;
   const idx: BrandIndex = {
@@ -1785,7 +1785,7 @@ export function keywordMatchesHost(keyword: string, raw: string): boolean {
  * @param haystacks - non-null strings to check (domain, url, ioc_value)
  * @param brands - list of known brands
  */
-export function fuzzyMatchBrandDetailed(haystacks: string[], brands: BrandRow[]): BrandMatch | null {
+export function fuzzyMatchBrandDetailed(haystacks: string[], brands: readonly BrandRow[]): BrandMatch | null {
   const idx = indexBrands(brands);
   for (const raw of haystacks) {
     if (!raw) continue;
@@ -1872,7 +1872,7 @@ function matchGenericInIndex(host: string, idx: BrandIndex): BrandMatch | null {
 }
 
 /** As fuzzyMatchBrandDetailed, returning only the brand id. */
-export function fuzzyMatchBrand(haystacks: string[], brands: BrandRow[]): string | null {
+export function fuzzyMatchBrand(haystacks: string[], brands: readonly BrandRow[]): string | null {
   return fuzzyMatchBrandDetailed(haystacks, brands)?.brandId ?? null;
 }
 
@@ -1914,24 +1914,128 @@ export async function loadBrands(db: D1Database): Promise<BrandRow[]> {
   return rows.results;
 }
 
+// ─── Cached brand catalog ────────────────────────────────────────
+// loadBrands reads every brands row (~124K). Batch tools that call it once
+// per request (brand-link-cleanup runValidate, idp re-attribution) drove
+// 10,392 loads/24h = ~1.29B D1 rows read — 74% of the platform's reads
+// (prod diagnostics, 2026-10-14). loadBrandsCached serves the same rows
+// from an isolate memo (10 min), then KV (1h), then D1. Worst-case staleness
+// is ~70 min (a memo filled from a KV entry about to expire). That is fine
+// for its callers: a brand added in that window just isn't matched until the
+// next refresh. Callers that need the live catalog keep using loadBrands.
+
+/** KV key for the encoded catalog. Bump the version if the tuple layout changes. */
+export const BRAND_CATALOG_KV_KEY = "brands:catalog:v1";
+const BRAND_CATALOG_KV_TTL_S = 3600;
+const BRAND_CATALOG_MEMO_TTL_MS = 10 * 60 * 1000;
+/** KV's value cap is 25 MiB; skip the put well below it rather than fail. */
+const BRAND_CATALOG_KV_MAX_BYTES = 20 * 1024 * 1024;
+
+/** Compact row encoding: [id, name, canonical_domain, tier, tranco_rank]. */
+type BrandTuple = [string, string, string, string | null, number | null];
+
+let catalogMemo: { rows: readonly BrandRow[]; at: number } | null = null;
+let catalogInflight: Promise<readonly BrandRow[]> | null = null;
+
+/** Test hook: drop the isolate memo so each test sees its own stub catalog. */
+export function resetBrandCatalogCacheForTest(): void {
+  catalogMemo = null;
+  catalogInflight = null;
+}
+
+export function encodeBrandCatalog(rows: readonly BrandRow[]): string {
+  return JSON.stringify(rows.map((b): BrandTuple =>
+    [b.id, b.name, b.canonical_domain, b.tier ?? null, b.tranco_rank ?? null]));
+}
+
+/** Returns null on any malformed payload (caller falls through to D1). */
+export function decodeBrandCatalog(raw: string): BrandRow[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out: BrandRow[] = [];
+  for (const t of parsed) {
+    if (!Array.isArray(t) || t.length !== 5) return null;
+    const [id, name, canonical, tier, rank] = t as unknown[];
+    if (typeof id !== "string" || typeof name !== "string" || typeof canonical !== "string") return null;
+    if (tier !== null && typeof tier !== "string") return null;
+    if (rank !== null && typeof rank !== "number") return null;
+    out.push({ id, name, canonical_domain: canonical, tier, tranco_rank: rank });
+  }
+  return out;
+}
+
+async function loadBrandCatalogFromKvOrDb(env: { DB: D1Database; CACHE?: KVNamespace }): Promise<BrandRow[]> {
+  const kv = env.CACHE;
+  if (kv) {
+    try {
+      const raw = await kv.get(BRAND_CATALOG_KV_KEY, "text");
+      const rows = raw ? decodeBrandCatalog(raw) : null;
+      if (rows && rows.length > 0) return rows;
+    } catch {
+      // KV unavailable — fall through to D1.
+    }
+  }
+  const rows = await loadBrands(env.DB);
+  if (kv && rows.length > 0) {
+    try {
+      const bytes = new TextEncoder().encode(encodeBrandCatalog(rows));
+      if (bytes.byteLength <= BRAND_CATALOG_KV_MAX_BYTES) {
+        await kv.put(BRAND_CATALOG_KV_KEY, bytes, { expirationTtl: BRAND_CATALOG_KV_TTL_S });
+      }
+    } catch {
+      // Best-effort — the next miss retries the put.
+    }
+  }
+  return rows;
+}
+
+/**
+ * The brand catalog, up to ~70 min stale: isolate memo → KV → D1 (loadBrands).
+ * Never throws because of the cache; a D1 failure still propagates, exactly
+ * as loadBrands would. Concurrent callers in one isolate share one load.
+ * The returned array is shared across requests, so it is frozen.
+ */
+export async function loadBrandsCached(env: { DB: D1Database; CACHE?: KVNamespace }): Promise<readonly BrandRow[]> {
+  const memo = catalogMemo;
+  if (memo && Date.now() - memo.at < BRAND_CATALOG_MEMO_TTL_MS) return memo.rows;
+  catalogMemo = null; // release the stale catalog (and its WeakMap index) for GC
+  if (!catalogInflight) {
+    const p = loadBrandCatalogFromKvOrDb(env).then(
+      (loaded): readonly BrandRow[] => {
+        const rows = Object.freeze(loaded);
+        if (catalogInflight === p && rows.length > 0) catalogMemo = { rows, at: Date.now() };
+        return rows;
+      },
+    ).finally(() => {
+      if (catalogInflight === p) catalogInflight = null;
+    });
+    catalogInflight = p;
+  }
+  return catalogInflight;
+}
+
 /**
  * Enrich threats that have a malicious_domain but no target_brand_id.
  * Matches against known brands and updates threats in-place.
  */
-export async function enrichBrands(db: D1Database): Promise<{ matched: number; total: number }> {
-  const brands = await loadBrands(db);
-  if (brands.length === 0) return { matched: 0, total: 0 };
-
-  // Get threats missing brand assignment
+export async function enrichBrands(db: D1Database, cache?: KVNamespace): Promise<{ matched: number; total: number }> {
+  // Candidates FIRST: when there are none, the catalog isn't needed at all.
   const rows = await db.prepare(
     `SELECT id, malicious_domain, malicious_url, technique FROM threats
      WHERE malicious_domain IS NOT NULL AND target_brand_id IS NULL
      LIMIT 500`,
   ).all<{ id: string; malicious_domain: string; malicious_url: string | null; technique: string | null }>();
-  const brandById = new Map(brands.map((b) => [b.id, b]));
-
   const total = rows.results.length;
   if (total === 0) return { matched: 0, total: 0 };
+
+  const brands = await loadBrandsCached({ DB: db, CACHE: cache });
+  if (brands.length === 0) return { matched: 0, total: 0 };
+  const brandById = new Map(brands.map((b) => [b.id, b]));
 
   let matched = 0;
 

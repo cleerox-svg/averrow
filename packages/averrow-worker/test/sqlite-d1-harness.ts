@@ -42,12 +42,12 @@ try {
 export const hasSqlite = (): boolean => DatabaseSync !== null;
 
 /** Fresh in-memory DB with the migration-derived shape of `tables`. */
-export function openDerivedDb(tables: string[]): SqliteDb {
+export function openDerivedDb(tables: string[], opts: { indexes?: string[] } = {}): SqliteDb {
   const db = new DatabaseSync!(":memory:");
   // The derived schema contains only the tables under test; the real
   // schema's FKs point at tables that are deliberately not materialised.
   db.exec("PRAGMA foreign_keys = OFF");
-  for (const stmt of deriveSchema(tables).ddl) db.exec(stmt);
+  for (const stmt of deriveSchema(tables, opts).ddl) db.exec(stmt);
   return db;
 }
 
