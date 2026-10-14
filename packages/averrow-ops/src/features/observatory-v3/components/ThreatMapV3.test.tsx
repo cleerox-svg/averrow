@@ -46,7 +46,7 @@ vi.mock('maplibre-gl', () => ({
   default: { Map: FakeMap, NavigationControl: class {} },
 }));
 vi.mock('@deck.gl/mapbox', () => ({ MapboxOverlay: FakeOverlay }));
-vi.mock('@deck.gl/layers', () => ({ ScatterplotLayer: FakeLayer, PathLayer: FakeLayer }));
+vi.mock('@deck.gl/layers', () => ({ ScatterplotLayer: FakeLayer, PathLayer: FakeLayer, GeoJsonLayer: FakeLayer, TextLayer: FakeLayer }));
 vi.mock('@deck.gl/aggregation-layers', () => ({ HeatmapLayer: FakeLayer }));
 vi.mock('@/lib/trips-layer', () => ({ TripsLayer: FakeLayer }));
 
@@ -180,24 +180,6 @@ describe('ThreatMapV3 layer memoisation', () => {
     const before = overlays[0].props.layers;
     rerender(<ThreatMapV3 {...base} threats={[{ ...t }]} />);
     expect(overlays[0].props.layers).not.toBe(before);
-  });
-});
-
-describe('ThreatMapV3 selection card', () => {
-  const t = { lat: 1, lng: 2, threat_count: 4, top_severity: 'high', critical: 0, high: 4, medium: 0, low: 0, country_code: 'DE', top_threat_type: 'phishing' };
-
-  it('renders a card for a URL-restored selection, closes on Esc and via the labelled button', async () => {
-    const onSelect = vi.fn();
-    render(<ThreatMapV3 {...base} threats={[t]} selection={{ kind: 'node', node: t }} onSelect={onSelect} />);
-    act(() => lastMap().emit('style.load'));
-    const card = await screen.findByRole('dialog', { name: 'Threat node details' });
-    expect(card).toHaveTextContent('4 threats');
-
-    await userEvent.keyboard('{Escape}');
-    expect(onSelect).toHaveBeenCalledWith(null);
-
-    await userEvent.click(screen.getByRole('button', { name: 'Close details' }));
-    expect(onSelect).toHaveBeenCalledTimes(2);
   });
 });
 

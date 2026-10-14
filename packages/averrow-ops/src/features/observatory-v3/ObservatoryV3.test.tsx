@@ -7,6 +7,8 @@ import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 const fetchMock = vi.fn();
 const getMock = vi.fn();
+const authState = { user: { role: 'super_admin' as string } };
+vi.mock('@/lib/auth', () => ({ useAuth: () => authState }));
 vi.mock('@/lib/api', () => ({ api: { fetch: (...a: unknown[]) => fetchMock(...a), get: (...a: unknown[]) => getMock(...a) } }));
 
 const mapProps = vi.fn();

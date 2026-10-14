@@ -44,7 +44,7 @@ import {
 } from '../lib/trips';
 import { AnimationClock } from '../lib/animation-clock';
 import { classifyMapError, type MapErrorLike } from '../lib/map-errors';
-import { hasValidPoint, hasValidArc } from '../lib/geo';
+import { hasValidPoint, hasValidArc, centerLngForFreeArea } from '../lib/geo';
 import { usePrefersReducedMotion } from '../lib/use-motion';
 import {
   useDeckFrame, PulseExtension, RingExtension, RingBuffer, ringBufferLayerProps, ImpactRingSpawner,
@@ -52,10 +52,14 @@ import {
   type PulseExtensionProps, type RingExtensionProps, type ArrivalEvent,
 } from '../anim';
 import {
-  selectionKey, selectionLngLat, type MapSelection,
+  clampCardPosition, type MapSelection,
 } from '../lib/selection';
 import { nodeKey, arcKey, type MapMode } from '../lib/url-state';
-import { MapDetailCard } from './MapDetailCard';
+import {
+  buildLensBaseLayers, buildLensLayers, lensNeedsFrame,
+  type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
+} from '../layers/lens-layers';
+import type { PingItem } from '../lib/lens/live';
 
 export type { MapMode } from '../lib/url-state';
 
@@ -63,6 +67,7 @@ export type { MapMode } from '../lib/url-state';
 interface TooltipInfo {
   x: number;
   y: number;
+  lens?: LensHover;
   threat?: ThreatPoint;
   arc?: ArcData;
   bot?: BotDensityPoint;
@@ -93,6 +98,15 @@ const glowRadius = (d: ThreatPoint) => Math.sqrt(Math.max(1, d.threat_count)) * 
 const bloomColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 6);
 const glowColor = (d: ThreatPoint) => getSeverityColor(d.top_severity || 'low', 12);
 const nodePosition = (d: ThreatPoint): [number, number] => [d.lng, d.lat];
+
+/** Lens data + selection the map draws (everything except per-map concerns the map adds itself). */
+export type LensMapProps = Omit<LensLayerInput, 'reducedMotion' | 'isMobile' | 'pick'>;
+
+/** A batch of live pings. A new `seq` spawns the items' rings once. */
+export interface PingBatch {
+  seq: number;
+  items: readonly PingItem[];
+}
 
 export interface MapFocus {
   id: number;
@@ -127,6 +141,11 @@ export interface ThreatMapV3Props {
    * and detail cards stay clear of it.
    */
   controlRightInset?: number;
+  /**
+   * Width (px) of the left rail overlaying the map (desktop). Camera moves centre
+   * the target in the free area between it and the right inset, not behind the rail.
+   */
+  controlLeftInset?: number;
   /** Currently selected node / arc (resolved against the current data), or null. */
   selection?: MapSelection | null;
   /** Called with a new selection on click/tap, or null to clear (empty-map click). */
@@ -136,6 +155,16 @@ export interface ThreatMapV3Props {
    * passes its own to drive play / pause / speed / seek.
    */
   clock?: AnimationClock;
+  /** Phase B lens data. Omit (or all layers off) for the plain threat map. */
+  lens?: LensMapProps;
+  /** A lens object was clicked / tapped on the map. */
+  onLensPick?: (pick: LensPick) => void;
+  /** New live threats: a sonar ring at each origin (static highlight under reduced motion). */
+  pings?: PingBatch | null;
+  /** Called every animation frame with the replay playhead (clock units) — for DOM-only readouts, never React state. */
+  onPlayhead?: (t: number) => void;
+  /** Bump to repaint once after a seek while the loop is not running (reduced motion / hidden tab). */
+  seekVersion?: number;
   /**
    * Camera request. A NEW `id` flies the map to (lng, lat) (MapLibre flyTo, <= 800ms;
    * jumpTo under reduced motion or `instant`). Used when the selection did not
@@ -217,8 +246,9 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
   mapMode, period, heatmapData: heatmapIn = EMPTY_HEAT,
-  botDensity, botGlobalAvg = null, controlRightInset = 0,
+  botDensity, botGlobalAvg = null, controlRightInset = 0, controlLeftInset = 0,
   selection = null, onSelect, clock: clockProp, onFatal, focus = null,
+  lens, onLensPick, pings = null, onPlayhead, seekVersion = 0,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -240,7 +270,6 @@ function ThreatMapV3Inner({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [tileIssue, setTileIssue] = useState(false);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [anchor, setAnchor] = useState<{ key: string; x: number; y: number } | null>(null);
 
   // Colour stops are re-resolved after the theme attribute lands in the DOM.
   const { resolvedTheme } = useTheme();
@@ -250,15 +279,14 @@ function ThreatMapV3Inner({
 
   // Stable handler bag: layers close over THIS, never over props, so a parent
   // re-render (e.g. onSelect identity) can't invalidate the layer set.
-  const latest = useRef({ onSelect, controlRightInset });
-  latest.current = { onSelect, controlRightInset };
+  const latest = useRef({ onSelect, controlRightInset, controlLeftInset, onLensPick, onPlayhead });
+  latest.current = { onSelect, controlRightInset, controlLeftInset, onLensPick, onPlayhead };
   const handlers = useMemo(() => ({
     hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
     hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
     clickNode: (info: Pick<ThreatPoint>) => {
       if (!info.object) return false;
       const sel: MapSelection = { kind: 'node', node: info.object };
-      setAnchor({ key: selectionKey(sel), x: info.x, y: info.y });
       setTooltip(null);
       latest.current.onSelect?.(sel);
       return true;
@@ -266,9 +294,14 @@ function ThreatMapV3Inner({
     clickArc: (info: Pick<ArcData>) => {
       if (!info.object) return false;
       const sel: MapSelection = { kind: 'arc', arc: info.object };
-      setAnchor({ key: selectionKey(sel), x: info.x, y: info.y });
       setTooltip(null);
       latest.current.onSelect?.(sel);
+      return true;
+    },
+    hoverLens: (hover: LensHover | null) => setTooltip(hover ? { x: hover.x, y: hover.y, lens: hover } : null),
+    clickLens: (pick: LensPick) => {
+      setTooltip(null);
+      latest.current.onLensPick?.(pick);
       return true;
     },
     hoverBot: (info: Pick<BotDensityPoint>) => {
@@ -314,7 +347,9 @@ function ThreatMapV3Inner({
       map = new maplibregl.Map({
         container,
         style: MAP_STYLE,
-        center: isMobileRef.current ? [-30, 30] : [10, 25],
+        center: isMobileRef.current
+          ? [-30, 30]
+          : [centerLngForFreeArea(10, latest.current.controlLeftInset, latest.current.controlRightInset, 2.2), 25],
         zoom: isMobileRef.current ? 0.6 : 2.2,
         pitch: isMobileRef.current ? 0 : 20,
         bearing: 0,
@@ -668,14 +703,74 @@ function ThreatMapV3Inner({
     animTime,
   }), [ringBuffer, isMobile]);
 
+  // ─── Phase B lenses ───────────────────────────────────────
+  const lensInput = useMemo<LensLayerInput | null>(() => {
+    if (!lens || mapMode !== 'global') return null;
+    const pick: LensPickHandlers = { hover: handlers.hoverLens, click: handlers.clickLens };
+    return { ...lens, reducedMotion, isMobile, pick };
+  }, [lens, mapMode, reducedMotion, isMobile, handlers]);
+  const lensBase = useMemo(() => (lensInput ? buildLensBaseLayers(lensInput) : []), [lensInput]);
+  const lensAnimating = !!lensInput && !reducedMotion && lensNeedsFrame(lensInput);
+
+  // Movement departures / landings: their own ring pool, fed by the replay clock like the particles.
+  const movementOn = !!lensInput && lensInput.layers.movement && !!lensInput.movement && lensInput.movement.ringEvents.length > 0 && !reducedMotion;
+  const [moveBuffer] = useState(() => new RingBuffer(128));
+  const moveSpawner = useMemo(() => new ImpactRingSpawner(moveBuffer, { duration: 2.2, cooldown: 0.2, maxPerFrame: 4 }), [moveBuffer]);
+  const moveScheduler = useMemo(
+    () => new ArrivalScheduler(lensInput?.movement?.ringEvents ?? [], CYCLE_LENGTH),
+    [lensInput?.movement],
+  );
+  useEffect(() => { moveBuffer.clear(); moveSpawner.reset(); }, [moveScheduler, moveBuffer, moveSpawner]);
+
+  // Live pings: sonar rings at the origin of newly-arrived threats.
+  const [pingBuffer] = useState(() => new RingBuffer(64));
+  const pingSpawner = useMemo(() => new ImpactRingSpawner(pingBuffer, { duration: 2.4, cooldown: 0.8, maxPerFrame: 4, alpha: 240 }), [pingBuffer]);
+  /** Reduced motion: a brief, non-expanding highlight instead of the sonar ring. */
+  const [staticPings, setStaticPings] = useState<Array<{ id: string; position: [number, number]; color: [number, number, number, number] }>>([]);
+
+  const makeRingLayer = useCallback((id: string, buffer: RingBuffer, radiusPx: number, width: number, animTime: number) =>
+    new ScatterplotLayer<number, RingExtensionProps<number>>({
+      id,
+      ...ringBufferLayerProps(buffer),
+      getRadius: radiusPx,
+      radiusUnits: 'pixels',
+      stroked: true,
+      filled: false,
+      lineWidthUnits: 'pixels',
+      getLineWidth: width,
+      pickable: false,
+      extensions: RING_EXT,
+      ringFrom: 0.1,
+      ringTo: 1,
+      animTime,
+    }), []);
+
   /** Latest animation seconds, so non-frame pushes (data changes) stay in phase. */
   const animSecondsRef = useRef(0);
   const compose = useCallback((seconds: number, t: number): Layer[] => {
-    const layers: Layer[] = [...makeGlow(seconds), ...staticLayers];
+    const layers: Layer[] = [...lensBase, ...makeGlow(seconds), ...staticLayers];
+    if (lensInput) layers.push(...buildLensLayers(lensInput, { seconds, t }));
     if (particlesOn) layers.push(makeTrips(t));
     if (ringsOn) layers.push(makeRings(seconds));
+    if (movementOn) layers.push(makeRingLayer('movement-rings', moveBuffer, 26, 1.5, seconds));
+    if (mapMode === 'global') layers.push(makeRingLayer('live-pings', pingBuffer, isMobile ? 26 : 34, 2, seconds));
+    if (staticPings.length > 0) {
+      layers.push(new ScatterplotLayer<{ id: string; position: [number, number]; color: [number, number, number, number] }>({
+        id: 'live-pings-static',
+        data: staticPings,
+        getPosition: d => d.position,
+        getLineColor: d => d.color,
+        getRadius: 16,
+        radiusUnits: 'pixels',
+        stroked: true,
+        filled: false,
+        lineWidthUnits: 'pixels',
+        getLineWidth: 2,
+        pickable: false,
+      }));
+    }
     return layers;
-  }, [makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings]);
+  }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings]);
 
   // ─── Push layers to deck (data / style changes, and the static frame) ──
   useEffect(() => {
@@ -689,42 +784,58 @@ function ThreatMapV3Inner({
       map.addControl(overlay as unknown as maplibregl.IControl);
       deckRef.current = overlay;
     }
-  }, [mapLoaded, compose, clock, handlers, isMobile]);
+    // seekVersion: a scrub while the loop is stopped still repaints the new playhead.
+  }, [mapLoaded, compose, clock, handlers, isMobile, seekVersion]);
+
+  // New pings: spawn once per batch.
+  const lastPingSeq = useRef(0);
+  useEffect(() => {
+    if (!pings || pings.seq === lastPingSeq.current) return;
+    lastPingSeq.current = pings.seq;
+    const placed = pings.items.filter((p): p is PingItem & { position: [number, number] } => p.position !== null);
+    if (placed.length === 0 || mapMode !== 'global') return;
+    if (reducedMotion) {
+      setStaticPings(placed.map(p => ({ id: p.id, position: p.position, color: p.color })));
+      const timer = setTimeout(() => setStaticPings([]), 1600);
+      return () => clearTimeout(timer);
+    }
+    pingSpawner.spawn(
+      placed.map(p => ({ time: 0, lng: p.position[0], lat: p.position[1], color: p.color, key: `${p.position[0].toFixed(2)},${p.position[1].toFixed(2)}` })),
+      animSecondsRef.current,
+    );
+  }, [pings, pingSpawner, reducedMotion, mapMode]);
 
   // ─── The one animation loop ───────────────────────────────
   const prevPlayheadRef = useRef<number | null>(null);
   const arrivalsScratch = useRef<ArrivalEvent[]>([]);
+  const moveScratch = useRef<ArrivalEvent[]>([]);
   const onFrame = useCallback((t: number, frame: { seconds: number; dt: number }) => {
     animSecondsRef.current = frame.seconds;
+    latest.current.onPlayhead?.(t);
     const overlay = deckRef.current;
     if (!overlay) return;
-    if (ringsOn) {
+    if (ringsOn || movementOn) {
       const prev = frame.dt > 0 ? prevPlayheadRef.current : null; // first frame after (re)start has no baseline
       prevPlayheadRef.current = t;
       if (prev !== null) {
-        const arrivals = arrivalsScratch.current;
-        arrivals.length = 0;
-        scheduler.collect(prev, t, arrivals);
-        if (arrivals.length > 0) spawner.spawn(arrivals, frame.seconds);
+        if (ringsOn) {
+          const arrivals = arrivalsScratch.current;
+          arrivals.length = 0;
+          scheduler.collect(prev, t, arrivals);
+          if (arrivals.length > 0) spawner.spawn(arrivals, frame.seconds);
+        }
+        if (movementOn) {
+          const moves = moveScratch.current;
+          moves.length = 0;
+          moveScheduler.collect(prev, t, moves);
+          if (moves.length > 0) moveSpawner.spawn(moves, frame.seconds);
+        }
       }
     }
     overlay.setProps({ layers: compose(frame.seconds, t) });
-  }, [ringsOn, scheduler, spawner, compose]);
+  }, [ringsOn, movementOn, scheduler, spawner, moveScheduler, moveSpawner, compose]);
 
-  useDeckFrame(clock, mapLoaded && (particlesOn || pulseOn), onFrame, { targetRef: rootRef });
-
-  // ─── Detail-card anchor: use the click point, else project the selection ──
-  const selKey = selection ? selectionKey(selection) : null;
-  useEffect(() => {
-    if (!selection || !selKey) return;
-    if (anchor?.key === selKey) return;
-    const map = mapRef.current;
-    if (!mapLoaded || !map) return;
-    const at = selectionLngLat(selection);
-    if (!at) return; // nothing placeable: no card anchor (and never a NaN projection)
-    const p = map.project(at);
-    setAnchor({ key: selKey, x: p.x, y: p.y });
-  }, [selKey, mapLoaded]);
+  useDeckFrame(clock, mapLoaded && (particlesOn || pulseOn || lensAnimating), onFrame, { targetRef: rootRef });
 
   // ─── Camera fly-to (non-click selections) ─────────────────
   const focusId = focus?.id ?? null;
@@ -732,17 +843,16 @@ function ThreatMapV3Inner({
     const map = mapRef.current;
     if (!map || !mapLoaded || !focus) return;
     if (!Number.isFinite(focus.lng) || !Number.isFinite(focus.lat)) return;
+    const zoom = Math.max(map.getZoom(), focus.zoom ?? 3);
+    // Aim at the middle of the area the rail and drawer leave free, so the target isn't behind either.
     const target = {
-      center: [focus.lng, focus.lat] as [number, number],
-      zoom: Math.max(map.getZoom(), focus.zoom ?? 3),
-      padding: { top: 0, bottom: 0, left: 0, right: latest.current.controlRightInset },
+      center: [centerLngForFreeArea(focus.lng, latest.current.controlLeftInset, latest.current.controlRightInset, zoom), focus.lat] as [number, number],
+      zoom,
     };
     if (reducedMotion || focus.instant) map.jumpTo(target);
     else map.flyTo({ ...target, duration: FLY_DURATION_MS, essential: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per request id
   }, [focusId, mapLoaded]);
-
-  const cardAnchor = selection && anchor?.key === selKey ? anchor : null;
 
   return (
     <div ref={rootRef} className="relative w-full h-full">
@@ -751,19 +861,18 @@ function ThreatMapV3Inner({
       {tileIssue && (
         <div
           role="status"
-          className="absolute left-1/2 -translate-x-1/2 top-3 px-3 py-1 rounded-full font-mono text-[10px] pointer-events-none"
-          style={{ background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)', zIndex: 30 }}
+          className="absolute left-1/2 -translate-x-1/2 px-3 py-1 rounded-full font-mono text-[10px] pointer-events-none"
+          style={{ top: isMobile ? 156 : 96, background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)', zIndex: 30 }}
         >
           Some map tiles are loading slowly
         </div>
       )}
 
-      {tooltip && !selection && (
+      {tooltip && (!selection || tooltip.lens) && (
         <div
           className="absolute z-50 pointer-events-none rounded-lg px-3 py-2 text-xs max-w-xs"
           style={{
-            left: Math.max(4, Math.min(tooltip.x + 10, size.width - 260)),
-            top: Math.max(4, Math.min(tooltip.y + 10, size.height - 110)),
+            ...clampCardPosition({ x: tooltip.x, y: tooltip.y }, { width: 260, height: 110 }, { width: size.width, height: size.height }, 4, 10),
             background: 'var(--bg-card-deep)',
             border: '1px solid var(--border-base)',
             backdropFilter: 'blur(12px)',
@@ -794,6 +903,15 @@ function ThreatMapV3Inner({
               <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
             </>
           )}
+          {tooltip.lens && (
+            <>
+              <div className="font-mono font-bold" style={{ color: 'var(--text-primary)' }}>{tooltip.lens.title}</div>
+              {tooltip.lens.lines.map((line, i) => (
+                <div key={i} className="mt-0.5" style={{ color: i === 0 ? 'var(--text-tertiary)' : 'var(--text-muted)' }}>{line}</div>
+              ))}
+              <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>Click for details</div>
+            </>
+          )}
           {tooltip.bot && (
             <div className="font-mono" style={{ color: 'var(--text-primary)' }}>
               {botDensityTooltip(tooltip.bot, botGlobalAvg)}
@@ -816,15 +934,6 @@ function ThreatMapV3Inner({
             </>
           )}
         </div>
-      )}
-
-      {selection && cardAnchor && (
-        <MapDetailCard
-          selection={selection}
-          anchor={cardAnchor}
-          bounds={{ width: size.width, height: size.height, rightInset: controlRightInset }}
-          onClose={() => latest.current.onSelect?.(null)}
-        />
       )}
     </div>
   );
