@@ -68,7 +68,7 @@ import { diffLive, announcePings } from './lib/lens/live';
 import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
-import { useCanSeeTakedowns } from './lib/use-takedown-access';
+import { TAKEDOWN_ROLE_NOTE, useCanSeeTakedowns, useTakedownAccess } from './lib/use-takedown-access';
 import { computeLayout, cameraInsets, chipPlacement, initialSheetPx, DOCK_WIDTH, TIMELINE_H } from './lib/layout';
 import { useElementSize } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
@@ -125,6 +125,16 @@ export function ObservatoryV3() {
   // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
   // sees the lens's default measure whatever the URL says, and no takedown request is ever made.
   const measure: Measure = state.measure === 'takedowns' && !canSeeTakedowns ? 'index' : state.measure;
+  // ...and the link itself is set right, not just ignored: the address bar (and anything shared from it) stops claiming
+  // a view this role cannot see, replacing the entry so Back does not return to it, and a note says what happened.
+  const takedownAccessNow = useTakedownAccess();
+  const [takedownRefusedOn, setTakedownRefusedOn] = useState<LensId | null>(null);
+  useEffect(() => {
+    if (state.measure !== 'takedowns' || takedownAccessNow !== 'denied') return;
+    setTakedownRefusedOn(state.lens);
+    update({ measure: 'index' }); // `update` replaces the history entry
+  }, [state.measure, state.lens, takedownAccessNow, update]);
+  const takedownNote = takedownRefusedOn === state.lens && state.measure !== 'takedowns' ? TAKEDOWN_ROLE_NOTE : undefined;
   const takedownsOn = measure === 'takedowns';
   const tdWindow = takedownPeriod(state.period);
   const mapMode = mapModeOf(state);
@@ -277,11 +287,11 @@ export function ObservatoryV3() {
     movements: L.movements,
     actors: L.actorList,
     overindex: L.overindex,
-    takedownCountries: L.takedownCountries,
+    takedownCountries: L.takedownCountryModel?.rows,
     takedownProviders: L.takedownProviders,
     takedownWindow: tdWindow,
     takedownCountriesError: !!L.takedownCountriesQ.error,
-  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex, L.takedownCountries, L.takedownProviders, tdWindow, L.takedownCountriesQ.error]);
+  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex, L.takedownCountryModel, L.takedownProviders, tdWindow, L.takedownCountriesQ.error]);
 
   const drill = useMemo<DrillTarget | null>(
     () => (mapMode !== 'heatmap' && mapMode !== 'bot_density' ? resolveDrill({ node: state.node, arc: state.arc, sel: state.sel }, drillData) : null),
@@ -614,6 +624,7 @@ export function ObservatoryV3() {
         onSelect={handlePanelSelect}
         placement={placement}
         question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
+        note={takedownNote}
       />
     ) : (
       <SidePanel
@@ -827,6 +838,7 @@ export function ObservatoryV3() {
         summary={summary}
         maxPanelHeight={legendMaxPanel}
         onOpenChange={setLegendOpen}
+        notice={takedownNote}
         style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
       />}
 

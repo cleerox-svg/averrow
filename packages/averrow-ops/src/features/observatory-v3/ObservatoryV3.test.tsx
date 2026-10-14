@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 const fetchMock = vi.fn();
@@ -533,6 +533,49 @@ describe('ObservatoryV3 takedown outcomes (manage_takedowns)', () => {
     expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
     expect(screen.queryByRole('group', { name: 'Hosting measure' })).not.toBeInTheDocument();
     expect(await screen.findByRole('region', { name: 'Top hosting providers' })).toBeInTheDocument();
+  });
+
+  it('a Takedowns link opened by a role that cannot see it is set right: the URL drops it (replace) and a note says why', async () => {
+    authState.user.role = 'sales';
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns&period=30d');
+    await waitFor(() => expect(search).not.toContain('measure=takedowns'));
+    expect(search).toContain('lens=baseline');
+    expect(search).toContain('period=30d');
+    // the legend and the panel both carry the one-line note
+    expect((await screen.findAllByText(/shown to roles that manage takedowns/)).length).toBeGreaterThanOrEqual(1);
+    unmount();
+    authState.user.role = 'super_admin';
+  });
+
+  it('...and Back does not return to it (the entry is replaced, not pushed)', async () => {
+    authState.user.role = 'support';
+    routeTd();
+    let navType = '';
+    const Spy = () => { const l = useLocation(); const t = useNavigationType(); if (!l.search.includes('measure=takedowns')) navType = t; return null; };
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={['/observatory?lens=hosting&measure=takedowns']}><Spy /><ObservatoryV3 /></MemoryRouter></QueryClientProvider>);
+    await waitFor(() => expect(navType).toBe('REPLACE'));
+    authState.user.role = 'super_admin';
+  });
+
+  it('a holder keeps the link, and sees no note', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/takedowns-geo')).toBe(true));
+    expect(search).toContain('measure=takedowns');
+    expect(screen.queryByText(/shown to roles that manage takedowns/)).not.toBeInTheDocument();
+  });
+
+  it('nothing is rewritten while the signed-in user is not known yet', async () => {
+    const saved = authState.user;
+    (authState as unknown as { user: null }).user = null;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/stats')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(search).toContain('measure=takedowns');
+    (authState as unknown as { user: typeof saved }).user = saved;
   });
 
   it('a country drawer reads takedowns by country for a holder, on any lens, and for nobody else', async () => {

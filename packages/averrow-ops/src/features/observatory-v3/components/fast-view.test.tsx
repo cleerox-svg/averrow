@@ -116,6 +116,15 @@ describe('VelocitySection (legend)', () => {
     expect(screen.getByText(/Always all sources/)).toBeInTheDocument();
     expect(screen.getByText(/5 without a placeable country not shown/)).toBeInTheDocument();
   });
+  it('the very-fast class is described by a ring, not only by the pulse (it must read under reduced motion)', () => {
+    const model = buildVelocityModel([{ lat: 1, lng: 2, threat_count: 9, country_code: 'NL', very_fast: 6, fast: 3, precision: 'country' }]);
+    wrap(<VelocitySection s={{ model, q }} />);
+    const veryFast = screen.getByText(/Very fast: live within 24h/);
+    expect(veryFast).toHaveTextContent(/ring/);
+    expect(veryFast).toHaveTextContent(/pulse when motion is on/);
+    expect(screen.getByText(/Fast: live within 72h/)).toHaveTextContent(/no ring/);
+    expect(screen.queryByText(/These pulse/)).not.toBeInTheDocument();
+  });
   it('an empty model is "coverage still filling", never "none"', () => {
     wrap(<VelocitySection s={{ model: buildVelocityModel([]), q }} />);
     expect(screen.getByRole('status')).toHaveTextContent(VELOCITY_FILLING);

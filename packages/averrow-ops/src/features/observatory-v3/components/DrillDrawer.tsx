@@ -259,7 +259,7 @@ function TakedownRowSection({ row, window }: { row: TakedownGeoRow; window?: str
  * request is never made; holders see the success rate once enough takedowns resolved, else why not.
  */
 function TakedownSection({ what, canSee, rows, row, error, window }: {
-  what: 'country'; canSee: boolean; rows: readonly TakedownGeoRow[] | undefined; row: TakedownGeoRow | null; error: boolean; window?: string;
+  what: 'country'; canSee: boolean; rows: ReadonlyMap<string, TakedownGeoRow> | undefined; row: TakedownGeoRow | null; error: boolean; window?: string;
 }) {
   const title = `Takedowns${window ? ` · ${window}` : ''}`;
   if (!canSee) {
@@ -302,7 +302,7 @@ function CountryBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<DrillT
         what="country"
         canSee={canSeeTakedowns}
         rows={data.takedownCountries}
-        row={data.takedownCountries?.find(r => r.key === f.code) ?? null}
+        row={data.takedownCountries?.get(f.code) ?? null}
         error={!!data.takedownCountriesError}
         window={data.takedownWindow}
       />

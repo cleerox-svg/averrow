@@ -61,7 +61,7 @@ export interface LegendSectionProps {
 const LABEL = 'font-mono text-[10px] uppercase tracking-wider';
 const TEXT = 'font-mono text-[10px]';
 
-function Swatch({ color, ring, dashed, square }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean }) {
+function Swatch({ color, ring, dashed, square, halo }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean; halo?: boolean }) {
   return (
     <span
       aria-hidden
@@ -70,7 +70,9 @@ function Swatch({ color, ring, dashed, square }: { color: string; ring?: boolean
         width: 10, height: 10, borderRadius: square ? 2 : '50%', flexShrink: 0,
         background: ring ? 'transparent' : color,
         border: ring || dashed ? `1.5px ${dashed ? 'dashed' : 'solid'} ${color}` : 'none',
-        boxShadow: '0 0 0 1px rgba(0,0,0,0.3)',
+        // `halo`: a filled dot with a separate ring around it (the very-fast nodes' static ring on the map).
+        boxShadow: halo ? `0 0 0 2px var(--bg-card-deep), 0 0 0 3.5px ${color}` : '0 0 0 1px rgba(0,0,0,0.3)',
+        ...(halo ? { margin: 3 } : null),
       }}
     />
   );
@@ -162,8 +164,8 @@ export function HostingSection({ s }: { s: LegendSectionProps['hosting'] }) {
             <Row swatch={<Swatch color={css(TREND_COLORS.rising)} />}>Rising this week</Row>
             <Row swatch={<Swatch color={css(TREND_COLORS.falling)} />}>Falling this week</Row>
             <Row swatch={<Swatch color={css(TREND_COLORS.flat)} />}>Steady</Row>
-            <Row swatch={<Swatch color="rgb(248, 113, 113)" dashed />}>Bulletproof host (rotating dashes)</Row>
-            {m.rings.some(r => r.takedownShare !== null) && <Row swatch={<Swatch color="rgb(60, 184, 120)" ring />}>Green arc: share of resolved takedowns that succeeded</Row>}
+            <Row swatch={<Swatch color="var(--sev-critical)" dashed />}>Bulletproof host (rotating dashes)</Row>
+            {m.rings.some(r => r.takedownShare !== null) && <Row swatch={<Swatch color="var(--green)" ring />}>Green arc: share of resolved takedowns that succeeded</Row>}
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Ring size = active threats · {m.rings.length} providers
@@ -186,7 +188,7 @@ function TakedownScale({ what }: { what: string }) {
         <span>0% taken down</span><span>100%</span>
       </div>
       <ul className="list-none p-0 m-0">
-        <Row swatch={<Swatch color={css(TAKEDOWN_SMALL_OUTLINE)} square />}>
+        <Row swatch={<Swatch color={css(TAKEDOWN_SMALL_OUTLINE)} />}>
           Grey: fewer than {TAKEDOWN_MIN_RESOLVED} resolved takedowns, too few for a rate ({what} left out of the ranking)
         </Row>
       </ul>
@@ -222,7 +224,7 @@ export function TakedownProviderSection({ s, window }: { s: LegendSectionProps['
         <>
           <TakedownScale what="hosts" />
           <ul className="list-none p-0 m-0">
-            <Row swatch={<Swatch color="rgb(60, 184, 120)" ring />}>Green arc: the same share, as a fraction of the ring</Row>
+            <Row swatch={<Swatch color="var(--green)" ring />}>Green arc: the same share, as a fraction of the ring</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Ring size = active threats. Share = taken down ÷ (taken down + refused + expired), for takedowns submitted in the last {window}.
@@ -319,8 +321,8 @@ export function VelocitySection({ s }: { s: LegendSectionProps['velocity'] }) {
       {m && m.points.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color={VELOCITY_RGB} />}>Very fast: live within 24h of registration. These pulse.</Row>
-            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px rgba(0,0,0,0.3)' }} />}>Fast: live within 72h. Still.</Row>
+            <Row swatch={<Swatch color={VELOCITY_RGB} halo />}>Very fast: live within 24h of registration. Solid, with a ring (and a pulse when motion is on).</Row>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px rgba(0,0,0,0.3)' }} />}>Fast: live within 72h. Lighter, no ring.</Row>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Node size = very fast + fast threats · {m.points.length} countries · {m.total.toLocaleString()} threats.

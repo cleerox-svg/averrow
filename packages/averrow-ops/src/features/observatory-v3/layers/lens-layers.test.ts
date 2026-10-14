@@ -343,8 +343,8 @@ describe('Fast weaponization (velocity) layers', () => {
   const model = () => buildVelocityModel([vnode('NL', 6, 4), vnode('US', 0, 3)]);
   const fastInput = (extra: Partial<LensLayerInput> = {}) => input({}, { velocity: model(), ...extra });
 
-  it('draws bloom + core only while the Fast view hands the map a model; nothing without one', () => {
-    expect(ids(fastInput())).toEqual(['velocity-bloom', 'velocity-core']);
+  it('draws bloom + core (+ the very-fast ring) only while the Fast view hands the map a model; nothing without one', () => {
+    expect(ids(fastInput())).toEqual(['velocity-bloom', 'velocity-core', 'velocity-hot-ring']);
     expect(ids(input({}))).toEqual([]);
     expect(ids(fastInput({ velocity: buildVelocityModel([]) }))).toEqual([]);
   });
@@ -370,6 +370,26 @@ describe('Fast weaponization (velocity) layers', () => {
     expect((props(find(rm, 'velocity-core')).getPulseAmp as (p: unknown) => number)(hot!)).toBe(0);
     expect(props(find(rm, 'velocity-core')).animTime).toBe(0);
     expect(props(find(rm, 'velocity-core')).transitions).toBeUndefined();
+  });
+  it('very-fast nodes carry a STATIC ring, so they differ from fast-only ones without motion', () => {
+    const i = fastInput();
+    const ring = props(find(i, 'velocity-hot-ring'));
+    const hot = i.velocity!.points.filter(p => p.hot);
+    expect(hot.length).toBe(1);
+    expect(ring.data).toEqual(hot);
+    expect(ring.filled).toBe(false);
+    expect(ring.stroked).toBe(true);
+    expect(ring.pickable).toBe(false);
+    expect(ring.extensions).toEqual([]);                           // not part of the pulse
+    expect(ring.animTime).toBeUndefined();
+    const radius = ring.getRadius as (p: { radiusPx: number }) => number;
+    expect(radius(hot[0]!)).toBeGreaterThan(hot[0]!.radiusPx * 1.26); // clear of the breathing core's peak
+    // the same under reduced motion (the ring is the whole difference there)
+    expect(ids(fastInput({ reducedMotion: true }))).toContain('velocity-hot-ring');
+    // and absent when nothing is very fast
+    expect(ids(fastInput({ velocity: buildVelocityModel([vnode('US', 0, 3)]) }))).toEqual(['velocity-bloom', 'velocity-core']);
+    // stable data identity across frames
+    expect(props(find(i, 'velocity-hot-ring', { seconds: 1, t: 1 })).data).toBe(props(find(i, 'velocity-hot-ring', { seconds: 9, t: 9 })).data);
   });
   it('the loop is needed only while a very-fast node pulses', () => {
     expect(lensNeedsFrame(fastInput())).toBe(true);
@@ -432,6 +452,22 @@ describe('takedown outcomes on the map', () => {
       const features = (props(outline).data as { features: Array<{ id: string }> }).features;
       expect(features.map(f => f.id)).toEqual(['DE']);
       expect(layers.map(l => l.id)).not.toContain('baseline-no-baseline');            // the Radar outline belongs to over-index
+    });
+    it('outlines every RATED country in its own fill hue at 60% alpha, and nothing else', () => {
+      const i = tdInput();
+      const layer = buildLensBaseLayers(i).find(l => l.id === 'takedown-rated-outline');
+      expect(layer).toBeTruthy();
+      const p = props(layer);
+      expect((p.data as { features: Array<{ id: string }> }).features.map(f => f.id).sort()).toEqual(['FR', 'NL']); // DE is small, GB has no row
+      const line = p.getLineColor as (f: { id: string }) => number[];
+      const fill = i.takedownCountries!.colors.get('NL')!;
+      expect(line({ id: 'NL' })).toEqual([fill[0], fill[1], fill[2], 153]);
+      expect(p.filled).toBe(false);
+      expect(p.pickable).toBe(false);
+      expect((p.updateTriggers as { getLineColor: unknown[] }).getLineColor).toEqual([i.takedownCountries]);
+    });
+    it('no rated outline outside the takedowns measure', () => {
+      expect(buildLensBaseLayers(input({ baseline: true }, { measure: 'index' })).map(l => l.id)).not.toContain('takedown-rated-outline');
     });
     it('repaints when the model changes (updateTriggers), and the outline data is memoised on the model', () => {
       const a = tdInput();

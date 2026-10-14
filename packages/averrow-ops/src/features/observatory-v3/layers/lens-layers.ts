@@ -41,7 +41,7 @@ import type { CampaignsModel, CampaignArc } from '../lib/lens/campaigns';
 import type { ActorModel, ActorCountry, ActorEdge } from '../lib/lens/actors';
 import { actorNodePx, confidenceBand } from '../lib/lens/actors';
 import type { TakedownCountryModel, TakedownProviderModel } from '../lib/lens/takedowns';
-import { TAKEDOWN_SMALL_COLOR, TAKEDOWN_SMALL_OUTLINE, takedownFacts } from '../lib/lens/takedowns';
+import { TAKEDOWN_SMALL_COLOR, TAKEDOWN_SMALL_OUTLINE, takedownFacts, takedownOutline } from '../lib/lens/takedowns';
 import type { VelocityModel, VelocityPoint } from '../lib/lens/velocity';
 import { VELOCITY_COLOR } from '../lib/lens/velocity';
 import type { MovementModel, MovementHop, MovementPulse } from '../lib/lens/movement';
@@ -188,6 +188,12 @@ const takedownSmallShapes = memoByModelAndKey((m: TakedownCountryModel, countrie
   features: countries.features.filter(f => m.small.has(String(f.id))),
 }));
 
+/** Countries with a rate (the complement of `small`): outlined in their own hue. */
+const takedownRatedShapes = memoByModelAndKey((m: TakedownCountryModel, countries: CountryCollection) => ({
+  type: 'FeatureCollection' as const,
+  features: countries.features.filter(f => m.colors.has(String(f.id)) && !m.small.has(String(f.id))),
+}));
+
 const hostingParts = memoByModel((m: HostingModel) => ({
   bullet: m.rings.filter(r => r.bulletproof),
   withTakedown: m.rings.filter(r => r.takedownShare !== null),
@@ -282,6 +288,19 @@ export function buildLensBaseLayers(input: LensLayerInput): Layer[] {
     }),
   ];
   if (isTakedown && takedownCountries) {
+    // A same-hue 60% outline on every RATED country: where two similar greens touch, the border still reads.
+    const rated = takedownRatedShapes(takedownCountries, countries);
+    if (rated.features.length > 0) {
+      out.push(new GeoJsonLayer<{ n: string }>({
+        id: 'takedown-rated-outline',
+        data: rated as GeoData,
+        stroked: true, filled: false,
+        getLineColor: f => takedownOutline(takedownCountries.colors.get(String(f.id)) ?? TAKEDOWN_SMALL_COLOR),
+        getLineWidth: 1.1, lineWidthUnits: 'pixels',
+        updateTriggers: { getLineColor: [takedownCountries] },
+        pickable: false,
+      }));
+    }
     const shapes = takedownSmallShapes(takedownCountries, countries);
     if (shapes.features.length > 0) {
       out.push(new GeoJsonLayer<{ n: string }>({
@@ -823,6 +842,8 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
 // ─── Fast weaponization (Threats lens, Fast view) ───────────
 
 const VELOCITY_HOT_AMP = 0.26;
+/** The very-fast nodes, as one array (memoised: layer data identity is stable across frames). */
+const velocityHot = memoByModel((m: VelocityModel) => m.points.filter(p => p.hot));
 
 function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const m = input.velocity;
@@ -873,6 +894,21 @@ function velocityLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         : null),
       onClick: (info: PickInfo<VelocityPoint>) => (info.object ? pick.click({ kind: 'country', id: info.object.cc }) : false),
     }),
+    // A STATIC ring on the very-fast nodes (outside the breathing core's peak), so the two classes differ without
+    // motion: reduced motion, a paused frame and a screenshot all keep the distinction the pulse alone would carry.
+    ...(velocityHot(m).length > 0 ? [new ScatterplotLayer<VelocityPoint>({
+      id: 'velocity-hot-ring',
+      data: velocityHot(m),
+      getPosition: (p: VelocityPoint): [number, number] => p.position,
+      radiusUnits: 'pixels',
+      getRadius: (p: VelocityPoint) => p.radiusPx * (1 + VELOCITY_HOT_AMP) + 3,
+      stroked: true,
+      filled: false,
+      getLineColor: withAlpha(VELOCITY_COLOR, 230),
+      getLineWidth: 1.5,
+      lineWidthUnits: 'pixels',
+      pickable: false,
+    })] : []),
   ];
 }
 

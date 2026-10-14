@@ -83,6 +83,20 @@ describe('takedown legend sections', () => {
     expect(screen.getByText(/1 country with a rate, 1 too small/)).toBeInTheDocument();
     expect(screen.getByText(/10 takedowns have no known country/)).toBeInTheDocument();
   });
+  it('country: the grey "too few" swatch is a filled round dot, like the map\'s grey fill, not an outlined square', () => {
+    const model = buildTakedownCountryModel([trow('US', 30, 10), trow('DE', 1, 1)]);
+    wrap(<TakedownCountrySection s={{ model, q }} window="30d" />);
+    const swatch = screen.getByText(/Grey: fewer than/).closest('li')!.firstElementChild as HTMLElement;
+    expect(swatch.style.borderRadius).toBe('50%');
+    expect(swatch.style.background).not.toBe('transparent');
+    expect(swatch.style.background).not.toBe('');
+  });
+  it('country: the legend scale is the map\'s scale (one source of truth for the stops)', () => {
+    const model = buildTakedownCountryModel([trow('US', 30, 10)]);
+    wrap(<TakedownCountrySection s={{ model, q }} window="30d" />);
+    const bar = screen.getByRole('img', { name: /Colour scale/ }) as HTMLElement;
+    expect(bar.style.background).toContain('rgb(42, 138, 104) 0%');
+  });
   it('country: empty / loading / error', () => {
     wrap(<TakedownCountrySection s={{ model: buildTakedownCountryModel([]), q }} window="90d" />);
     expect(screen.getByRole('status')).toHaveTextContent('No takedowns were submitted in the last 90d.');
@@ -102,6 +116,9 @@ describe('takedown legend sections', () => {
   });
 });
 
+/** What the page hands the drawer: the country model's rows (upper-case ISO keys, duplicates summed). */
+const cmap = (rows: TakedownGeoRow[]) => buildTakedownCountryModel(rows).rows;
+
 describe('DrillDrawer takedown sections', () => {
   const prov: ProviderGeo = {
     id: 'p1', name: 'Host', asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 9, trend_7d: 1, trend_30d: 2,
@@ -113,7 +130,7 @@ describe('DrillDrawer takedown sections', () => {
   describe('country', () => {
     const target = { kind: 'country' as const, code: 'NL' };
     it('shows the success rate, volume, pending and median for a holder', () => {
-      mount(target, { takedownCountries: [trow('NL', 30, 10)], takedownWindow: '30d' }, true);
+      mount(target, { takedownCountries: cmap([trow('NL', 30, 10)]), takedownWindow: '30d' }, true);
       expect(screen.getByRole('heading', { name: 'Takedowns · 30d' })).toBeInTheDocument();
       expect(screen.getByRole('img', { name: 'Taken down: 75%' })).toBeInTheDocument();
       expect(screen.getByText('75% of resolved')).toBeInTheDocument();
@@ -122,12 +139,17 @@ describe('DrillDrawer takedown sections', () => {
       expect(screen.getByText('Median time to take down').nextSibling).toHaveTextContent('30h');
     });
     it('a small sample is told why there is no rate (no bar)', () => {
-      mount(target, { takedownCountries: [trow('NL', 1, 1)], takedownWindow: '30d' }, true);
+      mount(target, { takedownCountries: cmap([trow('NL', 1, 1)]), takedownWindow: '30d' }, true);
       expect(screen.getByText(`Too few resolved takedowns for a rate (2 of ${TAKEDOWN_MIN_RESOLVED} needed).`)).toBeInTheDocument();
       expect(screen.queryByRole('img', { name: /Taken down/ })).not.toBeInTheDocument();
     });
+    it('reads the normalised model: rows the server keyed in lower case (or twice) still reach the drawer, summed', () => {
+      mount(target, { takedownCountries: cmap([trow('nl', 30, 10), trow('NL', 10, 10)]), takedownWindow: '30d' }, true);
+      expect(screen.getByText('67% of resolved')).toBeInTheDocument(); // 40 / 60
+      expect(screen.getByText('60 resolved')).toBeInTheDocument();
+    });
     it('a holder with no row for the country is told none were submitted', () => {
-      mount(target, { takedownCountries: [trow('DE', 5, 5)], takedownWindow: '90d' }, true);
+      mount(target, { takedownCountries: cmap([trow('DE', 5, 5)]), takedownWindow: '90d' }, true);
       expect(screen.getByText(/No takedowns were submitted for this country in this window/)).toBeInTheDocument();
     });
     it('loading and failed states are different', () => {
@@ -138,7 +160,7 @@ describe('DrillDrawer takedown sections', () => {
       expect(screen.getByText('Takedown outcomes failed to load.')).toBeInTheDocument();
     });
     it('other roles: a neutral note, never numbers, "none submitted", loading or an error', () => {
-      mount(target, { takedownCountries: [trow('NL', 30, 10)], takedownCountriesError: true }, false);
+      mount(target, { takedownCountries: cmap([trow('NL', 30, 10)]), takedownCountriesError: true }, false);
       expect(screen.getByText(/roles that manage takedowns/)).toBeInTheDocument();
       expect(screen.queryByText(/75%/)).not.toBeInTheDocument();
       expect(screen.queryByText(/Loading takedown|failed to load|No takedowns were submitted/)).not.toBeInTheDocument();

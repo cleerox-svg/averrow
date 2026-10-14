@@ -11,7 +11,10 @@
  *
  * Scale: sequential green, dark (hard: most requests refused or ignored) to bright
  * (they take it down). Sequential, not diverging: there is no neutral midpoint, and
- * red would read as "attack", which this is not.
+ * red would read as "attack", which this is not. Even the DARK end has to be seen:
+ * every stop, composited over the dark basemap, keeps at least 3:1 contrast against it
+ * (WCAG graphical-object minimum; pinned by takedowns.test.ts), and a rated country also
+ * gets a same-hue outline so its border reads where two fills of similar green touch.
  */
 
 import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
@@ -24,10 +27,16 @@ import type { HostingModel, ProviderRing } from './hosting';
 export const TAKEDOWN_MIN_RESOLVED = 5;
 
 export const TAKEDOWN_STOPS: ReadonlyArray<{ t: number; color: Rgba }> = [
-  { t: 0, color: [22, 78, 62, 175] },
-  { t: 0.5, color: [38, 150, 100, 205] },
-  { t: 1, color: [110, 231, 160, 240] },
+  { t: 0, color: [42, 138, 104, 235] },
+  { t: 0.5, color: [58, 178, 124, 240] },
+  { t: 1, color: [134, 239, 172, 245] },
 ];
+
+/** Opacity of a rated country's outline: its own fill hue at 60%. */
+export const TAKEDOWN_OUTLINE_ALPHA = 153;
+
+/** The outline for a rated country's fill colour: same hue, 60% alpha. */
+export const takedownOutline = (fill: Rgba): Rgba => [fill[0], fill[1], fill[2], TAKEDOWN_OUTLINE_ALPHA];
 
 /** Too few resolved takedowns to call a rate. */
 export const TAKEDOWN_SMALL_COLOR: Rgba = [148, 163, 184, 70];
@@ -87,6 +96,27 @@ export interface TakedownCountryModel {
   unknownSubmitted: number;
 }
 
+/**
+ * Two rows for one country (the server keys by whatever the source stored: `nl` and `NL`) are one country: counts
+ * are summed and the share is recomputed from the sums. A median cannot be combined from two medians, so the
+ * larger sample's is kept.
+ */
+function mergeCountryRows(a: TakedownGeoRow, b: TakedownGeoRow): TakedownGeoRow {
+  const big = resolvedOf(b) > resolvedOf(a) ? b : a;
+  const taken = (a.taken_down || 0) + (b.taken_down || 0);
+  const resolved = taken + (a.refused || 0) + (b.refused || 0) + (a.expired || 0) + (b.expired || 0);
+  return {
+    ...big,
+    submitted: (a.submitted || 0) + (b.submitted || 0),
+    taken_down: taken,
+    refused: (a.refused || 0) + (b.refused || 0),
+    expired: (a.expired || 0) + (b.expired || 0),
+    pending: (a.pending || 0) + (b.pending || 0),
+    share: resolved > 0 ? taken / resolved : null,
+    median_hours: big.median_hours,
+  };
+}
+
 export function buildTakedownCountryModel(rows: readonly TakedownGeoRow[]): TakedownCountryModel {
   const byCc = new Map<string, TakedownGeoRow>();
   let unknownSubmitted = 0;
@@ -95,7 +125,9 @@ export function buildTakedownCountryModel(rows: readonly TakedownGeoRow[]): Take
     submitted += r.submitted || 0;
     const cc = iso2(r.key);
     if (!cc) { unknownSubmitted += r.submitted || 0; continue; }
-    byCc.set(cc, r.key === cc ? r : { ...r, key: cc }); // downstream (map ids, drill targets) use the upper-case code
+    const row = r.key === cc ? r : { ...r, key: cc }; // downstream (map ids, drill targets) use the upper-case code
+    const prev = byCc.get(cc);
+    byCc.set(cc, prev ? mergeCountryRows(prev, row) : row);
   }
   const colors = new Map<string, Rgba>();
   const small = new Set<string>();

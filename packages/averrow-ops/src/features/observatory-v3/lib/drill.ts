@@ -42,7 +42,8 @@ export interface DrillData {
    * Takedown outcomes (`/takedowns-geo`; roles holding `manage_takedowns` only, so these stay undefined for everyone
    * else). `takedownWindow` is the server window they cover ('30d' | '90d').
    */
-  takedownCountries?: readonly TakedownGeoRow[];
+  /** The country model's rows (`buildTakedownCountryModel`: keyed by upper-case ISO code, duplicate keys summed). */
+  takedownCountries?: ReadonlyMap<string, TakedownGeoRow>;
   takedownProviders?: readonly TakedownGeoRow[];
   takedownWindow?: string;
   /** The country takedown request failed (so "loading" is not forever). */

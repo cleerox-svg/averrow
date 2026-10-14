@@ -37,6 +37,8 @@ export interface LegendChipProps extends LegendSectionProps {
   maxPanelHeight?: number;
   /** The panel opened / closed (the map holds the globe still while someone reads it). */
   onOpenChange?: (open: boolean) => void;
+  /** A one-line status shown first in the open legend (e.g. a link to a view this role cannot see was set aside). */
+  notice?: string;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -95,7 +97,7 @@ function HeatKey() {
 }
 
 export function LegendChip(props: LegendChipProps) {
-  const { lens, layers, view, measure, colorBy, summary, reducedMotion, maxPanelHeight, onOpenChange, className, style } = props;
+  const { lens, layers, view, measure, colorBy, summary, reducedMotion, maxPanelHeight, onOpenChange, notice, className, style } = props;
   const id = useId();
   // The Actors lens starts open: its legend holds the "choose an actor" control.
   const [open, setOpen] = useState(() => lens === 'actors' && !props.actors.selectedId);
@@ -146,6 +148,7 @@ export function LegendChip(props: LegendChipProps) {
           ...(maxPanelHeight ? { maxHeight: `min(58vh, 440px, ${maxPanelHeight}px)` } : null),
         }}
       >
+        {notice && <div role="status" className="font-mono text-[10px]" style={{ color: 'var(--amber-text)' }}>{notice}</div>}
         {sections}
       </div>
       <button

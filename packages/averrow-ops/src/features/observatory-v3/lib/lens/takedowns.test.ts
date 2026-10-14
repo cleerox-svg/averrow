@@ -3,7 +3,7 @@ import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
 import { buildHostingModel } from './hosting';
 import {
   TAKEDOWN_MIN_RESOLVED, TAKEDOWN_STOPS, TAKEDOWN_SMALL_COLOR, buildTakedownCountryModel, buildTakedownProviderModel,
-  formatHours, hasRate, pct, rankHardest, resolvedOf, takedownColor, takedownFacts,
+  formatHours, hasRate, pct, rankHardest, resolvedOf, takedownColor, takedownFacts, takedownOutline, TAKEDOWN_OUTLINE_ALPHA,
 } from './takedowns';
 import { SEVERITY_COLORS } from '../map-colors';
 
@@ -144,5 +144,62 @@ describe('buildTakedownProviderModel', () => {
     expect(hosting.byId.get('p1')!.takedownShare).toBe(0.1);
     expect(t.hosting).not.toBe(hosting);
     expect(t.hosting.rings.map(r => r.position)).toEqual(hosting.rings.map(r => r.position));
+  });
+});
+
+// ─── contrast against the dark basemap (WCAG 1.4.11 graphical objects: 3:1) ──
+const lin = (c: number): number => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+const lum = (c: readonly number[]): number => 0.2126 * lin(c[0]!) + 0.7152 * lin(c[1]!) + 0.0722 * lin(c[2]!);
+const over = (c: readonly number[], bg: readonly number[]): number[] => [0, 1, 2].map(i => c[i]! * (c[3]! / 255) + bg[i]! * (1 - c[3]! / 255));
+const contrast = (a: readonly number[], b: readonly number[]): number => {
+  const [hi, lo] = lum(a) >= lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+  return (hi + 0.05) / (lo + 0.05);
+};
+// The darkest to the lightest basemap the console draws on (Carto dark matter water / land, the deep-blue land of the
+// style the QA harness stands in, and the lightest panel-adjacent tone).
+const BASEMAPS: ReadonlyArray<readonly [number, number, number]> = [[10, 10, 10], [14, 14, 14], [28, 28, 28], [11, 18, 32], [26, 36, 54]];
+
+describe('takedown scale is visible on the dark basemap', () => {
+  it.each(TAKEDOWN_STOPS.map(s => [s.t, s.color] as const))('stop %s is at least 3:1 against every basemap tone once composited', (_t, color) => {
+    for (const bg of BASEMAPS) expect(contrast(over(color, bg), bg)).toBeGreaterThanOrEqual(3);
+  });
+  it('still reads dark -> bright: luminance rises with every stop', () => {
+    const bg = BASEMAPS[0]!;
+    const ls = TAKEDOWN_STOPS.map(s => lum(over(s.color, bg)));
+    for (let i = 1; i < ls.length; i++) expect(ls[i]!).toBeGreaterThan(ls[i - 1]!);
+  });
+  it('a rated country\'s outline is its fill hue at 60% alpha', () => {
+    const fill = takedownColor(row('US', 20, 0, 0));
+    expect(takedownOutline(fill)).toEqual([fill[0], fill[1], fill[2], TAKEDOWN_OUTLINE_ALPHA]);
+    expect(TAKEDOWN_OUTLINE_ALPHA / 255).toBeCloseTo(0.6, 2);
+  });
+});
+
+describe('country model: duplicate keys are one country', () => {
+  it('sums counts, recomputes the share from the sums and keeps the larger sample\'s median', () => {
+    const m = buildTakedownCountryModel([
+      row('nl', 10, 0, 0, { median_hours: 12 }),     // 10 resolved
+      row('NL', 10, 20, 0, { median_hours: 40 }),    // 30 resolved: the larger sample
+    ]);
+    expect(m.rows.size).toBe(1);
+    const nl = m.rows.get('NL')!;
+    expect(nl.key).toBe('NL');
+    expect(nl.taken_down).toBe(20);
+    expect(nl.refused).toBe(20);
+    expect(resolvedOf(nl)).toBe(40);
+    expect(nl.share).toBeCloseTo(0.5, 9);
+    expect(nl.submitted).toBe(13 + 33);
+    expect(nl.pending).toBe(6);
+    expect(nl.median_hours).toBe(40);
+    expect(m.withRate).toBe(1);
+  });
+  it('two small samples that together reach the threshold become a rate', () => {
+    const m = buildTakedownCountryModel([row('de', 2, 1, 0), row('DE', 2, 0, 0)]);
+    expect(m.small.has('DE')).toBe(false);
+    expect(m.rows.get('DE')!.share).toBeCloseTo(0.8, 9);
+  });
+  it('counts every submitted takedown once in the total', () => {
+    const rows = [row('nl', 10, 0, 0), row('NL', 10, 20, 0), row('unknown', 1, 1, 1)];
+    expect(buildTakedownCountryModel(rows).submitted).toBe(rows.reduce((n, r) => n + r.submitted, 0));
   });
 });
