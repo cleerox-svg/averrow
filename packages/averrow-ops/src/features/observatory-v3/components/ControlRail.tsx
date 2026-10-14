@@ -62,7 +62,7 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
         onClick={item.onPress}
         className={cn(
           'ds-focusable inline-flex items-center justify-center rounded-lg transition-colors motion-reduce:transition-none cursor-pointer',
-          panel ? 'w-full min-h-[44px] gap-1.5 px-2 font-mono text-[11px]' : 'w-9 h-9',
+          panel ? 'w-full min-h-[44px] gap-1.5 px-2 py-1 font-mono text-[11px]' : 'w-9 h-9',
         )}
         style={{
           background: item.pressed ? 'color-mix(in srgb, var(--amber) 14%, transparent)' : 'transparent',
@@ -71,7 +71,7 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
         }}
       >
         {item.icon}
-        {panel && <span className="truncate">{item.label}</span>}
+        {panel && <span className="min-w-0 text-left leading-tight">{item.label}</span>}
       </button>
       {!panel && (
         <span

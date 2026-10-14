@@ -16,8 +16,8 @@ export const RAIL_WIDTH = 44;
 export const DOCK_WIDTH = 320;
 export const TOOLBAR_H = 44;
 export const MOBILE_BREAKPOINT = 900;
-/** Map width at which a 320px dock still leaves the map room to breathe (about a 1440px window with the sidebar open). */
-export const DOCK_MIN_MAP = 1160;
+/** Map width at which a 320px dock still leaves the map room to breathe: a 1440px window with the 248px sidebar open leaves 1192px, so 1440 docks and anything narrower floats. */
+export const DOCK_MIN_MAP = 1190;
 /** Toolbar width needed to show tabs + a full search box + period + source + refresh (about a 1360px window with the sidebar open). */
 export const TOOLBAR_FULL = 1090;
 /** Toolbar width below which period + source fold into one filters popover. */

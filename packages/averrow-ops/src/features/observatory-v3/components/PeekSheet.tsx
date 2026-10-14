@@ -105,7 +105,7 @@ export function PeekSheet({ open, onClose, label, onHeight, initialSnap = 0, chi
       style={{
         height: `${Math.round(frac * 1000) / 10}%`,
         zIndex: 25,
-        background: 'var(--bg-elevated)',
+        background: 'var(--bg-elevated-solid, var(--bg-elevated))',
         borderTop: '1px solid var(--border-base)',
         boxShadow: '0 -10px 32px rgba(0,0,0,0.35)',
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',

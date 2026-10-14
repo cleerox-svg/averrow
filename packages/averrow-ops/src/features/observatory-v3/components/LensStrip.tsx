@@ -123,7 +123,7 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
               onFocus={() => setRove(id)}
               onKeyDown={e => onKeyDown(e, i)}
               className={cn(
-                'ds-focusable shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-3 font-mono text-[11px] font-bold tracking-[0.06em] cursor-pointer',
+                'ds-focusable shrink-0 inline-flex items-center justify-center whitespace-nowrap rounded-[9px] px-2.5 font-mono text-[11px] font-bold tracking-[0.03em] cursor-pointer',
                 'transition-[background,color,box-shadow] duration-150 motion-reduce:transition-none',
                 touch ? 'min-h-[44px]' : 'min-h-[32px]',
               )}

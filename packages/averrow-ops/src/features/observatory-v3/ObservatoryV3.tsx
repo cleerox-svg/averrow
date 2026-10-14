@@ -679,7 +679,7 @@ export function ObservatoryV3() {
       {phone ? (
         <div className="absolute top-2 left-3 right-3 flex flex-col gap-2" style={{ zIndex: Z_CHROME }}>
           <div className="flex items-center gap-2">
-            <FiltersPopover period={period} source={source} touch align="left" className="flex-1 min-w-0" triggerClassName="w-full justify-between">
+            <FiltersPopover period={period} source={source} touch align="left" className="flex-1 min-w-0" triggerClassName="w-full">
               {filtersBody}
               {mapMode !== 'heatmap' || lens === 'threats' ? (
                 <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
@@ -709,7 +709,7 @@ export function ObservatoryV3() {
         <>
           <div className="absolute top-2 left-3 right-3 flex items-center gap-2" style={{ zIndex: Z_CHROME, height: 44 }} data-toolbar>
             <LensStrip lens={lens} onChange={setLens} className="flex-1" />
-            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[220px] shrink-0' })}
+            {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[190px] shrink-0' })}
             {layout.filtersInPopover ? (
               <FiltersPopover period={period} source={source}>{filtersBody}</FiltersPopover>
             ) : (
@@ -741,11 +741,12 @@ export function ObservatoryV3() {
       )}
 
       {/* ─── Legend chip (one per view) ─────────────────────── */}
-      <LegendChip
+      {/* On a phone the open sheet covers the bottom of the map, and with it the chip. */}
+      {!(phone && (drill || showMobilePanel)) && <LegendChip
         {...legendProps}
         summary={summary}
         style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
-      />
+      />}
 
       {/* ─── Replay timeline ─────────────────────────────────────
           Drives the same clock as the particles and movement trails. */}

@@ -52,7 +52,7 @@ export function PeriodSegment({ period, onChange, touch = false, className }: { 
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(id)}
             onKeyDown={e => move(e, i)}
-            className={cn('ds-focusable rounded-[9px] px-2.5 font-mono text-[11px] font-bold tracking-[0.06em] cursor-pointer transition-[background,color] duration-150 motion-reduce:transition-none', touch ? 'min-h-[42px] min-w-[44px]' : 'min-h-[32px]')}
+            className={cn('ds-focusable rounded-[9px] px-2 font-mono text-[11px] font-bold tracking-[0.04em] cursor-pointer transition-[background,color] duration-150 motion-reduce:transition-none', touch ? 'min-h-[42px] min-w-[44px]' : 'min-h-[32px]')}
             style={{
               border: `1px solid ${on ? 'var(--pill-active-border)' : 'transparent'}`,
               background: on ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
@@ -142,14 +142,14 @@ export function FiltersPopover({
         <span style={{ color: 'var(--amber-text)' }}>{PERIOD_LABELS[period]}</span>
         <span aria-hidden style={{ color: 'var(--text-tertiary)' }}>·</span>
         <span className="truncate max-w-[110px]" style={{ color: 'var(--amber-text)' }}>{SOURCE_LABELS[source]}</span>
-        <ChevronDown size={13} aria-hidden className={cn('shrink-0 transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
+        <ChevronDown size={13} aria-hidden className={cn('shrink-0 ml-auto transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
       </button>
       <div
         id={id}
         role="dialog"
         aria-label="Filters"
         hidden={!open}
-        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none', align === 'right' ? 'right-0' : 'left-0')}
+        className={cn('absolute top-full mt-2 z-40 w-[min(320px,calc(100vw-24px))] rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden', align === 'right' ? 'right-0' : 'left-0')}
         style={{ background: 'var(--bg-card-deep)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow-elevated)' }}
       >
         {children}

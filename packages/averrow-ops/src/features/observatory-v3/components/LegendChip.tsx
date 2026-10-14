@@ -115,7 +115,7 @@ export function LegendChip(props: LegendChipProps) {
         role="group"
         aria-label={`${LENS_DEFS[lens].label} legend`}
         hidden={!open}
-        className="absolute left-0 bottom-full mb-2 w-[272px] max-w-[calc(100vw-24px)] max-h-[min(58vh,440px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none"
+        className="absolute left-0 bottom-full mb-2 w-[272px] max-w-[calc(100vw-24px)] max-h-[min(58vh,440px)] overflow-y-auto rounded-xl p-3 flex flex-col gap-3 animate-sheet-in motion-reduce:animate-none [&[hidden]]:hidden"
         style={{
           background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
