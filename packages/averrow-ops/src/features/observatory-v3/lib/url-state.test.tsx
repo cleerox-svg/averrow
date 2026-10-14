@@ -107,6 +107,14 @@ describe('lens options and legacy mode links', () => {
     expect(s.layers).toEqual(lensPreset('baseline'));
     expect(mapModeOf(s)).toBe('bot_density');
   });
+  it('a legacy mode= link ignores a stray layers= (it described another scene): the lens preset applies', () => {
+    expect(parse('mode=bot_density&layers=nodes,beams').layers).toEqual(lensPreset('baseline'));
+    expect(parse('mode=heatmap&layers=operations').layers).toEqual(lensPreset('threats'));
+    // without a legacy mode, explicit layers still win
+    expect(parse('lens=operations&layers=nodes').layers).toMatchObject({ nodes: true, operations: false });
+    // mode=global is not legacy
+    expect(parse('mode=global&lens=operations&layers=nodes').layers).toMatchObject({ nodes: true, operations: false });
+  });
   it('mode=global is a no-op', () => {
     expect(parse('mode=global&lens=hosting').lens).toBe('hosting');
   });

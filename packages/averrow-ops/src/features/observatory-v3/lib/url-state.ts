@@ -188,7 +188,8 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     period: pick(PERIOD_IDS, sp.get('period'), DEFAULT_STATE.period),
     source: pick(SOURCE_IDS, sp.get('source'), DEFAULT_STATE.source),
     colorBy: pick(COLOR_BY_IDS, sp.get('colorBy'), DEFAULT_STATE.colorBy),
-    layers: parseLayers(sp.get('layers'), lens),
+    // A legacy `mode=` link predates the layer toggles: its `layers` (if any) described another scene, so the lens preset applies.
+    layers: legacy ? lensPreset(lens) : parseLayers(sp.get('layers'), lens),
     // node, arc and sel are mutually exclusive; node wins, then arc, then sel.
     node: nodeOk ? rawNode : null,
     arc: arcOk ? rawArc : null,
