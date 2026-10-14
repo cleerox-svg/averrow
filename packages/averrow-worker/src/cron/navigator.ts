@@ -621,8 +621,9 @@ async function runNavigatorImpl(
   // through markCacheRefresh() (lib/cache-refresh.ts — an in-process WeakSet
   // marker no HTTP caller can set). Handlers that honour it (the Observatory
   // ones) treat the warm as refresh-ahead: they recompute and rewrite the key
-  // once its REMAINING TTL drops below min(1800s, ttl/2)
-  // (refreshMarginSeconds) instead of returning the cached copy, so a key
+  // once its AGE reaches ttl − min(1800s, ttl/2) − min(60s, ttl/8)
+  // (refreshAfterSeconds: margin + jitter skew) instead of returning the
+  // cached copy, so a key
   // the landing page reads never lapses between warms. Over the soft-cap the
   // warm is NOT marked: every handler falls back to fill-on-miss and no warm
   // forces a recompute. Handlers that don't honour the marker are always
@@ -650,15 +651,18 @@ async function runNavigatorImpl(
   //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
   //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
   // A warm call is not a D1 recompute. A refresh-marked Observatory warm
-  // recomputes only once the key's remaining TTL < min(1800s, ttl/2):
-  //   - nodes/stats 7d (1800s TTL, Phase A every 600s): hit at age 600s,
-  //     recompute at age 1200s → every OTHER warm (3/h per key), never lapses;
-  //   - arcs 7d (7200s TTL): recompute once age ≥ 5400s (~1 in 9 warms);
+  // recomputes only once the key's age ≥ refreshAfterSeconds(ttl):
+  //   - nodes/stats 7d (1800s TTL, Phase A every 600s): threshold 840s —
+  //     hit at age 600s, recompute at age 1200s → every OTHER warm (3/h per
+  //     key), never lapses;
+  //   - arcs 7d (7200s TTL): recompute once age ≥ 5340s (~1 in 9 warms);
   //   - live (60s TTL): always expired by the next warm → recompute (cheap,
   //     LIMIT 8 on an index);
   //   - A2 nodes/stats 24h/30d + heatmap 7d (1800s TTL, every 900s):
-  //     recompute every A2 warm (4/h per key) — the same count the old
-  //     fill-on-miss paid on a 900s TTL, without the cold gap.
+  //     threshold 840s, so every A2 warm (age ≈900s) recomputes (4/h per
+  //     key) even when tick jitter reads the age back as 899.x s — without
+  //     the 60s skew such a warm landed exactly ON the old 900s threshold,
+  //     counted as a hit, and the key lapsed before the next warm.
   // The operations list warms are plain fill-on-miss (1800s TTL).
   // Over the D1 soft-cap, A2/B/C drop out entirely and Phase A runs
   // unmarked (fill-on-miss), so no warm forces a recompute.

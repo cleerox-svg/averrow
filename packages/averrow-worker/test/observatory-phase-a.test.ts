@@ -35,7 +35,9 @@ import {
   readRefreshableCache,
   refreshAfterSeconds,
   refreshMarginSeconds,
+  refreshSkewSeconds,
   CACHE_REFRESH_MARGIN_S,
+  CACHE_REFRESH_SKEW_S,
 } from "../src/lib/cache-refresh";
 import { hasSqlite, openDerivedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
@@ -206,15 +208,16 @@ describe("cache refresh marker", () => {
     const live = new Request("https://x/");
     const warm = markCacheRefresh(new Request("https://x/"));
     const cache = kv as unknown as KVNamespace;
-    // TTL 7200 → margin min(1800, 3600) = 1800 → refresh after 5400s
-    expect(refreshAfterSeconds(7200)).toBe(7200 - CACHE_REFRESH_MARGIN_S);
+    // TTL 7200 → margin min(1800, 3600) = 1800, skew 60 → refresh after 5340s
+    expect(refreshAfterSeconds(7200)).toBe(7200 - CACHE_REFRESH_MARGIN_S - CACHE_REFRESH_SKEW_S);
     expect(await readRefreshableCache(warm, cache, "k", 7200, now)).toBe("v");
-    expect(await readRefreshableCache(warm, cache, "k", 7200, now + 5_400_000)).toBeNull();
+    expect(await readRefreshableCache(warm, cache, "k", 7200, now + 5_320_000)).toBe("v"); // age 5330s
+    expect(await readRefreshableCache(warm, cache, "k", 7200, now + 5_340_000)).toBeNull(); // age 5350s
     expect(await readRefreshableCache(live, cache, "k", 7200, now + 5_400_000)).toBe("v");
-    // A short key is NOT recomputed on every warm: 900s → margin 450s.
+    // A short key is NOT recomputed on every warm: 900s → margin 450s, skew 60s → 390s.
     expect(await readRefreshableCache(warm, cache, "k", 900, now)).toBe("v");
-    expect(await readRefreshableCache(warm, cache, "k", 900, now + 430_000)).toBe("v"); // age 440s
-    expect(await readRefreshableCache(warm, cache, "k", 900, now + 445_000)).toBeNull(); // age 455s
+    expect(await readRefreshableCache(warm, cache, "k", 900, now + 370_000)).toBe("v"); // age 380s
+    expect(await readRefreshableCache(warm, cache, "k", 900, now + 385_000)).toBeNull(); // age 395s
     // Unstamped legacy entries refresh
     await kv.put("legacy", "v");
     expect(await readRefreshableCache(warm, cache, "legacy", 7200, now)).toBeNull();
@@ -253,6 +256,39 @@ describe("refresh margin is relative to the TTL", () => {
     expect(OBSERVATORY_TTL_S.heatmap).toBe(1800);
     expect(OBSERVATORY_TTL_S.stats).toBe(1800);
     expect(900).toBeGreaterThanOrEqual(refreshAfterSeconds(1800));
+  });
+
+  it("skew: an A2 warm landing ON the old 900s threshold (jitter → age 899.x s) still refreshes", async () => {
+    // Pre-skew the threshold was exactly 900s = the A2 cadence. A warm whose
+    // previous write landed later in its tick than this read reads the age
+    // back as 899.x s → served as a hit → the next warm (900s later) finds
+    // the 1800s key already expired.
+    expect(refreshSkewSeconds(1800)).toBe(CACHE_REFRESH_SKEW_S);
+    expect(refreshAfterSeconds(1800)).toBe(840);
+    const kv = metaKv();
+    const cache = kv as unknown as KVNamespace;
+    const warm = markCacheRefresh(new Request("https://x/"));
+    const writtenAt = 2_000_000_000;
+    await kv.put("a2", "v", { metadata: { cachedAt: writtenAt } });
+    for (const ageMs of [899_400, 900_000, 900_600, 850_000]) {
+      expect(await readRefreshableCache(warm, cache, "a2", 1800, writtenAt + ageMs)).toBeNull();
+    }
+    // A fresh-ish key is still served (no recompute storm).
+    expect(await readRefreshableCache(warm, cache, "a2", 1800, writtenAt + 600_000)).toBe("v");
+    // Simulated A2 cadence with ±1s jitter never lets the key lapse.
+    let lastWrite = 0;
+    for (let k = 1; k <= 12; k++) {
+      const t = k * 900 + (k % 2 === 0 ? -0.6 : 0.6);
+      const age = t - lastWrite;
+      expect(age).toBeLessThan(1800);
+      if (age >= refreshAfterSeconds(1800)) lastWrite = t;
+      expect(lastWrite).toBe(t); // every A2 warm refreshes
+    }
+  });
+
+  it("skew stays a small fraction of short TTLs (threshold > 0)", () => {
+    expect(refreshSkewSeconds(60)).toBe(7.5);
+    expect(refreshAfterSeconds(60)).toBe(22.5);
   });
 });
 
