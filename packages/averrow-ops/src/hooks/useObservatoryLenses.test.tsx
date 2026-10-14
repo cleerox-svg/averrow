@@ -5,10 +5,12 @@ import type { ReactNode } from 'react';
 
 const fetchMock = vi.fn();
 vi.mock('@/lib/api', () => ({ api: { fetch: (...a: unknown[]) => fetchMock(...a) } }));
+const authState: { user: { role: string } | null } = { user: { role: 'super_admin' } };
+vi.mock('@/lib/auth', () => ({ useAuth: () => authState }));
 
 import {
   useOperationsGeo, useMovements, useProvidersGeo, useOverindex, useCampaignsGeo, useObservatoryTimeline,
-  useActorList, useActorDetail, overindexPeriod, readLensMeta,
+  useActorList, useActorDetail, overindexPeriod, readLensMeta, useVelocityNodes, useTakedownsGeo, takedownPeriod,
 } from './useObservatoryLenses';
 
 function wrapper() {
@@ -18,6 +20,7 @@ function wrapper() {
 const urls = () => fetchMock.mock.calls.map(c => c[0] as string);
 
 beforeEach(() => {
+  authState.user = { role: 'super_admin' };
   fetchMock.mockReset();
   fetchMock.mockResolvedValue({ success: true, data: [], meta: { generated_at: '2026-10-14T00:00:00Z', period: '7d', radar_snapshot_date: '2026-10-13' } });
 });
@@ -33,6 +36,9 @@ describe('lens hooks request the right endpoint with the right params', () => {
     ['campaigns-geo', () => useCampaignsGeo(), '/api/observatory/campaigns-geo'],
     ['timeline', () => useObservatoryTimeline({ period: '24h', source: 'feeds', country: 'NL' }), '/api/observatory/timeline?period=24h&source_feed=feeds&country=NL'],
     ['timeline (all sources, no country)', () => useObservatoryTimeline({ period: '7d' }), '/api/observatory/timeline?period=7d'],
+    ['velocity nodes (all flags by default)', () => useVelocityNodes(), '/api/observatory/velocity-nodes?period=7d&flag=all'],
+    ['velocity nodes, one flag', () => useVelocityNodes({ period: '30d', flag: 'very_fast' }), '/api/observatory/velocity-nodes?period=30d&flag=very_fast'],
+    ['timeline with velocity', () => useObservatoryTimeline({ period: '30d', velocity: 'all' }), '/api/observatory/timeline?period=30d&velocity=all'],
     ['actors list', () => useActorList(), '/api/observatory/actors'],
     ['actor detail', () => useActorDetail('apt 1'), '/api/observatory/actors?actor_id=apt+1'],
   ])('%s', async (_name, hook, url) => {
@@ -46,7 +52,7 @@ describe('gating', () => {
     renderHook(() => ({
       a: useOperationsGeo({ enabled: false }), b: useMovements({ enabled: false }), c: useProvidersGeo({ enabled: false }),
       d: useOverindex({ enabled: false }), e: useCampaignsGeo({ enabled: false }), f: useObservatoryTimeline({ enabled: false }),
-      g: useActorList({ enabled: false }), h: useActorDetail(null),
+      g: useActorList({ enabled: false }), h: useActorDetail(null), i: useVelocityNodes({ enabled: false }),
     }), { wrapper: wrapper() });
     await new Promise(r => setTimeout(r, 30));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -97,6 +103,87 @@ describe('results', () => {
   });
 });
 
+describe('velocity', () => {
+  it('never sends a source with velocity (the server answers 400 for both)', async () => {
+    renderHook(() => useObservatoryTimeline({ period: '7d', source: 'spam_trap', velocity: 'all', country: 'NL' }), { wrapper: wrapper() });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(urls()).toEqual(['/api/observatory/timeline?period=7d&country=NL&velocity=all']);
+  });
+  it('a severity timeline is never shown as the velocity series (or the reverse) while the other loads', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: { bucket: '1h', points: [{ t: url.includes('velocity') ? 'v' : 's' }] } }));
+    const { result, rerender } = renderHook(({ v }) => useObservatoryTimeline({ period: '7d', velocity: v }), { wrapper: wrapper(), initialProps: { v: null as 'all' | null } });
+    await waitFor(() => expect(result.current.data?.data.points[0]).toEqual({ t: 's' }));
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    rerender({ v: 'all' });
+    expect(result.current.data).toBeUndefined();
+  });
+  it('still keeps the previous period of the SAME series on screen', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: { bucket: '1h', points: [{ t: url.includes('24h') ? 'a' : 'b' }] } }));
+    const { result, rerender } = renderHook(({ p }) => useObservatoryTimeline({ period: p, velocity: 'all' }), { wrapper: wrapper(), initialProps: { p: '7d' } });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    rerender({ p: '24h' });
+    expect(result.current.data).toBeDefined();
+    expect(result.current.isUpdating).toBe(true);
+  });
+  it('velocity-nodes exposes dropped_no_centroid from the envelope', async () => {
+    fetchMock.mockResolvedValue({ success: true, data: [], meta: { flag: 'all', dropped_no_centroid: 4 } });
+    const { result } = renderHook(() => useVelocityNodes(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.meta.dropped_no_centroid).toBe(4);
+    expect(result.current.data?.data).toEqual([]); // empty is a valid answer: the UI words it as "coverage still filling"
+  });
+});
+
+describe('takedowns-geo needs manage_takedowns: no request is ever made without it', () => {
+  it.each(['super_admin', 'admin', 'analyst'])('%s requests it', async role => {
+    authState.user = { role };
+    renderHook(() => useTakedownsGeo({ period: '30d', by: 'country' }), { wrapper: wrapper() });
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+  });
+  it.each(['sales', 'support', 'billing', 'auditor', 'client'])('%s never does, however it is enabled', async role => {
+    authState.user = { role };
+    const { result } = renderHook(() => useTakedownsGeo({ enabled: true, period: '90d', by: 'provider' }), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.error).toBeNull(); // a neutral nothing, not an error
+    expect(result.current.isLoading).toBe(false);
+  });
+  it('no user (signed out / not loaded yet) never requests', async () => {
+    authState.user = null;
+    renderHook(() => useTakedownsGeo(), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('a permitted role still sends nothing while the view has it disabled', async () => {
+    renderHook(() => useTakedownsGeo({ enabled: false }), { wrapper: wrapper() });
+    await new Promise(r => setTimeout(r, 30));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('maps the page period onto the two windows the endpoint has, and sends `by`', async () => {
+    expect(['24h', '7d', '30d', '90d'].map(takedownPeriod)).toEqual(['30d', '30d', '30d', '90d']);
+    renderHook(() => useTakedownsGeo({ period: '90d', by: 'provider' }), { wrapper: wrapper() });
+    renderHook(() => useTakedownsGeo({ period: '7d' }), { wrapper: wrapper() });
+    await waitFor(() => expect(urls()).toEqual(expect.arrayContaining([
+      '/api/observatory/takedowns-geo?period=90d&by=provider',
+      '/api/observatory/takedowns-geo?period=30d&by=country',
+    ])));
+  });
+  it('country and provider are separate queries (no cross-talk)', async () => {
+    fetchMock.mockImplementation((url: string) => Promise.resolve({ success: true, data: [{ key: url.includes('by=provider') ? 'hp1' : 'NL' }] }));
+    const { result } = renderHook(() => ({ c: useTakedownsGeo({ by: 'country' }), p: useTakedownsGeo({ by: 'provider' }) }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.c.data && result.current.p.data).toBeTruthy());
+    expect(result.current.c.data?.data[0]).toEqual({ key: 'NL' });
+    expect(result.current.p.data?.data[0]).toEqual({ key: 'hp1' });
+  });
+  it('a failed request surfaces as an error for a permitted role', async () => {
+    fetchMock.mockResolvedValue({ success: false, error: 'rollup down' });
+    const { result } = renderHook(() => useTakedownsGeo(), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.error?.message).toBe('rollup down'));
+  });
+});
+
 describe('helpers', () => {
   it('overindexPeriod maps the page period onto the two the endpoint supports', () => {
     expect(overindexPeriod('24h')).toBe('7d');
@@ -105,7 +192,7 @@ describe('helpers', () => {
     expect(overindexPeriod('90d')).toBe('30d');
   });
   it('readLensMeta tolerates anything', () => {
-    expect(readLensMeta(undefined)).toEqual({ generated_at: null, period: null, radar_snapshot_date: null, source_feed: null, country: null });
+    expect(readLensMeta(undefined)).toEqual({ generated_at: null, period: null, radar_snapshot_date: null, source_feed: null, country: null, dropped_no_centroid: null });
     expect(readLensMeta({ generated_at: 5, period: '7d' })).toMatchObject({ generated_at: null, period: '7d' });
   });
 });

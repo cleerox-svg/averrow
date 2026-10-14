@@ -19,6 +19,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    version: "v4.7.0",
+    publishedAt: "2026-10-14",
+    kind: "Feature",
+    title: "Globe view and clearer operation mapping",
+    description:
+      "The threat map now has a globe view alongside the flat map, with true great-circle routes and a gentle idle rotation for wall displays. The operations view was rebuilt to stay readable at real scale: one point per country, one link per pair of countries weighted by how many operations share it, and the strongest evidence ranked first, with low-evidence groupings from shared hosting hidden by default. New views show which threats were weaponized fastest and, for teams that manage takedowns, where takedowns succeed. Also improved map contrast, keyboard and screen-reader support, and map data attribution.",
+  },
+  {
     version: "v4.6.0",
     publishedAt: "2026-10-14",
     kind: "Feature",

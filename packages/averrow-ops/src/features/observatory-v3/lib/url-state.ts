@@ -10,7 +10,9 @@
  * the interactive scenes (not the density heatmap or the bot-share choropleth).
  * A lens is the one question the map answers; `view` (Threats: Points | Heat) and
  * `measure` (Baseline: Over-index | Raw | Bot share) are that lens's option. Old
- * `mode=heatmap` / `mode=bot_density` links still parse and are rewritten. Params that aren't ours are left untouched.
+ * `mode=heatmap` / `mode=bot_density` links still parse and are rewritten. `proj=globe` picks the globe projection
+ * (flat is the default and is never written); it is a standing view setting, independent of the lens and the selection.
+ * Params that aren't ours are left untouched.
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
@@ -19,6 +21,7 @@ import {
   LAYER_IDS, LENS_IDS, lensPreset, isLensId, noLayers, sameLayers,
   type LayerToggles, type LensId,
 } from './lenses';
+import { DEFAULT_PROJECTION, PROJECTION_IDS, type Projection } from './projection';
 
 export const PERIOD_IDS = ['24h', '7d', '30d', '90d'] as const;
 export type Period = (typeof PERIOD_IDS)[number];
@@ -34,8 +37,12 @@ export type Source = (typeof SOURCE_IDS)[number];
 export const MAP_MODE_IDS = ['global', 'heatmap', 'bot_density'] as const;
 export type MapMode = (typeof MAP_MODE_IDS)[number];
 
-export const THREAT_VIEW_IDS = ['points', 'heat'] as const;
-/** Threats lens option: individual origin nodes, or the density heatmap. */
+export const THREAT_VIEW_IDS = ['points', 'heat', 'fast'] as const;
+/**
+ * Threats lens option: individual origin nodes, the density heatmap, or the fast-weaponization view
+ * (countries whose domains went live within days of registration; has no source split, so `source` is
+ * ignored while it is on).
+ */
 export type ThreatView = (typeof THREAT_VIEW_IDS)[number];
 
 export const COLOR_BY_IDS = ['severity', 'type'] as const;
@@ -43,9 +50,21 @@ export type ColorBy = (typeof COLOR_BY_IDS)[number];
 
 export { LAYER_IDS, LENS_IDS, type LayerId, type LayerToggles, type LensId } from './lenses';
 
-export const MEASURE_IDS = ['index', 'raw', 'bot'] as const;
-/** Baseline lens option: colour countries by over-index vs Radar, by raw volume, or by Radar bot share. */
+export const MEASURE_IDS = ['index', 'raw', 'bot', 'takedowns'] as const;
+/**
+ * A lens's measure. Baseline: over-index vs Radar (`index`, the default), raw volume, Radar bot share, or
+ * takedown success by country. Hosting: its providers by active threats (`index`, the default) or takedown
+ * outcomes by provider. `takedowns` needs the `manage_takedowns` permission: the URL cannot know it, so the
+ * page falls back to the default for a viewer without it (see ObservatoryV3).
+ */
 export type Measure = (typeof MEASURE_IDS)[number];
+
+/** Which measures each lens has (the first is its default). Other lenses have none. */
+export function measuresFor(lens: LensId): readonly Measure[] {
+  if (lens === 'baseline') return MEASURE_IDS;
+  if (lens === 'hosting') return ['index', 'takedowns'];
+  return ['index'];
+}
 
 export const SEL_KINDS = ['country', 'op', 'provider', 'actor', 'campaign', 'move'] as const;
 export type SelKind = (typeof SEL_KINDS)[number];
@@ -70,7 +89,7 @@ export function selValue(kind: SelKind, id: string): string {
 export interface ObservatoryUrlState {
   /** Which question the map answers (global mode only). */
   lens: LensId;
-  /** Threats lens option (`heat` = density heatmap). Always `points` on other lenses. */
+  /** Threats lens option (`heat` = density heatmap, `fast` = fast weaponization). Always `points` on other lenses. */
   view: ThreatView;
   period: Period;
   source: Source;
@@ -85,8 +104,12 @@ export interface ObservatoryUrlState {
    * movement) — global mode only. Mutually exclusive with `node` / `arc`.
    */
   sel: string | null;
-  /** Baseline lens option. Always `index` on other lenses. */
+  /** Baseline / Hosting lens option (see `measuresFor`). Always `index` on other lenses. */
   measure: Measure;
+  /** Map projection: the flat map (default) or the globe (`proj=globe`). Independent of the lens. */
+  proj: Projection;
+  /** Operations lens: include the clusters the backend flags as shared infrastructure (`shared=1`; off by default). */
+  shared: boolean;
 }
 
 /** The scene the map draws for a state. */
@@ -116,10 +139,12 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   arc: null,
   sel: null,
   measure: 'index',
+  proj: DEFAULT_PROJECTION,
+  shared: false,
 };
 
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure'] as const;
+export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -171,10 +196,10 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     : null;
   const rawLens = sp.get('lens');
   const lens: LensId = legacy ? legacy.lens : isLensId(rawLens) ? rawLens : 'threats';
-  const view: ThreatView = lens === 'threats' && (legacy?.view === 'heat' || sp.get('view') === 'heat') ? 'heat' : 'points';
-  const measure: Measure = lens === 'baseline'
-    ? pick(MEASURE_IDS, legacy ? legacy.measure : sp.get('measure'), DEFAULT_STATE.measure)
-    : DEFAULT_STATE.measure;
+  const view: ThreatView = lens === 'threats'
+    ? (legacy?.view === 'heat' ? 'heat' : pick(THREAT_VIEW_IDS, sp.get('view'), DEFAULT_STATE.view))
+    : DEFAULT_STATE.view;
+  const measure: Measure = pick(measuresFor(lens), legacy ? legacy.measure : sp.get('measure'), DEFAULT_STATE.measure);
   // Selection lives on the interactive scenes: not on the density heatmap, nor the bot-share choropleth.
   const selectable = mapModeOf({ lens, view, measure }) === 'global';
   const rawNode = sp.get('node');
@@ -195,6 +220,9 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     arc: arcOk ? rawArc : null,
     sel: parsedSel ? selValue(parsedSel.kind, parsedSel.id) : null,
     measure,
+    // Absent / unknown = flat, so every pre-globe link keeps opening on the flat map.
+    proj: pick(PROJECTION_IDS, sp.get('proj'), DEFAULT_STATE.proj),
+    shared: sp.get('shared') === '1',
   };
 }
 
@@ -209,7 +237,9 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   if (state.lens === 'threats' && state.view !== DEFAULT_STATE.view) out.set('view', state.view);
   const layers = serializeLayers(state.layers, state.lens);
   if (layers) out.set('layers', layers);
-  if (state.lens === 'baseline' && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
+  if (measuresFor(state.lens).includes(state.measure) && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
+  if (state.proj !== DEFAULT_STATE.proj) out.set('proj', state.proj);
+  if (state.shared) out.set('shared', '1');
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);
@@ -256,7 +286,7 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
     if (patch.layers === undefined) next.layers = lensPreset(next.lens);
   }
   if (next.lens !== 'threats') next.view = DEFAULT_STATE.view;
-  if (next.lens !== 'baseline') next.measure = DEFAULT_STATE.measure;
+  if (!measuresFor(next.lens).includes(next.measure)) next.measure = DEFAULT_STATE.measure;
   const setsSelection = patch.node !== undefined || patch.arc !== undefined || patch.sel !== undefined;
   if (viewChanged && !setsSelection) {
     next.node = null;

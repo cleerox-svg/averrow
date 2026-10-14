@@ -4,7 +4,7 @@
  * queries disabled (no wasted requests, no phantom error banner).
  */
 
-import type { MapMode, SelKind } from './url-state';
+import type { MapMode, Measure, SelKind } from './url-state';
 import type { LayerToggles } from './lenses';
 
 export interface DataNeeds {
@@ -30,6 +30,15 @@ export interface DataNeeds {
   timeline: boolean;
   /** Live sonar pings. */
   live: boolean;
+  /** Fast-weaponization nodes (Threats lens, Fast view). */
+  velocity: boolean;
+  /**
+   * Takedown outcomes by country (Baseline > Takedowns, or a country drawer). Requires `manage_takedowns`: the hook
+   * itself never requests it for any other role, so this only says the VIEW wants it.
+   */
+  takedownsCountry: boolean;
+  /** Takedown outcomes by provider (Hosting > Takedowns). Same permission rule. */
+  takedownsProvider: boolean;
 }
 
 export interface NeedsOptions {
@@ -42,20 +51,44 @@ export interface NeedsOptions {
   selection?: 'node' | 'arc' | SelKind | null;
   /** The search box has been focused: load the lens lists it searches. */
   searching?: boolean;
+  /**
+   * The Threats lens' Fast weaponization view: its own picture (like the heatmap), drawn from the velocity cube.
+   * Only a country selection keeps other data loaded. The replay bar shows the velocity series.
+   */
+  velocity?: boolean;
+  /** The lens's measure (Baseline / Hosting). `takedowns` swaps the lens's data for takedown outcomes. */
+  measure?: Measure;
 }
 
 const NONE: DataNeeds = {
   nodes: false, arcs: false, heatmap: false, stats: false, bot: false,
   operations: false, movements: false, providers: false, overindex: false, campaigns: false,
-  actors: false, geometry: false, timeline: false, live: false,
+  actors: false, geometry: false, timeline: false, live: false, velocity: false,
+  takedownsCountry: false, takedownsProvider: false,
 };
 
 export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOptions = {}): DataNeeds {
   switch (mode) {
     case 'global': {
       const sel = opts.selection ?? null;
+      if (opts.velocity) {
+        // Layers are all off in this scene; a country drawer (the only selection a velocity node opens) loads its own data.
+        const country = sel === 'country';
+        return {
+          ...NONE,
+          velocity: true,
+          timeline: true,
+          nodes: country,
+          arcs: country,
+          operations: country,
+          providers: country,
+          overindex: country,
+          takedownsCountry: country,
+        };
+      }
       const country = sel === 'country';
       const searching = !!opts.searching;
+      const takedowns = opts.measure === 'takedowns';
       return {
         ...NONE,
         nodes: layers.nodes || sel === 'node' || country,
@@ -65,7 +98,10 @@ export function dataNeeds(mode: MapMode, layers: LayerToggles, opts: NeedsOption
         operations: layers.operations || sel === 'op' || country || searching,
         movements: layers.movement || sel === 'move',
         providers: layers.hosting || sel === 'provider' || country || searching,
-        overindex: layers.baseline || country,
+        // Takedown outcomes replace the Radar baseline on the Baseline lens (a country drawer still reads it).
+        overindex: (layers.baseline && !takedowns) || country,
+        takedownsCountry: (layers.baseline && takedowns) || country,
+        takedownsProvider: layers.hosting && takedowns,
         campaigns: layers.campaigns || sel === 'campaign' || searching,
         actors: layers.actors || sel === 'actor' || searching,
         // A country drawer alone does not need the shapes: only a visible choropleth draws them.
@@ -88,7 +124,8 @@ export type QueryErrors<E> = Partial<Record<NeedKey, E | null>>;
 
 /** Order failures are reported in. */
 const FAILURE_KEYS: readonly NeedKey[] = [
-  'nodes', 'arcs', 'heatmap', 'stats', 'operations', 'movements', 'providers', 'overindex', 'campaigns', 'actors', 'timeline',
+  'nodes', 'arcs', 'heatmap', 'stats', 'operations', 'movements', 'providers', 'overindex', 'campaigns', 'actors', 'timeline', 'velocity',
+  'takedownsCountry', 'takedownsProvider',
 ];
 
 /** Names of the failed queries that matter for this view (disabled queries can retain stale errors). */

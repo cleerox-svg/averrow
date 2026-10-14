@@ -11,6 +11,8 @@
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { roleHasPermission } from '@/lib/permissions';
 import {
   POLL, buildObservatoryUrl, clampLimit, observatoryKeys, shape, sourceParam,
   type ObservatoryQueryResult,
@@ -34,6 +36,12 @@ export interface OperationGeo {
   asns: string[];
   last_seen: string | null;
   last_movement_pivot_at: string | null;
+  /** Backend filter fields: all optional, the UI works before and after they ship (unknown tiers read as the kind). */
+  evidence_tier?: string | null;
+  brand_fanout?: number | null;
+  shared_infra?: boolean;
+  hub?: boolean;
+  ip_reputation?: boolean;
 }
 
 export interface ComponentEdge {
@@ -170,6 +178,42 @@ export interface ActorDetail {
   attributions: { by_confidence: Record<string, number>; by_source: Record<string, number> };
 }
 
+/** Fast-weaponization flag filter (`/velocity-nodes?flag=`, `/timeline?velocity=`). */
+export type VelocityFilter = 'very_fast' | 'fast' | 'all';
+
+/** One country of `/velocity-nodes`: the `/nodes` shape (severity fields are always empty) plus the flag counts. */
+export interface VelocityNode {
+  lat: number;
+  lng: number;
+  /** very_fast + fast for `flag=all`. */
+  threat_count: number;
+  country_code: string;
+  very_fast: number;
+  fast: number;
+  precision: 'country';
+}
+
+export type TakedownBy = 'country' | 'provider';
+export type TakedownPeriod = '30d' | '90d';
+
+/** One row of `/takedowns-geo` (requires `manage_takedowns`). */
+export interface TakedownGeoRow {
+  /** ISO-2 | hosting_providers.id | 'unknown'. */
+  key: string;
+  label: string;
+  country: string | null;
+  lat: number | null;
+  lng: number | null;
+  submitted: number;
+  taken_down: number;
+  refused: number;
+  expired: number;
+  pending: number;
+  /** taken_down / (taken_down + refused + expired); null when nothing resolved. */
+  share: number | null;
+  median_hours: number | null;
+}
+
 export interface LensMeta {
   generated_at: string | null;
   period: string | null;
@@ -177,6 +221,12 @@ export interface LensMeta {
   radar_snapshot_date: string | null;
   source_feed: string | null;
   country: string | null;
+  /** velocity-nodes only: countries' fast counts dropped for lacking a centroid. */
+  dropped_no_centroid: number | null;
+  /** operations-geo only: clusters left out by the backend's shared-infrastructure filters (optional: absent before it ships). */
+  excluded?: { shared_asn?: number; hub_ip?: number; ip_reputation?: number } | null;
+  /** operations-geo only: how many of the excluded rows this response carries (include_shared=1; else 0). */
+  shared_returned?: number | null;
 }
 
 export interface LensPayload<T> {
@@ -196,7 +246,15 @@ export function readLensMeta(raw: unknown): LensMeta {
     radar_snapshot_date: str(m.radar_snapshot_date),
     source_feed: str(m.source_feed),
     country: str(m.country),
+    dropped_no_centroid: typeof m.dropped_no_centroid === 'number' ? m.dropped_no_centroid : null,
+    ...(typeof m.shared_returned === 'number' && m.shared_returned >= 0 ? { shared_returned: m.shared_returned } : null),
+    ...(m.excluded && typeof m.excluded === 'object' ? { excluded: readExcluded(m.excluded as Record<string, unknown>) } : null),
   };
+}
+
+const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+function readExcluded(e: Record<string, unknown>): NonNullable<LensMeta['excluded']> {
+  return { shared_asn: count(e.shared_asn), hub_ip: count(e.hub_ip), ip_reputation: count(e.ip_reputation) };
 }
 
 async function fetchLens<T>(url: string, signal: AbortSignal): Promise<LensPayload<T>> {
@@ -216,12 +274,12 @@ const LENS_POLL = { ...POLL, refetchInterval: 600_000, staleTime: 120_000 } as c
 
 export const OPERATIONS_GEO_LIMIT = 50;
 
-export function useOperationsGeo(opts: Opts & { limit?: number; status?: 'active' | 'all' } = {}): ObservatoryQueryResult<LensPayload<OperationsGeoData>> {
-  const { enabled = true, status = 'active', limit = OPERATIONS_GEO_LIMIT } = opts;
+export function useOperationsGeo(opts: Opts & { limit?: number; status?: 'active' | 'all'; includeShared?: boolean } = {}): ObservatoryQueryResult<LensPayload<OperationsGeoData>> {
+  const { enabled = true, status = 'active', limit = OPERATIONS_GEO_LIMIT, includeShared = false } = opts;
   const safe = clampLimit(limit, 1, 50);
   return shape(useQuery({
-    queryKey: observatoryKeys.lens('operations-geo', { status, limit: safe }),
-    queryFn: ({ signal }) => fetchLens<OperationsGeoData>(buildObservatoryUrl('/api/observatory/operations-geo', { status, limit: safe }), signal),
+    queryKey: observatoryKeys.lens('operations-geo', { status, limit: safe, ...(includeShared ? { shared: 1 } : null) }),
+    queryFn: ({ signal }) => fetchLens<OperationsGeoData>(buildObservatoryUrl('/api/observatory/operations-geo', { status, limit: safe, ...(includeShared ? { include_shared: 1 } : null) }), signal),
     enabled,
     ...LENS_POLL,
   }));
@@ -277,19 +335,75 @@ export function useCampaignsGeo(opts: Opts = {}): ObservatoryQueryResult<LensPay
 }
 
 export function useObservatoryTimeline(
-  opts: Opts & { period?: string; source?: string; country?: string | null } = {},
+  opts: Opts & { period?: string; source?: string; country?: string | null; velocity?: VelocityFilter | null } = {},
 ): ObservatoryQueryResult<LensPayload<TimelineData>> {
-  const { enabled = true, period = '7d', source = 'all', country = null } = opts;
+  const { enabled = true, period = '7d', source = 'all', country = null, velocity = null } = opts;
+  // The velocity cube has no source dimension (the server answers 400 for velocity + a source): never send both.
+  const src = velocity ? 'all' : source;
   return shape(useQuery({
-    queryKey: observatoryKeys.lens('timeline', { period, source, country }),
+    queryKey: observatoryKeys.lens('timeline', { period, source: src, country, velocity }),
     queryFn: ({ signal }) => fetchLens<TimelineData>(
-      buildObservatoryUrl('/api/observatory/timeline', { period, source_feed: sourceParam(source), country: country ?? undefined }),
+      buildObservatoryUrl('/api/observatory/timeline', {
+        period, source_feed: sourceParam(src), country: country ?? undefined, velocity: velocity ?? undefined,
+      }),
       signal,
     ),
     enabled,
     ...LENS_POLL,
     refetchInterval: 300_000,
+    // Keep the previous PERIOD on screen while a new one loads, but never carry a severity series into the
+    // velocity view (or back): they are different charts.
+    placeholderData: (prev, prevQuery) => (prevQuery && timelineSeries(prevQuery.queryKey) === (velocity ?? null) ? prev : undefined),
+  }));
+}
+
+/** The `velocity` param a timeline query key was built with. */
+function timelineSeries(key: readonly unknown[]): string | null {
+  const params = key[3];
+  const v = params && typeof params === 'object' ? (params as Record<string, unknown>).velocity : null;
+  return typeof v === 'string' ? v : null;
+}
+
+/**
+ * Fast-weaponization nodes (one per country). The velocity cube is heal-only, so an empty answer means
+ * "coverage still filling", not "none" — callers word it that way.
+ */
+export function useVelocityNodes(opts: Opts & { period?: string; flag?: VelocityFilter } = {}): ObservatoryQueryResult<LensPayload<VelocityNode[]>> {
+  const { enabled = true, period = '7d', flag = 'all' } = opts;
+  return shape(useQuery({
+    queryKey: observatoryKeys.lens('velocity-nodes', { period, flag }),
+    queryFn: ({ signal }) => fetchLens<VelocityNode[]>(buildObservatoryUrl('/api/observatory/velocity-nodes', { period, flag }), signal),
+    enabled,
+    ...LENS_POLL,
     placeholderData: keepPreviousData,
+  }));
+}
+
+/** takedowns-geo only has 30d / 90d: map the page period onto the nearest window. */
+export function takedownPeriod(period: string): TakedownPeriod {
+  return period === '90d' ? '90d' : '30d';
+}
+
+/** True when the signed-in role holds `manage_takedowns` (the same gate as the worker's route). */
+export function useCanManageTakedowns(): boolean {
+  const { user } = useAuth();
+  return roleHasPermission(user?.role, 'manage_takedowns');
+}
+
+/**
+ * Takedown outcomes by country or provider. Requires `manage_takedowns`: the request is NEVER sent for any
+ * other role (the server would answer 403), whatever `enabled` says.
+ */
+export function useTakedownsGeo(opts: Opts & { period?: string; by?: TakedownBy } = {}): ObservatoryQueryResult<LensPayload<TakedownGeoRow[]>> {
+  const { enabled = true, period = '30d', by = 'country' } = opts;
+  const permitted = useCanManageTakedowns();
+  const p = takedownPeriod(period);
+  return shape(useQuery({
+    queryKey: observatoryKeys.lens('takedowns-geo', { period: p, by }),
+    queryFn: ({ signal }) => fetchLens<TakedownGeoRow[]>(buildObservatoryUrl('/api/observatory/takedowns-geo', { period: p, by }), signal),
+    enabled: enabled && permitted,
+    ...LENS_POLL,
+    refetchInterval: 1_800_000,
   }));
 }
 

@@ -13,6 +13,10 @@
  * movement trails were built for), so the playhead, the bars and the animation agree.
  * On phones the readout is short ("13 Oct 14:00") and the range line is dropped.
  *
+ * Fast view (`series="velocity"`): the bars are the fast-weaponized threats per bucket (`/timeline?velocity=`).
+ * Nothing replays in that scene (its nodes are period totals), so the transport and the playhead are left
+ * out and the histogram is a still chart with a text summary instead of a slider.
+ *
  * Accessibility: the histogram is a `slider` — Left/Right move one bucket,
  * Shift or Page keys ten, Home/End jump to the ends, Space plays / pauses. Under
  * reduced motion playback is off (scrubbing still works).
@@ -24,8 +28,9 @@ import type { AnimationClock } from '../lib/animation-clock';
 import type { TimelineData } from '@/hooks/useObservatoryLenses';
 import {
   buildHistogram, barIndexAt, clockToFrac, formatPlayheadTime, fracToClock, fracToTime, nudgePlayhead,
-  pointerFrac, stackedPaths, windowBuckets, type ReplayWindow,
+  pointerFrac, stackedPaths, velocityPaths, windowBuckets, type ReplayWindow, type TimelineSeries,
 } from '../lib/lens/timeline';
+import { VELOCITY_RGB } from '../lib/lens/velocity';
 import { CYCLE_LENGTH } from '../lib/trips';
 
 // ─── Playhead bus ───────────────────────────────────────────
@@ -74,15 +79,18 @@ export interface ReplayTimelineProps {
   /** True while the pointer is dragging the playhead (live pings pause meanwhile). */
   onScrubChange?: (scrubbing: boolean) => void;
   isMobile?: boolean;
+  /** `severity` (default): the replay histogram. `velocity`: fast-weaponized threats, a still chart. */
+  series?: TimelineSeries;
   className?: string;
   style?: React.CSSProperties;
 }
 
 export function ReplayTimeline({
   data, isLoading, error, onRetry, clock, subscribe, playing, speed, onTogglePlay, onSpeed, onSeek,
-  reducedMotion, periodLabel, countryLabel, window: replayWindow, onScrubChange, isMobile = false, className, style,
+  reducedMotion, periodLabel, countryLabel, window: replayWindow, onScrubChange, isMobile = false, series = 'severity', className, style,
 }: ReplayTimelineProps) {
-  const hist = useMemo(() => buildHistogram(data, replayWindow), [data, replayWindow]);
+  const velocity = series === 'velocity';
+  const hist = useMemo(() => buildHistogram(data, replayWindow, series), [data, replayWindow, series]);
   const trackRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const readoutRef = useRef<HTMLSpanElement>(null);
@@ -106,7 +114,8 @@ export function ReplayTimeline({
     return () => ro.disconnect();
   }, []);
 
-  const paths = useMemo(() => (hist && width > 0 ? stackedPaths(hist, width, HIST_HEIGHT) : null), [hist, width]);
+  const paths = useMemo(() => (hist && width > 0 && !velocity ? stackedPaths(hist, width, HIST_HEIGHT) : null), [hist, width, velocity]);
+  const vPaths = useMemo(() => (hist && width > 0 && velocity ? velocityPaths(hist, width, HIST_HEIGHT) : null), [hist, width, velocity]);
 
   /** Move the playhead marker + readout to clock position t. DOM only. */
   const apply = useCallback((t: number) => {
@@ -127,10 +136,11 @@ export function ReplayTimeline({
 
   // Follow the clock; also snap to the current position whenever the layout / data changes.
   useEffect(() => {
+    if (velocity) return; // a still chart: no playhead to move
     lastBucket.current = -1;
     apply(clock.currentTime);
     return subscribe(apply);
-  }, [subscribe, apply, clock, width]);
+  }, [subscribe, apply, clock, width, velocity]);
 
   // A drag cut short by unmounting must not leave the page believing it is still scrubbing.
   const scrubCbRef = useRef(onScrubChange);
@@ -187,11 +197,12 @@ export function ReplayTimeline({
 
   const subtitle = hist ? `${periodLabel}${countryLabel ? ` · ${countryLabel}` : ''}` : periodLabel;
   const empty = hist !== null && hist.total === 0;
+  const stillSummary = velocity && hist ? `Fast weaponization, ${subtitle}: ${hist.total.toLocaleString()} threats` : `Fast weaponization, ${subtitle}`;
 
   return (
     <div
       role="group"
-      aria-label="Replay timeline"
+      aria-label={velocity ? 'Fast weaponization timeline' : 'Replay timeline'}
       className={className}
       style={{
         background: 'var(--bg-card-deep)',
@@ -206,7 +217,7 @@ export function ReplayTimeline({
         ...style,
       }}
     >
-      <button
+      {!velocity && <button
         type="button"
         onClick={onTogglePlay}
         aria-label={reducedMotion ? 'Playback is off (reduced motion)' : playing ? 'Pause replay' : 'Play replay'}
@@ -223,9 +234,9 @@ export function ReplayTimeline({
         onClickCapture={e => { if (reducedMotion) { e.preventDefault(); e.stopPropagation(); } }}
       >
         {playing && !reducedMotion ? <Pause size={14} /> : <Play size={14} />}
-      </button>
+      </button>}
 
-      {!isMobile && (
+      {!isMobile && !velocity && (
         <div role="group" aria-label="Replay speed" className="flex shrink-0 rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-base)' }}>
           {REPLAY_SPEEDS.map(s => (
             <button
@@ -247,55 +258,66 @@ export function ReplayTimeline({
       )}
 
       <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-        <div
-          ref={sliderRef}
-          role="slider"
-          tabIndex={0}
-          aria-label={`Replay position, ${subtitle}`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={0}
-          aria-orientation="horizontal"
-          onKeyDown={onKeyDown}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          className="ds-focusable relative rounded-md"
-          style={{ height: HIST_HEIGHT + 2, cursor: 'ew-resize', touchAction: 'none', background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)' }}
-        >
-          <div ref={trackRef} className="absolute inset-0 overflow-hidden rounded-md">
-            {paths && !empty && (
-              <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
-                <path d={paths.other} fill={SEV_FILL.other} opacity={0.5} />
-                <path d={paths.low} fill={SEV_FILL.low} opacity={0.7} />
-                <path d={paths.medium} fill={SEV_FILL.medium} opacity={0.75} />
-                <path d={paths.high} fill={SEV_FILL.high} opacity={0.85} />
-                <path d={paths.critical} fill={SEV_FILL.critical} />
-              </svg>
-            )}
-            {(isLoading || error || empty || !hist) && (
-              <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                {error ? (
-                  <span role="alert">
-                    Timeline unavailable{' '}
-                    <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} onPointerDown={e => e.stopPropagation()} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
-                  </span>
-                ) : isLoading ? 'Loading timeline…' : empty ? 'No activity in this period' : ''}
-              </div>
-            )}
-          </div>
-          {/* Playhead: a transform-only marker, positioned by `apply`. */}
+        {/* The slider / image role makes its children presentational for assistive tech, so anything that has to be
+            reachable (the Retry button, the status text) is a SIBLING laid over it, never inside it. */}
+        <div className="relative" style={{ height: HIST_HEIGHT + 2 }}>
           <div
-            ref={headRef}
-            aria-hidden
-            className="absolute top-0 bottom-0 left-0 pointer-events-none"
-            style={{ width: 2, marginLeft: -1, background: 'var(--amber)', boxShadow: '0 0 6px var(--amber)', willChange: 'transform' }}
-          />
+            ref={sliderRef}
+            {...(velocity
+              ? { role: 'img', 'aria-label': stillSummary }
+              : {
+                role: 'slider', tabIndex: 0, 'aria-label': `Replay position, ${subtitle}`,
+                'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': 0, 'aria-orientation': 'horizontal' as const,
+                onKeyDown, onPointerDown, onPointerMove, onPointerUp: endDrag, onPointerCancel: endDrag,
+              })}
+            className="ds-focusable absolute inset-0 rounded-md"
+            style={{ cursor: velocity ? 'default' : 'ew-resize', touchAction: velocity ? undefined : 'none', background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)' }}
+          >
+            <div ref={trackRef} className="absolute inset-0 overflow-hidden rounded-md">
+              {paths && !empty && (
+                <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
+                  <path d={paths.other} fill={SEV_FILL.other} opacity={0.5} />
+                  <path d={paths.low} fill={SEV_FILL.low} opacity={0.7} />
+                  <path d={paths.medium} fill={SEV_FILL.medium} opacity={0.75} />
+                  <path d={paths.high} fill={SEV_FILL.high} opacity={0.85} />
+                  <path d={paths.critical} fill={SEV_FILL.critical} />
+                </svg>
+              )}
+              {vPaths && !empty && (
+                <svg width={width} height={HIST_HEIGHT} aria-hidden style={{ position: 'absolute', left: 0, bottom: 0 }}>
+                  <path d={vPaths.fast} fill={VELOCITY_RGB} opacity={0.5} />
+                  <path d={vPaths.veryFast} fill={VELOCITY_RGB} />
+                </svg>
+              )}
+            </div>
+            {/* Playhead: a transform-only marker, positioned by `apply`. */}
+            {!velocity && <div
+              ref={headRef}
+              aria-hidden
+              className="absolute top-0 bottom-0 left-0 pointer-events-none"
+              style={{ width: 2, marginLeft: -1, background: 'var(--amber)', boxShadow: '0 0 6px var(--amber)', willChange: 'transform' }}
+            />}
+          </div>
+          {(isLoading || error || empty || !hist) && (
+            <div className="absolute inset-0 flex items-center justify-center font-mono text-[10px] pointer-events-none" style={{ color: 'var(--text-muted)' }}>
+              {error ? (
+                <span role="alert" className="pointer-events-auto">
+                  Timeline unavailable{' '}
+                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
+                </span>
+              ) : isLoading ? <span role="status">Loading timeline…</span>
+                : empty ? <span role="status">{velocity ? 'Coverage still filling: no fast-weaponized threats counted yet' : 'No activity in this period'}</span>
+                  : null}
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-between gap-2 font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {/* The readout follows the playhead's bucket (written imperatively, never via React state). */}
-          <span ref={readoutRef} aria-hidden style={{ color: 'var(--amber-text)', minWidth: 0 }} />
+          {velocity
+            ? <span style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
+              {hist && !empty ? <><span style={{ color: VELOCITY_RGB }}>■</span> very fast (≤ 24h) <span style={{ opacity: 0.6, color: VELOCITY_RGB }}>■</span> fast (≤ 72h)</> : null}
+            </span>
+            : <span ref={readoutRef} aria-hidden style={{ color: 'var(--amber-text)', minWidth: 0 }} />}
           {!isMobile && (
             <span className="truncate">
               {hist ? `${formatPlayheadTime(hist.startMs, hist.bucketMs)} – ${formatPlayheadTime(hist.endMs, hist.bucketMs)}` : subtitle}

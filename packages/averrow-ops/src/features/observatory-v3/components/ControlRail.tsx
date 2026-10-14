@@ -2,11 +2,15 @@
  * Control rail: the console's secondary controls in a slim 44px column, replacing
  * the old nine-row layer list.
  *
- *   VIEW      the active lens's option  (Threats: Points | Heat,
- *                                         Baseline: Over-index | Raw | Bot share)
+ *   VIEW      the active lens's option  (Threats: Points | Heat | Fast,
+ *                                         Baseline: Over-index | Raw | Bot share | Takedowns,
+ *                                         Hosting: Active threats | Takedowns)
+ *             The Takedowns options exist only for roles holding `manage_takedowns`.
  *   TRAFFIC   threat traffic underneath: Off | Nodes | Nodes + Flow
  *   Beams     static attack corridors
  *   Colour    severity | threat type
+ *
+ * (Flat | Globe is a MAP control, not a lens control: it lives in the map's zoom cluster, see ProjectionToggle.)
  *
  * Every control is an icon button with a tooltip and, where one exists, its
  * keyboard hint (the 1-9 layer keys keep working; they just aren't a list any
@@ -15,7 +19,7 @@
  */
 
 import { useCallback, useId, useState, type ReactNode } from 'react';
-import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart } from 'lucide-react';
+import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart, Server, ShieldCheck, Zap } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LayerToggles, LensId } from '../lib/lenses';
 import type { ColorBy, Measure, ThreatView } from '../lib/url-state';
@@ -32,6 +36,8 @@ export interface ControlRailProps {
   onView: (view: ThreatView) => void;
   onMeasure: (measure: Measure) => void;
   onColorBy: (colorBy: ColorBy) => void;
+  /** Holds `manage_takedowns`: only then are the Takedowns measures offered (the server refuses them to every other role). */
+  canSeeTakedowns?: boolean;
   /** `rail`: 44px icon column (tablet / desktop). `panel`: labelled 44px rows (phone filters card). */
   layout?: 'rail' | 'panel';
   className?: string;
@@ -46,6 +52,8 @@ interface Item {
   icon: ReactNode;
   pressed: boolean;
   onPress: () => void;
+  /** Unavailable right now; `hint` says why. */
+  disabled?: boolean;
 }
 
 function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) {
@@ -56,12 +64,14 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
       <button
         type="button"
         aria-pressed={item.pressed}
+        aria-disabled={item.disabled || undefined}
         aria-label={item.label}
         aria-describedby={panel ? undefined : tipId}
         data-control={item.id}
-        onClick={item.onPress}
+        onClick={item.disabled ? undefined : item.onPress}
         className={cn(
-          'ds-focusable inline-flex items-center justify-center rounded-lg transition-colors motion-reduce:transition-none cursor-pointer',
+          'ds-focusable inline-flex items-center justify-center rounded-lg transition-colors motion-reduce:transition-none',
+          item.disabled ? 'cursor-not-allowed opacity-45' : 'cursor-pointer',
           panel ? 'w-full min-h-[44px] gap-1.5 px-2 py-1 font-mono text-[11px]' : 'w-9 h-9',
         )}
         style={{
@@ -95,14 +105,15 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
 
 function Group({ label, items, layout }: { label: string; items: Item[]; layout: 'rail' | 'panel' }) {
   return (
-    <div role="group" aria-label={label} className={cn(layout === 'panel' ? 'flex gap-1.5' : 'flex flex-col gap-0.5')}>
+    <div role="group" aria-label={label} className={cn(layout === 'panel' ? (items.length > 3 ? 'grid grid-cols-2 gap-1.5' : 'flex gap-1.5') : 'flex flex-col gap-0.5')}>
       {items.map(item => <RailButton key={item.id} item={item} layout={layout} />)}
     </div>
   );
 }
 
 export function ControlRail({
-  lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, layout = 'rail', className,
+  lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, canSeeTakedowns = false,
+  layout = 'rail', className,
 }: ControlRailProps) {
   const [announcement, setAnnouncement] = useState('');
   const say = useCallback((msg: string) => setAnnouncement(prev => (prev === msg ? `${msg}​` : msg)), []);
@@ -140,17 +151,24 @@ export function ControlRail({
       ? [
         { id: 'view-points', label: 'Points', hint: 'Origin nodes, one per place', icon: icon(<ScatterChart size={16} />), pressed: view === 'points', onPress: () => { onView('points'); say('Threats view: points'); } },
         { id: 'view-heat', label: 'Heat', hint: 'Density of geolocated threats', icon: icon(<Flame size={16} />), pressed: view === 'heat', onPress: () => { onView('heat'); say('Threats view: heat'); } },
+        { id: 'view-fast', label: 'Fast weaponization', hint: 'Countries where domains went live within days of registration (all sources)', icon: icon(<Zap size={16} />), pressed: view === 'fast', onPress: () => { onView('fast'); say('Threats view: fast weaponization'); } },
       ]
       : lens === 'baseline'
         ? [
           { id: 'measure-index', label: 'Over-index', hint: 'Our share of threats vs Cloudflare Radar\'s share of attack origin', icon: icon(<Scale size={16} />), pressed: measure === 'index', onPress: () => { onMeasure('index'); say('Baseline: over-index'); } },
           { id: 'measure-raw', label: 'Raw', hint: 'Raw count of threats per country', icon: icon(<BarChart3 size={16} />), pressed: measure === 'raw', onPress: () => { onMeasure('raw'); say('Baseline: raw volume'); } },
           { id: 'measure-bot', label: 'Bot share', hint: 'Radar: bot share of each country\'s traffic', icon: icon(<Bot size={16} />), pressed: measure === 'bot', onPress: () => { onMeasure('bot'); say('Baseline: bot share'); } },
+          ...(canSeeTakedowns ? [{ id: 'measure-takedowns', label: 'Takedowns', hint: 'How often takedowns succeed, by country (green = most are taken down)', icon: icon(<ShieldCheck size={16} />), pressed: measure === 'takedowns', onPress: () => { onMeasure('takedowns'); say('Baseline: takedown outcomes'); } }] : []),
         ]
-        : [];
+        : lens === 'hosting' && canSeeTakedowns
+          ? [
+            { id: 'measure-hosts', label: 'Active threats', hint: 'Providers by active threats, coloured by trend', icon: icon(<Server size={16} />), pressed: measure !== 'takedowns', onPress: () => { onMeasure('index'); say('Hosting: active threats'); } },
+            { id: 'measure-takedowns', label: 'Takedowns', hint: 'How often takedowns succeed, by host (green = most are taken down)', icon: icon(<ShieldCheck size={16} />), pressed: measure === 'takedowns', onPress: () => { onMeasure('takedowns'); say('Hosting: takedown outcomes'); } },
+          ]
+          : [];
 
-  // The heat view and the bot-share scene are their own pictures: traffic context does not apply.
-  const traffickable = !(lens === 'threats' && view === 'heat') && !(lens === 'baseline' && measure === 'bot');
+  // The heat and fast views and the bot-share scene are their own pictures: traffic context does not apply.
+  const traffickable = !(lens === 'threats' && (view === 'heat' || view === 'fast')) && !(lens === 'baseline' && measure === 'bot');
 
   const panel = layout === 'panel';
   return (
@@ -169,7 +187,7 @@ export function ControlRail({
       {viewItems.length > 0 && (
         <>
           {panel && <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>View</div>}
-          <Group label={lens === 'threats' ? 'Threats view' : 'Baseline measure'} items={viewItems} layout={layout} />
+          <Group label={lens === 'threats' ? 'Threats view' : lens === 'hosting' ? 'Hosting measure' : 'Baseline measure'} items={viewItems} layout={layout} />
           {!panel && traffickable && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
         </>
       )}

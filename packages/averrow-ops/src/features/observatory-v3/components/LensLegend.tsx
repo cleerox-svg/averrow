@@ -13,6 +13,7 @@ import { RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Measure } from '../lib/url-state';
 import type { OperationsModel } from '../lib/lens/operations';
+import { opEdgeStyle } from '../lib/lens/operations-draw';
 import type { MovementModel } from '../lib/lens/movement';
 import type { HostingModel } from '../lib/lens/hosting';
 import { TREND_COLORS } from '../lib/lens/hosting';
@@ -23,6 +24,10 @@ import { formatPct } from '../lib/bot-density';
 import { Link } from 'react-router-dom';
 import { tabUrl } from '@/lib/workspaceRoutes';
 import type { CampaignsModel } from '../lib/lens/campaigns';
+import type { TakedownCountryModel, TakedownProviderModel } from '../lib/lens/takedowns';
+import { TAKEDOWN_MIN_RESOLVED, TAKEDOWN_SMALL_OUTLINE, TAKEDOWN_STOPS } from '../lib/lens/takedowns';
+import type { VelocityModel } from '../lib/lens/velocity';
+import { VELOCITY_FILLING, VELOCITY_RGB } from '../lib/lens/velocity';
 import type { ActorModel } from '../lib/lens/actors';
 import type { ActorListItem } from '@/hooks/useObservatoryLenses';
 import { rgbCss, type Rgba } from '../lib/map-colors';
@@ -43,6 +48,13 @@ export interface LegendSectionProps {
     bot: { model: BotShareModel | null; q: QueryState };
   };
   campaigns: { model: CampaignsModel | null; q: QueryState };
+  velocity: { model: VelocityModel | null; q: QueryState };
+  /** Takedown outcomes (Baseline / Hosting, Takedowns measure). `window` is the server's window: '30d' or '90d'. */
+  takedowns: {
+    window: string;
+    countries: { model: TakedownCountryModel | null; q: QueryState };
+    providers: { model: TakedownProviderModel | null; q: QueryState };
+  };
   actors: { model: ActorModel | null; list: ActorListItem[]; listQ: QueryState; detailQ: QueryState | null; selectedId: string | null };
   onPickActor: (id: string | null) => void;
 }
@@ -50,7 +62,7 @@ export interface LegendSectionProps {
 const LABEL = 'font-mono text-[10px] uppercase tracking-wider';
 const TEXT = 'font-mono text-[10px]';
 
-function Swatch({ color, ring, dashed, square }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean }) {
+function Swatch({ color, ring, dashed, square, halo }: { color: string; ring?: boolean; dashed?: boolean; square?: boolean; halo?: boolean }) {
   return (
     <span
       aria-hidden
@@ -59,7 +71,9 @@ function Swatch({ color, ring, dashed, square }: { color: string; ring?: boolean
         width: 10, height: 10, borderRadius: square ? 2 : '50%', flexShrink: 0,
         background: ring ? 'transparent' : color,
         border: ring || dashed ? `1.5px ${dashed ? 'dashed' : 'solid'} ${color}` : 'none',
-        boxShadow: '0 0 0 1px rgba(0,0,0,0.3)',
+        // `halo`: a filled dot with a separate ring around it (the very-fast nodes' static ring on the map).
+        boxShadow: halo ? `0 0 0 2px var(--bg-card-deep), 0 0 0 3.5px ${color}` : '0 0 0 1px rgba(0,0,0,0.3)',
+        ...(halo ? { margin: 3 } : null),
       }}
     />
   );
@@ -96,6 +110,9 @@ function Section({ title, children, id }: { title: string; children: ReactNode; 
 
 const css = (c: Rgba): string => rgbCss(c);
 
+/** The legend's link scale: 1, 3 and 5+ operations sharing a country pair. */
+const EDGE_SCALE = [1, 3, 5] as const;
+
 export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }) {
   const m = s.model;
   return (
@@ -104,11 +121,25 @@ export function OperationsSection({ s }: { s: LegendSectionProps['operations'] }
       {m && m.nodes.length > 0 && (
         <>
           <ul className="list-none p-0 m-0 flex flex-col gap-1">
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Operation in a country. Nodes of one operator pulse in unison.</Row>
-            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Linked by shared evidence. The label says what: ◆ cert, ● IP, ▲ ASN ×count. Hover a link for the full detail.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" />}>Country with operations: bigger = more of them there (labelled &ldquo;DE 37&rdquo; for the busiest). Click for the list.</Row>
+            <Row swatch={<Swatch color="rgb(122, 234, 255)" dashed />}>Links radiate from each operation&rsquo;s busiest country. The label says the evidence: ◆ cert, ● IP, ▲ ASN.</Row>
+            <li className={`${TEXT} flex items-center gap-2`} style={{ color: 'var(--text-secondary)' }} data-testid="ops-edge-scale">
+              <span aria-hidden className="inline-flex items-center gap-2 shrink-0">
+                {EDGE_SCALE.map(n => {
+                  const { width, alpha } = opEdgeStyle(n, EDGE_SCALE[EDGE_SCALE.length - 1]!);
+                  return (
+                    <span key={n} className="inline-flex items-center gap-1">
+                      <span style={{ display: 'inline-block', width: 18, height: Math.max(1, Math.round(width)), borderRadius: 1, background: `rgba(122, 234, 255, ${(alpha / 255).toFixed(2)})` }} />
+                      <span style={{ color: 'var(--text-tertiary)' }}>{n === EDGE_SCALE[EDGE_SCALE.length - 1] ? `${n}+` : n}</span>
+                    </span>
+                  );
+                })}
+              </span>
+              <span className="min-w-0">operations share a link: thicker and brighter = more</span>
+            </li>
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
-            {m.placedOps.size} operations · {m.nodes.length} country nodes · {m.edges.length} links
+            {m.placedOps.size} operations · {m.nodes.length} countries · links drawn for the top {m.topOpIds.length}; select one for its whole footprint
             {m.unplaced > 0 && ` · ${m.unplaced} country entries not placeable`}
           </div>
         </>
@@ -151,12 +182,72 @@ export function HostingSection({ s }: { s: LegendSectionProps['hosting'] }) {
             <Row swatch={<Swatch color={css(TREND_COLORS.rising)} />}>Rising this week</Row>
             <Row swatch={<Swatch color={css(TREND_COLORS.falling)} />}>Falling this week</Row>
             <Row swatch={<Swatch color={css(TREND_COLORS.flat)} />}>Steady</Row>
-            <Row swatch={<Swatch color="rgb(248, 113, 113)" dashed />}>Bulletproof host (rotating dashes)</Row>
-            {m.rings.some(r => r.takedownShare !== null) && <Row swatch={<Swatch color="rgb(60, 184, 120)" ring />}>Green arc: share of resolved takedowns that succeeded</Row>}
+            <Row swatch={<Swatch color="var(--sev-critical)" dashed />}>Bulletproof host (rotating dashes)</Row>
+            {m.rings.some(r => r.takedownShare !== null) && <Row swatch={<Swatch color="var(--green)" ring />}>Green arc: share of resolved takedowns that succeeded</Row>}
           </ul>
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Ring size = active threats · {m.rings.length} providers
             {m.unplaced > 0 && ` · ${m.unplaced} without a country not shown`}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+const TAKEDOWN_GRADIENT = `linear-gradient(90deg, ${TAKEDOWN_STOPS.map(st => `${css(st.color)} ${Math.round(st.t * 100)}%`).join(', ')})`;
+
+/** The key both takedown views share: the sequential green scale and the grey "too few" outline. */
+function TakedownScale({ what }: { what: string }) {
+  return (
+    <>
+      <div role="img" aria-label="Colour scale: dark green, few taken down, to bright green, most taken down" style={{ height: 8, borderRadius: 4, background: TAKEDOWN_GRADIENT }} />
+      <div className={`${TEXT} flex justify-between`} style={{ color: 'var(--text-secondary)' }}>
+        <span>0% taken down</span><span>100%</span>
+      </div>
+      <ul className="list-none p-0 m-0">
+        <Row swatch={<Swatch color={css(TAKEDOWN_SMALL_OUTLINE)} />}>
+          Grey: fewer than {TAKEDOWN_MIN_RESOLVED} resolved takedowns, too few for a rate ({what} left out of the ranking)
+        </Row>
+      </ul>
+    </>
+  );
+}
+
+export function TakedownCountrySection({ s, window }: { s: LegendSectionProps['takedowns']['countries']; window: string }) {
+  const m = s.model;
+  return (
+    <Section title="Takedown success by country" id="lg-td-country">
+      <Status q={s.q} what="takedown outcomes" empty={!!m && m.rows.size === 0} emptyText={`No takedowns were submitted in the last ${window}.`} />
+      {m && m.rows.size > 0 && (
+        <>
+          <TakedownScale what="countries" />
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Taken down ÷ (taken down + refused + expired), for takedowns submitted in the last {window} (whole UTC days).
+            {` ${m.withRate} ${m.withRate === 1 ? 'country' : 'countries'} with a rate, ${m.tooSmall} too small.`}
+            {m.unknownSubmitted > 0 && ` ${m.unknownSubmitted.toLocaleString()} takedowns have no known country and are not mapped.`}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+export function TakedownProviderSection({ s, window }: { s: LegendSectionProps['takedowns']['providers']; window: string }) {
+  const m = s.model;
+  return (
+    <Section title="Takedown success by host" id="lg-td-host">
+      <Status q={s.q} what="takedown outcomes" empty={!!m && m.rows.size === 0} emptyText={`No takedowns were submitted in the last ${window}.`} />
+      {m && m.rows.size > 0 && (
+        <>
+          <TakedownScale what="hosts" />
+          <ul className="list-none p-0 m-0">
+            <Row swatch={<Swatch color="var(--green)" ring />}>Green arc: the same share, as a fraction of the ring</Row>
+          </ul>
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Ring size = active threats. Share = taken down ÷ (taken down + refused + expired), for takedowns submitted in the last {window}.
+            {` ${m.withRate} ${m.withRate === 1 ? 'host' : 'hosts'} with a rate, ${m.tooSmall} too small.`}
+            {m.undrawn > 0 && ` ${m.undrawn} more ${m.undrawn === 1 ? 'host has' : 'hosts have'} a takedown history but no active threats, and ${m.undrawn === 1 ? 'is' : 'are'} listed in the panel only.`}
           </div>
         </>
       )}
@@ -238,6 +329,29 @@ function botGradient(m: BotShareModel): string {
   const mid = pick(Math.floor(sorted.length / 2));
   const hi = pick(sorted.length - 1);
   return `linear-gradient(90deg, ${css(lo)}, ${css(mid)}, ${css(hi)})`;
+}
+
+export function VelocitySection({ s }: { s: LegendSectionProps['velocity'] }) {
+  const m = s.model;
+  return (
+    <Section title="Fast weaponization" id="lg-fast">
+      <Status q={s.q} what="fast weaponization" empty={!!m && m.points.length === 0} emptyText={VELOCITY_FILLING} />
+      {m && m.points.length > 0 && (
+        <>
+          <ul className="list-none p-0 m-0 flex flex-col gap-1">
+            <Row swatch={<Swatch color={VELOCITY_RGB} halo />}>Very fast: live within 24h of registration. Solid, with a ring (and a pulse when motion is on).</Row>
+            <Row swatch={<span aria-hidden style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: VELOCITY_RGB, opacity: 0.45, boxShadow: '0 0 0 1px rgba(0,0,0,0.3)' }} />}>Fast: live within 72h. Lighter, no ring.</Row>
+          </ul>
+          <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
+            Node size = very fast + fast threats · {m.points.length} countries · {m.total.toLocaleString()} threats.
+            Evidence about how an operator works, not a severity. Always all sources.
+            {m.dropped > 0 && ` ${m.dropped.toLocaleString()} without a placeable country not shown.`}
+            {' '}Coverage fills as the cube healer runs, so recent threats may be missing.
+          </div>
+        </>
+      )}
+    </Section>
+  );
 }
 
 export function CampaignsSection({ s }: { s: LegendSectionProps['campaigns'] }) {

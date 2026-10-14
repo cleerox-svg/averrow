@@ -12,7 +12,8 @@
 // (status, threat_count DESC, id).
 //
 // Here the DB is built by applying EVERY migration file (openMigratedDb),
-// seeded at realistic production scale (77K clusters ~92% active, 27.6K
+// seeded at realistic production scale (77K clusters: 76K random-UUID legacy
+// rows + 780 stable `cluster_*` rows, 27.6K
 // agent_events, 12.8K providers, 90 days of cubes), and every lens handler
 // is RUN — the plans are taken from the statements the handlers actually
 // issued (SQL + binds from the harness log), not restated SQL. Each plan is
@@ -30,12 +31,18 @@ import {
   handleObservatoryActors,
   handleObservatoryTakedownsGeo,
   handleObservatoryVelocityNodes,
+  STABLE_CLUSTER_ID_LO,
+  STABLE_CLUSTER_ID_HI,
+  OPERATIONS_GEO_SCAN_CAP,
 } from "../src/handlers/observatoryLenses";
 import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
 
 const SCALE = {
-  clusters: 77_000,
+  // Prod shape 2026-10-14: ~70K ACTIVE random-UUID legacy rows (pre-2026-09-11
+  // ASN-lane bug) + ~780 stable `cluster_*` rows, ~370 of them active.
+  legacyClusters: 76_220,
+  stableClusters: 780,
   actors: 300,
   agentEvents: 27_600,
   providers: 12_800,
@@ -82,14 +89,28 @@ function seedAtScale(db: SqliteDb): void {
   let s = db.prepare("INSERT INTO threat_actors (id, name, country_code, status) VALUES (?, ?, 'RU', 'active')");
   for (let i = 0; i < SCALE.actors; i++) s.run(`ta_${i}`, `Actor ${i}`);
 
-  // ~92% active, skewed threat_count, ~5% attributed, ~30% in a component.
+  // Legacy: ~92% active, frozen HIGH threat_count (they dominate any
+  // threat_count order), ~5% attributed. Stable: ~47% active, smaller counts,
+  // ~30% in a component, every NEXUS id prefix represented.
   s = db.prepare(`INSERT INTO infrastructure_clusters
-    (id, cluster_name, threat_count, status, first_detected, last_seen, countries, asns, actor_id, component_id)
-    VALUES (?, ?, ?, ?, '2026-01-01', '2026-10-01', '["US"]', '["AS13335"]', ?, ?)`);
-  for (let i = 0; i < SCALE.clusters; i++) {
-    s.run(`cluster_asn_${i}`, `op ${i}`, Math.floor(rnd() ** 4 * 5000), i % 12 === 0 ? "dormant" : "active",
+    (id, cluster_name, threat_count, status, first_detected, last_seen, countries, asns, attack_types, brand_ids, agent_notes, actor_id, component_id)
+    VALUES (?, ?, ?, ?, '2026-01-01', '2026-10-01', '["US"]', ?, ?, ?, ?, ?, ?)`);
+  for (let i = 0; i < SCALE.legacyClusters; i++) {
+    const hex = (i * 2654435761 >>> 0).toString(16).padStart(8, "0");
+    s.run(`${hex}-${String(i).padStart(4, "0").slice(-4)}-4a1c-9b2d-${String(i).padStart(12, "0")}`, `op ${i}`,
+      5000 + Math.floor(rnd() * 20_000), i % 12 === 0 ? "dormant" : "active",
+      '["AS13335"]', '["malware_distribution"]', '["b1","b2"]', null,
+      rnd() < 0.05 ? `ta_${Math.floor(rnd() ** 3 * SCALE.actors)}` : null, null);
+  }
+  const prefixes = ["cluster_asn_", "cluster_subnet_", "cluster_cert_", "cluster_registrar_", "cluster_ip_", "cluster_dev_"];
+  for (let i = 0; i < SCALE.stableClusters; i++) {
+    const prefix = prefixes[i % prefixes.length]!;
+    s.run(`${prefix}${i}`, `stable ${i}`, Math.floor(rnd() ** 4 * 3000), rnd() < 0.47 ? "active" : "dormant",
+      i % 3 === 0 ? '["AS13335"]' : `["AS${2000 + i}"]`, i % 7 === 0 ? '["scanning"]' : '["phishing"]',
+      JSON.stringify(Array.from({ length: i % 11 === 0 ? 200 : 3 }, (_, k) => `b${k}`)),
+      prefix === "cluster_cert_" ? JSON.stringify({ cluster_type: i % 2 ? "ssl_san_hash" : "ssl_cert_serial" }) : null,
       rnd() < 0.05 ? `ta_${Math.floor(rnd() ** 3 * SCALE.actors)}` : null,
-      rnd() < 0.3 ? `component_cluster_asn_${i % 2000}` : null);
+      rnd() < 0.3 ? `component_cluster_cert_${(i % 40) * 6 + 2}` : null);
   }
 
   // ~1% pivot_detected over 120 days; pivots carry v2 ASN lists + a cluster id
@@ -209,14 +230,31 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
         ]));
       });
 
-      it("operations-geo: status=active seeks (status, threat_count DESC, id); status=all walks (threat_count DESC, id); never sorts", () => {
+      it("operations-geo: both statuses read the stable-id PRIMARY KEY range, never a status / threat_count index; no sort", () => {
         const ops = find(modes[mode]!, /FROM infrastructure_clusters c LEFT JOIN threat_actors a/);
         expect(ops).toHaveLength(2);
-        const [active, all] = ops[0]!.sql.includes("c.status = 'active'") ? [ops[0]!, ops[1]!] : [ops[1]!, ops[0]!];
-        expect(active.sql).toContain("c.status = 'active'");
-        expect(active.plan).toContain("SEARCH c USING INDEX idx_clusters_status_threat_count (status=?)");
-        expect(all.plan).toContain("SCAN c USING INDEX idx_clusters_threat_count");
-        for (const p of ops) expect(p.plan).not.toContain("TEMP B-TREE");
+        const [active, all] = ops[0]!.sql.includes("+c.status = 'active'") ? [ops[0]!, ops[1]!] : [ops[1]!, ops[0]!];
+        expect(active.sql).toContain("+c.status = 'active'");
+        expect(all.sql).not.toContain("c.status = 'active'");
+        for (const p of ops) {
+          expect(p.plan).toContain("SEARCH c USING INDEX sqlite_autoindex_infrastructure_clusters_1 (id>? AND id<?)");
+          expect(p.plan).not.toMatch(/idx_clusters_status|idx_clusters_threat_count/);
+          expect(p.plan).not.toContain("SCAN c");
+          expect(p.plan).not.toContain("TEMP B-TREE");
+        }
+      });
+
+      it("operations-geo: the range it reads is the stable population only (rows read bounded, legacy never touched)", () => {
+        const [p] = find(modes[mode]!, /FROM infrastructure_clusters c LEFT JOIN threat_actors a/);
+        const [lo, hi] = [STABLE_CLUSTER_ID_LO, STABLE_CLUSTER_ID_HI];
+        const inRange = (db.prepare("SELECT COUNT(*) AS n FROM infrastructure_clusters WHERE id >= ? AND id < ?").all(lo, hi) as Array<{ n: number }>)[0]!.n;
+        const total = (db.prepare("SELECT COUNT(*) AS n FROM infrastructure_clusters").all() as Array<{ n: number }>)[0]!.n;
+        expect(inRange).toBe(SCALE.stableClusters);
+        expect(total).toBe(SCALE.legacyClusters + SCALE.stableClusters);
+        // The bounds the handler bound are exactly the stable range.
+        const entry = p!;
+        expect(entry.sql).toMatch(/WHERE c\.id >= \? AND c\.id < \?/);
+        expect(inRange).toBeLessThan(OPERATIONS_GEO_SCAN_CAP);
       });
 
       it("movements: (event_type, created_at) range in order; follow-up lookups by key", () => {
@@ -280,10 +318,9 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
       it("no lens read full-scans a large table", () => {
         // Only tiny reference tables may be scanned: threat_actors (a few
         // hundred rows; the list sorts on computed counts) and the curated
-        // geopolitical_campaigns. idx_clusters_threat_count /
-        // idx_providers_active_threats SCANs are ordered walks that stop at
-        // LIMIT (pinned above).
-        const allowed = /^SCAN (a|threat_actors|geopolitical_campaigns)\b|^SCAN c USING INDEX idx_clusters_threat_count$|^SCAN hosting_providers USING INDEX idx_providers_active_threats$/;
+        // geopolitical_campaigns. The idx_providers_active_threats SCAN is an
+        // ordered walk that stops at LIMIT (pinned above).
+        const allowed = /^SCAN (a|threat_actors|geopolitical_campaigns)\b|^SCAN hosting_providers USING INDEX idx_providers_active_threats$/;
         for (const p of modes[mode]!) {
           for (const step of p.plan.split(" | ")) {
             if (step.startsWith("SCAN ")) expect(step, p.sql).toMatch(allowed);

@@ -47,6 +47,30 @@ describe('PeekSheet height reporting', () => {
   });
 });
 
+describe('PeekSheet snap across a rotation', () => {
+  it("keeps the user's chosen snap when the initial snap changes while open (portrait <-> landscape)", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<PeekSheet open onClose={vi.fn()} label="Sheet" initialSnap={0}>x</PeekSheet>);
+    expect(sheetHeight()).toBe('30%');
+    const handle = screen.getByRole('button', { name: /Resize panel/ });
+    handle.focus();
+    await user.keyboard('{ArrowUp}{ArrowUp}');
+    expect(sheetHeight()).toBe('90%');
+    rerender(<PeekSheet open onClose={vi.fn()} label="Sheet" initialSnap={1}>x</PeekSheet>); // rotated to landscape
+    expect(sheetHeight()).toBe('90%');
+    rerender(<PeekSheet open onClose={vi.fn()} label="Sheet" initialSnap={0}>x</PeekSheet>); // and back
+    expect(sheetHeight()).toBe('90%');
+  });
+  it('still starts each (re)open at the current initial snap', () => {
+    const { rerender } = render(<PeekSheet open={false} onClose={vi.fn()} label="Sheet" initialSnap={0}>x</PeekSheet>);
+    rerender(<PeekSheet open onClose={vi.fn()} label="Sheet" initialSnap={1}>x</PeekSheet>);
+    expect(sheetHeight()).toBe('60%');
+    rerender(<PeekSheet open={false} onClose={vi.fn()} label="Sheet" initialSnap={1}>x</PeekSheet>);
+    rerender(<PeekSheet open onClose={vi.fn()} label="Sheet" initialSnap={0}>x</PeekSheet>);
+    expect(sheetHeight()).toBe('30%');
+  });
+});
+
 describe('PeekSheet handle', () => {
   it('Enter and Space cycle the height like a tap (click with detail 0), arrows still step', async () => {
     const user = userEvent.setup();

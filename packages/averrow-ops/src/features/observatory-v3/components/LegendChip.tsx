@@ -11,26 +11,34 @@ import { useEffect, useId, useState, type ReactNode } from 'react';
 import { ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LensId, LayerToggles } from '../lib/lenses';
+import type { Measure, ThreatView } from '../lib/url-state';
 import { LENS_DEFS } from '../lib/lenses';
 import type { ColorBy } from '../lib/map-colors';
 import {
   SEVERITY_COLORS, SEVERITY_ORDER, THREAT_TYPE_COLORS, TYPE_ORDER, HEATMAP_COLOR_RANGE, rgbCss, typeLabel,
 } from '../lib/map-colors';
 import {
-  ActorsSection, BaselineSection, CampaignsSection, HostingSection, MovementSection, OperationsSection,
+  ActorsSection, BaselineSection, CampaignsSection, HostingSection, MovementSection, OperationsSection, VelocitySection,
+  TakedownCountrySection, TakedownProviderSection,
   type LegendSectionProps,
 } from './LensLegend';
 
 export interface LegendChipProps extends LegendSectionProps {
   lens: LensId;
   layers: LayerToggles;
-  view: 'points' | 'heat';
+  view: ThreatView;
+  /** The lens's measure (Baseline / Hosting). */
+  measure: Measure;
   colorBy: ColorBy;
   /** One-line state shown on the closed chip. */
   summary: { text: string; tone: 'ok' | 'loading' | 'error' | 'empty' };
   reducedMotion: boolean;
   /** Tallest the expanded panel may grow (px), so it never reaches the top chrome on a short viewport. */
   maxPanelHeight?: number;
+  /** The panel opened / closed (the map holds the globe still while someone reads it). */
+  onOpenChange?: (open: boolean) => void;
+  /** A one-line status shown first in the open legend (e.g. a link to a view this role cannot see was set aside). */
+  notice?: string;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -89,21 +97,34 @@ function HeatKey() {
 }
 
 export function LegendChip(props: LegendChipProps) {
-  const { lens, layers, view, colorBy, summary, reducedMotion, maxPanelHeight, className, style } = props;
+  const { lens, layers, view, measure, colorBy, summary, reducedMotion, maxPanelHeight, onOpenChange, notice, className, style } = props;
   const id = useId();
   // The Actors lens starts open: its legend holds the "choose an actor" control.
   const [open, setOpen] = useState(() => lens === 'actors' && !props.actors.selectedId);
   useEffect(() => { if (lens === 'actors' && !props.actors.selectedId) setOpen(true); }, [lens, props.actors.selectedId]);
+  useEffect(() => {
+    onOpenChange?.(open);
+    return () => onOpenChange?.(false);
+  }, [open, onOpenChange]);
 
   const threatTraffic = layers.nodes || layers.particles || layers.beams;
   const sections: ReactNode[] = [];
   if (lens === 'threats' && view === 'heat') sections.push(<HeatKey key="heat" />);
+  else if (lens === 'threats' && view === 'fast') sections.push(<VelocitySection key="fast" s={props.velocity} />);
   else {
     if (threatTraffic) sections.push(<ThreatKey key="threat" colorBy={colorBy} reducedMotion={reducedMotion} />);
     if (layers.operations) sections.push(<OperationsSection key="ops" s={props.operations} />);
     if (layers.movement) sections.push(<MovementSection key="move" s={props.movement} />);
-    if (layers.hosting) sections.push(<HostingSection key="host" s={props.hosting} />);
-    if (layers.baseline) sections.push(<BaselineSection key="base" s={props.baseline} />);
+    if (layers.hosting) {
+      sections.push(measure === 'takedowns'
+        ? <TakedownProviderSection key="host" s={props.takedowns.providers} window={props.takedowns.window} />
+        : <HostingSection key="host" s={props.hosting} />);
+    }
+    if (layers.baseline) {
+      sections.push(measure === 'takedowns'
+        ? <TakedownCountrySection key="base" s={props.takedowns.countries} window={props.takedowns.window} />
+        : <BaselineSection key="base" s={props.baseline} />);
+    }
     if (layers.campaigns) sections.push(<CampaignsSection key="camp" s={props.campaigns} />);
     if (layers.actors) sections.push(<ActorsSection key="actor" s={props.actors} onPickActor={props.onPickActor} />);
   }
@@ -127,6 +148,7 @@ export function LegendChip(props: LegendChipProps) {
           ...(maxPanelHeight ? { maxHeight: `min(58vh, 440px, ${maxPanelHeight}px)` } : null),
         }}
       >
+        {notice && <div role="status" className="font-mono text-[10px]" style={{ color: 'var(--amber-text)' }}>{notice}</div>}
         {sections}
       </div>
       <button

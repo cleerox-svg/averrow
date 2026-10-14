@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import { stubMatchMedia } from '@/test/shared-ui/helpers';
 
 const fetchMock = vi.fn();
@@ -241,6 +241,219 @@ describe('ObservatoryV3 lenses', () => {
   });
 });
 
+describe('ObservatoryV3 projection', () => {
+  it('the map gets the REQUESTED projection and a handler that writes proj; the rail has no projection control', async () => {
+    renderAt('/observatory?proj=globe');
+    await screen.findByRole('group', { name: 'Threat traffic underneath' });
+    const last = () => mapProps.mock.calls.at(-1)![0] as { projection: string; onProjection: (p: string) => void };
+    expect(last().projection).toBe('globe');
+    expect(screen.queryByRole('group', { name: 'Projection' })).not.toBeInTheDocument();
+    act(() => last().onProjection('flat'));
+    await waitFor(() => expect(search).not.toContain('proj='));
+    act(() => last().onProjection('globe'));
+    await waitFor(() => expect(search).toContain('proj=globe'));
+  });
+
+  it('Heat keeps the requested globe (the preference is not dropped) while the map draws flat', async () => {
+    renderAt('/observatory?proj=globe&view=heat');
+    await waitFor(() => expect(mapProps.mock.calls.length).toBeGreaterThan(0));
+    const p = mapProps.mock.calls.at(-1)![0] as { projection: string; mapMode: string };
+    expect(p.mapMode).toBe('heatmap');
+    expect(p.projection).toBe('globe');
+    expect(search).toContain('proj=globe');
+  });
+});
+
+describe('ObservatoryV3 disabled controls explain themselves in text', () => {
+  it('the Fast view\'s all-sources source select says why on the phone filters card, where there is no tooltip', async () => {
+    window.innerWidth = 400;
+    renderAt('/observatory?view=fast');
+    await userEvent.click(await screen.findByRole('button', { name: /Filters/ }));
+    const notes = await screen.findAllByText('Fast weaponization is always all sources');
+    expect(notes.some(n => !n.classList.contains('sr-only'))).toBe(true); // written out, not only the screen-reader copy
+    window.innerWidth = 1440;
+  });
+});
+
+describe('ObservatoryV3: basemap attribution is always on screen (the map control is off for GHSA-jrc7-96c5-q579)', () => {
+  const assertCredit = () => {
+    const credit = screen.getByTestId('map-attribution');
+    const osm = within(credit).getByRole('link', { name: '© OpenStreetMap contributors' });
+    const carto = within(credit).getByRole('link', { name: '© CARTO' });
+    expect(osm).toHaveAttribute('href', 'https://www.openstreetmap.org/copyright');
+    expect(carto).toHaveAttribute('href', 'https://carto.com/attributions');
+    for (const a of [osm, carto]) {
+      expect(a).toHaveAttribute('target', '_blank');
+      expect(a.getAttribute('rel')).toContain('noopener');
+      expect(a.getAttribute('rel')).toContain('noreferrer');
+      expect(a.className).toContain('ds-focusable');
+    }
+    expect(credit).toBeVisible();
+  };
+  const paths = [
+    ...['threats', 'operations', 'movement', 'hosting', 'baseline', 'campaigns', 'actors'].flatMap(l => [`lens=${l}`, `lens=${l}&proj=globe`]),
+    'view=fast', 'mode=heatmap', 'mode=heatmap&proj=globe', 'mode=bot_density',
+  ];
+  it.each(paths)('desktop: %s', async q => {
+    renderAt(`/observatory?${q}`);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeInTheDocument());
+    assertCredit();
+  });
+  it.each(['lens=operations', 'lens=hosting&proj=globe', 'view=fast'])('phone width: %s (wraps, never hidden or removed)', async q => {
+    window.innerWidth = 400;
+    renderAt(`/observatory?${q}`);
+    await waitFor(() => expect(screen.getByTestId('map')).toBeInTheDocument());
+    assertCredit();
+    // wrapping, not clipping: the container may wrap and the links never shrink to nothing
+    expect(screen.getByTestId('map-attribution').className).toContain('flex-wrap');
+    window.innerWidth = 1440;
+  });
+});
+
+describe('ObservatoryV3: entering a lens frames what it draws, once', () => {
+  const opsData = [
+    { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    { id: 'o2', name: 'Beta', component_id: null, kind: 'asn', status: 'active', confidence_score: 60, threat_count: 20, actor: null, countries: ['AU', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null },
+  ];
+  const routeOps = () => fetchMock.mockImplementation((url: string) => {
+    if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null } });
+    if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+    return Promise.resolve({ success: true, data: [] });
+  });
+  const focusCalls = () => mapProps.mock.calls.map(c => c[0].focus).filter(Boolean);
+
+  it('fits every operation node instantly when the lens opens with nothing selected', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(focusCalls().length).toBeGreaterThan(0));
+    const f = focusCalls()[0] as { points: number[][]; instant: boolean; id: number };
+    expect(f.instant).toBe(true);
+    expect(f.points).toHaveLength(4); // US, JP, AU, DE: the whole footprint, not the default overview
+    expect(new Set(focusCalls().map(x => (x as { id: number }).id)).size).toBe(1);
+  });
+
+  it('does not re-fit when the data refreshes', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(focusCalls().length).toBeGreaterThan(0));
+    const opsCalls = () => fetchMock.mock.calls.filter(c => (c[0] as string).startsWith('/api/observatory/operations-geo')).length;
+    const before = opsCalls();
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh Observatory data' }));
+    await waitFor(() => expect(opsCalls()).toBeGreaterThan(before));
+    await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+    expect(new Set(focusCalls().map(x => (x as { id: number }).id)).size).toBe(1);
+  });
+
+  it('leaves the camera alone once the person has moved it, even before the data lands', async () => {
+    let release: (v: unknown) => void = () => {};
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) return new Promise(res => { release = res; });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations');
+    await waitFor(() => expect(mapProps).toHaveBeenCalled());
+    act(() => { (mapProps.mock.calls.at(-1)![0].onUserCamera as () => void)(); });
+    release({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null } });
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.operations?.nodes).toHaveLength(4));
+    expect(focusCalls()).toHaveLength(0);
+  });
+
+  it('a lens with no geographic content of its own (Threats) is left on the default view', async () => {
+    renderAt('/observatory');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    expect(focusCalls()).toHaveLength(0);
+  });
+});
+
+describe('ObservatoryV3 Operations: shared infrastructure and row previews', () => {
+  const opsData = [
+    { id: 'o1', name: 'Alpha', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 50, actor: null, countries: ['US', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    { id: 'o2', name: 'Beta', component_id: null, kind: 'asn', evidence_tier: 'cert', shared_infra: true, status: 'active', confidence_score: 60, threat_count: 20, actor: null, countries: ['NL', 'FR'], asns: [], last_seen: null, last_movement_pivot_at: null },
+  ];
+  const routeOps = (excluded?: object) => fetchMock.mockImplementation((url: string) => {
+    if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded } });
+    if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+    return Promise.resolve({ success: true, data: [] });
+  });
+
+  it('names each row\'s evidence, marks shared infrastructure, and works without the new fields', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    expect(await screen.findByText('shared cert')).toBeInTheDocument();
+    expect(screen.getByText(/60% conf · shared infra/)).toBeInTheDocument();
+    expect(screen.getByText('same ASN')).toBeInTheDocument();
+    expect(screen.queryByText(/low-evidence clusters? hidden/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Show low-evidence clusters' })).not.toBeInTheDocument();
+  });
+
+  it('a muted line counts the hidden clusters; the toggle sets shared=1 and requests include_shared=1', async () => {
+    routeOps({ shared_asn: 3, hub_ip: 1, ip_reputation: 0 });
+    renderAt('/observatory?lens=operations');
+    expect(await screen.findByText('4 low-evidence clusters hidden (shared hosting, hub IPs, scanning)')).toBeInTheDocument();
+    expect(urls().some(u => u.includes('include_shared'))).toBe(false);
+    // one fixed label; aria-pressed carries the state (a label that flips AND a pressed state read as a double negative)
+    expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'false');
+    await userEvent.click(screen.getByRole('button', { name: 'Show low-evidence clusters' }));
+    await waitFor(() => expect(search).toContain('shared=1'));
+    await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
+    expect(screen.getByRole('button', { name: 'Show low-evidence clusters' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: 'Hide low-evidence clusters' })).not.toBeInTheDocument();
+  });
+
+  it('with the toggle on the line says how many of the hidden clusters are shown', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) return Promise.resolve({ success: true, data: { operations: opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 70, hub_ip: 0, ip_reputation: 0 }, shared_returned: 50 } });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations&shared=1');
+    expect(await screen.findByText('50 of 70 low-evidence clusters shown (largest first)')).toBeInTheDocument();
+  });
+
+  it('a link to an operation the default view hides turns shared=1 on (once) so the selection resolves', async () => {
+    const hidden = { ...opsData[1]!, id: 'o9', name: 'Hidden hub', shared_infra: true };
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/operations-geo')) {
+        const withShared = url.includes('include_shared=1');
+        return Promise.resolve({ success: true, data: { operations: withShared ? [...opsData, hidden] : opsData, components: [] }, meta: { generated_at: null, excluded: { shared_asn: 1 }, shared_returned: withShared ? 1 : 0 } });
+      }
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+    renderAt('/observatory?lens=operations&sel=op:o9');
+    await waitFor(() => expect(search).toContain('shared=1'));
+    await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/operations-geo') && u.includes('include_shared=1'))).toBe(true));
+    await waitFor(() => expect(decodeURIComponent(search)).toContain('sel=op:o9'));
+    expect(await screen.findByText('Hidden hub')).toBeInTheDocument();
+  });
+
+  it('a link to an operation that does not exist even with shared on is dropped (no loop)', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations&sel=op:nope');
+    await waitFor(() => expect(search).not.toContain('nope'));
+    await waitFor(() => expect(search).not.toContain('shared=1')); // the automatic widening is undone with the drop
+    expect(urls().filter(u => u.startsWith('/api/observatory/operations-geo')).length).toBeLessThanOrEqual(2);
+  });
+
+  it('a shared=1 link opens with them included', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations&shared=1');
+    await waitFor(() => expect(urls().some(u => u.includes('include_shared=1'))).toBe(true));
+  });
+
+  it('hovering a panel row previews its links on the map; leaving clears it', async () => {
+    routeOps();
+    renderAt('/observatory?lens=operations');
+    const row = await screen.findByRole('button', { name: /Alpha/ });
+    const lensProp = () => (mapProps.mock.calls.at(-1)![0] as { lens: { sel: { previewOpId?: string | null } } }).lens.sel.previewOpId;
+    await userEvent.hover(row);
+    await waitFor(() => expect(lensProp()).toBe('o1'));
+    await userEvent.unhover(row);
+    await waitFor(() => expect(lensProp() ?? null).toBeNull());
+  });
+});
+
 describe('ObservatoryV3 refresh', () => {
   it('the refresh button refetches the page data', async () => {
     renderAt('/observatory');
@@ -325,6 +538,293 @@ describe('ObservatoryV3 Threats lens Points | Heat', () => {
     expect(mapProps.mock.calls.at(-1)![0].mapMode).toBe('heatmap');
     expect(screen.getByRole('tab', { name: 'Threats' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument();
+  });
+});
+
+describe('ObservatoryV3 Threats lens: Fast weaponization view', () => {
+  const vnode = { lat: 52, lng: 5, threat_count: 9, country_code: 'NL', very_fast: 6, fast: 3, precision: 'country' };
+  const tl = { bucket: '1h', points: [{ t: '2026-10-14T00:00:00Z', total: 9, critical: 0, high: 0, medium: 0, low: 0, very_fast: 6, fast: 3 }] };
+
+  it('fetches velocity nodes + the velocity timeline, with NO source, and none of the threat queries', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast&source=spam_trap&period=30d');
+    await waitFor(() => expect(called('/api/observatory/velocity-nodes')).toBe(true));
+    expect(urls().find(u => u.startsWith('/api/observatory/velocity-nodes'))).toBe('/api/observatory/velocity-nodes?period=30d&flag=all');
+    await waitFor(() => expect(called('/api/observatory/timeline')).toBe(true));
+    expect(urls().find(u => u.startsWith('/api/observatory/timeline'))).toBe('/api/observatory/timeline?period=30d&velocity=all');
+    expect(urls().some(u => u.includes('source_feed'))).toBe(false);
+    for (const p of ['nodes', 'arcs', 'heatmap', 'stats', 'live']) expect(called(`/api/observatory/${p}`)).toBe(false);
+  });
+
+  it('the source select reads All sources and is disabled (the URL source is kept for the other views)', async () => {
+    renderAt('/observatory?view=fast&source=spam_trap');
+    const select = await screen.findByRole('combobox', { name: 'Source' });
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue('all');
+    expect(search).toContain('source=spam_trap');
+  });
+
+  it('the map gets the velocity model, no threat layers, and the selection stays a country', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    await waitFor(() => {
+      const p = mapProps.mock.calls.at(-1)![0];
+      expect(p.lens.velocity?.points).toHaveLength(1);
+    });
+    const p = mapProps.mock.calls.at(-1)![0];
+    expect(p).toMatchObject({ mapMode: 'global', showNodes: false, showParticles: false, showBeams: false });
+    expect(p.sceneKey).toBe('threats|fast|index');
+    // the Points view hands the map no velocity model
+    await userEvent.click(screen.getByRole('button', { name: 'Points' }));
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.velocity).toBeNull());
+  });
+
+  it('keeps the model identity stable between renders with unchanged data (no per-poll layer rebuilds)', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].lens.velocity).not.toBeNull());
+    const a = mapProps.mock.calls.at(-1)![0].lens.velocity;
+    await act(async () => { await userEvent.click(screen.getByRole('radio', { name: '7D' })); });
+    await new Promise(r => setTimeout(r, 30));
+    expect(mapProps.mock.calls.at(-1)![0].lens.velocity).toBe(a);
+  });
+
+  it('the replay bar is the still velocity chart, and the panel ranks countries; a node opens the country drawer', async () => {
+    route({ '/api/observatory/velocity-nodes': [vnode], '/api/observatory/timeline': tl });
+    renderAt('/observatory?view=fast');
+    expect(await screen.findByRole('group', { name: 'Fast weaponization timeline' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Fastest to weaponize' })).toBeInTheDocument();
+    expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('region', { name: 'Fastest to weaponize' })).getByRole('button', { name: /Netherlands/ }));
+    await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+  });
+
+  it('an empty answer reads as coverage still filling in the legend chip and the panel', async () => {
+    route({ '/api/observatory/velocity-nodes': [], '/api/observatory/timeline': { bucket: '1h', points: [] } });
+    renderAt('/observatory?view=fast');
+    expect(await screen.findByRole('button', { name: /Legend.*coverage filling/ })).toBeInTheDocument();
+    // the panel's empty state (the legend carries the same words, collapsed)
+    expect((await screen.findAllByText(/Velocity coverage is still filling/)).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/no fast-weaponized threats\b/i)).not.toBeInTheDocument();
+  });
+
+  it('a velocity failure raises the banner here and not in the Points view', async () => {
+    route({ '/api/observatory/velocity-nodes': new Error('cube down') });
+    const { unmount } = renderAt('/observatory?view=fast');
+    expect(await screen.findByTestId('observatory-load-error')).toBeInTheDocument();
+    unmount();
+    renderAt('/observatory');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    expect(screen.queryByTestId('observatory-load-error')).not.toBeInTheDocument();
+  });
+
+  it('choosing Fast on the rail writes view=fast; the number keys do not toggle layers in it', async () => {
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: 'Fast weaponization' }));
+    await waitFor(() => expect(search).toContain('view=fast'));
+    const before = search;
+    await userEvent.keyboard('3');
+    expect(search).toBe(before);
+  });
+});
+
+describe('ObservatoryV3 takedown outcomes (manage_takedowns)', () => {
+  const trow = (key: string, td: number, refused: number, expired = 0) => ({
+    key, label: `Label ${key}`, country: 'NL', lat: 52, lng: 5, submitted: td + refused + expired + 2, taken_down: td, refused, expired, pending: 2,
+    share: td + refused + expired ? td / (td + refused + expired) : null, median_hours: 30,
+  });
+  const byCountry = [trow('US', 30, 10), trow('RU', 2, 38), trow('DE', 1, 1)];
+  const byProvider = [trow('p1', 16, 4), trow('ghost', 1, 29), trow('unknown', 3, 3)];
+  const prov = { id: 'p1', name: 'Host p1', asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 9, trend_7d: 1, trend_30d: 2, is_bulletproof: false, reputation_score: null, takedown: null };
+  const tdRoute = (u: string) => (u.includes('by=provider') ? byProvider : byCountry);
+  const routeTd = () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith('/api/observatory/takedowns-geo')) return Promise.resolve({ success: true, data: tdRoute(url) });
+      if (url.startsWith('/api/observatory/providers-geo')) return Promise.resolve({ success: true, data: [prov] });
+      if (url.startsWith('/api/observatory/stats')) return Promise.resolve({ success: true, data: okStats });
+      return Promise.resolve({ success: true, data: [] });
+    });
+  };
+  const lastLens = () => mapProps.mock.calls.at(-1)![0].lens;
+
+  beforeEach(() => { authState.user.role = 'super_admin'; });
+  afterEach(() => { authState.user.role = 'super_admin'; });
+
+  it.each(['super_admin', 'admin', 'analyst'])('%s: Baseline > Takedowns requests by=country for the page window and hands the map a model', async role => {
+    authState.user.role = role;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    await waitFor(() => expect(lastLens().takedownCountries).not.toBeNull());
+    expect(lastLens()).toMatchObject({ measure: 'takedowns', takedownProviders: null });
+    expect(called('/api/observatory/overindex')).toBe(false);          // takedowns replace the Radar baseline
+    expect(called('/api/observatory/takedowns-geo?period=30d&by=provider')).toBe(false);
+    expect(mapProps.mock.calls.at(-1)![0].sceneKey).toBe('baseline|points|takedowns');
+  });
+
+  it('the window follows the period: 90D -> 90d, 24H / 7D -> 30d', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns&period=90d');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=90d&by=country'));
+  });
+
+  it('the panel lists the hardest jurisdictions (lowest share, enough volume) and a row opens the country drawer', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    const list = await screen.findByRole('region', { name: 'Hardest jurisdictions' });
+    const rows = await within(list).findAllByRole('button');
+    expect(rows.map(r => r.textContent)).toEqual([expect.stringMatching(/^Russia.*5%$/), expect.stringMatching(/^United States.*75%$/)]);   // DE: 2 resolved
+    await userEvent.click(rows[0]!);
+    await waitFor(() => expect(search).toContain('sel=country%3ARU'));
+    expect(await screen.findByRole('dialog', { name: /Country details/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Takedowns · 30d' })).toBeInTheDocument();
+  });
+
+  it('Hosting > Takedowns requests by=provider next to providers-geo; the panel lists the hardest hosts', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=provider'));
+    expect(called('/api/observatory/providers-geo')).toBe(true);
+    expect(called('/api/observatory/takedowns-geo?period=30d&by=country')).toBe(false);
+    await waitFor(() => expect(lastLens().takedownProviders).not.toBeNull());
+    const list = await screen.findByRole('region', { name: 'Hardest hosts' });
+    expect(within(list).getAllByRole('listitem').map(li => li.textContent)).toEqual([expect.stringMatching(/^Label ghost/), expect.stringMatching(/^Label p1/)]);
+    // only the host the map knows is a button
+    expect(within(list).getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('the closed legend counts hosts (the unknown-host row is not one); the panel asks the takedown question, not the lens\'s', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    expect(await screen.findByRole('button', { name: /Legend.*2 hosts/ })).toBeInTheDocument();
+    // (the lens strip also announces the lens's own question in an sr-only live region: look at the panel's <p>)
+    const panelQuestion = (text: string) => screen.queryAllByText(text).filter(el => el.tagName === 'P');
+    expect(panelQuestion('Which hosts ignore or refuse takedowns most often?')).toHaveLength(1);
+    expect(panelQuestion('Where do operators choose to host?')).toHaveLength(0);
+  });
+
+  it('Baseline asks its takedown question too; without the measure the lens keeps its own', async () => {
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns');
+    const panelQuestion = (text: string) => screen.queryAllByText(text).filter(el => el.tagName === 'P');
+    await waitFor(() => expect(panelQuestion('In which countries do takedowns succeed least often?')).toHaveLength(1));
+    unmount();
+    renderAt('/observatory?lens=baseline');
+    await waitFor(() => expect(panelQuestion('Where do we see more than normal attack traffic?')).toHaveLength(1));
+  });
+
+  it('the rail offers Takedowns to holders and writes measure=takedowns', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline');
+    await userEvent.click(await screen.findByRole('button', { name: 'Takedowns' }));
+    await waitFor(() => expect(search).toContain('measure=takedowns'));
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    await userEvent.click(screen.getByRole('button', { name: 'Over-index' }));
+    await waitFor(() => expect(search).not.toContain('measure='));
+  });
+
+  it.each(['sales', 'support', 'billing', 'auditor'])('%s: no takedown option, no takedowns-geo request, and a shared measure=takedowns link shows the default measure', async role => {
+    authState.user.role = role;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns&period=90d');
+    await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Takedowns' })).not.toBeInTheDocument();
+    expect(lastLens()).toMatchObject({ measure: 'index', takedownCountries: null, takedownProviders: null });
+    expect(mapProps.mock.calls.at(-1)![0].sceneKey).toBe('baseline|points|index');
+    expect(screen.queryByRole('region', { name: 'Hardest jurisdictions' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Most over-indexed' })).toBeInTheDocument();
+  });
+
+  it('Hosting for a non-holder: the lens works as before (providers-geo, no measure control, no takedown request)', async () => {
+    authState.user.role = 'support';
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/providers-geo')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+    expect(screen.queryByRole('group', { name: 'Hosting measure' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Top hosting providers' })).toBeInTheDocument();
+  });
+
+  it('a Takedowns link opened by a role that cannot see it is set right: the URL drops it (replace) and a note says why', async () => {
+    authState.user.role = 'sales';
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns&period=30d');
+    await waitFor(() => expect(search).not.toContain('measure=takedowns'));
+    expect(search).toContain('lens=baseline');
+    expect(search).toContain('period=30d');
+    // the legend and the panel both carry the one-line note
+    expect((await screen.findAllByText(/shown to roles that manage takedowns/)).length).toBeGreaterThanOrEqual(1);
+    unmount();
+    authState.user.role = 'super_admin';
+  });
+
+  it('...and Back does not return to it (the entry is replaced, not pushed)', async () => {
+    authState.user.role = 'support';
+    routeTd();
+    let navType = '';
+    const Spy = () => { const l = useLocation(); const t = useNavigationType(); if (!l.search.includes('measure=takedowns')) navType = t; return null; };
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+    render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={['/observatory?lens=hosting&measure=takedowns']}><Spy /><ObservatoryV3 /></MemoryRouter></QueryClientProvider>);
+    await waitFor(() => expect(navType).toBe('REPLACE'));
+    authState.user.role = 'super_admin';
+  });
+
+  it('a holder keeps the link, and sees no note', async () => {
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/takedowns-geo')).toBe(true));
+    expect(search).toContain('measure=takedowns');
+    expect(screen.queryByText(/shown to roles that manage takedowns/)).not.toBeInTheDocument();
+  });
+
+  it('nothing is rewritten while the signed-in user is not known yet', async () => {
+    const saved = authState.user;
+    (authState as unknown as { user: null }).user = null;
+    routeTd();
+    renderAt('/observatory?lens=baseline&measure=takedowns');
+    await waitFor(() => expect(called('/api/observatory/stats')).toBe(true));
+    await new Promise(r => setTimeout(r, 50));
+    expect(search).toContain('measure=takedowns');
+    (authState as unknown as { user: typeof saved }).user = saved;
+  });
+
+  it('a country drawer reads takedowns by country for a holder, on any lens, and for nobody else', async () => {
+    routeTd();
+    const { unmount } = renderAt('/observatory?lens=hosting&sel=country:US');
+    await waitFor(() => expect(urls()).toContain('/api/observatory/takedowns-geo?period=30d&by=country'));
+    expect(await screen.findByRole('img', { name: 'Taken down: 75%' })).toBeInTheDocument();
+    unmount();
+    fetchMock.mockClear();
+    authState.user.role = 'sales';
+    renderAt('/observatory?lens=hosting&sel=country:US');
+    expect(await screen.findByText(/roles that manage takedowns/)).toBeInTheDocument();
+    await new Promise(r => setTimeout(r, 50));
+    expect(urls().some(u => u.includes('takedowns-geo'))).toBe(false);
+  });
+
+  it('a failing takedown request raises the banner in a takedown view and not elsewhere', async () => {
+    fetchMock.mockImplementation((url: string) => (url.startsWith('/api/observatory/takedowns-geo')
+      ? Promise.resolve({ success: false, error: 'rollup down' })
+      : Promise.resolve({ success: true, data: url.startsWith('/api/observatory/stats') ? okStats : [] })));
+    const { unmount } = renderAt('/observatory?lens=baseline&measure=takedowns');
+    expect(await screen.findByTestId('observatory-load-error')).toBeInTheDocument();
+    unmount();
+    renderAt('/observatory?lens=baseline');
+    await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
+    expect(screen.queryByTestId('observatory-load-error')).not.toBeInTheDocument();
+  });
+
+  it('the map gets the SAME model objects while the data is unchanged (no per-poll layer rebuild)', async () => {
+    routeTd();
+    renderAt('/observatory?lens=hosting&measure=takedowns');
+    await waitFor(() => expect(lastLens().takedownProviders).not.toBeNull());
+    const a = lastLens().takedownProviders;
+    await act(async () => { await userEvent.click(screen.getByRole('button', { name: 'Hide intelligence panel' })); });
+    await new Promise(r => setTimeout(r, 30));
+    expect(lastLens().takedownProviders).toBe(a);
   });
 });
 

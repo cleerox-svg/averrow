@@ -23,7 +23,13 @@ export interface HistBar {
   high: number;
   medium: number;
   low: number;
+  /** Fast-weaponization counts (velocity series only; 0 otherwise). */
+  veryFast: number;
+  fast: number;
 }
+
+/** Which series the bars show: threats by severity, or fast-weaponized threats (`/timeline?velocity=`). */
+export type TimelineSeries = 'severity' | 'velocity';
 
 export interface Histogram {
   bars: HistBar[];
@@ -33,11 +39,12 @@ export interface Histogram {
   bucketMs: number;
   max: number;
   total: number;
+  series: TimelineSeries;
 }
 
 export interface ReplayWindow { startMs: number; endMs: number }
 
-export function buildHistogram(data: TimelineData | undefined, window?: ReplayWindow | null): Histogram | null {
+export function buildHistogram(data: TimelineData | undefined, window?: ReplayWindow | null, series: TimelineSeries = 'severity'): Histogram | null {
   if (!data || !Array.isArray(data.points) || data.points.length === 0) return null;
   const bucketMs = BUCKET_MS[data.bucket] ?? BUCKET_MS['1h'];
   const bars: HistBar[] = [];
@@ -46,9 +53,13 @@ export function buildHistogram(data: TimelineData | undefined, window?: ReplayWi
   for (const p of data.points as TimelinePoint[]) {
     const startMs = Date.parse(p.t);
     if (!Number.isFinite(startMs)) continue;
-    bars.push({ startMs, total: p.total, critical: p.critical, high: p.high, medium: p.medium, low: p.low });
-    if (p.total > max) max = p.total;
-    total += p.total;
+    // The velocity series is the fast-weaponized count; its severity fields are always 0 (the cube has none).
+    const veryFast = series === 'velocity' ? Math.max(0, p.very_fast ?? 0) : 0;
+    const fast = series === 'velocity' ? Math.max(0, p.fast ?? 0) : 0;
+    const t = series === 'velocity' ? veryFast + fast : p.total;
+    bars.push({ startMs, total: t, critical: p.critical, high: p.high, medium: p.medium, low: p.low, veryFast, fast });
+    if (t > max) max = t;
+    total += t;
   }
   if (bars.length === 0) return null;
   bars.sort((a, b) => a.startMs - b.startMs);
@@ -57,7 +68,7 @@ export function buildHistogram(data: TimelineData | undefined, window?: ReplayWi
     bars,
     startMs: aligned ? window.startMs : bars[0]!.startMs,
     endMs: aligned ? window.endMs : bars[bars.length - 1]!.startMs + bucketMs,
-    bucketMs, max, total,
+    bucketMs, max, total, series,
   };
 }
 
@@ -148,6 +159,38 @@ export function stackedPaths(h: Histogram, width: number, height: number, gap = 
     seg('medium', b.medium);
     seg('low', b.low);
     seg('other', Math.max(0, b.total - known));
+  }
+  return out;
+}
+
+export interface VelocityPathSet {
+  veryFast: string;
+  fast: string;
+}
+
+/** The velocity series' bars: very fast at the bottom, fast on top. Same geometry as `stackedPaths`. */
+export function velocityPaths(h: Histogram, width: number, height: number, gap = 0.5): VelocityPathSet {
+  const out: VelocityPathSet = { veryFast: '', fast: '' };
+  if (h.max <= 0 || width <= 0 || height <= 0) return out;
+  const span = h.endMs - h.startMs;
+  if (!(span > 0)) return out;
+  const scale = (height - 1) / h.max;
+  const f = (x: number): string => (Math.round(x * 100) / 100).toString();
+  for (const b of h.bars) {
+    const x0 = Math.max(0, ((b.startMs - h.startMs) / span) * width);
+    const x1 = Math.min(width, ((b.startMs + h.bucketMs - h.startMs) / span) * width);
+    if (x1 <= x0) continue;
+    const x = x0 + gap / 2;
+    const w = Math.max(0.5, x1 - x0 - gap);
+    let y = height;
+    const seg = (key: keyof VelocityPathSet, v: number): void => {
+      if (v <= 0) return;
+      const ph = v * scale;
+      y -= ph;
+      out[key] += `M${f(x)} ${f(y)}h${f(w)}v${f(ph)}h${f(-w)}z`;
+    };
+    seg('veryFast', b.veryFast);
+    seg('fast', b.fast);
   }
   return out;
 }

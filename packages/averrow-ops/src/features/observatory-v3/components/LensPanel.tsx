@@ -7,9 +7,11 @@
  * over the map under the toolbar on tablets, a peek sheet on phones.
  */
 
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import type { DrillTarget } from '../lib/drill';
 import { LENS_DEFS, type LensId } from '../lib/lenses';
+import { Badge } from '@/design-system/components';
 import type { PanelSection } from '../lib/panel-rows';
 
 export interface LensPanelProps {
@@ -22,20 +24,43 @@ export interface LensPanelProps {
   onSelect: (target: DrillTarget) => void;
   /** `dock`: right column. `overlay`: tablet float. `sheet`: content only (inside a PeekSheet). */
   placement: 'dock' | 'overlay' | 'sheet';
+  /** Replaces the lens's own question under its name (a measure of the lens can ask a different one). */
+  question?: string;
+  /** A one-line status under the question (e.g. a link to a view this role cannot see was set aside). */
+  note?: string;
+  /** A row's target is under the pointer / focused (null when it leaves): the map previews it. */
+  onPreview?: (target: DrillTarget | null) => void;
+  /** Extra content after the list (e.g. the Operations lens's shared-infrastructure toggle). */
+  aside?: ReactNode;
   className?: string;
+}
+
+/** Two joined dots: this row's links are drawn on the map. */
+function LinkedGlyph() {
+  return (
+    <span className="inline-flex shrink-0" title="Links drawn on the map">
+      <svg width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false">
+        <line x1="3" y1="5" x2="13" y2="5" stroke="var(--cyan-text, #7aeaff)" strokeWidth="1.5" strokeDasharray="2.5 1.5" />
+        <circle cx="2.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
+        <circle cx="13.5" cy="5" r="2" fill="var(--cyan-text, #7aeaff)" />
+      </svg>
+      <span className="sr-only">links drawn on the map</span>
+    </span>
+  );
 }
 
 const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = {
   rising: 'var(--sev-critical-text)', falling: 'var(--sev-info-text)', neutral: 'var(--text-primary)',
 };
 
-export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, className }: LensPanelProps) {
+export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside, className }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
     <div className="flex flex-col gap-3 p-4">
       <div>
         <div className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>{def.label}</div>
-        <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{def.question}</p>
+        <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{question ?? def.question}</p>
+        {note && <p role="status" className="m-0 mt-1.5 font-mono text-[11px]" style={{ color: 'var(--amber-text)' }}>{note}</p>}
       </div>
       <section aria-label={section.title} className="flex flex-col">
         <h2 className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] m-0 mb-2" style={{ color: 'var(--text-tertiary)' }}>
@@ -56,8 +81,13 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
               const inner = (
                 <>
                   <span className="min-w-0 flex-1 text-left">
-                    <span className="block text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
-                    {row.secondary && <span className="block font-mono text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      {row.linked && <LinkedGlyph />}
+                      <span className="block text-xs font-medium truncate min-w-0" style={{ color: 'var(--text-primary)' }}>{row.primary}</span>
+                      {/* The tier badge never truncates: the NAME gives way, so the evidence stays readable. */}
+                      {row.badge && <span className="shrink-0"><Badge context="nexus" size="xs" label={row.badge} /></span>}
+                    </span>
+                    {row.secondary && <span className="block font-mono text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>{row.secondary}</span>}
                   </span>
                   {row.trailing && (
                     <span className="font-mono text-xs font-bold tabular-nums shrink-0" style={{ color: TONE[row.tone ?? 'neutral'] }}>{row.trailing}</span>
@@ -70,6 +100,10 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                     <button
                       type="button"
                       onClick={() => onSelect(row.target!)}
+                      onMouseEnter={onPreview ? () => onPreview(row.target!) : undefined}
+                      onMouseLeave={onPreview ? () => onPreview(null) : undefined}
+                      onFocus={onPreview ? () => onPreview(row.target!) : undefined}
+                      onBlur={onPreview ? () => onPreview(null) : undefined}
                       className="ds-focusable w-full flex items-center gap-3 rounded-md px-1.5 py-1.5 min-h-[44px] sm:min-h-[40px] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] transition-colors motion-reduce:transition-none"
                       style={{ background: 'none', border: 'none', cursor: 'pointer' }}
                     >
@@ -81,9 +115,15 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
                 </li>
               );
             })}
+            {section.more !== undefined && section.more > 0 && (
+              <li className="font-mono text-[11px] px-1.5 py-1.5" style={{ color: 'var(--text-muted)' }}>
+                {`+${section.more.toLocaleString()} more — search or filter`}
+              </li>
+            )}
           </ul>
         )}
       </section>
+      {aside}
     </div>
   );
 

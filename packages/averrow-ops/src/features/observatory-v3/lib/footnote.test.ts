@@ -17,3 +17,11 @@ describe('lensFootnote', () => {
     }
   });
 });
+
+describe('lensFootnote: Fast view', () => {
+  it('names the pulsing instead of "Replaying attacks"', () => {
+    expect(lensFootnote({ lens: 'threats', reducedMotion: false, motionOn: true, fast: true })).toBe('Very fast nodes pulse');
+    expect(lensFootnote({ lens: 'threats', reducedMotion: false, motionOn: true })).toBe('Replaying attacks');
+    expect(lensFootnote({ lens: 'threats', reducedMotion: true, motionOn: true, fast: true })).toBe('Motion reduced');
+  });
+});

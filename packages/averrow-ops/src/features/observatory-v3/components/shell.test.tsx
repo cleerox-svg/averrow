@@ -5,6 +5,7 @@ import { ControlRail, type ControlRailProps } from './ControlRail';
 import { LensStrip } from './LensStrip';
 import { ObservatorySearch } from './ObservatorySearch';
 import { ReplayTimeline } from './ReplayTimeline';
+import { LegendChip, type LegendChipProps } from './LegendChip';
 import { lensPreset } from '../lib/lenses';
 import { AnimationClock } from '../lib/animation-clock';
 import { CYCLE_LENGTH } from '../lib/trips';
@@ -24,9 +25,11 @@ describe('ControlRail', () => {
     expect(within(traffic).getByRole('button', { name: 'Nodes + Flow' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(traffic).getByRole('button', { name: 'Off' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Beams' })).toHaveAttribute('aria-pressed', 'false');
-    // a slim column, not a nine-row list
+    // a slim column, not a nine-row list: Points | Heat | Fast, Off | Nodes | Nodes + Flow, Beams, Colour = 8
+    // (Flat | Globe is a map control in the zoom cluster, not a rail button)
     expect(screen.queryByRole('group', { name: 'Map layers' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button').length).toBeLessThanOrEqual(9);
+    expect(screen.queryByRole('group', { name: 'Projection' })).not.toBeInTheDocument();
   });
   it('traffic buttons set the nodes / particles flags; Beams toggles on its own', async () => {
     const onLayers = vi.fn();
@@ -222,6 +225,8 @@ describe('ReplayTimeline', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(e.onRetry).toHaveBeenCalled();
     expect(screen.getByRole('slider')).toBeInTheDocument();
+    // a slider's children are presentational to assistive tech: Retry sits beside it, not in it
+    expect(screen.getByRole('button', { name: 'Retry' }).closest('[role="slider"]')).toBeNull();
   });
 });
 
@@ -323,5 +328,29 @@ describe('ReplayTimeline: window alignment and the phone readout', () => {
     expect(onScrubChange).toHaveBeenLastCalledWith(true);
     fireEvent.pointerUp(slider, { clientX: 50, pointerId: 1 });
     expect(onScrubChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('LegendChip: open state is reported (the map holds the globe still while it is read)', () => {
+  const chip = (onOpenChange: (o: boolean) => void) => (
+    <LegendChip
+      {...({
+        lens: 'threats', layers: lensPreset('threats'), view: 'points', measure: 'index', colorBy: 'severity', reducedMotion: false,
+        summary: { text: 'ok', tone: 'ok' }, actors: { selectedId: null },
+      } as unknown as LegendChipProps)}
+      onOpenChange={onOpenChange}
+    />
+  );
+  it('reports closed, then open / closed as it is toggled, and closed again on unmount', async () => {
+    const onOpenChange = vi.fn();
+    const { unmount } = render(chip(onOpenChange));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole('button', { name: /Legend/ }));
+    unmount();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
   });
 });

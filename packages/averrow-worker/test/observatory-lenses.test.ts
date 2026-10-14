@@ -15,6 +15,10 @@ import {
   aliasList,
   buildComponents,
   unresolvedCertReps,
+  classifyOperation,
+  selectOperations,
+  compareOperations,
+  OPERATIONS_GEO_SCAN_CAP,
   parsePivotRow,
   computeOverindex,
   bucketTimeline,
@@ -32,6 +36,8 @@ import {
 } from "../src/handlers/observatoryLenses";
 import { hasSqlite, openDerivedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import type { Env } from "../src/types";
+import { asnKey, isSharedInfraAsn, SHARED_INFRA_ASNS } from "../src/lib/shared-infra-asns";
+import { DEFAULT_HUB_FANOUT_THRESHOLD } from "../src/lib/cluster-components";
 
 // ─── Harness ─────────────────────────────────────────────────────────
 
@@ -85,14 +91,16 @@ const TABLES = [
 function cluster(raw: SqliteDb, c: {
   id: string; name?: string; status?: string; threat_count: number; countries?: string | null; asns?: string | null;
   component_id?: string | null; actor_id?: string | null; agent_notes?: string | null; confidence?: number;
-  last_movement_pivot_at?: string | null;
+  last_movement_pivot_at?: string | null; brand_ids?: string | null; attack_types?: string | null;
 }) {
   raw.prepare(`INSERT INTO infrastructure_clusters
-    (id, cluster_name, status, threat_count, countries, asns, component_id, actor_id, agent_notes, confidence_score, last_movement_pivot_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    (id, cluster_name, status, threat_count, countries, asns, component_id, actor_id, agent_notes, confidence_score, last_movement_pivot_at,
+     brand_ids, attack_types)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     c.id, c.name ?? `${c.id} name`, c.status ?? "active", c.threat_count,
     c.countries === undefined ? "[]" : c.countries, c.asns === undefined ? "[]" : c.asns,
-    c.component_id ?? null, c.actor_id ?? null, c.agent_notes ?? null, c.confidence ?? 50, c.last_movement_pivot_at ?? null);
+    c.component_id ?? null, c.actor_id ?? null, c.agent_notes ?? null, c.confidence ?? 50, c.last_movement_pivot_at ?? null,
+    c.brand_ids === undefined ? "[]" : c.brand_ids, c.attack_types === undefined ? "[]" : c.attack_types);
 }
 function actor(raw: SqliteDb, id: string, name: string, aliases: string | null = null) {
   raw.prepare(`INSERT INTO threat_actors (id, name, aliases, country_code) VALUES (?, ?, ?, 'ir')`).run(id, name, aliases);
@@ -153,7 +161,8 @@ describe("JSON / code normalisers", () => {
 
 function op(over: Partial<OperationGeo> & { id: string }): OperationGeo {
   return {
-    name: null, component_id: null, kind: "other", status: "active", confidence_score: 50, threat_count: 1,
+    name: null, component_id: null, kind: "other", evidence_tier: "residue", brand_fanout: 0,
+    shared_infra: false, hub: false, ip_reputation: false, status: "active", confidence_score: 50, threat_count: 1,
     actor: null, countries: [], asns: [], last_seen: null, last_movement_pivot_at: null, ...over,
   };
 }
@@ -205,6 +214,109 @@ describe("buildComponents", () => {
     expect(unresolvedCertReps([op({ id: "cluster_cert_x", kind: "cert_serial", component_id: "component_cluster_cert_rep" }),
       op({ id: "cluster_asn_as1_a", kind: "asn", component_id: "component_cluster_cert_rep" })])).toEqual([]);
     expect(unresolvedCertReps([op({ id: "cluster_asn_as1_a", kind: "asn", component_id: "component_cluster_cert_rep" })])).toEqual([]);
+  });
+});
+
+describe("shared-infra ASNs", () => {
+  it("asnKey normalises every stored ASN form; isSharedInfraAsn reads through it", () => {
+    expect(asnKey("AS13335")).toBe("AS13335");
+    expect(asnKey("as13335")).toBe("AS13335");
+    expect(asnKey("13335")).toBe("AS13335");
+    expect(asnKey(13335)).toBe("AS13335");
+    expect(asnKey("AS13335 Cloudflare, Inc.")).toBe("AS13335");
+    expect(asnKey("  AS16509 Amazon.com")).toBe("AS16509");
+    expect(asnKey("AS133350")).toBe("AS133350");
+    expect(asnKey("Cloudflare AS13335")).toBeNull();
+    expect(asnKey("")).toBeNull();
+    expect(asnKey(null)).toBeNull();
+    expect(asnKey({})).toBeNull();
+    expect(isSharedInfraAsn("AS13335 Cloudflare, Inc.")).toBe(true);
+    expect(isSharedInfraAsn("AS133350")).toBe(false);
+    expect(isSharedInfraAsn("AS9009")).toBe(false);
+    expect(SHARED_INFRA_ASNS.size).toBe(19);
+    for (const k of SHARED_INFRA_ASNS) expect(asnKey(k)).toBe(k);
+  });
+});
+
+describe("classifyOperation", () => {
+  const base = { cluster_type: null, threat_count: 50, brand_fanout: 3, primary_asn: null, primary_type: null };
+  it("evidence tiers: cert → ip → subnet → registrar → asn → residue", () => {
+    expect(classifyOperation({ ...base, id: "cluster_cert_x", cluster_type: "ssl_san_hash" })).toMatchObject({ kind: "cert_san", evidence_tier: "cert" });
+    expect(classifyOperation({ ...base, id: "cluster_cert_y", cluster_type: "ssl_cert_serial" })).toMatchObject({ kind: "cert_serial", evidence_tier: "cert" });
+    expect(classifyOperation({ ...base, id: "cluster_ip_1.2.3.4" })).toMatchObject({ kind: "per_ip", evidence_tier: "ip" });
+    expect(classifyOperation({ ...base, id: "cluster_subnet_1_2_3" })).toMatchObject({ kind: "subnet", evidence_tier: "subnet" });
+    expect(classifyOperation({ ...base, id: "cluster_registrar_namecheap" })).toMatchObject({ kind: "registrar", evidence_tier: "registrar" });
+    expect(classifyOperation({ ...base, id: "cluster_asn_as9_phishing" })).toMatchObject({ kind: "asn", evidence_tier: "asn" });
+    for (const id of ["cluster_dev_x", "cluster_actor_y", "0b9c5e1e-legacy"]) {
+      expect(classifyOperation({ ...base, id }).evidence_tier).toBe("residue");
+    }
+  });
+  it("cert / per-IP below 10 threats drop to residue; subnet/registrar/asn don't", () => {
+    expect(classifyOperation({ ...base, id: "cluster_cert_x", threat_count: 9 }).evidence_tier).toBe("residue");
+    expect(classifyOperation({ ...base, id: "cluster_cert_x", threat_count: 10 }).evidence_tier).toBe("cert");
+    expect(classifyOperation({ ...base, id: "cluster_ip_1.1.1.1", threat_count: 9 }).evidence_tier).toBe("residue");
+    expect(classifyOperation({ ...base, id: "cluster_ip_1.1.1.1", threat_count: 10 }).evidence_tier).toBe("ip");
+    expect(classifyOperation({ ...base, id: "cluster_subnet_a", threat_count: 1 }).evidence_tier).toBe("subnet");
+    expect(classifyOperation({ ...base, id: "cluster_asn_a_b", threat_count: 1 }).evidence_tier).toBe("asn");
+  });
+  it("shared_infra only for ASN-kind rows on a shared network (org-suffixed form too)", () => {
+    expect(classifyOperation({ ...base, id: "cluster_asn_as13335_x", primary_asn: "AS13335 Cloudflare, Inc." }).shared_infra).toBe(true);
+    expect(classifyOperation({ ...base, id: "cluster_asn_as9_x", primary_asn: "AS9" }).shared_infra).toBe(false);
+    // Specific evidence on Cloudflare is still operator evidence.
+    expect(classifyOperation({ ...base, id: "cluster_ip_1.1.1.1", primary_asn: "AS13335" }).shared_infra).toBe(false);
+    expect(classifyOperation({ ...base, id: "cluster_subnet_a", primary_asn: "AS13335" }).shared_infra).toBe(false);
+  });
+  it("hub = per-IP above the 150-brand fan-out threshold", () => {
+    expect(classifyOperation({ ...base, id: "cluster_ip_9.9.9.9", brand_fanout: DEFAULT_HUB_FANOUT_THRESHOLD }).hub).toBe(false);
+    expect(classifyOperation({ ...base, id: "cluster_ip_9.9.9.9", brand_fanout: DEFAULT_HUB_FANOUT_THRESHOLD + 1 }).hub).toBe(true);
+    expect(classifyOperation({ ...base, id: "cluster_cert_x", brand_fanout: 999 }).hub).toBe(false);
+  });
+  it("ip_reputation = ASN rows whose primary type is scanning / malicious_ip", () => {
+    expect(classifyOperation({ ...base, id: "cluster_asn_a_s", primary_type: "scanning" }).ip_reputation).toBe(true);
+    expect(classifyOperation({ ...base, id: "cluster_asn_a_m", primary_type: " Malicious_IP " }).ip_reputation).toBe(true);
+    expect(classifyOperation({ ...base, id: "cluster_asn_a_p", primary_type: "phishing" }).ip_reputation).toBe(false);
+    expect(classifyOperation({ ...base, id: "cluster_ip_1.1.1.1", primary_type: "scanning" }).ip_reputation).toBe(false);
+  });
+});
+
+describe("selectOperations", () => {
+  const ops = [
+    op({ id: "cluster_asn_cf", kind: "asn", evidence_tier: "asn", threat_count: 9000, shared_infra: true }),
+    op({ id: "cluster_asn_cf_scan", kind: "asn", evidence_tier: "asn", threat_count: 8000, shared_infra: true, ip_reputation: true }),
+    op({ id: "cluster_ip_hub", kind: "per_ip", evidence_tier: "ip", threat_count: 7000, hub: true }),
+    op({ id: "cluster_asn_scan", kind: "asn", evidence_tier: "asn", threat_count: 6000, ip_reputation: true }),
+    op({ id: "cluster_asn_b", kind: "asn", evidence_tier: "asn", threat_count: 500 }),
+    op({ id: "cluster_asn_a", kind: "asn", evidence_tier: "asn", threat_count: 500 }),
+    op({ id: "cluster_subnet_x", kind: "subnet", evidence_tier: "subnet", threat_count: 20 }),
+    op({ id: "cluster_cert_x", kind: "cert_san", evidence_tier: "cert", threat_count: 12 }),
+    op({ id: "cluster_ip_small", kind: "per_ip", evidence_tier: "residue", threat_count: 3 }),
+  ];
+  it("default: excludes shared/hub/ip-reputation (each counted once), ranks tier → threat_count DESC → id, limit after filter", () => {
+    const r = selectOperations(ops, { includeShared: false, limit: 3 });
+    expect(r.operations.map((o) => o.id)).toEqual(["cluster_cert_x", "cluster_subnet_x", "cluster_asn_a"]);
+    expect(r.excluded).toEqual({ shared_asn: 2, hub_ip: 1, ip_reputation: 1 });
+    expect(selectOperations(ops, { includeShared: false, limit: 50 }).operations.map((o) => o.id)).toEqual([
+      "cluster_cert_x", "cluster_subnet_x", "cluster_asn_a", "cluster_asn_b", "cluster_ip_small",
+    ]);
+  });
+  it("include_shared = the normal top-N PLUS every excluded row (threat_count DESC), counts reconcile", () => {
+    const r = selectOperations(ops, { includeShared: true, limit: 3 });
+    expect(r.excluded).toEqual({ shared_asn: 2, hub_ip: 1, ip_reputation: 1 });
+    expect(r.shared_returned).toBe(4);
+    expect(r.operations.map((o) => o.id)).toEqual([
+      "cluster_cert_x", "cluster_subnet_x", "cluster_asn_a",
+      "cluster_asn_cf", "cluster_asn_cf_scan", "cluster_ip_hub", "cluster_asn_scan",
+    ]);
+    // Same top-N as the default response, so the toggle only ADDS rows.
+    expect(r.operations.slice(0, 3)).toEqual(selectOperations(ops, { includeShared: false, limit: 3 }).operations);
+    expect(selectOperations(ops, { includeShared: false, limit: 3 }).shared_returned).toBe(0);
+    expect(compareOperations(ops[5]!, ops[4]!)).toBeLessThan(0);
+  });
+  it("the shared cap bounds what Show reveals; excluded still counts the whole population", () => {
+    const r = selectOperations(ops, { includeShared: true, limit: 3, sharedCap: 2 });
+    expect(r.shared_returned).toBe(2);
+    expect(r.operations.slice(3).map((o) => o.id)).toEqual(["cluster_asn_cf", "cluster_asn_cf_scan"]);
+    expect(r.excluded).toEqual({ shared_asn: 2, hub_ip: 1, ip_reputation: 1 });
   });
 });
 
@@ -292,26 +404,29 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     const b = await body<{ operations: OperationGeo[]; components: Array<{ component_id: string; edges: unknown[] }> }>(res);
     expect(b.success).toBe(true);
     expect(typeof b.meta.generated_at).toBe("string");
-    expect(b.data.operations.map((o) => o.id)).toEqual(["cluster_ip_1.2.3.4", "cluster_cert_s1", "cluster_asn_as9_x"]);
-    const top = b.data.operations[0]!;
-    expect(top).toMatchObject({ kind: "per_ip", actor: { id: "ta_1", name: "Charming Kitten" }, asns: ["AS1", "AS2"], last_movement_pivot_at: "2026-10-13 10:00:00", threat_count: 50 });
+    // Ranked by evidence tier first: cert (40) outranks per-IP (50).
+    expect(b.data.operations.map((o) => o.id)).toEqual(["cluster_cert_s1", "cluster_ip_1.2.3.4", "cluster_asn_as9_x"]);
+    const top = b.data.operations[1]!;
+    expect(top).toMatchObject({ kind: "per_ip", evidence_tier: "ip", actor: { id: "ta_1", name: "Charming Kitten" }, asns: ["AS1", "AS2"], last_movement_pivot_at: "2026-10-13 10:00:00", threat_count: 50 });
     expect(top.countries).toHaveLength(20);
     expect(top.countries).not.toContain("XX");
-    expect(b.data.operations[1]).toMatchObject({ kind: "cert_san", actor: null });
-    expect(b.data.operations[2]).toMatchObject({ kind: "asn", asns: [], countries: [] });
+    expect(b.data.operations[0]).toMatchObject({ kind: "cert_san", evidence_tier: "cert", actor: null });
+    expect(b.data.operations[2]).toMatchObject({ kind: "asn", evidence_tier: "asn", asns: [], countries: [] });
     expect(b.data.components).toEqual([{
       component_id: "component_cluster_ip_1.2.3.4",
-      operation_ids: ["cluster_ip_1.2.3.4", "cluster_cert_s1"],
+      operation_ids: ["cluster_cert_s1", "cluster_ip_1.2.3.4"],
       countries: expect.any(Array),
       edges: [{ a: "cluster_ip_1.2.3.4", b: "cluster_cert_s1", kind: "per_ip", shared_asns: ["AS2"] }],
     }]);
     expect(log.every((l) => !l.error)).toBe(true);
-    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo:active:3"]);
+    expect(lensKeys(kv)).toEqual(["cv:observatory_lens.operations_geo.v3:active:3:s0"]);
 
     const all = await body<{ operations: OperationGeo[] }>(await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=all&limit=999"), env));
-    expect(all.data.operations[0]!.id).toBe("cluster_subnet_dormant");
-    expect(all.data.operations).toHaveLength(5);
-    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo:all:50");
+    expect(all.data.operations.map((o) => o.id)).toEqual([
+      "cluster_cert_s1", "cluster_ip_1.2.3.4", "cluster_subnet_dormant", "cluster_asn_as9_x",
+      "cluster_ip_5.5.5.5", // per-IP with < 10 threats → residue tier
+    ]);
+    expect(lensKeys(kv)).toContain("cv:observatory_lens.operations_geo.v3:all:50:s0");
 
     const bad = await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=dormant"), env);
     expect(bad.status).toBe(400);
@@ -335,6 +450,87 @@ describe.skipIf(!hasSqlite())("lens handlers — real SQLite", () => {
     const lookups = log.filter((l) => /FROM infrastructure_clusters\s+WHERE id IN/.test(l.sql));
     expect(lookups).toHaveLength(1);
     expect((lookups[0]!.sql.match(/\?/g) ?? []).length).toBe(2);
+  });
+
+  it("operations-geo: stable-id population only, default exclusions + meta counts, include_shared, tier ranking, 400", async () => {
+    const raw = openDerivedDb(TABLES);
+    // Legacy random-UUID copies with huge frozen counts — must never surface.
+    for (let i = 0; i < 40; i++) {
+      cluster(raw, { id: `${(i + 10).toString(16).padStart(8, "0")}-6d1c-4c1a-9a55-0f1e2d3c4b5a`, threat_count: 100_000 - i,
+        asns: '["AS13335"]', attack_types: '["malware_distribution"]', status: i % 5 === 0 ? "dormant" : "active" });
+    }
+    cluster(raw, { id: "Cluster_upper_not_stable", threat_count: 99_999 });
+    cluster(raw, { id: "cluster`after_range", threat_count: 99_999 });
+    // Stable rows.
+    cluster(raw, { id: "cluster_asn_as13335_malware_distribution", threat_count: 5000, asns: '["AS13335 Cloudflare, Inc."]', attack_types: '["malware_distribution"]' });
+    cluster(raw, { id: "cluster_asn_as16509_phishing", threat_count: 4000, asns: '["AS16509"]', attack_types: '["phishing"]' });
+    cluster(raw, { id: "cluster_asn_as9009_scanning", threat_count: 3000, asns: '["AS9009"]', attack_types: '["scanning"]' });
+    cluster(raw, { id: "cluster_asn_as9009_phishing", threat_count: 900, asns: '["AS9009"]', attack_types: '["phishing"]' });
+    cluster(raw, { id: "cluster_ip_6.6.6.6", threat_count: 2500, brand_ids: JSON.stringify(Array.from({ length: 151 }, (_, i) => `b${i}`)) });
+    cluster(raw, { id: "cluster_ip_7.7.7.7", threat_count: 30, brand_ids: '["b1","b2"]', component_id: "component_cluster_cert_san1" });
+    cluster(raw, { id: "cluster_cert_san1", threat_count: 12, agent_notes: '{"cluster_type":"ssl_san_hash"}', component_id: "component_cluster_cert_san1",
+      // Component member that is a legacy row is just absent from the set.
+    });
+    cluster(raw, { id: "cluster_subnet_45_9_20", threat_count: 200 });
+    cluster(raw, { id: "cluster_ip_8.8.4.4", threat_count: 4 });
+    cluster(raw, { id: "cluster_registrar_dormant", threat_count: 300, status: "dormant" });
+    cluster(raw, { id: "ffffffff-legacy-member", threat_count: 80_000, component_id: "component_cluster_cert_san1" });
+    const { env, kv } = makeEnv(raw);
+
+    const res = await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo"), env);
+    expect(res.status).toBe(200);
+    const b = await body<{ operations: OperationGeo[]; components: Array<{ component_id: string; operation_ids: string[]; edges: Array<{ a: string; b: string; kind: unknown }> }> }>(res);
+    expect(b.data.operations.map((o) => o.id)).toEqual([
+      "cluster_cert_san1", "cluster_ip_7.7.7.7", "cluster_subnet_45_9_20", "cluster_asn_as9009_phishing", "cluster_ip_8.8.4.4",
+    ]);
+    expect(b.data.operations.every((o) => o.id.startsWith("cluster_"))).toBe(true);
+    expect(b.meta).toMatchObject({ include_shared: false, excluded: { shared_asn: 2, hub_ip: 1, ip_reputation: 1 }, scanned: 9, truncated: false });
+    expect(b.data.operations[0]).toMatchObject({ evidence_tier: "cert", kind: "cert_san", shared_infra: false, hub: false, ip_reputation: false });
+    expect(b.data.operations[1]).toMatchObject({ evidence_tier: "ip", brand_fanout: 2 });
+    expect(b.data.operations[4]).toMatchObject({ evidence_tier: "residue", kind: "per_ip" });
+    expect(b.data.components).toEqual([{
+      component_id: "component_cluster_cert_san1",
+      operation_ids: ["cluster_cert_san1", "cluster_ip_7.7.7.7"],
+      countries: [],
+      edges: [{ a: "cluster_cert_san1", b: "cluster_ip_7.7.7.7", kind: "cert_san", shared_asns: [] }],
+    }]);
+
+    const shared = await body<{ operations: OperationGeo[] }>(
+      await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?include_shared=1&limit=4"), env));
+    // Normal top-4, then every excluded row by threat_count (nothing is cut by the limit).
+    expect(shared.data.operations.map((o) => o.id)).toEqual([
+      "cluster_cert_san1", "cluster_ip_7.7.7.7", "cluster_subnet_45_9_20", "cluster_asn_as9009_phishing",
+      "cluster_asn_as13335_malware_distribution", "cluster_asn_as16509_phishing", "cluster_asn_as9009_scanning", "cluster_ip_6.6.6.6",
+    ]);
+    expect(shared.data.operations[7]).toMatchObject({ hub: true, brand_fanout: 151 });
+    // Counts reconcile: hidden (4) == shared rows returned == the flagged rows in the payload.
+    expect(shared.meta).toMatchObject({ include_shared: true, excluded: { shared_asn: 2, hub_ip: 1, ip_reputation: 1 }, shared_returned: 4 });
+    expect(shared.data.operations.filter((o) => o.shared_infra || o.hub || o.ip_reputation)).toHaveLength(4);
+    expect(b.meta).toMatchObject({ shared_returned: 0 });
+    const sharedAll = await body<{ operations: OperationGeo[] }>(
+      await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?include_shared=1&limit=50"), env));
+    const cf = sharedAll.data.operations.find((o) => o.id === "cluster_asn_as13335_malware_distribution")!;
+    expect(cf).toMatchObject({ shared_infra: true, evidence_tier: "asn" });
+    expect(sharedAll.data.operations.find((o) => o.id === "cluster_asn_as9009_scanning")).toMatchObject({ ip_reputation: true });
+
+    const all = await body<{ operations: OperationGeo[] }>(
+      await handleObservatoryOperationsGeo(req("/api/observatory/operations-geo?status=all"), env));
+    expect(all.data.operations.map((o) => o.id)).toContain("cluster_registrar_dormant");
+    expect(all.data.operations.every((o) => o.id.startsWith("cluster_"))).toBe(true);
+    expect(all.meta).toMatchObject({ scanned: 10 });
+
+    expect(lensKeys(kv).sort()).toEqual([
+      "cv:observatory_lens.operations_geo.v3:active:25:s0",
+      "cv:observatory_lens.operations_geo.v3:active:4:s1",
+      "cv:observatory_lens.operations_geo.v3:active:50:s1",
+      "cv:observatory_lens.operations_geo.v3:all:25:s0",
+    ]);
+    for (const bad of ["2", "true", "yes", "-1"]) {
+      const r = await handleObservatoryOperationsGeo(req(`/api/observatory/operations-geo?include_shared=${bad}`), env);
+      expect(r.status).toBe(400);
+    }
+    expect(lensKeys(kv)).toHaveLength(4);
+    expect(OPERATIONS_GEO_SCAN_CAP).toBeGreaterThanOrEqual(1000);
   });
 
   it("movements: window + event_type filter, v1/v2 shapes, ASN→country, cluster_name fallback, 400, keyed", async () => {

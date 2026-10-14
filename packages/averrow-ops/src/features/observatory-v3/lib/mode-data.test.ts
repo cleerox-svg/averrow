@@ -96,3 +96,57 @@ describe('relevantFailures', () => {
     expect(relevantFailures(dataNeeds('heatmap', DEFAULT_LAYERS), { heatmap: err })).toEqual(['heatmap']);
   });
 });
+
+describe('dataNeeds: the Fast weaponization view', () => {
+  const fast = dataNeeds('global', layers({ nodes: true, particles: true }), { velocity: true });
+  it('loads the velocity nodes and the (velocity) replay series and nothing else', () => {
+    expect(fast).toMatchObject({ velocity: true, timeline: true });
+    expect(fast).toMatchObject({
+      nodes: false, arcs: false, heatmap: false, stats: false, bot: false, live: false, geometry: false,
+      operations: false, movements: false, providers: false, overindex: false, campaigns: false, actors: false,
+    });
+  });
+  it('other views never ask for velocity', () => {
+    expect(dataNeeds('global', DEFAULT_LAYERS).velocity).toBe(false);
+    expect(dataNeeds('heatmap', DEFAULT_LAYERS).velocity).toBe(false);
+    expect(dataNeeds('global', lensPreset('hosting')).velocity).toBe(false);
+  });
+  it('a country selection (what a velocity node opens) loads what the country drawer reads', () => {
+    expect(dataNeeds('global', layers({}), { velocity: true, selection: 'country' })).toMatchObject({
+      velocity: true, nodes: true, arcs: true, operations: true, providers: true, overindex: true, geometry: false,
+    });
+  });
+  it('a velocity failure only raises the banner in that view', () => {
+    const err = new Error('x');
+    expect(relevantFailures(fast, { velocity: err })).toEqual(['velocity']);
+    expect(relevantFailures(dataNeeds('global', DEFAULT_LAYERS), { velocity: err })).toEqual([]);
+  });
+});
+
+describe('dataNeeds: takedown outcomes', () => {
+  it('Baseline + Takedowns loads takedowns by country (not the Radar baseline), and the shapes', () => {
+    expect(dataNeeds('global', lensPreset('baseline'), { measure: 'takedowns' })).toMatchObject({
+      takedownsCountry: true, takedownsProvider: false, overindex: false, geometry: true,
+    });
+    expect(dataNeeds('global', lensPreset('baseline'), { measure: 'index' })).toMatchObject({ takedownsCountry: false, overindex: true });
+  });
+  it('Hosting + Takedowns loads takedowns by provider next to the providers it colours', () => {
+    expect(dataNeeds('global', lensPreset('hosting'), { measure: 'takedowns' })).toMatchObject({
+      takedownsProvider: true, takedownsCountry: false, providers: true,
+    });
+    expect(dataNeeds('global', lensPreset('hosting'), { measure: 'index' })).toMatchObject({ takedownsProvider: false });
+  });
+  it('a country drawer on any lens reads takedowns by country; the other lenses never ask otherwise', () => {
+    expect(dataNeeds('global', lensPreset('operations'), { selection: 'country' }).takedownsCountry).toBe(true);
+    for (const lens of ['threats', 'operations', 'movement', 'campaigns', 'actors'] as const) {
+      expect(dataNeeds('global', lensPreset(lens), { measure: 'takedowns' })).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+    }
+    expect(dataNeeds('global', DEFAULT_LAYERS)).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+    expect(dataNeeds('heatmap', DEFAULT_LAYERS, { measure: 'takedowns' })).toMatchObject({ takedownsCountry: false, takedownsProvider: false });
+  });
+  it('a failure only raises the banner in the view that asked', () => {
+    const err = new Error('x');
+    expect(relevantFailures(dataNeeds('global', lensPreset('baseline'), { measure: 'takedowns' }), { takedownsCountry: err, takedownsProvider: err })).toEqual(['takedownsCountry']);
+    expect(relevantFailures(dataNeeds('global', DEFAULT_LAYERS), { takedownsCountry: err })).toEqual([]);
+  });
+});

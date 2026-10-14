@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { boundsOf, clampInsets, planCamera, drillPoints, wrapLng, phoneMinZoom, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
-import { buildOperationsModel } from './lens/operations';
+import { boundsOf, clampInsets, planCamera, drillPoints, lensFitPoints, wrapLng, phoneMinZoom, desktopMinZoom, DEFAULT_MIN_ZOOM, FIT_MAX_ZOOM, POINT_ZOOM, FLY_MS, FRAME_MARGIN, type FocusModels } from './camera';
+import { buildOperationsModel, aggregateEdges } from './lens/operations';
 import { buildCampaignsModel } from './lens/campaigns';
 import { buildMovementModel } from './lens/movement';
 import { buildActorModel } from './lens/actors';
@@ -8,6 +8,16 @@ import { buildHostingModel } from './lens/hosting';
 import type { CampaignGeo, Movement, OperationGeo, ProviderGeo, ActorDetail } from '@/hooks/useObservatoryLenses';
 
 const EMPTY: FocusModels = { operations: null, hosting: null, campaigns: null, movement: null, actors: null };
+
+describe('desktopMinZoom: low enough that a world-spanning target fits beside the open drawer', () => {
+  it('is capped at 0.5 on a wide canvas and drops with the canvas width, never below MapLibre\'s floor', () => {
+    expect(desktopMinZoom(3000)).toBe(0.5);
+    expect(desktopMinZoom(776)).toBeLessThan(-0.5); // 1024px screen: the world must fit in ~440px of free width
+    expect(desktopMinZoom(776)).toBeLessThan(desktopMinZoom(1192));
+    expect(desktopMinZoom(10)).toBe(DEFAULT_MIN_ZOOM);
+    expect(desktopMinZoom(0)).toBe(0.5);
+  });
+});
 
 describe('phoneMinZoom: derived from the canvas so a world-spanning target can fit', () => {
   // zoom at which a lng span (deg) exactly fills `free` px: world = 512 * 2^z px wide
@@ -25,6 +35,12 @@ describe('phoneMinZoom: derived from the canvas so a world-spanning target can f
     const needed = fitZoom(plan.box.east - plan.box.west, free);
     expect(needed).toBeLessThan(0.5);               // the old floor clamped here and cut both ends off
     expect(phoneMinZoom(400)).toBeLessThanOrEqual(needed);
+  });
+  it("never goes below MapLibre's -2 floor, however narrow the canvas", () => {
+    // free width is pinned at 64px under 168px of canvas: log2(64/512) = -3 would be rejected by setMinZoom
+    for (const w of [1, 100, 168, 200, 231]) expect(phoneMinZoom(w)).toBe(DEFAULT_MIN_ZOOM);
+    expect(phoneMinZoom(232)).toBe(-2);           // exactly the boundary: 128px free = 2^-2 of the world
+    expect(phoneMinZoom(233)).toBeGreaterThan(-2);
   });
   it('a full 360 degree target still fits inside the framing margins', () => {
     const free = 400 - 2 * (12 + FRAME_MARGIN);
@@ -157,5 +173,65 @@ describe('drillPoints: every placeable position of the target', () => {
   it('a country is its centroid', () => {
     expect(drillPoints({ kind: 'country', code: 'NL' }, EMPTY)).toHaveLength(1);
     expect(drillPoints({ kind: 'country', code: 'ZZ' }, EMPTY)).toEqual([]);
+  });
+});
+
+describe('lensFitPoints: what a lens occupies when it is entered with nothing selected', () => {
+  const models = (over: Partial<FocusModels>): FocusModels => ({ operations: null, hosting: null, campaigns: null, movement: null, actors: null, ...over });
+  it('is empty until the lens has data, and for lenses that do not frame themselves', () => {
+    expect(lensFitPoints('operations', models({}))).toEqual([]);
+    expect(lensFitPoints('threats', models({}))).toEqual([]);
+    expect(lensFitPoints('baseline', models({}))).toEqual([]);
+    expect(lensFitPoints('actors', models({}))).toEqual([]);
+  });
+  it('operations: every country node', () => {
+    const m = buildOperationsModel([
+      { id: 'a', name: 'a', component_id: null, kind: 'asn', status: 'active', confidence_score: 1, threat_count: 1, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    ], []);
+    expect(lensFitPoints('operations', models({ operations: m }))).toEqual(m.nodes.map(n => n.position));
+    expect(lensFitPoints('operations', models({ operations: m }))).toHaveLength(2);
+  });
+  it('a fit across the Pacific is a short box over the date line, not a world-wide one', () => {
+    const m = buildOperationsModel([
+      { id: 'a', name: 'a', component_id: null, kind: 'asn', status: 'active', confidence_score: 1, threat_count: 1, actor: null, countries: ['US', 'JP'], asns: [], last_seen: null, last_movement_pivot_at: null },
+    ], []);
+    const box = boundsOf(lensFitPoints('operations', models({ operations: m })))!;
+    expect(box.east - box.west).toBeLessThan(240);
+  });
+});
+
+describe('noWrap framing: the flat Operations arcs live in -180..180, so the camera frames the same space', () => {
+  const canvas = { width: 1200, height: 700 };
+  const insets = { top: 0, right: 0, bottom: 0, left: 0 };
+  const mk = (countries: string[]) => buildOperationsModel([
+    { id: 'a', name: 'a', component_id: null, kind: 'asn', status: 'active', confidence_score: 1, threat_count: 1, actor: null, countries, asns: [], last_seen: null, last_movement_pivot_at: null },
+  ], []);
+  for (const countries of [['JP', 'US'], ['JP', 'US', 'DE']]) {
+    it(`${countries.join('+')}: every node and every arc point is inside the framed box, in the primary copy`, () => {
+      const m = mk(countries);
+      const pts = lensFitPoints('operations', { ...EMPTY, operations: m });
+      const wrapped = planCamera(pts, canvas, insets)!;
+      const plan = planCamera(pts, canvas, insets, { noWrap: true })!;
+      expect(plan.box.west).toBeGreaterThanOrEqual(-180);
+      expect(plan.box.east).toBeLessThanOrEqual(180);
+      for (const [lng, lat] of pts) {
+        expect(lng).toBeGreaterThanOrEqual(plan.box.west);
+        expect(lng).toBeLessThanOrEqual(plan.box.east);
+        expect(lat).toBeGreaterThanOrEqual(plan.box.south);
+        expect(lat).toBeLessThanOrEqual(plan.box.north);
+      }
+      const edges = aggregateEdges(m, ['a']);
+      expect(edges.length).toBeGreaterThan(0);
+      for (const e of edges) for (const [lng] of e.path) {
+        expect(lng).toBeGreaterThanOrEqual(plan.box.west);
+        expect(lng).toBeLessThanOrEqual(plan.box.east);
+      }
+      // the default (circle) framing for JP+US is the short box across the Pacific: the one that disagreed with the arcs
+      if (countries.length === 2) expect(wrapped.box.east).toBeGreaterThan(180);
+    });
+  }
+  it('boundsOf noWrap is the plain min/max box; default stays the circle box', () => {
+    expect(boundsOf([[138, 36], [-98, 39]], { noWrap: true })).toEqual({ west: -98, south: 36, east: 138, north: 39 });
+    expect(boundsOf([[175, 0], [-170, 0]])!.east).toBe(190);
   });
 });

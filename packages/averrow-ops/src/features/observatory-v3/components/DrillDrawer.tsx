@@ -30,7 +30,9 @@ import {
   countryFacts, drillEyebrow, drillKey, drillTitle, isPending, type DrillData, type DrillTarget,
 } from '../lib/drill';
 import { formatRatio } from '../lib/lens/baseline';
-import { kindLabel, normalizeConfidence } from '../lib/lens/operations';
+import { formatHours, hasRate, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED } from '../lib/lens/takedowns';
+import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
+import { kindLabel, normalizeConfidence, operationEvidence } from '../lib/lens/operations';
 import { trendClass } from '../lib/lens/hosting';
 import { confidenceBand, confidenceValue, type ConfidenceBand } from '../lib/lens/actors';
 import { useActorDetail } from '@/hooks/useObservatoryLenses';
@@ -99,6 +101,19 @@ function Pill({ children, onClick, title }: { children: ReactNode; onClick?: () 
       {children}
     </button>
   );
+}
+
+/** A country list once per country: the API can send 'DE' and 'de' (or a code twice), and a chip per entry repeats the name. */
+export function uniqueCountries(list: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of list) {
+    const key = iso2(raw) ?? raw;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(raw);
+  }
+  return out;
 }
 
 /** Chips: the first `max`, then "+N more" (a button) that reveals the rest. */
@@ -231,7 +246,48 @@ function ArcBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'arc' }>; on
   );
 }
 
-function CountryBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 'country' }>; data: DrillData; onSelect: DrillDrawerProps['onSelect'] }) {
+/** Success rate (once enough resolved), the bar and the facts for one takedowns-geo row. */
+function TakedownRowSection({ row, window }: { row: TakedownGeoRow; window?: string }) {
+  const resolved = resolvedOf(row);
+  const median = formatHours(row.median_hours);
+  return (
+    <Section title={`Takedowns${window ? ` · ${window}` : ''}`}>
+      {hasRate(row) ? (
+        <>
+          <Bar value={row.share as number} color="var(--green)" label="Taken down" />
+          <KV k={`${pct(row.share as number)} of resolved`}>{num(resolved)} resolved</KV>
+        </>
+      ) : (
+        <Note>{`Too few resolved takedowns for a rate (${resolved} of ${TAKEDOWN_MIN_RESOLVED} needed).`}</Note>
+      )}
+      <KV k="Submitted">{num(row.submitted)}</KV>
+      {row.pending > 0 && <KV k="Pending">{num(row.pending)}</KV>}
+      {median && <KV k="Median time to take down">{median}</KV>}
+    </Section>
+  );
+}
+
+/**
+ * Takedown outcomes for a country (takedowns-geo). Roles without `manage_takedowns` get a neutral note and the
+ * request is never made; holders see the success rate once enough takedowns resolved, else why not.
+ */
+function TakedownSection({ what, canSee, rows, row, error, window }: {
+  what: 'country'; canSee: boolean; rows: ReadonlyMap<string, TakedownGeoRow> | undefined; row: TakedownGeoRow | null; error: boolean; window?: string;
+}) {
+  const title = `Takedowns${window ? ` · ${window}` : ''}`;
+  if (!canSee) {
+    return <Section title="Takedowns"><Note>Takedown outcomes are shown to roles that manage takedowns.</Note></Section>;
+  }
+  if (!rows) {
+    return <Section title={title}><Note>{error ? 'Takedown outcomes failed to load.' : 'Loading takedown outcomes…'}</Note></Section>;
+  }
+  if (!row) {
+    return <Section title={title}><Note>{`No takedowns were submitted for this ${what} in this window.`}</Note></Section>;
+  }
+  return <TakedownRowSection row={row} window={window} />;
+}
+
+function CountryBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<DrillTarget, { kind: 'country' }>; data: DrillData; onSelect: DrillDrawerProps['onSelect']; canSeeTakedowns: boolean }) {
   const f = countryFacts(t.code, data);
   const sev = f.severity;
   const total = sev ? sev.critical + sev.high + sev.medium + sev.low : 0;
@@ -254,6 +310,15 @@ function CountryBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 'c
           {f.topTypes.map(x => <KV key={x.type} k={typeLabel(x.type)}>{num(x.count)}</KV>)}
         </Section>
       )}
+
+      <TakedownSection
+        what="country"
+        canSee={canSeeTakedowns}
+        rows={data.takedownCountries}
+        row={data.takedownCountries?.get(f.code) ?? null}
+        error={!!data.takedownCountriesError}
+        window={data.takedownWindow}
+      />
 
       {f.brands.length > 0 && (
         <Section title="Brands attacked from here">
@@ -311,7 +376,7 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
         badges={(
           <>
             {op.status && <Badge status={OP_STATUS[status as keyof typeof OP_STATUS] ?? 'pending'} size="md" label={op.status} />}
-            <Badge context="nexus" size="md" label={kindLabel(op.kind)} />
+            <Badge context="nexus" size="md" label={operationEvidence(op)} />
           </>
         )}
         cta={{ label: 'Open operation →', to: `/campaigns/${encodeURIComponent(op.id)}` }}
@@ -325,9 +390,9 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
             : 'unattributed'}
         </KV>
       </Section>
-      <Section title={`Countries · ${op.countries.length}`}>
+      <Section title={`Countries · ${uniqueCountries(op.countries).length}`}>
         <Pills>
-          {op.countries.map(cc => {
+          {uniqueCountries(op.countries).map(cc => {
             const code = iso2(cc);
             return code
               ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill>
@@ -351,7 +416,7 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
   );
 }
 
-function ProviderBody({ t, onSelect, canSeeTakedowns }: { t: Extract<DrillTarget, { kind: 'provider' }>; onSelect: DrillDrawerProps['onSelect']; canSeeTakedowns: boolean }) {
+function ProviderBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<DrillTarget, { kind: 'provider' }>; data: DrillData; onSelect: DrillDrawerProps['onSelect']; canSeeTakedowns: boolean }) {
   const p = t.provider;
   if (!p) return <Note>Loading provider…</Note>;
   const cc = iso2(p.country);
@@ -384,6 +449,10 @@ function ProviderBody({ t, onSelect, canSeeTakedowns }: { t: Extract<DrillTarget
         {p.reputation_score !== null && <KV k="Reputation">{p.reputation_score}</KV>}
       </Section>
       {p.is_bulletproof && <Note tone="warn">Flagged bulletproof: abuse reports are routinely ignored.</Note>}
+      {/* The Hosting > Takedowns measure loads per-host outcomes for the chosen window: show that row (same numbers as the map). */}
+      {canSeeTakedowns && data.takedownProviders?.some(r => r.key === p.id) ? (
+        <TakedownRowSection row={data.takedownProviders.find(r => r.key === p.id)!} window={data.takedownWindow} />
+      ) : (
       <Section title="Takedowns">
         {!canSeeTakedowns ? (
           <Note>Takedown outcomes are shown to roles that manage takedowns.</Note>
@@ -397,6 +466,7 @@ function ProviderBody({ t, onSelect, canSeeTakedowns }: { t: Extract<DrillTarget
           <Note>No resolved takedowns recorded for this provider yet.</Note>
         )}
       </Section>
+      )}
     </>
   );
 }
@@ -499,7 +569,7 @@ function CampaignBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'campai
   if (!c) return <Note>Loading campaign…</Note>;
   const row = (list: string[]) => (
     <Pills>
-      {list.map(cc => {
+      {uniqueCountries(list).map(cc => {
         const code = iso2(cc);
         return code ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill> : <Pill key={cc}>{cc}</Pill>;
       })}
@@ -536,7 +606,7 @@ function MovementBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'moveme
       {e.countries.length === 0 && e.asns.length === 0 ? <Note>Not recorded for this event.</Note> : (
         <>
           <Pills>
-            {e.countries.map(cc => {
+            {uniqueCountries(e.countries).map(cc => {
               const code = iso2(cc);
               return code ? <Pill key={cc} onClick={() => onSelect({ kind: 'country', code })}>{countryName(code)}</Pill> : <Pill key={cc}>{cc}</Pill>;
             })}
@@ -614,9 +684,9 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
     <div key={drillKey(target)} className="flex flex-col gap-3.5">
       {target.kind === 'node' && <NodeBody t={target} onSelect={onSelect} />}
       {target.kind === 'arc' && <ArcBody t={target} onSelect={onSelect} />}
-      {target.kind === 'country' && <CountryBody t={target} data={data} onSelect={onSelect} />}
+      {target.kind === 'country' && <CountryBody t={target} data={data} onSelect={onSelect} canSeeTakedowns={canSeeTakedowns} />}
       {target.kind === 'operation' && <OperationBody t={target} data={data} onSelect={onSelect} />}
-      {target.kind === 'provider' && <ProviderBody t={target} onSelect={onSelect} canSeeTakedowns={canSeeTakedowns} />}
+      {target.kind === 'provider' && <ProviderBody t={target} data={data} onSelect={onSelect} canSeeTakedowns={canSeeTakedowns} />}
       {target.kind === 'actor' && <ActorBody t={target} onSelect={onSelect} />}
       {target.kind === 'campaign' && <CampaignBody t={target} onSelect={onSelect} />}
       {target.kind === 'movement' && <MovementBody t={target} onSelect={onSelect} />}

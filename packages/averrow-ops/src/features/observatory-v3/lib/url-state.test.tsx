@@ -6,7 +6,7 @@ import { noLayers, lensPreset } from './lenses';
 import {
   parseSel, selValue,
   parseObservatoryParams, applyObservatoryState, mergeObservatoryState, DEFAULT_STATE, mapModeOf,
-  nodeKey, arcKey, useObservatoryUrlState,
+  nodeKey, arcKey, useObservatoryUrlState, measuresFor,
 } from './url-state';
 
 const parse = (qs: string) => parseObservatoryParams(new URLSearchParams(qs));
@@ -258,5 +258,88 @@ describe('useObservatoryUrlState', () => {
   it('canonicalises a garbage URL on mount', () => {
     const { loc } = setup('?period=bogus&mode=heatmap');
     expect(loc.search).toBe('?view=heat');
+  });
+});
+
+describe('Threats view=fast (fast weaponization)', () => {
+  it('parses, and stays on the interactive global scene', () => {
+    const s = parse('view=fast');
+    expect(s).toMatchObject({ lens: 'threats', view: 'fast' });
+    expect(mapModeOf(s)).toBe('global');
+  });
+  it('round-trips as ?view=fast, and the default view writes nothing', () => {
+    const s = parse('view=fast&period=30d');
+    expect(applyObservatoryState(new URLSearchParams(), s).toString()).toBe('period=30d&view=fast');
+    expect(applyObservatoryState(new URLSearchParams(), DEFAULT_STATE).toString()).toBe('');
+  });
+  it('back-compat: view=heat, mode=heatmap and junk views still mean what they did', () => {
+    expect(parse('view=heat').view).toBe('heat');
+    expect(parse('mode=heatmap').view).toBe('heat');
+    expect(parse('mode=heatmap&view=fast').view).toBe('heat');
+    expect(parse('view=nope').view).toBe('points');
+    expect(parse('view=points').view).toBe('points');
+  });
+  it('view only exists on the Threats lens', () => {
+    expect(parse('lens=hosting&view=fast').view).toBe('points');
+    const next = mergeObservatoryState(parse('view=fast'), { lens: 'hosting' });
+    expect(next.view).toBe('points');
+    expect(applyObservatoryState(new URLSearchParams(), next).get('view')).toBeNull();
+  });
+  it('switching view clears the selection (it belongs to the old picture); the source in the URL is kept for when it returns', () => {
+    const prev = parse('source=feeds&sel=country:NL');
+    const next = mergeObservatoryState(prev, { view: 'fast' });
+    expect(next.view).toBe('fast');
+    expect(next.sel).toBeNull();
+    expect(next.source).toBe('feeds');
+    expect(mergeObservatoryState(next, { sel: 'country:NL' }).sel).toBe('country:NL');
+  });
+});
+
+describe('measure=takedowns (Baseline and Hosting)', () => {
+  it('parses on Baseline and Hosting only; every other lens falls back to the default', () => {
+    expect(parse('lens=baseline&measure=takedowns').measure).toBe('takedowns');
+    expect(parse('lens=hosting&measure=takedowns').measure).toBe('takedowns');
+    for (const lens of ['threats', 'operations', 'movement', 'campaigns', 'actors']) {
+      expect(parse(`lens=${lens}&measure=takedowns`).measure).toBe('index');
+    }
+    expect(measuresFor('hosting')).toEqual(['index', 'takedowns']);
+    expect(measuresFor('threats')).toEqual(['index']);
+  });
+  it('Hosting has no raw / bot measure; Baseline keeps all of its old ones', () => {
+    expect(parse('lens=hosting&measure=raw').measure).toBe('index');
+    expect(parse('lens=hosting&measure=bot').measure).toBe('index');
+    expect(parse('lens=baseline&measure=raw').measure).toBe('raw');
+    expect(parse('lens=baseline&measure=bot').measure).toBe('bot');
+    expect(parse('lens=baseline&measure=nope').measure).toBe('index');
+  });
+  it('legacy mode=bot_density still lands on Baseline + Bot share', () => {
+    expect(parse('mode=bot_density')).toMatchObject({ lens: 'baseline', measure: 'bot' });
+    expect(mapModeOf(parse('mode=bot_density'))).toBe('bot_density');
+  });
+  it('takedowns is a normal interactive scene (selection survives; not the bot-share scene)', () => {
+    const s = parse('lens=baseline&measure=takedowns&sel=country:NL');
+    expect(mapModeOf(s)).toBe('global');
+    expect(s.sel).toBe('country:NL');
+  });
+  it('round-trips as ?lens=…&measure=takedowns; the default measure writes nothing', () => {
+    const base = parse('lens=hosting&measure=takedowns&period=90d');
+    expect(applyObservatoryState(new URLSearchParams(), base).toString()).toBe('period=90d&lens=hosting&measure=takedowns');
+    expect(applyObservatoryState(new URLSearchParams(), parse('lens=hosting')).get('measure')).toBeNull();
+    expect(applyObservatoryState(new URLSearchParams(), parse('lens=baseline&measure=takedowns')).get('measure')).toBe('takedowns');
+  });
+  it('leaving the lens drops the measure (and its URL key); the next lens starts at its default', () => {
+    const next = mergeObservatoryState(parse('lens=hosting&measure=takedowns'), { lens: 'operations' });
+    expect(next.measure).toBe('index');
+    expect(applyObservatoryState(new URLSearchParams(), next).get('measure')).toBeNull();
+    // Hosting -> Baseline does not carry a measure over either
+    expect(mergeObservatoryState(parse('lens=hosting&measure=takedowns'), { lens: 'baseline' }).measure).toBe('index');
+  });
+  it('a patch can choose the measure with the lens', () => {
+    expect(mergeObservatoryState(parse(''), { lens: 'baseline', measure: 'takedowns' })).toMatchObject({ lens: 'baseline', measure: 'takedowns' });
+    // a measure the lens does not have is dropped
+    expect(mergeObservatoryState(parse(''), { lens: 'operations', measure: 'takedowns' }).measure).toBe('index');
+  });
+  it('changing the period keeps the measure (the window follows the period, not the other way round)', () => {
+    expect(mergeObservatoryState(parse('lens=baseline&measure=takedowns'), { period: '90d' })).toMatchObject({ period: '90d', measure: 'takedowns' });
   });
 });

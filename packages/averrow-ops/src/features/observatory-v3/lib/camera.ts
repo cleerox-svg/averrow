@@ -32,19 +32,34 @@ export const FRAME_MARGIN = 40;
 const WORLD_PX = 512;
 /** Closest-in floor of the phone's minimum zoom: it never needs to be higher than the original 0.5. */
 const PHONE_MIN_ZOOM_CAP = 0.5;
+
+/** MapLibre's own default minimum zoom (restored when leaving the phone layout), and the lowest it accepts. */
+export const DEFAULT_MIN_ZOOM = -2;
+
 /**
  * Lowest zoom a phone map may reach, derived from its canvas width: low enough that the whole world fits
  * inside the framing margins on both sides, so a world-spanning target (US to Japan) can be framed in full.
  * A fixed 0.5 floor clipped those on 400px screens (the world is 512px * 2^z wide).
+ *
+ * Never below MapLibre's own -2 floor: a canvas narrower than 232px would ask for less (the free width is
+ * pinned at 64px, log2(64/512) = -3) and `setMinZoom` rejects anything under -2.
  */
 export function phoneMinZoom(canvasWidth: number): number {
   if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
   const free = Math.max(64, canvasWidth - 2 * (12 + FRAME_MARGIN));
-  return Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX));
+  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2(free / WORLD_PX)));
 }
 
-/** MapLibre's own default minimum zoom (restored when leaving the phone layout). */
-export const DEFAULT_MIN_ZOOM = -2;
+/**
+ * Lowest zoom a desktop flat map may reach: the world never needs to be narrower than ~30% of the canvas. Below
+ * the vertical-coverage floor (~0.5 on a 700px-tall canvas) this is what lets a world-spanning target (US to
+ * Japan) fit the free strip left of the open drawer on a 1024px screen; capped at the phone's 0.5 so a wide
+ * canvas keeps a sensible floor.
+ */
+export function desktopMinZoom(canvasWidth: number): number {
+  if (!(canvasWidth > 0)) return PHONE_MIN_ZOOM_CAP;
+  return Math.max(DEFAULT_MIN_ZOOM, Math.min(PHONE_MIN_ZOOM_CAP, Math.log2((0.3 * canvasWidth) / WORLD_PX)));
+}
 
 /** Mercator's own latitude limit (MapLibre's default `latRange`). */
 export const WORLD_LAT_LIMIT = 85.051129;
@@ -76,12 +91,18 @@ export function wrapLng(lng: number): number {
  * the box spans the whole circle EXCEPT its largest gap, so Fiji + Alaska is a
  * 40-degree box across the date line (west 175, east 215), not a 350-degree one.
  */
-export function boundsOf(points: ReadonlyArray<readonly [number, number]>): LngLatBox | null {
+export function boundsOf(points: ReadonlyArray<readonly [number, number]>, opts: { noWrap?: boolean } = {}): LngLatBox | null {
   const pts = points.filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
   if (pts.length === 0) return null;
   let south = Infinity;
   let north = -Infinity;
   for (const p of pts) { south = Math.min(south, p[1]); north = Math.max(north, p[1]); }
+  if (opts.noWrap) {
+    // The flat Operations arcs are drawn inside -180..180 (JP to US runs west across Europe), so frame the same
+    // space: the plain min/max box, never the shorter way across the date line.
+    const xs = pts.map(p => Math.max(-180, Math.min(180, p[0])));
+    return { west: Math.min(...xs), south, east: Math.max(...xs), north };
+  }
   const lngs = pts.map(p => wrapLng(p[0])).sort((a, b) => a - b);
   let gap = -1;
   let gapAfter = 0; // index whose successor starts the box
@@ -123,9 +144,9 @@ export function planCamera(
   points: ReadonlyArray<readonly [number, number]>,
   canvas: { width: number; height: number },
   insets: Insets,
-  opts: { maxZoom?: number; pointZoom?: number } = {},
+  opts: { maxZoom?: number; pointZoom?: number; noWrap?: boolean } = {},
 ): CameraPlan | null {
-  const box = boundsOf(points);
+  const box = boundsOf(points, { noWrap: opts.noWrap });
   if (!box) return null;
   const padding = clampInsets(
     { top: insets.top + FRAME_MARGIN, right: insets.right + FRAME_MARGIN, bottom: insets.bottom + FRAME_MARGIN, left: insets.left + FRAME_MARGIN },
@@ -177,8 +198,9 @@ export function drillPoints(t: DrillTarget, m: FocusModels): LngLat[] {
     case 'country':
       return present([countryCenter(t.code)]);
     case 'operation': {
-      const nodes = m.operations?.nodes.filter(n => n.opId === t.id) ?? [];
-      return nodes.length > 0 ? nodes.map(n => n.position) : centers(t.op?.countries);
+      const ccs = m.operations?.countriesOf.get(t.id) ?? [];
+      const nodes = ccs.flatMap(cc => m.operations?.nodeByCc.get(cc)?.position ?? []);
+      return nodes.length > 0 ? ccs.map(cc => m.operations!.nodeByCc.get(cc)!.position) : centers(t.op?.countries);
     }
     case 'provider': {
       const ring = m.hosting?.byId.get(t.id);
@@ -209,4 +231,62 @@ export function drillPoints(t: DrillTarget, m: FocusModels): LngLat[] {
       return [...centers(t.movement?.from.countries), ...centers(t.movement?.to.countries)];
     }
   }
+}
+
+/**
+ * Every placeable position a LENS draws, for the first framing when it is entered with nothing selected (the fixed
+ * overview opens on Eurasia and can leave the content off screen). Empty while the lens has no data yet, and for the
+ * lenses where the whole world IS the picture (Threats, Baseline) or that frame themselves (Actors, by selection).
+ */
+export function lensFitPoints(lens: string, m: FocusModels): LngLat[] {
+  switch (lens) {
+    case 'operations':
+      return m.operations?.nodes.map(n => n.position) ?? [];
+    case 'hosting':
+      return m.hosting?.rings.map(r => r.position) ?? [];
+    case 'campaigns':
+      return present((m.campaigns?.arcs ?? []).flatMap(a => [countryCenter(a.from), countryCenter(a.to)]));
+    case 'movement':
+      return [
+        ...(m.movement?.hops.filter(h => !h.id.endsWith(':w')).flatMap(h => [h.from, h.to]) ?? []),
+        ...(m.movement?.pulses.map(p => p.position) ?? []),
+      ];
+    default:
+      return [];
+  }
+}
+
+/** The slice of MapLibre 5's transform that holds the latitude range (private: there is no public setter that keeps lngRange null). */
+interface LatRangeHolder {
+  _helper?: { _latRange?: [number, number] | null };
+}
+
+/**
+ * Set the latitude range the map may show. MapLibre 5 made `transform.latRange` a read-only getter over
+ * `transform._helper._latRange`, and `setMaxBounds` also pins the longitude range (which would stop the world
+ * wrapping), so the range is written to the helper directly. Guarded: when the shape is not there (a future
+ * major, a stub) nothing happens and the library default applies. Returns whether it was applied.
+ * MapLibre copies the range across projection switches (`transform.apply`), so it survives flat <-> globe.
+ */
+export function setLatRange(transform: unknown, lat: number): boolean {
+  const helper = (transform as LatRangeHolder | null | undefined)?._helper;
+  if (!helper || !('_latRange' in helper)) {
+    warnLatRangeOnce();
+    return false;
+  }
+  helper._latRange = [-lat, lat];
+  return true;
+}
+
+let latRangeWarned = false;
+/** Test seam. */
+export function resetLatRangeWarning(): void { latRangeWarned = false; }
+/**
+ * This writes a private field, so a MapLibre upgrade can silently turn it into a no-op (the phone would be pinned at
+ * ~zoom 0.3 and a world-spanning target clipped). In development say so, once; production builds drop the branch.
+ */
+function warnLatRangeOnce(): void {
+  if (process.env.NODE_ENV === 'production' || latRangeWarned) return;
+  latRangeWarned = true;
+  console.warn('[observatory] setLatRange: MapLibre\'s transform no longer has _helper._latRange, so the widened phone latitude range is NOT applied. Re-check lib/camera.ts after the MapLibre upgrade.');
 }

@@ -55,6 +55,7 @@ import {
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type ThreatView,
 } from './lib/url-state';
 import { noLayers, type LayerToggles } from './lib/lenses';
+import type { Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
@@ -67,15 +68,18 @@ import { diffLive, announcePings } from './lib/lens/live';
 import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
-import { useCanSeeTakedowns } from './lib/use-takedown-access';
-import { computeLayout, cameraInsets, chipPlacement, initialSheetPx, DOCK_WIDTH, TIMELINE_H } from './lib/layout';
+import { TAKEDOWN_ROLE_NOTE, useCanSeeTakedowns, useTakedownAccess } from './lib/use-takedown-access';
+import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, initialSheetPx, DOCK_WIDTH, RAIL_TOP, TIMELINE_H } from './lib/layout';
 import { useElementSize } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
-import { drillPoints, type FocusModels } from './lib/camera';
+import { drillPoints, lensFitPoints, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
-import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows } from './lib/panel-rows';
+import { linkedOperationIds } from './lib/lens/operations';
+import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
+import { takedownPeriod } from '@/hooks/useObservatoryLenses';
 import { lensFootnote } from './lib/footnote';
+import { MapAttribution } from './components/MapAttribution';
 import type { LngLat } from '@/lib/country-centroids';
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
@@ -83,6 +87,8 @@ const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
 const BOT_LAYERS = { ...noLayers(), baseline: true } as LayerToggles;
+/** The Fast view is its own picture (like the heatmap and bot share): no threat traffic or lens layer under it. */
+const FAST_LAYERS = noLayers();
 
 // Explicit stacking order for this view's overlay chrome — replaces raw
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
@@ -95,6 +101,14 @@ const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
 
 type SheetKey = 'drill' | 'panel';
 
+const FAST_SOURCE_NOTE = 'Fast weaponization is always all sources';
+
+/** What the intelligence panel asks under each lens while its Takedowns measure is on. */
+const TAKEDOWN_QUESTION = {
+  baseline: 'In which countries do takedowns succeed least often?',
+  hosting: 'Which hosts ignore or refuse takedowns most often?',
+} as const;
+
 const PICK_TO_SEL: Record<LensPick['kind'], 'op' | 'provider' | 'country' | 'campaign' | 'move' | 'actor'> = {
   operation: 'op', provider: 'provider', country: 'country', campaign: 'campaign', movement: 'move', actor: 'actor',
 };
@@ -103,14 +117,44 @@ const qState = (q: { isLoading: boolean; error: Error | null; refetch: () => Pro
   isLoading: q.isLoading, error: q.error, refetch: q.refetch,
 });
 
+const LOW_EVIDENCE = 'low-evidence clusters';
+/** The Operations panel's count line: what is held back (or, with the toggle on, how many of those are shown). */
+export function lowEvidenceNote(total: number, shown: boolean, returned: number | null | undefined): string {
+  if (!shown) return `${total.toLocaleString()} ${total === 1 ? 'low-evidence cluster' : LOW_EVIDENCE} hidden (shared hosting, hub IPs, scanning)`;
+  const n = Math.min(returned ?? total, total);
+  return n >= total
+    ? `${total.toLocaleString()} ${total === 1 ? 'low-evidence cluster' : LOW_EVIDENCE} shown (shared hosting, hub IPs, scanning)`
+    : `${n.toLocaleString()} of ${total.toLocaleString()} ${LOW_EVIDENCE} shown (largest first)`;
+}
+
 export function ObservatoryV3() {
   const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
   const canSeeTakedowns = useCanSeeTakedowns();
   const { resolvedTheme } = useTheme();
   const { state, update } = useObservatoryUrlState();
-  const { period, source, colorBy, layers, lens, view, measure } = state;
+  const { period, colorBy, layers, lens, view } = state;
+  // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
+  // sees the lens's default measure whatever the URL says, and no takedown request is ever made.
+  const measure: Measure = state.measure === 'takedowns' && !canSeeTakedowns ? 'index' : state.measure;
+  // ...and the link itself is set right, not just ignored: the address bar (and anything shared from it) stops claiming
+  // a view this role cannot see, replacing the entry so Back does not return to it, and a note says what happened.
+  const takedownAccessNow = useTakedownAccess();
+  const [takedownRefusedOn, setTakedownRefusedOn] = useState<LensId | null>(null);
+  useEffect(() => {
+    if (state.measure !== 'takedowns' || takedownAccessNow !== 'denied') return;
+    setTakedownRefusedOn(state.lens);
+    update({ measure: 'index' }); // `update` replaces the history entry
+  }, [state.measure, state.lens, takedownAccessNow, update]);
+  const takedownNote = takedownRefusedOn === state.lens && state.measure !== 'takedowns' ? TAKEDOWN_ROLE_NOTE : undefined;
+  const takedownsOn = measure === 'takedowns';
+  const tdWindow = takedownPeriod(state.period);
   const mapMode = mapModeOf(state);
+  /** Threats lens, Fast weaponization view: drawn from the velocity cube. */
+  const fast = lens === 'threats' && view === 'fast';
+  // The velocity cube has no source dimension (the server 400s velocity + a source), so the Fast view is always
+  // "all sources" whatever the URL says; the select shows that and is disabled.
+  const source: Source = fast ? 'all' : state.source;
   const sel = useMemo(() => parseSel(state.sel), [state.sel]);
 
   // ─── Layout: the MAP's width decides, and it reacts to every resize ──
@@ -148,15 +192,16 @@ export function ObservatoryV3() {
   const setView = useCallback((v: ThreatView) => update({ view: v }), [update]);
   const setMeasure = useCallback((m: Measure) => update({ measure: m }), [update]);
   const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
+  const setProjection = useCallback((proj: Projection) => update({ proj }), [update]);
 
   // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
-  const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : layers;
+  const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : fast ? FAST_LAYERS : layers;
 
   // ─── Data — each query is enabled only for the views that render it ──
   const selectionKind = state.node ? 'node' : state.arc ? 'arc' : sel?.kind ?? null;
   const needs = useMemo(
-    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching }),
-    [mapMode, mapLayers, selectionKind, searching],
+    () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching, velocity: fast, measure }),
+    [mapMode, mapLayers, selectionKind, searching, fast, measure],
   );
   const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
   const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
@@ -177,6 +222,7 @@ export function ObservatoryV3() {
     needs, period, source, actorId,
     timelineCountry: sel?.kind === 'country' ? sel.id : null,
     replayNowMs,
+    includeShared: state.shared,
   });
 
   // Re-pin the window whenever the period/source changes or fresh arcs / moves arrive.
@@ -203,7 +249,8 @@ export function ObservatoryV3() {
     nodes: threatsQ.error, arcs: arcsQ.error, heatmap: heatmapQ.error, stats: statsQ.error,
     operations: L.operationsQ.error, movements: L.movementsQ.error, providers: L.providersQ.error,
     overindex: L.overindexQ.error, campaigns: L.campaignsQ.error, actors: L.actorsQ.error,
-    timeline: L.timelineQ.error,
+    timeline: L.timelineQ.error, velocity: L.velocityQ.error,
+    takedownsCountry: L.takedownCountriesQ.error, takedownsProvider: L.takedownProvidersQ.error,
   });
   const loadError = failures.length > 0 || (isBotMode && !!botError);
   const retryFailed = useCallback(() => {
@@ -218,12 +265,16 @@ export function ObservatoryV3() {
     if (failures.includes('campaigns')) void L.campaignsQ.refetch();
     if (failures.includes('actors')) void L.actorsQ.refetch();
     if (failures.includes('timeline')) void L.timelineQ.refetch();
+    if (failures.includes('velocity')) void L.velocityQ.refetch();
+    if (failures.includes('takedownsCountry')) void L.takedownCountriesQ.refetch();
+    if (failures.includes('takedownsProvider')) void L.takedownProvidersQ.refetch();
     if (isBotMode && botError) void refetchBot();
-  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, isBotMode, botError, refetchBot]);
+  }, [failures, threatsQ, statsQ, arcsQ, heatmapQ, L.operationsQ, L.movementsQ, L.providersQ, L.overindexQ, L.campaignsQ, L.actorsQ, L.timelineQ, L.velocityQ, L.takedownCountriesQ, L.takedownProvidersQ, isBotMode, botError, refetchBot]);
 
   // "Updating" = showing the previous period/source's data while the new one loads.
   const activeQueries = [
     needs.nodes ? threatsQ : null, needs.stats ? statsQ : null, needs.arcs ? arcsQ : null, needs.heatmap ? heatmapQ : null,
+    needs.velocity ? L.velocityQ : null,
   ].filter((q): q is typeof threatsQ => q !== null);
   const isUpdating = activeQueries.some(q => q.isUpdating);
   // The footer's threats / countries come from the stats query alone: its label
@@ -249,7 +300,11 @@ export function ObservatoryV3() {
     movements: L.movements,
     actors: L.actorList,
     overindex: L.overindex,
-  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex]);
+    takedownCountries: L.takedownCountryModel?.rows,
+    takedownProviders: L.takedownProviders,
+    takedownWindow: tdWindow,
+    takedownCountriesError: !!L.takedownCountriesQ.error,
+  }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.campaigns, L.movements, L.actorList, L.overindex, L.takedownCountryModel, L.takedownProviders, tdWindow, L.takedownCountriesQ.error]);
 
   const drill = useMemo<DrillTarget | null>(
     () => (mapMode !== 'heatmap' && mapMode !== 'bot_density' ? resolveDrill({ node: state.node, arc: state.arc, sel: state.sel }, drillData) : null),
@@ -261,10 +316,14 @@ export function ObservatoryV3() {
     () => (drill?.kind === 'node' ? { kind: 'node', node: drill.node } : drill?.kind === 'arc' ? { kind: 'arc', arc: drill.arc } : null),
     [drill],
   );
+  /** A panel row under the pointer: its operation's links are previewed on the map (nothing is selected). */
+  const [previewOpId, setPreviewOpId] = useState<string | null>(null);
+  const onPanelPreview = useCallback((t: DrillTarget | null) => setPreviewOpId(t && t.kind === 'operation' ? t.id : null), []);
   const lensSel = useMemo<LensSelection>(() => {
-    if (!drill) return NO_SELECTION;
+    if (!drill) return previewOpId ? { ...NO_SELECTION, previewOpId } : NO_SELECTION;
     return {
       ...NO_SELECTION,
+      previewOpId,
       opId: drill.kind === 'operation' ? drill.id : null,
       providerId: drill.kind === 'provider' ? drill.id : null,
       country: drill.kind === 'country' ? drill.code : null,
@@ -272,7 +331,7 @@ export function ObservatoryV3() {
       movementId: drill.kind === 'movement' ? drill.id : null,
       actorId: drill.kind === 'actor' ? drill.id : null,
     };
-  }, [drill]);
+  }, [drill, previewOpId]);
 
   // ─── Right slot ──
   const panelOpen = (panelPref ?? layout.panelStartsOpen) && hasPanel;
@@ -297,10 +356,10 @@ export function ObservatoryV3() {
   );
   const [focus, setFocus] = useState<MapFocus | null>(null);
   const focusSeq = useRef(0);
-  const focusPoints = useCallback((points: readonly LngLat[], opts: { instant?: boolean } = {}) => {
+  const focusPoints = useCallback((points: readonly LngLat[], opts: { instant?: boolean; noWrap?: boolean } = {}) => {
     if (points.length === 0) return; // unplaceable: select without moving the camera
     focusSeq.current += 1;
-    setFocus({ id: focusSeq.current, points, instant: opts.instant ?? false });
+    setFocus({ id: focusSeq.current, points, instant: opts.instant ?? false, noWrap: opts.noWrap ?? false });
   }, []);
 
   // What opened the drawer, so focus can come back to a control that still exists (see DrillDrawer).
@@ -318,7 +377,7 @@ export function ObservatoryV3() {
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
     update(targetPatch(target, layers));
-    focusPoints(drillPoints(target, focusModels));
+    focusPoints(drillPoints(target, focusModels), { noWrap: target.kind === 'operation' });
     setShowMobilePanel(false);
   }, [update, layers, focusPoints, focusModels]);
 
@@ -356,8 +415,25 @@ export function ObservatoryV3() {
     // A pending target (its query hasn't returned) has no position yet: wait for it.
     if (pts.length === 0 && isPending(drill)) return;
     restoredRef.current = true;
-    focusPoints(pts, { instant: true });
+    focusPoints(pts, { instant: true, noWrap: drill.kind === 'operation' });
   }, [drill, focusPoints, focusModels]);
+
+  // Entering a lens with nothing selected frames what the lens draws, once: the fixed overview (Eurasia at zoom 2.2)
+  // can leave the Pacific / the Americas off screen. Reset per lens; never after the person has moved the camera or
+  // selected something (their view wins), and not again when the data refreshes.
+  const fitRef = useRef<{ lens: LensId | null; done: boolean; moved: boolean }>({ lens: null, done: false, moved: false });
+  if (fitRef.current.lens !== lens) fitRef.current = { lens, done: false, moved: false };
+  const onUserCamera = useCallback(() => { fitRef.current.moved = true; }, []);
+  const hasSelection = !!(drill || state.node || state.arc || state.sel);
+  useEffect(() => {
+    const f = fitRef.current;
+    if (f.done || mapMode !== 'global') return;
+    if (f.moved || hasSelection) { f.done = true; return; } // a selection frames itself; a moved camera is theirs
+    const pts = lensFitPoints(lens, focusModels);
+    if (pts.length === 0) return; // no data yet: wait for it
+    f.done = true;
+    focusPoints(pts, { instant: true, noWrap: lens === 'operations' });
+  }, [lens, mapMode, hasSelection, focusModels, focusPoints]);
 
   // An actor has no single point: frame ALL of its attributed countries once its infrastructure loads.
   const actorFocused = useRef<string | null>(null);
@@ -378,13 +454,37 @@ export function ObservatoryV3() {
     campaign: !L.campaignsQ.isFetching && L.campaignsQ.data !== undefined,
     move: !L.movementsQ.isFetching && L.movementsQ.data !== undefined,
   };
+  // ...except a link to an operation the default view hides (shared hosting / hub / scanning): that one is
+  // resolved by turning `shared=1` on in the URL (replacing the entry), once per id, rather than dropped.
+  const sharedRetried = useRef<string | null>(null);
+  const sharedPending = useRef(false);
+  // Auto-widening is for deep links only. A manual toggle-off while an operation is selected marks that id as already
+  // handled, so the effect never flips shared back on: the selection stays if the narrower set still holds it, else
+  // it is dropped with the usual dead-key path.
+  const toggleShared = useCallback(() => {
+    if (state.shared && sel?.kind === 'op') sharedRetried.current = sel.id;
+    update({ shared: !state.shared });
+  }, [state.shared, sel, update]);
   useEffect(() => {
     if (drill) return;
+    if (state.shared) sharedPending.current = false;
+    else if (sel?.kind === 'op' && settled.op) {
+      if (sharedRetried.current !== sel.id) {
+        sharedRetried.current = sel.id;
+        sharedPending.current = true;
+        update({ shared: true });
+        return;
+      }
+      if (sharedPending.current) return; // the URL update has not landed yet: do not drop the key under it
+    }
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));
-    else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) update(drillToPatch(null));
+    else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) {
+      // A link we widened to shared=1 that still does not resolve: undo the widening with the drop (predictable URL).
+      update(sel.kind === 'op' && sharedRetried.current === sel.id && state.shared ? { ...drillToPatch(null), shared: false } : drillToPatch(null));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `settled` is derived from the listed query states
-  }, [drill, state.node, state.arc, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
+  }, [drill, state.node, state.arc, state.shared, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
 
   // "Threat Landscape Clear" — only when verified for THIS view.
   const overlayKind = mapFatal ? null : clearOverlayKind({
@@ -462,8 +562,11 @@ export function ObservatoryV3() {
     campaigns: L.campaignsModel,
     actors: L.actorModel,
     movement: L.movementModel,
+    velocity: fast ? L.velocityModel : null,
+    takedownCountries: takedownsOn ? L.takedownCountryModel : null,
+    takedownProviders: takedownsOn ? L.takedownProviderModel : null,
     sel: lensSel,
-  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, lensSel]);
+  }), [mapLayers, L.operationsModel, L.hostingModel, L.baselineModel, measure, botModel, L.geometry.countries, L.campaignsModel, L.actorModel, L.movementModel, fast, L.velocityModel, takedownsOn, L.takedownCountryModel, L.takedownProviderModel, lensSel]);
   const sceneKey = `${lens}|${view}|${measure}`;
 
   // ─── Search ──
@@ -478,11 +581,13 @@ export function ObservatoryV3() {
   }, [selectTarget]);
   const activateSearch = useCallback(() => setSearching(true), []);
 
+  /** The legend is open: someone is reading, so the globe holds still. */
+  const [legendOpen, setLegendOpen] = useState(false);
   const [announceToggle, setAnnounceToggle] = useState('');
   const onShortcut = useLayerShortcuts(useCallback((id: LayerId) => {
     update({ layers: { [id]: !layers[id] } });
     setAnnounceToggle(`${id} ${layers[id] ? 'off' : 'on'}`);
-  }, [update, layers]), mapMode === 'global');
+  }, [update, layers]), mapMode === 'global' && !fast);
 
   const onPickActor = useCallback((id: string | null) => {
     if (!id) { update(drillToPatch(null)); return; }
@@ -499,11 +604,17 @@ export function ObservatoryV3() {
   const controlRightInset = rightSlot ? DOCK_WIDTH + (layout.docked ? 0 : 12) : 0;
   const threatLayersOn = mapLayers.nodes || mapLayers.particles || mapLayers.beams;
   const countryLabel = sel?.kind === 'country' ? countryName(sel.id) : null;
-  const motionOn = !reducedMotion && (mapLayers.particles || (mapMode === 'global' && (mapLayers.operations || mapLayers.hosting || mapLayers.campaigns || mapLayers.actors || mapLayers.movement)));
+  const fastPulses = fast && !!L.velocityModel && L.velocityModel.points.some(p => p.hot);
+  const motionOn = !reducedMotion && (mapLayers.particles || fastPulses || (mapMode === 'global' && (mapLayers.operations || mapLayers.hosting || mapLayers.campaigns || mapLayers.actors || mapLayers.movement)));
 
   // ─── Legend chip content ──
   const legendProps = {
-    lens, layers: mapLayers, view, colorBy, reducedMotion,
+    lens, layers: mapLayers, view, measure, colorBy, reducedMotion,
+    takedowns: {
+      window: tdWindow,
+      countries: { model: L.takedownCountryModel, q: qState(L.takedownCountriesQ) },
+      providers: { model: L.takedownProviderModel, q: qState(L.takedownProvidersQ) },
+    },
     operations: { model: L.operationsModel, q: qState(L.operationsQ) },
     movement: { model: L.movementModel, q: qState(L.movementsQ), count: L.movements?.length ?? 0 },
     hosting: { model: L.hostingModel, q: qState(L.providersQ) },
@@ -514,6 +625,7 @@ export function ObservatoryV3() {
       bot: { model: botModel, q: { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } },
     },
     campaigns: { model: L.campaignsModel, q: qState(L.campaignsQ) },
+    velocity: { model: L.velocityModel, q: qState(L.velocityQ) },
     actors: {
       model: L.actorModel, list: L.actorList ? [...L.actorList] : [], listQ: qState(L.actorsQ),
       detailQ: actorId ? qState(L.actorDetailQ) : null, selectedId: actorId,
@@ -524,6 +636,12 @@ export function ObservatoryV3() {
     lens, view, measure,
     nodes: threatsQ.data ? threatsQ.data.length : null,
     threats: threatsQ,
+    velocity: { ...L.velocityQ, count: L.velocityModel ? L.velocityModel.points.length : null },
+    takedowns: {
+      countries: { ...L.takedownCountriesQ, count: L.takedownCountryModel ? L.takedownCountryModel.rows.size : null },
+      // `unknown` (takedowns with no known host) is a row, not a host
+      providers: { ...L.takedownProvidersQ, count: L.takedownProviderModel ? L.takedownProviderModel.withRate + L.takedownProviderModel.tooSmall : null },
+    },
     operations: { ...L.operationsQ, count: L.operationsModel ? L.operationsModel.placedOps.size : null },
     movement: { ...L.movementsQ, count: L.movementModel ? L.movementModel.hops.filter(h => !h.id.endsWith(':w')).length + L.movementModel.pulses.length : null, events: L.movements?.length ?? 0 },
     hosting: { ...L.providersQ, count: L.hostingModel ? L.hostingModel.rings.length : null },
@@ -536,22 +654,25 @@ export function ObservatoryV3() {
   // ─── Lens-aware panel content ──
   const panelSection = useMemo(() => {
     switch (lens) {
-      case 'hosting': return hostingRows(L.providers);
-      case 'operations': return operationRows(L.operationsQ.data?.data.operations);
-      case 'baseline': return baselineRows(measure, L.overindex, botPoints);
+      case 'hosting': return takedownsOn ? takedownProviderRows(L.takedownProviderModel, L.providers, tdWindow) : hostingRows(L.providers);
+      case 'operations': return operationRows(L.operationsQ.data?.data.operations, L.operationsModel ? linkedOperationIds(L.operationsModel) : undefined);
+      case 'baseline': return takedownsOn ? takedownCountryRows(L.takedownCountryModel, tdWindow) : baselineRows(measure, L.overindex, botPoints);
       case 'campaigns': return campaignRows(L.campaigns);
       case 'movement': return movementRows(L.movements);
       case 'actors': return actorRows(L.actorList);
+      case 'threats': return fast ? velocityRows(L.velocityModel) : null;
       default: return null;
     }
-  }, [lens, measure, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
-  const panelQuery = lens === 'hosting' ? L.providersQ
+  }, [lens, fast, L.velocityModel, measure, takedownsOn, tdWindow, L.takedownProviderModel, L.takedownCountryModel, L.providers, L.operationsQ.data, L.overindex, botPoints, L.campaigns, L.movements, L.actorList]);
+  const panelQuery = lens === 'hosting' ? (takedownsOn ? L.takedownProvidersQ : L.providersQ)
     : lens === 'operations' ? L.operationsQ
-      : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : L.overindexQ)
+      : lens === 'baseline' ? (measure === 'bot' ? { isLoading: botLoading, error: botError as Error | null, refetch: () => refetchBot() } : takedownsOn ? L.takedownCountriesQ : L.overindexQ)
         : lens === 'campaigns' ? L.campaignsQ
           : lens === 'movement' ? L.movementsQ
-            : lens === 'actors' ? L.actorsQ : null;
+            : lens === 'actors' ? L.actorsQ : fast ? L.velocityQ : null;
   // The Actors lens needs its list for the panel even before the legend asks for it.
+  const ex = L.operationsQ.data?.meta?.excluded;
+  const excludedTotal = ex ? (ex.shared_asn ?? 0) + (ex.hub_ip ?? 0) + (ex.ip_reputation ?? 0) : 0;
   const lensPanel = (placement: 'dock' | 'overlay' | 'sheet') => (
     panelSection && panelQuery ? (
       <LensPanel
@@ -562,6 +683,23 @@ export function ObservatoryV3() {
         onRetry={() => void panelQuery.refetch()}
         onSelect={handlePanelSelect}
         placement={placement}
+        question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
+        note={takedownNote}
+        onPreview={lens === 'operations' ? onPanelPreview : undefined}
+        aside={lens === 'operations' && (excludedTotal > 0 || state.shared) ? (
+          <div className="flex flex-col gap-1.5 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            {excludedTotal > 0 && <span role="status">{lowEvidenceNote(excludedTotal, state.shared, L.operationsQ.data?.meta?.shared_returned)}</span>}
+            <button
+              type="button"
+              onClick={toggleShared}
+              aria-pressed={state.shared}
+              className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
+              style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+            >
+              Show low-evidence clusters
+            </button>
+          </div>
+        ) : undefined}
       />
     ) : (
       <SidePanel
@@ -583,7 +721,9 @@ export function ObservatoryV3() {
       </div>
       <div className="flex flex-col gap-1.5">
         <div className={FILTER_LABEL} style={{ color: 'var(--text-tertiary)' }}>Source</div>
-        <SourceSelect source={source} onChange={setSource} touch={phone} />
+        <SourceSelect source={source} onChange={setSource} touch={phone} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
+        {/* The select's own reason is a tooltip: there is no hover on touch, so it is also written out. */}
+        {fast && <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{FAST_SOURCE_NOTE}</div>}
       </div>
       {isBotMode && (
         <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -595,7 +735,7 @@ export function ObservatoryV3() {
 
   const railProps = {
     lens, layers, view, measure, colorBy, reducedMotion,
-    onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy,
+    onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy, canSeeTakedowns,
   };
 
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
@@ -626,6 +766,10 @@ export function ObservatoryV3() {
           showNodes={mapLayers.nodes}
           colorBy={colorBy}
           mapMode={mapMode}
+          projection={state.proj}
+          onProjection={setProjection}
+          onUserCamera={onUserCamera}
+          spinHold={legendOpen}
           period={period}
           heatmapData={heatmapData}
           replayNowMs={replayNowMs}
@@ -740,7 +884,7 @@ export function ObservatoryV3() {
             ) : (
               <>
                 <PeriodSegment period={period} onChange={setPeriod} />
-                <SourceSelect source={source} onChange={setSource} />
+                <SourceSelect source={source} onChange={setSource} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
               </>
             )}
             <RefreshButton onClick={handleRefresh} busy={isFetching} />
@@ -748,7 +892,11 @@ export function ObservatoryV3() {
 
           {/* Rail: the lens's option + threat traffic underneath. */}
           {(mapMode !== 'heatmap' || lens === 'threats') && (
-            <div className="absolute left-3" style={{ top: 60, zIndex: Z_CHROME }}>
+            <div
+              className="absolute left-3"
+              // Stops above the legend chip on a short canvas and scrolls instead of running into it.
+              style={{ top: RAIL_TOP, zIndex: Z_CHROME, maxHeight: railMaxHeight({ rootHeight, chipBottom }), overflowY: 'auto', scrollbarWidth: 'thin' }}
+            >
               <ControlRail {...railProps} />
             </div>
           )}
@@ -771,6 +919,8 @@ export function ObservatoryV3() {
         {...legendProps}
         summary={summary}
         maxPanelHeight={legendMaxPanel}
+        onOpenChange={setLegendOpen}
+        notice={takedownNote}
         style={{ position: 'absolute', left: 12, bottom: chipBottom, zIndex: Z_CHROME + 2 }}
       />}
 
@@ -794,6 +944,7 @@ export function ObservatoryV3() {
           reducedMotion={reducedMotion}
           periodLabel={periodLabel}
           countryLabel={countryLabel}
+          series={fast ? 'velocity' : 'severity'}
           isMobile={phone}
           style={{ position: 'absolute', left: 12, right: phone ? 12 : rightClear + 44, bottom: timelineBottom, height: TIMELINE_H, zIndex: Z_CHROME }}
         />
@@ -804,18 +955,26 @@ export function ObservatoryV3() {
           keep this in sync with that wrapper's `height` (desktop 40,
           mobile 72 — see the ticker wrapper below for why). */}
       <div
-        className="absolute left-0 right-0 flex items-center justify-between px-4"
+        className="absolute left-0 right-0 flex flex-wrap items-center justify-between gap-x-4 px-4 py-0.5"
         style={{
           bottom: layout.statsBottom,
-          height: 36,
+          minHeight: 36,
           background: 'var(--bg-card-deep)',
           backdropFilter: 'blur(20px)',
           borderTop: '1px solid var(--border-base)',
           zIndex: Z_CHROME,
         }}
       >
-        <div className="flex items-center gap-4">
-          {isBotMode ? (
+        <div className="flex items-center gap-4 min-w-0">
+          {fast ? (
+            <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
+              {' · '}
+              <span style={{ color: 'var(--text-secondary)' }}>{L.velocityModel?.points.length ?? 0}</span> countries
+            </div>
+          ) : isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
               <span style={{ color: 'var(--amber-text)' }}>7D</span>
@@ -841,10 +1000,11 @@ export function ObservatoryV3() {
             </div>
           )}
         </div>
-        <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          {lensFootnote({ lens, reducedMotion, motionOn }) && (
-            <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn })}</span>
+        <div className="font-mono text-[10px] flex flex-wrap items-center justify-end gap-x-3 min-w-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+          {lensFootnote({ lens, reducedMotion, motionOn, fast }) && (
+            <span style={{ color: reducedMotion ? 'var(--text-muted)' : 'var(--sev-info-text)' }}>{lensFootnote({ lens, reducedMotion, motionOn, fast })}</span>
           )}
+          <MapAttribution />
         </div>
       </div>
 

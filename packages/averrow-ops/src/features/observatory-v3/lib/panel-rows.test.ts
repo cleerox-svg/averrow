@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { OperationGeo, ProviderGeo, CampaignGeo, Movement, ActorListItem, OverindexRow } from '@/hooks/useObservatoryLenses';
 import {
-  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, PANEL_ROWS, MIN_RANKED_COUNT,
+  hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows, PANEL_ROWS, MIN_RANKED_COUNT,
 } from './panel-rows';
+import { buildTakedownCountryModel, buildTakedownProviderModel, TAKEDOWN_MIN_RESOLVED } from './lens/takedowns';
+import { buildHostingModel } from './lens/hosting';
+import type { TakedownGeoRow } from '@/hooks/useObservatoryLenses';
+import { buildVelocityModel } from './lens/velocity';
 
 const prov = (id: string, active: number, over: Partial<ProviderGeo> = {}): ProviderGeo => ({
   id, name: `Host ${id}`, asn: 'AS1', country: 'NL', active_threat_count: active, total_threat_count: active, trend_7d: 0, trend_30d: 0,
@@ -22,8 +26,27 @@ describe('lens-aware panel rows', () => {
     const op = (id: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: n, actor: { id: 'a', name: 'APT' }, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
     const s = operationRows([op('small', 1), op('big', 99)]);
     expect(s.rows.map(r => r.key)).toEqual(['big', 'small']);
-    expect(s.rows[0]!.secondary).toBe('2 countries · 80% conf · APT');
+    expect(s.rows[0]).toMatchObject({ badge: 'same ASN', secondary: '2 countries · 80% conf · APT' });
     expect(operationRows(undefined).rows).toEqual([]);
+  });
+  it('Operations with include_shared: low-evidence rows (hub tier ip, shared, scanning) sit after every kept row and do not displace the top 12', () => {
+    const mk = (id: string, tier: string, n: number, flags: Partial<OperationGeo> = {}): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', evidence_tier: tier, status: 'active', confidence_score: 80, threat_count: n, actor: null, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null, ...flags });
+    const kept = Array.from({ length: PANEL_ROWS }, (_, i) => mk(`k${String(i).padStart(2, '0')}`, 'subnet', 10 - i));
+    const s = operationRows([mk('hub', 'ip', 9000, { hub: true }), mk('rep', 'asn', 8000, { ip_reputation: true }), mk('sh', 'asn', 7000, { shared_infra: true }), ...kept]);
+    expect(s.rows.map(r => r.key)).toEqual(kept.map(o => o.id));
+    expect(s.more).toBe(3);
+    const only = operationRows([mk('hub', 'ip', 9000, { hub: true }), mk('sh', 'asn', 7000, { shared_infra: true }), mk('k', 'residue', 1)]);
+    expect(only.rows.map(r => r.key)).toEqual(['k', 'hub', 'sh']);
+  });
+  it('Operations keep the server order (tier, then threats), mark linked rows and count what the cap hides', () => {
+    const mk = (id: string, tier: string, n: number): OperationGeo => ({ id, name: id, component_id: null, kind: 'asn', evidence_tier: tier, status: 'active', confidence_score: 80, threat_count: n, actor: null, countries: ['NL', 'DE'], asns: [], last_seen: null, last_movement_pivot_at: null });
+    const s = operationRows([mk('weak-huge', 'residue', 9999), mk('cert-small', 'cert', 3), mk('asn-big', 'asn', 500), ...Array.from({ length: 12 }, (_, i) => mk(`p${i}`, 'asn', 400 - i))], new Set(['cert-small']));
+    expect(s.rows.slice(0, 3).map(r => r.key)).toEqual(['cert-small', 'asn-big', 'p0']);
+    expect(s.rows[0]).toMatchObject({ linked: true, badge: 'shared cert' });
+    expect(s.rows[1]!.linked).toBe(false);
+    expect(s.rows).toHaveLength(PANEL_ROWS);
+    expect(s.more).toBe(15 - PANEL_ROWS);
+    expect(operationRows([mk('a', 'asn', 1)]).more).toBeUndefined();
   });
   it('Baseline over-index: most over-indexed first, ignoring tiny samples and countries without a baseline', () => {
     const rows: OverindexRow[] = [
@@ -63,5 +86,58 @@ describe('lens-aware panel rows', () => {
       expect(s.rows).toEqual([]);
       expect(s.empty.length).toBeGreaterThan(5);
     }
+  });
+});
+
+describe('velocityRows (Threats lens, Fast view)', () => {
+  const n = (cc: string, vf: number, f: number) => ({ lat: 1, lng: 2, threat_count: vf + f, country_code: cc, very_fast: vf, fast: f, precision: 'country' as const });
+  it('ranks countries by fast-weaponized threats and opens the country drawer', () => {
+    const s = velocityRows(buildVelocityModel([n('DE', 1, 1), n('NL', 5, 5), n('US', 0, 4)]));
+    expect(s.rows.map(r => r.key)).toEqual(['NL', 'US', 'DE']);
+    expect(s.rows[0]).toMatchObject({ primary: 'Netherlands', secondary: '5 very fast · 5 fast', trailing: '10', target: { kind: 'country', code: 'NL' } });
+  });
+  it('caps the list and, when empty, says coverage is still filling (not "none")', () => {
+    const many = velocityRows(buildVelocityModel(Array.from({ length: 30 }, (_, i) => n(`${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + ((i * 7) % 26))}`, 1, i))));
+    expect(many.rows.length).toBeLessThanOrEqual(PANEL_ROWS);
+    for (const empty of [velocityRows(null), velocityRows(buildVelocityModel([]))]) {
+      expect(empty.rows).toEqual([]);
+      expect(empty.empty).toMatch(/still filling/i);
+    }
+  });
+});
+
+describe('takedown panel lists', () => {
+  const trow = (key: string, td: number, refused: number, expired = 0, over: Partial<TakedownGeoRow> = {}): TakedownGeoRow => {
+    const resolved = td + refused + expired;
+    return { key, label: `Label ${key}`, country: 'NL', lat: 1, lng: 2, submitted: resolved + 2, taken_down: td, refused, expired, pending: 2, share: resolved ? td / resolved : null, median_hours: 30, ...over };
+  };
+  it('hardest jurisdictions: lowest share with enough volume, with n resolved and the median hours', () => {
+    const s = takedownCountryRows(buildTakedownCountryModel([trow('US', 40, 10), trow('RU', 2, 38), trow('DE', 0, 2), trow('FR', 6, 6)]), '30d');
+    expect(s.title).toBe('Hardest jurisdictions');
+    expect(s.rows.map(r => r.key)).toEqual(['RU', 'FR', 'US']);   // DE: 2 resolved, left out
+    expect(s.rows[0]).toMatchObject({ primary: 'Russia', secondary: '40 resolved · median 30h', trailing: '5%', tone: 'rising', target: { kind: 'country', code: 'RU' } });
+    expect(s.rows[2]).toMatchObject({ trailing: '80%', tone: 'neutral' });
+  });
+  it('says why it is empty, and names the window and the threshold', () => {
+    for (const s of [takedownCountryRows(null, '90d'), takedownCountryRows(buildTakedownCountryModel([trow('DE', 0, 2)]), '90d')]) {
+      expect(s.rows).toEqual([]);
+      expect(s.empty).toContain(`${TAKEDOWN_MIN_RESOLVED}+`);
+      expect(s.empty).toContain('90d');
+    }
+  });
+  it('hardest hosts: only a host the map knows can be opened', () => {
+    const prov = (id: string) => ({ id, name: `Host ${id}`, asn: 'AS1', country: 'NL', active_threat_count: 5, total_threat_count: 5, trend_7d: 0, trend_30d: 0, is_bulletproof: false, reputation_score: null, takedown: null });
+    const providers = [prov('a'), prov('b')];
+    const model = buildTakedownProviderModel(buildHostingModel(providers), [trow('a', 3, 17), trow('ghost', 1, 29), trow('b', 18, 2)]);
+    const s = takedownProviderRows(model, providers, '30d');
+    expect(s.title).toBe('Hardest hosts');
+    expect(s.rows.map(r => r.key)).toEqual(['ghost', 'a', 'b']);
+    expect(s.rows[0]!.target).toBeUndefined();                       // no ring, no active threats: informational
+    expect(s.rows[1]!.target).toMatchObject({ kind: 'provider', id: 'a' });
+    expect(s.rows[1]!.secondary).toBe('20 resolved · median 30h · Netherlands');
+  });
+  it('caps the list', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => trow(`${String.fromCharCode(65 + (i % 26))}${String.fromCharCode(65 + ((i * 3) % 26))}`, i, 20));
+    expect(takedownCountryRows(buildTakedownCountryModel(rows), '30d').rows.length).toBeLessThanOrEqual(PANEL_ROWS);
   });
 });

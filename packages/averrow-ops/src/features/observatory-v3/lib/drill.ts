@@ -12,7 +12,7 @@
 
 import type { ArcData, ThreatPoint } from '@/hooks/useObservatory';
 import type {
-  ActorListItem, CampaignGeo, Movement, OperationGeo, OverindexRow, ProviderGeo,
+  ActorListItem, CampaignGeo, Movement, OperationGeo, OverindexRow, ProviderGeo, TakedownGeoRow,
 } from '@/hooks/useObservatoryLenses';
 import { countryName } from './country-name';
 import { arcKey, nodeKey, parseSel, selValue, type ObservatoryPatch, type SelKind } from './url-state';
@@ -38,6 +38,16 @@ export interface DrillData {
   movements?: readonly Movement[];
   actors?: readonly ActorListItem[];
   overindex?: readonly OverindexRow[];
+  /**
+   * Takedown outcomes (`/takedowns-geo`; roles holding `manage_takedowns` only, so these stay undefined for everyone
+   * else). `takedownWindow` is the server window they cover ('30d' | '90d').
+   */
+  /** The country model's rows (`buildTakedownCountryModel`: keyed by upper-case ISO code, duplicate keys summed). */
+  takedownCountries?: ReadonlyMap<string, TakedownGeoRow>;
+  takedownProviders?: readonly TakedownGeoRow[];
+  takedownWindow?: string;
+  /** The country takedown request failed (so "loading" is not forever). */
+  takedownCountriesError?: boolean;
 }
 
 export interface DrillUrl {

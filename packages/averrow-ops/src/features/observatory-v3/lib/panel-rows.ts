@@ -18,9 +18,12 @@ import { countryName } from './country-name';
 import type { DrillTarget } from './drill';
 import { formatRatio } from './lens/baseline';
 import { trendClass } from './lens/hosting';
-import { normalizeConfidence } from './lens/operations';
+import { compareOperations, kindLabel, normalizeConfidence } from './lens/operations';
 import { isActiveCampaign } from './lens/campaigns';
 import { iso2 } from './lens/placement';
+import { formatHours, pct, resolvedOf, TAKEDOWN_MIN_RESOLVED, type TakedownCountryModel, type TakedownProviderModel } from './lens/takedowns';
+import type { VelocityModel } from './lens/velocity';
+import { VELOCITY_FILLING } from './lens/velocity';
 import { parseUtc, relativeTime } from '@/lib/time';
 
 export interface PanelRow {
@@ -33,6 +36,10 @@ export interface PanelRow {
   tone?: 'rising' | 'falling' | 'neutral';
   /** Selecting the row re-targets the map + drawer. Absent => informational. */
   target?: DrillTarget;
+  /** A short tag shown as a badge before the secondary line (never truncated with it): the Operations evidence tier. */
+  badge?: string;
+  /** The row's links are drawn on the map in the default view (Operations top rows). */
+  linked?: boolean;
 }
 
 export interface PanelSection {
@@ -40,6 +47,8 @@ export interface PanelSection {
   /** Shown when there are no rows. */
   empty: string;
   rows: PanelRow[];
+  /** Rows the section holds beyond those listed (the list is capped): rendered as a "+N more" hint. */
+  more?: number;
 }
 
 export const PANEL_ROWS = 12;
@@ -64,21 +73,29 @@ export function hostingRows(providers: readonly ProviderGeo[] | undefined): Pane
   return { title: 'Top hosting providers', empty: 'No provider has active threats.', rows };
 }
 
-export function operationRows(ops: readonly OperationGeo[] | undefined): PanelSection {
-  const rows = [...(ops ?? [])]
-    .sort((a, b) => b.threat_count - a.threat_count || a.id.localeCompare(b.id))
+/**
+ * Operations keep the server's order (evidence tier, then threat count): the panel and the map's "top operations"
+ * agree. `linkedIds` are the operations whose links the default view draws; their rows say so.
+ */
+export function operationRows(ops: readonly OperationGeo[] | undefined, linkedIds: ReadonlySet<string> = NO_LINKED): PanelSection {
+  const sorted = [...(ops ?? [])].sort(compareOperations);
+  const rows = sorted
     .slice(0, PANEL_ROWS)
     .map((o): PanelRow => {
       const conf = normalizeConfidence(o.confidence_score);
       return {
         key: o.id, primary: o.name ?? o.id,
-        secondary: `${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
+        badge: kindLabel(o.evidence_tier ?? o.kind),
+        secondary: `${o.countries.length} countries${conf !== null ? ` · ${Math.round(conf * 100)}% conf` : ''}${o.shared_infra ? ' · shared infra' : ''}${o.actor ? ` · ${o.actor.name}` : ''}`,
         trailing: o.threat_count.toLocaleString(),
+        linked: linkedIds.has(o.id),
         target: { kind: 'operation', id: o.id, op: o },
       };
     });
-  return { title: 'Top operations', empty: 'No active operations.', rows };
+  const more = sorted.length - rows.length;
+  return { title: 'Top operations', empty: 'No active operations.', rows, ...(more > 0 ? { more } : {}) };
 }
+const NO_LINKED: ReadonlySet<string> = new Set();
 
 export function baselineRows(
   measure: 'index' | 'raw' | 'bot',
@@ -157,4 +174,61 @@ export function actorRows(actors: readonly ActorListItem[] | undefined): PanelSe
       target: { kind: 'actor', id: a.id, name: a.name },
     }));
   return { title: 'Known actors', empty: 'No actors are on file.', rows };
+}
+
+/** Fast weaponization (Threats lens, Fast view): countries ranked by fast-weaponized threats. */
+export function velocityRows(model: VelocityModel | null): PanelSection {
+  const rows = (model?.points ?? []).slice(0, PANEL_ROWS).map((p): PanelRow => ({
+    key: p.cc, primary: countryName(p.cc) || p.cc,
+    secondary: `${p.veryFast.toLocaleString()} very fast · ${p.fast.toLocaleString()} fast`,
+    trailing: p.count.toLocaleString(),
+    target: { kind: 'country', code: p.cc },
+  }));
+  return { title: 'Fastest to weaponize', empty: VELOCITY_FILLING, rows };
+}
+
+const rateTone = (share: number): PanelRow['tone'] => (share < 0.5 ? 'rising' : 'neutral');
+
+/** Baseline > Takedowns: the hardest jurisdictions, lowest success share first, enough volume only. */
+export function takedownCountryRows(model: TakedownCountryModel | null | undefined, window: string): PanelSection {
+  const rows = (model?.hardest ?? []).slice(0, PANEL_ROWS).map((r): PanelRow => {
+    const median = formatHours(r.median_hours);
+    return {
+      key: r.key, primary: countryName(r.key) || r.key,
+      secondary: `${resolvedOf(r).toLocaleString()} resolved${median ? ` · median ${median}` : ''}`,
+      trailing: pct(r.share as number),
+      tone: rateTone(r.share as number),
+      target: { kind: 'country', code: r.key },
+    };
+  });
+  return {
+    title: 'Hardest jurisdictions',
+    empty: `No country has ${TAKEDOWN_MIN_RESOLVED}+ resolved takedowns in the last ${window} yet.`,
+    rows,
+  };
+}
+
+/** Hosting > Takedowns: the hardest hosts, lowest success share first, enough volume only. */
+export function takedownProviderRows(
+  model: TakedownProviderModel | null | undefined,
+  providers: readonly ProviderGeo[] | undefined,
+  window: string,
+): PanelSection {
+  const rows = (model?.hardest ?? []).slice(0, PANEL_ROWS).map((r): PanelRow => {
+    const median = formatHours(r.median_hours);
+    const provider = providers?.find(p => p.id === r.key) ?? null;
+    return {
+      key: r.key, primary: r.label,
+      secondary: [`${resolvedOf(r).toLocaleString()} resolved`, median ? `median ${median}` : null, r.country ? countryName(iso2(r.country) ?? '') : null].filter(Boolean).join(' · '),
+      trailing: pct(r.share as number),
+      tone: rateTone(r.share as number),
+      // Only a host the map and drawer know (it has active threats) can be opened.
+      target: provider ? { kind: 'provider', id: provider.id, provider } : undefined,
+    };
+  });
+  return {
+    title: 'Hardest hosts',
+    empty: `No host has ${TAKEDOWN_MIN_RESOLVED}+ resolved takedowns in the last ${window} yet.`,
+    rows,
+  };
 }
