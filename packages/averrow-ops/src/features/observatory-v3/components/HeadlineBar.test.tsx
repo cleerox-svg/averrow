@@ -25,6 +25,16 @@ function bar(props: Partial<HeadlineBarProps> & { result: HeadlineBarProps['resu
 const title = () => screen.getByTestId('headline-title').textContent;
 const announce = () => screen.getByTestId('headline-announce').textContent;
 const tick = (ms: number) => act(() => { vi.advanceTimersByTime(ms); });
+// jsdom has no PointerEvent, so a pointer's type is stamped on a plain event; React reads `pointerType` and derives
+// pointerenter / pointerleave from pointerover / pointerout (entering from, and leaving to, outside the tree).
+function pointer(el: Element, type: 'pointerover' | 'pointerout', pointerType: string) {
+  const e = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'pointerType', { value: pointerType });
+  Object.defineProperty(e, 'relatedTarget', { value: null });
+  act(() => { el.dispatchEvent(e); });
+}
+const pointerIn = (el: Element, pointerType: string) => pointer(el, 'pointerover', pointerType);
+const pointerOut = (el: Element, pointerType: string) => pointer(el, 'pointerout', pointerType);
 
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW });
@@ -48,9 +58,28 @@ describe('rendering', () => {
     const { rerender } = render(bar({ result: r }));
     fireEvent.click(screen.getByRole('button', { name: 'Open all 15 events' }));
     expect(onOpenAll).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('All 15 ›')).toBeInTheDocument();
+    // 15 records vs the "1 / 2" items beside it: the pill says "events", and its title spells the difference.
+    const pill = screen.getByText('All 15 events ›');
+    expect(pill.closest('button')).toHaveAttribute('title', '15 records across 2 items');
     rerender(bar({ result: r, onOpenAll: undefined }));
     expect(screen.queryByText(/^All /)).toBeNull();
+  });
+
+  it('on the phone band the pill stays short', () => {
+    render(bar({ result: result([ev('a'), ev('b')], {}, { critical: 12, fast: 3 }), phone: true }));
+    expect(screen.getByText('All 15 ›')).toBeInTheDocument();
+  });
+
+  it('the live dot is decoration: hidden from assistive tech', () => {
+    const { container } = render(bar({ result: result([ev('a')]) }));
+    const dot = container.querySelector('.ev-live-dot')!;
+    expect(dot.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  it('sets the leading entity name bold', () => {
+    render(bar({ result: result([ev('a', { title: 'Acme Bank targeted by 12 new phishing pages', entity: { type: 'brand', id: 'b', name: 'Acme Bank' } })]) }));
+    expect(screen.getByText('Acme Bank').tagName).toBe('STRONG');
+    expect(title()).toBe('Acme Bank targeted by 12 new phishing pages');
   });
 
   it('clicking the headline hands the event to the page', () => {
@@ -63,7 +92,8 @@ describe('rendering', () => {
   it('empty feed says so, with the live dot, and offers no controls', () => {
     const { container } = render(bar({ result: result([]) }));
     expect(screen.getByText(EMPTY_COPY)).toBeInTheDocument();
-    expect(EMPTY_COPY).toBe('No new threat events in the last hour');
+    // The server window is [top of the hour - 1h, now], i.e. one to two hours: never "the last hour".
+    expect(EMPTY_COPY).toBe('No new threat events in the past hour or so');
     expect(container.querySelector('.ev-live-dot')).not.toBeNull();
     expect(screen.queryByRole('button', { name: /Pause|Next|Previous/ })).toBeNull();
     expect(screen.queryByText(/^All /)).toBeNull();
@@ -83,8 +113,32 @@ describe('rendering', () => {
     render(bar({ result: result([ev('a'), ev('b')], { failed_kinds: ['lookalike', 'actor'] }) }));
     const note = screen.getByTestId('events-partial');
     expect(note).toHaveAttribute('title', expect.stringContaining('lookalikes, actors'));
+    expect(note).toHaveAccessibleName(/PARTIAL — lookalikes, actors could not be loaded/);
     expect(title()).toBe('Headline a');
     expect(screen.getByRole('button', { name: 'Next event' })).toBeInTheDocument();
+  });
+
+  it('no events AND failed kinds never reads as a quiet feed (some kinds failed, or every kind did)', () => {
+    const { rerender } = render(bar({ result: result([], { failed_kinds: ['critical'] }) }));
+    expect(screen.getByTestId('events-failed')).toHaveTextContent('Event feed partly unavailable (critical could not be loaded)');
+    expect(screen.queryByText(EMPTY_COPY)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    expect(onRetry).toHaveBeenCalled();
+    rerender(bar({ result: result([], { failed_kinds: ['critical', 'operation', 'fast', 'lookalike', 'takedown', 'actor', 'spike'] }) }));
+    expect(screen.getByTestId('events-failed')).toHaveTextContent('Event feed partly unavailable');
+    expect(screen.queryByTestId('events-empty')).toBeNull();
+  });
+
+  it('the PARTIAL tag is focusable and shows the kinds on screen when activated', () => {
+    render(bar({ result: result([ev('a'), ev('b')], { failed_kinds: ['lookalike', 'actor'] }) }));
+    const note = screen.getByTestId('events-partial');
+    expect(note.tagName).toBe('BUTTON');
+    note.focus();
+    expect(note).toHaveFocus();
+    expect(note).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(note);
+    expect(note).toHaveAttribute('aria-expanded', 'true');
+    expect(note).toHaveTextContent('· lookalikes, actors');
   });
 
   it('shows no second LIVE word (the shell owns the badge)', () => {
@@ -159,26 +213,74 @@ describe('pause and manual stepping', () => {
     tick(6_100); expect(title()).toBe('Headline b');
   });
 
-  it('hover holds the bar and the hold restarts when the pointer leaves', () => {
+  it('a mouse over the bar holds it, shows a "Held" cue and dims the track; the hold restarts when the mouse leaves', () => {
     const { container } = render(bar({ result: result([ev('a'), ev('b')]) }));
     const root = container.querySelector('section')!;
     tick(4_000);
-    fireEvent.mouseEnter(root);
+    expect(screen.queryByTestId('headline-held')).toBeNull();
+    pointerIn(root, 'mouse');
+    expect(screen.getByTestId('headline-held')).toHaveTextContent('Held');
+    expect(screen.getByTestId('headline-held-track')).toBeInTheDocument();
     tick(60_000); expect(title()).toBe('Headline a');
     expect(screen.queryByTestId('headline-progress')).toBeNull();
-    fireEvent.mouseLeave(root);
+    pointerOut(root, 'mouse');
+    expect(screen.queryByTestId('headline-held')).toBeNull();
+    expect(screen.queryByTestId('headline-held-track')).toBeNull();
     tick(5_900); expect(title()).toBe('Headline a'); // a fresh 6s, not the 2s that were left
     tick(200); expect(title()).toBe('Headline b');
   });
 
-  it('keyboard focus inside the bar holds it; leaving releases it', () => {
-    const { container } = render(bar({ result: result([ev('a'), ev('b')]) }));
-    const next = screen.getByRole('button', { name: 'Next event' });
-    fireEvent.focus(next);
-    tick(60_000); expect(title()).toBe('Headline a');
-    fireEvent.blur(next, { relatedTarget: document.body });
-    expect(container.querySelector('section')).not.toBeNull();
+  it('a tap (touch / pen pointer) never holds the bar: rotation carries on after it', () => {
+    const { container } = render(bar({ result: result([ev('a'), ev('b'), ev('c')]) }));
+    const root = container.querySelector('section')!;
+    pointerIn(root, 'touch');
+    pointerIn(root, 'pen');
+    expect(screen.queryByTestId('headline-held')).toBeNull();
     tick(6_100); expect(title()).toBe('Headline b');
+  });
+
+  it('clicking prev / next does not freeze the bar: the button keeps focus but that is not keyboard focus', () => {
+    render(bar({ result: result([ev('a'), ev('b'), ev('c')]) }));
+    const prev = screen.getByRole('button', { name: 'Previous event' });
+    // A mouse click focuses the button without :focus-visible.
+    const matches = Element.prototype.matches;
+    const spy = vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, sel: string) {
+      return sel === ':focus-visible' ? false : matches.call(this, sel);
+    });
+    try {
+      act(() => prev.focus());
+      fireEvent.click(prev);
+      expect(title()).toBe('Headline c');
+      expect(screen.queryByTestId('headline-held')).toBeNull();
+      tick(6_100); expect(title()).toBe('Headline a'); // rotation resumed past the manual step
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keyboard focus (:focus-visible) inside the bar holds it with a "Held" cue; leaving releases it', () => {
+    render(bar({ result: result([ev('a'), ev('b')]) }));
+    const next = screen.getByRole('button', { name: 'Next event' });
+    const matches = Element.prototype.matches;
+    const spy = vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, sel: string) {
+      return sel === ':focus-visible' ? true : matches.call(this, sel);
+    });
+    try {
+      act(() => next.focus());
+      expect(screen.getByTestId('headline-held')).toBeInTheDocument();
+      tick(60_000); expect(title()).toBe('Headline a');
+      fireEvent.blur(next, { relatedTarget: document.body });
+      expect(screen.queryByTestId('headline-held')).toBeNull();
+      tick(6_100); expect(title()).toBe('Headline b');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('pausing by hand shows no "Held" cue (the pause button already says so)', () => {
+    render(bar({ result: result([ev('a'), ev('b')]) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pause rotation' }));
+    expect(screen.queryByTestId('headline-held')).toBeNull();
   });
 
   it('previous and next step by hand, with wrap-around', () => {
@@ -189,7 +291,9 @@ describe('pause and manual stepping', () => {
     expect(title()).toBe('Headline a');
     fireEvent.click(screen.getByRole('button', { name: 'Next event' }));
     expect(title()).toBe('Headline b');
-    expect(screen.getByLabelText('Event 2 of 3')).toBeInTheDocument();
+    // The index reads as one phrase to a screen reader; the visible "2 / 3" is hidden from it.
+    expect(screen.getByText('Event 2 of 3')).toHaveClass('sr-only');
+    expect(screen.getByText('2 / 3')).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('does not rotate in a hidden tab', () => {
@@ -204,28 +308,41 @@ describe('pause and manual stepping', () => {
 });
 
 describe('screen readers', () => {
-  it('announces each event once, politely, in its own region (not the ticking visible text)', () => {
-    render(bar({ result: result([ev('a'), ev('b')]) }));
+  it('announces critical events (once) in their own polite region, not ordinary rotation', () => {
+    render(bar({ result: result([ev('a'), crit('x'), ev('b')]) }));
     const region = screen.getByTestId('headline-announce');
     expect(region).toHaveAttribute('aria-live', 'polite');
     expect(region).toHaveAttribute('aria-atomic', 'true');
-    expect(announce()).toBe('Fast weaponization: Headline a');
-    tick(6_100);
-    expect(announce()).toBe('Fast weaponization: Headline b');
-    // Round the loop to 'a' again: it was already announced, so the region is left alone.
-    tick(6_000);
+    // The queue opens on the critical event.
+    expect(announce()).toBe('Critical threat: Headline x');
+    // Ordinary headlines rotate by without a word.
+    tick(12_100);
     expect(title()).toBe('Headline a');
-    expect(announce()).toBe('Fast weaponization: Headline b');
+    expect(announce()).toBe('Critical threat: Headline x');
+    tick(6_000); expect(title()).toBe('Headline b');
+    expect(announce()).toBe('Critical threat: Headline x');
+    // Round the loop to the critical event again: heard already, so the region is left alone.
+    tick(6_000); expect(title()).toBe('Headline x');
+    expect(announce()).toBe('Critical threat: Headline x');
     // The visible headline is not itself a live region.
-    expect(screen.getByRole('button', { name: /Headline a/ }).closest('[aria-live]')).toBeNull();
+    expect(screen.getByRole('button', { name: /Headline x/ }).closest('[aria-live]')).toBeNull();
   });
 
-  it('stepping by hand to an event already heard announces it again', () => {
+  it('a feed with no critical event is silent while it rotates', () => {
     render(bar({ result: result([ev('a'), ev('b')]) }));
-    tick(6_100);
+    expect(announce()).toBe('');
+    tick(6_100); expect(title()).toBe('Headline b');
+    expect(announce()).toBe('');
+  });
+
+  it('stepping by hand announces the event you stepped to, even one already heard', () => {
+    render(bar({ result: result([ev('a'), ev('b')]) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Next event' }));
+    expect(announce()).toBe('Fast weaponization: Headline b');
     fireEvent.click(screen.getByRole('button', { name: 'Previous event' }));
-    expect(title()).toBe('Headline a');
     expect(announce()).toBe('Fast weaponization: Headline a');
+    fireEvent.click(screen.getByRole('button', { name: 'Next event' }));
+    expect(announce()).toBe('Fast weaponization: Headline b');
   });
 
   it('names the kind in words for a critical threat', () => {
@@ -245,7 +362,7 @@ describe('reduced motion', () => {
     expect(title()).toBe('Headline a'); // silent: no jump
     fireEvent.click(screen.getByRole('button', { name: 'Next event' }));
     expect(title()).toBe('Headline b');
-    expect(within(screen.getByLabelText('Live threat events')).getByLabelText(/Event \d of 3/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Live threat events')).getByText(/Event \d of 3/)).toBeInTheDocument();
   });
 
   it('motion on: the headline slides in', () => {

@@ -114,8 +114,39 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 export const sourceLabel = (s: string): string => SOURCE_LABEL[s] ?? s.replace(/_/g, ' ');
 
-/** The rail row's second line: `critical · via Sentinel`. */
-export const viaLine = (e: Pick<ObservatoryEvent, 'kind' | 'source'>): string => `${e.kind} · via ${sourceLabel(e.source)}`;
+/** The rail row's attribution: `via Sentinel`. */
+export const viaLine = (e: Pick<ObservatoryEvent, 'source'>): string => `via ${sourceLabel(e.source)}`;
+
+/** Severity as a word (the dot's colour is not the only cue). */
+export const SEVERITY_LABEL: Record<EventSeverity, string> = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info' };
+
+/** `17 critical records in 3 items` (a chip's count is records; the list holds grouped items). */
+export const chipCountText = (kind: EventKind, records: number, items: number): string =>
+  `${records} ${kind} ${records === 1 ? 'record' : 'records'} in ${items} ${items === 1 ? 'item' : 'items'}`;
+
+/**
+ * Where the leading entity name ends in a title, so it can be set bold: `Acme Bank targeted by …` -> ['Acme Bank', ' targeted by …'].
+ * Operations are named `Operation X` in copy but `X` in the entity, so both spellings count. No match = no split.
+ */
+export function splitLeadEntity(title: string, name: string | null | undefined): [string, string] {
+  const n = (name ?? '').trim();
+  if (n === '') return ['', title];
+  for (const lead of [n, `Operation ${n}`]) {
+    if (title.startsWith(lead)) return [lead, title.slice(lead.length)];
+  }
+  return ['', title];
+}
+
+const PERIOD_PHRASE: Record<EventPeriod, string> = { '1h': 'the past hour or so', '24h': 'the past day or so', '7d': 'the past week' };
+
+/**
+ * The empty-feed sentence, true to the server window ([top of the current UTC hour - N h, now]: a "1h" request covers
+ * between one and two hours, so "the last hour" would be wrong).
+ */
+export const emptyFeedCopy = (period: EventPeriod, kinds: readonly EventKind[] = []): string =>
+  kinds.length > 0
+    ? `No ${kinds.map(k => KIND_CHIP_LABEL[k].toLowerCase()).join(' or ')} events in ${PERIOD_PHRASE[period]}`
+    : `No new threat events in ${PERIOD_PHRASE[period]}`;
 
 /** Chip colours per kind. Theme tokens only, so both themes get an AA text colour. */
 export const KIND_TONE: Record<EventKind, { fg: string; bg: string }> = {
@@ -163,7 +194,7 @@ export interface AgeGroup { key: AgeGroupKey; label: string; events: Observatory
 
 export const RECENT_MS = 15 * 60_000;
 export const MID_MS = 45 * 60_000;
-const GROUP_LABEL: Record<AgeGroupKey, string> = { recent: 'LAST 15 MIN', mid: '15–45 MIN AGO', older: 'OLDER' };
+const GROUP_LABEL: Record<AgeGroupKey, string> = { recent: 'Last 15 min', mid: '15–45 min', older: 'Older' };
 
 export function ageGroupOf(iso: string, nowMs: number): AgeGroupKey {
   const age = nowMs - parseUtc(iso).getTime();
@@ -233,6 +264,16 @@ export function eventTargetPatch(e: Pick<ObservatoryEvent, 'target' | 'place'>, 
   if (lens === 'threats' && current.view === 'heat') patch.view = 'points';
   if (lens === 'baseline' && current.measure === 'bot') patch.measure = 'index';
   return patch;
+}
+
+/**
+ * What to select when the event's own `sel` cannot be resolved in the loaded lens data (an operation's pivot id that the
+ * Movement lens no longer lists, a provider outside the Hosting top list): its country. null = nothing to fall back to.
+ */
+export function eventFallbackSel(e: Pick<ObservatoryEvent, 'place'>, patchSel: string | null): string | null {
+  const cc = e.place.country_code;
+  const fallback = cc && /^[A-Z]{2}$/.test(cc) ? `country:${cc}` : null;
+  return fallback && fallback !== patchSel ? fallback : null;
 }
 
 /** Where the camera goes for an event: its own point, else its country's centre, else nowhere. */

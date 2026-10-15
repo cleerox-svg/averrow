@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseEventKinds, serializeEventKinds, visibleKinds, eventAge, eventAgeSpoken, groupByAge, orderQueue, holdFor, stepIndex, freshCriticals,
-  eventTargetPatch, eventFlyPoint, totalCount, viaLine, railLimit, EVENT_KINDS, type ObservatoryEvent,
+  eventTargetPatch, eventFlyPoint, eventFallbackSel, totalCount, viaLine, railLimit, splitLeadEntity, emptyFeedCopy, chipCountText, SEVERITY_LABEL,
+  EVENT_KINDS, EVENTS_DEFAULT_LIMIT, type ObservatoryEvent,
 } from './events';
 
 const NOW = Date.parse('2026-10-15T12:00:00.000Z');
@@ -46,7 +47,7 @@ describe('ages and groups', () => {
     const list = [ev('a', { occurred_at: ago(0) }), ev('b', { occurred_at: ago(14.9) }), ev('c', { occurred_at: ago(15) }), ev('d', { occurred_at: ago(44.9) }), ev('e', { occurred_at: ago(45) }), ev('f', { occurred_at: ago(600) })];
     const g = groupByAge(list, NOW);
     expect(g.map(x => [x.key, x.label, x.events.map(e => e.id)])).toEqual([
-      ['recent', 'LAST 15 MIN', ['a', 'b']], ['mid', '15–45 MIN AGO', ['c', 'd']], ['older', 'OLDER', ['e', 'f']],
+      ['recent', 'Last 15 min', ['a', 'b']], ['mid', '15–45 min', ['c', 'd']], ['older', 'Older', ['e', 'f']],
     ]);
     expect(groupByAge([ev('x', { occurred_at: ago(3) })], NOW).map(x => x.key)).toEqual(['recent']);
     expect(groupByAge([], NOW)).toEqual([]);
@@ -55,12 +56,34 @@ describe('ages and groups', () => {
     expect(totalCount({ critical: 12, fast: 3 }, 2)).toBe(15);
     expect(totalCount({}, 4)).toBe(4);
   });
-  it('writes the rail second line and sizes the page per period', () => {
-    expect(viaLine({ kind: 'takedown', source: 'sparrow' })).toBe('takedown · via Sparrow');
-    expect(viaLine({ kind: 'lookalike', source: 'lookalike_scanner' })).toBe('lookalike · via lookalike scanner');
-    expect(viaLine({ kind: 'spike', source: 'cloudflare_radar' })).toBe('spike · via Cloudflare Radar');
-    expect(railLimit('1h')).toBe(40);
+  it('writes the rail attribution and sizes the page per period', () => {
+    expect(viaLine({ source: 'sparrow' })).toBe('via Sparrow');
+    expect(viaLine({ source: 'lookalike_scanner' })).toBe('via lookalike scanner');
+    expect(viaLine({ source: 'cloudflare_radar' })).toBe('via Cloudflare Radar');
+    expect(SEVERITY_LABEL.critical).toBe('Critical');
     expect(railLimit('7d')).toBe(100);
+  });
+  it('the rail\'s 1h view asks for exactly the warmed default page (so it shares the headline bar\'s key)', () => {
+    expect(railLimit('1h')).toBe(EVENTS_DEFAULT_LIMIT);
+    expect(railLimit('1h')).toBe(40);
+  });
+  it('spells a chip count: records, in items', () => {
+    expect(chipCountText('critical', 17, 3)).toBe('17 critical records in 3 items');
+    expect(chipCountText('fast', 1, 1)).toBe('1 fast record in 1 item');
+  });
+  it('splits the leading entity off a title (also "Operation X" for an operation named X)', () => {
+    expect(splitLeadEntity('Acme Bank targeted by 12 new phishing pages', 'Acme Bank')).toEqual(['Acme Bank', ' targeted by 12 new phishing pages']);
+    expect(splitLeadEntity('Operation Invoice kit linked to TA4903', 'Invoice kit')).toEqual(['Operation Invoice kit', ' linked to TA4903']);
+    expect(splitLeadEntity('Vietnam at 4.2× its usual share', 'Vietnam')[0]).toBe('Vietnam');
+    expect(splitLeadEntity('A different sentence', 'Acme Bank')).toEqual(['', 'A different sentence']);
+    expect(splitLeadEntity('Anything', '')).toEqual(['', 'Anything']);
+    expect(splitLeadEntity('Anything', null)).toEqual(['', 'Anything']);
+  });
+  it('empty copy is true to the server window, never "the last hour"', () => {
+    expect(emptyFeedCopy('1h')).toBe('No new threat events in the past hour or so');
+    expect(emptyFeedCopy('24h')).toBe('No new threat events in the past day or so');
+    expect(emptyFeedCopy('7d')).toBe('No new threat events in the past week');
+    expect(emptyFeedCopy('1h', ['actor', 'spike'])).toBe('No actors or spikes events in the past hour or so');
   });
 });
 
@@ -107,6 +130,14 @@ describe('click target', () => {
     expect(eventTargetPatch(ev('a'), { view: 'fast', measure: 'index' }).view).toBeUndefined();
     expect(eventTargetPatch(ev('a', { target: { lens: 'baseline', select: 'country:VN' } }), { view: 'points', measure: 'bot' }).measure).toBe('index');
     expect(eventTargetPatch(ev('a', { target: { lens: 'hosting' } }), { view: 'points', measure: 'bot' }).measure).toBeUndefined();
+  });
+  it('keeps the event\'s country as the fallback for a sel the lens cannot resolve', () => {
+    expect(eventFallbackSel(ev('a'), 'move:evt_9')).toBe('country:US');
+    expect(eventFallbackSel(ev('a'), 'provider:hp_1')).toBe('country:US');
+    // Already the country: nothing to fall back to. No country: nowhere to fall back.
+    expect(eventFallbackSel(ev('a'), 'country:US')).toBeNull();
+    expect(eventFallbackSel(ev('a', { place: { country_code: null, country_name: null, lat: null, lng: null } }), 'move:evt_9')).toBeNull();
+    expect(eventFallbackSel(ev('a', { place: { country_code: 'usa', country_name: null, lat: null, lng: null } }), 'move:evt_9')).toBeNull();
   });
   it('flies to the event point, else its country, else nowhere', () => {
     expect(eventFlyPoint(ev('a'))).toEqual([-97, 38]);

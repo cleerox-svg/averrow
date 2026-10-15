@@ -1076,7 +1076,8 @@ describe('ObservatoryV3 lens-aware panel', () => {
   it('Threats keeps the global overview', async () => {
     renderAt('/observatory');
     expect(await screen.findByTestId('side-panel')).toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: /panel$/ })).not.toBeInTheDocument();
+    // (the dock is one aside named for what it shows: the global overview, not a lens panel like "Hosting panel")
+    expect(screen.queryByRole('complementary', { name: /^(?!Intelligence panel$).*panel$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -1261,13 +1262,13 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     const bar = screen.getByRole('region', { name: 'Live threat events' });
     expect(within(bar).getByText('CRITICAL')).toBeInTheDocument();
     expect(within(bar).getByText('5m')).toBeInTheDocument();
-    expect(within(bar).getByRole('button', { name: 'Open all 14 events' })).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Open all 14 events' })).toHaveTextContent('All 14 events ›');
   });
 
   it('an empty hour says so', async () => {
     withEvents([], {}, {});
     renderAt('/observatory');
-    expect(await screen.findByText('No new threat events in the last hour')).toBeInTheDocument();
+    expect(await screen.findByText('No new threat events in the past hour or so')).toBeInTheDocument();
   });
 
   it('a partial feed shows the quiet note and the bar still works', async () => {
@@ -1349,6 +1350,81 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     await userEvent.click(await within(rail).findByRole('button', { name: /^Actors/ }));
     await waitFor(() => expect(search).toContain('ev=actor'));
     await waitFor(() => expect(urls()).toContain('/api/observatory/events?period=1h&kinds=actor&limit=40'));
+  });
+
+  it('the Intel | Events strip survives the tab swap: the same node, focus follows arrow keys, Home / End, tabpanel wiring', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    const strip = within(rail).getByRole('tablist', { name: 'Panel' });
+    const intel = within(strip).getByRole('tab', { name: 'Intel' });
+    const events = within(strip).getByRole('tab', { name: /Events/ });
+    // aria wiring: tabs control a tabpanel, the visible panel is labelled by its tab.
+    expect(events).toHaveAttribute('aria-controls', 'tabpanel-events');
+    const panel = rail.querySelector('#tabpanel-events') as HTMLElement;
+    expect(panel).toHaveAttribute('role', 'tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', events.id);
+    expect(within(panel).getByText('Title op1')).toBeInTheDocument();
+
+    events.focus();
+    await userEvent.keyboard('{ArrowLeft}');
+    // The selected tab AND the keyboard focus moved, and the strip is the very same DOM node (it never remounted).
+    await waitFor(() => expect(intel).toHaveAttribute('aria-selected', 'true'));
+    expect(intel).toHaveFocus();
+    const dock = await screen.findByRole('complementary', { name: 'Intelligence panel' });
+    expect(within(dock).getByRole('tablist', { name: 'Panel' })).toBe(strip);
+    expect(within(dock).getByRole('tab', { name: 'Intel' })).toBe(intel);
+    expect(dock.querySelector('#tabpanel-intel')).toHaveAttribute('aria-labelledby', intel.id);
+    await userEvent.keyboard('{End}');
+    await waitFor(() => expect(events).toHaveAttribute('aria-selected', 'true'));
+    expect(events).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    await waitFor(() => expect(intel).toHaveAttribute('aria-selected', 'true'));
+    expect(intel).toHaveFocus();
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('the rail close button returns to Intel', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    await userEvent.click(within(rail).getByRole('button', { name: 'Close events, back to Intel' }));
+    expect(await screen.findByTestId('side-panel')).toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Event rail' })).toBeNull();
+  });
+
+  describe('a target the lens cannot resolve falls back to the event\'s country', () => {
+    // route() answers every other prefix with an empty list, so these lens lists settle WITHOUT the id the event names.
+    it('an operation pivot (move:<id>) that the Movement lens does not list', async () => {
+      withEvents([E('op9', 'operation', { target: { lens: 'movement', select: 'move:pivot_gone' }, source: 'nexus' })]);
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title op9/ }));
+      await waitFor(() => expect(search).toContain('lens=movement'));
+      await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+      expect(search).not.toContain('move%3Apivot_gone');
+      // ... and it stays: the country drawer is open, not dropped.
+      expect(await screen.findByRole('button', { name: 'Close details' })).toBeInTheDocument();
+    });
+
+    it('a takedown provider (provider:<id>) that the Hosting lens does not list', async () => {
+      withEvents([E('td9', 'takedown', { severity: 'info', source: 'sparrow', target: { lens: 'hosting', select: 'provider:hp_gone' } })], { omitted_kinds: [] }, { takedown: 1 });
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title td9/ }));
+      await waitFor(() => expect(search).toContain('lens=hosting'));
+      await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+      expect(search).not.toContain('provider%3Ahp_gone');
+      expect(await screen.findByRole('button', { name: 'Close details' })).toBeInTheDocument();
+    });
+
+    it('an event with no country has nothing to fall back to: the dead key is dropped as before', async () => {
+      withEvents([E('op8', 'operation', { place: { country_code: null, country_name: null, lat: null, lng: null }, target: { lens: 'movement', select: 'move:pivot_gone' } })]);
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title op8/ }));
+      await waitFor(() => expect(search).toContain('lens=movement'));
+      await waitFor(() => expect(search).not.toContain('sel='));
+    });
   });
 
   it('a wall screen has no feed: no bar, no rail, and no events request', async () => {

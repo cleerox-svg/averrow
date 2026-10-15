@@ -602,11 +602,11 @@ interface SidePanelProps {
    * (`mobile` omitted/false) is unchanged.
    */
   mobile?: boolean;
-  /** The panel's tab strip (Intel | Events), rendered above the widgets of the docked / floating panel. */
-  tabs?: ReactNode;
+  /** Rendered inside the PanelDock (which owns the aside, the tab strip and the scroll): in-flow widgets, no scroller of their own. */
+  embedded?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode, tabs }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode, embedded = false }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -618,7 +618,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
   const widgets = (
     <div // Cards are `overflow:hidden`, so as flex items they would shrink to fit and clip their
     // content instead of letting the container scroll — `[&>*]:shrink-0` keeps natural height.
-    className={mobile ? 'flex flex-col gap-3 p-3 [&>*]:shrink-0' : 'flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-y-auto [&>*]:shrink-0'}>
+    className={mobile || embedded ? 'flex flex-col gap-3 p-3 [&>*]:shrink-0' : 'flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-y-auto [&>*]:shrink-0'}>
       {filtered && (
         <div
           className="px-2 py-1.5 rounded text-[10px] font-mono"
@@ -663,6 +663,8 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
     </div>
   );
 
+  if (embedded) return <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>;
+
   if (mobile) {
     // Full-width, in-flow — the drawer shell (ObservatoryV3.tsx) owns
     // background, border, positioning and the scrollable container.
@@ -688,7 +690,6 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
         boxShadow: placement === 'overlay' ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
-      {tabs}
       <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>
     </aside>
   );

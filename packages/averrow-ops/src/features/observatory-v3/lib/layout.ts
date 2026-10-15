@@ -79,7 +79,7 @@ export function computeLayout({ mapWidth, viewportWidth, viewportHeight = 0 }: L
       toolbarWidth: width, searchCollapsed: true, filtersInPopover: true, panelStartsOpen: false,
       short, compact,
       bottomBand: compact ? STATS_H : BOTTOM_BAND.phone,
-      statsBottom: compact ? 0 : TICKER_H.phone,
+      statsBottom: compact ? 0 : FEED_BAR_H.phone,
       topInset: compact ? TOP_COMPACT : TOP_PHONE,
     };
   }
@@ -97,7 +97,7 @@ export function computeLayout({ mapWidth, viewportWidth, viewportHeight = 0 }: L
     panelStartsOpen: docked,
     short, compact: false,
     bottomBand: BOTTOM_BAND.desktop,
-    statsBottom: TICKER_H.desktop,
+    statsBottom: FEED_BAR_H.desktop,
     topInset: TOP_DESKTOP,
   };
 }
@@ -109,9 +109,9 @@ export const TIMELINE_H = 56;
 /** Stats bar height. */
 export const STATS_H = 36;
 /** Headline-bar (intel feed) height under the stats bar. */
-export const TICKER_H = { desktop: 40, phone: 72 } as const;
+export const FEED_BAR_H = { desktop: 40, phone: 72 } as const;
 /** Height of the stats bar + headline-bar band below the map element: desktop 36 + 40, phone 36 + 72. */
-export const BOTTOM_BAND = { desktop: STATS_H + TICKER_H.desktop, phone: STATS_H + TICKER_H.phone } as const;
+export const BOTTOM_BAND = { desktop: STATS_H + FEED_BAR_H.desktop, phone: STATS_H + FEED_BAR_H.phone } as const;
 const TOP_DESKTOP = 8 + TOOLBAR_H + 12;
 /** Phone: summary row (48) + lens strip (48) + gaps. */
 const TOP_PHONE = 8 + 48 + 8 + 48 + 12;

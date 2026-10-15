@@ -35,7 +35,8 @@ import { Card, Button } from '@/design-system/components';
 import { ObservatoryLoadError } from './components/ObservatoryLoadError';
 import { HeadlineBar } from './components/HeadlineBar';
 import { EventRail } from './components/EventRail';
-import { PanelTabs, type PanelTab } from './components/PanelTabs';
+import { PanelTabs, PanelTabPanels, type PanelTab } from './components/PanelTabs';
+import { PanelDock } from './components/PanelDock';
 import { useObservatoryEvents } from '@/hooks/useObservatoryEvents';
 import { useTheme } from '@/design-system/hooks';
 import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
@@ -61,7 +62,7 @@ import {
   useObservatoryUrlState, parseSel, mapModeOf,
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type Severity, type ThreatView,
 } from './lib/url-state';
-import { noLayers, type LayerToggles } from './lib/lenses';
+import { noLayers, LENS_DEFS, type LayerToggles } from './lib/lenses';
 import type { Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
@@ -72,7 +73,7 @@ import { targetPatch, type SearchData, type SearchResult } from './lib/search';
 import { useLensData } from './lib/use-lens-data';
 import { NO_SELECTION, type LensPick, type LensSelection } from './layers/lens-layers';
 import { diffLive, announcePings, type PingItem } from './lib/lens/live';
-import { eventTargetPatch, eventFlyPoint, totalCount, type EventKind, type EventPeriod, type ObservatoryEvent } from './lib/events';
+import { eventTargetPatch, eventFlyPoint, eventFallbackSel, totalCount, type EventKind, type EventPeriod, type ObservatoryEvent } from './lib/events';
 import { getSeverityColor } from './lib/map-colors';
 import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
@@ -421,20 +422,23 @@ export function ObservatoryV3() {
 
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
+    evFallback.current = null;
     update(targetPatch(target, layers));
     focusPoints(drillPoints(target, focusModels), { noWrap: target.kind === 'operation' });
     setShowMobilePanel(false);
   }, [update, layers, focusPoints, focusModels]);
 
-  const closeDrill = useCallback(() => update(drillToPatch(null)), [update]);
+  const closeDrill = useCallback(() => { evFallback.current = null; update(drillToPatch(null)); }, [update]);
 
   // A click on the map selects without moving the camera.
   const handleMapSelect = useCallback((s: MapSelection | null) => {
     openerKind.current = null;
+    evFallback.current = null;
     update(drillToPatch(s ? (s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc }) : null));
   }, [update]);
   const handleLensPick = useCallback((pick: LensPick) => {
     openerKind.current = null;
+    evFallback.current = null;
     update(selPatch(PICK_TO_SEL[pick.kind], pick.id));
   }, [update]);
 
@@ -544,6 +548,13 @@ export function ObservatoryV3() {
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));
     else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) {
+      // An event click whose target is not in the loaded lens data: open its country instead of nothing.
+      const fb = evFallback.current;
+      if (fb && state.sel === fb.sel) {
+        evFallback.current = null;
+        update({ ...drillToPatch(null), sel: fb.fallback });
+        return;
+      }
       // A link we widened to shared=1 that still does not resolve: undo the widening with the drop (predictable URL).
       update(sel.kind === 'op' && sharedRetried.current === sel.id && state.shared ? { ...drillToPatch(null), shared: false } : drillToPatch(null));
     }
@@ -619,9 +630,16 @@ export function ObservatoryV3() {
   // spot with the same sonar ring a live threat gets. The ping waits out the camera flight so it lands where you arrive.
   const evPingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (evPingTimer.current) clearTimeout(evPingTimer.current); }, []);
+  // An event's `sel` (an operation's pivot, a provider) can name something the lens's loaded list no longer holds, and the
+  // dead-key effect below would then drop it and open nothing. The server cannot know what the client has loaded, so the
+  // client keeps the event's country as the fallback and swaps to it only if that exact `sel` fails to resolve.
+  const evFallback = useRef<{ sel: string; fallback: string } | null>(null);
   const openEvent = useCallback((ev: ObservatoryEvent, opts: { ping?: boolean } = {}) => {
     openerKind.current = opts.ping ? 'panel' : null;
-    update(eventTargetPatch(ev, { view: state.view, measure: state.measure }));
+    const patch = eventTargetPatch(ev, { view: state.view, measure: state.measure });
+    const fallback = patch.sel ? eventFallbackSel(ev, patch.sel) : null;
+    evFallback.current = patch.sel && fallback ? { sel: patch.sel, fallback } : null;
+    update(patch);
     const at = eventFlyPoint(ev);
     if (at) focusPoints([at]);
     setShowMobilePanel(false);
@@ -638,6 +656,7 @@ export function ObservatoryV3() {
     }, reducedMotion ? 0 : FLY_MS);
   }, [update, state.view, state.measure, focusPoints, reducedMotion]);
   const openRailEvent = useCallback((ev: ObservatoryEvent) => openEvent(ev, { ping: true }), [openEvent]);
+  const closeRail = useCallback(() => setPanelTab('intel'), []);
   /** "All N ›": the rail takes the right slot (or the phone sheet), replacing a drawer that is open. */
   const openRail = useCallback(() => {
     setPanelTab('events');
@@ -799,7 +818,6 @@ export function ObservatoryV3() {
   // The Actors lens needs its list for the panel even before the legend asks for it.
   const ex = L.operationsQ.data?.meta?.excluded;
   const excludedTotal = ex ? (ex.shared_asn ?? 0) + (ex.hub_ip ?? 0) + (ex.ip_reputation ?? 0) : 0;
-  const eventTabs = <PanelTabs tab={panelTab} onTab={setPanelTab} eventCount={eventTotal} />;
   const lensPanel = (placement: 'dock' | 'overlay' | 'sheet') => (
     panelSection && panelQuery ? (
       <LensPanel
@@ -810,7 +828,7 @@ export function ObservatoryV3() {
         onRetry={() => void panelQuery.refetch()}
         onSelect={handlePanelSelect}
         placement={placement}
-        tabs={placement === 'sheet' ? undefined : eventTabs}
+        embedded={placement !== 'sheet'}
         question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
         note={takedownNote}
         onPreview={lens === 'operations' ? onPanelPreview : undefined}
@@ -836,7 +854,7 @@ export function ObservatoryV3() {
         visible
         mobile={placement === 'sheet'}
         placement={placement === 'overlay' ? 'overlay' : 'dock'}
-        tabs={placement === 'sheet' ? undefined : eventTabs}
+        embedded={placement !== 'sheet'}
         onSelectNode={handleSelectNodeFromPanel}
       />
     )
@@ -1216,9 +1234,21 @@ export function ObservatoryV3() {
           variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} brandId={state.brand}
         />
       )}
-      {!phone && !drill && panelOpen && (panelTab === 'events'
-        ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} placement={layout.docked ? 'dock' : 'overlay'} tabs={eventTabs} />
-        : lensPanel(layout.docked ? 'dock' : 'overlay'))}
+      {/* One aside for both tabs: the Intel | Events strip sits above the swapped content and never remounts, so keyboard
+          focus stays on the tab you just chose. */}
+      {!phone && !drill && panelOpen && (
+        <PanelDock
+          tab={panelTab}
+          onTab={setPanelTab}
+          eventCount={eventTotal}
+          placement={layout.docked ? 'dock' : 'overlay'}
+          label={panelTab === 'events' ? 'Event rail' : panelSection && panelQuery ? `${LENS_DEFS[lens].label} panel` : 'Intelligence panel'}
+        >
+          {panelTab === 'events'
+            ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} onClose={closeRail} placement="embedded" />
+            : lensPanel(layout.docked ? 'dock' : 'overlay')}
+        </PanelDock>
+      )}
 
       {/* Panel toggle (the drawer has its own close button and Escape) */}
       {!phone && hasPanel && !drill && (
@@ -1296,9 +1326,11 @@ export function ObservatoryV3() {
             </div>
             <PanelTabs tab={panelTab} onTab={setPanelTab} eventCount={eventTotal} touch />
           </div>
-          {panelTab === 'events'
-            ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} placement="sheet" />
-            : lensPanel('sheet')}
+          <PanelTabPanels tab={panelTab}>
+            {panelTab === 'events'
+              ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} onClose={closeRail} placement="sheet" />
+              : lensPanel('sheet')}
+          </PanelTabPanels>
         </PeekSheet>
       )}
     </div>

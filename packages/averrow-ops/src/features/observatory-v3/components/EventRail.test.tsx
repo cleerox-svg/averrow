@@ -29,10 +29,11 @@ let search = '';
 function Loc() { search = useLocation().search; return null; }
 
 /** The rail wired exactly as the page wires it: kinds come from, and go to, the URL. */
+const onClose = vi.fn();
 function UrlHarness({ onOpenEvent }: { onOpenEvent: EventRailProps['onOpenEvent'] }) {
   const { state, update } = useObservatoryUrlState();
   const [period, setPeriod] = useState<EventPeriod>('1h');
-  return <EventRail period={period} onPeriod={setPeriod} kinds={state.ev} onKinds={ev => update({ ev })} onOpenEvent={onOpenEvent} placement="dock" />;
+  return <EventRail period={period} onPeriod={setPeriod} kinds={state.ev} onKinds={ev => update({ ev })} onOpenEvent={onOpenEvent} onClose={onClose} placement="embedded" />;
 }
 function renderRail(path = '/observatory', onOpenEvent: EventRailProps['onOpenEvent'] = vi.fn()) {
   return render(
@@ -64,20 +65,41 @@ describe('groups and rows', () => {
     renderRail();
     await screen.findByText('Title c1');
     const heads = screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent);
-    expect(heads).toEqual(['LAST 15 MIN', '15–45 MIN AGO', 'OLDER']);
-    const recent = screen.getByRole('region', { name: 'last 15 min' });
+    expect(heads).toEqual(['Last 15 min', '15–45 min', 'Older']);
+    const recent = screen.getByRole('region', { name: 'Last 15 min' });
     expect(within(recent).getByText('Title c1')).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: '15–45 min ago' })).getAllByRole('button').map(b => b.getAttribute('data-event-id'))).toEqual(['o1', 'f1']);
-    expect(within(screen.getByRole('region', { name: 'older' })).getByText('Title l1')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: '15–45 min' })).getAllByRole('button').map(b => b.getAttribute('data-event-id'))).toEqual(['o1', 'f1']);
+    expect(within(screen.getByRole('region', { name: 'Older' })).getByText('Title l1')).toBeInTheDocument();
   });
 
-  it('a row shows a severity dot (spoken), the title, "kind · via source" and the age', async () => {
+  it('a row shows the title, a kind chip, a severity word, "via source" and the age', async () => {
     renderRail();
     const row = (await screen.findByText('Title c1')).closest('button')!;
-    expect(row).toHaveTextContent('critical severity.');
-    expect(row).toHaveTextContent('critical · via Sentinel');
+    expect(within(row).getByText('CRITICAL')).toBeInTheDocument(); // the shared EventChip, not a raw lowercase token
+    expect(row).toHaveTextContent('Critical · via Sentinel');
     expect(row).toHaveTextContent('5m');
-    expect(screen.getByText('Title o1').closest('button')).toHaveTextContent('operation · via NEXUS');
+    const op = screen.getByText('Title o1').closest('button')!;
+    expect(within(op).getByText('OPERATION')).toBeInTheDocument();
+    expect(op).toHaveTextContent('High · via NEXUS');
+  });
+
+  it('sets the leading entity name bold when the title starts with it', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(envelope([
+      ev('b1', 'critical', 5, { title: 'Acme Bank targeted by 12 new phishing pages', entity: { type: 'brand', id: 'b1', name: 'Acme Bank' } }),
+      ev('b2', 'fast', 6, { title: 'Unrelated sentence', entity: { type: 'brand', id: 'b2', name: 'Acme Bank' } }),
+    ])));
+    renderRail();
+    const lead = await screen.findByText('Acme Bank');
+    expect(lead.tagName).toBe('STRONG');
+    expect(screen.getByText('Unrelated sentence').querySelector('strong')).toBeNull();
+  });
+
+  it('the close button returns to Intel', async () => {
+    onClose.mockClear();
+    renderRail();
+    await screen.findByText('Title c1');
+    fireEvent.click(screen.getByRole('button', { name: 'Close events, back to Intel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('clicking a row hands the event to the page', async () => {
@@ -90,7 +112,7 @@ describe('groups and rows', () => {
   it('empty feed says so; a failed request offers a retry', async () => {
     fetchMock.mockImplementation(() => Promise.resolve(envelope([])));
     const { unmount } = renderRail();
-    expect(await screen.findByText('No new threat events in the last hour')).toBeInTheDocument();
+    expect(await screen.findByText('No new threat events in the past hour or so')).toBeInTheDocument();
     unmount();
     qc.clear();
     fetchMock.mockImplementation(() => Promise.resolve({ success: false, error: 'down' }));
@@ -104,6 +126,23 @@ describe('groups and rows', () => {
     renderRail();
     expect(await screen.findByText(/Partial feed\. Lookalikes could not be loaded\./)).toBeInTheDocument();
     expect(screen.getByText('Title c1')).toBeInTheDocument();
+  });
+
+  it('a flashing row keeps its flash (no restart) when it changes time group, and loses it after the flash length', async () => {
+    renderRail();
+    await screen.findByText('Title c1');
+    const next: EventsResult = {
+      events: [ev('c2', 'critical', 14.9), ...DATA], counts: {},
+      meta: { generated_at: null, period: '1h', omitted_kinds: ['takedown'], capped_kinds: [], failed_kinds: [] },
+    };
+    act(() => { qc.setQueryData(eventsKey('1h', [], 40), next); });
+    await waitFor(() => expect(document.querySelectorAll('.ev-row-new')).toHaveLength(1));
+    const row = document.querySelector('.ev-row-new') as HTMLElement;
+    expect(row.getAttribute('data-event-id')).toBe('c2');
+    // Resumes at its elapsed time on a remount: the style carries a negative delay, never a fresh start.
+    expect(row.style.animationDelay).toMatch(/^-?\d+ms$/);
+    // (only Date is faked here, so the real flash timer runs out on its own)
+    await waitFor(() => expect(document.querySelectorAll('.ev-row-new')).toHaveLength(0), { timeout: 3_000 });
   });
 
   it('a row that arrives later flashes once; the rows already there do not', async () => {
@@ -127,6 +166,10 @@ describe('kind filter', () => {
     const group = await screen.findByRole('group', { name: 'Filter events by kind' });
     await waitFor(() => expect(within(group).getByRole('button', { name: /Critical/ })).toHaveTextContent('14'));
     const names = within(group).getAllByRole('button').map(b => b.textContent?.replace(/\d+$/, ''));
+    // The count is records, not items: the chip says so in its title and name.
+    const crit = within(group).getByRole('button', { name: /^Critical/ });
+    expect(crit).toHaveAttribute('title', '14 critical records in 1 item');
+    expect(crit).toHaveAttribute('aria-label', 'Critical: 14 critical records in 1 item');
     expect(names).toEqual(['All', 'Critical', 'Operations', 'Fast', 'Lookalikes', 'Actors', 'Spikes']);
     expect(within(group).queryByRole('button', { name: /Takedowns/ })).toBeNull();
     expect(within(group).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
@@ -187,7 +230,7 @@ describe('kind filter', () => {
   it('says so when a kind has nothing in the period', async () => {
     fetchMock.mockImplementation((url: string) => Promise.resolve(envelope(new URL(url, 'http://x').searchParams.get('kinds') ? [] : DATA)));
     renderRail('/observatory?ev=actor');
-    expect(await screen.findByText('No actors events in the last hour')).toBeInTheDocument();
+    expect(await screen.findByText('No actors events in the past hour or so')).toBeInTheDocument();
   });
 });
 
@@ -205,6 +248,28 @@ describe('period', () => {
     expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('Events · 24H');
     await user.click(radios[2]!);
     await waitFor(() => expect(urls()).toContain('/api/observatory/events?period=7d&limit=100'));
+  });
+
+  it('the period radios are a roving radio group: arrows (and Home / End) move and select, focus follows', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderRail();
+    await screen.findByText('Title c1');
+    const radios = within(screen.getByRole('radiogroup', { name: 'Event period' })).getAllByRole('radio');
+    expect(radios.map(r => r.tabIndex)).toEqual([0, -1, -1]);
+    radios[0]!.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(radios[1]).toHaveAttribute('aria-checked', 'true');
+    expect(radios[1]).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(radios[2]).toHaveAttribute('aria-checked', 'true');
+    expect(radios[2]).toHaveFocus();
+    await user.keyboard('{ArrowRight}'); // wraps
+    expect(radios[0]).toHaveAttribute('aria-checked', 'true');
+    await user.keyboard('{ArrowLeft}');
+    expect(radios[2]).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(radios[0]).toHaveFocus();
+    expect(radios.map(r => r.tabIndex)).toEqual([0, -1, -1]);
   });
 
   it('the 1h view asks for exactly the warmed request', async () => {

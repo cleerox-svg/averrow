@@ -6,7 +6,7 @@ export function EventChip({ kind, className = '' }: { kind: EventKind; className
   const tone = KIND_TONE[kind];
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-[0.12em] ${className}`}
+      className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-[0.1em] ${className}`}
       style={{ color: tone.fg, background: tone.bg }}
     >
       {KIND_LABEL[kind]}

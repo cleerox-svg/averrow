@@ -482,6 +482,18 @@
   transform-origin: left center;
   animation-name: ev-progress; animation-timing-function: linear; animation-fill-mode: both;
 }
+/* Held by a reader: the track stays, still and dim. */
+.ev-progress-held {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: var(--text-muted); opacity: 0.35;
+}
+/* Touch: a control is 44px wide and its hit area 44px tall, past the visual where the band is short. `ev-hit-y` is for a
+   target that is already wide (the headline). */
+@media (pointer: coarse) {
+  .ev-hit { position: relative; min-width: 44px; }
+  .ev-hit::after, .ev-hit-y::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
+  .ev-hit-y { position: relative; }
+}
 @keyframes ev-row-arrive {
   from { background: color-mix(in srgb, var(--amber) 22%, transparent); }
   to   { background: transparent; }

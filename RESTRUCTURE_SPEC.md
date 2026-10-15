@@ -37,7 +37,7 @@ first and follows it exactly. Nothing is invented. Nothing deviates.
 - All hooks/ — the data layer works. Reorganize, don't rewrite.
 - All backend routes/handlers — untouched throughout restructure.
 - PortfolioHealthCard.tsx (SVG donut) — untouched.
-- EventTicker.tsx — untouched.
+- (EventTicker.tsx was replaced by the Headline bar + Event rail on 2026-10-15 at the owner's request.)
 - (ThreatMap.tsx, ExposureGauge.tsx, Sparkline.tsx, ActivitySparkline.tsx were removed as unused in UI consolidation Phase 1 PR3, 2026-10.)
 
 ---
@@ -123,7 +123,7 @@ packages/averrow-ops/src/
 │   │   ├── ObservatoryPage.tsx
 │   │   └── components/
 │   │       ├── ThreatMap.tsx         ← (removed as unused in UI consolidation Phase 1 PR3, 2026-10)
-│   │       ├── EventTicker.tsx       ← KEEP AS-IS
+│   │       ├── EventTicker.tsx       ← (replaced by the Headline bar + Event rail, 2026-10-15, owner request)
 │   │       └── ObservatoryChrome.tsx ← mode tabs, stat bar, bottom panel
 │   ├── campaigns/
 │   ├── agents/
@@ -824,7 +824,7 @@ isCampaignSignificant(campaign) ⇒
 These files are frozen throughout all sessions:
 - packages/averrow-worker/src/** — backend untouched
 - PortfolioHealthCard.tsx — SVG donut untouched
-- EventTicker.tsx — untouched
+- (EventTicker.tsx replaced by the Headline bar + Event rail, 2026-10-15, owner request)
 - (ThreatMap, ExposureGauge, Sparkline, ActivitySparkline removed as unused in UI consolidation Phase 1 PR3, 2026-10)
 - All hook logic — only file locations change
 - All API endpoints — untouched
