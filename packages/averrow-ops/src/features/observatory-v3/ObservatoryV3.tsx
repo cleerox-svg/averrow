@@ -40,6 +40,11 @@ import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay'
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import { ControlRail } from './components/ControlRail';
+import { DataFiltersBody, DataFiltersPopover, FilterChips } from './components/DataFilters';
+import { filtersToParams, filterNodesBySeverity, filterChips, removeFilterPatch, CLEAR_FILTERS_PATCH } from './lib/filters';
+import { lookupBrand } from './lib/brand-lookup';
+import { useDrillTrend } from './lib/use-drill-trend';
+import { useProjectionShortcut } from './lib/use-projection-shortcut';
 import { LensStrip } from './components/LensStrip';
 import { ObservatorySearch } from './components/ObservatorySearch';
 import { DrillDrawer } from './components/DrillDrawer';
@@ -52,7 +57,7 @@ import { buildBotDensityPoints, resolveScaleStops, resolveGlobalAvg } from './li
 import { buildBotShareModel } from './lib/lens/bot-share';
 import {
   useObservatoryUrlState, parseSel, mapModeOf,
-  type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type ThreatView,
+  type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type Severity, type ThreatView,
 } from './lib/url-state';
 import { noLayers, type LayerToggles } from './lib/lenses';
 import type { Projection } from './lib/projection';
@@ -101,6 +106,9 @@ const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
 
 type SheetKey = 'drill' | 'panel';
 
+/** A wall screen starts turning sooner than a console somebody is reading. */
+const WALL_SPIN_IDLE_MS = 6_000;
+
 const FAST_SOURCE_NOTE = 'Fast weaponization is always all sources';
 
 /** What the intelligence panel asks under each lens while its Takedowns measure is on. */
@@ -133,7 +141,7 @@ export function ObservatoryV3() {
   const canSeeTakedowns = useCanSeeTakedowns();
   const { resolvedTheme } = useTheme();
   const { state, update } = useObservatoryUrlState();
-  const { period, colorBy, layers, lens, view } = state;
+  const { period, colorBy, layers, lens, view, wall } = state;
   // `measure=takedowns` needs manage_takedowns (the server refuses it to every other role): a viewer without it
   // sees the lens's default measure whatever the URL says, and no takedown request is ever made.
   const measure: Measure = state.measure === 'takedowns' && !canSeeTakedowns ? 'index' : state.measure;
@@ -193,6 +201,9 @@ export function ObservatoryV3() {
   const setMeasure = useCallback((m: Measure) => update({ measure: m }), [update]);
   const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
   const setProjection = useCallback((proj: Projection) => update({ proj }), [update]);
+  const setSev = useCallback((sev: Severity[]) => update({ sev }), [update]);
+  const setTypes = useCallback((type: string[]) => update({ type }), [update]);
+  const exitWall = useCallback(() => update({ wall: false }), [update]);
 
   // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
   const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : fast ? FAST_LAYERS : layers;
@@ -203,11 +214,20 @@ export function ObservatoryV3() {
     () => dataNeeds(mapMode, mapLayers, { selection: selectionKind, searching, velocity: fast, measure }),
     [mapMode, mapLayers, selectionKind, searching, fast, measure],
   );
-  const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes });
-  const statsQ = useObservatoryStats({ period, source, enabled: needs.stats });
-  const arcsQ = useObservatoryArcs({ period, source, enabled: needs.arcs });
+  // Data filters: sent to the server only when set (the hooks drop `brand` for /nodes: it has no brand dimension).
+  const sevKey = state.sev.join(',');
+  const typeKey = state.type.join(',');
+  const filters = useMemo(
+    () => filtersToParams({ sev: sevKey ? (sevKey.split(',') as Severity[]) : [], type: typeKey ? typeKey.split(',') : [], brand: state.brand }),
+    [sevKey, typeKey, state.brand],
+  );
+  const threatsQ = useObservatoryThreats({ period, source, enabled: needs.nodes, filters });
+  const statsQ = useObservatoryStats({ period, source, enabled: needs.stats, filters });
+  const arcsQ = useObservatoryArcs({ period, source, enabled: needs.arcs, filters });
   const heatmapQ = useObservatoryHeatmap({ period, source, enabled: needs.heatmap });
-  const threats = threatsQ.data ?? EMPTY_THREATS;
+  // The severity chips narrow the nodes on the client too, from each node's per-severity counts.
+  const rawThreats = threatsQ.data ?? EMPTY_THREATS;
+  const threats = useMemo(() => filterNodesBySeverity(rawThreats, state.sev), [rawThreats, state.sev]);
   const arcsResolved = arcsQ.data ?? EMPTY_ARCS;
   const heatmapData = heatmapQ.data ?? EMPTY_HEAT;
   const stats = statsQ.data;
@@ -223,6 +243,7 @@ export function ObservatoryV3() {
     timelineCountry: sel?.kind === 'country' ? sel.id : null,
     replayNowMs,
     includeShared: state.shared,
+    filters,
   });
 
   // Re-pin the window whenever the period/source changes or fresh arcs / moves arrive.
@@ -242,7 +263,8 @@ export function ObservatoryV3() {
   );
 
   // The intelligence panel exists on the interactive scenes (not under the density heatmap).
-  const hasPanel = mapMode !== 'heatmap';
+  // A wall screen has no panel.
+  const hasPanel = mapMode !== 'heatmap' && !wall;
 
   // Only failures from queries the current view actually uses raise the banner.
   const failures = relevantFailures(needs, {
@@ -337,7 +359,7 @@ export function ObservatoryV3() {
   const panelOpen = (panelPref ?? layout.panelStartsOpen) && hasPanel;
   const rightSlot: 'drawer' | 'panel' | null = phone ? null : drill ? 'drawer' : panelOpen ? 'panel' : null;
   // A short (landscape) phone has no room for the replay bar.
-  const showTimeline = mapMode === 'global' && needs.timeline && !layout.compact;
+  const showTimeline = mapMode === 'global' && needs.timeline && !layout.compact && !wall;
 
   // ─── Camera: frame ALL of a target inside the area the overlays leave free ──
   // The sheet a selection is about to open has not mounted yet when the camera plans its first move:
@@ -346,9 +368,10 @@ export function ObservatoryV3() {
   const sheetInitialSnap = layout.compact ? 1 : 0;
   const sheetKey: SheetKey | null = phone ? (drill ? 'drill' : showMobilePanel && hasPanel ? 'panel' : null) : null;
   const sheetPx = sheetKey === null ? 0 : sheetRep.key === sheetKey && sheetRep.px > 0 ? sheetRep.px : initialSheetPx(rootHeight, sheetInitialSnap);
+  // No toolbar and no rail on a wall screen: the camera frames its targets in the whole map.
   const insets = useMemo(
-    () => cameraInsets({ layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx }),
-    [layout, rightSlot, showTimeline, sheetPx],
+    () => cameraInsets({ layout: wall ? { ...layout, railWidth: 0, topInset: 12 } : layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx }),
+    [layout, wall, rightSlot, showTimeline, sheetPx],
   );
   const focusModels = useMemo<FocusModels>(
     () => ({ operations: L.operationsModel, hosting: L.hostingModel, campaigns: L.campaignsModel, movement: L.movementModel, actors: L.actorModel }),
@@ -608,6 +631,28 @@ export function ObservatoryV3() {
     setAnnounceToggle(`${id} ${layers[id] ? 'off' : 'on'}`);
   }, [update, layers]), mapMode === 'global' && !fast);
 
+  // G: Flat | Globe, from anywhere on the page (the heat view has no globe).
+  useProjectionShortcut(useCallback(() => {
+    if (mapMode === 'heatmap') { setAnnounceToggle('Heat view is flat-only'); return; }
+    const next: Projection = state.proj === 'globe' ? 'flat' : 'globe';
+    setProjection(next);
+    setAnnounceToggle(next === 'globe' ? 'Projection: globe' : 'Projection: flat map');
+  }, [mapMode, state.proj, setProjection]), true);
+
+  // ─── Data filters: chips, brand pick ──
+  const [brandNames, setBrandNames] = useState<Record<string, string>>({});
+  const brandName = state.brand ? brandNames[state.brand] ?? (arcsQ.data?.[0]?.brand_name || null) : null;
+  const chips = useMemo(() => filterChips({ sev: state.sev, type: state.type, brand: state.brand }, brandName), [state.sev, state.type, state.brand, brandName]);
+  const onBrand = useCallback((name: string) => {
+    void lookupBrand(name).then(ref => {
+      if (!ref) { setAnnounceToggle(`Could not find the brand ${name}`); return; }
+      setBrandNames(prev => ({ ...prev, [ref.id]: ref.name }));
+      update({ brand: ref.id });
+      setAnnounceToggle(`Brand filter: ${ref.name}`);
+    });
+  }, [update]);
+  const drillTrend = useDrillTrend(drill, { period, source, filters, enabled: !!drill });
+
   const onPickActor = useCallback((id: string | null) => {
     if (!id) { update(drillToPatch(null)); return; }
     actorFocused.current = null;
@@ -755,7 +800,16 @@ export function ObservatoryV3() {
   const railProps = {
     lens, layers, view, measure, colorBy, reducedMotion,
     onLayers: setLayers, onView: setView, onMeasure: setMeasure, onColorBy: setColorBy, canSeeTakedowns,
+    sev: state.sev, onSev: setSev,
   };
+
+  const dataFiltersBody = (touch: boolean) => (
+    <DataFiltersBody
+      types={state.type} brand={state.brand} brandName={brandName}
+      onTypes={setTypes} onBrand={onBrand} searchData={searchData} onActivate={activateSearch} touch={touch}
+    />
+  );
+  const showDataFilters = mapMode === 'global' && lens === 'threats' && !fast;
 
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
     <ObservatorySearch
@@ -789,6 +843,7 @@ export function ObservatoryV3() {
           onProjection={setProjection}
           onUserCamera={onUserCamera}
           spinHold={legendOpen}
+          spinIdleMs={wall ? WALL_SPIN_IDLE_MS : undefined}
           period={period}
           heatmapData={heatmapData}
           replayNowMs={replayNowMs}
@@ -862,11 +917,12 @@ export function ObservatoryV3() {
 
       {/* ─── Toolbar ────────────────────────────────────────────
           Desktop / tablet: ONE 44px row. Phone: summary row, then the lens strip. */}
-      {phone ? (
+      {wall ? null : phone ? (
         <div className="absolute top-2 left-3 right-3 flex flex-col gap-2" style={{ zIndex: Z_TOOLBAR }}>
           <div className="flex items-center gap-2">
             <FiltersPopover period={period} source={source} touch align="left" className={layout.compact ? 'shrink-0' : 'flex-1 min-w-0'} triggerClassName={layout.compact ? undefined : 'w-full'}>
               {filtersBody}
+              {showDataFilters && <div className="flex flex-col gap-3 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>{dataFiltersBody(true)}</div>}
               {mapMode !== 'heatmap' || lens === 'threats' ? (
                 <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
                   <ControlRail {...railProps} layout="panel" />
@@ -899,11 +955,15 @@ export function ObservatoryV3() {
             <LensStrip lens={lens} onChange={setLens} className="flex-1" />
             {searchEl({ collapsed: layout.searchCollapsed, className: layout.searchCollapsed ? 'shrink-0' : 'w-[190px] shrink-0' })}
             {layout.filtersInPopover ? (
-              <FiltersPopover period={period} source={source}>{filtersBody}</FiltersPopover>
+              <FiltersPopover period={period} source={source}>
+                {filtersBody}
+                {showDataFilters && <div className="flex flex-col gap-3 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>{dataFiltersBody(false)}</div>}
+              </FiltersPopover>
             ) : (
               <>
                 <PeriodSegment period={period} onChange={setPeriod} />
                 <SourceSelect source={source} onChange={setSource} disabledReason={fast ? FAST_SOURCE_NOTE : undefined} />
+                {showDataFilters && <DataFiltersPopover count={chips.length}>{dataFiltersBody(false)}</DataFiltersPopover>}
               </>
             )}
             <RefreshButton onClick={handleRefresh} busy={isFetching} />
@@ -922,6 +982,29 @@ export function ObservatoryV3() {
         </>
       )}
 
+      {/* Active filters: one removable chip per value (severity, type, brand). */}
+      <FilterChips
+        chips={chips}
+        onRemove={c => update(removeFilterPatch({ sev: state.sev, type: state.type, brand: state.brand }, c.kind, c.value))}
+        onClear={() => update(CLEAR_FILTERS_PATCH)}
+        touch={phone}
+        className="absolute"
+        style={{ top: wall ? 8 : layout.topInset, left: phone || wall ? 12 : 12 + 44 + 12, right: rightClear + 56, zIndex: Z_CHROME + 1 }}
+      />
+
+      {/* Wall screen: the way back to the console. Quiet, top right. */}
+      {wall && (
+        <button
+          type="button"
+          onClick={exitWall}
+          className={`ds-focusable absolute rounded-full px-3 font-mono text-[10px] uppercase tracking-wider ${phone ? 'left-3' : 'top-2 right-3'}`}
+          // Phones have the projection toggle top right: the way out sits bottom left, above the stats bar.
+          style={{ ...(phone ? { bottom: layout.bottomBand + 12 } : null), zIndex: Z_TOOLBAR, minHeight: phone ? 44 : 28, background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)', cursor: 'pointer', opacity: 0.8 }}
+        >
+          Exit wall screen
+        </button>
+      )}
+
       {/* ─── Load-error banner ──────────────────────────────────
           Only failures from queries the current view uses. */}
       {loadError && (
@@ -934,7 +1017,7 @@ export function ObservatoryV3() {
 
       {/* ─── Legend chip (one per view) ─────────────────────── */}
       {/* On a phone the open sheet covers the bottom of the map, and with it the chip. */}
-      {!(phone && (drill || showMobilePanel)) && <LegendChip
+      {!wall && !(phone && (drill || showMobilePanel)) && <LegendChip
         {...legendProps}
         summary={summary}
         maxPanelHeight={legendMaxPanel}
@@ -1044,7 +1127,7 @@ export function ObservatoryV3() {
       {!phone && drill && (
         <DrillDrawer
           target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget}
-          variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus}
+          variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend}
         />
       )}
       {!phone && !drill && panelOpen && lensPanel(layout.docked ? 'dock' : 'overlay')}
@@ -1104,7 +1187,7 @@ export function ObservatoryV3() {
       )}
       {phone && (
         <PeekSheet open={!!drill} onClose={closeDrill} label={drill ? `${drill.kind} details` : 'Details'} onHeight={onDrillSheetHeight} restoreFocus={fallbackFocus} initialSnap={sheetInitialSnap}>
-          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} />}
+          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} />}
         </PeekSheet>
       )}
       {phone && hasPanel && (

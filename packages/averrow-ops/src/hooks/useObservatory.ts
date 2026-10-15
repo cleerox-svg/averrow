@@ -109,13 +109,59 @@ export const NODES_MAX_LIMIT = 2000;
 export const HEATMAP_DEFAULT_LIMIT = 10_000;
 export const LIVE_FEED_LIMIT = 8;
 
+/**
+ * Data filters for nodes / arcs / stats. Every field is optional and an empty one is NOT sent, so an unfiltered view keeps
+ * the exact URL and query key it always had. Param names are the backend contract: `severity`, `threat_type`, `brand`.
+ */
+export interface ObservatoryFilters {
+  /** Comma-separated severities (`critical,high`). */
+  severity?: string;
+  /** Comma-separated threat types (`phishing,malware`). */
+  threat_type?: string;
+  /** Brand name. */
+  brand?: string;
+}
+
+/** The filters that are actually set (trimmed, non-empty), or null when there are none. */
+export function activeFilters(f: ObservatoryFilters | undefined): ObservatoryFilters | null {
+  if (!f) return null;
+  const out: ObservatoryFilters = {};
+  if (f.severity?.trim()) out.severity = f.severity.trim();
+  if (f.threat_type?.trim()) out.threat_type = f.threat_type.trim();
+  if (f.brand?.trim()) out.brand = f.brand.trim();
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * `/nodes` has no brand dimension (the geo cube is brand-less) and answers 400 to `brand`: the node layer drops it, so a
+ * brand filter narrows the arcs and stats but leaves the nodes as they are.
+ */
+export function withoutBrand(f: ObservatoryFilters | undefined): ObservatoryFilters | undefined {
+  if (!f || f.brand === undefined) return f;
+  const { brand: _brand, ...rest } = f;
+  void _brand;
+  return rest;
+}
+
+/** Query-key fragment: `{}` when there is no filter (default keys unchanged), `{ filters }` otherwise. */
+export function filterKey(f: ObservatoryFilters | undefined): { filters?: ObservatoryFilters } {
+  const a = activeFilters(f);
+  return a ? { filters: a } : {};
+}
+
+/** URL params for the filters that are set (undefined entries are dropped by `buildObservatoryUrl`). */
+export function filterParams(f: ObservatoryFilters | undefined): Record<string, string | undefined> {
+  const a = activeFilters(f);
+  return a ? { severity: a.severity, threat_type: a.threat_type, brand: a.brand } : {};
+}
+
 export const observatoryKeys = {
   all: ['observatory'] as const,
   /** Phase B lens endpoints share this root so `refreshObservatory` invalidates them too. */
   lens: (name: string, params: Record<string, string | number | null | undefined> = {}) => ['observatory', 'lens', name, params] as const,
-  nodes: (period: string, source: string, limit: number) => ['observatory', 'nodes', { period, source, limit }] as const,
-  stats: (period: string, source: string) => ['observatory', 'stats', { period, source }] as const,
-  arcs: (period: string, source: string) => ['observatory', 'arcs', { period, source }] as const,
+  nodes: (period: string, source: string, limit: number, filters?: ObservatoryFilters) => ['observatory', 'nodes', { period, source, limit, ...filterKey(filters) }] as const,
+  stats: (period: string, source: string, filters?: ObservatoryFilters) => ['observatory', 'stats', { period, source, ...filterKey(filters) }] as const,
+  arcs: (period: string, source: string, filters?: ObservatoryFilters) => ['observatory', 'arcs', { period, source, ...filterKey(filters) }] as const,
   heatmap: (period: string, source: string, limit: number) => ['observatory', 'heatmap', { period, source, limit }] as const,
   live: (source: string, limit: number) => ['observatory', 'live', { source, limit }] as const,
 };
@@ -154,6 +200,8 @@ interface CommonOptions {
 interface ListOptions extends CommonOptions {
   period?: string;
   source?: string;
+  /** Severity / threat type / brand. Only the ones that are set are sent (nodes, arcs and stats). */
+  filters?: ObservatoryFilters;
 }
 
 export function shape<T>(q: {
@@ -183,12 +231,13 @@ export function useObservatoryThreats(
   options: ListOptions & { limit?: number } = {},
 ): ObservatoryQueryResult<ThreatPoint[]> {
   const { period = '7d', source = 'all', limit = NODES_MAX_LIMIT, enabled = true } = options;
+  const filters = withoutBrand(options.filters);
   const safeLimit = clampLimit(limit, 1, NODES_MAX_LIMIT);
   const q = useQuery({
-    queryKey: observatoryKeys.nodes(period, source, safeLimit),
+    queryKey: observatoryKeys.nodes(period, source, safeLimit, filters),
     queryFn: async ({ signal }) =>
       (await fetchObservatory<ThreatPoint[]>(
-        buildObservatoryUrl('/api/observatory/nodes', { period, source_feed: sourceParam(source), limit: safeLimit }),
+        buildObservatoryUrl('/api/observatory/nodes', { period, source_feed: sourceParam(source), limit: safeLimit, ...filterParams(filters) }),
         signal,
       )) ?? [],
     enabled,
@@ -198,12 +247,12 @@ export function useObservatoryThreats(
 }
 
 export function useObservatoryStats(options: ListOptions = {}): ObservatoryQueryResult<ObservatoryStats> {
-  const { period = '7d', source = 'all', enabled = true } = options;
+  const { period = '7d', source = 'all', enabled = true, filters } = options;
   const q = useQuery({
-    queryKey: observatoryKeys.stats(period, source),
+    queryKey: observatoryKeys.stats(period, source, filters),
     queryFn: async ({ signal }) => {
       const data = await fetchObservatory<ObservatoryStats>(
-        buildObservatoryUrl('/api/observatory/stats', { period, source_feed: sourceParam(source) }),
+        buildObservatoryUrl('/api/observatory/stats', { period, source_feed: sourceParam(source), ...filterParams(filters) }),
         signal,
       );
       if (!data) throw new Error('Observatory stats unavailable');
@@ -216,12 +265,12 @@ export function useObservatoryStats(options: ListOptions = {}): ObservatoryQuery
 }
 
 export function useObservatoryArcs(options: ListOptions = {}): ObservatoryQueryResult<ArcData[]> {
-  const { period = '7d', source = 'all', enabled = true } = options;
+  const { period = '7d', source = 'all', enabled = true, filters } = options;
   const q = useQuery({
-    queryKey: observatoryKeys.arcs(period, source),
+    queryKey: observatoryKeys.arcs(period, source, filters),
     queryFn: async ({ signal }) =>
       (await fetchObservatory<ArcData[]>(
-        buildObservatoryUrl('/api/observatory/arcs', { period, source_feed: sourceParam(source) }),
+        buildObservatoryUrl('/api/observatory/arcs', { period, source_feed: sourceParam(source), ...filterParams(filters) }),
         signal,
       )) ?? [],
     enabled,

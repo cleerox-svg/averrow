@@ -213,7 +213,8 @@ describe('ObservatoryV3 lenses', () => {
     await waitFor(() => expect(called('/api/observatory/overindex')).toBe(true));
     expect(called('/api/observatory/operations-geo')).toBe(true);
     expect(called('/api/observatory/nodes')).toBe(true);
-    expect(urls().find(u => u.startsWith('/api/observatory/timeline'))).toBeUndefined(); // hosting has no replay bar
+    // hosting has no replay bar, but the country drawer's "vs prior period" reads the country's timeline (trend)
+    await waitFor(() => expect(urls().some(u => u.startsWith('/api/observatory/timeline') && u.includes('country=NL') && !u.includes('velocity'))).toBe(true));
   });
 
   it('a lens failure raises the banner for that lens only', async () => {

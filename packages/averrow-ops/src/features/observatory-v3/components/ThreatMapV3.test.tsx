@@ -368,6 +368,88 @@ describe('ThreatMapV3 motion policy', () => {
     expect(layerOf('particle-trails')).toBeDefined();
   });
 
+  const arcP = { sourcePosition: [10, 20] as [number, number], targetPosition: [-70, 40] as [number, number], threat_type: 'phishing', severity: 'high', source_region: 'NL', target_brand: 'b', brand_name: 'B', volume: 3 };
+
+  it('arcs are pickable through an invisible corridor layer with the Beams layer OFF (particles only)', () => {
+    render(<ThreatMapV3 {...base} showParticles showBeams={false} threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    const pick = layerOf('arc-pick')!;
+    expect(pick).toBeDefined();
+    expect(pick.props.pickable).toBe(true);
+    expect((pick.props.getColor as number[])[3]).toBeLessThan(5); // drawn as nothing
+    expect(pick.props.onClick).toBeTypeOf('function');
+    expect(layerOf('beam-core')).toBeUndefined();
+    // and it sits UNDER the nodes, so a node on a corridor still wins the pick
+    const ids = (overlays[0].props.layers as Array<{ props: { id: string } }>).map(l => l.props.id);
+    expect(ids.indexOf('arc-pick')).toBeLessThan(ids.indexOf('nodes-core'));
+  });
+
+  it('with beams on, the corridor layer owns picking (beam-core is draw-only)', () => {
+    render(<ThreatMapV3 {...base} showBeams threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    expect(layerOf('arc-pick')!.props.pickable).toBe(true);
+    expect(layerOf('beam-core')!.props.pickable).toBeFalsy();
+  });
+
+  it('no arcs visible (no particles, no beams): no corridor layer', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    expect(layerOf('arc-pick')).toBeUndefined();
+  });
+
+  it('threat nodes ease radius and colour over ~500 ms when the data changes', () => {
+    render(<ThreatMapV3 {...base} threats={[mk('critical')]} />);
+    ready();
+    const tr = layerOf('nodes-core')!.props.transitions as Record<string, { duration: number }>;
+    expect(tr.getRadius.duration).toBe(500);
+    expect(tr.getFillColor.duration).toBe(500);
+  });
+
+  it('node transitions are instant under reduced motion', () => {
+    stubMatchMedia(true);
+    render(<ThreatMapV3 {...base} threats={[mk('critical')]} />);
+    ready();
+    expect(layerOf('nodes-core')!.props.transitions).toBeUndefined();
+  });
+
+  it('a node that leaves the data is kept as a transparent ghost (so it fades out), and is never offered as a pick', () => {
+    const a = mk('critical', 1);
+    const b = mk('high', 5);
+    const { rerender } = render(<ThreatMapV3 {...base} threats={[a, b]} />);
+    ready();
+    rerender(<ThreatMapV3 {...base} threats={[a]} />);
+    const data = layerOf('nodes-core')!.props.data as Array<{ lat: number; threat_count: number }>;
+    expect(data).toHaveLength(2);
+    expect(data[1]!.threat_count).toBe(0);
+    const fill = layerOf('nodes-core')!.props.getFillColor as (d: unknown) => number[];
+    expect(fill(data[1])[3]).toBe(0);
+  });
+
+  it('the replay drops a dot at every arrival while particles play (static and settled under reduced motion)', () => {
+    render(<ThreatMapV3 {...base} showParticles threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    expect(layerOf('replay-dots')).toBeDefined();
+    expect(layerOf('replay-dots')!.props.pickable).toBe(false);
+  });
+
+  it('under reduced motion the replay dots are static: every one is drawn settled', () => {
+    stubMatchMedia(true);
+    render(<ThreatMapV3 {...base} showParticles threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    const dots = layerOf('replay-dots')!;
+    const r = dots.props.getRadius as (d: { time: number }) => number;
+    expect(r({ time: 1e9 })).toBeGreaterThan(0); // even a dot "from the future" is settled, not hidden
+    expect(r({ time: 1e9 })).toBeLessThan(4);
+  });
+
+  it('impact rings take their radius from the buffer (volume-sized), not a fixed 22px', () => {
+    render(<ThreatMapV3 {...base} showParticles threats={[mk('critical')]} arcs={[arcP]} />);
+    ready();
+    const rings = layerOf('impact-rings');
+    expect(rings).toBeDefined();
+    expect(rings!.props.getRadius).toBeTypeOf('function');
+  });
+
   it('node blooms and glows are capped smaller toward the world view (the stub camera sits at zoom 2), cores keep their size', () => {
     render(<ThreatMapV3 {...base} threats={[mk('critical'), mk('low', 4)]} />);
     ready();

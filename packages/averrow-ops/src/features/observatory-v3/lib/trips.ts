@@ -32,6 +32,8 @@ export interface TripDatum {
   color: Rgba;
   /** Severity of the arc (only critical / high arrivals earn an impact ring). */
   severity: string;
+  /** Threats the arc carries: sizes its impact ring and replay dot. */
+  volume?: number;
 }
 
 export function trailLengthFor(isMobile: boolean): number {
@@ -187,12 +189,12 @@ export function buildTripData(
         if (logical >= maxParticles) break;
         const tripStart = (start + offsetWithinLife + phase) % CYCLE_LENGTH;
         const stamps = (base: number) => path.map((_, idx) => base + (idx / (path.length - 1)) * tripSpan);
-        trips.push({ path, timestamps: stamps(tripStart), color, severity: arc.severity });
+        trips.push({ path, timestamps: stamps(tripStart), color, severity: arc.severity, volume: arc.volume });
         // The particle (plus its fading trail) outlives the cycle: when the
         // clock wraps to 0 it would vanish mid-flight. Emit a twin shifted one
         // cycle back so it carries on across the wrap.
         if (tripStart + tripSpan + trail > CYCLE_LENGTH) {
-          trips.push({ path, timestamps: stamps(tripStart - CYCLE_LENGTH), color, severity: arc.severity });
+          trips.push({ path, timestamps: stamps(tripStart - CYCLE_LENGTH), color, severity: arc.severity, volume: arc.volume });
         }
         logical++;
       }

@@ -12,6 +12,9 @@
  * `measure` (Baseline: Over-index | Raw | Bot share) are that lens's option. Old
  * `mode=heatmap` / `mode=bot_density` links still parse and are rewritten. `proj=globe` picks the globe projection
  * (flat is the default and is never written); it is a standing view setting, independent of the lens and the selection.
+ * `wall=1` is the wall-screen mode: it defaults the projection to the globe (so `proj` is written only when it differs from
+ * THAT default, i.e. `wall=1&proj=flat`), and the page hides the panel and the chrome that is not needed.
+ * `sev` (critical,high,medium,low), `type` (threat types) and `brand` are the data filters: empty = no filter, never written.
  * Params that aren't ours are left untouched.
  */
 
@@ -44,6 +47,43 @@ export const THREAT_VIEW_IDS = ['points', 'heat', 'fast'] as const;
  * ignored while it is on).
  */
 export type ThreatView = (typeof THREAT_VIEW_IDS)[number];
+
+export const SEVERITY_IDS = ['critical', 'high', 'medium', 'low'] as const;
+export type Severity = (typeof SEVERITY_IDS)[number];
+
+/** The `threats.threat_type` CHECK values: the only ones the API accepts for `threat_type` (anything else is a 400). */
+export const THREAT_TYPE_IDS = [
+  'botnet', 'c2', 'credential_harvesting', 'impersonation', 'malicious_ip', 'malicious_ssl',
+  'malware_distribution', 'phishing', 'scanning', 'typosquatting',
+] as const;
+const TYPE_SET: ReadonlySet<string> = new Set(THREAT_TYPE_IDS);
+/** A brand id, as the API takes it (`brand=<id>`). */
+const BRAND_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** Canonical severity list from a comma string: known ids only, in severity order, deduplicated. All four = no filter. */
+export function parseSeverities(raw: string | null | undefined): Severity[] {
+  if (!raw) return [];
+  const on = new Set(raw.split(',').map(x => x.trim().toLowerCase()));
+  const out = SEVERITY_IDS.filter(id => on.has(id));
+  return out.length === SEVERITY_IDS.length ? [] : out;
+}
+
+/** Threat types from a comma string: only the known ones, lower-case, deduplicated, sorted (a stable URL and query key). */
+export function parseTypes(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  for (const x of raw.split(',')) {
+    const t = x.trim().toLowerCase();
+    if (TYPE_SET.has(t)) seen.add(t);
+  }
+  return [...seen].sort();
+}
+
+/** A brand filter: one brand ID (not a name), or null when it is not a well-formed id. */
+export function parseBrand(raw: string | null | undefined): string | null {
+  const b = (raw ?? '').trim();
+  return BRAND_ID_RE.test(b) ? b : null;
+}
 
 export const COLOR_BY_IDS = ['severity', 'type'] as const;
 export type ColorBy = (typeof COLOR_BY_IDS)[number];
@@ -110,6 +150,14 @@ export interface ObservatoryUrlState {
   proj: Projection;
   /** Operations lens: include the clusters the backend flags as shared infrastructure (`shared=1`; off by default). */
   shared: boolean;
+  /** Wall-screen mode (`wall=1`): globe by default, no panel, no toolbar / rail / legend / replay bar; the idle spin keeps running. */
+  wall: boolean;
+  /** Severity filter (`sev=critical,high`). Empty = all. Applied to the threat nodes on the client (per-severity counts). */
+  sev: Severity[];
+  /** Threat-type filter (`type=phishing,malware`). Empty = all. Sent to the nodes / arcs / stats endpoints. */
+  type: string[];
+  /** Brand filter (`brand=<brand id>`). Sent to /arcs, /stats and /timeline; /nodes has no brand dimension (it would 400), so the node layer ignores it. */
+  brand: string | null;
 }
 
 /** The scene the map draws for a state. */
@@ -141,10 +189,17 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   measure: 'index',
   proj: DEFAULT_PROJECTION,
   shared: false,
+  wall: false,
+  sev: [],
+  type: [],
+  brand: null,
 };
 
+/** The projection a link without `proj` opens on: the globe on a wall screen, the flat map otherwise. */
+export const defaultProjectionFor = (wall: boolean): Projection => (wall ? 'globe' : DEFAULT_PROJECTION);
+
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared'] as const;
+export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared', 'wall', 'sev', 'type', 'brand'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -207,6 +262,7 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
   const nodeOk = selectable && !!rawNode && NODE_KEY_RE.test(rawNode);
   const arcOk = selectable && !nodeOk && !!rawArc && rawArc.length <= ARC_KEY_MAX;
   const parsedSel = selectable && !nodeOk && !arcOk ? parseSel(sp.get('sel')) : null;
+  const wall = sp.get('wall') === '1';
   return {
     lens,
     view,
@@ -221,8 +277,12 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     sel: parsedSel ? selValue(parsedSel.kind, parsedSel.id) : null,
     measure,
     // Absent / unknown = flat, so every pre-globe link keeps opening on the flat map.
-    proj: pick(PROJECTION_IDS, sp.get('proj'), DEFAULT_STATE.proj),
+    proj: pick(PROJECTION_IDS, sp.get('proj'), defaultProjectionFor(wall)),
     shared: sp.get('shared') === '1',
+    wall,
+    sev: parseSeverities(sp.get('sev')),
+    type: parseTypes(sp.get('type')),
+    brand: parseBrand(sp.get('brand')),
   };
 }
 
@@ -238,8 +298,12 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   const layers = serializeLayers(state.layers, state.lens);
   if (layers) out.set('layers', layers);
   if (measuresFor(state.lens).includes(state.measure) && state.measure !== DEFAULT_STATE.measure) out.set('measure', state.measure);
-  if (state.proj !== DEFAULT_STATE.proj) out.set('proj', state.proj);
+  if (state.proj !== defaultProjectionFor(state.wall)) out.set('proj', state.proj);
   if (state.shared) out.set('shared', '1');
+  if (state.wall) out.set('wall', '1');
+  if (state.sev.length > 0 && state.sev.length < SEVERITY_IDS.length) out.set('sev', SEVERITY_IDS.filter(id => state.sev.includes(id)).join(','));
+  if (state.type.length > 0) out.set('type', state.type.join(','));
+  if (state.brand) out.set('brand', state.brand);
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);
@@ -274,7 +338,9 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
     lensChanged ||
     (patch.view !== undefined && patch.view !== prev.view) ||
     (patch.period !== undefined && patch.period !== prev.period) ||
-    (patch.source !== undefined && patch.source !== prev.source);
+    (patch.source !== undefined && patch.source !== prev.source) ||
+    (patch.type !== undefined && patch.type.join() !== prev.type.join()) ||
+    (patch.brand !== undefined && patch.brand !== prev.brand);
   const next: ObservatoryUrlState = {
     ...prev,
     ...patch,
@@ -286,6 +352,10 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
     if (patch.layers === undefined) next.layers = lensPreset(next.lens);
   }
   if (next.lens !== 'threats') next.view = DEFAULT_STATE.view;
+  // Filters are normalised the way the URL parser would read them back, so state and URL never disagree.
+  next.sev = parseSeverities(next.sev.join(','));
+  next.type = parseTypes(next.type.join(','));
+  next.brand = parseBrand(next.brand);
   if (!measuresFor(next.lens).includes(next.measure)) next.measure = DEFAULT_STATE.measure;
   const setsSelection = patch.node !== undefined || patch.arc !== undefined || patch.sel !== undefined;
   if (viewChanged && !setsSelection) {

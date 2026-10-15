@@ -4,8 +4,9 @@ export { PulseExtension, type PulseExtensionProps } from './pulse-extension';
 export { RingExtension, type RingExtensionProps } from './ring-extension';
 export { RingMaskExtension, type RingMaskExtensionProps } from './ring-mask-extension';
 export { DashFlowExtension, cumulativeDistances, type DashFlowExtensionProps } from './dash-flow-extension';
-export { RingBuffer, ringBufferLayerProps, DEFAULT_RING_CAPACITY, type RingSpawn } from './ring-buffer';
-export { ImpactRingSpawner, type ImpactRingOptions } from './impact-rings';
+export { RingBuffer, ringBufferLayerProps, DEFAULT_RING_CAPACITY, DEFAULT_RING_RADIUS_PX, type RingSpawn } from './ring-buffer';
+export { ImpactRingSpawner, ringRadiusPx, RING_RADIUS_PX, RING_FULL_VOLUME, type ImpactRingOptions } from './impact-rings';
+export { replayDotState, sampleDots, POP_UNITS, MAX_REPLAY_DOTS, type DotState } from './replay-dots';
 export { ArrivalScheduler, buildArrivalEvents, type ArrivalEvent } from './arrivals';
 export { useDeckFrame, type DeckFrame, type UseDeckFrameOptions, type UseDeckFrameResult } from './use-deck-frame';
 export {

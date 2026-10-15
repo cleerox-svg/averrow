@@ -8,7 +8,9 @@
  *   - the density Heat view has no globe variant (deck.gl's HeatmapLayer aggregates in screen space): the button is
  *     disabled and says so IN TEXT next to it (a tooltip does not exist on touch), and the change is announced when
  *     Heat flips a requested globe flat and when the globe comes back;
- *   - 29px like MapLibre's own zoom buttons on a pointer device, 44px on touch.
+ *   - 29px tall like MapLibre's own zoom buttons on a pointer device, 44px on touch;
+ *   - on a pointer device it is NOT icon-only: it reads "Flat | Globe" with the current projection lit and a `G` key hint
+ *     (the shortcut lives in lib/shortcuts.ts, wired by the page); touch keeps the 44px icon.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -25,6 +27,8 @@ export interface ProjectionToggleProps {
   onToggle: (next: Projection) => void;
   /** 44px target (phones / touch). */
   touch?: boolean;
+  /** Show the "Flat | Globe" text and the `G` hint (default: on a pointer device, off on touch). */
+  showLabel?: boolean;
 }
 
 export function toggleLabel(projection: Projection, flatOnly: boolean): string {
@@ -32,7 +36,7 @@ export function toggleLabel(projection: Projection, flatOnly: boolean): string {
   return flatOnly ? 'Globe view (unavailable: heat view is flat-only)' : 'Globe view';
 }
 
-export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch = false }: ProjectionToggleProps) {
+export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch = false, showLabel = !touch }: ProjectionToggleProps) {
   const [announcement, setAnnouncement] = useState('');
   const say = (msg: string) => setAnnouncement(prev => (prev === msg ? `${msg}​` : msg));
   const globe = projection === 'globe';
@@ -70,17 +74,29 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
         aria-pressed={globe}
         aria-disabled={flatOnly || undefined}
         aria-describedby={flatOnly ? reasonId : undefined}
-        title={flatOnly ? HEAT_FLAT_ONLY : 'Globe view'}
+        aria-keyshortcuts="G"
+        title={flatOnly ? HEAT_FLAT_ONLY : globe ? 'Switch to the flat map (G)' : 'Switch to the globe (G)'}
         onClick={flatOnly ? undefined : () => { const next: Projection = globe ? 'flat' : 'globe'; onToggle(next); say(next === 'globe' ? 'Projection: globe' : 'Projection: flat map'); }}
         className="ds-focusable"
         style={{
-          width: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: showLabel ? 'auto' : size, minWidth: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          gap: showLabel ? 6 : 0, padding: showLabel ? '0 8px' : undefined,
           opacity: flatOnly ? 0.45 : 1, cursor: flatOnly ? 'not-allowed' : 'pointer',
           // pressed = the globe is on: MapLibre's control chrome with the console's amber for the on state
           color: globe && !flatOnly ? 'var(--amber-dim, #B8821F)' : '#333',
         }}
       >
         {globe ? <MapIcon size={touch ? 18 : 16} aria-hidden /> : <Globe2 size={touch ? 18 : 16} aria-hidden />}
+        {showLabel && (
+          <>
+            <span data-projection-label className="font-mono" style={{ fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap' }}>
+              <span style={{ fontWeight: globe ? 400 : 700, opacity: globe ? 0.55 : 1 }}>Flat</span>
+              <span aria-hidden style={{ opacity: 0.4 }}> | </span>
+              <span style={{ fontWeight: globe ? 700 : 400, opacity: globe ? 1 : 0.55 }}>Globe</span>
+            </span>
+            <kbd className="font-mono" aria-hidden style={{ fontSize: 10, lineHeight: 1, padding: '1px 4px', borderRadius: 4, border: '1px solid rgba(0,0,0,0.25)', opacity: 0.7 }}>G</kbd>
+          </>
+        )}
       </button>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
     </div>

@@ -25,6 +25,12 @@
  *     reduced motion (then: static, with static beams standing in for particles).
  *   - Labels are placed in SCREEN space (lib/label-placement.ts) when the camera
  *     settles (`moveend`), never per frame.
+ *   - A scene change (lens / option) cross-fades
+ *   - Threat nodes ease their radius and colour (~500 ms deck.gl `transitions`) when the data changes: they are laid out by
+ *     stable id into fixed slots (lib/node-transitions.ts) so deck.gl interpolates each node with ITSELF; absent nodes
+ *     fade out as ghosts. Instant under reduced motion.
+ *   - ARC PICKING does not depend on the Beams layer: an invisible, wide corridor layer is pickable whenever particles or
+ *     beams are drawn. The replay also drops a faint dot at every arrival (it pops in at its timestamp, then settles).
  *   - A scene change (lens / option) cross-fades: the previous scene is kept
  *     ~200ms and faded out while the new one fades in over 240ms, both read from
  *     the frame clock (lib/motion.ts), not from a CSS timer.
@@ -66,8 +72,11 @@ import { ProjectionToggle } from './ProjectionToggle';
 import {
   useDeckFrame, PulseExtension, RingExtension, RingBuffer, ringBufferLayerProps, ImpactRingSpawner,
   ArrivalScheduler, buildArrivalEvents, phaseForKey, pulseRateForSeverity, pulseAmpForSeverity,
+  ringRadiusPx, replayDotState, sampleDots, DEFAULT_RING_RADIUS_PX,
   type PulseExtensionProps, type RingExtensionProps, type ArrivalEvent,
 } from '../anim';
+import { useSlottedNodes, nodeTransitions, isGhostNode } from '../lib/node-transitions';
+import { moveLabelMinZoom } from '../lib/lens/movement';
 import {
   clampCardPosition, type MapSelection,
 } from '../lib/selection';
@@ -77,7 +86,7 @@ import {
   type LensLayerInput, type LensPick, type LensHover, type LensPickHandlers,
 } from '../layers/lens-layers';
 import {
-  edgeLabelSources, labelledEdges, opNodeLabelSources, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
+  edgeLabelSources, labelledEdges, opNodeLabelSources, hostLabelSources, actorLabelSources, moveLabelSources, placeLensLabels, stablePlacement, NO_LABELS,
   type PlacedLabels, type PlaceInput, type Project,
 } from '../layers/lens-labels';
 import { visibleEdges } from '../lib/lens/operations';
@@ -114,6 +123,8 @@ const PICK_RADIUS_TOUCH = 16;
 const EMPTY_THREATS: ThreatPoint[] = [];
 const EMPTY_ARCS: ArcData[] = [];
 const EMPTY_HEAT: HeatmapPoint[] = [];
+/** Width (px) of the invisible arc-picking corridor, on top of the pick radius: a corridor is thin, a fingertip is not. */
+const ARC_PICK_PX = { fine: 10, touch: 20 } as const;
 /** The loop keeps running this long after a trigger (ring life) so spawned rings can finish. */
 const LOOP_HOLD_MS = 2800;
 
@@ -413,11 +424,12 @@ function ThreatMapV3Inner({
   /** A click deck.gl delivered itself while the interleaved (globe) overlay is up: dropped, `onMapClick` owns clicks there. */
   const deckNativeClick = useCallback(() => overlayInterleavedRef.current && !dispatchingClickRef.current, []);
   const handlers = useMemo(() => ({
-    hover: (info: Pick<ThreatPoint>) => setTooltip(info.object ? { x: info.x, y: info.y, threat: info.object } : null),
+    hover: (info: Pick<ThreatPoint>) => setTooltip(info.object && !isGhostNode(info.object) ? { x: info.x, y: info.y, threat: info.object } : null),
     hoverArc: (info: Pick<ArcData>) => setTooltip(info.object ? { x: info.x, y: info.y, arc: info.object } : null),
     clickNode: (info: Pick<ThreatPoint>) => {
       if (deckNativeClick()) return true;
-      if (!info.object) return false;
+      // A fading ghost (a node absent from this period) is not there: the click falls through to the empty map.
+      if (!info.object || isGhostNode(info.object)) return false;
       const sel: MapSelection = { kind: 'node', node: info.object };
       setTooltip(null);
       latest.current.onSelect?.(sel);
@@ -458,7 +470,7 @@ function ThreatMapV3Inner({
     // Map-level click: only reached for empty-map clicks (layer handlers return true).
     clickEmpty: (info: PickingInfo) => {
       if (deckNativeClick()) return;
-      if (info.object) return;
+      if (info.object && !isGhostNode(info.object)) return;
       pinnedRef.current = null;
       setTooltip(null);
       latest.current.onSelect?.(null);
@@ -734,6 +746,12 @@ function ThreatMapV3Inner({
   );
   // Reduced motion: the corridors the particles would have run along stay visible as static beams.
   const beamsOn = showBeams || policy.staticBeams;
+  // Arcs are visible (so pickable) whenever the particles or the beams are drawn; picking does not need the Beams toggle.
+  const arcsVisible = beamsOn || policy.flow;
+  // The nodes the layer draws: laid out by stable id so a period / filter change eases each node into its new radius and
+  // colour (and fades the ones that left). Under reduced motion this is the plain array and nothing animates.
+  const nodeData = useSlottedNodes(geoThreats, !reducedMotion);
+  const nodeTrans = useMemo(() => nodeTransitions(reducedMotion), [reducedMotion]);
 
   const tripData = useMemo(
     () => buildTripData(geoArcs, colorBy, isMobile, periodToMs(period), replayNowMs, projection),
@@ -752,19 +770,40 @@ function ThreatMapV3Inner({
     const arcPath = (d: ArcData) => arcPathFor(d, projection);
 
     if (mapMode === 'global') {
-      if (showNodes && geoThreats.length > 0) {
+      // The invisible arc-picking corridor goes UNDER the nodes (first in the list), so a node on a corridor still wins.
+      if (arcsVisible && geoArcs.length > 0) {
+        layers.push(new PathLayer<ArcData>({
+          id: 'arc-pick',
+          data: geoArcs,
+          getPath: arcPath,
+          // Alpha 1/255: drawn as nothing, but not alpha 0, which deck.gl's picking pass skips.
+          getColor: [255, 255, 255, 1],
+          getWidth: isMobile ? ARC_PICK_PX.touch : ARC_PICK_PX.fine,
+          widthUnits: 'pixels',
+          pickable: true,
+          onHover: handlers.hoverArc,
+          onClick: handlers.clickArc,
+          updateTriggers: { getPath: projection },
+        }));
+      }
+      if (showNodes && nodeData.length > 0) {
         layers.push(
           new ScatterplotLayer<ThreatPoint>({
             id: 'nodes-core',
-            data: geoThreats,
+            data: nodeData,
             getPosition: d => [d.lng, d.lat],
-            getRadius: d => Math.sqrt(Math.max(1, d.threat_count)) * 1440,
-            getFillColor: d => getSeverityColor(d.top_severity?.toLowerCase() || 'low'),
+            getRadius: d => (isGhostNode(d) ? 0 : Math.sqrt(Math.max(1, d.threat_count)) * 1440),
+            // A ghost (a node that left the data) fades to transparent instead of vanishing.
+            getFillColor: d => {
+              const c = getSeverityColor(d.top_severity?.toLowerCase() || 'low');
+              return isGhostNode(d) ? [c[0], c[1], c[2], 0] as Rgba : c;
+            },
             stroked: true, filled: true,
             radiusMinPixels: 1.5, radiusMaxPixels: 9,
             pickable: true,
             onHover: handlers.hover,
             onClick: handlers.clickNode,
+            transitions: nodeTrans,
           }),
         );
       }
@@ -795,9 +834,6 @@ function ThreatMapV3Inner({
             widthMinPixels: isMobile ? 2 : 1,
             widthMaxPixels: isMobile ? 3 : 1,
             updateTriggers: { getColor: [colorBy, lift], getPath: projection },
-            pickable: true,
-            onHover: handlers.hoverArc,
-            onClick: handlers.clickArc,
           }),
         );
       }
@@ -866,7 +902,7 @@ function ThreatMapV3Inner({
     // selectedNode/selectedArc are keyed by id so a data refetch that returns
     // an equal object doesn't rebuild.
   }, [
-    geoThreats, geoArcs, targetNodes, beamsOn, policy.staticBeams, showNodes, colorBy, mapMode, geoHeat,
+    nodeData, nodeTrans, arcsVisible, geoArcs, targetNodes, beamsOn, policy.staticBeams, showNodes, colorBy, mapMode, geoHeat,
     isMobile, handlers, selectedNodeId, selectedArcId, projection,
   ]);
 
@@ -929,19 +965,36 @@ function ThreatMapV3Inner({
   // Impact rings: a fixed 256-slot pool (typed arrays) behind ONE layer; arrivals
   // overwrite the oldest slot and bump `version`, so nothing is reallocated.
   const [ringBuffer] = useState(() => new RingBuffer());
-  const spawner = useMemo(() => new ImpactRingSpawner(ringBuffer), [ringBuffer]);
+  // Each ring is sized by the volume of the arc that lands (log-scaled between a min and a max, see ringRadiusPx).
+  const spawner = useMemo(() => new ImpactRingSpawner(ringBuffer, { radiusFor: e => ringRadiusPx(e.volume, isMobile) }), [ringBuffer, isMobile]);
+  const arrivalEvents = useMemo(() => buildArrivalEvents(tripData, CYCLE_LENGTH), [tripData]);
   // Only critical / high arrivals earn a ring: the rest land quietly.
   const scheduler = useMemo(
-    () => new ArrivalScheduler(buildArrivalEvents(tripData, CYCLE_LENGTH).filter(e => isLoudSeverity(e.severity)), CYCLE_LENGTH),
-    [tripData],
+    () => new ArrivalScheduler(arrivalEvents.filter(e => isLoudSeverity(e.severity)), CYCLE_LENGTH),
+    [arrivalEvents],
   );
+  // Replay: every arrival leaves a dot that pops in at its timestamp and settles faint (static under reduced motion).
+  const replayDots = useMemo(() => sampleDots(arrivalEvents), [arrivalEvents]);
+  const replayDotsOn = mapMode === 'global' && showParticles && replayDots.length > 0;
+  const makeReplayDots = useCallback((t: number) => new ScatterplotLayer<ArrivalEvent>({
+    id: 'replay-dots',
+    data: replayDots,
+    getPosition: d => [d.lng, d.lat],
+    radiusUnits: 'pixels',
+    getRadius: d => replayDotState(t, d.time, reducedMotion).radius,
+    getFillColor: d => { const s = replayDotState(t, d.time, reducedMotion); return [d.color[0], d.color[1], d.color[2], s.alpha] as Rgba; },
+    pickable: false,
+    // The playhead is the only thing that moves: the data stays put and the accessors are re-read as it advances.
+    updateTriggers: { getRadius: [t, reducedMotion], getFillColor: [t, reducedMotion] },
+  }), [replayDots, reducedMotion]);
   // A new data set invalidates old rings (their targets may be gone).
   useEffect(() => { ringBuffer.clear(); spawner.reset(); }, [scheduler, ringBuffer, spawner]);
 
   const makeRings = useCallback((animTime: number) => new ScatterplotLayer<number, RingExtensionProps<number>>({
     id: 'impact-rings',
     ...ringBufferLayerProps(ringBuffer),
-    getRadius: isMobile ? 16 : 22,
+    // Per-ring radius from the buffer (volume-sized, min..max); a ring spawned without one gets the default.
+    getRadius: ringBuffer.getRadius,
     radiusUnits: 'pixels',
     stroked: true,
     filled: false,
@@ -952,7 +1005,7 @@ function ThreatMapV3Inner({
     ringFrom: 0.12,
     ringTo: 1,
     animTime,
-  }), [ringBuffer, isMobile]);
+  }), [ringBuffer]);
 
   // ─── Phase B lenses ───────────────────────────────────────
   // Labels that fit at the current camera (placed when it settles, see recomputeLabels).
@@ -972,18 +1025,20 @@ function ThreatMapV3Inner({
     const ops = lens.layers.operations ? lens.operations : null;
     const host = lens.layers.hosting ? lens.hosting : null;
     const actors = lens.layers.actors ? lens.actors : null;
-    if (!ops && !host && !actors) return null;
+    const movement = lens.layers.movement ? lens.movement : null;
+    if (!ops && !host && !actors && !movement) return null;
     const edges = ops ? edgeLabelSources(labelledEdges(visibleEdges(ops, lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId, lens.sel.previewOpId ?? null), lens.sel.opId ?? '', projection) : [];
     const opNodes = ops ? opNodeLabelSources(ops) : [];
     const hosts = host ? hostLabelSources(host, lens.sel.providerId ?? '') : [];
     const range = ops ? opCountRange(ops) : null;
     const actorLabels = actors && !actors.empty ? actorLabelSources(actors) : [];
+    const moves = movement ? moveLabelSources(movement, lens.sel.movementId ?? '') : [];
     const nodes = [
       ...(ops && range ? ops.nodes.map(n => ({ position: n.position, radiusPx: opNodePx(n.opCount, range), id: n.country })) : []),
       ...(host ? host.rings.map(r => ({ position: r.position, radiusPx: r.radiusPx, id: r.id })) : []),
       ...actorLabels.map(a => ({ position: a.position, radiusPx: a.radiusPx, id: a.id })),
     ];
-    return { opNodes, edges, hosts, actors: actorLabels, nodes };
+    return { opNodes, edges, hosts, actors: actorLabels, moves, nodes };
   }, [lens, mapMode, projection]);
 
   /** The idle spin is turning the globe: labels (placed for a still camera) stay hidden until it stops. */
@@ -1008,7 +1063,9 @@ function ThreatMapV3Inner({
       const p = map.project([lng, lat]);
       return Number.isFinite(p.x) && Number.isFinite(p.y) ? { x: p.x, y: p.y, fade } : null;
     };
-    const next = placeLensLabels(labelInputs, project, canvasSize);
+    // Movement words are left out at the world view, where the trails converge and they would pile up.
+    const moves = labelInputs.moves && labelInputs.moves.length > 0 && map.getZoom() < moveLabelMinZoom(projectionRef.current, canvasSize) ? [] : labelInputs.moves;
+    const next = placeLensLabels(moves === labelInputs.moves ? labelInputs : { ...labelInputs, moves }, project, canvasSize);
     setLabels(prev => stablePlacement(prev, next));
   }, [labelInputs, canvasSize]);
   /** The latest placement, for callbacks that outlive a render (the post-flip `idle` handler). */
@@ -1083,6 +1140,7 @@ function ThreatMapV3Inner({
   const compose = useCallback((seconds: number, t: number): Layer[] => {
     const layers: Layer[] = [...lensBase, ...makeGlow(seconds), ...staticLayers];
     if (lensInput) layers.push(...buildLensLayers(lensInput, { seconds, t }));
+    if (replayDotsOn) layers.push(makeReplayDots(t));
     if (particlesOn) layers.push(makeTrips(t));
     if (ringsOn) layers.push(makeRings(seconds));
     if (movementOn) layers.push(makeRingLayer('movement-rings', moveBuffer, 26, 1.5, seconds));
@@ -1117,7 +1175,7 @@ function ThreatMapV3Inner({
       for (const l of outgoing) if (easeOut.has(l.id)) mixed.push(l.clone({ id: `out:${l.id}`, opacity: fade.outgoing, pickable: false }));
     }
     return mixed;
-  }, [lensBase, lensInput, makeGlow, staticLayers, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings, reducedMotion]);
+  }, [lensBase, lensInput, makeGlow, staticLayers, replayDotsOn, makeReplayDots, particlesOn, makeTrips, ringsOn, makeRings, movementOn, makeRingLayer, moveBuffer, pingBuffer, isMobile, mapMode, staticPings, reducedMotion]);
 
   // ─── Projection: flat <-> globe ───────────────────────────
   // Declared BEFORE the overlay effect: the overlay reads the map's projection when it is built.

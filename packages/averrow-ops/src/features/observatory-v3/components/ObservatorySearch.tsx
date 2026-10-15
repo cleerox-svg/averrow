@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Search, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { buildSearchIndex, runSearch, kindNoun, type SearchData, type SearchResult } from '../lib/search';
+import { buildSearchIndex, runSearch, kindNoun, type SearchData, type SearchKind, type SearchResult } from '../lib/search';
 
 export interface ObservatorySearchProps {
   data: SearchData;
@@ -32,9 +32,16 @@ export interface ObservatorySearchProps {
   openerRef?: MutableRefObject<HTMLElement | null>;
   /** Phone: the field is shown open in-flow (the page toggles it), no popover chrome. */
   inline?: boolean;
+  /** Only offer results of these kinds (the brand filter picks `['brand']`). Default: every kind. */
+  kinds?: readonly SearchKind[];
+  /** Field label and placeholder (default "Find on map"): a second search on the page needs its own accessible name. */
+  label?: string;
+  placeholder?: string;
+  /** Show the results in the flow of the page instead of floating over it (inside a scrolling popover a floating list is clipped). */
+  flowList?: boolean;
 }
 
-export function ObservatorySearch({ data, onPick, onActivate, className, touch = false, collapsed = false, openerRef, inline = false }: ObservatorySearchProps) {
+export function ObservatorySearch({ data, onPick, onActivate, className, touch = false, collapsed = false, openerRef, inline = false, kinds, label = 'Find on map', placeholder, flowList = false }: ObservatorySearchProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -46,7 +53,8 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
   const listId = useId();
 
   const index = useMemo(() => buildSearchIndex(data), [data]);
-  const results = useMemo(() => runSearch(index, query), [index, query]);
+  const allResults = useMemo(() => runSearch(index, query), [index, query]);
+  const results = useMemo(() => (kinds ? allResults.filter(r => kinds.includes(r.kind)) : allResults), [allResults, kinds]);
 
   useEffect(() => { setActive(0); }, [query]);
 
@@ -137,7 +145,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         ref={inputRef}
         type="text"
         role="combobox"
-        aria-label="Find on map"
+        aria-label={label}
         aria-expanded={showList}
         aria-controls={listId}
         aria-haspopup="listbox"
@@ -145,7 +153,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         aria-activedescendant={showList && results[active] ? optionId(active) : undefined}
         autoComplete="off"
         spellCheck={false}
-        placeholder="Find on map…"
+        placeholder={placeholder ?? `${label}…`}
         value={query}
         onChange={e => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); activate(); }}
@@ -174,7 +182,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
         role="listbox"
         aria-label="Search results"
         hidden={!showList}
-        className="absolute left-0 right-0 mt-1 rounded-xl overflow-hidden list-none p-1 m-0"
+        className={cn('left-0 right-0 mt-1 rounded-xl overflow-hidden list-none p-1 m-0', flowList ? 'relative' : 'absolute')}
         style={{
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-base)',
