@@ -321,13 +321,15 @@ describe.skipIf(!hasSqlite())("filtered results over seeded cubes", () => {
 
   it("arcs: brand + severity + threat_type filter the arcs cube; a filtered empty result never falls back to raw threats", async () => {
     const { env, log } = makeEnv(db);
-    type Arc = { source_region: string; target_brand: string; threat_type: string; volume: number; severity: string };
+    type Arc = { source_region: string; target_brand: string; target_brand_id: string | null; threat_type: string; volume: number; severity: string };
     const all = await body<Arc[]>(await handleObservatoryArcs(req("/api/observatory/arcs?period=7d"), env));
     expect(all.data.map((a) => `${a.source_region}>${a.target_brand}:${a.threat_type}=${a.volume}`).sort()).toEqual([
       "RU>DHL:malware_distribution=5", "RU>PayPal:malware_distribution=2", "US>PayPal:c2=3", "US>PayPal:phishing=5",
     ]);
+    // Every arc carries its brand id: the client filters by id, never by looking a name up.
+    expect(all.data.map((a) => `${a.target_brand}=${a.target_brand_id}`).sort()).toEqual(["DHL=b_dhl", "PayPal=b_pay", "PayPal=b_pay", "PayPal=b_pay"]);
     const dhl = await body<Arc[]>(await handleObservatoryArcs(req("/api/observatory/arcs?period=7d&brand=b_dhl"), env));
-    expect(dhl.data).toEqual([expect.objectContaining({ source_region: "RU", target_brand: "DHL", volume: 5, severity: "high" })]);
+    expect(dhl.data).toEqual([expect.objectContaining({ source_region: "RU", target_brand: "DHL", target_brand_id: "b_dhl", volume: 5, severity: "high" })]);
     const pay = await body<Arc[]>(await handleObservatoryArcs(req("/api/observatory/arcs?period=30d&brand=b_pay&threat_type=phishing&severity=high,critical"), env));
     // 30d includes the 200h-old high phishing row → volume 9, top severity critical.
     expect(pay.data).toEqual([expect.objectContaining({ source_region: "US", threat_type: "phishing", volume: 9, severity: "critical" })]);

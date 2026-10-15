@@ -678,6 +678,8 @@ export interface ArcRow extends SeverityCounts {
   source_lng: number | null;
   threat_type: string;
   source_country: string | null;
+  /** `brands.id` (the cube/threat row's `target_brand_id`): the Observatory's brand filter is this id, not the name. */
+  target_brand_id: string | null;
   target_brand: string | null;
   target_domain: string | null;
   target_sector: string | null;
@@ -698,6 +700,8 @@ export interface ArcAssembly {
     severity: RankedSeverity;
     source_region: string;
     target_brand: string;
+    /** `brands.id`: what `?brand=` takes on /arcs, /stats and /timeline. Null only if the row carried none. */
+    target_brand_id: string | null;
     brand_name: string | null;
     volume: number;
     first_seen: string | null;
@@ -736,6 +740,7 @@ export function assembleArcs(rows: ArcRow[]): ArcAssembly {
       severity: topSeverity(row),
       source_region: row.source_country && row.source_country !== "XX" ? row.source_country : "Unknown",
       target_brand: row.target_brand ?? "Unknown",
+      target_brand_id: row.target_brand_id ?? null,
       brand_name: row.target_brand ?? null,
       volume: row.volume,
       first_seen: row.first_seen,
@@ -804,6 +809,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
         ROUND(SUM(c.source_lng * c.threat_count) / SUM(CASE WHEN c.source_lng IS NOT NULL THEN c.threat_count END), 1) AS source_lng,
         c.threat_type,
         c.country_code              AS source_country,
+        c.target_brand_id           AS target_brand_id,
         b.name                      AS target_brand,
         b.canonical_domain          AS target_domain,
         b.sector                    AS target_sector,
@@ -843,6 +849,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
           ROUND(AVG(t.lng), 1) AS source_lng,
           COALESCE(t.threat_type, 'unknown') AS threat_type,
           COALESCE(t.country_code, 'XX') AS source_country,
+          t.target_brand_id AS target_brand_id,
           b.name AS target_brand,
           b.canonical_domain AS target_domain,
           b.sector AS target_sector,
@@ -1065,6 +1072,7 @@ export async function handleObservatoryBrandArcs(request: Request, env: Env): Pr
 
     const assembled = assembleArcs(resultRows.map((r) => ({
       ...r,
+      target_brand_id: brand.id,
       target_brand: brand.name,
       target_domain: brand.canonical_domain,
       target_sector: null,
