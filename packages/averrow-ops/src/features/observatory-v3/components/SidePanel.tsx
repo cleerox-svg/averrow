@@ -591,32 +591,26 @@ interface SidePanelProps {
   visible: boolean;
   /** Selects a node on the map (keyboard path from the Top Threat Origins rows). */
   onSelectNode?: (node: ThreatPoint) => void;
-  /** `dock` (default): right column under the toolbar. `overlay`: tablet float over the map. */
-  placement?: 'dock' | 'overlay';
   /**
-   * R10 mobile chrome (C2): when true, renders full-width and in-flow
-   * (no fixed w-80 / absolute right-dock chrome) so the SAME widget set
-   * can be embedded inside a mobile bottom-sheet drawer instead of the
-   * desktop right-docked panel. The caller supplies the sheet's own
-   * background/scroll container — see ObservatoryV3.tsx. Desktop
-   * (`mobile` omitted/false) is unchanged.
+   * R10 mobile chrome (C2): when true, the widgets are wrapped full-width for the
+   * phone's PeekSheet. Either way they are in-flow content: the PanelDock (desktop)
+   * or the sheet (phone) supplies the background and the scroll container — see
+   * ObservatoryV3.tsx.
    */
   mobile?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mobile = false, onSelectNode }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
 
-  // Desktop keeps its own scroll container (`flex-1 overflow-y-auto`); the
-  // mobile variant renders inside the BottomSheet, which already owns the
-  // single scroll container for its content — a second one here would
-  // double-scroll.
+  // In-flow widgets with no scroller of their own: the PanelDock (desktop) or the sheet (phone) owns the single scroll
+  // container — a second one here would double-scroll.
   const widgets = (
     <div // Cards are `overflow:hidden`, so as flex items they would shrink to fit and clip their
     // content instead of letting the container scroll — `[&>*]:shrink-0` keeps natural height.
-    className={mobile ? 'flex flex-col gap-3 p-3 [&>*]:shrink-0' : 'flex flex-col gap-3 p-3 flex-1 min-h-0 overflow-y-auto [&>*]:shrink-0'}>
+    className="flex flex-col gap-3 p-3 [&>*]:shrink-0">
       {filtered && (
         <div
           className="px-2 py-1.5 rounded text-[10px] font-mono"
@@ -661,32 +655,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
     </div>
   );
 
-  if (mobile) {
-    // Full-width, in-flow — the drawer shell (ObservatoryV3.tsx) owns
-    // background, border, positioning and the scrollable container.
-    return <div className="w-full"><PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary></div>;
-  }
-
-  return (
-    // top-[60px] sits the panel under the console toolbar; bottom-[76px] reserves the
-    // same stats-bar (36) + ticker (40) band as ObservatoryV3.tsx's map container and
-    // stats bar (desktop-only — this branch never renders on mobile), so the panel's
-    // own bottom edge stays flush with the top of that chrome strip.
-    <aside
-      aria-label="Intelligence panel"
-      className={placement === 'overlay'
-        ? 'absolute top-[60px] right-3 bottom-[88px] z-20 w-80 max-w-[calc(100%-24px)] flex flex-col overflow-hidden rounded-xl animate-drawer-in motion-reduce:animate-none'
-        : 'absolute top-[60px] right-0 bottom-[76px] z-20 w-80 flex flex-col overflow-hidden animate-drawer-in motion-reduce:animate-none'}
-      style={{
-        background: 'var(--bg-card-deep)',
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
-        border: placement === 'overlay' ? '1px solid var(--border-base)' : undefined,
-        borderLeft: '1px solid var(--border-base)',
-        boxShadow: placement === 'overlay' ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
-      }}
-    >
-      <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>
-    </aside>
-  );
+  const panel = <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>;
+  // Full-width, in-flow — the drawer shell (ObservatoryV3.tsx) owns background, border, positioning and the scroll.
+  return mobile ? <div className="w-full">{panel}</div> : panel;
 }

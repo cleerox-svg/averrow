@@ -54,7 +54,7 @@ describe('short viewports (landscape phones)', () => {
     // a short desktop window keeps the desktop chrome
     expect(computeLayout({ mapWidth: 1300, viewportWidth: 1400, viewportHeight: 500 })).toMatchObject({ short: true, compact: false, tier: 'desktop' });
   });
-  it('compact: one chrome row, no ticker, so the map keeps most of the height', () => {
+  it('compact: one chrome row, no headline bar, so the map keeps most of the height', () => {
     expect(tall.topInset).toBeGreaterThan(110);
     expect(land.topInset).toBeLessThan(70);
     expect(tall.bottomBand).toBe(108);

@@ -47,6 +47,7 @@ import { buildGeoCubeForHour, buildProviderCubeForHour, buildBrandCubeForHour, b
 import type { CubeBuildResult } from '../lib/cube-builder';
 import { handleObservatoryNodes, handleObservatoryArcs, handleObservatoryStats, handleObservatoryLive, handleObservatoryHeatmap } from '../handlers/observatory';
 import { markCacheRefresh } from '../lib/cache-refresh';
+import { handleObservatoryEvents } from '../handlers/observatoryEvents';
 import { handleDashboardOverview } from '../handlers/dashboard';
 import { handleListAgents } from '../handlers/agents';
 import { handleAdminDashboard } from '../handlers/admin';
@@ -95,10 +96,13 @@ export interface NavigatorWarmTarget {
 }
 
 /**
- * Synthetic super_admin context for warming the admin dashboard snapshot
- * (handleAdminDashboard gates its threat_health slice on role). Warming is
- * a trusted internal cron path — this ctx never authorizes a request, it
- * only selects which role-scoped cache variant to populate.
+ * Synthetic super_admin context for the role-scoped warms: the admin
+ * dashboard snapshot (handleAdminDashboard gates its threat_health slice on
+ * role) and the Observatory event rail (its `takedown` kind, and so its cache
+ * key's role segment, depends on `manage_takedowns` — super_admin, admin and
+ * analyst share the warmed `td` variant). Warming is a trusted internal cron
+ * path — this ctx never authorizes a request, it only selects which
+ * role-scoped cache variant to populate.
  */
 const DASHBOARD_WARM_CTX: AuthContext = {
   userId: 'navigator',
@@ -122,6 +126,12 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   { phase: 'A', path: '/api/observatory/stats?period=7d', consumer: 'ops ObservatoryV3 + SidePanel (useObservatoryStats); MCP smoke probe', handler: handleObservatoryStats },
   { phase: 'A', path: '/api/observatory/live?limit=8', consumer: 'ops SidePanel LiveFeedWidget', handler: handleObservatoryLive },
   { phase: 'A', path: '/api/v1/operations?limit=4&offset=0&status=active', consumer: 'ops SidePanel OperationsWidget (useOperations)', handler: handleListOperations },
+  // Event rail default (1h, 40 items, every kind). Written as a
+  // manage_takedowns holder — the `td` key segment super_admin / admin /
+  // analyst read; sales / support / billing / auditor read the `notd` variant
+  // and fill it on their own miss. 60s TTL, so (like live) every warm
+  // recomputes; the 1h window keeps that cheap.
+  { phase: 'A', path: '/api/observatory/events?period=1h&limit=40', consumer: 'ops Observatory headline bar + event rail (useObservatoryEvents default request)', handler: (req, env) => handleObservatoryEvents(req, env, DASHBOARD_WARM_CTX) },
 
   // ── Phase A2 — Observatory alternate periods + heatmap ──
   // Heatmap is a non-default mode (the landing page renders the globe), so it
@@ -642,11 +652,11 @@ async function runNavigatorImpl(
   //   Phase C   — every 30 min (Brands + Threat Actors)
   //
   // The exact targets (and the consumer each serves) are the module-level
-  // NAVIGATOR_WARM_TARGETS table — 22 warms across the four phases.
+  // NAVIGATOR_WARM_TARGETS table — 23 warms across the four phases.
   //
   // Warm CALLS over a 30-day month if Navigator runs clean (*/5 cron =
   // 8,640 ticks; the minute gates below pick the subset each phase runs on):
-  //   A:  5 warms × 4,320 ticks (minute % 10) = 21,600
+  //   A:  6 warms × 4,320 ticks (minute % 10) = 25,920
   //   A2: 7 warms × 2,880 ticks (minute % 15) = 20,160
   //   B:  6 warms × 2,880 ticks (minute % 15) = 17,280
   //   C:  4 warms × 1,440 ticks (minute % 30) =  5,760
@@ -658,6 +668,11 @@ async function runNavigatorImpl(
   //   - arcs 7d (7200s TTL): recompute once age ≥ 5340s (~1 in 9 warms);
   //   - live (60s TTL): always expired by the next warm → recompute (cheap,
   //     LIMIT 8 on an index);
+  //   - events 1h (600s TTL, cachedValue — not refresh-aware): the TTL equals the
+  //     Phase A interval, so each warm lands as the previous entry expires and
+  //     recomputes once (~2 cube-hours + bounded index ranges,
+  //     handlers/observatoryEvents.ts) while clients read KV in between. The
+  //     key carries no `limit` (entries hold 100 items, sliced per request);
   //   - A2 nodes/stats 24h/30d + heatmap 7d (1800s TTL, every 900s):
   //     threshold 840s, so every A2 warm (age ≈900s) recomputes (4/h per
   //     key) even when tick jitter reads the age back as 899.x s — without

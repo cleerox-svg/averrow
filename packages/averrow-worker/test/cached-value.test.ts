@@ -126,4 +126,32 @@ describe("cachedValue", () => {
       cachedValue(env, "test.compute.throws", 60, throwingCompute),
     ).rejects.toThrow("d1 outage");
   });
+
+  describe("ttlFor (a result that should not live the full TTL)", () => {
+    it("stamps a shorter-lived result so it expires after the short TTL, not the full one", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-10-15T10:00:00Z"));
+        const compute = vi.fn().mockResolvedValue({ degraded: true });
+        await cachedValue(env, "test.short", 600, compute, { ttlFor: (v) => (v.degraded ? 15 : 600) });
+        vi.setSystemTime(new Date("2026-10-15T10:00:10Z"));
+        await cachedValue(env, "test.short", 600, compute);
+        expect(compute).toHaveBeenCalledTimes(1); // still fresh at 10s
+        vi.setSystemTime(new Date("2026-10-15T10:00:16Z"));
+        await cachedValue(env, "test.short", 600, compute);
+        expect(compute).toHaveBeenCalledTimes(2); // expired at 16s, long before 600s
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("never lengthens the TTL, and a result of 0 is not written", async () => {
+      const compute = vi.fn().mockResolvedValue({ n: 1 });
+      await cachedValue(env, "test.long", 60, compute, { ttlFor: () => 9999 });
+      await cachedValue(env, "test.long", 60, compute);
+      expect(compute).toHaveBeenCalledTimes(1);
+      await cachedValue(env, "test.zero", 60, compute, { ttlFor: () => 0 });
+      expect(kv.store.has("cv:test.zero")).toBe(false);
+    });
+  });
 });

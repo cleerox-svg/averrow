@@ -6,7 +6,7 @@ import { noLayers, lensPreset } from './lenses';
 import {
   parseSel, selValue,
   parseObservatoryParams, applyObservatoryState, mergeObservatoryState, DEFAULT_STATE, mapModeOf,
-  nodeKey, arcKey, useObservatoryUrlState, measuresFor,
+  nodeKey, arcKey, useObservatoryUrlState, measuresFor, OWNED_KEYS,
 } from './url-state';
 
 const parse = (qs: string) => parseObservatoryParams(new URLSearchParams(qs));
@@ -341,5 +341,36 @@ describe('measure=takedowns (Baseline and Hosting)', () => {
   });
   it('changing the period keeps the measure (the window follows the period, not the other way round)', () => {
     expect(mergeObservatoryState(parse('lens=baseline&measure=takedowns'), { period: '90d' })).toMatchObject({ period: '90d', measure: 'takedowns' });
+  });
+});
+
+
+describe('ev (event rail kind filter)', () => {
+  it('is owned by this module, defaults to every kind and is never written when empty', () => {
+    expect(OWNED_KEYS).toContain('ev');
+    expect(parse('').ev).toEqual([]);
+    expect(applyObservatoryState(new URLSearchParams(), DEFAULT_STATE).has('ev')).toBe(false);
+  });
+  it('round-trips through the URL in canonical order', () => {
+    const s = parse('ev=spike,critical,bogus');
+    expect(s.ev).toEqual(['critical', 'spike']);
+    expect(applyObservatoryState(new URLSearchParams(), s).get('ev')).toBe('critical,spike');
+    expect(parse(applyObservatoryState(new URLSearchParams(), s).toString()).ev).toEqual(['critical', 'spike']);
+  });
+  it('naming all seven kinds, or none, is no filter', () => {
+    expect(parse('ev=critical,operation,fast,lookalike,takedown,actor,spike').ev).toEqual([]);
+    expect(parse('ev=nonsense').ev).toEqual([]);
+  });
+  it('is kept across other changes and leaves the selection alone', () => {
+    const base = parse('ev=fast&lens=hosting&sel=provider:p1');
+    const next = mergeObservatoryState(base, { ev: ['fast', 'critical'] });
+    expect(next.ev).toEqual(['critical', 'fast']);
+    expect(next.sel).toBe('provider:p1');
+    expect(mergeObservatoryState(base, { period: '30d' }).ev).toEqual(['fast']);
+  });
+  it('leaves params that are not ours untouched', () => {
+    const out = applyObservatoryState(new URLSearchParams('foo=1&ev=old'), parse('ev=actor'));
+    expect(out.get('foo')).toBe('1');
+    expect(out.get('ev')).toBe('actor');
   });
 });

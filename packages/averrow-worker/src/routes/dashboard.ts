@@ -14,6 +14,7 @@ import {
   handleObservatoryOverindex, handleObservatoryCampaignsGeo, handleObservatoryTimeline,
   handleObservatoryActors, handleObservatoryTakedownsGeo, handleObservatoryVelocityNodes,
 } from "../handlers/observatoryLenses";
+import { handleObservatoryEvents } from "../handlers/observatoryEvents";
 import { handleDashboardOverview, handleDashboardTopBrands, handleDashboardProviders } from "../handlers/dashboard";
 import { handleBrandAdminDashboard } from "../handlers/brandAdminDashboard";
 import { handleIngestSignal } from "../handlers/signals";
@@ -123,6 +124,9 @@ export function registerDashboardRoutes(router: RouterType<IRequest>): void {
     ["/api/observatory/actors",         handleObservatoryActors],
     ["/api/observatory/takedowns-geo",  handleObservatoryTakedownsGeo, "manage_takedowns"],
     ["/api/observatory/velocity-nodes", handleObservatoryVelocityNodes],
+    // Event rail (handlers/observatoryEvents.ts). Its `takedown` kind is
+    // dropped in-handler for callers without `manage_takedowns`.
+    ["/api/observatory/events",         handleObservatoryEvents],
   ];
   for (const [path, handler, permission] of observatoryRoutes) {
     router.get(path, async (request: Request, env: Env) => {

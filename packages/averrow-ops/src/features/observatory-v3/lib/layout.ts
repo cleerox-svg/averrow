@@ -48,13 +48,13 @@ export interface ObservatoryLayout {
   filtersInPopover: boolean;
   /** The intel panel starts open (only worth it when it docks). */
   panelStartsOpen: boolean;
-  /** The viewport is short (landscape phone): one chrome row, no ticker or replay bar. */
+  /** The viewport is short (landscape phone): one chrome row, no headline bar or replay bar. */
   short: boolean;
   /** Phone in a short viewport: lens strip, filters, search and refresh share ONE 48px row. */
   compact: boolean;
-  /** Height reserved under the map element for the stats bar (+ ticker), px. */
+  /** Height reserved under the map element for the stats bar (+ headline bar), px. */
   bottomBand: number;
-  /** Stats bar offset from the page bottom (= the ticker height under it), px. */
+  /** Stats bar offset from the page bottom (= the headline-bar height under it), px. */
   statsBottom: number;
   /** What the top chrome covers, px (camera inset + the first free y for floating UI). */
   topInset: number;
@@ -79,7 +79,7 @@ export function computeLayout({ mapWidth, viewportWidth, viewportHeight = 0 }: L
       toolbarWidth: width, searchCollapsed: true, filtersInPopover: true, panelStartsOpen: false,
       short, compact,
       bottomBand: compact ? STATS_H : BOTTOM_BAND.phone,
-      statsBottom: compact ? 0 : TICKER_H.phone,
+      statsBottom: compact ? 0 : FEED_BAR_H.phone,
       topInset: compact ? TOP_COMPACT : TOP_PHONE,
     };
   }
@@ -97,7 +97,7 @@ export function computeLayout({ mapWidth, viewportWidth, viewportHeight = 0 }: L
     panelStartsOpen: docked,
     short, compact: false,
     bottomBand: BOTTOM_BAND.desktop,
-    statsBottom: TICKER_H.desktop,
+    statsBottom: FEED_BAR_H.desktop,
     topInset: TOP_DESKTOP,
   };
 }
@@ -108,10 +108,10 @@ export function computeLayout({ mapWidth, viewportWidth, viewportHeight = 0 }: L
 export const TIMELINE_H = 56;
 /** Stats bar height. */
 export const STATS_H = 36;
-/** Event ticker height under the stats bar. */
-export const TICKER_H = { desktop: 40, phone: 72 } as const;
-/** Height of the stats bar + ticker band below the map element: desktop 36 + 40, phone 36 + 72. */
-export const BOTTOM_BAND = { desktop: STATS_H + TICKER_H.desktop, phone: STATS_H + TICKER_H.phone } as const;
+/** Headline-bar (intel feed) height under the stats bar. */
+export const FEED_BAR_H = { desktop: 40, phone: 72 } as const;
+/** Height of the stats bar + headline-bar band below the map element: desktop 36 + 40, phone 36 + 72. */
+export const BOTTOM_BAND = { desktop: STATS_H + FEED_BAR_H.desktop, phone: STATS_H + FEED_BAR_H.phone } as const;
 const TOP_DESKTOP = 8 + TOOLBAR_H + 12;
 /** Phone: summary row (48) + lens strip (48) + gaps. */
 const TOP_PHONE = 8 + 48 + 8 + 48 + 12;

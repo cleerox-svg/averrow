@@ -43,7 +43,9 @@ import { handleListOperations } from "../src/handlers/operations";
 import { handleListBrands } from "../src/handlers/brands";
 import { handleListThreatActors } from "../src/handlers/threatActors";
 import { handleDashboardOverview } from "../src/handlers/dashboard";
-import type { Env } from "../src/types";
+import { handleObservatoryEvents } from "../src/handlers/observatoryEvents";
+import { readdirSync } from "node:fs";
+import type { Env, UserRole } from "../src/types";
 
 // ─── Harness ────────────────────────────────────────────────────────
 
@@ -125,6 +127,7 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "A /api/observatory/stats?period=7d",
       "A /api/observatory/live?limit=8",
       "A /api/v1/operations?limit=4&offset=0&status=active",
+      "A /api/observatory/events?period=1h&limit=40",
       "A2 /api/observatory/heatmap?period=7d",
       "A2 /api/observatory/nodes?period=24h",
       "A2 /api/observatory/arcs?period=24h",
@@ -284,7 +287,23 @@ const CLIENT_REQUESTS: Array<{ warm: string; client: string; source: string; han
   { warm: "/api/threat-actors?status=active", client: "/api/threat-actors?status=active", source: "averrow-ops/src/features/threat-actors/ThreatActors.tsx:353-357 + hooks/useThreatActors.ts:91-98", handler: handleListThreatActors },
   // MCP smoke probe (service JWT, auditor → scope null).
   { warm: "/api/dashboard/overview", client: "/api/dashboard/overview", source: "averrow-mcp/src/index.ts:354", handler: (r, e) => handleDashboardOverview(r, e, null) },
+  // Observatory intel-feed default — what the ops client
+  // (hooks/useObservatoryEvents.ts, shared by the headline bar and the event
+  // rail's 1h view) sends: `period=1h&limit=40`, every kind. The route hands
+  // the handler the caller's role; analyst / admin / super_admin
+  // (manage_takedowns) share the warmed key. The reordered / param-less
+  // spellings pin the handler's key canonicalisation (the client sends the
+  // first form; section 4 pins that against its source).
+  ...(["analyst", "admin", "super_admin"] as UserRole[]).flatMap((role) => [
+    { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events?period=1h&limit=40", source: `useObservatoryEvents default (${role})`, handler: eventsAs(role) },
+    { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events?limit=40&period=1h", source: `events key canonicalisation, reordered (${role})`, handler: eventsAs(role) },
+  ]),
+  { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events", source: "events key canonicalisation, defaults", handler: eventsAs("analyst") },
 ];
+
+function eventsAs(role: UserRole): Handler {
+  return (r, e) => handleObservatoryEvents(r, e, { role });
+}
 
 describe("warm KV key === live client KV key", () => {
   for (const { warm, client, source, handler } of CLIENT_REQUESTS) {
@@ -301,6 +320,20 @@ describe("warm KV key === live client KV key", () => {
     const covered = new Set(CLIENT_REQUESTS.map((c) => c.warm));
     const parameterised = NAVIGATOR_WARM_TARGETS.filter((t) => t.path.includes("?")).map((t) => t.path);
     expect(parameterised.filter((p) => !covered.has(p))).toEqual([]);
+  });
+
+  it("events: the warm writes the manage_takedowns (`td`) variant; other staff roles read their own key", async () => {
+    const target = NAVIGATOR_WARM_TARGETS.find((t) => t.path.startsWith("/api/observatory/events"))!;
+    const warmKey = await firstCacheKey(target.handler, target.path);
+    expect(warmKey).toBe("cv:observatory_events.1h:all:g-takedown");
+    for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+      expect(await firstCacheKey(eventsAs(role), target.path)).toBe("cv:observatory_events.1h:all:g-none");
+    }
+    // A different period is a different key (nothing else is warmed) ...
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=24h&limit=40")).not.toBe(warmKey);
+    // ... but `limit` is not part of the key: any limit is served from the warmed entry (sliced per request).
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=20")).toBe(warmKey);
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=100")).toBe(warmKey);
   });
 
   it("regression: the pre-PR7b warm params missed the client keys", async () => {
@@ -345,6 +378,9 @@ const SIDE_PANEL = `${OPS}/features/observatory-v3/components/SidePanel.tsx`;
 const USE_OPS = `${OPS}/hooks/useOperations.ts`;
 const USE_BRANDS = `${OPS}/hooks/useBrands.ts`;
 const USE_TA = `${OPS}/hooks/useThreatActors.ts`;
+const USE_EVENTS = `${OPS}/hooks/useObservatoryEvents.ts`;
+const EVENTS_LIB = `${OPS}/features/observatory-v3/lib/events.ts`;
+const OBSERVATORY_PAGE = `${OPS}/features/observatory-v3/ObservatoryV3.tsx`;
 const MCP = "averrow-mcp/src/index.ts";
 
 /** Closed string literal for `path` — any quote style, nothing after the path. */
@@ -487,6 +523,34 @@ const SOURCE_CHECKS: Record<string, SourceCheck[]> = {
     },
   ],
   "/api/threat-actors/stats": [{ file: USE_TA, present: [closedLiteral("/api/threat-actors/stats")] }],
+  // Phase A — Intel Feed (headline bar + event rail). The default request is
+  // exactly `period=1h&limit=40` with `kinds` dropped when there is no filter.
+  "/api/observatory/events?period=1h&limit=40": [
+    {
+      file: USE_EVENTS,
+      present: [
+        closedLiteral("/api/observatory/events"),
+        // Param order is period, kinds, limit (buildObservatoryUrl keeps insertion order).
+        /['"]\/api\/observatory\/events['"]\s*,\s*\{\s*period\s*,\s*kinds\s*:[^}]*\blimit\s*,?\s*\}/,
+        /\bkinds\s*:\s*kinds\.length\s*>\s*0\s*\?\s*kinds\.join\(\s*['"],['"]\s*\)\s*:\s*undefined\b/,
+        /\bperiod\s*=\s*EVENTS_DEFAULT_PERIOD\b/,
+        /\blimit\s*=\s*EVENTS_DEFAULT_LIMIT\b/,
+        // 7d never polls faster than every 5 minutes; nothing polls in a background tab.
+        /\bEVENTS_POLL_7D_MS\s*=\s*300_?000\b/,
+        /\brefetchIntervalInBackground\s*:\s*false\b/,
+      ],
+    },
+    {
+      file: EVENTS_LIB,
+      present: [/\bEVENTS_DEFAULT_PERIOD\s*:\s*EventPeriod\s*=\s*['"]1h['"]/, /\bEVENTS_DEFAULT_LIMIT\s*=\s*40\b/],
+    },
+    {
+      file: OBSERVATORY_PAGE,
+      // The headline bar asks with no period / kinds / limit, so it lands on the warmed key.
+      present: [/useObservatoryEvents\(\s*\{\s*enabled\s*:[^}]*\}\s*\)/],
+      absent: [/useObservatoryEvents\(\s*\{[^}]*\b(period|kinds|limit)\s*:/],
+    },
+  ],
 };
 
 const sourceCache = new Map<string, string>();
@@ -507,10 +571,26 @@ function sourceViolations(check: SourceCheck, src: string): string[] {
   return out;
 }
 
+function opsSourceFiles(): string[] {
+  const root = resolve(PACKAGES_DIR, OPS);
+  return (readdirSync(root, { recursive: true }) as string[])
+    .filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => `${OPS}/${f}`);
+}
+
 describe("client source still sends what each warm mirrors", () => {
-  it("every warm target has a source check", () => {
+  it("every warm target has a client source check (no warm is allowed to lack a consumer)", () => {
     const missing = NAVIGATOR_WARM_TARGETS.map((t) => t.path).filter((p) => !SOURCE_CHECKS[p]);
     expect(missing).toEqual([]);
+    for (const p of Object.keys(SOURCE_CHECKS)) {
+      expect(NAVIGATOR_WARM_TARGETS.some((t) => t.path === p), `stale source check ${p}`).toBe(true);
+    }
+  });
+
+  it("the events endpoint is requested from exactly one place in the ops client (the shared hook the warm mirrors)", () => {
+    const requested = closedLiteral("/api/observatory/events");
+    const users = opsSourceFiles().filter((f) => requested.test(readSource(f)));
+    expect(users).toEqual([USE_EVENTS]);
   });
 
   for (const [warm, checks] of Object.entries(SOURCE_CHECKS)) {
@@ -540,6 +620,11 @@ describe("client source still sends what each warm mirrors", () => {
     { warm: "/api/brands?view=top&limit=8&offset=0&range=7d", file: SIDE_PANEL, from: /view: 'top', limit: 8/, to: "view: 'top', limit: 8, offset: 8" },
     { warm: "/api/threat-actors?status=active", file: USE_TA, from: /if \(status\) params\.set\('status', status\);/, to: "if (status) params.set('status', status); params.set('limit', '50');" },
     { warm: "/api/agents", file: `${OPS}/hooks/useAgents.ts`, from: /'\/api\/agents'/, to: "'/api/agents?include=retired'" },
+    { warm: "/api/observatory/events?period=1h&limit=40", file: EVENTS_LIB, from: /EVENTS_DEFAULT_LIMIT = 40/, to: "EVENTS_DEFAULT_LIMIT = 50" },
+    { warm: "/api/observatory/events?period=1h&limit=40", file: EVENTS_LIB, from: /EVENTS_DEFAULT_PERIOD: EventPeriod = '1h'/, to: "EVENTS_DEFAULT_PERIOD: EventPeriod = '24h'" },
+    { warm: "/api/observatory/events?period=1h&limit=40", file: USE_EVENTS, from: /period,\n    kinds:/, to: "kinds: undefined,\n    period,\n    kinds:" },
+    { warm: "/api/observatory/events?period=1h&limit=40", file: USE_EVENTS, from: /EVENTS_POLL_7D_MS = 300_000/, to: "EVENTS_POLL_7D_MS = 30_000" },
+    { warm: "/api/observatory/events?period=1h&limit=40", file: OBSERVATORY_PAGE, from: /useObservatoryEvents\(\{ enabled: !wall \}\)/, to: "useObservatoryEvents({ limit: 20, enabled: !wall })" },
     { warm: "/api/brands/stats", file: USE_BRANDS, from: /'\/api\/brands\/stats'/, to: "`/api/brands/stats?range=${r}`" },
   ];
 

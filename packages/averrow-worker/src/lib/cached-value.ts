@@ -58,12 +58,18 @@ interface CachedEntry<T> {
  * @param ttlSeconds   Freshness budget. Pass `0` to bypass cache entirely.
  * @param compute      Async function to run on a miss. Should return
  *                     the JSON-serializable value to cache.
+ * @param opts.ttlFor  Optional per-result freshness: return a SHORTER ttl (seconds) for a
+ *                     result that should not live the full `ttlSeconds` (e.g. a degraded
+ *                     response). The entry is stamped as if written `ttlSeconds - ttlFor`
+ *                     ago, so readers (who only know `ttlSeconds`) treat it as expired
+ *                     after `ttlFor`. A value <= 0 skips the write. Never lengthens.
  */
 export async function cachedValue<T>(
   env: Env,
   key: string,
   ttlSeconds: number,
   compute: () => Promise<T>,
+  opts: { ttlFor?: (value: T) => number } = {},
 ): Promise<T> {
   if (ttlSeconds <= 0) {
     const value = await compute();
@@ -95,10 +101,12 @@ export async function cachedValue<T>(
   const value = await compute();
   void recordStat(env, "miss");
 
+  const effective = opts.ttlFor ? Math.min(ttlSeconds, opts.ttlFor(value)) : ttlSeconds;
+  if (effective <= 0) return value;
   try {
-    const entry: CachedEntry<T> = { v: value, t: Date.now() };
+    const entry: CachedEntry<T> = { v: value, t: Date.now() - (ttlSeconds - effective) * 1000 };
     await env.CACHE.put(cacheKey, JSON.stringify(entry), {
-      expirationTtl: Math.max(ttlSeconds * 2, 60),
+      expirationTtl: Math.max(effective * 2, 60),
     });
   } catch {
     // Non-fatal.

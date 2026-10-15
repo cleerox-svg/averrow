@@ -26,7 +26,6 @@ export default tseslint.config(
       'node_modules/**',
       // Frozen components (CLAUDE.md §4) — never refactored, exempt from lint.
       'src/features/brands/components/PortfolioHealthCard.tsx',
-      'src/components/observatory/EventTicker.tsx',
     ],
   },
   {

@@ -18,12 +18,15 @@
 //      never be served to an anonymous caller.
 //   2. A tenant `client` JWT          → 403, same no-handler guarantee.
 //   3. Staff roles (analyst, auditor) → reach the handler (200).
-//   4. The route table registers exactly the sixteen known paths, so a
+//   4. The route table registers exactly the seventeen known paths, so a
 //      new observatory route can't slip in without this test noticing.
 //   5. Takedown effectiveness needs `manage_takedowns` (same gate as
 //      /api/admin/takedowns/metrics): takedowns-geo is 403 for sales /
 //      support / billing / auditor without running the handler, and 200
 //      for analyst / admin / super_admin.
+//   6. The event rail (/events) is requireStaff only; the route hands the
+//      caller's role to the handler, which drops the `takedown` kind (and
+//      keys the cache separately) for roles without manage_takedowns.
 
 import { describe, it, expect } from "vitest";
 import { Router } from "itty-router";
@@ -55,6 +58,8 @@ const OBSERVATORY_PATHS = [
   "/api/observatory/actors?actor_id=ta_apt28",
   "/api/observatory/takedowns-geo?period=30d&by=country",
   "/api/observatory/velocity-nodes?period=7d&flag=very_fast",
+  // Event rail (handlers/observatoryEvents.ts)
+  "/api/observatory/events?period=1h&limit=40",
 ] as const;
 
 /** Routes that additionally require a StaffPermission (routes/dashboard.ts). */
@@ -215,13 +220,28 @@ describe("/api/observatory/* — staff-only", () => {
     }
   });
 
+  it("events passes the caller's role: takedown-less roles read the `g-none` key, holders the `g-takedown` key", async () => {
+    for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/events?period=1h&limit=40", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:g-none"]);
+    }
+    for (const role of ["analyst", "admin", "super_admin"] as UserRole[]) {
+      const h = makeHarness();
+      const res = await call("/api/observatory/events?period=1h&limit=40", h.env, await bearer(role));
+      expect(res.status).toBe(200);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:g-takedown"]);
+    }
+  });
+
   it("takedowns-geo is the only permission-gated observatory route, gated on manage_takedowns", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const gated = [...src.matchAll(/\["(\/api\/observatory\/[a-z-]+)",\s*\w+,\s*"([a-z_]+)"\]/g)].map((m) => [m[1], m[2]]);
     expect(gated).toEqual([["/api/observatory/takedowns-geo", "manage_takedowns"]]);
   });
 
-  it("registers exactly the sixteen known observatory paths, all behind requireStaff", () => {
+  it("registers exactly the seventeen known observatory paths, all behind requireStaff", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/dashboard.ts"), "utf-8");
     const registered = [...src.matchAll(/"(\/api\/observatory\/[a-z-]+)"/g)].map((m) => m[1]).sort();
     expect(registered).toEqual([...new Set(OBSERVATORY_PATHS.map((p) => p.split("?")[0]))].sort());

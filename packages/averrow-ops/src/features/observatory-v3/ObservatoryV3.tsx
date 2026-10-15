@@ -33,7 +33,11 @@ import { ThreatMapV3, type MapFocus, type PingBatch, type LensMapProps } from '.
 import { SidePanel } from './components/SidePanel';
 import { Card, Button } from '@/design-system/components';
 import { ObservatoryLoadError } from './components/ObservatoryLoadError';
-import { EventTicker } from '@/components/observatory/EventTicker';
+import { HeadlineBar } from './components/HeadlineBar';
+import { EventRail } from './components/EventRail';
+import { PanelTabs, PanelTabPanels, type PanelTab } from './components/PanelTabs';
+import { PanelDock } from './components/PanelDock';
+import { useObservatoryEvents } from '@/hooks/useObservatoryEvents';
 import { useTheme } from '@/design-system/hooks';
 import { RefreshCw, PanelRightOpen, PanelRightClose, AlertTriangle, Search as SearchIcon, SlidersHorizontal } from 'lucide-react';
 import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay';
@@ -58,7 +62,7 @@ import {
   useObservatoryUrlState, parseSel, mapModeOf,
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type Severity, type ThreatView,
 } from './lib/url-state';
-import { noLayers, type LayerToggles } from './lib/lenses';
+import { noLayers, LENS_DEFS, type LayerToggles } from './lib/lenses';
 import type { Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
@@ -68,7 +72,9 @@ import { resolveDrill, isPending, drillToPatch, selPatch, type DrillTarget, type
 import { targetPatch, type SearchData, type SearchResult } from './lib/search';
 import { useLensData } from './lib/use-lens-data';
 import { NO_SELECTION, type LensPick, type LensSelection } from './layers/lens-layers';
-import { diffLive, announcePings } from './lib/lens/live';
+import { diffLive, announcePings, type PingItem } from './lib/lens/live';
+import { eventTargetPatch, eventFlyPoint, eventFallbackSel, totalCount, type EventKind, type EventPeriod, type ObservatoryEvent } from './lib/events';
+import { getSeverityColor } from './lib/map-colors';
 import { AnimationClock } from './lib/animation-clock';
 import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
@@ -77,7 +83,7 @@ import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, initialSheet
 import { useElementSize, useMeasuredHeight } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
-import { drillPoints, lensFitPoints, type FocusModels } from './lib/camera';
+import { drillPoints, lensFitPoints, FLY_MS, type FocusModels } from './lib/camera';
 import { legendSummary } from './lib/legend-summary';
 import { linkedOperationIds } from './lib/lens/operations';
 import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, actorRows, velocityRows, takedownCountryRows, takedownProviderRows } from './lib/panel-rows';
@@ -99,7 +105,7 @@ const FAST_LAYERS = noLayers();
 // z-10/20/30/40 Tailwind utilities so the layering intent is documented in
 // one place instead of scattered magic numbers. (ThreatMapV3's own hover
 // tooltip renders above all of these, inside that component.)
-const Z_CHROME = 10;   // rail, stats bar, ticker, legend chip, replay bar
+const Z_CHROME = 10;   // rail, stats bar, headline bar, legend chip, replay bar
 const Z_PANEL = 20;    // intel panel / drill drawer (their own z-20) and the mobile Intel FAB
 const Z_TOOLBAR = 22;  // toolbar row: ABOVE the panel / drawer, so its filters + search popovers open over them
 const Z_TOGGLE = 30;   // desktop panel toggle + load-error banner
@@ -172,7 +178,7 @@ export function ObservatoryV3() {
   const { width: mapWidth, height: rootHeight } = useElementSize(rootRef);
   const viewportHeight = useViewportHeight();
   const baseLayout = useMemo(() => computeLayout({ mapWidth, viewportWidth, viewportHeight }), [mapWidth, viewportWidth, viewportHeight]);
-  // A wall screen is the picture alone: no stats bar / ticker band under the map, no toolbar or rail beside it.
+  // A wall screen is the picture alone: no stats bar / headline band under the map, no toolbar or rail beside it.
   const layout = useMemo(
     () => (wall ? { ...baseLayout, bottomBand: 0, statsBottom: 0, railWidth: 0, topInset: WALL_TOP } : baseLayout),
     [baseLayout, wall],
@@ -211,6 +217,14 @@ export function ObservatoryV3() {
   const setSev = useCallback((sev: Severity[]) => update({ sev }), [update]);
   const setTypes = useCallback((type: string[]) => update({ type }), [update]);
   const exitWall = useCallback(() => update({ wall: false }), [update]);
+  const setEvKinds = useCallback((ev: EventKind[]) => update({ ev }), [update]);
+
+  // The intel feed: the headline bar's request (the warmed `period=1h&limit=40` key; the rail's 1h view shares it). A wall
+  // screen is the picture alone, so it asks for nothing.
+  const eventsQ = useObservatoryEvents({ enabled: !wall });
+  const eventTotal = eventsQ.data ? totalCount(eventsQ.data.counts, eventsQ.data.events.length) : undefined;
+  const [panelTab, setPanelTab] = useState<PanelTab>('intel');
+  const [railPeriod, setRailPeriod] = useState<EventPeriod>('1h');
 
   // The bot-share scene paints only the baseline shapes: nothing else is drawn under it.
   const mapLayers = mapMode === 'bot_density' ? BOT_LAYERS : fast ? FAST_LAYERS : layers;
@@ -408,20 +422,23 @@ export function ObservatoryV3() {
 
   /** Select something that did NOT come from a click on the map: the camera follows it. */
   const selectTarget = useCallback((target: DrillTarget) => {
+    evFallback.current = null;
     update(targetPatch(target, layers));
     focusPoints(drillPoints(target, focusModels), { noWrap: target.kind === 'operation' });
     setShowMobilePanel(false);
   }, [update, layers, focusPoints, focusModels]);
 
-  const closeDrill = useCallback(() => update(drillToPatch(null)), [update]);
+  const closeDrill = useCallback(() => { evFallback.current = null; update(drillToPatch(null)); }, [update]);
 
   // A click on the map selects without moving the camera.
   const handleMapSelect = useCallback((s: MapSelection | null) => {
     openerKind.current = null;
+    evFallback.current = null;
     update(drillToPatch(s ? (s.kind === 'node' ? { kind: 'node', node: s.node } : { kind: 'arc', arc: s.arc }) : null));
   }, [update]);
   const handleLensPick = useCallback((pick: LensPick) => {
     openerKind.current = null;
+    evFallback.current = null;
     update(selPatch(PICK_TO_SEL[pick.kind], pick.id));
   }, [update]);
 
@@ -531,6 +548,13 @@ export function ObservatoryV3() {
     if (state.node && settled.nodes) update(drillToPatch(null));
     else if (state.arc && settled.arcs && settled.nodes) update(drillToPatch(null));
     else if (sel && sel.kind in settled && settled[sel.kind as keyof typeof settled]) {
+      // An event click whose target is not in the loaded lens data: open its country instead of nothing.
+      const fb = evFallback.current;
+      if (fb && state.sel === fb.sel) {
+        evFallback.current = null;
+        update({ ...drillToPatch(null), sel: fb.fallback });
+        return;
+      }
       // A link we widened to shared=1 that still does not resolve: undo the widening with the drop (predictable URL).
       update(sel.kind === 'op' && sharedRetried.current === sel.id && state.shared ? { ...drillToPatch(null), shared: false } : drillToPatch(null));
     }
@@ -600,6 +624,46 @@ export function ObservatoryV3() {
     }
   }, [liveQ.data, needs.live]);
   useEffect(() => () => { if (announceTimer.current) clearTimeout(announceTimer.current); }, []);
+
+  // ─── Intel feed: what a click on an event does ──
+  // Fly to its place, apply its target (lens + `sel`, which opens the drill drawer or sheet), and — from the rail — ping the
+  // spot with the same sonar ring a live threat gets. The ping waits out the camera flight so it lands where you arrive.
+  const evPingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (evPingTimer.current) clearTimeout(evPingTimer.current); }, []);
+  // An event's `sel` (an operation's pivot, a provider) can name something the lens's loaded list no longer holds, and the
+  // dead-key effect below would then drop it and open nothing. The server cannot know what the client has loaded, so the
+  // client keeps the event's country as the fallback and swaps to it only if that exact `sel` fails to resolve.
+  const evFallback = useRef<{ sel: string; fallback: string } | null>(null);
+  const openEvent = useCallback((ev: ObservatoryEvent, opts: { ping?: boolean } = {}) => {
+    openerKind.current = opts.ping ? 'panel' : null;
+    const patch = eventTargetPatch(ev, { view: state.view, measure: state.measure });
+    const fallback = patch.sel ? eventFallbackSel(ev, patch.sel) : null;
+    evFallback.current = patch.sel && fallback ? { sel: patch.sel, fallback } : null;
+    update(patch);
+    const at = eventFlyPoint(ev);
+    if (at) focusPoints([at]);
+    setShowMobilePanel(false);
+    if (!opts.ping || !at) return;
+    if (evPingTimer.current) clearTimeout(evPingTimer.current);
+    const item: PingItem = {
+      id: `event:${ev.id}`, position: at, color: getSeverityColor(ev.severity, 235), severity: ev.severity,
+      type: '', country: ev.place.country_code, domain: null,
+    };
+    evPingTimer.current = setTimeout(() => {
+      evPingTimer.current = null;
+      pingSeq.current += 1;
+      setPings({ seq: pingSeq.current, items: [item] });
+    }, reducedMotion ? 0 : FLY_MS);
+  }, [update, state.view, state.measure, focusPoints, reducedMotion]);
+  const openRailEvent = useCallback((ev: ObservatoryEvent) => openEvent(ev, { ping: true }), [openEvent]);
+  const closeRail = useCallback(() => setPanelTab('intel'), []);
+  /** "All N ›": the rail takes the right slot (or the phone sheet), replacing a drawer that is open. */
+  const openRail = useCallback(() => {
+    setPanelTab('events');
+    setPanelPref(true);
+    setShowMobilePanel(true);
+    if (drill) update(drillToPatch(null));
+  }, [drill, update]);
 
   // ─── Lens props for the map ──
   const lensMapProps = useMemo<LensMapProps>(() => ({
@@ -788,7 +852,6 @@ export function ObservatoryV3() {
         source={source}
         visible
         mobile={placement === 'sheet'}
-        placement={placement === 'overlay' ? 'overlay' : 'dock'}
         onSelectNode={handleSelectNodeFromPanel}
       />
     )
@@ -842,7 +905,7 @@ export function ObservatoryV3() {
   // it tracks the real topbar + safe-area + platform-alert-banner height.
   return (
     <div ref={rootRef} className="relative flex-1 min-h-0 overflow-hidden" onKeyDown={onShortcut} data-tier={layout.tier}>
-      {/* Full-screen map — bottom inset reserves the stats bar + ticker band below. */}
+      {/* Full-screen map — bottom inset reserves the stats bar + headline band below. */}
       <div
         className="absolute inset-0"
         style={{ bottom: layout.bottomBand }}
@@ -1081,9 +1144,9 @@ export function ObservatoryV3() {
       )}
 
       {/* ─── Stats bar ─────────────────────────────────────────────
-          `bottom` sits flush on top of the ticker wrapper directly below —
+          `bottom` sits flush on top of the headline-bar wrapper directly below —
           keep this in sync with that wrapper's `height` (desktop 40,
-          mobile 72 — see the ticker wrapper below for why). */}
+          mobile 72 — see the wrapper below for why). */}
       {!wall && <div
         className="absolute left-0 right-0 flex flex-wrap items-center justify-between gap-x-4 px-4 py-0.5"
         style={{
@@ -1138,16 +1201,26 @@ export function ObservatoryV3() {
         </div>
       </div>}
 
-      {/* ─── Event ticker ─────────────────────────────────────────
-          EventTicker doesn't self-position; it fills whatever box this
-          wrapper gives it. Desktop 40 / mobile 72 (touch target sizing)
-          match the stats-bar `bottom` offset and the map's bottom inset above. */}
+      {/* ─── Headline bar ─────────────────────────────────────────
+          One threat event at a time (concept B of the intel-feed redesign). It doesn't
+          self-position; it fills whatever box this wrapper gives it. Desktop 40 / mobile
+          72 (two rows, touch sizing) match the stats-bar `bottom` offset and the map's
+          bottom inset above. A wall screen shows no feed. */}
       {!wall && !layout.compact && (
         <div
           className="absolute bottom-0 left-0 right-0"
           style={{ height: layout.statsBottom, zIndex: Z_CHROME }}
         >
-          <EventTicker />
+          <HeadlineBar
+            result={eventsQ.data}
+            loading={eventsQ.isLoading}
+            error={!!eventsQ.error}
+            onRetry={() => void eventsQ.refetch()}
+            onOpenEvent={openEvent}
+            onOpenAll={hasPanel ? openRail : undefined}
+            phone={phone}
+            reducedMotion={reducedMotion}
+          />
         </div>
       )}
 
@@ -1158,7 +1231,22 @@ export function ObservatoryV3() {
           variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} brandId={state.brand}
         />
       )}
-      {!phone && !drill && panelOpen && lensPanel(layout.docked ? 'dock' : 'overlay')}
+      {/* One aside for both tabs: the Intel | Events strip sits above the swapped content and never remounts, so keyboard
+          focus stays on the tab you just chose. */}
+      {!phone && !drill && panelOpen && (
+        <PanelDock
+          tab={panelTab}
+          onTab={setPanelTab}
+          eventCount={eventTotal}
+          contentKey={panelSection && panelQuery ? 'lens' : 'threats'}
+          placement={layout.docked ? 'dock' : 'overlay'}
+          label={panelTab === 'events' ? 'Event rail' : panelSection && panelQuery ? `${LENS_DEFS[lens].label} panel` : 'Intelligence panel'}
+        >
+          {panelTab === 'events'
+            ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} onClose={closeRail} placement="embedded" />
+            : lensPanel(layout.docked ? 'dock' : 'overlay')}
+        </PanelDock>
+      )}
 
       {/* Panel toggle (the drawer has its own close button and Escape) */}
       {!phone && hasPanel && !drill && (
@@ -1220,20 +1308,27 @@ export function ObservatoryV3() {
       )}
       {phone && hasPanel && (
         <PeekSheet open={showMobilePanel && !drill} onClose={() => setShowMobilePanel(false)} label="Intelligence panel" onHeight={onPanelSheetHeight} restoreFocus={restorePanelFocus} initialSnap={sheetInitialSnap}>
-          <div className="sticky top-0 z-[1] flex items-center justify-between px-4 pb-1" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>
-            <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
-            <button
-              type="button"
-              onClick={() => setShowMobilePanel(false)}
-              aria-label="Close intelligence panel"
-              title="Close"
-              className="ds-focusable inline-flex items-center justify-center min-w-[44px] min-h-[44px]"
-              style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
-            >
-              <PanelRightClose size={14} />
-            </button>
+          <div className="sticky top-0 z-[1]" style={{ background: 'var(--bg-elevated-solid, var(--bg-elevated))' }}>
+            <div className="flex items-center justify-between px-4 pb-1">
+              <span className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>Intelligence</span>
+              <button
+                type="button"
+                onClick={() => setShowMobilePanel(false)}
+                aria-label="Close intelligence panel"
+                title="Close"
+                className="ds-focusable inline-flex items-center justify-center min-w-[44px] min-h-[44px]"
+                style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer' }}
+              >
+                <PanelRightClose size={14} />
+              </button>
+            </div>
+            <PanelTabs tab={panelTab} onTab={setPanelTab} eventCount={eventTotal} touch />
           </div>
-          {lensPanel('sheet')}
+          <PanelTabPanels tab={panelTab}>
+            {panelTab === 'events'
+              ? <EventRail period={railPeriod} onPeriod={setRailPeriod} kinds={state.ev} onKinds={setEvKinds} onOpenEvent={openRailEvent} onClose={closeRail} placement="sheet" />
+              : lensPanel('sheet')}
+          </PanelTabPanels>
         </PeekSheet>
       )}
     </div>

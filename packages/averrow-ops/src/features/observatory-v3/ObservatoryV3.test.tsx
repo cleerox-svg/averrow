@@ -17,16 +17,15 @@ vi.mock('./components/ThreatMapV3', () => ({
 }));
 const panelProps = vi.fn();
 vi.mock('./components/SidePanel', () => ({
-  SidePanel: (p: { visible: boolean; mobile?: boolean; placement?: string; onSelectNode?: (n: unknown) => void }) => {
+  SidePanel: (p: { visible: boolean; mobile?: boolean; onSelectNode?: (n: unknown) => void }) => {
     panelProps(p);
     return (
-      <div data-testid={p.mobile ? 'side-panel-mobile' : 'side-panel'} data-visible={String(p.visible)} data-placement={p.placement}>
+      <div data-testid={p.mobile ? 'side-panel-mobile' : 'side-panel'} data-visible={String(p.visible)}>
         <button type="button" onClick={() => p.onSelectNode?.(node)}>pick-origin</button>
       </div>
     );
   },
 }));
-vi.mock('@/components/observatory/EventTicker', () => ({ EventTicker: () => null }));
 
 import { ObservatoryV3 } from './ObservatoryV3';
 
@@ -46,6 +45,8 @@ function route(routes: Routes) {
 }
 const urls = () => fetchMock.mock.calls.map(c => c[0] as string);
 const called = (prefix: string) => urls().some(u => u.startsWith(prefix));
+/** Where the PanelDock hosting a panel sits ('dock' | 'overlay'): the dock owns the geometry, not the panel. */
+const dockPlacement = (panel: HTMLElement) => panel.closest('aside')?.dataset.placement;
 
 let search = '';
 function Loc() { search = useLocation().search; return null; }
@@ -541,7 +542,8 @@ describe('ObservatoryV3 bot share (a Baseline measure)', () => {
     expect(search).not.toContain('mode=');
     const footer = screen.getByText(/countries/, { selector: 'div.font-mono' });
     expect(footer.textContent).toMatch(/^7D/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The intel feed (headline bar) is not map data: it is the only request this scene makes.
+    expect(urls().filter(u => !u.startsWith('/api/observatory/events'))).toEqual([]);
     expect(screen.getByRole('tab', { name: 'Baseline' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -937,24 +939,24 @@ describe('ObservatoryV3 chrome', () => {
     window.innerWidth = 1440;
     const wide = renderAt('/observatory');
     const dock = await screen.findByTestId('side-panel');
-    expect(dock.dataset.placement).toBe('dock');
+    expect(dockPlacement(dock)).toBe('dock');
     wide.unmount();
     window.innerWidth = 1100;
     renderAt('/observatory');
     await screen.findByRole('button', { name: 'Show intelligence panel' });
     expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Show intelligence panel' }));
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('overlay');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('overlay');
   });
 
   it('re-flows on resize: shrinking the window closes the docked panel, widening docks it again', async () => {
     window.innerWidth = 1440;
     renderAt('/observatory');
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('dock');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('dock');
     act(() => { window.innerWidth = 1000; window.dispatchEvent(new Event('resize')); });
     await waitFor(() => expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument());
     act(() => { window.innerWidth = 1500; window.dispatchEvent(new Event('resize')); });
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('dock');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('dock');
   });
 
   it('hides "Threat Landscape Clear" when the map is in its fatal fallback', async () => {
@@ -1076,7 +1078,8 @@ describe('ObservatoryV3 lens-aware panel', () => {
   it('Threats keeps the global overview', async () => {
     renderAt('/observatory');
     expect(await screen.findByTestId('side-panel')).toBeInTheDocument();
-    expect(screen.queryByRole('complementary', { name: /panel$/ })).not.toBeInTheDocument();
+    // (the dock is one aside named for what it shows: the global overview, not a lens panel like "Hosting panel")
+    expect(screen.queryByRole('complementary', { name: /^(?!Intelligence panel$).*panel$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -1169,7 +1172,7 @@ describe('ObservatoryV3 review round: stacking, short phones, sheet camera, bot-
       await waitFor(() => expect(mapProps.mock.calls.at(-1)![0].cameraInsets.top).toBeLessThan(80));
     });
 
-    it('no replay bar and no ticker band: the map keeps its height', async () => {
+    it('no replay bar and no headline band: the map keeps its height', async () => {
       renderAt('/observatory');
       await screen.findByRole('tablist', { name: 'Observatory lens' });
       expect(screen.queryByRole('slider')).toBeNull();
@@ -1231,5 +1234,232 @@ describe('ObservatoryV3 review round: stacking, short phones, sheet camera, bot-
     await userEvent.keyboard('1');
     expect(search).not.toContain('layers=');
     expect(mapProps.mock.calls.at(-1)![0].lens.layers.baseline).toBe(true); // baseline never switched off by a hidden-layer toggle
+  });
+});
+
+describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
+  const E = (id: string, kind: string, over: Record<string, unknown> = {}) => ({
+    id, kind, severity: kind === 'critical' ? 'critical' : 'high', title: `Title ${id}`, entity: { type: 'domain', id, name: id },
+    place: { country_code: 'NL', country_name: 'Netherlands', lat: 52.1, lng: 5.3 }, count: 1,
+    occurred_at: new Date(Date.now() - 5 * 60_000).toISOString(), source: 'sentinel', target: { lens: 'threats', select: 'country:NL' }, ...over,
+  });
+  const FEED = [
+    E('crit1', 'critical'),
+    E('op1', 'operation', { target: { lens: 'operations', select: 'op:opx' }, source: 'nexus', occurred_at: new Date(Date.now() - 20 * 60_000).toISOString() }),
+    E('act1', 'actor', { target: { lens: 'actors', select: 'actor:ta1' }, place: { country_code: null, country_name: null, lat: null, lng: null } }),
+  ];
+  const withEvents = (data: unknown[], meta: Record<string, unknown> = {}, counts: Record<string, number> = { critical: 12, operation: 1, actor: 1 }) => {
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string) => (url.startsWith('/api/observatory/events')
+      ? Promise.resolve({ success: true, data, counts_by_kind: counts, meta: { omitted_kinds: ['takedown'], failed_kinds: [], capped_kinds: [], ...meta } })
+      : base(url)));
+  };
+  const focusCalls = () => mapProps.mock.calls.map(c => c[0].focus).filter(Boolean);
+
+  it('asks for exactly the warmed request, once, and shows the first headline with its kind and age', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    expect(await screen.findByTestId('headline-title')).toHaveTextContent('Title crit1');
+    expect(urls().filter(u => u.startsWith('/api/observatory/events'))).toEqual(['/api/observatory/events?period=1h&limit=40']);
+    const bar = screen.getByRole('region', { name: 'Live threat events' });
+    expect(within(bar).getByText('CRITICAL')).toBeInTheDocument();
+    expect(within(bar).getByText('5m')).toBeInTheDocument();
+    expect(within(bar).getByRole('button', { name: 'Open all 3 events' })).toHaveTextContent('All 3 events ›');
+  });
+
+  it('an empty hour says so', async () => {
+    withEvents([], {}, {});
+    renderAt('/observatory');
+    expect(await screen.findByText('No new threat events in the past hour or so')).toBeInTheDocument();
+  });
+
+  it('a partial feed shows the quiet note and the bar still works', async () => {
+    withEvents(FEED, { failed_kinds: ['lookalike'] });
+    renderAt('/observatory');
+    expect(await screen.findByTestId('events-partial')).toBeInTheDocument();
+    expect(screen.getByTestId('headline-title')).toHaveTextContent('Title crit1');
+  });
+
+  it('clicking the headline flies to its place, applies the target (lens + sel) in the URL and opens the drawer', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Title crit1/ }));
+    await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+    expect(focusCalls().some(f => f.points.length === 1 && f.points[0][0] === 5.3 && f.points[0][1] === 52.1)).toBe(true);
+    // The selection resolves into the drill drawer (a country target) in the right slot.
+    expect(await screen.findByRole('button', { name: 'Close details' })).toBeInTheDocument();
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+  });
+
+  it('a target on another lens switches the lens as well', async () => {
+    withEvents([FEED[1]!]);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Title op1/ }));
+    await waitFor(() => expect(search).toContain('lens=operations'));
+    expect(search).toContain('sel=op%3Aopx');
+    expect(screen.getByRole('tab', { name: 'Operations' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('an event with no point is still selected, and the camera stays put', async () => {
+    route({ '/api/observatory/actors?actor_id=': { actor: { id: 'ta1', name: 'TA1', aliases: [], affiliation: null, country_code: null, capability: null, attribution_confidence: null, status: null, description: null, first_seen: null, last_seen: null }, infrastructure: [], clusters: [], attributions: { by_confidence: {}, by_source: {} } }, '/api/observatory/stats': okStats });
+    withEvents([FEED[2]!]);
+    renderAt('/observatory');
+    const before = focusCalls().length;
+    await userEvent.click(await screen.findByRole('button', { name: /Title act1/ }));
+    await waitFor(() => expect(search).toContain('lens=actors'));
+    expect(search).toContain('sel=actor%3Ata1');
+    expect(focusCalls().length).toBe(before);
+  });
+
+  it('from the heat view the click leaves it, so the selection has a scene to live in', async () => {
+    withEvents(FEED);
+    renderAt('/observatory?view=heat');
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: /Title crit1/ }));
+    await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+    expect(search).not.toContain('view=heat');
+  });
+
+  it('"All N" opens the rail in the right slot; its tabs go back to Intel; rows click through and ping the spot', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    expect(screen.queryByTestId('side-panel')).toBeNull();
+    expect(within(rail).getByRole('tab', { name: /Events/ })).toHaveAttribute('aria-selected', 'true');
+    expect(within(rail).getByText('Title op1')).toBeInTheDocument();
+    await userEvent.click(within(rail).getByRole('tab', { name: 'Intel' }));
+    expect(await screen.findByTestId('side-panel')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail2 = await screen.findByRole('complementary', { name: 'Event rail' });
+    // Row click: same as the headline, plus a sonar ping at the place (after the camera flight).
+    expect(mapProps.mock.calls.at(-1)![0].pings ?? null).toBeNull();
+    await userEvent.click(within(rail2).getByText('Title crit1'));
+    await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+    await waitFor(() => {
+      const p = mapProps.mock.calls.at(-1)![0].pings;
+      expect(p?.items?.[0]).toMatchObject({ id: 'event:crit1', position: [5.3, 52.1], country: 'NL', severity: 'critical' });
+    }, { timeout: 3000 });
+    expect(focusCalls().some(f => f.points[0][0] === 5.3)).toBe(true);
+  });
+
+  it('the rail kind filter lives in the URL as `ev`, and a withheld kind has no chip', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    expect(within(rail).queryByRole('button', { name: /Takedowns/ })).toBeNull();
+    await userEvent.click(await within(rail).findByRole('button', { name: /^Actors/ }));
+    await waitFor(() => expect(search).toContain('ev=actor'));
+    await waitFor(() => expect(urls()).toContain('/api/observatory/events?period=1h&kinds=actor&limit=40'));
+  });
+
+  it('the Intel | Events strip survives the tab swap: the same node, focus follows arrow keys, Home / End, tabpanel wiring', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    const strip = within(rail).getByRole('tablist', { name: 'Panel' });
+    const intel = within(strip).getByRole('tab', { name: 'Intel' });
+    const events = within(strip).getByRole('tab', { name: /Events/ });
+    // aria wiring: tabs control a tabpanel, the visible panel is labelled by its tab.
+    expect(events).toHaveAttribute('aria-controls', 'tabpanel-events');
+    const panel = rail.querySelector('#tabpanel-events') as HTMLElement;
+    expect(panel).toHaveAttribute('role', 'tabpanel');
+    expect(panel).toHaveAttribute('aria-labelledby', events.id);
+    expect(within(panel).getByText('Title op1')).toBeInTheDocument();
+
+    events.focus();
+    await userEvent.keyboard('{ArrowLeft}');
+    // The selected tab AND the keyboard focus moved, and the strip is the very same DOM node (it never remounted).
+    await waitFor(() => expect(intel).toHaveAttribute('aria-selected', 'true'));
+    expect(intel).toHaveFocus();
+    const dock = await screen.findByRole('complementary', { name: 'Intelligence panel' });
+    expect(within(dock).getByRole('tablist', { name: 'Panel' })).toBe(strip);
+    expect(within(dock).getByRole('tab', { name: 'Intel' })).toBe(intel);
+    expect(dock.querySelector('#tabpanel-intel')).toHaveAttribute('aria-labelledby', intel.id);
+    await userEvent.keyboard('{End}');
+    await waitFor(() => expect(events).toHaveAttribute('aria-selected', 'true'));
+    expect(events).toHaveFocus();
+    await userEvent.keyboard('{Home}');
+    await waitFor(() => expect(intel).toHaveAttribute('aria-selected', 'true'));
+    expect(intel).toHaveFocus();
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('the rail close button returns to Intel', async () => {
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const rail = await screen.findByRole('complementary', { name: 'Event rail' });
+    await userEvent.click(within(rail).getByRole('button', { name: 'Close events, back to Intel' }));
+    expect(await screen.findByTestId('side-panel')).toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Event rail' })).toBeNull();
+  });
+
+  describe('a target the lens cannot resolve falls back to the event\'s country', () => {
+    // route() answers every other prefix with an empty list, so these lens lists settle WITHOUT the id the event names.
+    it('an operation pivot (move:<id>) that the Movement lens does not list', async () => {
+      withEvents([E('op9', 'operation', { target: { lens: 'movement', select: 'move:pivot_gone' }, source: 'nexus' })]);
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title op9/ }));
+      await waitFor(() => expect(search).toContain('lens=movement'));
+      await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+      expect(search).not.toContain('move%3Apivot_gone');
+      // ... and it stays: the country drawer is open, not dropped.
+      expect(await screen.findByRole('button', { name: 'Close details' })).toBeInTheDocument();
+    });
+
+    it('a takedown provider (provider:<id>) that the Hosting lens does not list', async () => {
+      withEvents([E('td9', 'takedown', { severity: 'info', source: 'sparrow', target: { lens: 'hosting', select: 'provider:hp_gone' } })], { omitted_kinds: [] }, { takedown: 1 });
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title td9/ }));
+      await waitFor(() => expect(search).toContain('lens=hosting'));
+      await waitFor(() => expect(search).toContain('sel=country%3ANL'));
+      expect(search).not.toContain('provider%3Ahp_gone');
+      expect(await screen.findByRole('button', { name: 'Close details' })).toBeInTheDocument();
+    });
+
+    it('an event with no country has nothing to fall back to: the dead key is dropped as before', async () => {
+      withEvents([E('op8', 'operation', { place: { country_code: null, country_name: null, lat: null, lng: null }, target: { lens: 'movement', select: 'move:pivot_gone' } })]);
+      renderAt('/observatory');
+      await userEvent.click(await screen.findByRole('button', { name: /Title op8/ }));
+      await waitFor(() => expect(search).toContain('lens=movement'));
+      await waitFor(() => expect(search).not.toContain('sel='));
+    });
+  });
+
+  it('a wall screen has no feed: no bar, no rail, and no events request', async () => {
+    withEvents(FEED);
+    renderAt('/observatory?wall=1');
+    await screen.findByTestId('map');
+    await new Promise(r => setTimeout(r, 30));
+    expect(screen.queryByRole('region', { name: 'Live threat events' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Event rail' })).toBeNull();
+    expect(called('/api/observatory/events')).toBe(false);
+  });
+
+  it('phone: the peek sheet has Intel | Events tabs, and an event row selects and closes the sheet', async () => {
+    window.innerWidth = 400;
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: 'Open intelligence panel' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Intelligence panel' });
+    const tabs = within(sheet).getByRole('tablist', { name: 'Panel' });
+    expect(within(tabs).getByRole('tab', { name: 'Intel' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(within(tabs).getByRole('tab', { name: /Events/ }));
+    expect(await within(sheet).findByText('Title op1')).toBeInTheDocument();
+    await userEvent.click(within(sheet).getByText('Title op1'));
+    await waitFor(() => expect(search).toContain('lens=operations'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Intelligence panel' })).toBeNull());
+  });
+
+  it('phone: the headline pill opens the sheet on the Events tab', async () => {
+    window.innerWidth = 400;
+    withEvents(FEED);
+    renderAt('/observatory');
+    await userEvent.click(await screen.findByRole('button', { name: /Open all/ }));
+    const sheet = await screen.findByRole('dialog', { name: 'Intelligence panel' });
+    expect(within(sheet).getByRole('tab', { name: /Events/ })).toHaveAttribute('aria-selected', 'true');
   });
 });
