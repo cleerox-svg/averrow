@@ -220,18 +220,18 @@ describe("/api/observatory/* — staff-only", () => {
     }
   });
 
-  it("events passes the caller's role: takedown-less roles read the `notd` key, holders the `td` key", async () => {
+  it("events passes the caller's role: takedown-less roles read the `g-none` key, holders the `g-takedown` key", async () => {
     for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
       const h = makeHarness();
       const res = await call("/api/observatory/events?period=1h&limit=40", h.env, await bearer(role));
       expect(res.status).toBe(200);
-      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:40:notd"]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:g-none"]);
     }
     for (const role of ["analyst", "admin", "super_admin"] as UserRole[]) {
       const h = makeHarness();
       const res = await call("/api/observatory/events?period=1h&limit=40", h.env, await bearer(role));
       expect(res.status).toBe(200);
-      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:40:td"]);
+      expect(h.cacheReads.filter(isObservatoryKey)).toEqual(["cv:observatory_events.1h:all:g-takedown"]);
     }
   });
 

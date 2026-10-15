@@ -325,13 +325,15 @@ describe("warm KV key === live client KV key", () => {
   it("events: the warm writes the manage_takedowns (`td`) variant; other staff roles read their own key", async () => {
     const target = NAVIGATOR_WARM_TARGETS.find((t) => t.path.startsWith("/api/observatory/events"))!;
     const warmKey = await firstCacheKey(target.handler, target.path);
-    expect(warmKey).toBe("cv:observatory_events.1h:all:40:td");
+    expect(warmKey).toBe("cv:observatory_events.1h:all:g-takedown");
     for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
-      expect(await firstCacheKey(eventsAs(role), target.path)).toBe("cv:observatory_events.1h:all:40:notd");
+      expect(await firstCacheKey(eventsAs(role), target.path)).toBe("cv:observatory_events.1h:all:g-none");
     }
-    // A different period / limit is a different key (nothing else is warmed).
+    // A different period is a different key (nothing else is warmed) ...
     expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=24h&limit=40")).not.toBe(warmKey);
-    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=20")).not.toBe(warmKey);
+    // ... but `limit` is not part of the key: any limit is served from the warmed entry (sliced per request).
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=20")).toBe(warmKey);
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=100")).toBe(warmKey);
   });
 
   it("regression: the pre-PR7b warm params missed the client keys", async () => {

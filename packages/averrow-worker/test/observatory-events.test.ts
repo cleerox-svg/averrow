@@ -22,7 +22,12 @@ import {
   handleObservatoryEvents,
   parseEventsParams,
   eventsCacheKey,
+  CRITICAL_BRANDS_SQL,
+  eventsRoleSegment,
   eventsWindowStart,
+  permittedGatedKinds,
+  GATED_KINDS,
+  EVENTS_FAILED_TTL_S,
   fitTitle,
   durationPhrase,
   countrySuffix,
@@ -39,6 +44,7 @@ import {
   TITLE_MAX,
   SPIKE_MIN_COUNT,
   type ObservatoryEvent,
+  type EventKind,
   type EventsEnvelope,
 } from "../src/handlers/observatoryEvents";
 import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
@@ -160,8 +166,22 @@ describe("copy helpers", () => {
     expect(t.length).toBeLessThanOrEqual(TITLE_MAX);
     expect(t.endsWith("…")).toBe(true);
     expect(t.slice(0, -1).split(" ").every((w) => w === "word")).toBe(true);
-    // A separator is never left dangling before the ellipsis.
-    expect(fitTitle(`${"a".repeat(80)} · ${"b".repeat(20)}`)).toBe(`${"a".repeat(80)}…`);
+    // An optional tail clause is dropped whole, never cut mid-clause and never left as a bare separator.
+    expect(fitTitle(`${"a".repeat(80)} · ${"b".repeat(20)}`)).toBe("a".repeat(80));
+    const head = "Acme Bank targeted by 12 new credential-harvesting pages in the last few hours";
+    expect(fitTitle(`${head} · mostly the Netherlands and Germany`)).toBe(head);
+    expect(fitTitle(`${head.slice(0, 50)} has 9 new lookalikes registered, incl. a-very-long-lookalike-domain-name.example.com`))
+      .toBe(head.slice(0, 50) + " has 9 new lookalikes registered");
+    // A hard cut never ends on a connecting word or a half-written clause (`incl.…`, `· mostly…`, `and…`).
+    for (const raw of [
+      `${"word ".repeat(17)}incl. someverylonglookalike.example.com`,
+      `${"word ".repeat(17)}and 3 new certificates`,
+      `${"word ".repeat(16)}word mostly Netherlands`,
+    ]) {
+      const t = fitTitle(raw);
+      expect(t.length).toBeLessThanOrEqual(TITLE_MAX);
+      expect(t, raw).not.toMatch(/(incl\.|mostly|and|·|,)…?$/);
+    }
     // One giant token is kept whole rather than cut.
     const giant = "x".repeat(120);
     expect(fitTitle(giant)).toBe(giant);
@@ -262,13 +282,34 @@ describe("params", () => {
     expect(p("?limit=12.9")).toMatchObject({ limit: 12 });
   });
 
-  it("cache key: period, canonical kinds, limit and — only when takedown is requested — the role class", () => {
+  it("cache key: period, canonical kinds and — only when a permission-gated kind is requested — the role class; never the limit", () => {
     const all = [...EVENT_KINDS];
-    expect(eventsCacheKey("1h", all, 40, true)).toBe("observatory_events.1h:all:40:td");
-    expect(eventsCacheKey("1h", all, 40, false)).toBe("observatory_events.1h:all:40:notd");
-    expect(eventsCacheKey("7d", ["spike", "critical"], 10, true)).toBe("observatory_events.7d:critical,spike:10:any");
-    expect(eventsCacheKey("7d", ["critical", "spike"], 10, false)).toBe("observatory_events.7d:critical,spike:10:any");
-    expect(eventsCacheKey("24h", ["takedown"], 5, false)).toBe("observatory_events.24h:takedown:5:notd");
+    const td = permittedGatedKinds("analyst");
+    const noTd = permittedGatedKinds("sales");
+    expect(td).toEqual(["takedown"]);
+    expect(noTd).toEqual([]);
+    expect(permittedGatedKinds(undefined)).toEqual([]);
+    expect(eventsCacheKey("1h", all, td)).toBe("observatory_events.1h:all:g-takedown");
+    expect(eventsCacheKey("1h", all, noTd)).toBe("observatory_events.1h:all:g-none");
+    expect(eventsCacheKey("7d", ["spike", "critical"], td)).toBe("observatory_events.7d:critical,spike:any");
+    expect(eventsCacheKey("7d", ["critical", "spike"], noTd)).toBe("observatory_events.7d:critical,spike:any");
+    expect(eventsCacheKey("24h", ["takedown"], noTd)).toBe("observatory_events.24h:takedown:g-none");
+  });
+
+  it("the role segment is derived from GATED_KINDS: every gated kind, and only those, shapes it", () => {
+    for (const k of EVENT_KINDS) {
+      const seg = eventsRoleSegment([k], []);
+      expect(seg === "any", `${k} -> ${seg}`).toBe(!(k in GATED_KINDS));
+    }
+    // Same requested set + a different permitted set can never collide.
+    expect(eventsRoleSegment([...EVENT_KINDS], [])).not.toBe(eventsRoleSegment([...EVENT_KINDS], Object.keys(GATED_KINDS) as EventKind[]));
+    // A permitted kind that was not requested is irrelevant to the key.
+    expect(eventsRoleSegment(["critical"], ["takedown"])).toBe("any");
+  });
+
+  it("freshness: 1h outlives the 600s Navigator warm interval; 24h 300s, 7d 900s", () => {
+    expect(EVENTS_TTL_S).toEqual({ "1h": 600, "24h": 300, "7d": 900 });
+    expect(EVENTS_TTL_S["1h"]).toBeGreaterThanOrEqual(600);
   });
 });
 
@@ -288,15 +329,54 @@ describe.skipIf(!hasSqlite())("handler — params, 400s and caching", () => {
     const { env, kv, log } = makeEnv(openMigratedDb());
     const first = await call(env, "/api/observatory/events?period=1h&limit=40");
     expect(first.res.status).toBe(200);
-    expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:40:td"]);
-    expect(kv.store.get("cv:observatory_events.1h:all:40:td")!.ttl).toBe(Math.max(EVENTS_TTL_S * 2, 60));
+    expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:g-takedown"]);
+    expect(kv.store.get("cv:observatory_events.1h:all:g-takedown")!.ttl).toBe(Math.max(EVENTS_TTL_S["1h"] * 2, 60));
     const n = log.length;
     expect(n).toBeGreaterThan(0);
     // Absent params and a reordered explicit full kinds list are the same key.
     await call(env, "/api/observatory/events");
     await call(env, `/api/observatory/events?kinds=${[...EVENT_KINDS].reverse().join(",")}&limit=40`);
     expect(log.length).toBe(n);
-    expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:40:td"]);
+    expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:g-takedown"]);
+  });
+
+  it("one entry serves every limit: computed at the max, sliced per request, meta.limit echoes the request", async () => {
+    const db = openMigratedDb();
+    const rows = 7;
+    for (let i = 0; i < rows; i++) {
+      brand(db, `bl${i}`, `Brand ${i}`);
+      lookalike(db, { id: `ld${i}`, brand: `bl${i}`, domain: `lookalike${i}.example`, firstSeen: ts(5 + i) });
+    }
+    const { env, kv, log } = makeEnv(db);
+    const big = await call(env, "/api/observatory/events?kinds=lookalike&limit=100");
+    expect(big.body.data.length).toBe(rows);
+    const n = log.length;
+    const small = await call(env, "/api/observatory/events?kinds=lookalike&limit=3");
+    expect(log.length).toBe(n); // no SQL: the same entry
+    expect(small.body.data.map((e) => e.id)).toEqual(big.body.data.slice(0, 3).map((e) => e.id));
+    expect(small.body.meta.limit).toBe(3);
+    expect(big.body.meta.limit).toBe(100);
+    expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:lookalike:any"]);
+    expect(small.body.counts_by_kind).toEqual(big.body.counts_by_kind); // counts stay pre-limit
+  });
+
+  it("a response with a failed source is cached for the short failed TTL, not the full one", async () => {
+    const db = openMigratedDb();
+    db.exec("DROP TABLE lookalike_domains");
+    const { env, kv, log } = makeEnv(db);
+    const first = await call(env, "/api/observatory/events?kinds=lookalike");
+    expect(first.body.meta.failed_kinds).toEqual(["lookalike"]);
+    const entry = kv.store.get("cv:observatory_events.1h:lookalike:any")!;
+    expect(entry.ttl).toBe(Math.max(EVENTS_FAILED_TTL_S * 2, 60));
+    // Fresh within the failed TTL ...
+    const n = log.length;
+    await call(env, "/api/observatory/events?kinds=lookalike");
+    expect(log.length).toBe(n);
+    // ... and treated as expired once that has passed (the entry is stamped as if written TTL - FAILED_TTL ago).
+    const t = (JSON.parse(entry.value) as { t: number }).t;
+    const ageS = (Date.now() - t) / 1000;
+    expect(ageS).toBeGreaterThanOrEqual(EVENTS_TTL_S["1h"] - EVENTS_FAILED_TTL_S - 1);
+    expect(ageS).toBeLessThan(EVENTS_TTL_S["1h"]);
   });
 
   it("empty platform → empty rail, zero counts for every requested kind, envelope meta", async () => {
@@ -311,6 +391,19 @@ describe.skipIf(!hasSqlite())("handler — params, 400s and caching", () => {
 });
 
 // ─── 3. Sources on seeded rows ────────────────────────────────────────
+
+describe.skipIf(!hasSqlite())("critical — capped read keeps the NEWEST groups", () => {
+  it("CRITICAL_BRANDS_SQL orders latest-hour first before its LIMIT", () => {
+    const db = openMigratedDb();
+    for (const [i, h] of [[0, 30], [1, 2], [2, 10], [3, 0]] as const) {
+      brand(db, `bo${i}`, `Brand ${i}`);
+      brandCube(db, hourBucket(h), `bo${i}`, "phishing", "critical", 5 + i);
+    }
+    const rows = db.prepare(CRITICAL_BRANDS_SQL).all(eventsWindowStart("7d"), 3) as Array<{ brand_id: string }>;
+    // bo0 is the oldest of four: the cap of 3 drops it, not a newer brand.
+    expect(rows.map((r) => r.brand_id)).toEqual(["bo3", "bo1", "bo2"]);
+  });
+});
 
 describe.skipIf(!hasSqlite())("critical", () => {
   let body: EventsEnvelope;
@@ -523,7 +616,7 @@ describe.skipIf(!hasSqlite())("takedown + role gating", () => {
       const { body } = await call(env, "/api/observatory/events", role);
       expect(only(body, "takedown").length).toBe(2);
       expect(body.counts_by_kind.takedown).toBe(3);
-      expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:40:td"]);
+      expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:g-takedown"]);
     });
   }
 
@@ -538,7 +631,7 @@ describe.skipIf(!hasSqlite())("takedown + role gating", () => {
       expect(body.meta.kinds).not.toContain("takedown");
       expect(JSON.stringify(body)).not.toContain("contoso-pay.net");
       expect(log.some((e) => /takedown_requests/.test(e.sql))).toBe(false);
-      expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:40:notd"]);
+      expect(eventKeys(kv)).toEqual(["cv:observatory_events.1h:all:g-none"]);
       // Explicitly asking for takedowns doesn't help.
       const solo = await call(env, "/api/observatory/events?kinds=takedown", role);
       expect(solo.body.data).toEqual([]);
@@ -561,9 +654,9 @@ describe.skipIf(!hasSqlite())("takedown + role gating", () => {
     await call(env, "/api/observatory/events?kinds=critical,spike", "analyst");
     await call(env, "/api/observatory/events?kinds=critical,spike", "auditor");
     expect(eventKeys(kv).sort()).toEqual([
-      "cv:observatory_events.1h:all:40:notd",
-      "cv:observatory_events.1h:all:40:td",
-      "cv:observatory_events.1h:critical,spike:40:any",
+      "cv:observatory_events.1h:all:g-none",
+      "cv:observatory_events.1h:all:g-takedown",
+      "cv:observatory_events.1h:critical,spike:any",
     ]);
   });
 });
@@ -604,7 +697,7 @@ describe.skipIf(!hasSqlite())("actor", () => {
       title: "Operation Invoice kit linked to TA4903",
       entity: { type: "actor", id: "ta_4903", name: "TA4903" },
       place: { country_code: "US" },
-      occurred_at: toIsoUtc(ts(15)),
+      occurred_at: toIsoUtc(ts(20)), // the FIRST link, not the newest member row
       target: { lens: "actors", select: "actor:ta_4903" },
     });
   });

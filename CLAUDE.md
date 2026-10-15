@@ -1306,7 +1306,7 @@ behind a feature flag.
 - Navigator pre-warms 23 page-load requests across 4 minute-gated phases. The
   list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
   consumer; pinned by `test/navigator-warm-targets.test.ts`):
-  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`) + the Intel Feed events (`/api/observatory/events?period=1h&limit=40`, the headline bar + event rail default; 60s TTL, so every warm recomputes)
+  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`) + the Intel Feed events (`/api/observatory/events?period=1h&limit=40`, the headline bar + event rail default; 600s TTL = the Phase A interval, key has no `limit`)
   - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats + 7d heatmap
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats

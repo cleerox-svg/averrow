@@ -668,9 +668,11 @@ async function runNavigatorImpl(
   //   - arcs 7d (7200s TTL): recompute once age ≥ 5340s (~1 in 9 warms);
   //   - live (60s TTL): always expired by the next warm → recompute (cheap,
   //     LIMIT 8 on an index);
-  //   - events 1h (60s TTL, cachedValue — not refresh-aware): likewise
-  //     recomputes on every Phase A warm; ~2 cube-hours + bounded index
-  //     ranges (handlers/observatoryEvents.ts);
+  //   - events 1h (600s TTL, cachedValue — not refresh-aware): the TTL equals the
+  //     Phase A interval, so each warm lands as the previous entry expires and
+  //     recomputes once (~2 cube-hours + bounded index ranges,
+  //     handlers/observatoryEvents.ts) while clients read KV in between. The
+  //     key carries no `limit` (entries hold 100 items, sliced per request);
   //   - A2 nodes/stats 24h/30d + heatmap 7d (1800s TTL, every 900s):
   //     threshold 840s, so every A2 warm (age ≈900s) recomputes (4/h per
   //     key) even when tick jitter reads the age back as 899.x s — without

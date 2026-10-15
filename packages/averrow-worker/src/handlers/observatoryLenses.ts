@@ -232,17 +232,17 @@ function asnList(values: readonly unknown[], cap = LENS_ARRAY_CAP): string[] {
   return dedupeStrings(values, cap, (s) => normalizeAsn(s));
 }
 
-function chunk<T>(xs: readonly T[], size: number): T[][] {
+export function chunk<T>(xs: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
   return out;
 }
 
-function placeholders(n: number): string {
+export function placeholders(n: number): string {
   return Array.from({ length: n }, () => "?").join(", ");
 }
 
-function num(v: unknown): number {
+export function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
@@ -1086,6 +1086,24 @@ export function computeOverindex(
   return rows;
 }
 
+/**
+ * The two reads behind the over-index lens, exported so the event feed's spike source runs the same SQL.
+ * `GROUP BY +country_code`: the unary + stops the planner satisfying the GROUP BY from idx_cube_geo_country_hour.
+ * Without sqlite_stat1 it otherwise SCANs that whole index (every hour the cube retains) to skip a small sort; with it,
+ * the read is always the idx_cube_geo_hour range for the window + a per-country fold.
+ */
+export const SPIKE_GEO_SQL = `
+  SELECT country_code, SUM(threat_count) AS n
+  FROM threat_cube_geo
+  WHERE hour_bucket >= ? AND country_code != 'XX'
+  GROUP BY +country_code`;
+
+export const SPIKE_RADAR_SQL = `
+  SELECT snapshot_date, country_code, value_pct
+  FROM radar_country_snapshots
+  WHERE metric = 'attack_origin'
+    AND snapshot_date = (SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = 'attack_origin')`;
+
 export async function handleObservatoryOverindex(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const period = parseLensPeriod(url.searchParams.get("period"), OVERINDEX_PERIODS);
@@ -1095,25 +1113,8 @@ export async function handleObservatoryOverindex(request: Request, env: Env): Pr
     `${CACHE_NS}.overindex:${period}`, LENS_TTL_S.overindex, period,
     async (session, tally) => {
       const [ours, radar] = await Promise.all([
-        // `GROUP BY +country_code`: the unary + stops the planner satisfying
-        // the GROUP BY from idx_cube_geo_country_hour. Without sqlite_stat1
-        // it otherwise SCANs that whole index (every hour the cube retains)
-        // to skip a small sort; with it, the read is always the
-        // idx_cube_geo_hour range for the window + a per-country fold.
-        session.prepare(`
-          SELECT country_code, SUM(threat_count) AS n
-          FROM threat_cube_geo
-          WHERE hour_bucket >= ? AND country_code != 'XX'
-          GROUP BY +country_code
-        `).bind(snappedWindowStart(period)).all<{ country_code: string; n: number }>(),
-        session.prepare(`
-          SELECT snapshot_date, country_code, value_pct
-          FROM radar_country_snapshots
-          WHERE metric = 'attack_origin'
-            AND snapshot_date = (
-              SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = 'attack_origin'
-            )
-        `).all<{ snapshot_date: string; country_code: string; value_pct: number }>(),
+        session.prepare(SPIKE_GEO_SQL).bind(snappedWindowStart(period)).all<{ country_code: string; n: number }>(),
+        session.prepare(SPIKE_RADAR_SQL).all<{ snapshot_date: string; country_code: string; value_pct: number }>(),
       ]);
       addToTally(tally, ours.meta);
       addToTally(tally, radar.meta);

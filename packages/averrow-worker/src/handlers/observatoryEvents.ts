@@ -19,7 +19,9 @@
 //   kinds   comma list ⊆ EVENT_KINDS. Absent / empty → every kind. Order and
 //           duplicates don't matter (canonicalised for the key).
 //   limit   1..100, default 40 — clamped, never rejected (same rule as
-//           parseObservatoryLimit on the sibling routes).
+//           parseObservatoryLimit on the sibling routes). It is NOT part of
+//           the cache key: every entry is computed at EVENTS_MAX_LIMIT and
+//           sliced to the requested limit per request.
 //
 // Window: [top of the current UTC hour − N hours, now], so `1h` covers the
 // current partial hour plus the previous full hour. Hour-snapped like every
@@ -76,10 +78,13 @@
 // the rest of the rail still renders. capped_kinds lists sources whose read
 // hit its row cap (their counts are lower bounds).
 //
-// Caching: cachedValue, EVENTS_TTL_S, key
-//   observatory_events.<period>:<kinds|all>:<limit>:<any|td|notd>
-// (role segment only varies when `takedown` was requested). Navigator warms
-// the default `period=1h&limit=40` as a takedown-permitted caller.
+// Caching: cachedValue, EVENTS_TTL_S[period], key
+//   observatory_events.<period>:<kinds|all>:<any|g-<permitted gated kinds|none>>
+// The role segment names the permission-gated kinds (GATED_KINDS) the caller
+// may read, and only varies when one of them was requested, so a new gated
+// kind needs no key change. A response with any failed source is cached for
+// EVENTS_FAILED_TTL_S instead. Navigator warms the default
+// `period=1h&limit=40` as a takedown-permitted caller.
 
 import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
@@ -90,14 +95,19 @@ import { VELOCITY_SOURCE_FILTER } from "../lib/cube-builder";
 import { notRetiredClusterSql } from "../lib/cluster-status";
 import { getCountryCentroid } from "../lib/country-centroids";
 import { countryName } from "../lib/country-name";
-import { roleHasPermission } from "../lib/role-permissions";
+import { roleHasPermission, type StaffPermission } from "../lib/role-permissions";
 import { parseObservatoryLimit } from "./observatory";
 import {
+  chunk,
   computeOverindex,
   handleObservatoryOverindex,
   normalizeCountry,
+  num,
   parsePivotRow,
+  placeholders,
   LENS_MAX_BINDS,
+  SPIKE_GEO_SQL,
+  SPIKE_RADAR_SQL,
   type OverindexRow,
 } from "./observatoryLenses";
 import type { Env } from "../types";
@@ -118,8 +128,20 @@ const PERIOD_HOURS: Record<EventPeriod, number> = { "1h": 1, "24h": 24, "7d": 16
 export const EVENTS_DEFAULT_PERIOD: EventPeriod = "1h";
 export const EVENTS_DEFAULT_LIMIT = 40;
 export const EVENTS_MAX_LIMIT = 100;
-/** KV freshness (seconds). The rail is near-live; 60s is the spec ceiling. */
-export const EVENTS_TTL_S = 60;
+/**
+ * KV freshness (seconds) per period.
+ *
+ * 1h is 600s, not 60s: Navigator warms exactly one key (`period=1h&limit=40`) every 600s
+ * (Phase A), and a TTL shorter than the warm interval means the warm is expired before a
+ * client ever reads it, so every first paint recomputes. At 600s each warm rewrites the key
+ * as the previous entry expires and clients are served from KV in between. The cost is up to
+ * ~10 min of staleness on a feed whose fastest sources move at a 5-minute cube rebuild (critical)
+ * or hourly (pivots, attributions), which the headline bar's 30s poll cannot beat anyway.
+ * 24h / 7d are client-filled only: 300s / 900s.
+ */
+export const EVENTS_TTL_S: Record<EventPeriod, number> = { "1h": 600, "24h": 300, "7d": 900 };
+/** A response with a failed source lives this long (seconds): the next poll retries the broken source. */
+export const EVENTS_FAILED_TTL_S = 15;
 /** Row cap on every per-row source read (pivots, fast, lookalikes, takedowns, attributions). */
 export const EVENTS_SOURCE_ROW_CAP = 500;
 /** Row cap on the critical (brand × threat_type) cube fold. */
@@ -207,22 +229,37 @@ export function parseEventsParams(url: URL): EventsParams {
   return { ok: true, period, kinds, allKinds: kinds.length === EVENT_KINDS.length, limit };
 }
 
-/** Role class for the key: only matters when `takedown` was requested. */
-export function eventsRoleSegment(kinds: readonly EventKind[], canTakedowns: boolean): "any" | "td" | "notd" {
-  if (!kinds.includes("takedown")) return "any";
-  return canTakedowns ? "td" : "notd";
+/** Kinds that need a staff permission (dropped before any read for a caller without it). */
+export const GATED_KINDS: Readonly<Partial<Record<EventKind, StaffPermission>>> = { takedown: "manage_takedowns" };
+
+/** The gated kinds `role` may read; no role -> none (fail closed). */
+export function permittedGatedKinds(role: AuthContext["role"] | undefined): EventKind[] {
+  return EVENT_KINDS.filter((k) => {
+    const need = GATED_KINDS[k];
+    return need !== undefined && role !== undefined && roleHasPermission(role, need);
+  });
 }
 
-/** cachedValue key (the helper prefixes `cv:`). */
+/**
+ * Role class for the key: `any` when no gated kind was requested, else the gated kinds the
+ * caller may read (`g-takedown`, or `g-none`). Derived from GATED_KINDS, not hard-coded.
+ */
+export function eventsRoleSegment(kinds: readonly EventKind[], permitted: readonly EventKind[]): string {
+  const gated = kinds.filter((k) => GATED_KINDS[k] !== undefined);
+  if (gated.length === 0) return "any";
+  const allowed = gated.filter((k) => permitted.includes(k));
+  return `g-${allowed.length > 0 ? allowed.join("+") : "none"}`;
+}
+
+/** cachedValue key (the helper prefixes `cv:`). No `limit`: entries hold EVENTS_MAX_LIMIT items. */
 export function eventsCacheKey(
   period: EventPeriod,
   kinds: readonly EventKind[],
-  limit: number,
-  canTakedowns: boolean,
+  permitted: readonly EventKind[],
 ): string {
   const all = kinds.length === EVENT_KINDS.length;
   const kindsSeg = all ? "all" : EVENT_KINDS.filter((k) => kinds.includes(k)).join(",");
-  return `${EVENTS_CACHE_NS}.${period}:${kindsSeg}:${limit}:${eventsRoleSegment(kinds, canTakedowns)}`;
+  return `${EVENTS_CACHE_NS}.${period}:${kindsSeg}:${eventsRoleSegment(kinds, permitted)}`;
 }
 
 /** 'YYYY-MM-DD HH:00:00' — top of the current UTC hour minus the period. */
@@ -234,13 +271,27 @@ export function eventsWindowStart(period: EventPeriod, now: Date = new Date()): 
 
 // ── Copy helpers (pure) ───────────────────────────────────────────────────────
 
-/** Cut at a word boundary with an ellipsis; a single over-long word is kept whole. */
+// An optional trailing clause the title can lose whole: " · Netherlands", ", incl. example.com".
+const TITLE_TAILS = [" · ", ", incl. "] as const;
+const DANGLING_WORDS = /(?:\s+(?:incl\.|including|mostly|and|or|of|to|in|at|with|the|a|an|by|for|from|on|within|after|new))+$/i;
+
+/**
+ * Fit a title into `max`. An optional tail clause (` · mostly Netherlands`, `, incl. x.com`) is dropped whole rather
+ * than cut mid-clause; otherwise it is cut at a word boundary with an ellipsis, never after a separator or a
+ * connecting word (no `incl.…`, no `· mostly…`). A single over-long word is kept whole.
+ */
 export function fitTitle(s: string, max: number = TITLE_MAX): string {
   const t = s.replace(/\s+/g, " ").trim();
   if (t.length <= max) return t;
+  let tail = -1;
+  for (const m of TITLE_TAILS) {
+    for (let i = t.indexOf(m); i > 0; i = t.indexOf(m, i + 1)) if (i <= max && i > tail) tail = i;
+  }
+  if (tail > 0) return t.slice(0, tail).trimEnd();
   const cut = t.lastIndexOf(" ", max - 1);
   if (cut <= 0) return t;
-  return `${t.slice(0, cut).replace(/[\s·,:;—-]+$/, "")}…`;
+  const head = t.slice(0, cut).replace(/[\s·,:;—-]+$/, "").replace(DANGLING_WORDS, "").replace(/[\s·,:;—-]+$/, "");
+  return head === "" ? t : `${head}…`;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -400,20 +451,6 @@ function normalizeSeverity(raw: string | null | undefined, fallback: EventSeveri
   return s === "critical" || s === "high" || s === "medium" || s === "low" || s === "info" ? s : fallback;
 }
 
-function chunk<T>(xs: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
-  return out;
-}
-
-function placeholders(n: number): string {
-  return Array.from({ length: n }, () => "?").join(", ");
-}
-
-function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0;
-}
-
 /** Newest first; ties by kind order then id (deterministic). */
 export function sortEvents(events: ObservatoryEvent[]): ObservatoryEvent[] {
   const rank = (k: EventKind) => EVENT_KINDS.indexOf(k);
@@ -461,6 +498,7 @@ export const CRITICAL_BRANDS_SQL = `
   JOIN brands b ON b.id = c.target_brand_id
   WHERE c.hour_bucket >= ? AND c.severity = 'critical' AND ${MONITORED_BRAND_PREDICATE_SQL}
   GROUP BY c.target_brand_id, c.threat_type
+  ORDER BY MAX(c.hour_bucket) DESC, SUM(c.threat_count) DESC
   LIMIT ?`;
 
 export const criticalCountriesSql = (n: number) => `
@@ -926,14 +964,14 @@ async function takedownSource(ctx: SourceCtx): Promise<SourceResult> {
 
 // ── 6. actor ──────────────────────────────────────────────────────────────────
 
-// First link of (cluster, actor) in the window: the NOT EXISTS probe is
+// First link of (cluster, actor) in the window (`at` is that first link's time, MIN, so a later fan-out never moves it): the NOT EXISTS probe is
 // keyed on the cluster (idx_attribution_pulse) and stops at the first older
 // row, so it reads at most the window's own rows for that cluster. The unary
 // `+` on its other terms keeps the planner off idx_attribution_actor
 // (actor_id, observed_at), which would walk EVERY older attribution of that
 // actor — OTX rows included — to prove a new link has no history.
 export const ACTOR_LINKS_SQL = `
-  SELECT ta.source_pulse_id AS cluster_id, ta.actor_id AS actor_id, MAX(ta.observed_at) AS at,
+  SELECT ta.source_pulse_id AS cluster_id, ta.actor_id AS actor_id, MIN(ta.observed_at) AS at,
          MIN(ta.source) AS source, COUNT(*) AS n
   FROM threat_attributions ta
   WHERE ta.source IN ('nexus', 'manual') AND ta.observed_at >= ?
@@ -981,19 +1019,8 @@ async function actorSource(ctx: SourceCtx): Promise<SourceResult> {
 
 // ── 7. spike ──────────────────────────────────────────────────────────────────
 
-// Same reads as /overindex (handlers/observatoryLenses.ts) over this window;
-// `GROUP BY +country_code` keeps the planner on the idx_cube_geo_hour range.
-export const SPIKE_GEO_SQL = `
-  SELECT country_code, SUM(threat_count) AS n
-  FROM threat_cube_geo
-  WHERE hour_bucket >= ? AND country_code != 'XX'
-  GROUP BY +country_code`;
-
-export const SPIKE_RADAR_SQL = `
-  SELECT country_code, value_pct
-  FROM radar_country_snapshots
-  WHERE metric = 'attack_origin'
-    AND snapshot_date = (SELECT MAX(snapshot_date) FROM radar_country_snapshots WHERE metric = 'attack_origin')`;
+// The reads are /overindex's own (SPIKE_GEO_SQL / SPIKE_RADAR_SQL, handlers/observatoryLenses.ts), run over this window.
+export { SPIKE_GEO_SQL, SPIKE_RADAR_SQL };
 
 /** Pure: over-index rows → spike events (ratio + volume gates). */
 export function buildSpikeEvents(rows: readonly OverindexRow[], occurredAt: string): ObservatoryEvent[] {
@@ -1052,10 +1079,10 @@ const SOURCES: Record<EventKind, (ctx: SourceCtx) => Promise<SourceResult>> = {
   spike: spikeSource,
 };
 
-/** Kinds this caller may see: takedown needs manage_takedowns; no ctx → none (fail closed). */
-export function permittedKinds(kinds: readonly EventKind[], canTakedowns: boolean): { kinds: EventKind[]; omitted: EventKind[] } {
-  if (canTakedowns || !kinds.includes("takedown")) return { kinds: [...kinds], omitted: [] };
-  return { kinds: kinds.filter((k) => k !== "takedown"), omitted: ["takedown"] };
+/** Kinds this caller may see: a gated kind needs its permission; no ctx -> none gated (fail closed). */
+export function permittedKinds(kinds: readonly EventKind[], permitted: readonly EventKind[]): { kinds: EventKind[]; omitted: EventKind[] } {
+  const omitted = kinds.filter((k) => GATED_KINDS[k] !== undefined && !permitted.includes(k));
+  return { kinds: kinds.filter((k) => !omitted.includes(k)), omitted };
 }
 
 export async function handleObservatoryEvents(
@@ -1067,16 +1094,17 @@ export async function handleObservatoryEvents(
   const params = parseEventsParams(new URL(request.url));
   if (!params.ok) return json({ success: false, error: params.error }, 400, origin);
 
-  const canTakedowns = ctx ? roleHasPermission(ctx.role, "manage_takedowns") : false;
-  const { kinds, omitted } = permittedKinds(params.kinds, canTakedowns);
-  const key = eventsCacheKey(params.period, params.kinds, params.limit, canTakedowns);
+  const permitted = permittedGatedKinds(ctx?.role);
+  const { kinds, omitted } = permittedKinds(params.kinds, permitted);
+  const key = eventsCacheKey(params.period, params.kinds, permitted);
 
   const session = getReadSession(env, getDbContext(request));
   const tally = newTally();
   try {
-    const payload = await cachedValue<EventsEnvelope>(env, key, EVENTS_TTL_S, async () => {
+    // One entry per (period, kinds, role class), computed at EVENTS_MAX_LIMIT; each request takes its own slice.
+    const full = await cachedValue<EventsEnvelope>(env, key, EVENTS_TTL_S[params.period], async () => {
       const windowStart = eventsWindowStart(params.period);
-      const sctx: SourceCtx = { session, tally, windowStart, limit: params.limit, period: params.period, env };
+      const sctx: SourceCtx = { session, tally, windowStart, limit: EVENTS_MAX_LIMIT, period: params.period, env };
       const settled = await Promise.allSettled(kinds.map((k) => SOURCES[k](sctx)));
       const events: ObservatoryEvent[] = [];
       const counts: Partial<Record<EventKind, number>> = {};
@@ -1094,21 +1122,25 @@ export async function handleObservatoryEvents(
       });
       return {
         success: true,
-        data: sortEvents(events).slice(0, params.limit),
+        data: sortEvents(events).slice(0, EVENTS_MAX_LIMIT),
         counts_by_kind: counts,
         meta: {
           generated_at: new Date().toISOString(),
           period: params.period,
           window_start: toIsoUtc(windowStart) ?? windowStart,
           kinds,
-          limit: params.limit,
+          limit: EVENTS_MAX_LIMIT,
           omitted_kinds: omitted,
           capped_kinds: capped,
           failed_kinds: failed,
         },
       };
+    }, {
+      // A broken source must not be pinned for the full TTL (every kind failing included): retry on the next poll.
+      ttlFor: (v) => (v.meta.failed_kinds.length > 0 ? EVENTS_FAILED_TTL_S : EVENTS_TTL_S[params.period]),
     });
     recordD1Reads(env, "observatory_events", tally);
+    const payload: EventsEnvelope = { ...full, data: full.data.slice(0, params.limit), meta: { ...full.meta, limit: params.limit } };
     return attachBookmark(json(payload, 200, origin), session);
   } catch {
     recordD1Reads(env, "observatory_events", tally);
