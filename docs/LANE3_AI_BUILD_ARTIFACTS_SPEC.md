@@ -696,6 +696,18 @@ old shape out of KV for a whole TTL).
 | `generator.by_token[]` | Builder-mix baseline | Also permanently falsifies any future proposal to score the generator tag |
 | `by_fetch_outcome[]` | **The current block's real gap** — `fetched_ok` has no denominator breakdown, so failures are invisible | See below |
 
+> **Staff exfil-sink surface deferred (2026-10-15, n = 2).** A planned staff
+> leaderboard of sink operators (keyed on Telegram / Discord sink id, with
+> kits and brands spanned, a partial index on `page_exfil_sink`, and
+> `GET /api/observatory/exfil-sinks`) was gated on prod signal. The
+> measurement was over 5,662 analyzed rows, with `truncated: false`: `exfil.firings = 2`,
+> both `formspree.io` (a shared relay, so no operator pivot), and
+> `sink_id_firings = 0`. The go gate was `firings >= 10`, with
+> `sink_id_firings >= 5` for the operator view. Revisit when diagnostics
+> shows it met. The plan has no map lens, because sinks resolve to shared
+> SaaS / anycast edges, not attacker locations. Only bare-IP sinks are
+> geolocatable, via `GEOIP_DB`.
+
 > **`by_fetch_outcome[]` is last-pass only for rows that have NEVER succeeded —
 > ever-succeeded otherwise.** Amended 2026-09-21; code review caught the
 > overclaim in the original text. Outcome is inferred from
