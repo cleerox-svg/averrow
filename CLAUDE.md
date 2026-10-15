@@ -178,7 +178,10 @@ After restructure: everything imports from `@/design-system/components`.
 
 **Frozen components — never refactor these:**
 - `PortfolioHealthCard.tsx` — SVG donut, untouchable
-- `EventTicker.tsx` — scrolling ticker, untouchable
+
+(`EventTicker.tsx` was retired and deleted on 2026-10-15 at the owner's explicit
+request: it was replaced by the Observatory Headline bar and Event rail
+(`features/observatory-v3/components/HeadlineBar.tsx`, `EventRail.tsx`).)
 
 (`ThreatMap.tsx`, `ExposureGauge.tsx`, `Sparkline.tsx`, `ActivitySparkline.tsx`
 were deleted as unused in UI consolidation Phase 1 PR3, 2026-10.)
@@ -555,7 +558,7 @@ while every agent reported `success`. Rules that came out of it:
 
 ### Cron schedule (wrangler.toml):
 ```
-navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 22 page-load requests)
+navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 23 page-load requests)
                               (independent agent; FC monitors health but does not dispatch;
                                historical agent_runs rows use agent_id='fast_tick')
                               (UTC hour 0, hour-only gate: dns-queue reaper + nrd_domains tiered
@@ -1300,10 +1303,10 @@ behind a feature flag.
 ### KV Cache on page-load endpoints
 - Check `env.CACHE.get(cacheKey)` before querying D1 on any page-load GET endpoint
 - Store results with `env.CACHE.put(cacheKey, JSON.stringify(data), { expirationTtl: 300 })` — 5-min TTL standard
-- Navigator pre-warms 22 page-load requests across 4 minute-gated phases. The
+- Navigator pre-warms 23 page-load requests across 4 minute-gated phases. The
   list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts` (each entry names its
   consumer; pinned by `test/navigator-warm-targets.test.ts`):
-  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`)
+  - **A** (every 10 min): Observatory 7d nodes/arcs/stats + side-panel live (`limit=8`) + active operations (`limit=4&offset=0&status=active`) + the Intel Feed events (`/api/observatory/events?period=1h&limit=40`, the headline bar + event rail default; 60s TTL, so every warm recomputes)
   - **A2** (every 15 min): Observatory 24h/30d nodes/arcs/stats + 7d heatmap
   - **B** (every 15 min): Dashboard overview (MCP probe), Agents, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot
   - **C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`status=active`) + stats

@@ -806,13 +806,11 @@
 /* ── Reduced motion (global) ──
    Transitions collapse to near-zero (not `none`, so transitionend still
    fires). Generic animations collapse to 0.01ms / 1 iteration so
-   animationend still fires. Three classes of animation must NOT be
+   animationend still fires. Two classes of animation must NOT be
    collapsed — each has an explicit exception below, using !important
    plus a class/attribute selector (specificity above the `*` rule):
      1. Loading spinners keep a slow rotation, otherwise loading looks hung.
-     2. The intel ticker is a scrolling marquee; frozen at -50% half its
-        items would be unreachable, so it is made manually scrollable.
-     3. Ping rings animate to opacity 0, so a collapsed run strands them
+     2. Ping rings animate to opacity 0, so a collapsed run strands them
         on an invisible/odd frame; the ring is hidden and the solid dot
         alone conveys LIVE.
    Loaded by both apps via theme.css. */
@@ -831,21 +829,7 @@
     animation: spin 1.6s linear infinite !important;
   }
 
-  /* 2. Ticker: no auto-scroll; the track is shown static and its
-        overflow container (an inline-styled `overflow:hidden` div, matched
-        structurally) scrolls horizontally. NOTE: EventTicker renders the
-        event list twice for the seamless loop, so with animation off the
-        duplicated items appear after the originals — acceptable. */
-  .ticker-track {
-    animation: none !important;
-    transform: none !important;
-  }
-  .event-ticker > div:has(> .ticker-track) {
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-  }
-
-  /* 3. Ping rings (inline-styled `live-ping` / `chip-ping`, Tailwind
+  /* 2. Ping rings (inline-styled `live-ping` / `chip-ping`, Tailwind
         `animate-ping`): hide the ring entirely; the solid dot remains. */
   [style*="live-ping"],
   [style*="chip-ping"],

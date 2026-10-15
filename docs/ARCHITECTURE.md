@@ -211,9 +211,9 @@ Default page loads (no search, no filter, page 1) use reduced-dimension cache ke
 
 ### Cache Pre-Warming (Navigator)
 
-The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a slower cadence below) pre-warms KV caches by calling handler functions with synthetic requests. Each warm uses the exact query string a live client sends, so it writes the KV key that client reads (22 requests across 4 phases; the list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts`, pinned by `test/navigator-warm-targets.test.ts`):
+The Navigator agent (cron every 5 minutes; each warm phase is minute-gated to a slower cadence below) pre-warms KV caches by calling handler functions with synthetic requests. Each warm uses the exact query string a live client sends, so it writes the KV key that client reads (23 requests across 4 phases; the list is `NAVIGATOR_WARM_TARGETS` in `cron/navigator.ts`, pinned by `test/navigator-warm-targets.test.ts`):
 
-- **Phase A** (every 10 min): Observatory 7d nodes, arcs, stats + side-panel live feed (`limit=8`) + side-panel active operations (`/api/v1/operations?limit=4&offset=0&status=active`) (5)
+- **Phase A** (every 10 min): Observatory 7d nodes, arcs, stats + side-panel live feed (`limit=8`) + side-panel active operations (`/api/v1/operations?limit=4&offset=0&status=active`) + Intel Feed events (`/api/observatory/events?period=1h&limit=40`, the headline bar and event rail default) (6)
 - **Phase A2** (every 15 min): Observatory 24h + 30d nodes, arcs, stats + heatmap 7d (`/api/observatory/heatmap?period=7d`, a non-default mode, so budget-gated) (7)
 - **Phase B** (every 15 min): Dashboard overview (MCP smoke probe), Agents list, Campaigns operations list (`limit=12&offset=0`) + stats, Feeds aggregate-stats, admin dashboard snapshot (super_admin variant) (6)
 - **Phase C** (every 30 min): side-panel Top Targeted Brands (`/api/brands?view=top&limit=8&offset=0&range=7d`) + brand stats, Threat Actors (`?status=active`) + stats (4)

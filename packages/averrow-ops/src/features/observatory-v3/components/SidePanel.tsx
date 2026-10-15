@@ -602,9 +602,11 @@ interface SidePanelProps {
    * (`mobile` omitted/false) is unchanged.
    */
   mobile?: boolean;
+  /** The panel's tab strip (Intel | Events), rendered above the widgets of the docked / floating panel. */
+  tabs?: ReactNode;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mobile = false, placement = 'dock', onSelectNode, tabs }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -669,7 +671,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
 
   return (
     // top-[60px] sits the panel under the console toolbar; bottom-[76px] reserves the
-    // same stats-bar (36) + ticker (40) band as ObservatoryV3.tsx's map container and
+    // same stats-bar (36) + headline bar (40) band as ObservatoryV3.tsx's map container and
     // stats bar (desktop-only — this branch never renders on mobile), so the panel's
     // own bottom edge stays flush with the top of that chrome strip.
     <aside
@@ -686,6 +688,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, pla
         boxShadow: placement === 'overlay' ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
+      {tabs}
       <PanelErrorBoundary label="Intelligence panel">{widgets}</PanelErrorBoundary>
     </aside>
   );

@@ -131,7 +131,7 @@ export const NAVIGATOR_WARM_TARGETS: readonly NavigatorWarmTarget[] = [
   // analyst read; sales / support / billing / auditor read the `notd` variant
   // and fill it on their own miss. 60s TTL, so (like live) every warm
   // recomputes; the 1h window keeps that cheap.
-  { phase: 'A', path: '/api/observatory/events?period=1h&limit=40', consumer: 'ops Observatory event rail + headline bar (Intel Feed redesign; client pending)', handler: (req, env) => handleObservatoryEvents(req, env, DASHBOARD_WARM_CTX) },
+  { phase: 'A', path: '/api/observatory/events?period=1h&limit=40', consumer: 'ops Observatory headline bar + event rail (useObservatoryEvents default request)', handler: (req, env) => handleObservatoryEvents(req, env, DASHBOARD_WARM_CTX) },
 
   // ── Phase A2 — Observatory alternate periods + heatmap ──
   // Heatmap is a non-default mode (the landing page renders the globe), so it

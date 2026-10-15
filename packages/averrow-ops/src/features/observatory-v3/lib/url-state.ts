@@ -15,6 +15,7 @@
  * `wall=1` is the wall-screen mode: it defaults the projection to the globe (so `proj` is written only when it differs from
  * THAT default, i.e. `wall=1&proj=flat`), and the page hides the panel and the chrome that is not needed.
  * `sev` (critical,high,medium,low), `type` (threat types) and `brand` are the data filters: empty = no filter, never written.
+ * `ev` (event kinds, e.g. `ev=critical,takedown`) filters the event rail: empty = every kind, never written.
  * Params that aren't ours are left untouched.
  */
 
@@ -25,6 +26,7 @@ import {
   type LayerToggles, type LensId,
 } from './lenses';
 import { DEFAULT_PROJECTION, PROJECTION_IDS, type Projection } from './projection';
+import { parseEventKinds, serializeEventKinds, type EventKind } from './events';
 
 export const PERIOD_IDS = ['24h', '7d', '30d', '90d'] as const;
 export type Period = (typeof PERIOD_IDS)[number];
@@ -158,6 +160,8 @@ export interface ObservatoryUrlState {
   type: string[];
   /** Brand filter (`brand=<brand id>`). Sent to /arcs, /stats and /timeline; /nodes has no brand dimension (it would 400), so the node layer ignores it. */
   brand: string | null;
+  /** Event-rail kind filter (`ev=critical,fast`). Empty = every kind. Independent of the lens and the selection. */
+  ev: EventKind[];
 }
 
 /** The scene the map draws for a state. */
@@ -193,13 +197,14 @@ export const DEFAULT_STATE: ObservatoryUrlState = {
   sev: [],
   type: [],
   brand: null,
+  ev: [],
 };
 
 /** The projection a link without `proj` opens on: the globe on a wall screen, the flat map otherwise. */
 export const defaultProjectionFor = (wall: boolean): Projection => (wall ? 'globe' : DEFAULT_PROJECTION);
 
 /** Every query-string key this module owns. */
-export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared', 'wall', 'sev', 'type', 'brand'] as const;
+export const OWNED_KEYS = ['lens', 'view', 'period', 'source', 'mode', 'colorBy', 'layers', 'node', 'arc', 'sel', 'measure', 'proj', 'shared', 'wall', 'sev', 'type', 'brand', 'ev'] as const;
 
 const NODE_KEY_RE = /^-?\d{1,3}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?$/;
 const ARC_KEY_MAX = 200;
@@ -283,6 +288,7 @@ export function parseObservatoryParams(sp: URLSearchParams): ObservatoryUrlState
     sev: parseSeverities(sp.get('sev')),
     type: parseTypes(sp.get('type')),
     brand: parseBrand(sp.get('brand')),
+    ev: parseEventKinds(sp.get('ev')),
   };
 }
 
@@ -304,6 +310,8 @@ export function applyObservatoryState(base: URLSearchParams, state: ObservatoryU
   if (state.sev.length > 0 && state.sev.length < SEVERITY_IDS.length) out.set('sev', SEVERITY_IDS.filter(id => state.sev.includes(id)).join(','));
   if (state.type.length > 0) out.set('type', state.type.join(','));
   if (state.brand) out.set('brand', state.brand);
+  const ev = serializeEventKinds(state.ev);
+  if (ev) out.set('ev', ev);
   if (mapModeOf(state) === 'global') {
     if (state.node) out.set('node', state.node);
     else if (state.arc) out.set('arc', state.arc);
@@ -357,6 +365,7 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
   next.sev = parseSeverities(next.sev.join(','));
   next.type = parseTypes(next.type.join(','));
   next.brand = parseBrand(next.brand);
+  next.ev = parseEventKinds(next.ev.join(','));
   if (!measuresFor(next.lens).includes(next.measure)) next.measure = DEFAULT_STATE.measure;
   const setsSelection = patch.node !== undefined || patch.arc !== undefined || patch.sel !== undefined;
   if (viewChanged && !setsSelection) {

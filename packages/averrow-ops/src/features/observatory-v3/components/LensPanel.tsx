@@ -32,6 +32,8 @@ export interface LensPanelProps {
   onPreview?: (target: DrillTarget | null) => void;
   /** Extra content after the list (e.g. the Operations lens's shared-infrastructure toggle). */
   aside?: ReactNode;
+  /** The panel's tab strip (Intel | Events), rendered at the top of the docked / floating panel. */
+  tabs?: ReactNode;
   className?: string;
 }
 
@@ -53,7 +55,7 @@ const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = 
   rising: 'var(--sev-critical-text)', falling: 'var(--sev-info-text)', neutral: 'var(--text-primary)',
 };
 
-export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside, className }: LensPanelProps) {
+export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside, tabs, className }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
     <div className="flex flex-col gap-3 p-4">
@@ -147,6 +149,7 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
         boxShadow: overlay ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
       }}
     >
+      {tabs}
       {body}
     </aside>
   );
