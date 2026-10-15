@@ -41,6 +41,14 @@ describe('ProjectionToggle: ONE button for Flat | Globe', () => {
       expect(onToggle).not.toHaveBeenCalled();
     });
 
+    it('the reason chip sits beside the button (not on it), on the labelled desktop button and the touch icon alike', () => {
+      for (const touch of [false, true]) {
+        const { unmount } = render(<ProjectionToggle projection="flat" flatOnly touch={touch} onToggle={vi.fn()} />);
+        expect(screen.getByText(HEAT_FLAT_ONLY).style.right).toBe('calc(100% + 8px)');
+        unmount();
+      }
+    });
+
     it('keeps the REQUESTED globe pressed (the preference survives) while disabled, and announces the flip', () => {
       const { rerender } = render(<ProjectionToggle projection="globe" onToggle={vi.fn()} />);
       expect(screen.getByRole('status')).toHaveTextContent('');

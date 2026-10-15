@@ -149,6 +149,9 @@ describe("JSON / code normalisers", () => {
     expect(normalizeAsn("as13335")).toBe("AS13335");
     expect(normalizeAsn("13335")).toBe("AS13335");
     expect(normalizeAsn("AS-x")).toBeNull();
+    // asnKey semantics: the legacy org form resolves; no prefix games.
+    expect(normalizeAsn("AS13335 Cloudflare, Inc.")).toBe("AS13335");
+    expect(normalizeAsn("AS13335x")).toBeNull();
     expect(normalizeCountry("us")).toBe("US");
     expect(normalizeCountry("XX")).toBeNull();
     expect(normalizeCountry("USA")).toBeNull();

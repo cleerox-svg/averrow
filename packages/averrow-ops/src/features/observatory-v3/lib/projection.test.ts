@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   DEFAULT_PROJECTION, PROJECTION_IDS, isProjection, effectiveProjection, overlayInterleaved, projectionSpec, maxZoomFor,
   globeFitZoom, globeCanvasBox, globeDiscPx, globeBleeds, BLEED_ENTER, BLEED_EXIT, limbFade, globeLabelOpacity, LABEL_FADE_START_DEG, LABEL_FADE_END_DEG, globeOverlayProps, centreAngleDeg, GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, skyFor,
-  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE, GLOBE_START_CENTER, GLOBE_START_CENTER_PHONE, globeStartCamera,
+  GLOBE_RESOLUTION_DEG, GLOBE_DEPTH_BIAS, GLOBE_DEPTH_WRITE, GLOBE_APPARENT_SCALE, GLOBE_START_CENTER, GLOBE_START_CENTER_PHONE, globeStartCamera, wallExitProjection,
 } from './projection';
 
 describe('projection ids', () => {
@@ -200,5 +200,19 @@ describe('globeStartCamera: where the globe opens', () => {
       expect(globeDiscPx(zoom)).toBeLessThan(Math.min(w, h));
       expect(globeDiscPx(zoom)).toBeGreaterThan(Math.min(w, h) * 0.5);
     }
+  });
+});
+
+describe('wallExitProjection', () => {
+  it('gives back what the viewer had before the wall, not the wall default globe', () => {
+    expect(wallExitProjection('globe', 'flat', false)).toBe('flat');
+    expect(wallExitProjection('globe', 'globe', false)).toBe('globe');
+  });
+  it('a link that opened on the wall has no earlier view: the console default (flat), or an explicit flat as is', () => {
+    expect(wallExitProjection('globe', null, false)).toBe('flat');
+    expect(wallExitProjection('flat', null, false)).toBe('flat');
+  });
+  it('a projection picked on the wall is kept', () => {
+    expect(wallExitProjection('globe', 'flat', true)).toBe('globe');
   });
 });

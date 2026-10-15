@@ -243,3 +243,38 @@ export function globeOverlayProps(): Pick<MapboxOverlayProps, 'views' | 'paramet
     parameters: { depthBias: GLOBE_DEPTH_BIAS, depthWriteEnabled: GLOBE_DEPTH_WRITE },
   };
 }
+
+/**
+ * The projection to leave a wall screen on. The wall opens on the globe by default, so the globe it shows is not the viewer's
+ * choice: they get back what they had before it (`before`), or, with no earlier view in this page (a link that opened on the
+ * wall), the console default. A projection picked on the wall itself (`chosen`) is kept as it is.
+ */
+export function wallExitProjection(current: Projection, before: Projection | null, chosen: boolean): Projection {
+  if (chosen) return current;
+  if (before) return before;
+  return current === 'globe' ? DEFAULT_PROJECTION : current;
+}
+
+const BEFORE_WALL_KEY = 'averrow.observatory.projBeforeWall';
+
+/**
+ * The projection the viewer had before a wall screen, kept for the tab session: entering the wall by in-app navigation
+ * remounts the page, which loses a component ref. Storage can be unavailable (private window, blocked site data): every
+ * access is guarded and a miss is simply "no earlier view".
+ */
+export function readProjBeforeWall(): Projection | null {
+  try {
+    const v = window.sessionStorage.getItem(BEFORE_WALL_KEY);
+    return isProjection(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeProjBeforeWall(proj: Projection): void {
+  try {
+    window.sessionStorage.setItem(BEFORE_WALL_KEY, proj);
+  } catch {
+    /* storage unavailable: the exit falls back to the console default */
+  }
+}

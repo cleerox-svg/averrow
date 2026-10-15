@@ -169,3 +169,26 @@ export function isAboveAverage(
   if (bound === 'upper') return false;
   return typeof globalAvg === 'number' && Number.isFinite(globalAvg) && botPct > globalAvg;
 }
+
+/**
+ * The wall screen's tiles for the bot-share scene: the global share, how many countries are painted and the most
+ * automated one. Always the same three tiles, so the layout does not jump as the data arrives. `value: null` means still
+ * loading; once `loaded`, a figure the data does not have reads "N/A" (a loaded-empty scene is not a busy one).
+ */
+export function botWallTiles(
+  points: readonly BotDensityPoint[],
+  globalAvg: number | null | undefined,
+  loaded: boolean = points.length > 0,
+): Array<{ label: string; value: number | string | null; sub?: string }> {
+  const hasAvg = typeof globalAvg === 'number' && Number.isFinite(globalAvg);
+  const unknown = loaded ? 'N/A' : null;
+  let top: BotDensityPoint | null = null;
+  for (const p of points) if (!top || p.bot_pct > top.bot_pct) top = p;
+  return [
+    { label: 'Global bot share', value: hasAvg ? formatPct(globalAvg) : unknown },
+    { label: 'Countries', value: loaded ? points.length : null },
+    top
+      ? { label: 'Most automated', value: formatBotShare(top.bot_pct, top.bound), sub: `${top.name} (${top.code})` }
+      : { label: 'Most automated', value: unknown },
+  ];
+}

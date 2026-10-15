@@ -58,8 +58,12 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
   );
 }
 
-export function BrandFilter({ brand, brandName, data, onChange, onActivate, touch = false }: {
+export function BrandFilter({ brand, brandName, data, onChange, onActivate, touch = false, loading = false, failed = false }: {
   brand: string | null; brandName?: string | null; data: SearchData; onChange: (brand: { id: string; name: string }) => void; onActivate?: () => void; touch?: boolean;
+  /** No brand can be offered yet and the data that would supply them is still loading. */
+  loading?: boolean;
+  /** Every source of brands failed: there is nothing to search. */
+  failed?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-filter="brand">
@@ -75,24 +79,29 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
         onActivate={onActivate}
         onPick={(r: SearchResult) => { if (r.brandId) onChange({ id: r.brandId, name: r.label }); }}
       />
-      <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div
+        className="font-mono text-[11px]"
+        style={{ color: !brand && failed && !loading ? 'var(--sev-critical-text)' : 'var(--text-tertiary)' }}
+        aria-live="polite"
+        aria-busy={!brand && loading ? true : undefined}
+      >
         {brand
-          ? <>Showing <span style={{ color: 'var(--amber-text)' }}>{brandName || brand}</span> in arcs and stats (the node layer has no brand split).</>
-          : 'Brands on the map are searchable here; pick one to follow it.'}
+          ? <>Showing <span style={{ color: 'var(--amber-text)' }}>{brandName || 'the selected brand'}</span> in arcs and stats (the node layer has no brand split).</>
+          : loading ? 'Loading brands…' : failed ? 'Couldn\u2019t load brands.' : 'Brands on the map are searchable here; pick one to follow it.'}
       </div>
     </div>
   );
 }
 
 /** Type + brand, as one block (the body of both the popover and the phone filters card). */
-export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, searchData, onActivate, touch = false }: {
+export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, searchData, onActivate, touch = false, brandsLoading = false, brandsFailed = false }: {
   types: readonly string[]; brand: string | null; brandName?: string | null; onTypes: (types: string[]) => void; onBrand: (brand: { id: string; name: string }) => void;
-  searchData: SearchData; onActivate?: () => void; touch?: boolean;
+  searchData: SearchData; onActivate?: () => void; touch?: boolean; brandsLoading?: boolean; brandsFailed?: boolean;
 }) {
   return (
     <>
       <TypeMultiSelect types={types} onChange={onTypes} touch={touch} />
-      <BrandFilter brand={brand} brandName={brandName} data={searchData} onChange={onBrand} onActivate={onActivate} touch={touch} />
+      <BrandFilter brand={brand} brandName={brandName} data={searchData} onChange={onBrand} onActivate={onActivate} touch={touch} loading={brandsLoading} failed={brandsFailed} />
     </>
   );
 }
@@ -171,9 +180,13 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
   /** Chips shown before folding (default 4, 2 on touch). */
   max?: number; muted?: boolean; mutedNote?: string; rootRef?: Ref<HTMLDivElement>;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  if (chips.length === 0) return null;
+  const [expandedState, setExpanded] = useState(false);
   const limit = max ?? (touch ? CHIPS_VISIBLE.touch : CHIPS_VISIBLE.fine);
+  // Once the chips fit again nothing is folded, so the expansion is spent: without this the row stayed in its wrapping
+  // (multi-line) state for good, and the next overflow opened already expanded.
+  useEffect(() => { if (chips.length <= limit) setExpanded(false); }, [chips.length, limit]);
+  if (chips.length === 0) return null;
+  const expanded = expandedState && chips.length > limit;
   const folded = !expanded && chips.length > limit;
   const shown = folded ? chips.slice(0, limit) : chips;
   const hidden = chips.length - shown.length;

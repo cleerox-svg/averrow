@@ -5,7 +5,7 @@ import type { ArcData } from '@/hooks/useObservatory';
 import { BrandFilter, FilterChips, FILTERS_MUTED_NOTE, TypeMultiSelect } from './DataFilters';
 import { ControlRail } from './ControlRail';
 import { WallOverlay, WALL_EXIT_HIDE_MS } from './WallOverlay';
-import { filterChips } from '../lib/filters';
+import { filterChips, withFallbackBrands, hasBrandIds } from '../lib/filters';
 import { lensPreset } from '../lib/lenses';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -26,6 +26,18 @@ describe('filter chips: one row, with a +N overflow', () => {
     expect(screen.queryByText('+2')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Show less' }));
     expect(group.querySelectorAll('[data-chip]')).toHaveLength(3);
+  });
+
+  it('a spent expansion does not linger: once the chips fit again the row is single-line, and the next overflow starts folded', async () => {
+    const { rerender } = render(<FilterChips chips={chips} onRemove={vi.fn()} onClear={vi.fn()} max={3} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Show 2 more active filters' }));
+    const group = screen.getByRole('group', { name: 'Active filters' });
+    expect(group.className).toContain('flex-wrap');
+    rerender(<FilterChips chips={chips.slice(0, 2)} onRemove={vi.fn()} onClear={vi.fn()} max={3} />);
+    expect(screen.getByRole('group', { name: 'Active filters' }).className).toContain('flex-nowrap');
+    rerender(<FilterChips chips={chips} onRemove={vi.fn()} onClear={vi.fn()} max={3} />);
+    expect(screen.getByRole('group', { name: 'Active filters' }).className).toContain('flex-nowrap');
+    expect(screen.getByRole('button', { name: 'Show 2 more active filters' })).toBeInTheDocument();
   });
 
   it('defaults to 2 on touch and 4 otherwise', () => {
@@ -62,6 +74,57 @@ describe('brand filter picks by id', () => {
     expect(options).toHaveLength(1);
     await userEvent.click(options[0]!);
     expect(onChange).toHaveBeenCalledWith({ id: 'b_ing', name: 'ING' });
+  });
+});
+
+describe('brand filter while the cached arcs carry no brand ids (right after a deploy)', () => {
+  const legacyArc = (name: string): ArcData => ({
+    sourcePosition: [5, 52], targetPosition: [-100, 40], threat_type: 'phishing', severity: 'high', source_region: 'NL',
+    target_brand: name, brand_name: name, volume: 3,
+  });
+  const top = [{ id: 'b_pp', name: 'PayPal', threat_count: 40 }, { id: 'b_ing', name: 'ING', threat_count: 9 }];
+
+  it('is offered the top brands instead of an empty list, and picking one reports its id', async () => {
+    const arcs = [legacyArc('PayPal')];
+    expect(hasBrandIds(arcs)).toBe(false);
+    const onChange = vi.fn();
+    render(<BrandFilter brand={null} data={{ arcs: withFallbackBrands(arcs, top) }} onChange={onChange} />);
+    await userEvent.type(screen.getByRole('combobox'), 'pay');
+    await userEvent.click(screen.getAllByRole('option')[0]!);
+    expect(onChange).toHaveBeenCalledWith({ id: 'b_pp', name: 'PayPal' });
+  });
+
+  it('does not repeat a brand whose id the arcs already carry, and returns the arcs untouched when nothing is added', () => {
+    const withId: ArcData = { ...legacyArc('PayPal'), target_brand_id: 'b_pp' };
+    const merged = withFallbackBrands([withId], top)!;
+    expect(merged.filter(a => a.target_brand_id === 'b_pp')).toHaveLength(1);
+    expect(merged.filter(a => a.target_brand_id === 'b_ing')).toHaveLength(1);
+    const arcs = [withId];
+    expect(withFallbackBrands(arcs, [top[0]!])).toBe(arcs);
+    expect(withFallbackBrands(arcs, undefined)).toBe(arcs);
+    expect(withFallbackBrands(arcs, 'nope' as never)).toBe(arcs);
+  });
+
+  it('says "Loading brands…" instead of the empty-looking hint while the data that would supply them loads', () => {
+    const { rerender } = render(<BrandFilter brand={null} data={{}} onChange={vi.fn()} loading />);
+    expect(screen.getByText('Loading brands…')).toBeInTheDocument();
+    expect(screen.getByText('Loading brands…')).toHaveAttribute('aria-busy', 'true');
+    rerender(<BrandFilter brand={null} data={{}} onChange={vi.fn()} />);
+    expect(screen.queryByText('Loading brands…')).toBeNull();
+  });
+
+  it('says "Couldn\u2019t load brands." when every source failed, instead of the normal hint over an empty list', () => {
+    render(<BrandFilter brand={null} data={{}} onChange={vi.fn()} failed />);
+    expect(screen.getByText('Couldn\u2019t load brands.')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.queryByText(/searchable here/)).toBeNull();
+  });
+
+  it('fallback brands carry no count (the top-brands total is all-time, not the period) and a named-less brand reads neutrally', () => {
+    const [stand] = withFallbackBrands(undefined, top)!;
+    expect(stand!.volume).toBe(0);
+    expect(filterChips({ sev: [], type: [], brand: 'brand_acme' })[0]!.label).toBe('Brand filter');
+    render(<BrandFilter brand="brand_acme" data={{}} onChange={vi.fn()} />);
+    expect(screen.queryByText(/brand_acme/)).toBeNull();
   });
 });
 
@@ -103,6 +166,15 @@ describe('wall overlay', () => {
     const css = document.querySelector('style')!.textContent!;
     expect(css).toMatch(/clamp\(32px/);
     expect(screen.getByTestId('map-attribution')).toBeInTheDocument();
+  });
+
+  it('custom tiles replace the defaults (bot-share scene), with their sub-line', () => {
+    render(<WallOverlay {...props} tiles={[{ label: 'Global bot share', value: '31.2%' }, { label: 'Most automated', value: '62.0%', sub: 'Peru (PE)' }]} />);
+    const group = screen.getByRole('group', { name: 'Headline numbers, 7D' });
+    expect(within(group).getByText('Global bot share')).toBeInTheDocument();
+    expect(within(group).getByText('Peru (PE)')).toBeInTheDocument();
+    expect(within(group).queryByText('Threats')).toBeNull();
+    expect(within(group).queryByText('Countries')).toBeNull();
   });
 
   it('operations are shown only when available', () => {

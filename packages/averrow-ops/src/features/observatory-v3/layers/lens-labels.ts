@@ -428,13 +428,24 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     const p = project(a.position);
     return p ? [{ x: p.x, y: p.y + a.radiusPx + 10, r: (a.text.length * CHAR_PX) / 2 }] : [];
   }));
-  const moves = moveCands.length === 0 ? [] : placeLabels(moveCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_MOVE_LABELS + ((input.moves ?? []).some(m => m.selected) ? 1 : 0), obstacles: moveObstacles })
+  // The selected event's label rides on top of the top moves, but only when it is actually placed: reserving its slot up
+  // front let a fourth ordinary label through whenever the selected one was off screen or crowded out.
+  const moves = moveCands.length === 0 ? [] : keepTopMoves(
+    placeLabels(moveCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_MOVE_LABELS + 1, obstacles: moveObstacles }),
+    id => !!moveById.get(id)?.selected,
+  )
     .map(p => {
       const src = moveById.get(p.id)!;
       return { id: p.id, text: src.text, position: src.position, angle: p.angle, fade: moveFade.get(p.id) ?? 1 } satisfies PlacedEdgeLabel;
     });
 
   return moves.length > 0 ? { opNodes, edges, hosts, actors, moves } : { opNodes, edges, hosts, actors };
+}
+
+/** Placed movement labels (best first): every selected one, then the best `MAX_MOVE_LABELS` of the rest. */
+export function keepTopMoves<T extends { id: string }>(placed: readonly T[], isSelected: (id: string) => boolean): T[] {
+  let rest = 0;
+  return placed.filter(p => isSelected(p.id) || rest++ < MAX_MOVE_LABELS);
 }
 
 const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1];

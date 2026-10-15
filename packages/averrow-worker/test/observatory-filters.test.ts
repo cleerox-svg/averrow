@@ -26,7 +26,9 @@ import {
 } from "../src/handlers/observatory";
 import {
   handleObservatoryTimeline,
-  computeTimelineTrend,
+  timelineTrend,
+  sumTotals,
+  timelinePriorCacheKey,
   periodDeltaPct,
   priorWindowStartMs,
   timelineStartMs,
@@ -372,7 +374,12 @@ describe.skipIf(!hasSqlite())("filtered results over seeded cubes", () => {
     expect(sum(ruType)).toBe(7);
 
     const cubes = log.map((l) => /FROM (threat_cube_\w+)/.exec(l.sql)?.[1]).filter(Boolean);
-    expect(cubes).toEqual(["threat_cube_status", "threat_cube_brand", "threat_cube_arcs", "threat_cube_geo"]);
+    // Per request: the current-window series, then the prior-window total
+    // on the SAME cube (fresh KV, so the prior total is a miss each time).
+    expect(cubes).toEqual([
+      "threat_cube_status", "threat_cube_status", "threat_cube_brand", "threat_cube_brand",
+      "threat_cube_arcs", "threat_cube_arcs", "threat_cube_geo", "threat_cube_geo",
+    ]);
     // every filter value is bound: nothing quoted in the WHERE clause but the
     // fixed status literal.
     for (const l of log) {
@@ -400,11 +407,10 @@ describe("periodDeltaPct", () => {
   });
 });
 
-describe("computeTimelineTrend", () => {
+describe("timelineTrend", () => {
   const spec = TIMELINE_SPECS["7d"];
   const now = new Date("2026-10-15T10:30:00Z");
   const start = timelineStartMs(spec, now);
-  const hb = (ms: number) => new Date(ms).toISOString().replace("T", " ").slice(0, 19);
   const H = 3_600_000;
 
   it("prior window is the equal-length window ending at the current start", () => {
@@ -415,26 +421,25 @@ describe("computeTimelineTrend", () => {
     expect((s90 - priorWindowStartMs(d90, s90)) / (24 * H)).toBe(90);
   });
 
-  it("splits rows at the window boundaries (inclusive start, exclusive end)", () => {
-    const t = computeTimelineTrend([
-      { hour_bucket: hb(start), total: 4 },               // first current hour
-      { hour_bucket: hb(start + 167 * H), total: 6 },     // current (partial) hour
-      { hour_bucket: hb(start - H), total: 2 },           // last prior hour
-      { hour_bucket: hb(start - 168 * H), total: 3 },     // first prior hour
-      { hour_bucket: hb(start - 169 * H), total: 100 },   // before the prior window
-      { hour_bucket: "garbage", total: 100 },
-      { hour_bucket: hb(start + H), total: null },
-    ], spec, start);
-    expect(t).toEqual({
+  it("assembles current / prior / delta and both window starts", () => {
+    expect(timelineTrend(10, 5, spec, start)).toEqual({
       current: 10, prior: 5, delta_pct: 100,
       current_start: "2026-10-08T11:00:00.000Z", prior_start: "2026-10-01T11:00:00.000Z",
     });
+    expect(sumTotals([{ total: 4 }, { total: 0 }, { total: 6 }])).toBe(10);
   });
 
   it("zero prior", () => {
-    expect(computeTimelineTrend([{ hour_bucket: hb(start), total: 3 }], spec, start))
-      .toMatchObject({ current: 3, prior: 0, delta_pct: null });
-    expect(computeTimelineTrend([], spec, start)).toMatchObject({ current: 0, prior: 0, delta_pct: null });
+    expect(timelineTrend(3, 0, spec, start)).toMatchObject({ current: 3, prior: 0, delta_pct: null });
+    expect(timelineTrend(0, 0, spec, start)).toMatchObject({ current: 0, prior: 0, delta_pct: null });
+  });
+
+  it("prior cache key carries the full lens key and the prior window start (rotates once per bucket)", () => {
+    const k = timelinePriorCacheKey("observatory_lens.timeline:7d:all:US", spec, start);
+    expect(k).toBe("count.observatory_lens.timeline:7d:all:US.prior:2026-10-01 11:00:00");
+    // Same bucket → same key; next bucket → next key.
+    expect(timelinePriorCacheKey("observatory_lens.timeline:7d:all:US", spec, timelineStartMs(spec, new Date("2026-10-15T10:59:59Z")))).toBe(k);
+    expect(timelinePriorCacheKey("observatory_lens.timeline:7d:all:US", spec, timelineStartMs(spec, new Date("2026-10-15T11:00:00Z")))).not.toBe(k);
   });
 });
 
@@ -450,10 +455,34 @@ describe.skipIf(!hasSqlite())("timeline?country= trend over the geo cube", () =>
     expect(b.data.trend).toMatchObject({ current: 8, prior: 4, delta_pct: 100 });
     expect(b.data.trend.current).toBe(b.data.points.reduce((s, p) => s + p.total, 0));
     expect(b.data.trend.current_start).toBe((b.data.points[0] as unknown as { t: string }).t);
-    // One cube read spans both windows, on threat_cube_geo.
+    // The series reads the current window only; the prior total is one
+    // SUM over [prior_start, current_start) on the same cube + filters.
+    const hb = (iso: string) => iso.replace("T", " ").slice(0, 19);
     const reads = log.filter((l) => /FROM threat_cube_geo/.test(l.sql));
+    expect(reads).toHaveLength(2);
+    const [series, prior] = reads;
+    expect(series!.sql).toMatch(/GROUP BY hour_bucket/);
+    expect(series!.binds).toEqual([hb(b.data.trend.current_start), "US"]);
+    expect(series!.rows).toBeLessThanOrEqual(168);
+    expect(prior!.sql).toMatch(/COALESCE\(SUM\(threat_count\), 0\) AS n/);
+    expect(prior!.binds).toEqual([hb(b.data.trend.prior_start), hb(b.data.trend.current_start), "US"]);
+    expect(prior!.rows).toBe(1);
+  });
+
+  it("a response-cache miss inside the same bucket re-reads only the current window (prior total from KV)", async () => {
+    const { env, kv, log } = makeEnv(db);
+    const path = "/api/observatory/timeline?period=7d&country=US&severity=high";
+    const first = await body<TL>(await handleObservatoryTimeline(req(path), env));
+    // Expire the response entry only; the prior-total entry stays.
+    for (const k of [...kv.store.keys()]) if (k.includes("timeline") && !k.startsWith("cc:")) kv.store.delete(k);
+    expect([...kv.store.keys()].some((k) => k.startsWith("cc:count.observatory_lens.timeline:7d:all:US") && k.includes(".prior:"))).toBe(true);
+    const n = log.length;
+    const second = await body<TL>(await handleObservatoryTimeline(req(path), env));
+    const reads = log.slice(n).filter((l) => /FROM threat_cube_geo/.test(l.sql));
     expect(reads).toHaveLength(1);
-    expect(reads[0]!.binds?.[0]).toBe(b.data.trend.prior_start.replace("T", " ").slice(0, 19));
+    expect(reads[0]!.sql).toMatch(/GROUP BY hour_bucket/);
+    expect(second.data.trend).toEqual(first.data.trend);
+    expect(second.data.trend).toMatchObject({ current: 0, prior: 4, delta_pct: -100 });
   });
 
   it("RU 7d: prior 0 → delta_pct null", async () => {
@@ -557,7 +586,7 @@ describe.skipIf(!hasSqlite())("filtered cube reads stay on the cube indexes", ()
       const distinctBrand = planned.find((x) => /COUNT\(DISTINCT target_brand_id\) AS n FROM threat_cube_brand INDEXED BY/.test(x.sql));
       expect(distinctBrand!.plan).toContain("SEARCH threat_cube_brand USING INDEX idx_cube_brand_hour (hour_bucket>?)");
       for (const p of planned.filter((x) => /target_brand_id = \?/.test(x.sql))) {
-        expect(p.plan, p.sql).toMatch(/idx_cube_(arcs|brand)_(brand|id)_hour \(target_brand_id=\? AND hour_bucket>\?\)/);
+        expect(p.plan, p.sql).toMatch(/idx_cube_(arcs|brand)_(brand|id)_hour \(target_brand_id=\? AND hour_bucket>\?( AND hour_bucket<\?)?\)/);
       }
     });
   }
