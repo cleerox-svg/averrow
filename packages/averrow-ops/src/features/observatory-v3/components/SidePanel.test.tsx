@@ -75,9 +75,13 @@ describe('SidePanel', () => {
 
   it('says so when a map data filter is set (the panel endpoints take none), and is silent otherwise', () => {
     const { unmount } = renderPanel();
-    expect(screen.queryByText(/Unfiltered/)).toBeNull();
+    expect(screen.queryByText(/aren't narrowed/)).toBeNull();
+    // the live region stays mounted (so a change is announced) but is empty and takes no room
+    const region = document.querySelector('[data-unfiltered-hint]')!;
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toBeEmptyDOMElement();
     unmount();
-    renderPanel({ mapFiltered: true });
-    expect(screen.getByText(/Unfiltered: the map/)).toBeInTheDocument();
+    renderPanel({ mapFilters: ['severity', 'brand'] });
+    expect(screen.getByText("Panel totals aren't narrowed by your map filters (severity, brand).")).toBeInTheDocument();
   });
 });

@@ -590,10 +590,11 @@ interface SidePanelProps {
   source?: string;
   visible: boolean;
   /**
-   * A map data filter (severity / threat type / brand) is set. The panel's endpoints take no such filters, so its
-   * widgets stay unfiltered; when this is true the panel says so instead of silently disagreeing with the map.
+   * The names of the map data filters in force (`severity`, `type`, `brand`) — only those the map is actually applying. The
+   * panel's endpoints take none of them, so its widgets stay unfiltered; when any are named the panel says so instead of
+   * silently disagreeing with the map.
    */
-  mapFiltered?: boolean;
+  mapFilters?: readonly string[];
   /** Selects a node on the map (keyboard path from the Top Threat Origins rows). */
   onSelectNode?: (node: ThreatPoint) => void;
   /**
@@ -605,7 +606,9 @@ interface SidePanelProps {
   mobile?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mapFiltered = false, mobile = false, onSelectNode }: SidePanelProps) {
+const NO_FILTERS: readonly string[] = [];
+
+export function SidePanel({ period, source = 'all', visible, mapFilters = NO_FILTERS, mobile = false, onSelectNode }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -626,16 +629,18 @@ export function SidePanel({ period, source = 'all', visible, mapFiltered = false
         </div>
       )}
 
-      {mapFiltered && (
-        <div
-          role="status"
-          data-unfiltered-hint
-          className="px-2 py-1.5 rounded text-[10px] font-mono"
-          style={{ background: 'var(--amber-glow)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)' }}
-        >
-          Unfiltered: the map&apos;s severity, type and brand filters don&apos;t apply to this panel.
-        </div>
-      )}
+      {/* A live region only announces changes to content it already holds, so it stays mounted; empty it takes no height and
+          cancels its flex gap (`-mb-3`), so the panel does not shift. */}
+      <div role="status" data-unfiltered-hint className="empty:-mb-3 empty:h-0">
+        {mapFilters.length > 0 && (
+          <div
+            className="px-2 py-1.5 rounded text-[10px] font-mono"
+            style={{ background: 'var(--amber-glow)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)' }}
+          >
+            Panel totals aren&apos;t narrowed by your map filters ({mapFilters.join(', ')}).
+          </div>
+        )}
+      </div>
 
       <Card variant="active" padding="16px">
         <SummaryHeader period={period} source={source} />

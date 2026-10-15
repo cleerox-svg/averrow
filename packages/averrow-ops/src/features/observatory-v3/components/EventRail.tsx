@@ -229,8 +229,8 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
             <section key={g.key} aria-label={g.label}>
               <h3 className="m-0 px-3 pt-3 pb-1 font-mono text-[11px] font-semibold tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>
                 {g.label}
-                <span data-group-count className="ml-1.5 tabular-nums font-normal" style={{ color: 'var(--text-muted)' }}>
-                  <span aria-hidden="true">{g.events.length}</span>
+                <span data-group-count className="ml-1.5 tabular-nums font-normal" style={{ color: 'var(--text-tertiary)' }}>
+                  <span aria-hidden="true">· {g.events.length}</span>
                   <span className="sr-only">, {g.events.length} {g.events.length === 1 ? 'event' : 'events'}</span>
                 </span>
               </h3>

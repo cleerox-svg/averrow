@@ -70,6 +70,7 @@ beforeEach(() => {
   panelProps.mockClear();
   window.innerWidth = 1440;
   stubMatchMedia(false);
+  try { window.sessionStorage.clear(); } catch { /* unavailable */ }
   route({ '/api/observatory/stats': okStats });
 });
 
@@ -1468,10 +1469,10 @@ describe('ObservatoryV3 side panel vs map filters', () => {
   it('tells the panel when a map data filter is set (its endpoints take none), and not otherwise', async () => {
     renderAt('/observatory');
     await screen.findByTestId('side-panel');
-    expect(panelProps.mock.calls.at(-1)![0].mapFiltered).toBe(false);
+    expect(panelProps.mock.calls.at(-1)![0].mapFilters).toEqual([]);
     panelProps.mockClear();
     renderAt('/observatory?sev=critical');
-    await waitFor(() => expect(panelProps.mock.calls.some(c => c[0].mapFiltered === true)).toBe(true));
+    await waitFor(() => expect(panelProps.mock.calls.some(c => JSON.stringify(c[0].mapFilters) === '["severity"]')).toBe(true));
   });
 });
 
@@ -1496,6 +1497,49 @@ describe('ObservatoryV3 wall screen', () => {
     renderAt('/observatory?wall=1&node=' + encodeURIComponent('10.00,20.00'));
     await screen.findByTestId('map');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a node link survives on the wall (the hidden selection is not "broken"), and leaving the wall opens its drill', async () => {
+    window.innerWidth = 400;
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': okStats });
+    renderAt('/observatory?wall=1&node=' + encodeURIComponent('10.00,20.00'));
+    await screen.findByTestId('map');
+    await waitFor(() => expect(called('/api/observatory/nodes')).toBe(true));
+    await new Promise(r => setTimeout(r, 60));
+    expect(decodeURIComponent(search)).toContain('node=10.00,20.00');
+    wake();
+    await userEvent.click(screen.getByRole('button', { name: 'Exit wall screen' }));
+    await waitFor(() => expect(search).not.toContain('wall='));
+    expect(decodeURIComponent(search)).toContain('node=10.00,20.00');
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('an operation link survives on the wall: sel= kept, no shared=1 flip, no extra include_shared fetch; leaving opens the drill', async () => {
+    const op = { id: 'op1', name: 'OP ONE', component_id: null, kind: 'asn', status: 'active', confidence_score: 80, threat_count: 5, actor: null, countries: ['NL', 'MD'], asns: ['AS1'], last_seen: null, last_movement_pivot_at: null };
+    route({ '/api/observatory/operations-geo': { operations: [op], components: [] }, '/api/observatory/stats': okStats });
+    renderAt('/observatory?wall=1&lens=operations&sel=op:op1');
+    await screen.findByTestId('map');
+    await waitFor(() => expect(called('/api/observatory/operations-geo')).toBe(true));
+    await new Promise(r => setTimeout(r, 60));
+    expect(decodeURIComponent(search)).toContain('sel=op:op1');
+    expect(search).not.toContain('shared=1');
+    expect(urls().some(u => u.includes('include_shared=1'))).toBe(false);
+    wake();
+    await userEvent.click(screen.getByRole('button', { name: 'Exit wall screen' }));
+    await waitFor(() => expect(search).not.toContain('wall='));
+    expect(decodeURIComponent(search)).toContain('sel=op:op1');
+    expect(search).not.toContain('shared=1');
+    expect(await screen.findByRole('dialog', { name: /Operation details/ })).toHaveTextContent('OP ONE');
+  });
+
+  it('entering the wall by in-app navigation keeps the projection the viewer had (it survives the remount)', async () => {
+    window.sessionStorage.setItem('averrow.observatory.projBeforeWall', 'flat');
+    renderAt('/observatory?wall=1');
+    await screen.findByTestId('map');
+    wake();
+    await userEvent.click(screen.getByRole('button', { name: 'Exit wall screen' }));
+    await waitFor(() => expect(search).not.toContain('wall='));
+    expect(search).not.toContain('proj=');
   });
 
   it('leaving the wall does not write proj=globe (the wall default) into the console URL', async () => {

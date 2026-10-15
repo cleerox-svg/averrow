@@ -62,8 +62,8 @@ describe('active-filter chips', () => {
     expect(chips[0]!.removeLabel).toMatch(/critical/);
     expect(chips[2]).toMatchObject({ label: 'PayPal', note: BRAND_SCOPE_NOTE });
   });
-  it('the brand chip falls back to the id when the name is not known, and says it applies to arcs and stats', () => {
-    expect(filterChips(f).find(c => c.kind === 'brand')).toMatchObject({ label: 'b_1', note: 'applies to arcs and stats' });
+  it('the brand chip falls back to a neutral label (never the raw id) when the name is not known, and says it applies to arcs and stats', () => {
+    expect(filterChips(f).find(c => c.kind === 'brand')).toMatchObject({ label: 'Brand filter', note: 'applies to arcs and stats' });
   });
   it('removing a chip removes only its value', () => {
     expect(removeFilterPatch({ sev: ['critical', 'high'], type: [], brand: null }, 'sev', 'critical')).toEqual({ sev: ['high'] });

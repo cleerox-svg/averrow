@@ -108,8 +108,23 @@ describe('brand filter while the cached arcs carry no brand ids (right after a d
   it('says "Loading brands…" instead of the empty-looking hint while the data that would supply them loads', () => {
     const { rerender } = render(<BrandFilter brand={null} data={{}} onChange={vi.fn()} loading />);
     expect(screen.getByText('Loading brands…')).toBeInTheDocument();
+    expect(screen.getByText('Loading brands…')).toHaveAttribute('aria-busy', 'true');
     rerender(<BrandFilter brand={null} data={{}} onChange={vi.fn()} />);
     expect(screen.queryByText('Loading brands…')).toBeNull();
+  });
+
+  it('says "Couldn\u2019t load brands." when every source failed, instead of the normal hint over an empty list', () => {
+    render(<BrandFilter brand={null} data={{}} onChange={vi.fn()} failed />);
+    expect(screen.getByText('Couldn\u2019t load brands.')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.queryByText(/searchable here/)).toBeNull();
+  });
+
+  it('fallback brands carry no count (the top-brands total is all-time, not the period) and a named-less brand reads neutrally', () => {
+    const [stand] = withFallbackBrands(undefined, top)!;
+    expect(stand!.volume).toBe(0);
+    expect(filterChips({ sev: [], type: [], brand: 'brand_acme' })[0]!.label).toBe('Brand filter');
+    render(<BrandFilter brand="brand_acme" data={{}} onChange={vi.fn()} />);
+    expect(screen.queryByText(/brand_acme/)).toBeNull();
   });
 });
 

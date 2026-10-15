@@ -76,13 +76,16 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 /** Where the brand filter applies: /nodes has no brand dimension, so the node layer is not narrowed by it. */
 export const BRAND_SCOPE_NOTE = 'applies to arcs and stats';
 
+/** What the brand chip says before the brand's name is known (a link carries the id only): never the raw id. */
+export const BRAND_FILTER_FALLBACK_LABEL = 'Brand filter';
+
 /** One removable chip per active filter value. `brandName` is the brand's display name (the filter itself is its id). */
 export function filterChips(f: FilterState, brandName?: string | null): FilterChip[] {
   const chips: FilterChip[] = [];
   for (const s of f.sev) chips.push({ key: `sev:${s}`, kind: 'sev', value: s, label: cap(s), removeLabel: `Remove ${s} severity filter` });
   for (const t of f.type) chips.push({ key: `type:${t}`, kind: 'type', value: t, label: cap(typeLabel(t)), removeLabel: `Remove ${typeLabel(t)} type filter` });
   if (f.brand) {
-    const name = brandName || f.brand;
+    const name = brandName || BRAND_FILTER_FALLBACK_LABEL;
     chips.push({ key: `brand:${f.brand}`, kind: 'brand', value: f.brand, label: name, note: BRAND_SCOPE_NOTE, removeLabel: `Remove brand filter ${name}` });
   }
   return chips;
@@ -110,12 +113,14 @@ export function toggleType(types: readonly string[], id: string): string[] {
 
 /** A brand from a list the page already holds (the side panel's top brands). */
 export interface FallbackBrand { id: string; name: string; threat_count?: number | null }
+// `threat_count` is deliberately not used: `/api/brands?view=top` ignores `range` (all-time count), so it would not agree with the
+// arcs' period volumes. A fallback brand carries volume 0 and the search lists it without a count, after the arc brands.
 
 /**
  * The brand filter is picked from the arcs' brands, and only an arc that carries `target_brand_id` can be picked. The arcs
  * response is KV-cached for up to ~2h, so right after a deploy that added the id every cached arc lacks it and the filter
  * would list no brands at all. This tops the arcs up with brands from another already-fetched source (top brands), for the
- * FILTER's search only: each added entry is an `ArcData` stand-in that carries identity (id, name, volume) and nothing the
+ * FILTER's search only: each added entry is an `ArcData` stand-in that carries identity (id, name; volume 0) and nothing the
  * filter reads beyond that (picking uses the id and the label, never the arc's geometry). Brands whose id the arcs already
  * carry are not repeated; the arcs themselves are returned untouched when nothing is added.
  */
@@ -129,7 +134,7 @@ export function withFallbackBrands(arcs: readonly ArcData[] | undefined, brands:
     have.add(b.id);
     extra.push({
       sourcePosition: [0, 0], targetPosition: [0, 0], threat_type: '', severity: '', source_region: '',
-      target_brand: b.name, target_brand_id: b.id, brand_name: b.name, volume: b.threat_count ?? 0,
+      target_brand: b.name, target_brand_id: b.id, brand_name: b.name, volume: 0,
     });
   }
   return extra.length > 0 ? [...(arcs ?? []), ...extra] : arcs;

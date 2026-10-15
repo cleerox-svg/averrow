@@ -111,8 +111,16 @@ describe('botWallTiles', () => {
       { label: 'Most automated', value: '≥ 62.0%', sub: 'Peru (PE)' },
     ]);
   });
-  it('without a global figure that tile is left out; with no rows yet it is a loading tile (null), not a dash', () => {
-    expect(botWallTiles([pt('US', 'United States', 20)], null).map(t => t.label)).toEqual(['Countries', 'Most automated']);
-    expect(botWallTiles([], null)).toEqual([{ label: 'Global bot share', value: null }]);
+  it('always three tiles: without a global figure that tile is N/A once loaded, and null (busy) while loading', () => {
+    expect(botWallTiles([pt('US', 'United States', 20)], null).map(t => t.label)).toEqual(['Global bot share', 'Countries', 'Most automated']);
+    expect(botWallTiles([pt('US', 'United States', 20)], null)[0]).toEqual({ label: 'Global bot share', value: 'N/A' });
+    expect(botWallTiles([], null, false)).toEqual([
+      { label: 'Global bot share', value: null }, { label: 'Countries', value: null }, { label: 'Most automated', value: null },
+    ]);
+  });
+  it('loaded with no rows is settled, not loading', () => {
+    expect(botWallTiles([], 31.2, true)).toEqual([
+      { label: 'Global bot share', value: '31.2%' }, { label: 'Countries', value: 0 }, { label: 'Most automated', value: 'N/A' },
+    ]);
   });
 });

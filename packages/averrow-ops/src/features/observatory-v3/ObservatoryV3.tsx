@@ -64,7 +64,7 @@ import {
   type Period, type Source, type ColorBy, type LayerId, type LensId, type Measure, type Severity, type ThreatView,
 } from './lib/url-state';
 import { noLayers, LENS_DEFS, type LayerToggles } from './lib/lenses';
-import { wallExitProjection, type Projection } from './lib/projection';
+import { wallExitProjection, readProjBeforeWall, writeProjBeforeWall, type Projection } from './lib/projection';
 import { dataNeeds, relevantFailures } from './lib/mode-data';
 import { clearOverlayKind } from './lib/overlay-visibility';
 import { selectionLngLat, type MapSelection } from './lib/selection';
@@ -144,6 +144,8 @@ export function lowEvidenceNote(total: number, shown: boolean, returned: number 
     : `${n.toLocaleString()} of ${total.toLocaleString()} ${LOW_EVIDENCE} shown (largest first)`;
 }
 
+const NO_FILTER_NAMES: readonly string[] = [];
+
 export function ObservatoryV3() {
   const { isMobile, width: viewportWidth } = useBreakpoint();
   const reducedMotion = usePrefersReducedMotion();
@@ -167,6 +169,8 @@ export function ObservatoryV3() {
   const takedownsOn = measure === 'takedowns';
   const tdWindow = takedownPeriod(state.period);
   const mapMode = mapModeOf(state);
+  /** The type / brand filters exist (and apply) on the Threats lens's global scene only. */
+  const showDataFilters = mapMode === 'global' && lens === 'threats' && view !== 'fast';
   /** Threats lens, Fast weaponization view: drawn from the velocity cube. */
   const fast = lens === 'threats' && view === 'fast';
   // The velocity cube has no source dimension (the server 400s velocity + a source), so the Fast view is always
@@ -215,12 +219,13 @@ export function ObservatoryV3() {
   const setMeasure = useCallback((m: Measure) => update({ measure: m }), [update]);
   const setColorBy = useCallback((c: ColorBy) => update({ colorBy: c }), [update]);
   // Leaving a wall screen restores the projection the viewer had before it (the wall's globe is its default, not a choice):
-  // otherwise the exit writes `proj=globe` into a console URL that never asked for it. A projection picked ON the wall
+  // otherwise the exit writes `proj=globe` into a console URL that never asked for it. It is also kept in sessionStorage, because
+  // entering the wall by in-app navigation remounts this page and a ref would not survive that. A projection picked ON the wall
   // screen (the G shortcut) is a choice and stays.
-  const projBeforeWall = useRef<Projection | null>(null);
+  const projBeforeWall = useRef<Projection | null>(wall ? readProjBeforeWall() : null);
   const projChosenOnWall = useRef(false);
   useEffect(() => {
-    if (!wall) { projBeforeWall.current = state.proj; projChosenOnWall.current = false; }
+    if (!wall) { projBeforeWall.current = state.proj; projChosenOnWall.current = false; writeProjBeforeWall(state.proj); }
   }, [wall, state.proj]);
   const setProjection = useCallback((proj: Projection) => {
     if (wall) projChosenOnWall.current = true;
@@ -300,7 +305,7 @@ export function ObservatoryV3() {
 
   // The wall screen's tiles under the bot-share scene: stats / operations are not fetched there, so the default tiles would
   // read "—" forever. Show the scene's own numbers instead.
-  const wallBotTiles = useMemo(() => botWallTiles(botPoints, botGlobalAvg), [botPoints, botGlobalAvg]);
+  const wallBotTiles = useMemo(() => botWallTiles(botPoints, botGlobalAvg, !!botData), [botPoints, botGlobalAvg, botData]);
 
   // The intelligence panel exists on the interactive scenes (not under the density heatmap).
   // A wall screen has no panel.
@@ -554,7 +559,9 @@ export function ObservatoryV3() {
     update({ shared: sharedIntent.current });
   }, [sel, update]);
   useEffect(() => {
-    if (drill) return;
+    // A wall screen hides the drill on purpose (`drill` is null there): the selection in the link is not broken, and
+    // dropping it would rewrite the URL (and widen / un-widen `shared`) under a screen that cannot show it.
+    if (wall || drill) return;
     // Nothing left to wait for once the widening landed, or when the operation it was requested for is no longer selected.
     if (state.shared || !(sel?.kind === 'op' && sel.id === sharedPendingFor.current)) sharedPendingFor.current = null;
     if (!state.shared && sel?.kind === 'op' && settled.op) {
@@ -581,7 +588,7 @@ export function ObservatoryV3() {
       update(sel.kind === 'op' && sharedRetried.current === sel.id && state.shared ? { ...drillToPatch(null), shared: false } : drillToPatch(null));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `settled` is derived from the listed query states
-  }, [drill, state.node, state.arc, state.shared, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
+  }, [wall, drill, state.node, state.arc, state.shared, sel, threatsQ.isFetching, threatsQ.data, arcsQ.isFetching, arcsQ.data, L.operationsQ.isFetching, L.operationsQ.data, L.providersQ.isFetching, L.providersQ.data, L.campaignsQ.isFetching, L.campaignsQ.data, L.movementsQ.isFetching, L.movementsQ.data, update]);
 
   // "Threat Landscape Clear" — only when verified for THIS view.
   const overlayKind = mapFatal ? null : clearOverlayKind({
@@ -713,7 +720,7 @@ export function ObservatoryV3() {
   }), [threatsQ.data, arcsQ.data, L.operationsQ.data, L.providers, L.actorList, L.campaigns]);
   // The brand filter's list: the arcs' brands, topped up with the side panel's top brands (same query, already fetched) while
   // the cached arcs predate `target_brand_id` and so offer none.
-  const topBrandsQ = useBrands({ view: 'top', limit: 8, timeRange: period });
+  const topBrandsQ = useBrands({ view: 'top', limit: 8, timeRange: period, enabled: showDataFilters || !!state.brand });
   const brandFilterData = useMemo<SearchData>(
     () => ({ ...searchData, arcs: withFallbackBrands(searchData.arcs, topBrandsQ.data) }),
     [searchData, topBrandsQ.data],
@@ -750,7 +757,14 @@ export function ObservatoryV3() {
     const arc = (arcsQ.data ?? []).find(a => a.target_brand_id === state.brand);
     return arc ? arc.brand_name ?? arc.target_brand : null;
   }, [state.brand, arcsQ.data]);
-  const brandName = state.brand ? brandNames[state.brand] ?? arcBrandName : null;
+  // A brand loaded from a link has no name until a list supplies it: the arcs, else the top brands. Until then the chip reads
+  // neutrally ("Brand filter", see `filterChips`) rather than showing the raw id.
+  const topBrandName = useMemo(() => {
+    if (!state.brand) return null;
+    const hit = (Array.isArray(topBrandsQ.data) ? topBrandsQ.data : []).find(b => b.id === state.brand);
+    return hit?.name ?? null;
+  }, [state.brand, topBrandsQ.data]);
+  const brandName = state.brand ? brandNames[state.brand] ?? arcBrandName ?? topBrandName : null;
   const chips = useMemo(() => filterChips({ sev: state.sev, type: state.type, brand: state.brand }, brandName), [state.sev, state.type, state.brand, brandName]);
   // Picking a brand uses the id the search entry carries: synchronous, so there is no response to arrive out of order.
   const onBrand = useCallback((brand: { id: string; name: string }) => {
@@ -761,6 +775,16 @@ export function ObservatoryV3() {
   // The filters narrow the threat nodes / arcs: with no threat traffic drawn (other lenses' own pictures, the heat and Fast
   // views, bot share) the chips stay, since the filters are still set, but dim and say where they apply.
   const filtersApply = mapMode === 'global' && !fast && (mapLayers.nodes || mapLayers.particles || mapLayers.beams);
+  // The filters the map is applying (muted ones, on another lens / the fast view / the bot scene, narrow nothing), named for the
+  // side panel's "not narrowed" note.
+  const appliedFilterNames = useMemo(() => {
+    if (!filtersApply) return NO_FILTER_NAMES;
+    const names: string[] = [];
+    if (state.sev.length > 0) names.push('severity');
+    if (state.type.length > 0) names.push('type');
+    if (state.brand) names.push('brand');
+    return names;
+  }, [filtersApply, state.sev, state.type, state.brand]);
   const drillTrend = useDrillTrend(drill, { period, source, filters, enabled: !!drill });
 
   const onPickActor = useCallback((id: string | null) => {
@@ -880,7 +904,7 @@ export function ObservatoryV3() {
         period={period}
         source={source}
         visible
-        mapFiltered={state.sev.length > 0 || state.type.length > 0 || !!state.brand}
+        mapFilters={appliedFilterNames}
         mobile={placement === 'sheet'}
         onSelectNode={handleSelectNodeFromPanel}
       />
@@ -918,10 +942,9 @@ export function ObservatoryV3() {
       types={state.type} brand={state.brand} brandName={brandName}
       onTypes={setTypes} onBrand={onBrand} searchData={brandFilterData} onActivate={activateSearch} touch={touch}
       brandsLoading={!hasBrandIds(brandFilterData.arcs) && (arcsQ.isLoading || topBrandsQ.isLoading)}
+      brandsFailed={!hasBrandIds(brandFilterData.arcs) && !!arcsQ.error && !!topBrandsQ.error}
     />
   );
-  const showDataFilters = mapMode === 'global' && lens === 'threats' && !fast;
-
   const searchEl = (extra: Partial<React.ComponentProps<typeof ObservatorySearch>> = {}) => (
     <ObservatorySearch
       data={searchData}

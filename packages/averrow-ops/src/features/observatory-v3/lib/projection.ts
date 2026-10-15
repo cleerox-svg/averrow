@@ -254,3 +254,27 @@ export function wallExitProjection(current: Projection, before: Projection | nul
   if (before) return before;
   return current === 'globe' ? DEFAULT_PROJECTION : current;
 }
+
+const BEFORE_WALL_KEY = 'averrow.observatory.projBeforeWall';
+
+/**
+ * The projection the viewer had before a wall screen, kept for the tab session: entering the wall by in-app navigation
+ * remounts the page, which loses a component ref. Storage can be unavailable (private window, blocked site data): every
+ * access is guarded and a miss is simply "no earlier view".
+ */
+export function readProjBeforeWall(): Projection | null {
+  try {
+    const v = window.sessionStorage.getItem(BEFORE_WALL_KEY);
+    return isProjection(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeProjBeforeWall(proj: Projection): void {
+  try {
+    window.sessionStorage.setItem(BEFORE_WALL_KEY, proj);
+  } catch {
+    /* storage unavailable: the exit falls back to the console default */
+  }
+}

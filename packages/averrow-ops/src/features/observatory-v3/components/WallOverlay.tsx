@@ -77,7 +77,7 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
           ))}
         </div>
       </div>
-      <style>{'[data-wall-overlay] .ds-stat-value, [data-wall-overlay] .ds-stat-value--fit { font-size: clamp(32px, 5vw, 64px) !important; }'}</style>
+      <style>{'[data-wall-overlay] .ds-stat-value, [data-wall-overlay] .ds-stat-value--fit { font-size: clamp(32px, 5vw, 64px) !important; } [data-wall-overlay] .ds-stat-sub { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }'}</style>
       {/* Bottom right on a wide screen; on a phone the tiles span the width, so it runs along the very bottom edge under them. */}
       <span className={`absolute rounded-md px-2 py-0.5 bottom-1 ${phone ? 'left-3' : 'right-3'}`} style={{ zIndex, background: 'var(--bg-card-deep)' }} data-wall-attribution>
         <MapAttribution />

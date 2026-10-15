@@ -67,8 +67,8 @@ describe('groups and rows', () => {
     const headings = screen.getAllByRole('heading', { level: 3 });
     expect(headings.map(h => h.firstChild?.textContent?.trim())).toEqual(['Last 15 min', '15–45 min', 'Older']);
     // each header carries how many items its group holds (visible digit; a spoken "N events" for screen readers)
-    expect(headings.map(h => h.querySelector('[data-group-count] [aria-hidden]')?.textContent)).toEqual(['1', '2', '1']);
-    expect(headings[1]).toHaveTextContent('15–45 min2, 2 events');
+    expect(headings.map(h => h.querySelector('[data-group-count] [aria-hidden]')?.textContent)).toEqual(['· 1', '· 2', '· 1']);
+    expect(headings[1]).toHaveTextContent('15–45 min· 2, 2 events');
     const recent = screen.getByRole('region', { name: 'Last 15 min' });
     expect(within(recent).getByText('Title c1')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: '15–45 min' })).getAllByRole('button').map(b => b.getAttribute('data-event-id'))).toEqual(['o1', 'f1']);

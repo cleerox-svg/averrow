@@ -58,10 +58,12 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
   );
 }
 
-export function BrandFilter({ brand, brandName, data, onChange, onActivate, touch = false, loading = false }: {
+export function BrandFilter({ brand, brandName, data, onChange, onActivate, touch = false, loading = false, failed = false }: {
   brand: string | null; brandName?: string | null; data: SearchData; onChange: (brand: { id: string; name: string }) => void; onActivate?: () => void; touch?: boolean;
   /** No brand can be offered yet and the data that would supply them is still loading. */
   loading?: boolean;
+  /** Every source of brands failed: there is nothing to search. */
+  failed?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-filter="brand">
@@ -77,24 +79,29 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
         onActivate={onActivate}
         onPick={(r: SearchResult) => { if (r.brandId) onChange({ id: r.brandId, name: r.label }); }}
       />
-      <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+      <div
+        className="font-mono text-[11px]"
+        style={{ color: !brand && failed && !loading ? 'var(--sev-critical-text)' : 'var(--text-tertiary)' }}
+        aria-live="polite"
+        aria-busy={!brand && loading ? true : undefined}
+      >
         {brand
-          ? <>Showing <span style={{ color: 'var(--amber-text)' }}>{brandName || brand}</span> in arcs and stats (the node layer has no brand split).</>
-          : loading ? 'Loading brands…' : 'Brands on the map are searchable here; pick one to follow it.'}
+          ? <>Showing <span style={{ color: 'var(--amber-text)' }}>{brandName || 'the selected brand'}</span> in arcs and stats (the node layer has no brand split).</>
+          : loading ? 'Loading brands…' : failed ? 'Couldn\u2019t load brands.' : 'Brands on the map are searchable here; pick one to follow it.'}
       </div>
     </div>
   );
 }
 
 /** Type + brand, as one block (the body of both the popover and the phone filters card). */
-export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, searchData, onActivate, touch = false, brandsLoading = false }: {
+export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, searchData, onActivate, touch = false, brandsLoading = false, brandsFailed = false }: {
   types: readonly string[]; brand: string | null; brandName?: string | null; onTypes: (types: string[]) => void; onBrand: (brand: { id: string; name: string }) => void;
-  searchData: SearchData; onActivate?: () => void; touch?: boolean; brandsLoading?: boolean;
+  searchData: SearchData; onActivate?: () => void; touch?: boolean; brandsLoading?: boolean; brandsFailed?: boolean;
 }) {
   return (
     <>
       <TypeMultiSelect types={types} onChange={onTypes} touch={touch} />
-      <BrandFilter brand={brand} brandName={brandName} data={searchData} onChange={onBrand} onActivate={onActivate} touch={touch} loading={brandsLoading} />
+      <BrandFilter brand={brand} brandName={brandName} data={searchData} onChange={onBrand} onActivate={onActivate} touch={touch} loading={brandsLoading} failed={brandsFailed} />
     </>
   );
 }

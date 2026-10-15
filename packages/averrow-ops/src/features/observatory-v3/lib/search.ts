@@ -101,9 +101,11 @@ export function buildSearchIndex(data: SearchData): SearchEntry[] {
   }
   for (const [k, arc] of bestArc) {
     const name = arc.brand_name ?? arc.target_brand;
+    // A brand with no period volume (a top-brands stand-in, see `withFallbackBrands`) states no count and ranks after the arc brands.
+    const volume = brandVolume.get(k)!;
     out.push({
-      key: `brand:${k}`, kind: 'brand', label: name, sublabel: `${brandVolume.get(k)!.toLocaleString()} threats targeted`,
-      target: { kind: 'arc', arc }, hay: [lc(name)], weight: KIND_WEIGHT.brand,
+      key: `brand:${k}`, kind: 'brand', label: name, sublabel: volume > 0 ? `${volume.toLocaleString()} threats targeted` : 'Top targeted brand',
+      target: { kind: 'arc', arc }, hay: [lc(name)], weight: KIND_WEIGHT.brand - (volume > 0 ? 0 : 0.5),
       ...(arc.target_brand_id ? { brandId: arc.target_brand_id } : null),
     });
   }
