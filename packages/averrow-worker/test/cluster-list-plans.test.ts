@@ -181,7 +181,7 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
         // unchanged (test/provider-clusters-asn-match.test.ts pins results).
         expect(p.sql).toMatch(/EXISTS \(SELECT 1 FROM json_each\(/);
         expect(p.plan).toMatch(/SEARCH infrastructure_clusters USING INDEX idx_clusters_live_status_threat_count \(status=\?\)/);
-        expect(p.plan).toContain("SCAN j VIRTUAL TABLE");
+        expect(p.plan).toMatch(/SCAN j (EXISTS )?VIRTUAL TABLE/); // newer SQLite prints "EXISTS"
         expect(p.plan).not.toContain("idx_clusters_threat_count");
         expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
       });
