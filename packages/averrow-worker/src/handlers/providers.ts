@@ -4,6 +4,7 @@
 import { json } from "../lib/cors";
 import type { Env } from "../types";
 import { liveClusterStatusSql } from "../lib/cluster-status";
+import { asnKey, asnKeySql } from "../lib/shared-infra-asns";
 
 // GET /api/providers/stats (top providers by threat count)
 export async function handleProviderStats(request: Request, env: Env): Promise<Response> {
@@ -514,22 +515,31 @@ export async function handleProviderClusters(request: Request, env: Env, provide
       "SELECT asn FROM hosting_providers WHERE id = ?"
     ).bind(decoded).first<{ asn: string | null }>();
 
-    if (!provider?.asn) {
+    const asn = asnKey(provider?.asn);
+    if (!asn) {
       return json({ success: true, data: [] }, 200, origin);
     }
 
     // liveClusterStatusSql() (every storable status, AND not retired) +
     // `+threat_count`: the planner seeks the live-rows partial index
-    // idx_clusters_live_status_threat_count per status and LIKE-filters the
+    // idx_clusters_live_status_threat_count per status and filters the
     // few hundred live rows, instead of walking a full threat_count index (0298's, dropped in 0308)
     // through ~76K retired rows. Pinned in test/cluster-list-plans.test.ts.
+    // ASN match is EXACT: `asns LIKE '%<digits>%'` is only a cheap
+    // prefilter (it alone matched AS4837 against AS48370); the EXISTS
+    // compares each `asns` element through asnKeySql — the SQL twin of
+    // asnKey, so `AS4837`, `4837`, a JSON number and the legacy
+    // `AS4837 China Unicom` org form all match, and nothing else does.
+    // Malformed `asns` JSON reads as an empty array instead of erroring.
     const rows = await env.DB.prepare(`
       SELECT id, cluster_name, asns, countries, threat_count, status,
              confidence_score, agent_notes, first_detected, last_seen
       FROM infrastructure_clusters
       WHERE ${liveClusterStatusSql()} AND asns LIKE ?
+        AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(asns) THEN asns ELSE '[]' END) AS j
+                    WHERE ${asnKeySql("j.value")} = ?)
       ORDER BY +threat_count DESC
-    `).bind(`%${provider.asn}%`).all();
+    `).bind(`%${asn.slice(2)}%`, asn).all();
 
     return json({ success: true, data: rows.results }, 200, origin);
   } catch (err) {

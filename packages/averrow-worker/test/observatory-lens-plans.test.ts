@@ -175,7 +175,7 @@ function seedAtScale(db: SqliteDb): void {
   db.exec("COMMIT");
 }
 
-interface Planned { sql: string; plan: string }
+interface Planned { sql: string; plan: string; binds: unknown[] }
 
 /** Run every lens handler (cold KV) and EXPLAIN each read it issued. */
 async function planAllLensReads(db: SqliteDb): Promise<Planned[]> {
@@ -202,6 +202,7 @@ async function planAllLensReads(db: SqliteDb): Promise<Planned[]> {
     .filter((e) => e.error === undefined && /^\s*SELECT/i.test(e.sql))
     .map((e) => ({
       sql: e.sql,
+      binds: e.binds ?? [],
       plan: (db.prepare(`EXPLAIN QUERY PLAN ${e.sql}`).all(...(e.binds ?? [])) as Array<{ detail: string }>)
         .map((r) => r.detail).join(" | "),
     }));
@@ -307,6 +308,37 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
         expect(cc!.plan).toContain("idx_cube_geo_country_hour (country_code=? AND hour_bucket>?)");
         const [v] = find(modes[mode]!, /FROM threat_cube_velocity WHERE hour_bucket >= \? AND country_code = \?/);
         expect(v!.plan).toContain("sqlite_autoindex_threat_cube_velocity_1 (hour_bucket>?)");
+      });
+
+      it("timeline: the prior-window total is a bounded range on the same index, never the series read widened", () => {
+        // Series reads start at the CURRENT window (one bound); the prior
+        // total is a separate two-bound SUM (cached per bucket in KV).
+        const [st] = find(modes[mode]!, /FROM threat_cube_status WHERE hour_bucket >= \? AND hour_bucket < \? AND status = 'active'/);
+        expect(st!.sql).toMatch(/COALESCE\(SUM\(threat_count\), 0\) AS n/);
+        expect(st!.plan).toContain("idx_cube_status_status_hour (status=? AND hour_bucket>? AND hour_bucket<?)");
+        const [cc] = find(modes[mode]!, /FROM threat_cube_geo WHERE hour_bucket >= \? AND hour_bucket < \? AND country_code = \?/);
+        expect(cc!.plan).toContain("idx_cube_geo_country_hour (country_code=? AND hour_bucket>? AND hour_bucket<?)");
+        const [v] = find(modes[mode]!, /FROM threat_cube_velocity WHERE hour_bucket >= \? AND hour_bucket < \? AND country_code = \?/);
+        expect(v!.plan).toContain("sqlite_autoindex_threat_cube_velocity_1 (hour_bucket>? AND hour_bucket<?)");
+        for (const p of [st!, cc!, v!]) expect(p.plan).not.toContain("TEMP B-TREE");
+      });
+
+      it("timeline: index-range rows per cache miss — series covers one window, prior one window (was both in the series)", () => {
+        // Rows the index range visits, per statement, on the seeded cubes.
+        const rangeRows = (sql: string, binds: unknown[]) =>
+          (db.prepare(`SELECT COUNT(*) AS n FROM (${sql})`).all(...binds) as Array<{ n: number }>)[0]!.n;
+        const [series] = find(modes[mode]!, /FROM threat_cube_status WHERE hour_bucket >= \? AND status = 'active' GROUP BY/);
+        const [prior] = find(modes[mode]!, /FROM threat_cube_status WHERE hour_bucket >= \? AND hour_bucket < \? AND status = 'active'/);
+        const from = (b: unknown[]) => b[0] as string;
+        const window = rangeRows("SELECT 1 FROM threat_cube_status WHERE status = 'active' AND hour_bucket >= ?", [from(series!.binds)]);
+        const priorRows = rangeRows("SELECT 1 FROM threat_cube_status WHERE status = 'active' AND hour_bucket >= ? AND hour_bucket < ?", prior!.binds);
+        // 30d: 120 × 6h buckets. The prior window is exactly 720 hours; the
+        // current one ends at the current (partial) 6h bucket, so 715–720
+        // seeded hours. 4 active status rows per seeded hour. Before this
+        // split the series read visited window + prior (~2×) on every miss.
+        expect(priorRows).toBe(720 * 4);
+        expect(window).toBeGreaterThan(714 * 4);
+        expect(window).toBeLessThanOrEqual(720 * 4);
       });
 
       it("actors: list counts come from covering per-actor indexes; detail reads are actor-keyed", () => {

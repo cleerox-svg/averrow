@@ -35,13 +35,14 @@ import { json } from "../lib/cors";
 import { getDbContext, getReadSession, attachBookmark } from "../lib/db";
 import { newTally, addToTally, recordD1Reads, type D1Tally } from "../lib/analytics";
 import { cachedValue } from "../lib/cached-value";
+import { cachedCount } from "../lib/cached-count";
 import {
   classifyClusterKind,
   isBridgeKind,
   DEFAULT_HUB_FANOUT_THRESHOLD,
   type ClusterKind,
 } from "../lib/cluster-components";
-import { isSharedInfraAsn } from "../lib/shared-infra-asns";
+import { asnKey, isSharedInfraAsn } from "../lib/shared-infra-asns";
 import { notRetiredClusterSql } from "../lib/cluster-status";
 import {
   OBSERVATORY_PERIODS,
@@ -216,12 +217,14 @@ export function normalizeCountry(raw: string | null | undefined): string | null 
   return /^[A-Z]{2}$/.test(c) && c !== "XX" ? c : null;
 }
 
-/** Canonical ASN string `AS<digits>` (hosting_providers.asn form), or null. */
+/**
+ * Canonical ASN string `AS<digits>` (hosting_providers.asn form), or null.
+ * Delegates to asnKey (lib/shared-infra-asns.ts), the platform's single ASN
+ * normaliser, so the lens `asns[]` agree with classifyOperation and NEXUS —
+ * including the legacy `AS13335 Cloudflare, Inc.` org form.
+ */
 export function normalizeAsn(raw: string | null | undefined): string | null {
-  if (typeof raw !== "string") return null;
-  const a = raw.trim().toUpperCase();
-  if (/^\d+$/.test(a)) return `AS${a}`;
-  return /^AS\d+$/.test(a) ? a : null;
+  return asnKey(raw);
 }
 
 function countryList(values: readonly unknown[], cap = LENS_ARRAY_CAP): string[] {
@@ -1193,8 +1196,11 @@ export async function handleObservatoryCampaignsGeo(request: Request, env: Env):
 //                supported with velocity → 400.
 //
 // `data.trend` — current vs prior equal-length window total + delta_pct
-// (computeTimelineTrend). The drill drawer reads it from
-// `/timeline?country=XX&period=…`; the read spans both windows in one query.
+// (timelineTrend). The drill drawer reads it from
+// `/timeline?country=XX&period=…`. The series read covers the current window
+// only; the prior total is a separate SUM over [prior_start, current_start)
+// with the same filters, cached per prior window (readTimelinePriorTotal), so
+// a response-cache miss no longer re-reads the prior window's cube rows.
 //
 // Buckets: 24h → 24×1h, 7d → 168×1h, 30d → 120×6h, 90d → 90×1d. Buckets are
 // aligned to UTC boundaries (hour / 00-06-12-18 / midnight) and the LAST
@@ -1303,40 +1309,46 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
     if (hasObservatoryFilters(filters)) {
       return badRequest(request, "severity, threat_type and brand are not supported with velocity");
     }
-    return serveLens(request, env, "observatory_timeline",
-      `${CACHE_NS}.timeline:${period}:all:${country ?? "all"}:v:${velocity}`, ttl, period,
+    const lensKey = `${CACHE_NS}.timeline:${period}:all:${country ?? "all"}:v:${velocity}`;
+    return serveLens(request, env, "observatory_timeline", lensKey, ttl, period,
       async (session, tally) => {
         const startMs = timelineStartMs(spec);
-        // One read covers the window AND the equal-length prior window
-        // (for `trend`); bucketing drops the prior rows (k < 0).
-        const binds: unknown[] = [toHourBucket(priorWindowStartMs(spec, startMs))];
-        let where = "hour_bucket >= ?";
-        if (country) { where += " AND country_code = ?"; binds.push(country); }
-        if (velocity !== "all") { where += " AND flag = ?"; binds.push(velocity); }
+        let where = "";
+        const filterBinds: unknown[] = [];
+        if (country) { where += " AND country_code = ?"; filterBinds.push(country); }
+        if (velocity !== "all") { where += " AND flag = ?"; filterBinds.push(velocity); }
         const rows = await session.prepare(`
           SELECT hour_bucket, SUM(threat_count) AS total,
             SUM(CASE WHEN flag = 'very_fast' THEN threat_count ELSE 0 END) AS very_fast,
             SUM(CASE WHEN flag = 'fast' THEN threat_count ELSE 0 END) AS fast
           FROM threat_cube_velocity
-          WHERE ${where}
+          WHERE hour_bucket >= ?${where}
           GROUP BY hour_bucket
-        `).bind(...binds).all<VelocityTimelineRow>();
+        `).bind(toHourBucket(startMs), ...filterBinds).all<VelocityTimelineRow>();
         addToTally(tally, rows.meta);
-        const results = rows.results ?? [];
+        const points = bucketVelocityTimeline(rows.results ?? [], spec, startMs);
+        const prior = await readTimelinePriorTotal(env, lensKey, spec, startMs, async (from, to) => {
+          const r = await session.prepare(`
+            SELECT COALESCE(SUM(threat_count), 0) AS n
+            FROM threat_cube_velocity
+            WHERE hour_bucket >= ? AND hour_bucket < ?${where}
+          `).bind(from, to, ...filterBinds).all<{ n: number | null }>();
+          addToTally(tally, r.meta);
+          return num(r.results?.[0]?.n);
+        });
         return {
           data: {
             bucket: spec.bucket,
-            points: bucketVelocityTimeline(results, spec, startMs),
-            trend: computeTimelineTrend(results, spec, startMs),
+            points,
+            trend: timelineTrend(sumTotals(points), prior, spec, startMs),
           },
           meta: { source_feed: "all", country, velocity },
         };
       });
   }
 
-  return serveLens(request, env, "observatory_timeline",
-    `${CACHE_NS}.timeline:${period}:${sourceFeedCacheSegment(feed)}:${country ?? "all"}${observatoryFilterCacheSegment(filters)}`,
-    ttl, period,
+  const lensKey = `${CACHE_NS}.timeline:${period}:${sourceFeedCacheSegment(feed)}:${country ?? "all"}${observatoryFilterCacheSegment(filters)}`;
+  return serveLens(request, env, "observatory_timeline", lensKey, ttl, period,
     async (session, tally) => {
       const startMs = timelineStartMs(spec);
       const src = buildSourceFilter(feed);
@@ -1351,26 +1363,37 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
         ? (byBrand ? "threat_cube_arcs" : "threat_cube_geo")
         : (byBrand ? "threat_cube_brand" : "threat_cube_status");
       const cf = buildObservatoryCubeFilter(filters, { brandColumn: byBrand });
-      let where = "hour_bucket >= ?";
-      // One read covers the window AND the equal-length prior window (for
-      // `trend`); bucketTimeline drops the prior rows (k < 0).
-      const binds: unknown[] = [toHourBucket(priorWindowStartMs(spec, startMs))];
-      if (country) { where += " AND country_code = ?"; binds.push(country); }
+      // Everything after the hour_bucket bound(s); shared by the series read
+      // and the prior-window total so the two can never disagree on scope.
+      let where = "";
+      const filterBinds: unknown[] = [];
+      if (country) { where += " AND country_code = ?"; filterBinds.push(country); }
       if (cube === "threat_cube_status") where += " AND status = 'active'";
+      where += `${src.sql}${cf.sql}`;
+      filterBinds.push(...src.params, ...cf.params);
       const rows = await session.prepare(`
             SELECT hour_bucket, SUM(threat_count) AS total,
               ${severitySums("severity", "threat_count")}
             FROM ${cube}
-            WHERE ${where}${src.sql}${cf.sql}
+            WHERE hour_bucket >= ?${where}
             GROUP BY hour_bucket
-          `).bind(...binds, ...src.params, ...cf.params).all<TimelineRow>();
+          `).bind(toHourBucket(startMs), ...filterBinds).all<TimelineRow>();
       addToTally(tally, rows.meta);
-      const results = rows.results ?? [];
+      const points = bucketTimeline(rows.results ?? [], spec, startMs);
+      const prior = await readTimelinePriorTotal(env, lensKey, spec, startMs, async (from, to) => {
+        const r = await session.prepare(`
+            SELECT COALESCE(SUM(threat_count), 0) AS n
+            FROM ${cube}
+            WHERE hour_bucket >= ? AND hour_bucket < ?${where}
+          `).bind(from, to, ...filterBinds).all<{ n: number | null }>();
+        addToTally(tally, r.meta);
+        return num(r.results?.[0]?.n);
+      });
       return {
         data: {
           bucket: spec.bucket,
-          points: bucketTimeline(results, spec, startMs),
-          trend: computeTimelineTrend(results, spec, startMs),
+          points,
+          trend: timelineTrend(sumTotals(points), prior, spec, startMs),
         },
         meta: { source_feed: sourceFeedCacheSegment(feed), country },
       };
@@ -1407,29 +1430,55 @@ export function periodDeltaPct(current: number, prior: number): number | null {
   return Math.round(((current - prior) / prior) * 1000) / 10;
 }
 
-/** Pure: split hourly cube rows into the current and prior windows. */
-export function computeTimelineTrend(
-  rows: readonly { hour_bucket: string; total: number | null }[],
-  spec: TimelineSpec,
-  startMs: number,
-): TimelineTrend {
-  const priorStart = priorWindowStartMs(spec, startMs);
-  const end = startMs + spec.points * spec.bucketMs;
-  let current = 0;
-  let prior = 0;
-  for (const r of rows) {
-    const ms = Date.parse(`${r.hour_bucket.replace(" ", "T")}Z`);
-    if (!Number.isFinite(ms)) continue;
-    if (ms >= startMs && ms < end) current += num(r.total);
-    else if (ms >= priorStart && ms < startMs) prior += num(r.total);
-  }
+/** Sum of points[].total — the trend's `current`, by construction. */
+export function sumTotals(points: readonly { total: number }[]): number {
+  let n = 0;
+  for (const p of points) n += p.total;
+  return n;
+}
+
+/** Pure: assemble the trend from the two window totals. */
+export function timelineTrend(current: number, prior: number, spec: TimelineSpec, startMs: number): TimelineTrend {
   return {
     current,
     prior,
     delta_pct: periodDeltaPct(current, prior),
     current_start: new Date(startMs).toISOString(),
-    prior_start: new Date(priorStart).toISOString(),
+    prior_start: new Date(priorWindowStartMs(spec, startMs)).toISOString(),
   };
+}
+
+/**
+ * KV key (under cachedCount's `cc:` prefix) of a prior-window total: the
+ * lens response key (every query parameter) + the prior window's first
+ * hour bucket.
+ */
+export function timelinePriorCacheKey(lensKey: string, spec: TimelineSpec, startMs: number): string {
+  return `count.${lensKey}.prior:${toHourBucket(priorWindowStartMs(spec, startMs))}`;
+}
+
+/**
+ * The prior window's total, cached in KV for one bucket width
+ * (TIMELINE_SPECS: 1h for 24h/7d, 6h for 30d, 1d for 90d).
+ *
+ * The prior window is entirely in the past, so its total only changes when
+ * cube_healer rewrites those hours (2-day hot heal every 6h; 14-day cold
+ * heal — 90 days for threat_cube_velocity — once a day). Its start moves
+ * one bucket at a time and is part of the key, so an entry is only read
+ * while that window is still the prior one: the lag is at most one bucket,
+ * against a response TTL of 5–15 min. Every response-cache miss inside the
+ * bucket then reads only the current window (W cube rows) instead of
+ * current + prior (2W); the prior is read once per bucket per key.
+ */
+export function readTimelinePriorTotal(
+  env: Env,
+  lensKey: string,
+  spec: TimelineSpec,
+  startMs: number,
+  read: (fromBucket: string, toBucket: string) => Promise<number>,
+): Promise<number> {
+  return cachedCount(env, timelinePriorCacheKey(lensKey, spec, startMs), spec.bucketMs / 1000,
+    () => read(toHourBucket(priorWindowStartMs(spec, startMs)), toHourBucket(startMs)));
 }
 
 // ── 7. GET /api/observatory/actors ────────────────────────────────────────────

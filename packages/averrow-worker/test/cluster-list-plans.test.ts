@@ -176,7 +176,12 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
         const p = modes[mode]!.providerClusters;
         expect(p.sql).toContain("status IN ('active', 'dormant', 'disrupted', 'accelerating', 'pivot') AND retired_reason IS NULL");
         expect(p.sql).toMatch(/ORDER BY \+threat_count DESC/);
+        // Exact ASN match (asnKeySql over json_each) is a correlated
+        // subquery on the already-seeked live rows — the access path is
+        // unchanged (test/provider-clusters-asn-match.test.ts pins results).
+        expect(p.sql).toMatch(/EXISTS \(SELECT 1 FROM json_each\(/);
         expect(p.plan).toMatch(/SEARCH infrastructure_clusters USING INDEX idx_clusters_live_status_threat_count \(status=\?\)/);
+        expect(p.plan).toContain("SCAN j VIRTUAL TABLE");
         expect(p.plan).not.toContain("idx_clusters_threat_count");
         expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
       });
