@@ -1,0 +1,37 @@
+-- 0308 — drop two infrastructure_clusters indexes no reader uses any more.
+--
+-- Drops indexes only. No table, column or row is touched. Owner-approved
+-- 2026-10-15.
+--
+--   idx_clusters_threat_count        (0298: threat_count DESC, id)
+--   idx_clusters_status_threat_count (0301: status, threat_count DESC, id)
+--
+-- Both were built for top-N-by-threat_count reads (operations-geo, cluster
+-- lists) before retirement existed. Migration 0303 then retired ~76K legacy
+-- rows through retired_reason, and those rows keep status 'active' /
+-- 'dormant' and their large frozen counts. A walk of either index therefore
+-- passes through tens of thousands of retired rows before it reaches a live
+-- one, so every live-cluster reader was moved off them:
+--   - top-N reads use liveClusterStatusSql() + `ORDER BY +threat_count` and
+--     seek the partial live-rows index idx_clusters_live_status_threat_count
+--     (0306); the Attribution Backlog pins it with INDEXED BY;
+--   - actor reads use idx_clusters_actor_live (0304);
+--   - operations-geo, the per-IP banner read and the retirement pass use the
+--     PK range over the canonical `cluster_*` ids.
+--
+-- Verified 2026-10-15 before dropping: EXPLAIN QUERY PLAN for every
+-- infrastructure_clusters statement in src/ (55 distinct statements: those
+-- the worker test suite issues, plus the operations stats and diagnostics
+-- totals), on the fully migrated schema seeded at prod shape (~77K rows,
+-- ~300 live), with and without ANALYZE stats. No plan used either index and
+-- no plan changed when both were dropped. test/cluster-list-plans.test.ts
+-- asserts that neither index exists after migrations.
+--
+-- What dropping them saves: two full-table index entries to maintain on every
+-- NEXUS upsert, retire and attribution write, and the space they take.
+--
+-- idx_clusters_status (status) is kept: the status x retired_reason GROUP BY
+-- still scans it, and dropping it was outside the approved scope.
+
+DROP INDEX IF EXISTS idx_clusters_threat_count;
+DROP INDEX IF EXISTS idx_clusters_status_threat_count;

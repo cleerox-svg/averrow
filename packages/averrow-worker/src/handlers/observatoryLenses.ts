@@ -269,7 +269,7 @@ function severitySums(severityCol: string, countExpr: string): string {
 // rows are never returned (status=all included). The status and
 // retired_reason predicates are written `+c.status` / `+c.retired_reason`
 // so the planner can't take idx_clusters_status / the status-threat_count
-// indexes (0301, 0306 — both unused HERE) and walk tens of thousands of
+// indexes (0306; 0301's was dropped in 0308) and walk tens of thousands of
 // legacy rows; the PK range reads the ~780-row stable population instead
 // (pinned in test/observatory-lens-plans.test.ts).
 // Do NOT drop idx_clusters_live_status_threat_count as unused: the

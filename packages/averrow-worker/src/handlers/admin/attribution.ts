@@ -76,7 +76,7 @@ export async function handleAttributionBacklog(request: Request, env: Env): Prom
     // pinned to the PARTIAL live-rows index: ~76K retired legacy rows sit in
     // this table with status 'active' / 'dormant' (retirement is the
     // retired_reason column, not a status — lib/cluster-status.ts), so a
-    // (status, threat_count) seek on 0301's full index would walk all of
+    // (status, threat_count) seek on 0301's full index (dropped in 0308) would walk all of
     // them, and with ANALYZE stats the planner otherwise full-scans the
     // table. idx_clusters_live_status_threat_count (migration 0306, WHERE
     // retired_reason IS NULL) holds only live rows, so each read is four

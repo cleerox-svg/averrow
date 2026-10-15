@@ -521,7 +521,7 @@ export async function handleProviderClusters(request: Request, env: Env, provide
     // liveClusterStatusSql() (every storable status, AND not retired) +
     // `+threat_count`: the planner seeks the live-rows partial index
     // idx_clusters_live_status_threat_count per status and LIKE-filters the
-    // few hundred live rows, instead of walking idx_clusters_threat_count
+    // few hundred live rows, instead of walking a full threat_count index (0298's, dropped in 0308)
     // through ~76K retired rows. Pinned in test/cluster-list-plans.test.ts.
     const rows = await env.DB.prepare(`
       SELECT id, cluster_name, asns, countries, threat_count, status,

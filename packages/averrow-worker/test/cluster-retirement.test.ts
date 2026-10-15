@@ -156,7 +156,7 @@ function openProdShapedDb(opts: { withCountryCounts: boolean; legacy: number }):
   return { raw, legacyIds, stableIds };
 }
 
-describe.skipIf(!hasSqlite())("migrations 0302–0306 on prod's infrastructure_clusters DDL", () => {
+describe.skipIf(!hasSqlite())("migrations 0302–0306 + 0308 on prod's infrastructure_clusters DDL", () => {
   const LEGACY = 3000;
 
   for (const withCountryCounts of [true, false]) {
@@ -164,7 +164,7 @@ describe.skipIf(!hasSqlite())("migrations 0302–0306 on prod's infrastructure_c
     it(`apply cleanly from ${from} (country_counts ${withCountryCounts ? "present, as in prod" : "absent"}), legacy + stable rows`, () => {
       const { raw, legacyIds, stableIds } = openProdShapedDb({ withCountryCounts, legacy: LEGACY });
       const before = raw.prepare("SELECT id, status, threat_count, actor_id FROM infrastructure_clusters ORDER BY id").all();
-      const prefixes = withCountryCounts ? ["0303", "0304", "0305", "0306"] : ["0302", "0303", "0304", "0305", "0306"];
+      const prefixes = withCountryCounts ? ["0303", "0304", "0305", "0306", "0308"] : ["0302", "0303", "0304", "0305", "0306", "0308"];
       for (const p of prefixes) expect(() => applyMigration(raw, p), p).not.toThrow();
 
       const reason = new Map((raw.prepare("SELECT id, retired_reason FROM infrastructure_clusters").all() as Array<{ id: string; retired_reason: string | null }>)
@@ -180,7 +180,10 @@ describe.skipIf(!hasSqlite())("migrations 0302–0306 on prod's infrastructure_c
       const byName = new Map(idx.map((r) => [r.name, r.sql ?? ""]));
       expect(byName.get("idx_clusters_actor_live")).toMatch(/\(actor_id, retired_reason\)\s*WHERE retired_reason IS NULL/);
       expect(byName.get("idx_clusters_live_status_threat_count")).toMatch(/\(status, threat_count DESC, id\)\s*WHERE retired_reason IS NULL/);
-      expect(byName.has("idx_clusters_status_threat_count")).toBe(true); // 0301, kept
+      // 0308 drops the two full threat_count indexes the partial ones replaced.
+      expect(byName.has("idx_clusters_threat_count")).toBe(false); // 0298
+      expect(byName.has("idx_clusters_status_threat_count")).toBe(false); // 0301
+      expect(byName.has("idx_clusters_status")).toBe(true); // kept
       const cols = (raw.prepare("PRAGMA table_info(cluster_repoint_log)").all() as Array<{ name: string }>).map((c) => c.name);
       expect(cols).toEqual(["threat_id", "old_cluster_id", "new_cluster_id", "run_at"]);
 
