@@ -1036,7 +1036,11 @@ export function buildSpikeEvents(rows: readonly OverindexRow[], occurredAt: stri
       title: fitTitle(`${name} at ${r.ratio.toFixed(1)}× its usual share of attack traffic`),
       entity: { type: "country", id: r.country_code, name },
       place,
-      count: r.our_count,
+      // One country = one event = one record. (The country's threat volume is in the title's ratio, not here: summing it
+      // would put thousands of threats in the same total as events and inflate the "All N" pill and the Spikes chip.)
+      count: 1,
+      // The window's newest hour bucket, not a real moment: a spike is a standing condition "as of this hour", so after 45
+      // minutes it reads as 'Older' in the rail. That is deliberate (it is true until the next hour's data replaces it).
       occurred_at: occurredAt,
       source: "cloudflare_radar",
       target: { lens: "baseline", select: `country:${r.country_code}` },

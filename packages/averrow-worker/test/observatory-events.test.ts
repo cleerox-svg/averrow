@@ -245,7 +245,7 @@ describe("copy helpers", () => {
     expect(ev.map((e) => e.id)).toEqual(["spike:NL", "spike:RU"]);
     expect(ev[0]).toMatchObject({
       kind: "spike", severity: "medium", title: "Netherlands at 4.0× its usual share of attack traffic",
-      entity: { type: "country", id: "NL", name: "Netherlands" }, count: 40, occurred_at: at,
+      entity: { type: "country", id: "NL", name: "Netherlands" }, count: 1, occurred_at: at,
       target: { lens: "baseline", select: "country:NL" },
     });
     expect(ev[1]!.severity).toBe("high");
@@ -718,8 +718,8 @@ describe.skipIf(!hasSqlite())("spike", () => {
     radar(db, "2026-10-14", "DE", 2);
     const { body } = await call(makeEnv(db).env, "/api/observatory/events?kinds=spike");
     expect(body.data.map((e) => e.id)).toEqual(["spike:NL"]);
-    expect(body.data[0]).toMatchObject({ title: "Netherlands at 6.0× its usual share of attack traffic", severity: "high", count: 60 });
-    expect(body.counts_by_kind).toEqual({ spike: 60 });
+    expect(body.data[0]).toMatchObject({ title: "Netherlands at 6.0× its usual share of attack traffic", severity: "high", count: 1 }); // events, not the country's threat volume
+    expect(body.counts_by_kind).toEqual({ spike: 1 });
   });
 
   it("7d reuses the /overindex lens (its own cache key), not a second geo-cube read", async () => {
