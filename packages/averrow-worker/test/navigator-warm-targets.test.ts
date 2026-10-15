@@ -43,7 +43,9 @@ import { handleListOperations } from "../src/handlers/operations";
 import { handleListBrands } from "../src/handlers/brands";
 import { handleListThreatActors } from "../src/handlers/threatActors";
 import { handleDashboardOverview } from "../src/handlers/dashboard";
-import type { Env } from "../src/types";
+import { handleObservatoryEvents } from "../src/handlers/observatoryEvents";
+import { readdirSync } from "node:fs";
+import type { Env, UserRole } from "../src/types";
 
 // ─── Harness ────────────────────────────────────────────────────────
 
@@ -125,6 +127,7 @@ describe("NAVIGATOR_WARM_TARGETS — pinned list", () => {
       "A /api/observatory/stats?period=7d",
       "A /api/observatory/live?limit=8",
       "A /api/v1/operations?limit=4&offset=0&status=active",
+      "A /api/observatory/events?period=1h&limit=40",
       "A2 /api/observatory/heatmap?period=7d",
       "A2 /api/observatory/nodes?period=24h",
       "A2 /api/observatory/arcs?period=24h",
@@ -284,7 +287,20 @@ const CLIENT_REQUESTS: Array<{ warm: string; client: string; source: string; han
   { warm: "/api/threat-actors?status=active", client: "/api/threat-actors?status=active", source: "averrow-ops/src/features/threat-actors/ThreatActors.tsx:353-357 + hooks/useThreatActors.ts:91-98", handler: handleListThreatActors },
   // MCP smoke probe (service JWT, auditor → scope null).
   { warm: "/api/dashboard/overview", client: "/api/dashboard/overview", source: "averrow-mcp/src/index.ts:354", handler: (r, e) => handleDashboardOverview(r, e, null) },
+  // Observatory event rail default — the contract the (pending) ops client
+  // sends: `period=1h&limit=40`, every kind. The route hands the handler the
+  // caller's role; analyst / admin / super_admin (manage_takedowns) share the
+  // warmed key. Param order and an absent period/limit don't change it.
+  ...(["analyst", "admin", "super_admin"] as UserRole[]).flatMap((role) => [
+    { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events?period=1h&limit=40", source: `events contract (${role})`, handler: eventsAs(role) },
+    { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events?limit=40&period=1h", source: `events contract, reordered (${role})`, handler: eventsAs(role) },
+  ]),
+  { warm: "/api/observatory/events?period=1h&limit=40", client: "/api/observatory/events", source: "events contract, defaults", handler: eventsAs("analyst") },
 ];
+
+function eventsAs(role: UserRole): Handler {
+  return (r, e) => handleObservatoryEvents(r, e, { role });
+}
 
 describe("warm KV key === live client KV key", () => {
   for (const { warm, client, source, handler } of CLIENT_REQUESTS) {
@@ -301,6 +317,18 @@ describe("warm KV key === live client KV key", () => {
     const covered = new Set(CLIENT_REQUESTS.map((c) => c.warm));
     const parameterised = NAVIGATOR_WARM_TARGETS.filter((t) => t.path.includes("?")).map((t) => t.path);
     expect(parameterised.filter((p) => !covered.has(p))).toEqual([]);
+  });
+
+  it("events: the warm writes the manage_takedowns (`td`) variant; other staff roles read their own key", async () => {
+    const target = NAVIGATOR_WARM_TARGETS.find((t) => t.path.startsWith("/api/observatory/events"))!;
+    const warmKey = await firstCacheKey(target.handler, target.path);
+    expect(warmKey).toBe("cv:observatory_events.1h:all:40:td");
+    for (const role of ["sales", "support", "billing", "auditor"] as UserRole[]) {
+      expect(await firstCacheKey(eventsAs(role), target.path)).toBe("cv:observatory_events.1h:all:40:notd");
+    }
+    // A different period / limit is a different key (nothing else is warmed).
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=24h&limit=40")).not.toBe(warmKey);
+    expect(await firstCacheKey(eventsAs("analyst"), "/api/observatory/events?period=1h&limit=20")).not.toBe(warmKey);
   });
 
   it("regression: the pre-PR7b warm params missed the client keys", async () => {
@@ -507,10 +535,44 @@ function sourceViolations(check: SourceCheck, src: string): string[] {
   return out;
 }
 
+/**
+ * Warms whose consumer is not built yet: the warm mirrors the backend
+ * contract (pinned in section 3), and there is no client source to check.
+ * Each entry names the endpoint the future client will request; the test
+ * below fails as soon as ANY ops source mentions it, forcing this entry to
+ * be replaced by a real SOURCE_CHECKS entry against that client.
+ */
+const PENDING_CLIENT: Record<string, { endpoint: string; reason: string }> = {
+  "/api/observatory/events?period=1h&limit=40": {
+    endpoint: "/api/observatory/events",
+    reason: "Intel Feed redesign event rail — backend first; the ops rail must send period=1h&limit=40 by default",
+  },
+};
+
+function opsSourceFiles(): string[] {
+  const root = resolve(PACKAGES_DIR, OPS);
+  return (readdirSync(root, { recursive: true }) as string[])
+    .filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f))
+    .map((f) => `${OPS}/${f}`);
+}
+
 describe("client source still sends what each warm mirrors", () => {
-  it("every warm target has a source check", () => {
-    const missing = NAVIGATOR_WARM_TARGETS.map((t) => t.path).filter((p) => !SOURCE_CHECKS[p]);
+  it("every warm target has a source check (or an explicit pending-client entry)", () => {
+    const missing = NAVIGATOR_WARM_TARGETS.map((t) => t.path).filter((p) => !SOURCE_CHECKS[p] && !PENDING_CLIENT[p]);
     expect(missing).toEqual([]);
+    for (const p of Object.keys(PENDING_CLIENT)) {
+      expect(NAVIGATOR_WARM_TARGETS.some((t) => t.path === p), `stale pending entry ${p}`).toBe(true);
+      expect(SOURCE_CHECKS[p], `${p} has a real source check — drop its PENDING_CLIENT entry`).toBeUndefined();
+    }
+  });
+
+  it("a pending-client warm has no client yet — once one lands, pin it in SOURCE_CHECKS", () => {
+    const files = opsSourceFiles();
+    expect(files.length).toBeGreaterThan(50);
+    for (const [warm, { endpoint }] of Object.entries(PENDING_CLIENT)) {
+      const users = files.filter((f) => readSource(f).includes(endpoint));
+      expect(users, `${endpoint} is now requested by ${users.join(", ")}: replace PENDING_CLIENT["${warm}"] with a SOURCE_CHECKS entry`).toEqual([]);
+    }
   });
 
   for (const [warm, checks] of Object.entries(SOURCE_CHECKS)) {

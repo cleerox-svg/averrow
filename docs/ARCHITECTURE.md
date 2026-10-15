@@ -309,7 +309,7 @@ hour-only time gates, never minute gates (see the cron-audit rule in CLAUDE.md Â
 
 | Cron | Dispatches | Purpose |
 |------|------------|---------|
-| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (22 page-load requests) |
+| `*/5 * * * *` | navigator | DNS geo-backfill, OLAP cube refresh (current+prev hour), KV cache pre-warming (23 page-load requests) |
 | `7 * * * *` | orchestrator | Feed ingestion, Flight Control, agent mesh dispatch (see below) |
 | `8 * * * *` | enricher | Domain geo / brand logo / sector / firmographic enrichment (own budget since PR-E) |
 | `9 * * * *` | cartographer | Guaranteed hourly maintenance run (own budget since PR-F); FC scaleAgents adds instances for backlog drain |
