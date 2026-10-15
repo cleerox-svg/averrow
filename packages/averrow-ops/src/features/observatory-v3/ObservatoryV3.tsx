@@ -1241,6 +1241,7 @@ export function ObservatoryV3() {
           tab={panelTab}
           onTab={setPanelTab}
           eventCount={eventTotal}
+          contentKey={panelSection && panelQuery ? 'lens' : 'threats'}
           placement={layout.docked ? 'dock' : 'overlay'}
           label={panelTab === 'events' ? 'Event rail' : panelSection && panelQuery ? `${LENS_DEFS[lens].label} panel` : 'Intelligence panel'}
         >

@@ -8,7 +8,7 @@
  * floating variant a 12px margin above them.
  */
 
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { PanelTabPanels, PanelTabs, type PanelTab } from './PanelTabs';
 
 export interface PanelDockProps {
@@ -18,13 +18,24 @@ export interface PanelDockProps {
   placement: 'dock' | 'overlay';
   /** The landmark name: what the panel currently shows ("Hosting panel", "Event rail", ...). */
   label: string;
+  /**
+   * What the Intel tab is showing (e.g. the Threats panel vs a lens panel). The aside is the scroll container and never
+   * remounts, so a change of `tab` or `contentKey` resets its scroll to the top: the new content never opens part-way down.
+   */
+  contentKey?: string;
   children: ReactNode;
 }
 
-export function PanelDock({ tab, onTab, eventCount, placement, label, children }: PanelDockProps) {
+export function PanelDock({ tab, onTab, eventCount, placement, label, contentKey, children }: PanelDockProps) {
   const overlay = placement === 'overlay';
+  const asideRef = useRef<HTMLElement>(null);
+  // Layout effect: reset before paint, so the old offset never flashes on the new content.
+  useLayoutEffect(() => {
+    if (asideRef.current) asideRef.current.scrollTop = 0;
+  }, [tab, contentKey]);
   return (
     <aside
+      ref={asideRef}
       aria-label={label}
       className={overlay
         ? 'absolute top-[60px] right-3 bottom-[88px] z-20 w-80 max-w-[calc(100%-24px)] flex flex-col overflow-y-auto rounded-xl animate-drawer-in motion-reduce:animate-none'
