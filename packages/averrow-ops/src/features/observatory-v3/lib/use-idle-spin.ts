@@ -32,8 +32,8 @@ export const SPIN_EVENT_KEY = 'spin';
 /** Input that is somebody USING the console: it pauses the drift until `idleMs` of quiet. */
 const ENGAGE_EVENTS = ['pointerdown', 'wheel', 'keydown', 'touchstart'] as const;
 
-/** A press on one of the map's own controls (the Flat | Globe toggle) is not a gesture on the map. */
-const MAP_CONTROL = '[data-control]';
+/** A press on one of the map's own controls (only the Flat | Globe toggle, which marks itself `data-spin-exempt`; the rail buttons are not exempt) is not a gesture on the map. */
+const MAP_CONTROL = '[data-spin-exempt]';
 /** True when an engage event is a real gesture: it did not start on a map control. */
 export function isMapGesture(target: EventTarget | null): boolean {
   return !(target instanceof Element && target.closest(MAP_CONTROL));

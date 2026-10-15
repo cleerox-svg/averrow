@@ -40,9 +40,8 @@ import { ObservatoryOverlay } from '@/components/observatory/ObservatoryOverlay'
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useBotTraffic } from '@/hooks/useBotTraffic';
 import { ControlRail } from './components/ControlRail';
-import { DataFiltersBody, DataFiltersPopover, FilterChips } from './components/DataFilters';
+import { DataFiltersBody, DataFiltersPopover, FilterChips, FILTERS_MUTED_NOTE } from './components/DataFilters';
 import { filtersToParams, filterNodesBySeverity, filterChips, removeFilterPatch, CLEAR_FILTERS_PATCH } from './lib/filters';
-import { lookupBrand } from './lib/brand-lookup';
 import { useDrillTrend } from './lib/use-drill-trend';
 import { useProjectionShortcut } from './lib/use-projection-shortcut';
 import { LensStrip } from './components/LensStrip';
@@ -75,7 +74,7 @@ import { CYCLE_LENGTH, periodToMs } from './lib/trips';
 import { countryName } from './lib/country-name';
 import { TAKEDOWN_ROLE_NOTE, useCanSeeTakedowns, useTakedownAccess } from './lib/use-takedown-access';
 import { computeLayout, cameraInsets, chipPlacement, railMaxHeight, initialSheetPx, DOCK_WIDTH, RAIL_TOP, TIMELINE_H } from './lib/layout';
-import { useElementSize } from './lib/use-element-width';
+import { useElementSize, useMeasuredHeight } from './lib/use-element-width';
 import { useViewportHeight } from './lib/use-viewport-height';
 import { useLayerShortcuts } from './lib/use-layer-shortcuts';
 import { drillPoints, lensFitPoints, type FocusModels } from './lib/camera';
@@ -85,6 +84,7 @@ import { hostingRows, operationRows, baselineRows, campaignRows, movementRows, a
 import { takedownPeriod } from '@/hooks/useObservatoryLenses';
 import { lensFootnote } from './lib/footnote';
 import { MapAttribution } from './components/MapAttribution';
+import { WallOverlay } from './components/WallOverlay';
 import type { LngLat } from '@/lib/country-centroids';
 
 // Stable empties: a fresh `[]` per render would defeat the map's identity-based layer memoisation.
@@ -108,6 +108,8 @@ type SheetKey = 'drill' | 'panel';
 
 /** A wall screen starts turning sooner than a console somebody is reading. */
 const WALL_SPIN_IDLE_MS = 6_000;
+/** Wall screen: gap above the picture, px (there is no toolbar). */
+const WALL_TOP = 12;
 
 const FAST_SOURCE_NOTE = 'Fast weaponization is always all sources';
 
@@ -169,7 +171,12 @@ export function ObservatoryV3() {
   const rootRef = useRef<HTMLDivElement>(null);
   const { width: mapWidth, height: rootHeight } = useElementSize(rootRef);
   const viewportHeight = useViewportHeight();
-  const layout = useMemo(() => computeLayout({ mapWidth, viewportWidth, viewportHeight }), [mapWidth, viewportWidth, viewportHeight]);
+  const baseLayout = useMemo(() => computeLayout({ mapWidth, viewportWidth, viewportHeight }), [mapWidth, viewportWidth, viewportHeight]);
+  // A wall screen is the picture alone: no stats bar / ticker band under the map, no toolbar or rail beside it.
+  const layout = useMemo(
+    () => (wall ? { ...baseLayout, bottomBand: 0, statsBottom: 0, railWidth: 0, topInset: WALL_TOP } : baseLayout),
+    [baseLayout, wall],
+  );
   const phone = layout.phone || isMobile;
 
   // The right slot: the intelligence panel (a user choice overrides the tier default) or the drill drawer.
@@ -368,10 +375,12 @@ export function ObservatoryV3() {
   const sheetInitialSnap = layout.compact ? 1 : 0;
   const sheetKey: SheetKey | null = phone ? (drill ? 'drill' : showMobilePanel && hasPanel ? 'panel' : null) : null;
   const sheetPx = sheetKey === null ? 0 : sheetRep.key === sheetKey && sheetRep.px > 0 ? sheetRep.px : initialSheetPx(rootHeight, sheetInitialSnap);
-  // No toolbar and no rail on a wall screen: the camera frames its targets in the whole map.
+  // The chip row sits under the toolbar and covers the map there: the camera frames below it (a wall screen has no toolbar
+  // or rail, `layout` already says so).
+  const [chipsRef, chipRowHeight] = useMeasuredHeight();
   const insets = useMemo(
-    () => cameraInsets({ layout: wall ? { ...layout, railWidth: 0, topInset: 12 } : layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx }),
-    [layout, wall, rightSlot, showTimeline, sheetPx],
+    () => cameraInsets({ layout, rightSlotOpen: rightSlot !== null, showTimeline, sheetPx, chipRowHeight }),
+    [layout, rightSlot, showTimeline, sheetPx, chipRowHeight],
   );
   const focusModels = useMemo<FocusModels>(
     () => ({ operations: L.operationsModel, hosting: L.hostingModel, campaigns: L.campaignsModel, movement: L.movementModel, actors: L.actorModel }),
@@ -640,17 +649,25 @@ export function ObservatoryV3() {
   }, [mapMode, state.proj, setProjection]), true);
 
   // ─── Data filters: chips, brand pick ──
+  // The filter is a brand ID; the name comes from the id -> name map (filled when a brand is picked, and from the arcs, which
+  // carry both), never from "whatever arc is first".
   const [brandNames, setBrandNames] = useState<Record<string, string>>({});
-  const brandName = state.brand ? brandNames[state.brand] ?? (arcsQ.data?.[0]?.brand_name || null) : null;
+  const arcBrandName = useMemo(() => {
+    if (!state.brand) return null;
+    const arc = (arcsQ.data ?? []).find(a => a.target_brand_id === state.brand);
+    return arc ? arc.brand_name ?? arc.target_brand : null;
+  }, [state.brand, arcsQ.data]);
+  const brandName = state.brand ? brandNames[state.brand] ?? arcBrandName : null;
   const chips = useMemo(() => filterChips({ sev: state.sev, type: state.type, brand: state.brand }, brandName), [state.sev, state.type, state.brand, brandName]);
-  const onBrand = useCallback((name: string) => {
-    void lookupBrand(name).then(ref => {
-      if (!ref) { setAnnounceToggle(`Could not find the brand ${name}`); return; }
-      setBrandNames(prev => ({ ...prev, [ref.id]: ref.name }));
-      update({ brand: ref.id });
-      setAnnounceToggle(`Brand filter: ${ref.name}`);
-    });
+  // Picking a brand uses the id the search entry carries: synchronous, so there is no response to arrive out of order.
+  const onBrand = useCallback((brand: { id: string; name: string }) => {
+    setBrandNames(prev => ({ ...prev, [brand.id]: brand.name }));
+    update({ brand: brand.id });
+    setAnnounceToggle(`Brand filter: ${brand.name}`);
   }, [update]);
+  // The filters narrow the threat nodes / arcs: with no threat traffic drawn (other lenses' own pictures, the heat and Fast
+  // views, bot share) the chips stay, since the filters are still set, but dim and say where they apply.
+  const filtersApply = mapMode === 'global' && !fast && (mapLayers.nodes || mapLayers.particles || mapLayers.beams);
   const drillTrend = useDrillTrend(drill, { period, source, filters, enabled: !!drill });
 
   const onPickActor = useCallback((id: string | null) => {
@@ -844,6 +861,7 @@ export function ObservatoryV3() {
           onUserCamera={onUserCamera}
           spinHold={legendOpen}
           spinIdleMs={wall ? WALL_SPIN_IDLE_MS : undefined}
+          chromeless={wall}
           period={period}
           heatmapData={heatmapData}
           replayNowMs={replayNowMs}
@@ -922,10 +940,16 @@ export function ObservatoryV3() {
           <div className="flex items-center gap-2">
             <FiltersPopover period={period} source={source} touch align="left" className={layout.compact ? 'shrink-0' : 'flex-1 min-w-0'} triggerClassName={layout.compact ? undefined : 'w-full'}>
               {filtersBody}
-              {showDataFilters && <div className="flex flex-col gap-3 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>{dataFiltersBody(true)}</div>}
+              {/* Severity sits with the threat types it combines with; the rest of the rail follows. */}
+              {showDataFilters && (
+                <div className="flex flex-col gap-3 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
+                  <ControlRail {...railProps} layout="panel" part="severity" />
+                  {dataFiltersBody(true)}
+                </div>
+              )}
               {mapMode !== 'heatmap' || lens === 'threats' ? (
                 <div className="flex flex-col gap-2 pt-2" style={{ borderTop: '1px solid var(--border-base)' }}>
-                  <ControlRail {...railProps} layout="panel" />
+                  <ControlRail {...railProps} layout="panel" part={showDataFilters ? 'rest' : 'all'} />
                 </div>
               ) : null}
             </FiltersPopover>
@@ -988,21 +1012,25 @@ export function ObservatoryV3() {
         onRemove={c => update(removeFilterPatch({ sev: state.sev, type: state.type, brand: state.brand }, c.kind, c.value))}
         onClear={() => update(CLEAR_FILTERS_PATCH)}
         touch={phone}
+        muted={!filtersApply}
+        mutedNote={FILTERS_MUTED_NOTE}
+        rootRef={chipsRef}
         className="absolute"
-        style={{ top: wall ? 8 : layout.topInset, left: phone || wall ? 12 : 12 + 44 + 12, right: rightClear + 56, zIndex: Z_CHROME + 1 }}
+        style={{ top: layout.topInset, left: phone || wall ? 12 : 12 + 44 + 12, right: wall ? 140 : rightClear + 56, zIndex: Z_CHROME + 1 }}
       />
 
-      {/* Wall screen: the way back to the console. Quiet, top right. */}
+      {/* Wall screen: headline numbers readable from across a room, the period, a live dot, and the way back. */}
       {wall && (
-        <button
-          type="button"
-          onClick={exitWall}
-          className={`ds-focusable absolute rounded-full px-3 font-mono text-[10px] uppercase tracking-wider ${phone ? 'left-3' : 'top-2 right-3'}`}
-          // Phones have the projection toggle top right: the way out sits bottom left, above the stats bar.
-          style={{ ...(phone ? { bottom: layout.bottomBand + 12 } : null), zIndex: Z_TOOLBAR, minHeight: phone ? 44 : 28, background: 'var(--bg-card)', border: '1px solid var(--border-base)', color: 'var(--text-tertiary)', cursor: 'pointer', opacity: 0.8 }}
-        >
-          Exit wall screen
-        </button>
+        <WallOverlay
+          periodLabel={footerPeriodLabel}
+          threats={stats?.threats_mapped ?? null}
+          countries={stats?.countries ?? null}
+          operations={L.operationsModel ? L.operationsModel.placedOps.size : null}
+          loadFailed={!!statsQ.error}
+          phone={phone}
+          onExit={exitWall}
+          zIndex={Z_TOOLBAR}
+        />
       )}
 
       {/* ─── Load-error banner ──────────────────────────────────
@@ -1056,7 +1084,7 @@ export function ObservatoryV3() {
           `bottom` sits flush on top of the ticker wrapper directly below —
           keep this in sync with that wrapper's `height` (desktop 40,
           mobile 72 — see the ticker wrapper below for why). */}
-      <div
+      {!wall && <div
         className="absolute left-0 right-0 flex flex-wrap items-center justify-between gap-x-4 px-4 py-0.5"
         style={{
           bottom: layout.statsBottom,
@@ -1108,13 +1136,13 @@ export function ObservatoryV3() {
           )}
           <MapAttribution />
         </div>
-      </div>
+      </div>}
 
       {/* ─── Event ticker ─────────────────────────────────────────
           EventTicker doesn't self-position; it fills whatever box this
           wrapper gives it. Desktop 40 / mobile 72 (touch target sizing)
           match the stats-bar `bottom` offset and the map's bottom inset above. */}
-      {!layout.compact && (
+      {!wall && !layout.compact && (
         <div
           className="absolute bottom-0 left-0 right-0"
           style={{ height: layout.statsBottom, zIndex: Z_CHROME }}
@@ -1127,7 +1155,7 @@ export function ObservatoryV3() {
       {!phone && drill && (
         <DrillDrawer
           target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget}
-          variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend}
+          variant={layout.docked ? 'dock' : 'overlay'} canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} brandId={state.brand}
         />
       )}
       {!phone && !drill && panelOpen && lensPanel(layout.docked ? 'dock' : 'overlay')}
@@ -1187,7 +1215,7 @@ export function ObservatoryV3() {
       )}
       {phone && (
         <PeekSheet open={!!drill} onClose={closeDrill} label={drill ? `${drill.kind} details` : 'Details'} onHeight={onDrillSheetHeight} restoreFocus={fallbackFocus} initialSnap={sheetInitialSnap}>
-          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} />}
+          {drill && <DrillDrawer target={drill} data={drillData} onClose={closeDrill} onSelect={selectTarget} variant="sheet" canSeeTakedowns={canSeeTakedowns} fallbackFocus={fallbackFocus} trend={drillTrend} brandId={state.brand} />}
         </PeekSheet>
       )}
       {phone && hasPanel && (

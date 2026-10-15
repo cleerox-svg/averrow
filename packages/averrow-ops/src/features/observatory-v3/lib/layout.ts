@@ -125,7 +125,12 @@ export interface InsetInput {
   showTimeline: boolean;
   /** Height of the open peek sheet in px (0 = none), measured from the page bottom. */
   sheetPx: number;
+  /** The active-filter chip row under the toolbar, px (0 = none): the camera must not frame a target beneath it. */
+  chipRowHeight?: number;
 }
+
+/** Gap between the chip row and the toolbar above / the map content below it, px. */
+export const CHIP_ROW_GAP = 8;
 
 export interface Insets { top: number; right: number; bottom: number; left: number }
 
@@ -136,12 +141,12 @@ export interface Insets { top: number; right: number; bottom: number; left: numb
  * the bottom.
  */
 export function cameraInsets(i: InsetInput): Insets {
-  const { layout, rightSlotOpen, showTimeline, sheetPx } = i;
+  const { layout, rightSlotOpen, showTimeline, sheetPx, chipRowHeight = 0 } = i;
   const left = layout.railWidth > 0 ? 12 + layout.railWidth + 12 : 12;
   const right = rightSlotOpen && !layout.phone ? DOCK_WIDTH + 24 : 12;
   let bottom = showTimeline ? TIMELINE_H + 24 : 12;
   if (layout.phone && sheetPx > 0) bottom = Math.max(bottom, sheetPx - layout.bottomBand + 12);
-  return { top: layout.topInset, right, bottom, left };
+  return { top: layout.topInset + (chipRowHeight > 0 ? chipRowHeight + CHIP_ROW_GAP : 0), right, bottom, left };
 }
 
 // ─── Floating UI that rides the bottom edge ─────────────────

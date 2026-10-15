@@ -59,6 +59,8 @@ export interface ArcData {
   severity: string;
   source_region: string;
   target_brand: string;
+  /** `brands.id`: the value of the `brand` filter. Absent on payloads cached before the server sent it. */
+  target_brand_id?: string | null;
   brand_name: string | null;
   volume: number;
   first_seen?: string;
@@ -118,7 +120,7 @@ export interface ObservatoryFilters {
   severity?: string;
   /** Comma-separated threat types (`phishing,malware`). */
   threat_type?: string;
-  /** Brand name. */
+  /** Brand ID (`brands.id`, e.g. from an arc's `target_brand_id`), never a name. */
   brand?: string;
 }
 

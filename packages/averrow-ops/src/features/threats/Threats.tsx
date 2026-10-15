@@ -119,9 +119,12 @@ export function Threats() {
   // Campaign→Threat lands here pre-filtered to that indicator (there is no
   // single-threat route; the filtered table is the resolution).
   const initialQuery = searchParams.get('q') ?? '';
+  // `country` (ISO-2) lets the Observatory's "Open in Threats" land on that country's list.
+  const initialCountry = (searchParams.get('country') ?? '').trim().toUpperCase();
   const seededState = {
     ...(initialBrandId ? { brandId: initialBrandId } : {}),
     ...(initialQuery ? { q: initialQuery } : {}),
+    ...(/^[A-Z]{2}$/.test(initialCountry) ? { country: initialCountry } : {}),
   };
   const table = useThreatsTable({
     pageSize: 50,

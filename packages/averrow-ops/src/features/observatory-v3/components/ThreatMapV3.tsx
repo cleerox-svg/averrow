@@ -75,7 +75,7 @@ import {
   ringRadiusPx, replayDotState, sampleDots, DEFAULT_RING_RADIUS_PX,
   type PulseExtensionProps, type RingExtensionProps, type ArrivalEvent,
 } from '../anim';
-import { useSlottedNodes, nodeTransitions, isGhostNode } from '../lib/node-transitions';
+import { useSlottedNodesGen, nodeTransitions, isGhostNode } from '../lib/node-transitions';
 import { moveLabelMinZoom } from '../lib/lens/movement';
 import {
   clampCardPosition, type MapSelection,
@@ -193,6 +193,8 @@ export interface ThreatMapV3Props {
   spinHold?: boolean;
   /** Quiet time (ms) before the globe starts to drift; defaults to SPIN_IDLE_MS (tests and kiosks override it). */
   spinIdleMs?: number;
+  /** Wall screen: no zoom buttons and no Flat | Globe toggle on the map (the page shows only the picture). */
+  chromeless?: boolean;
   period: string; // 24h, 7d, 30d, 90d — drives timeline replay mapping
   heatmapData?: HeatmapPoint[];
   /** Replay window end (ms). One value for particles, movement and the timeline so they share a window. */
@@ -348,7 +350,7 @@ export function ThreatMapV3({ onFatalChange, ...props }: ThreatMapV3Props) {
 function ThreatMapV3Inner({
   threats = EMPTY_THREATS, arcs: arcsIn = EMPTY_ARCS, showBeams, showParticles, showNodes, colorBy,
   mapMode, projection: requestedProjection = 'flat', onProjection, spinHold = false, spinIdleMs, period, heatmapData: heatmapIn = EMPTY_HEAT, replayNowMs,
-  controlRightInset = 0, cameraInsets = NO_INSETS,
+  controlRightInset = 0, cameraInsets = NO_INSETS, chromeless = false,
   selection = null, onSelect, clock: clockProp, clockPlaying = true, onFatal, focus = null, onUserCamera,
   lens, sceneKey = '', onLensPick, pings = null, onPlayhead, seekVersion = 0,
 }: ThreatMapV3Props & { onFatal: (message: string) => void }) {
@@ -654,22 +656,22 @@ function ThreatMapV3Inner({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded) return;
-    if (!isMobile && !navControlRef.current) {
+    if (!isMobile && !chromeless && !navControlRef.current) {
       const ctrl = new maplibregl.NavigationControl({ showCompass: false });
       // Bottom-right, not top-right: the page's toolbar owns the top edge.
       map.addControl(ctrl, 'bottom-right');
       navControlRef.current = ctrl;
       applyControlInset();
-    } else if (isMobile && navControlRef.current) {
+    } else if ((isMobile || chromeless) && navControlRef.current) {
       map.removeControl(navControlRef.current);
       navControlRef.current = null;
     }
-  }, [isMobile, mapLoaded, applyControlInset]);
+  }, [isMobile, chromeless, mapLoaded, applyControlInset]);
 
   // The Flat | Globe toggle: one more cell in the zoom cluster (bottom-right; top-right under the toolbar on phones,
   // which have no zoom buttons and a crowded bottom edge).
   const [slotEl, setSlotEl] = useState<HTMLElement | null>(null);
-  const hasProjectionToggle = !!onProjection;
+  const hasProjectionToggle = !!onProjection && !chromeless;
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapLoaded || !hasProjectionToggle) return;
@@ -750,7 +752,7 @@ function ThreatMapV3Inner({
   const arcsVisible = beamsOn || policy.flow;
   // The nodes the layer draws: laid out by stable id so a period / filter change eases each node into its new radius and
   // colour (and fades the ones that left). Under reduced motion this is the plain array and nothing animates.
-  const nodeData = useSlottedNodes(geoThreats, !reducedMotion);
+  const { nodes: nodeData, generation: nodeGen } = useSlottedNodesGen(geoThreats, !reducedMotion);
   const nodeTrans = useMemo(() => nodeTransitions(reducedMotion), [reducedMotion]);
 
   const tripData = useMemo(
@@ -789,7 +791,7 @@ function ThreatMapV3Inner({
       if (showNodes && nodeData.length > 0) {
         layers.push(
           new ScatterplotLayer<ThreatPoint>({
-            id: 'nodes-core',
+            id: nodeGen === 0 ? 'nodes-core' : `nodes-core-${nodeGen}`,
             data: nodeData,
             getPosition: d => [d.lng, d.lat],
             getRadius: d => (isGhostNode(d) ? 0 : Math.sqrt(Math.max(1, d.threat_count)) * 1440),

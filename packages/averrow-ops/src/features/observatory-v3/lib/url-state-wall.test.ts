@@ -67,11 +67,13 @@ describe('sev / type / brand', () => {
     expect(DEFAULT_STATE.brand).toBeNull();
     expect(roundTrip('')).toBe('');
   });
-  it('a type / brand change clears the selection (its data changed); a severity change does not', () => {
+  it('a severity / type / brand change clears the selection (its data changed)', () => {
     const base = { ...parse('node=10.00,20.00') };
     expect(mergeObservatoryState(base, { type: ['c2'] }).node).toBeNull();
     expect(mergeObservatoryState(base, { brand: 'b_1' }).node).toBeNull();
-    expect(mergeObservatoryState(base, { sev: ['critical'] }).node).toBe('10.00,20.00');
+    expect(mergeObservatoryState(base, { sev: ['critical'] }).node).toBeNull();
+    // ...but re-sending the same severities keeps it
+    expect(mergeObservatoryState({ ...base, sev: ['critical'] }, { sev: ['critical'] }).node).toBe('10.00,20.00');
   });
   it('a patch is normalised the way the URL would read it back', () => {
     const next = mergeObservatoryState(parse(''), { sev: ['low', 'critical'], type: ['phishing', 'c2'] });

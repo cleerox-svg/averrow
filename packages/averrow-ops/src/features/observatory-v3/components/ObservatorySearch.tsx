@@ -34,6 +34,8 @@ export interface ObservatorySearchProps {
   inline?: boolean;
   /** Only offer results of these kinds (the brand filter picks `['brand']`). Default: every kind. */
   kinds?: readonly SearchKind[];
+  /** Only offer results this accepts (the brand filter needs a brand ID, which only some entries carry). */
+  accept?: (result: SearchResult) => boolean;
   /** Field label and placeholder (default "Find on map"): a second search on the page needs its own accessible name. */
   label?: string;
   placeholder?: string;
@@ -41,7 +43,7 @@ export interface ObservatorySearchProps {
   flowList?: boolean;
 }
 
-export function ObservatorySearch({ data, onPick, onActivate, className, touch = false, collapsed = false, openerRef, inline = false, kinds, label = 'Find on map', placeholder, flowList = false }: ObservatorySearchProps) {
+export function ObservatorySearch({ data, onPick, onActivate, className, touch = false, collapsed = false, openerRef, inline = false, kinds, accept, label = 'Find on map', placeholder, flowList = false }: ObservatorySearchProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -54,7 +56,10 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
 
   const index = useMemo(() => buildSearchIndex(data), [data]);
   const allResults = useMemo(() => runSearch(index, query), [index, query]);
-  const results = useMemo(() => (kinds ? allResults.filter(r => kinds.includes(r.kind)) : allResults), [allResults, kinds]);
+  const results = useMemo(
+    () => allResults.filter(r => (!kinds || kinds.includes(r.kind)) && (!accept || accept(r))),
+    [allResults, kinds, accept],
+  );
 
   useEffect(() => { setActive(0); }, [query]);
 

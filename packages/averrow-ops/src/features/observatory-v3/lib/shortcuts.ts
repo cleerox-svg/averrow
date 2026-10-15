@@ -47,7 +47,7 @@ export const PROJECTION_KEY = 'g';
 /** True when this keypress is the Flat | Globe shortcut: plain `G`, not in a field / list / dialog, not a held repeat. */
 export function isProjectionKey(e: KeyLike): boolean {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return false;
-  if (e.key.toLowerCase() !== PROJECTION_KEY) return false;
+  if (e.key?.toLowerCase() !== PROJECTION_KEY) return false;
   return !targetOwnsKeys(e.target);
 }
 

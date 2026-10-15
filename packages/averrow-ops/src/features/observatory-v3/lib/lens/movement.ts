@@ -25,6 +25,7 @@ import { CYCLE_LENGTH } from '../trips';
 import { globeFitZoom } from '../projection';
 import type { Projection } from '../projection';
 import { countryCenter, iso2 } from './placement';
+import { normAsn } from '../search';
 
 /** Clock units one hop takes (60 u/s => 1.5 s). */
 export const HOP_UNITS = 90;
@@ -70,10 +71,6 @@ export interface MovementModel {
   unplaced: number;
 }
 
-const asnOf = (raw: string): string | null => {
-  const m = /^(?:AS)?\s*(\d{1,10})$/i.exec(raw.trim());
-  return m ? `AS${m[1]}` : null;
-};
 const plural = (n: number, one: string, many: string): string => `+${n} ${n === 1 ? one : many}`;
 
 /**
@@ -85,7 +82,7 @@ export function moveLabelText(m: Pick<Movement, 'counts' | 'to'>): string {
   const parts: string[] = [];
   if (new_ips > 0) parts.push(plural(new_ips, 'IP', 'IPs'));
   else if (new_serials > 0) parts.push(plural(new_serials, 'cert', 'certs'));
-  const landed = m.to.asns.map(asnOf).find((a): a is string => a !== null);
+  const landed = m.to.asns.map(normAsn).find((a): a is string => a !== null);
   if (landed) parts.push(landed);
   else if (new_asns > 0) parts.push(plural(new_asns, 'ASN', 'ASNs'));
   return parts.join(' · ');
@@ -96,8 +93,11 @@ export function moveLabelText(m: Pick<Movement, 'counts' | 'to'>): string {
  * few countries and the words would pile up, so they appear once there is room: a fixed zoom on the flat map, a little
  * past the zoom that fits the whole planet on the globe.
  */
+/** Flat-map zoom below which the hop labels stay off: at the world view the trails converge and the words pile up. */
+export const MOVE_LABEL_MIN_ZOOM_FLAT = 2.2;
+
 export function moveLabelMinZoom(projection: Projection, canvas: { width: number; height: number }): number {
-  return projection === 'globe' ? globeFitZoom(canvas.width, canvas.height) + 0.5 : 1.2;
+  return projection === 'globe' ? globeFitZoom(canvas.width, canvas.height) + 0.5 : MOVE_LABEL_MIN_ZOOM_FLAT;
 }
 
 function placeable(list: readonly string[]): string[] {

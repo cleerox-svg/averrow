@@ -70,6 +70,7 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
       <button
         type="button"
         data-control="projection"
+        data-spin-exempt
         aria-label={toggleLabel(projection, flatOnly)}
         aria-pressed={globe}
         aria-disabled={flatOnly || undefined}

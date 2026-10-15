@@ -108,6 +108,7 @@ describe('useIdleSpin', () => {
     const spun = s.jumpTo.mock.calls.length;
     const toggle = document.createElement('button');
     toggle.setAttribute('data-control', 'projection');
+    toggle.setAttribute('data-spin-exempt', '');
     const inner = document.createElement('span');
     toggle.appendChild(inner);
     document.body.appendChild(toggle);

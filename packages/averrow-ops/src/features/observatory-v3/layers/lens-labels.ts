@@ -64,6 +64,8 @@ export interface MoveLabelSource {
   from: LngLat;
   to: LngLat;
   priority: number;
+  /** The selected event's label: kept in addition to the top moves. */
+  selected?: boolean;
 }
 
 export interface HostLabelSource {
@@ -90,8 +92,10 @@ export const MAX_HOST_CANDIDATES = 14;
 export const MAX_EDGE_LABELS = 10;
 export const MAX_HOST_LABELS = 8;
 export const MAX_ACTOR_LABELS = 10;
-/** Movement hop labels kept after de-dup (one per event at most). */
-export const MAX_MOVE_LABELS = 8;
+/** Movement hop labels kept after de-dup: the top moves, plus the selected event's on top of that. */
+export const MAX_MOVE_LABELS = 3;
+/** Movement labels lean with their trail, but never past this (degrees): text at a steep angle is unreadable. */
+export const MOVE_LABEL_MAX_TILT = 35;
 export const MAX_MOVE_CANDIDATES = 40;
 
 const pathLength = (e: OpEdge): number => e.distances[e.distances.length - 1] ?? 0;
@@ -180,6 +184,7 @@ export const moveLabelSources = memoByModelAndKey((m: MovementModel, selectedEve
       from: h.from,
       to: h.to,
       priority: (selectedEventId && h.eventId === selectedEventId ? 1e6 : 0) + size,
+      ...(selectedEventId && h.eventId === selectedEventId ? { selected: true } : null),
     });
   }
   return out.sort((a, b) => b.priority - a.priority).slice(0, MAX_MOVE_CANDIDATES);
@@ -246,6 +251,17 @@ export const MOVE_LABEL_LIFT = -10;
 const LABEL_H = 14;
 /** Gap, px, between a node's bloom and its label: the same constant the layer offsets the text by. */
 export const NODE_LABEL_GAP = 2;
+
+/**
+ * The screen angle of a trail segment, for its label: turned right way up (a westward trail would otherwise print the
+ * words upside down) and limited to +-MOVE_LABEL_MAX_TILT degrees.
+ */
+export function tiltOf(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  let deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+  if (deg > 90) deg -= 180;
+  else if (deg < -90) deg += 180;
+  return Math.max(-MOVE_LABEL_MAX_TILT, Math.min(MOVE_LABEL_MAX_TILT, deg));
+}
 
 /** Greedy screen-space placement of both label sets at the current camera. */
 export function placeLensLabels(input: PlaceInput, project: Project, size: { width: number; height: number }): PlacedLabels {
@@ -369,7 +385,7 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     if (!mid || !a || !b) continue;
     // A hop too short on screen to carry its words gets none (the tooltip and drawer have them).
     if (f && t && Math.hypot(t.x - f.x, t.y - f.y) < mv.text.length * CHAR_PX + 28) continue;
-    moveCands.push({ id: mv.id, text: mv.text, x: mid.x, y: mid.y, dy: MOVE_LABEL_LIFT, priority: mv.priority, angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI });
+    moveCands.push({ id: mv.id, text: mv.text, x: mid.x, y: mid.y, dy: MOVE_LABEL_LIFT, priority: mv.priority, angle: tiltOf(a, b) });
     moveById.set(mv.id, mv);
     moveFade.set(mv.id, mid.fade ?? 1);
   }
@@ -377,7 +393,7 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
     const p = project(a.position);
     return p ? [{ x: p.x, y: p.y + a.radiusPx + 10, r: (a.text.length * CHAR_PX) / 2 }] : [];
   }));
-  const moves = moveCands.length === 0 ? [] : placeLabels(moveCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_MOVE_LABELS, obstacles: moveObstacles })
+  const moves = moveCands.length === 0 ? [] : placeLabels(moveCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_MOVE_LABELS + ((input.moves ?? []).some(m => m.selected) ? 1 : 0), obstacles: moveObstacles })
     .map(p => {
       const src = moveById.get(p.id)!;
       return { id: p.id, text: src.text, position: src.position, angle: p.angle, fade: moveFade.get(p.id) ?? 1 } satisfies PlacedEdgeLabel;

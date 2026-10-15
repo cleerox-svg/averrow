@@ -49,6 +49,11 @@ export interface ControlRailProps {
   /** `rail`: 44px icon column (tablet / desktop). `panel`: labelled 44px rows (phone filters card). */
   layout?: 'rail' | 'panel';
   className?: string;
+  /**
+   * `panel` only. `severity`: just the severity filter (the phone card shows it next to the threat types); `rest`: everything
+   * else; `all` (default): both. Nothing is rendered when the part has nothing to show.
+   */
+  part?: 'all' | 'severity' | 'rest';
 }
 
 interface Item {
@@ -121,7 +126,7 @@ function Group({ label, items, layout }: { label: string; items: Item[]; layout:
 
 export function ControlRail({
   lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, sev = [], onSev, canSeeTakedowns = false,
-  layout = 'rail', className,
+  layout = 'rail', className, part = 'all',
 }: ControlRailProps) {
   const [announcement, setAnnouncement] = useState('');
   const say = useCallback((msg: string) => setAnnouncement(prev => (prev === msg ? `${msg}​` : msg)), []);
@@ -197,6 +202,17 @@ export function ControlRail({
   const traffickable = !(lens === 'threats' && (view === 'heat' || view === 'fast')) && !(lens === 'baseline' && measure === 'bot');
 
   const panel = layout === 'panel';
+  if (part === 'severity') {
+    // Same conditions as the group below: only where threat traffic is drawn.
+    if (!panel || !traffickable || sevItems.length === 0) return null;
+    return (
+      <div className={cn('flex flex-col gap-1.5', className)} data-layout={layout} data-part="severity">
+        <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div>
+        <Group label="Severity filter" items={sevItems} layout={layout} />
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+      </div>
+    );
+  }
   return (
     <div
       className={cn(panel ? 'flex flex-col gap-3' : 'flex flex-col items-center gap-1.5 rounded-xl p-[3px]', className)}
@@ -223,7 +239,7 @@ export function ControlRail({
           <Group label="Threat traffic underneath" items={trafficItems} layout={layout} />
           {!panel && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
           <Group label="Map options" items={extras} layout={layout} />
-          {sevItems.length > 0 && (
+          {sevItems.length > 0 && !(panel && part === 'rest') && (
             <>
               {panel ? <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
               <Group label="Severity filter" items={sevItems} layout={layout} />

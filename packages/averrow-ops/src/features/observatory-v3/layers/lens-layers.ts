@@ -371,6 +371,8 @@ const fadedText = (base: Rgba) => (d: object): Rgba => {
   return fade === undefined || fade >= 1 ? base : [base[0], base[1], base[2], Math.round(base[3] * Math.max(0, fade))];
 };
 const TEXT_COLOR_AT = fadedText(TEXT_COLOR);
+/** Movement hop labels: `--text-secondary` (white at 72%) over the dark halo; the basemap is dark in both themes. */
+const MOVE_TEXT_COLOR_AT = fadedText([255, 255, 255, 184]);
 const HALO_COLOR_AT = fadedText(TEXT_OUTLINE);
 
 /**
@@ -953,7 +955,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
     pushHaloed(out, v => new TextLayer<PlacedEdgeLabel>({
       id: `movement-hop-labels${v.suffix}`,
       ...labelStyle(input.projection),
-      getColor: v.getColor,
+      getColor: v.suffix === '' ? MOVE_TEXT_COLOR_AT : v.getColor,
       data: hopLabels,
       getPosition: l => l.position,
       getText: l => l.text,

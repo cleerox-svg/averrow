@@ -12,7 +12,7 @@
  * State lives in the URL (`sev`, `type`, `brand`, see lib/url-state.ts); this file only renders and reports changes.
  */
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import { ChevronDown, Filter as FilterIcon, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ObservatorySearch } from './ObservatorySearch';
@@ -22,12 +22,17 @@ import { rgbCss, sevText, THREAT_TYPE_COLORS } from '../lib/map-colors';
 import type { SearchData, SearchKind, SearchResult } from '../lib/search';
 
 const BRAND_ONLY: readonly SearchKind[] = ['brand'];
+/** The filter is a brand id: only brands whose arcs carried one can be picked. */
+const HAS_BRAND_ID = (r: SearchResult): boolean => !!r.brandId;
+
+/** Where the filters do not apply (the view draws something they cannot narrow). */
+export const FILTERS_MUTED_NOTE = 'Applies to Threats';
 
 export function TypeMultiSelect({ types, onChange, touch = false }: { types: readonly string[]; onChange: (types: string[]) => void; touch?: boolean }) {
   return (
     <fieldset className="m-0 p-0 border-0 flex flex-col gap-1.5" data-filter="type">
       <legend className={cn(FILTER_LABEL, 'p-0 mb-1.5')} style={{ color: 'var(--text-tertiary)' }}>Threat type</legend>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+      <div className={cn('grid gap-x-2 gap-y-0.5', touch ? 'grid-cols-1' : 'grid-cols-2')}>
         {TYPE_OPTIONS.map(t => {
           const on = types.includes(t.id);
           return (
@@ -54,7 +59,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
 }
 
 export function BrandFilter({ brand, brandName, data, onChange, onActivate, touch = false }: {
-  brand: string | null; brandName?: string | null; data: SearchData; onChange: (brandName: string) => void; onActivate?: () => void; touch?: boolean;
+  brand: string | null; brandName?: string | null; data: SearchData; onChange: (brand: { id: string; name: string }) => void; onActivate?: () => void; touch?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1.5" data-filter="brand">
@@ -62,12 +67,13 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
       <ObservatorySearch
         data={data}
         kinds={BRAND_ONLY}
+        accept={HAS_BRAND_ID}
         label="Filter by brand"
         placeholder="Search brands…"
         flowList
         touch={touch}
         onActivate={onActivate}
-        onPick={(r: SearchResult) => onChange(r.label)}
+        onPick={(r: SearchResult) => { if (r.brandId) onChange({ id: r.brandId, name: r.label }); }}
       />
       <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
         {brand
@@ -80,7 +86,7 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
 
 /** Type + brand, as one block (the body of both the popover and the phone filters card). */
 export function DataFiltersBody({ types, brand, brandName, onTypes, onBrand, searchData, onActivate, touch = false }: {
-  types: readonly string[]; brand: string | null; brandName?: string | null; onTypes: (types: string[]) => void; onBrand: (brandName: string) => void;
+  types: readonly string[]; brand: string | null; brandName?: string | null; onTypes: (types: string[]) => void; onBrand: (brand: { id: string; name: string }) => void;
   searchData: SearchData; onActivate?: () => void; touch?: boolean;
 }) {
   return (
@@ -151,25 +157,49 @@ export function DataFiltersPopover({ count, children, touch = false, className }
   );
 }
 
-/** Every active filter as a chip you can remove; "Clear all" once there are two or more. */
-export function FilterChips({ chips, onRemove, onClear, touch = false, className, style }: {
+/** Chips shown before the rest fold into a "+N" chip. */
+export const CHIPS_VISIBLE = { fine: 4, touch: 2 } as const;
+
+/**
+ * Every active filter as a chip you can remove, in ONE row (no wrapping: the row is the height the camera reserves). More
+ * than `max` fold into a "+N" chip that opens the rest in place; the row also scrolls sideways if it still does not fit.
+ * `muted`: the view cannot apply the filters (heat, Fast, lenses without threat traffic), so the chips stay (they are still
+ * set, and removable) but dim, with `mutedNote` saying where they do apply.
+ */
+export function FilterChips({ chips, onRemove, onClear, touch = false, className, style, max, muted = false, mutedNote, rootRef }: {
   chips: readonly FilterChip[]; onRemove: (chip: FilterChip) => void; onClear: () => void; touch?: boolean; className?: string; style?: CSSProperties;
+  /** Chips shown before folding (default 4, 2 on touch). */
+  max?: number; muted?: boolean; mutedNote?: string; rootRef?: Ref<HTMLDivElement>;
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (chips.length === 0) return null;
+  const limit = max ?? (touch ? CHIPS_VISIBLE.touch : CHIPS_VISIBLE.fine);
+  const folded = !expanded && chips.length > limit;
+  const shown = folded ? chips.slice(0, limit) : chips;
+  const hidden = chips.length - shown.length;
+  const pill = { ...GLASS, minHeight: touch ? 36 : 26 } as const;
   return (
-    <div role="group" aria-label="Active filters" data-filter-chips className={cn('flex flex-wrap items-center gap-1.5', className)} style={style}>
-      {chips.map(c => (
+    <div
+      ref={rootRef}
+      role="group"
+      aria-label="Active filters"
+      data-filter-chips
+      data-muted={muted || undefined}
+      className={cn('flex items-center gap-1.5 overflow-x-auto', expanded ? 'flex-wrap' : 'flex-nowrap', className)}
+      style={{ scrollbarWidth: 'none', ...style }}
+    >
+      {shown.map(c => (
         <span
           key={c.key}
           data-chip={c.key}
-          className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 font-mono text-[11px]"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full pl-2.5 pr-1 font-mono text-[11px]"
           style={{
-            ...GLASS, minHeight: touch ? 36 : 26,
+            ...pill, opacity: muted ? 0.55 : 1,
             color: c.kind === 'sev' ? sevText(c.value) : 'var(--text-primary)',
           }}
         >
           <span className="max-w-[160px] truncate">{c.label}</span>
-          {c.note && <span className="hidden sm:inline" style={{ color: 'var(--text-tertiary)' }} title={`${c.label} ${c.note}`}>· {c.note}</span>}
+          {c.note && !muted && <span className="hidden sm:inline whitespace-nowrap" style={{ color: 'var(--text-tertiary)' }} title={`${c.label} ${c.note}`}>· {c.note}</span>}
           <button
             type="button"
             aria-label={c.removeLabel}
@@ -181,15 +211,42 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
           </button>
         </span>
       ))}
+      {folded && (
+        <button
+          type="button"
+          data-chip-overflow
+          aria-expanded={false}
+          aria-label={`Show ${hidden} more active filter${hidden === 1 ? '' : 's'}`}
+          onClick={() => setExpanded(true)}
+          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          style={{ ...pill, color: 'var(--amber-text)', cursor: 'pointer', opacity: muted ? 0.55 : 1 }}
+        >
+          +{hidden}
+        </button>
+      )}
+      {expanded && chips.length > limit && (
+        <button
+          type="button"
+          aria-expanded
+          onClick={() => setExpanded(false)}
+          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          style={{ ...pill, color: 'var(--text-secondary)', cursor: 'pointer' }}
+        >
+          Show less
+        </button>
+      )}
       {chips.length > 1 && (
         <button
           type="button"
           onClick={onClear}
-          className="ds-focusable rounded-full px-2.5 font-mono text-[11px]"
-          style={{ ...GLASS, minHeight: touch ? 36 : 26, color: 'var(--text-secondary)', cursor: 'pointer' }}
+          className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
+          style={{ ...pill, color: 'var(--text-secondary)', cursor: 'pointer' }}
         >
           Clear all
         </button>
+      )}
+      {muted && mutedNote && (
+        <span data-chip-note className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 font-mono text-[11px]" style={{ ...pill, color: 'var(--text-secondary)' }}>{mutedNote}</span>
       )}
     </div>
   );

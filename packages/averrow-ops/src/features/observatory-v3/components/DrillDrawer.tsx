@@ -57,6 +57,8 @@ export interface DrillDrawerProps {
    * absent nothing is rendered, so the drawer works unchanged while the data is loading or unavailable.
    */
   trend?: DrillTrend | null;
+  /** The active brand filter (a brand id): "Open in Threats" carries it as `brand_id`. */
+  brandId?: string | null;
 }
 
 // ─── Actions: Copy link, Open in Threats ────────────────────
@@ -69,12 +71,11 @@ export function threatsCountry(t: DrillTarget): string | null {
 }
 
 /**
- * The Threats list for a country: the console's Threats tab with `country=XX`. (The tab's table has a country filter in its
- * API and state, but its page only seeds `brand_id` and `q` from the URL today, so until it also reads `country` this opens the
- * unfiltered list.)
+ * The Threats list for a country: the console's Threats tab with `country=XX` (the page seeds its table from `country` and
+ * `brand_id`), plus the active brand filter as `brand_id` so the list matches what the map was showing.
  */
-export function threatsHref(countryCode: string): string {
-  return tabUrl('threats', { country: countryCode });
+export function threatsHref(countryCode: string, brandId?: string | null): string {
+  return tabUrl('threats', { country: countryCode, ...(brandId ? { brand_id: brandId } : null) });
 }
 
 /** Copy the current page address (the selection is in the URL, so it is the link to THIS drawer). */
@@ -88,7 +89,7 @@ export async function copyCurrentLink(): Promise<boolean> {
   }
 }
 
-function DrillActions({ target }: { target: DrillTarget }) {
+function DrillActions({ target, brandId }: { target: DrillTarget; brandId?: string | null }) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -108,7 +109,7 @@ function DrillActions({ target }: { target: DrillTarget }) {
         {status === 'copied' ? 'Link copied' : 'Copy link'}
       </button>
       {cc && (
-        <Link to={threatsHref(cc)} className={btn} style={{ ...style, textDecoration: 'none' }}>
+        <Link to={threatsHref(cc, brandId)} className={btn} style={{ ...style, textDecoration: 'none' }}>
           Open in Threats <span aria-hidden>→</span>
         </Link>
       )}
@@ -724,7 +725,7 @@ function MovementBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'moveme
 
 // ─── Drawer ─────────────────────────────────────────────────
 
-export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTakedowns = true, fallbackFocus, trend }: DrillDrawerProps) {
+export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTakedowns = true, fallbackFocus, trend, brandId }: DrillDrawerProps) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -766,7 +767,7 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
 
   const body = (
     <div key={drillKey(target)} className="flex flex-col gap-3.5">
-      <DrillActions target={target} />
+      <DrillActions target={target} brandId={brandId} />
       <TrendChip trend={trend} />
       {target.kind === 'node' && <NodeBody t={target} onSelect={onSelect} />}
       {target.kind === 'arc' && <ArcBody t={target} onSelect={onSelect} />}

@@ -57,6 +57,8 @@ export interface SlotLayout {
 export class NodeSlotRegistry {
   private readonly slotOf = new Map<string, number>();
   private readonly protos: ThreatPoint[] = [];
+  /** slot -> when it was first seen absent (ms). A slot that is present again is removed from here. */
+  private readonly goneSince = new Map<number, number>();
 
   constructor(private readonly max: number = MAX_NODE_SLOTS) {}
 
@@ -65,6 +67,37 @@ export class NodeSlotRegistry {
   reset(): void {
     this.slotOf.clear();
     this.protos.length = 0;
+    this.goneSince.clear();
+  }
+
+  /** How many slots are currently ghosts (absent from the last layout). */
+  get ghostCount(): number { return this.goneSince.size; }
+
+  /**
+   * Drop the slots whose node has been absent for at least `NODE_TRANSITION_MS` (their fade-out is over), so ghosts never
+   * accumulate. Slots shift, so the caller must re-create the layer (instant, nothing visible changes: the dropped ones
+   * are already transparent and the rest are settled). Returns true when something was dropped.
+   */
+  compact(now: number): boolean {
+    const dead = new Set<number>();
+    for (const [slot, since] of this.goneSince) if (now - since >= NODE_TRANSITION_MS) dead.add(slot);
+    if (dead.size === 0) return false;
+    const keep = this.protos.filter((_, slot) => !dead.has(slot));
+    const was = new Map(this.goneSince);
+    this.slotOf.clear();
+    this.protos.length = 0;
+    this.goneSince.clear();
+    let slot = 0;
+    let old = 0;
+    for (const proto of keep) {
+      while (dead.has(old)) old++;
+      this.slotOf.set(nodeKey(proto), slot);
+      this.protos.push(proto);
+      const since = was.get(old);
+      if (since !== undefined) this.goneSince.set(slot, since);
+      slot++; old++;
+    }
+    return true;
   }
 
   /**
@@ -72,7 +105,7 @@ export class NodeSlotRegistry {
    * so the next call shows them for real and they ease in). The very first layout is never deferred: the initial load
    * should not animate every node in. A node set that would overflow the registry resets it (that frame is instant).
    */
-  layout(nodes: readonly ThreatPoint[], deferNew: boolean): SlotLayout {
+  layout(nodes: readonly ThreatPoint[], deferNew: boolean, now: number = Date.now()): SlotLayout {
     const wasEmpty = this.protos.length === 0;
     const present = new Map<number, ThreatPoint>();
     const fresh = new Set<number>();
@@ -82,7 +115,7 @@ export class NodeSlotRegistry {
       if (slot === undefined) {
         if (this.protos.length >= this.max) {
           this.reset();
-          return this.layout(nodes, false);
+          return this.layout(nodes, false, now);
         }
         slot = this.protos.length;
         this.slotOf.set(id, slot);
@@ -93,6 +126,8 @@ export class NodeSlotRegistry {
       }
       present.set(slot, n);
     }
+    for (const slot of present.keys()) this.goneSince.delete(slot);
+    for (let slot = 0; slot < this.protos.length; slot++) if (!present.has(slot) && !this.goneSince.has(slot)) this.goneSince.set(slot, now);
     const hold = deferNew && !wasEmpty;
     const data = this.protos.map((proto, slot) => {
       const node = present.get(slot);
@@ -105,13 +140,21 @@ export class NodeSlotRegistry {
   }
 }
 
+export interface SlottedNodes {
+  nodes: ThreatPoint[];
+  /** Bumps when ghost slots were dropped: the layer is re-created (no transition) because the slot indices moved. */
+  generation: number;
+}
+
 /**
  * The nodes for the layer, slotted so deck.gl can interpolate them. Identity follows the input: the same `nodes` (and
- * `enabled`) give the same array until a deferred node is filled in, which costs one extra render a frame later.
+ * `enabled`) give the same array until a deferred node is filled in, which costs one extra render a frame later. A node that
+ * left the data fades out as a ghost and its slot is dropped `NODE_TRANSITION_MS` later (`generation` changes then).
  */
-export function useSlottedNodes(nodes: ThreatPoint[], enabled: boolean): ThreatPoint[] {
+export function useSlottedNodesGen(nodes: ThreatPoint[], enabled: boolean): SlottedNodes {
   const [registry] = useState(() => new NodeSlotRegistry());
   const [settled, setSettled] = useState(0);
+  const [generation, setGeneration] = useState(0);
   const deferred = useRef(0);
   const slotted = useMemo(() => {
     if (!enabled) {
@@ -132,5 +175,17 @@ export function useSlottedNodes(nodes: ThreatPoint[], enabled: boolean): ThreatP
     if (raf === null) setSettled(n => n + 1);
     return () => { if (raf !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf); };
   }, [slotted]);
-  return slotted;
+  // Ghosts are removed once their fade is over.
+  useEffect(() => {
+    if (!enabled || registry.ghostCount === 0) return;
+    const t = setTimeout(() => {
+      if (registry.compact(Date.now())) { setGeneration(g => g + 1); setSettled(n => n + 1); }
+    }, NODE_TRANSITION_MS + 20);
+    return () => clearTimeout(t);
+  }, [slotted, enabled, registry]);
+  return { nodes: slotted, generation };
+}
+
+export function useSlottedNodes(nodes: ThreatPoint[], enabled: boolean): ThreatPoint[] {
+  return useSlottedNodesGen(nodes, enabled).nodes;
 }

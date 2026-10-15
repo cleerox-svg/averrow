@@ -35,6 +35,8 @@ export interface SearchEntry {
   /** Lower-cased strings the query is matched against: [primary, ...secondary]. */
   hay: string[];
   weight: number;
+  /** Brand entries only: the brand's id (the data filter's value), when the arcs carried it. */
+  brandId?: string;
 }
 
 export interface SearchResult {
@@ -44,6 +46,8 @@ export interface SearchResult {
   sublabel: string;
   target: DrillTarget;
   score: number;
+  /** Brand results only: see `SearchEntry.brandId`. */
+  brandId?: string;
 }
 
 const KIND_WEIGHT: Record<SearchKind, number> = {
@@ -83,20 +87,24 @@ export function buildSearchIndex(data: SearchData): SearchEntry[] {
     });
   }
 
-  // Brands: the biggest arc per target brand.
+  // Brands: the biggest arc per target brand. Keyed by the brand's ID when the arcs carry it (two brands can share a
+  // name, and the data filter is an id); the id stays on the entry so picking a brand never needs a name lookup.
   const bestArc = new Map<string, ArcData>();
   const brandVolume = new Map<string, number>();
   for (const a of data.arcs ?? []) {
     const name = a.brand_name ?? a.target_brand;
     if (!name) continue;
-    brandVolume.set(name, (brandVolume.get(name) ?? 0) + a.volume);
-    const cur = bestArc.get(name);
-    if (!cur || a.volume > cur.volume) bestArc.set(name, a);
+    const k = a.target_brand_id || name;
+    brandVolume.set(k, (brandVolume.get(k) ?? 0) + a.volume);
+    const cur = bestArc.get(k);
+    if (!cur || a.volume > cur.volume) bestArc.set(k, a);
   }
-  for (const [name, arc] of bestArc) {
+  for (const [k, arc] of bestArc) {
+    const name = arc.brand_name ?? arc.target_brand;
     out.push({
-      key: `brand:${name}`, kind: 'brand', label: name, sublabel: `${brandVolume.get(name)!.toLocaleString()} threats targeted`,
+      key: `brand:${k}`, kind: 'brand', label: name, sublabel: `${brandVolume.get(k)!.toLocaleString()} threats targeted`,
       target: { kind: 'arc', arc }, hay: [lc(name)], weight: KIND_WEIGHT.brand,
+      ...(arc.target_brand_id ? { brandId: arc.target_brand_id } : null),
     });
   }
 
@@ -172,7 +180,7 @@ export function runSearch(index: readonly SearchEntry[], query: string, limit = 
   const scored: SearchResult[] = [];
   for (const e of index) {
     const s = scoreEntry(e, q, asnQuery);
-    if (s > 0) scored.push({ key: e.key, kind: e.kind, label: e.label, sublabel: e.sublabel, target: e.target, score: s * 10 + e.weight });
+    if (s > 0) scored.push({ key: e.key, kind: e.kind, label: e.label, sublabel: e.sublabel, target: e.target, score: s * 10 + e.weight, ...(e.brandId ? { brandId: e.brandId } : null) });
   }
   scored.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
   return scored.slice(0, limit);

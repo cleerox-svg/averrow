@@ -15,9 +15,9 @@ export const POP_UNITS = 40;
 /** Share of the pop spent growing (the rest is the settle). */
 const GROW_SHARE = 0.2;
 export const POP_RADIUS_PX = 9;
-export const SETTLE_RADIUS_PX = 2.2;
+export const SETTLE_RADIUS_PX = 2.6;
 export const POP_ALPHA = 255;
-export const SETTLE_ALPHA = 58;
+export const SETTLE_ALPHA = 90;
 /** Dots kept (evenly sampled) so a heavy period stays cheap to re-evaluate every frame. */
 export const MAX_REPLAY_DOTS = 1500;
 

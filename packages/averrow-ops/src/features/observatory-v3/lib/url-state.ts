@@ -339,6 +339,7 @@ export function mergeObservatoryState(prev: ObservatoryUrlState, rawPatch: Obser
     (patch.view !== undefined && patch.view !== prev.view) ||
     (patch.period !== undefined && patch.period !== prev.period) ||
     (patch.source !== undefined && patch.source !== prev.source) ||
+    (patch.sev !== undefined && patch.sev.join() !== prev.sev.join()) ||
     (patch.type !== undefined && patch.type.join() !== prev.type.join()) ||
     (patch.brand !== undefined && patch.brand !== prev.brand);
   const next: ObservatoryUrlState = {

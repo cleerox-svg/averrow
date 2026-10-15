@@ -66,6 +66,13 @@ describe('DrillDrawer: Open in Threats', () => {
     expect(screen.getByRole('link', { name: /open in threats/i }).getAttribute('href')).toBe('/console?tab=threats&country=NL');
   });
 
+  it('carries the active brand filter as brand_id', () => {
+    expect(threatsHref('NL', 'b_1')).toBe('/console?tab=threats&country=NL&brand_id=b_1');
+    expect(threatsHref('NL', null)).toBe('/console?tab=threats&country=NL');
+    mount({ kind: 'country', code: 'NL' }, { brandId: 'b_1' });
+    expect(screen.getByRole('link', { name: /open in threats/i }).getAttribute('href')).toBe('/console?tab=threats&country=NL&brand_id=b_1');
+  });
+
   it('a node with no country, and the other kinds, have no such link', () => {
     mount({ kind: 'node', node: { ...node, country_code: null } });
     expect(screen.queryByRole('link', { name: /open in threats/i })).toBeNull();
