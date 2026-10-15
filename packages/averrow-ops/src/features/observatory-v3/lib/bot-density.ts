@@ -169,3 +169,23 @@ export function isAboveAverage(
   if (bound === 'upper') return false;
   return typeof globalAvg === 'number' && Number.isFinite(globalAvg) && botPct > globalAvg;
 }
+
+/**
+ * The wall screen's tiles for the bot-share scene: the global share, how many countries are painted and the most
+ * automated one. `value: null` (still loading) until the density rows arrive; a tile with nothing to say is left out.
+ */
+export function botWallTiles(
+  points: readonly BotDensityPoint[],
+  globalAvg: number | null | undefined,
+): Array<{ label: string; value: number | string | null; sub?: string }> {
+  if (points.length === 0) {
+    return [{ label: 'Global bot share', value: typeof globalAvg === 'number' && Number.isFinite(globalAvg) ? formatPct(globalAvg) : null }];
+  }
+  let top = points[0]!;
+  for (const p of points) if (p.bot_pct > top.bot_pct) top = p;
+  const tiles: Array<{ label: string; value: number | string | null; sub?: string }> = [];
+  if (typeof globalAvg === 'number' && Number.isFinite(globalAvg)) tiles.push({ label: 'Global bot share', value: formatPct(globalAvg) });
+  tiles.push({ label: 'Countries', value: points.length });
+  tiles.push({ label: 'Most automated', value: formatBotShare(top.bot_pct, top.bound), sub: `${top.name} (${top.code})` });
+  return tiles;
+}

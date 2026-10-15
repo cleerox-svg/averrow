@@ -136,7 +136,7 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
 
   return (
     <div role={phoneSheet ? 'group' : undefined} aria-label={phoneSheet ? 'Event rail' : undefined} className="flex w-full flex-col">
-      <div className="flex items-center justify-between gap-2 px-3 pt-3">
+      <div className="flex items-center justify-between gap-2 px-3 pt-2">
         <h2 className="m-0 flex items-center gap-2 font-mono text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>
           <span className="ev-live-dot" aria-hidden="true" />
           Events · {period.toUpperCase()}
@@ -227,7 +227,13 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
         ) : (
           groups.map(g => (
             <section key={g.key} aria-label={g.label}>
-              <h3 className="m-0 px-3 pt-3 pb-1 font-mono text-[11px] font-semibold tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>{g.label}</h3>
+              <h3 className="m-0 px-3 pt-3 pb-1 font-mono text-[11px] font-semibold tracking-[0.06em]" style={{ color: 'var(--text-secondary)' }}>
+                {g.label}
+                <span data-group-count className="ml-1.5 tabular-nums font-normal" style={{ color: 'var(--text-muted)' }}>
+                  <span aria-hidden="true">{g.events.length}</span>
+                  <span className="sr-only">, {g.events.length} {g.events.length === 1 ? 'event' : 'events'}</span>
+                </span>
+              </h3>
               <ul className="m-0 list-none p-0">
                 {g.events.map(e => {
                   const flash = flashStyle(e.id);

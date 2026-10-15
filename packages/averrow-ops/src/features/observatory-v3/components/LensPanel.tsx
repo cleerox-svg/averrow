@@ -54,7 +54,7 @@ const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = 
 export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
-    <div className="flex flex-col gap-3 p-4">
+    <div className="flex flex-col gap-3 px-4 pb-4 pt-3">
       <div>
         <div className="font-mono text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--text-tertiary)' }}>{def.label}</div>
         <p className="m-0 mt-1 font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>{question ?? def.question}</p>

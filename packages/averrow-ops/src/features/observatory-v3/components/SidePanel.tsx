@@ -589,6 +589,11 @@ interface SidePanelProps {
   /** Map source filter. Applied to the widgets whose data supports it (overview, origins, live feed). */
   source?: string;
   visible: boolean;
+  /**
+   * A map data filter (severity / threat type / brand) is set. The panel's endpoints take no such filters, so its
+   * widgets stay unfiltered; when this is true the panel says so instead of silently disagreeing with the map.
+   */
+  mapFiltered?: boolean;
   /** Selects a node on the map (keyboard path from the Top Threat Origins rows). */
   onSelectNode?: (node: ThreatPoint) => void;
   /**
@@ -600,7 +605,7 @@ interface SidePanelProps {
   mobile?: boolean;
 }
 
-export function SidePanel({ period, source = 'all', visible, mobile = false, onSelectNode }: SidePanelProps) {
+export function SidePanel({ period, source = 'all', visible, mapFiltered = false, mobile = false, onSelectNode }: SidePanelProps) {
   if (!visible) return null;
 
   const filtered = source !== 'all';
@@ -610,7 +615,7 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, onS
   const widgets = (
     <div // Cards are `overflow:hidden`, so as flex items they would shrink to fit and clip their
     // content instead of letting the container scroll — `[&>*]:shrink-0` keeps natural height.
-    className="flex flex-col gap-3 p-3 [&>*]:shrink-0">
+    className="flex flex-col gap-3 px-3 pb-3 pt-2 [&>*]:shrink-0">
       {filtered && (
         <div
           className="px-2 py-1.5 rounded text-[10px] font-mono"
@@ -618,6 +623,17 @@ export function SidePanel({ period, source = 'all', visible, mobile = false, onS
         >
           Source: {SOURCE_LABELS[source] ?? source}. Applies to overview, origins and live feed;
           brands, providers, operations and campaigns cover all sources.
+        </div>
+      )}
+
+      {mapFiltered && (
+        <div
+          role="status"
+          data-unfiltered-hint
+          className="px-2 py-1.5 rounded text-[10px] font-mono"
+          style={{ background: 'var(--amber-glow)', border: '1px solid var(--amber-border)', color: 'var(--amber-text)' }}
+        >
+          Unfiltered: the map&apos;s severity, type and brand filters don&apos;t apply to this panel.
         </div>
       )}
 

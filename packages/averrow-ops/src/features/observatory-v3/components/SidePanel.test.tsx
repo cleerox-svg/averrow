@@ -72,4 +72,12 @@ describe('SidePanel', () => {
     renderPanel();
     expect(screen.queryByRole('button', { name: /GB:/ })).not.toBeInTheDocument();
   });
+
+  it('says so when a map data filter is set (the panel endpoints take none), and is silent otherwise', () => {
+    const { unmount } = renderPanel();
+    expect(screen.queryByText(/Unfiltered/)).toBeNull();
+    unmount();
+    renderPanel({ mapFiltered: true });
+    expect(screen.getByText(/Unfiltered: the map/)).toBeInTheDocument();
+  });
 });

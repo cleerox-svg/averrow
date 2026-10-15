@@ -243,3 +243,14 @@ export function globeOverlayProps(): Pick<MapboxOverlayProps, 'views' | 'paramet
     parameters: { depthBias: GLOBE_DEPTH_BIAS, depthWriteEnabled: GLOBE_DEPTH_WRITE },
   };
 }
+
+/**
+ * The projection to leave a wall screen on. The wall opens on the globe by default, so the globe it shows is not the viewer's
+ * choice: they get back what they had before it (`before`), or, with no earlier view in this page (a link that opened on the
+ * wall), the console default. A projection picked on the wall itself (`chosen`) is kept as it is.
+ */
+export function wallExitProjection(current: Projection, before: Projection | null, chosen: boolean): Projection {
+  if (chosen) return current;
+  if (before) return before;
+  return current === 'globe' ? DEFAULT_PROJECTION : current;
+}

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import type { BotDensityPoint } from './bot-density';
 import {
-  botColor, botRadius, botDensityTooltip, buildBotDensityPoints, botDensityDomain,
+  botColor, botRadius, botDensityTooltip, buildBotDensityPoints, botDensityDomain, botWallTiles,
   parseCssColor, isAboveAverage, formatPct, RING_COLOR, OUTLINE_COLOR, resolveScaleStops, formatBotShare, resolveGlobalAvg,
 } from './bot-density';
 
@@ -97,5 +98,21 @@ describe('bounds and global average', () => {
     expect(resolveGlobalAvg({ bot_density_global_pct: null, latest: { bot_pct: 31 } })).toBe(31);
     expect(resolveGlobalAvg({ latest: null })).toBeNull();
     expect(resolveGlobalAvg(undefined)).toBeNull();
+  });
+});
+
+describe('botWallTiles', () => {
+  const pt = (code: string, name: string, bot_pct: number, bound?: 'lower' | 'upper'): BotDensityPoint => ({ code, name, bot_pct, traffic_pct: 1, rank: 1, position: [0, 0], ...(bound ? { bound } : null) });
+  it('global share, country count and the most automated country', () => {
+    const t = botWallTiles([pt('US', 'United States', 20), pt('PE', 'Peru', 62, 'lower')], 31.2);
+    expect(t).toEqual([
+      { label: 'Global bot share', value: '31.2%' },
+      { label: 'Countries', value: 2 },
+      { label: 'Most automated', value: '≥ 62.0%', sub: 'Peru (PE)' },
+    ]);
+  });
+  it('without a global figure that tile is left out; with no rows yet it is a loading tile (null), not a dash', () => {
+    expect(botWallTiles([pt('US', 'United States', 20)], null).map(t => t.label)).toEqual(['Countries', 'Most automated']);
+    expect(botWallTiles([], null)).toEqual([{ label: 'Global bot share', value: null }]);
   });
 });

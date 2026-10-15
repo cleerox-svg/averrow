@@ -1463,3 +1463,64 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     expect(within(sheet).getByRole('tab', { name: /Events/ })).toHaveAttribute('aria-selected', 'true');
   });
 });
+
+describe('ObservatoryV3 side panel vs map filters', () => {
+  it('tells the panel when a map data filter is set (its endpoints take none), and not otherwise', async () => {
+    renderAt('/observatory');
+    await screen.findByTestId('side-panel');
+    expect(panelProps.mock.calls.at(-1)![0].mapFiltered).toBe(false);
+    panelProps.mockClear();
+    renderAt('/observatory?sev=critical');
+    await waitFor(() => expect(panelProps.mock.calls.some(c => c[0].mapFiltered === true)).toBe(true));
+  });
+});
+
+describe('ObservatoryV3 wall screen', () => {
+  const wake = () => act(() => { window.dispatchEvent(new Event('pointermove')); });
+
+  it('picking on the map selects nothing: no drill sheet / drawer over the tiles, no URL write', async () => {
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': okStats });
+    renderAt('/observatory?wall=1');
+    await screen.findByTestId('map');
+    const props = mapProps.mock.calls.at(-1)![0] as { onSelect: (s: unknown) => void };
+    act(() => { props.onSelect({ kind: 'node', node }); });
+    await new Promise(r => setTimeout(r, 30));
+    expect(search).not.toContain('node=');
+    expect(screen.queryByRole('complementary', { name: /details/i })).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('a selection in the link does not open a drill on the wall either', async () => {
+    window.innerWidth = 400;
+    route({ '/api/observatory/nodes': [node], '/api/observatory/stats': okStats });
+    renderAt('/observatory?wall=1&node=' + encodeURIComponent('10.00,20.00'));
+    await screen.findByTestId('map');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('leaving the wall does not write proj=globe (the wall default) into the console URL', async () => {
+    renderAt('/observatory?wall=1');
+    await screen.findByTestId('map');
+    wake();
+    await userEvent.click(screen.getByRole('button', { name: 'Exit wall screen' }));
+    await waitFor(() => expect(search).not.toContain('wall='));
+    expect(search).not.toContain('proj=');
+  });
+
+  it('bot-share scene: the tiles show bot-share numbers, not threats / countries dashes', async () => {
+    getMock.mockResolvedValue({
+      success: true,
+      data: {
+        source: 'cloudflare_radar', latest: null, series: [], top_locations: [], top_asns: [], categories: [], bot_density_global_pct: 31.2,
+        bot_density: [{ code: 'US', name: 'United States', bot_pct: 20, traffic_pct: 30, rank: 1 }, { code: 'DE', name: 'Germany', bot_pct: 45, traffic_pct: 5, rank: 2 }],
+        last_fetch: { status: null, last_success_at: null, last_error: null },
+      },
+    });
+    renderAt('/observatory?wall=1&lens=baseline&measure=bot');
+    const group = await screen.findByRole('group', { name: /Headline numbers/ });
+    await waitFor(() => expect(within(group).getByText('Global bot share')).toBeInTheDocument());
+    expect(within(group).getByText('Germany (DE)')).toBeInTheDocument();
+    expect(within(group).queryByText('Threats')).toBeNull();
+    expect(group.textContent).not.toContain('—');
+  });
+});

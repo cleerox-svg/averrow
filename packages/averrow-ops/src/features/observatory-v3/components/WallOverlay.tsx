@@ -9,12 +9,17 @@ import { MapAttribution } from './MapAttribution';
 /** The exit button fades out this long after the pointer last moved, ms. */
 export const WALL_EXIT_HIDE_MS = 3_000;
 
+/** A tile that replaces the default headline numbers (a scene whose numbers are not threats / countries / operations). */
+export interface WallTile { label: string; value: number | string | null; sub?: string }
+
 /**
  * Wall screen overlay: the headline numbers (threats, countries and, once the Operations lens has loaded, active
  * operations) in the StatTile look at 32px or larger, the period with a live dot, the attribution in a corner, and the
  * exit button, which fades in while the pointer moves and out again after `WALL_EXIT_HIDE_MS`.
  */
-export function WallOverlay({ periodLabel, threats, countries, operations, loadFailed, phone, onExit, zIndex }: {
+export function WallOverlay({ periodLabel, threats, countries, operations, loadFailed, phone, onExit, zIndex, tiles: custom }: {
+  /** Replaces the default tiles (threats / countries / operations), e.g. the bot-share scene's own numbers. */
+  tiles?: readonly WallTile[];
   periodLabel: string; threats: number | null; countries: number | null; operations: number | null; loadFailed: boolean;
   phone: boolean; onExit: () => void; zIndex: number;
 }) {
@@ -34,11 +39,12 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
       if (timer.current) clearTimeout(timer.current);
     };
   }, [wake]);
-  const tiles: Array<{ label: string; value: number | null }> = [
+  const tiles: readonly WallTile[] = custom ?? [
     { label: 'Threats', value: threats },
     { label: 'Countries', value: countries },
     ...(operations !== null ? [{ label: 'Operations', value: operations }] : []),
   ];
+  const cols = Math.min(3, Math.max(1, tiles.length));
   return (
     <>
       <div
@@ -56,12 +62,13 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
           <span aria-hidden>·</span>
           <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
         </div>
-        <div className={phone ? 'grid grid-cols-3 gap-2' : 'flex gap-3'} role="group" aria-label={`Headline numbers, ${periodLabel}`}>
+        <div className={phone ? 'grid gap-2' : 'flex gap-3'} style={phone ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } : undefined} role="group" aria-label={`Headline numbers, ${periodLabel}`}>
           {tiles.map(t => (
             <StatTile
               key={t.label}
               label={t.label}
               value={t.value}
+              sub={t.sub}
               error={loadFailed}
               tone="amber"
               compact

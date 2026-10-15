@@ -4,7 +4,8 @@ import { buildOperationsModel, edgeShortLabel, visibleEdges } from '../lib/lens/
 import { buildHostingModel } from '../lib/lens/hosting';
 import type { ActorModel, ActorCountry } from '../lib/lens/actors';
 import {
-  edgeLabelSources, labelledEdges, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, MAX_ACTOR_LABELS, NO_LABELS,
+  edgeLabelSources, labelledEdges, hostLabelSources, actorLabelSources, placeLensLabels, stablePlacement, MAX_EDGE_LABELS, MAX_HOST_LABELS, MAX_ACTOR_LABELS, MAX_MOVE_LABELS, keepTopMoves, NO_LABELS,
+  type MoveLabelSource,
   type Project, type PlacedLabels,
 } from './lens-labels';
 
@@ -200,5 +201,37 @@ describe('actor labels go through the same screen-space placement', () => {
   });
   it('no actor sources => none placed', () => {
     expect(placeLensLabels({ edges: [], hosts: [], nodes: [] }, project, size).actors).toEqual([]);
+  });
+});
+
+describe('movement labels: top moves, plus the selected one only when it is placed', () => {
+  const size = { width: 1000, height: 700 };
+  // 1 degree = 20px; origin at (500, 350). Each source is a 10-degree hop on its own row so no two labels collide.
+  const project: Project = ([lng, lat]) => ({ x: 500 + lng * 20, y: 350 - lat * 20 });
+  const src = (id: string, row: number, over: Partial<MoveLabelSource> = {}): MoveLabelSource => ({
+    id, text: '+3 IPs', position: [0, row], before: [-1, row], after: [1, row], from: [-5, row], to: [5, row], priority: 10 - row, ...over,
+  });
+  const ids = (m: readonly MoveLabelSource[]) => placeLensLabels({ edges: [], hosts: [], nodes: [], moves: m }, project, size).moves?.map(x => x.id) ?? [];
+
+  it('keepTopMoves keeps every selected label and the best MAX_MOVE_LABELS of the rest', () => {
+    const placed = ['s', 'a', 'b', 'c', 'd'].map(id => ({ id }));
+    expect(keepTopMoves(placed, id => id === 's').map(p => p.id)).toEqual(['s', 'a', 'b', 'c']);
+    expect(keepTopMoves(placed.slice(1), () => false).map(p => p.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('shows at most MAX_MOVE_LABELS when the selected event cannot be placed (no fourth, "extra" label)', () => {
+    // the selected one is far off screen: it is skipped, and its reserved slot used to let a 4th ordinary label through
+    const off = src('sel', 0, { position: [200, 0], before: [199, 0], after: [201, 0], from: [190, 0], to: [210, 0], priority: 1e6, selected: true });
+    const rest = [1, 2, 3, 4, 5].map(r => src(`m${r}`, r));
+    expect(ids([off, ...rest])).toHaveLength(MAX_MOVE_LABELS);
+    expect(ids([off, ...rest])).not.toContain('sel');
+  });
+
+  it('adds the selected event on top of the top moves when it is placed', () => {
+    const sel = src('sel', 0, { priority: 1e6, selected: true });
+    const rest = [1, 2, 3, 4, 5].map(r => src(`m${r}`, r));
+    const out = ids([sel, ...rest]);
+    expect(out).toHaveLength(MAX_MOVE_LABELS + 1);
+    expect(out).toContain('sel');
   });
 });

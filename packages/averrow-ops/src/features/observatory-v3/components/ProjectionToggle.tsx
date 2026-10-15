@@ -59,7 +59,8 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
           id={reasonId}
           className="font-mono"
           style={{
-            position: 'absolute', right: size + 8, top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap',
+            // beside the BUTTON, whatever its width (the labelled desktop button is ~100px wide, the touch icon 44px)
+            position: 'absolute', right: 'calc(100% + 8px)', top: '50%', transform: 'translateY(-50%)', whiteSpace: 'nowrap',
             fontSize: 11, padding: '3px 8px', borderRadius: 8,
             background: 'var(--bg-card-deep)', border: '1px solid var(--border-base)', color: 'var(--text-secondary)',
           }}
