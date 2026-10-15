@@ -37,6 +37,9 @@ import {
   toIsoUtc,
   dominantClusterCountry,
   buildSpikeEvents,
+  buildOperationEvents,
+  buildActorEvents,
+  buildCriticalEvent,
   EVENT_KINDS,
   EVENTS_TTL_S,
   EVENTS_DEFAULT_LIMIT,
@@ -46,6 +49,7 @@ import {
   type ObservatoryEvent,
   type EventKind,
   type EventsEnvelope,
+  type LiveClusterRow,
 } from "../src/handlers/observatoryEvents";
 import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb, type StatementLogEntry } from "./sqlite-d1-harness";
 import type { Env, UserRole } from "../src/types";
@@ -167,11 +171,18 @@ describe("copy helpers", () => {
     expect(t.endsWith("…")).toBe(true);
     expect(t.slice(0, -1).split(" ").every((w) => w === "word")).toBe(true);
     // An optional tail clause is dropped whole, never cut mid-clause and never left as a bare separator.
-    expect(fitTitle(`${"a".repeat(80)} · ${"b".repeat(20)}`)).toBe("a".repeat(80));
+    expect(fitTitle("a".repeat(80), ` · ${"b".repeat(20)}`)).toBe("a".repeat(80));
+    expect(fitTitle("Acme Bank targeted", " · Netherlands")).toBe("Acme Bank targeted · Netherlands");
     const head = "Acme Bank targeted by 12 new credential-harvesting pages in the last few hours";
-    expect(fitTitle(`${head} · mostly the Netherlands and Germany`)).toBe(head);
-    expect(fitTitle(`${head.slice(0, 50)} has 9 new lookalikes registered, incl. a-very-long-lookalike-domain-name.example.com`))
+    expect(fitTitle(head, " · mostly the Netherlands and Germany")).toBe(head);
+    expect(fitTitle(`${head.slice(0, 50)} has 9 new lookalikes registered`, ", incl. a-very-long-lookalike-domain-name.example.com"))
       .toBe(head.slice(0, 50) + " has 9 new lookalikes registered");
+    // A ` · ` inside the head is part of the sentence — never a cut point (the NEXUS-name regression).
+    const op = `Operation AS4837 · malware distribution ${"word ".repeat(11)}end`;
+    expect(op.length).toBeGreaterThan(TITLE_MAX);
+    const fitted = fitTitle(op);
+    expect(fitted.startsWith("Operation AS4837 · malware distribution word")).toBe(true);
+    expect(fitted.endsWith("…")).toBe(true);
     // A hard cut never ends on a connecting word or a half-written clause (`incl.…`, `· mostly…`, `and…`).
     for (const raw of [
       `${"word ".repeat(17)}incl. someverylonglookalike.example.com`,
@@ -185,6 +196,89 @@ describe("copy helpers", () => {
     // One giant token is kept whole rather than cut.
     const giant = "x".repeat(120);
     expect(fitTitle(giant)).toBe(giant);
+  });
+
+  // Real producer titles: NEXUS names carry their own ` · ` (lib/cluster-naming.ts), so only an explicit optional
+  // tail may be dropped; past that the sentence word-cuts at the end, never back to the bare entity name.
+  describe("producer titles keep the sentence", () => {
+    const cluster = (id: string, name: string, actor?: string): LiveClusterRow =>
+      ({ id, cluster_name: name, actor_id: actor ? "act_1" : null, country_counts: null, countries: null, actor_name: actor ?? null });
+    const pivotFor = (id: string, clusterId: string, payload: Record<string, unknown>) =>
+      ({ id, created_at: "2026-10-15 10:00:00", payload_json: JSON.stringify({ payload_v: 2, cluster_id: clusterId, ...payload }) });
+    const noDangle = (t: string) => {
+      expect(t.length).toBeLessThanOrEqual(TITLE_MAX);
+      expect(t).not.toMatch(/(?:[·,:;—-]|\b(?:and|incl\.|mostly|new|\d+))…?$/);
+    };
+
+    it("ASN-lane movement: word-cut at the end, never back to `Operation AS4837`", () => {
+      const id = "cluster_asn_as4837_malware_distribution";
+      const [ev] = buildOperationEvents(
+        [pivotFor("p1", id, { kind: "infra_movement", new_ips: 12, new_asns: 3, new_serials: 4 })],
+        new Map([[id, cluster(id, "AS4837 · malware distribution")]]),
+      );
+      expect(ev!.title).toBe("Operation AS4837 · malware distribution moved to 12 new IPs, 3 new networks…");
+      noDangle(ev!.title);
+      // Short enough → whole sentence, internal separator intact.
+      const [short] = buildOperationEvents(
+        [pivotFor("p2", id, { kind: "infra_movement", new_ips: 2, new_asns: 1, new_serials: 0 })],
+        new Map([[id, cluster(id, "AS4837 · malware distribution")]]),
+      );
+      expect(short!.title).toBe("Operation AS4837 · malware distribution moved to 2 new IPs and 1 new network");
+    });
+
+    it("registrar-lane dormancy: drops only the optional ` · activity down` tail", () => {
+      const id = "cluster_registrar_pdr";
+      const name = "Registrar PDR Ltd. d/b/a PublicDomainRegistry.com · 14d cohort";
+      const [ev] = buildOperationEvents([pivotFor("p3", id, { kind: "dormancy" })], new Map([[id, cluster(id, name)]]));
+      expect(ev!.title).toBe(`Operation ${name} went quiet`);
+      const [short] = buildOperationEvents(
+        [pivotFor("p4", "c2", { kind: "dormancy" })],
+        new Map([["c2", cluster("c2", "Registrar Sav · 14d cohort")]]),
+      );
+      expect(short!.title).toBe("Operation Registrar Sav · 14d cohort went quiet · activity down over 80%");
+    });
+
+    it("subnet-lane movement keeps the subnet name and the verb", () => {
+      const id = "cluster_subnet_185_234_216";
+      const [ev] = buildOperationEvents(
+        [pivotFor("p5", id, { kind: "infra_movement", new_ips: 120, new_asns: 14, new_serials: 37 })],
+        new Map([[id, cluster(id, "Subnet 185.234.216.0/24 · 37 IPs")]]),
+      );
+      expect(ev!.title).toBe("Operation Subnet 185.234.216.0/24 · 37 IPs moved to 120 new IPs, 14 new networks…");
+      noDangle(ev!.title);
+    });
+
+    it("actor link keeps `linked to <actor>`; a very long actor name word-cuts at the end", () => {
+      const id = "cluster_asn_as4837_malware_distribution";
+      const [ev] = buildActorEvents(
+        [{ cluster_id: id, actor_id: "act_1", at: "2026-10-15 10:00:00", source: "attributor", n: 1 }],
+        new Map([[id, cluster(id, "AS4837 · malware distribution", "Scattered Spider")]]),
+      );
+      expect(ev!.title).toBe("Operation AS4837 · malware distribution linked to Scattered Spider");
+      const [long] = buildActorEvents(
+        [{ cluster_id: id, actor_id: "act_1", at: "2026-10-15 10:00:00", source: "attributor", n: 1 }],
+        new Map([[id, cluster(id, "AS4837 · malware distribution", "The Extraordinarily Persistent Credential Harvesting Collective")]]),
+      );
+      expect(long!.title.startsWith("Operation AS4837 · malware distribution linked to The Extraordinarily")).toBe(true);
+      expect(long!.title.endsWith("…")).toBe(true);
+      noDangle(long!.title);
+    });
+
+    it("critical burst: `· mostly X` kept when it fits, dropped whole when it doesn't, then word-cut", () => {
+      const countries = [
+        { brand_id: "b1", country_code: "NL", n: 9, last_seen: null, lat: null, lng: null },
+        { brand_id: "b1", country_code: "DE", n: 3, last_seen: null, lat: null, lng: null },
+      ];
+      const group = (name: string) => ({ brand_id: "b1", brand_name: name, n: 12, last_hour: "2026-10-15 10:00:00", types: new Map([["phishing", 12]]) });
+      expect(buildCriticalEvent(group("Acme Bank"), countries).title).toBe("Acme Bank targeted by 12 new phishing pages · mostly Netherlands");
+      const longBrand = "Acme · First National Bank of the Metropolitan Area";
+      expect(buildCriticalEvent(group(longBrand), countries).title).toBe(`${longBrand} targeted by 12 new phishing pages`);
+      const huge = "Acme First National Savings and Loan Bank of the Greater Metropolitan Area of Somewhere";
+      const t = buildCriticalEvent(group(huge), countries).title;
+      expect(t).not.toContain("mostly");
+      expect(t.endsWith("…")).toBe(true);
+      noDangle(t);
+    });
   });
 
   it("durationPhrase", () => {

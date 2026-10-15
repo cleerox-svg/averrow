@@ -271,27 +271,30 @@ export function eventsWindowStart(period: EventPeriod, now: Date = new Date()): 
 
 // ── Copy helpers (pure) ───────────────────────────────────────────────────────
 
-// An optional trailing clause the title can lose whole: " · Netherlands", ", incl. example.com".
-const TITLE_TAILS = [" · ", ", incl. "] as const;
-const DANGLING_WORDS = /(?:\s+(?:incl\.|including|mostly|and|or|of|to|in|at|with|the|a|an|by|for|from|on|within|after|new))+$/i;
+// Words a hard cut must not end on — connectors, plus a bare count whose noun was cut (`and 4…` → `…`).
+const DANGLING_WORDS = /(?:\s+(?:incl\.|including|mostly|and|or|of|to|in|at|with|the|a|an|by|for|from|on|within|after|new|\d[\d.,]*))+$/i;
+const TRAILING_SEPARATORS = /[\s·,:;—-]+$/;
 
 /**
- * Fit a title into `max`. An optional tail clause (` · mostly Netherlands`, `, incl. x.com`) is dropped whole rather
- * than cut mid-clause; otherwise it is cut at a word boundary with an ellipsis, never after a separator or a
- * connecting word (no `incl.…`, no `· mostly…`). A single over-long word is kept whole.
+ * Fit a title into `max`. `head` is the sentence that must survive; `optionalTail` is a trailing clause the title
+ * can lose whole, separator included (` · mostly Netherlands`, `, incl. x.com`, ` · median 3 hours`).
+ *
+ * Only the explicit tail is ever dropped — a ` · ` inside the head (NEXUS names like `AS4837 · malware distribution`,
+ * lib/cluster-naming.ts) is part of the sentence, not a cut point. When the head alone is still too long it is cut
+ * at a word boundary with an ellipsis, never after a separator or a connecting word (no `incl.…`, no `· mostly…`).
+ * A single over-long word is kept whole.
  */
-export function fitTitle(s: string, max: number = TITLE_MAX): string {
-  const t = s.replace(/\s+/g, " ").trim();
-  if (t.length <= max) return t;
-  let tail = -1;
-  for (const m of TITLE_TAILS) {
-    for (let i = t.indexOf(m); i > 0; i = t.indexOf(m, i + 1)) if (i <= max && i > tail) tail = i;
-  }
-  if (tail > 0) return t.slice(0, tail).trimEnd();
-  const cut = t.lastIndexOf(" ", max - 1);
-  if (cut <= 0) return t;
-  const head = t.slice(0, cut).replace(/[\s·,:;—-]+$/, "").replace(DANGLING_WORDS, "").replace(/[\s·,:;—-]+$/, "");
-  return head === "" ? t : `${head}…`;
+export function fitTitle(head: string, optionalTail: string = "", max: number = TITLE_MAX): string {
+  const h = head.replace(/\s+/g, " ").trim();
+  const tail = optionalTail.replace(/\s+/g, " ").trimEnd();
+  const full = `${h}${tail}`.trim();
+  if (full.length <= max) return full;
+  const bare = h.replace(TRAILING_SEPARATORS, "");
+  if (bare.length <= max) return bare;
+  const cut = bare.lastIndexOf(" ", max - 1);
+  if (cut <= 0) return bare;
+  const kept = bare.slice(0, cut).replace(TRAILING_SEPARATORS, "").replace(DANGLING_WORDS, "").replace(TRAILING_SEPARATORS, "");
+  return kept === "" ? bare : `${kept}…`;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -549,7 +552,7 @@ export function buildCriticalEvent(g: CriticalGroup, countries: readonly Critica
     id: `critical:${g.brand_id}`,
     kind: "critical",
     severity: "critical",
-    title: fitTitle(`${g.brand_name} targeted by ${threatNoun(g.n, type)}${countrySuffix(byCountry)}`),
+    title: fitTitle(`${g.brand_name} targeted by ${threatNoun(g.n, type)}`, countrySuffix(byCountry)),
     entity: { type: "brand", id: g.brand_id, name: g.brand_name },
     place: top ? placeFor(top.country_code, top.lat, top.lng) : NO_PLACE,
     count: g.n,
@@ -631,8 +634,10 @@ export function buildOperationEvents(pivots: readonly PivotInput[], clusters: Re
     const c = clusters.get(g.clusterId)!;
     const label = operationLabel(c.cluster_name);
     let title: string;
+    let tail = "";
     if (g.kind === "dormancy") {
-      title = `${label} went quiet · activity down over 80%`;
+      title = `${label} went quiet`;
+      tail = " · activity down over 80%";
     } else {
       const parts: string[] = [];
       if (g.ips > 0) parts.push(`${g.ips} new ${plural(g.ips, "IP", "IPs")}`);
@@ -645,7 +650,7 @@ export function buildOperationEvents(pivots: readonly PivotInput[], clusters: Re
       id: `operation:${g.clusterId}:${g.kind}`,
       kind: "operation",
       severity: g.kind === "infra_movement" ? "high" : "medium",
-      title: fitTitle(title),
+      title: fitTitle(title, tail),
       entity: { type: "operation", id: g.clusterId, name: c.cluster_name?.trim() || label },
       place: placeFor(dominantClusterCountry(c.country_counts, c.countries)),
       count: g.n,
@@ -822,7 +827,7 @@ export function buildLookalikeEvents(rows: readonly LookalikeRow[]): Observatory
         const v = normalizeSeverity(r.threat_level, "medium");
         return SEVERITY_ORDER.indexOf(v) < SEVERITY_ORDER.indexOf(s) ? v : s;
       }, "low"),
-      title: fitTitle(`${brand} has ${g.rows.length} new lookalikes registered, incl. ${newest.domain}`),
+      title: fitTitle(`${brand} has ${g.rows.length} new lookalikes registered`, `, incl. ${newest.domain}`),
       entity: { type: "brand", id: g.brandId, name: brand },
       place: NO_PLACE,
       count: g.rows.length,
@@ -922,7 +927,7 @@ export function buildTakedownEvents(rows: readonly TakedownRow[], threats: Reado
       id: `takedown:brand:${g.brandId}`,
       kind: "takedown",
       severity: "info",
-      title: fitTitle(`${brand} had ${g.rows.length} takedowns completed${med === null ? "" : ` · median ${durationPhrase(med)}`}`),
+      title: fitTitle(`${brand} had ${g.rows.length} takedowns completed`, med === null ? "" : ` · median ${durationPhrase(med)}`),
       entity: { type: "brand", id: g.brandId, name: brand },
       place: dominantPlace(g.rows.map(located)),
       count: g.rows.length,
