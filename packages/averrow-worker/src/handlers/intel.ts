@@ -245,7 +245,7 @@ export async function handleIntelCriticalBanner(
     // 3. New mass-impersonation IP cluster (PR-D fan-out clusters).
     // PK range instead of `id LIKE 'cluster_ip_%'` (LIKE can't use the
     // BINARY text PK) and `+threat_count` so the planner never walks
-    // idx_clusters_threat_count through ~76K retired rows to find the first
+    // a full threat_count index (0298's, dropped in 0308) through ~76K retired rows to find the first
     // live cluster_ip_* row. Plan pinned in test/cluster-list-plans.test.ts.
     try {
       const massImp = await env.DB.prepare(`

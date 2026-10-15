@@ -8,8 +8,10 @@
 // SQLite answered `WHERE status = 'active' ORDER BY threat_count DESC, id`
 // with an equality seek on idx_clusters_status + a TEMP B-TREE sort of every
 // active cluster (~71K rows per cache miss), so 0298's
-// idx_clusters_threat_count served only status=all. Migration 0301 adds
-// (status, threat_count DESC, id).
+// idx_clusters_threat_count served only status=all. Migration 0301 added
+// (status, threat_count DESC, id); after retirement (0303) both were
+// superseded by partial live-row indexes and the PK range, and 0308 dropped
+// them.
 //
 // Here the DB is built by applying EVERY migration file (openMigratedDb),
 // seeded at realistic production scale (77K clusters: 76K random-UUID legacy
@@ -229,9 +231,11 @@ describe.skipIf(!hasSqlite())("observatory lens reads — plans on the fully mig
         const names = (db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'infrastructure_clusters'`)
           .all() as Array<{ name: string }>).map((r) => r.name);
         expect(names).toEqual(expect.arrayContaining([
-          "idx_clusters_status", "idx_clusters_threat_count", "idx_clusters_status_threat_count",
-          "idx_clusters_live_status_threat_count",
+          "idx_clusters_status", "idx_clusters_live_status_threat_count",
         ]));
+        // 0298's / 0301's full threat_count indexes are dropped by 0308.
+        expect(names).not.toContain("idx_clusters_threat_count");
+        expect(names).not.toContain("idx_clusters_status_threat_count");
       });
 
       it("operations-geo: both statuses read the stable-id PRIMARY KEY range, never a status / threat_count index; no sort", () => {

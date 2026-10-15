@@ -8,8 +8,10 @@
 // clusters by threat_count. ~76K retired legacy rows (retired_reason='superseded',
 // migration 0303) keep status 'active' / 'dormant' — the prod CHECK allows
 // no other status — and their frozen counts dominate any threat_count
-// order, so neither idx_clusters_threat_count nor 0301's full
-// (status, threat_count) index can skip them.
+// order, so neither 0298's idx_clusters_threat_count nor 0301's full
+// (status, threat_count) index could skip them; migration 0308 dropped both.
+// The `not.toContain` checks below keep guarding against a re-added full
+// threat_count index being picked.
 // liveClusterStatusSql() (`status IN ('active', 'dormant', 'disrupted', 'accelerating',
 // 'pivot') AND retired_reason IS NULL`) + `ORDER BY +threat_count DESC`
 // makes the planner seek the PARTIAL live-rows index (migration 0306) per
@@ -137,6 +139,15 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
     raw.exec("ANALYZE");
     modes["ANALYZE"] = await planReads(raw);
   }, 60_000);
+
+  it("0308 dropped the full threat_count indexes; the live partial ones remain", () => {
+    const names = (raw.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'infrastructure_clusters'",
+    ).all() as Array<{ name: string }>).map((r) => r.name);
+    expect(names).not.toContain("idx_clusters_threat_count");
+    expect(names).not.toContain("idx_clusters_status_threat_count");
+    expect(names).toEqual(expect.arrayContaining(["idx_clusters_live_status_threat_count", "idx_clusters_actor_live"]));
+  });
 
   for (const mode of ["no stats", "ANALYZE"]) {
     describe(mode, () => {
