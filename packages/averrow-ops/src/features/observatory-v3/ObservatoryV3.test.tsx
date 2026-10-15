@@ -1264,7 +1264,7 @@ describe('ObservatoryV3 intel feed (headline bar + event rail)', () => {
     const bar = screen.getByRole('region', { name: 'Live threat events' });
     expect(within(bar).getByText('CRITICAL')).toBeInTheDocument();
     expect(within(bar).getByText('5m')).toBeInTheDocument();
-    expect(within(bar).getByRole('button', { name: 'Open all 14 events' })).toHaveTextContent('All 14 events ›');
+    expect(within(bar).getByRole('button', { name: 'Open all 3 events' })).toHaveTextContent('All 3 events ›');
   });
 
   it('an empty hour says so', async () => {

@@ -53,21 +53,21 @@ describe('rendering', () => {
     expect(screen.queryByTestId('headline-progress')).toBeNull();
   });
 
-  it('the "All N" pill shows the record total and opens the rail; no handler, no pill', () => {
+  it('the "All N" pill counts events (records in its title) and opens the rail; no handler, no pill', () => {
     const r = result([ev('a'), ev('b')], {}, { critical: 12, fast: 3 });
     const { rerender } = render(bar({ result: r }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open all 15 events' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open all 2 events' }));
     expect(onOpenAll).toHaveBeenCalledTimes(1);
-    // 15 records vs the "1 / 2" items beside it: the pill says "events", and its title spells the difference.
-    const pill = screen.getByText('All 15 events ›');
-    expect(pill.closest('button')).toHaveAttribute('title', '15 records across 2 items');
+    // The pill counts the events the rail lists; its title adds the underlying record total.
+    const pill = screen.getByText('All 2 events ›');
+    expect(pill.closest('button')).toHaveAttribute('title', '2 events · 15 records');
     rerender(bar({ result: r, onOpenAll: undefined }));
     expect(screen.queryByText(/^All /)).toBeNull();
   });
 
   it('on the phone band the pill stays short', () => {
     render(bar({ result: result([ev('a'), ev('b')], {}, { critical: 12, fast: 3 }), phone: true }));
-    expect(screen.getByText('All 15 ›')).toBeInTheDocument();
+    expect(screen.getByText('All 2 ›')).toBeInTheDocument();
   });
 
   it('the live dot is decoration: hidden from assistive tech', () => {
@@ -125,7 +125,8 @@ describe('rendering', () => {
     fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
     expect(onRetry).toHaveBeenCalled();
     rerender(bar({ result: result([], { failed_kinds: ['critical', 'operation', 'fast', 'lookalike', 'takedown', 'actor', 'spike'] }) }));
-    expect(screen.getByTestId('events-failed')).toHaveTextContent('Event feed partly unavailable');
+    expect(screen.getByTestId('events-failed')).toHaveTextContent('Event feed unavailable');
+    expect(screen.getByTestId('events-failed')).not.toHaveTextContent('partly');
     expect(screen.queryByTestId('events-empty')).toBeNull();
   });
 

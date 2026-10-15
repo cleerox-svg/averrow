@@ -216,10 +216,10 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
           onClick={onOpenAll}
           className={`ds-focusable ev-hit ml-1 shrink-0 rounded-full px-2.5 font-mono text-[11px] ${phone ? 'py-1.5' : 'py-0.5'}`}
           style={{ color: 'var(--amber-text)', border: '1px solid var(--amber-border)', background: 'var(--amber-glow)', cursor: 'pointer' }}
-          aria-label={`Open all ${total} events`}
-          title={`${total} records across ${queue.length} ${queue.length === 1 ? 'item' : 'items'}`}
+          aria-label={`Open all ${queue.length} events`}
+          title={`${queue.length} ${queue.length === 1 ? 'event' : 'events'} · ${total} records`}
         >
-          {phone ? `All ${total} ›` : `All ${total} events ›`}
+          {phone ? `All ${queue.length} ›` : `All ${queue.length} events ›`}
         </button>
       )}
     </div>
@@ -254,7 +254,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
     // every kind failed; the PARTIAL tag lives with the controls, which only exist when there is an event.)
     <div className="flex min-w-0 flex-1 items-center gap-2 font-mono text-[11px]" style={{ color: 'var(--text-secondary)' }} data-testid="events-failed">
       <span role="status" className="truncate">
-        {result ? `Event feed partly unavailable (${failedNames} could not be loaded)` : 'Event feed unavailable'}
+        {result && failed.length < 7 - result.meta.omitted_kinds.length ? `Event feed partly unavailable (${failedNames} could not be loaded)` : 'Event feed unavailable'}
       </span>
       <button type="button" onClick={onRetry} className="ds-focusable ev-hit inline-flex items-center gap-1 rounded px-1.5 py-0.5" style={{ background: 'none', border: '1px solid var(--border-base)', color: 'var(--text-secondary)', cursor: 'pointer' }}>
         <RefreshCw size={10} aria-hidden="true" /> Retry
