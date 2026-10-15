@@ -30,8 +30,9 @@ area follows `docs/ACCOUNT_DESIGN_SPEC.md` and is the reference others copy.
   `var(--sev-critical)`). **Never** use old tokens in new/restructured code
   (`glass-card`, `bg-cockpit`, `text-parchment`, `text-contrail`). Don't mix
   systems in one file — old files stay old until their restructure session.
-- **Frozen components — never refactor**: `PortfolioHealthCard.tsx`,
-  `EventTicker.tsx`. (`ThreatMap`, `ExposureGauge`, `Sparkline`,
+- **Frozen components — never refactor**: `PortfolioHealthCard.tsx`.
+  (`EventTicker.tsx` was retired 2026-10-15, replaced by the Observatory
+  headline bar + event rail. `ThreatMap`, `ExposureGauge`, `Sparkline`,
   `ActivitySparkline` were deleted as unused in UI consolidation Phase 1 PR3.)
 - **Never touch** `public/`, `app.js`, `styles.css` — frozen forever.
 - **User avatars = initials only.** Use `parseInitials` / `colorForUserId` /
