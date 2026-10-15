@@ -27,6 +27,10 @@
 //   status      — (operations) absent / '' / 'all' → no filter; a known
 //                 infrastructure_clusters status; anything else → 400
 //   brand_id    — (brand-arcs) /^[A-Za-z0-9_-]{1,128}$/ or 400
+//   severity / threat_type / brand — (nodes, arcs, stats; also lens
+//                 /timeline) cube filters, allow-listed and canonicalised by
+//                 parseObservatoryFilters; unknown values → 400; no filter →
+//                 no key suffix (keys unchanged)
 // so a garbage param can never mint a fresh cache key or an unbounded scan.
 
 import { json } from "../lib/cors";
@@ -260,6 +264,154 @@ export function buildSourceFilter(feed: ObservatorySourceFeed | null, alias?: st
 
 const INVALID_SOURCE_FEED_ERROR = "Invalid source_feed (expected all, feeds or spam_trap)";
 
+// ── Cube filters: severity / threat_type / brand ─────────────────────────────
+// Optional filters on /nodes, /arcs, /stats and /timeline. They are applied
+// to the threat cubes only (never raw `threats`): threat_cube_geo, _arcs,
+// _brand and _status all carry threat_type + severity; _arcs and _brand carry
+// target_brand_id. threat_cube_geo has NO brand dimension, so `brand` is a
+// 400 on /nodes (see handleObservatoryNodes).
+//
+// Canonicalisation (before any KV key is built):
+//   severity    comma list (repeatable) of critical|high|medium|low, trimmed,
+//               lowercased, deduped, sorted. Absent / '' / 'all' → no filter.
+//               Any other token → 400.
+//   threat_type comma list (repeatable) of OBSERVATORY_THREAT_TYPES, same
+//               rules.
+//   brand       one brand id matching BRAND_ID_PATTERN, case kept (ids are
+//               compared exactly). Absent / '' / 'all' → no filter. A list or
+//               a malformed id → 400.
+// The KV-key suffix is EMPTY when no filter is set, so every pre-existing key
+// (and every Navigator warm key) is byte-identical to what it was.
+
+/**
+ * Severity values the filter accepts — the four the cubes rank (same list as
+ * SEVERITY_RANK below; restated because that const is declared later in the
+ * module and this one is read at module init).
+ */
+export const OBSERVATORY_FILTER_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+export type ObservatoryFilterSeverity = (typeof OBSERVATORY_FILTER_SEVERITIES)[number];
+
+/**
+ * threat_type values the filter accepts: the threats.threat_type CHECK
+ * (migrations/0013_new_feeds_and_threat_types.sql). The cubes COALESCE a NULL
+ * type to 'unknown', but the column is NOT NULL, so that never occurs.
+ */
+export const OBSERVATORY_THREAT_TYPES = [
+  "botnet",
+  "c2",
+  "credential_harvesting",
+  "impersonation",
+  "malicious_ip",
+  "malicious_ssl",
+  "malware_distribution",
+  "phishing",
+  "scanning",
+  "typosquatting",
+] as const;
+export type ObservatoryThreatType = (typeof OBSERVATORY_THREAT_TYPES)[number];
+
+export interface ObservatoryFilters {
+  /** Sorted, deduped; empty = every severity. */
+  severity: readonly ObservatoryFilterSeverity[];
+  /** Sorted, deduped; empty = every threat type. */
+  threatType: readonly ObservatoryThreatType[];
+  /** Exact brand id, or null = every brand. */
+  brand: string | null;
+}
+
+export const NO_OBSERVATORY_FILTERS: ObservatoryFilters = { severity: [], threatType: [], brand: null };
+
+/**
+ * Most binds a filter can add: 4 severities + 10 threat types + 1 brand.
+ * Every filtered statement adds at most 4 binds of its own (window start,
+ * country, limit, …), far under the D1 ceiling of 100 (we budget 99).
+ */
+export const OBSERVATORY_FILTER_MAX_BINDS =
+  OBSERVATORY_FILTER_SEVERITIES.length + OBSERVATORY_THREAT_TYPES.length + 1;
+
+export type ObservatoryFiltersParse =
+  | { ok: true; filters: ObservatoryFilters }
+  | { ok: false; error: string };
+
+export function hasObservatoryFilters(f: ObservatoryFilters): boolean {
+  return f.severity.length > 0 || f.threatType.length > 0 || f.brand !== null;
+}
+
+/** Comma / repeated-param list → sorted deduped allow-listed tokens, or null on an unknown token. */
+function parseFilterList<T extends string>(raws: readonly string[], allowed: readonly T[]): T[] | null {
+  const tokens = raws
+    .flatMap((r) => r.split(","))
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t !== "");
+  if (tokens.length === 1 && tokens[0] === "all") return [];
+  const out = new Set<T>();
+  for (const t of tokens) {
+    if (!(allowed as readonly string[]).includes(t)) return null;
+    out.add(t as T);
+  }
+  return [...out].sort();
+}
+
+/** Parse + canonicalise the three cube filters. Pure; never touches D1 / KV. */
+export function parseObservatoryFilters(params: URLSearchParams): ObservatoryFiltersParse {
+  const severity = parseFilterList(params.getAll("severity"), OBSERVATORY_FILTER_SEVERITIES);
+  if (severity === null) {
+    return { ok: false, error: `Invalid severity (expected a comma list of ${OBSERVATORY_FILTER_SEVERITIES.join(", ")})` };
+  }
+  const threatType = parseFilterList(params.getAll("threat_type"), OBSERVATORY_THREAT_TYPES);
+  if (threatType === null) {
+    return { ok: false, error: `Invalid threat_type (expected a comma list of ${OBSERVATORY_THREAT_TYPES.join(", ")})` };
+  }
+  const brands = params.getAll("brand").map((b) => b.trim()).filter((b) => b !== "" && b !== "all");
+  if (brands.length > 1) return { ok: false, error: "brand takes a single brand id" };
+  const brand = brands[0] ?? null;
+  if (brand !== null && !BRAND_ID_PATTERN.test(brand)) return { ok: false, error: "Invalid brand" };
+  return { ok: true, filters: { severity, threatType, brand } };
+}
+
+/**
+ * KV-key suffix for the filters. '' when unfiltered (so existing keys and
+ * warm keys are unchanged); otherwise `:f:<severities|all>:<types|all>:<brand|all>`.
+ * Severity and type tokens are allow-listed and the brand id cannot contain
+ * ':' or ',', and is last, so the suffix is unambiguous.
+ */
+export function observatoryFilterCacheSegment(f: ObservatoryFilters): string {
+  if (!hasObservatoryFilters(f)) return "";
+  const sev = f.severity.length ? f.severity.join(",") : "all";
+  const tt = f.threatType.length ? f.threatType.join(",") : "all";
+  return `:f:${sev}:${tt}:${f.brand ?? "all"}`;
+}
+
+/**
+ * SQL for the filters over a cube. Values are BOUND (never interpolated);
+ * only the placeholder count is built. `brand` is applied only when the
+ * cube carries target_brand_id — callers must route a brand filter to
+ * threat_cube_arcs / threat_cube_brand (the type makes that explicit).
+ */
+export function buildObservatoryCubeFilter(
+  f: ObservatoryFilters,
+  opts: { alias?: string; brandColumn: boolean },
+): SourceFilter {
+  const col = (c: string) => (opts.alias ? `${opts.alias}.${c}` : c);
+  const marks = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+  let sql = "";
+  const params: unknown[] = [];
+  if (f.severity.length) {
+    sql += ` AND ${col("severity")} IN (${marks(f.severity.length)})`;
+    params.push(...f.severity);
+  }
+  if (f.threatType.length) {
+    sql += ` AND ${col("threat_type")} IN (${marks(f.threatType.length)})`;
+    params.push(...f.threatType);
+  }
+  if (f.brand !== null) {
+    if (!opts.brandColumn) throw new Error("brand filter on a cube without target_brand_id");
+    sql += ` AND ${col("target_brand_id")} = ?`;
+    params.push(f.brand);
+  }
+  return { sql, params };
+}
+
 // ── Severity ranking ──────────────────────────────────────────────────────────
 // MAX(severity) picked alphabetically: 'unknown' > 'medium' > 'low' > 'high'
 // > 'critical', so a cell holding one critical and one medium threat was
@@ -385,7 +537,10 @@ export const OBSERVATORY_TTL_S = {
 // Ties break alphabetically so the response is deterministic.
 //
 // `limit` (1..2000, default 2000) is honoured and part of the KV key.
+// `severity` / `threat_type` filter the geo cube; `brand` is a 400 here.
 export const NODES_MAX_LIMIT = 2000;
+export const NODES_BRAND_UNSUPPORTED_ERROR =
+  "brand filter is not supported on /nodes (threat_cube_geo has no brand dimension); use /arcs or /stats";
 
 export async function handleObservatoryNodes(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
@@ -399,13 +554,25 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
   if (!source.ok) {
     return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
   }
+  const parsedFilters = parseObservatoryFilters(url.searchParams);
+  if (!parsedFilters.ok) {
+    return attachBookmark(json({ success: false, error: parsedFilters.error }, 400, origin), session);
+  }
+  const filters = parsedFilters.filters;
+  // Nodes are a 0.1° grid over threat_cube_geo, which has no brand column.
+  // threat_cube_arcs has brand × country but only one centroid per country
+  // group (no lat/lng grid), so it cannot produce this endpoint's cells.
+  if (filters.brand !== null) {
+    return attachBookmark(json({ success: false, error: NODES_BRAND_UNSUPPORTED_ERROR }, 400, origin), session);
+  }
   const sourceFilter = buildSourceFilter(source.feed);
+  const cubeFilter = buildObservatoryCubeFilter(filters, { brandColumn: false });
 
   try {
     // KV cache, 30 min (refresh-warmed ahead of expiry). The geo cube's current + previous hour are rebuilt
     // by Navigator every 5 min; the 6-hourly cube_healer reconciles older
     // hours, so a 15-min-old 7-day aggregate is visually indistinguishable.
-    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}`;
+    const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}${observatoryFilterCacheSegment(filters)}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.nodes);
     if (cached) {
       // Cache hit — record zero D1 reads so attribution still shows
@@ -415,8 +582,8 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
     }
 
     const tally = newTally();
-    const rows = await session.prepare(NODES_SQL(sourceFilter.sql))
-      .bind(windowStart, ...sourceFilter.params, limit)
+    const rows = await session.prepare(NODES_SQL(sourceFilter.sql + cubeFilter.sql))
+      .bind(windowStart, ...sourceFilter.params, ...cubeFilter.params, limit)
       .all<NodeRow>();
     addToTally(tally, rows.meta);
 
@@ -590,6 +757,9 @@ export function assembleArcs(rows: ArcRow[]): ArcAssembly {
 // placed are DROPPED and counted in `dropped_unknown_target`; arcs without a
 // source centroid are dropped and counted in `dropped_no_source`.
 //
+// Filters: `severity`, `threat_type` and `brand` (all on threat_cube_arcs;
+// brand seeks idx_cube_arcs_brand_hour). See parseObservatoryFilters.
+//
 // Cube-empty fallback: if the cube returns 0 rows for an UNFILTERED window the
 // handler falls back to a raw-threats GROUP BY so the globe is never blank
 // during cube bootstrap. CLAUDE.md §8 flags raw GROUP BY over threats; this one
@@ -611,10 +781,16 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
   if (!source.ok) {
     return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
   }
+  const parsedFilters = parseObservatoryFilters(url.searchParams);
+  if (!parsedFilters.ok) {
+    return attachBookmark(json({ success: false, error: parsedFilters.error }, 400, origin), session);
+  }
+  const filters = parsedFilters.filters;
   const cubeSourceFilter = buildSourceFilter(source.feed, "c");
+  const cubeFilter = buildObservatoryCubeFilter(filters, { alias: "c", brandColumn: true });
 
   try {
-    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(source.feed)}`;
+    const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(source.feed)}${observatoryFilterCacheSegment(filters)}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.arcs);
     if (cached) {
       recordD1Reads(env, "observatory_arcs", newTally());
@@ -640,11 +816,11 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
         MAX(c.last_seen)            AS last_seen
       FROM threat_cube_arcs c
       JOIN brands b ON b.id = c.target_brand_id
-      WHERE c.hour_bucket >= ?${cubeSourceFilter.sql}
+      WHERE c.hour_bucket >= ?${cubeSourceFilter.sql}${cubeFilter.sql}
       GROUP BY c.country_code, c.target_brand_id, c.threat_type
       ORDER BY volume DESC, c.country_code, c.target_brand_id, c.threat_type
       LIMIT ${ARCS_ROW_LIMIT}
-    `).bind(windowStart, ...cubeSourceFilter.params).all<ArcRow>();
+    `).bind(windowStart, ...cubeSourceFilter.params, ...cubeFilter.params).all<ArcRow>();
     addToTally(tally, rows.meta);
 
     let resultRows = rows.results ?? [];
@@ -656,7 +832,9 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     let cacheTtlSeconds: number = OBSERVATORY_TTL_S.arcs;
     let usedFallback = false;
 
-    if (resultRows.length === 0 && source.feed === null) {
+    // Fallback only for the fully UNFILTERED window: a filter that matches
+    // nothing is an honest empty answer, never a raw-threats scan.
+    if (resultRows.length === 0 && source.feed === null && !hasObservatoryFilters(filters)) {
       usedFallback = true;
       cacheTtlSeconds = OBSERVATORY_TTL_S.arcsFallback;
       const fallback = await session.prepare(`
@@ -949,6 +1127,10 @@ interface BrandArcRow extends SeverityCounts {
 //   - active_campaigns → campaigns table (not threats)
 //   - brands_monitored → threat_cube_brand COUNT(DISTINCT target_brand_id),
 //                        behind its own 1h cachedValue
+// Filters (`severity`, `threat_type`, `brand`) apply to every cube tile.
+// With `brand`, threats_mapped / countries read threat_cube_arcs and
+// threats_total reads threat_cube_brand (same populations, see the handler).
+// `active_campaigns` is NOT filtered (campaigns has none of these columns).
 export async function handleObservatoryStats(request: Request, env: Env): Promise<Response> {
   const origin = request.headers.get("Origin");
   const ctx = getDbContext(request);
@@ -960,11 +1142,24 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
   if (!source.ok) {
     return attachBookmark(json({ success: false, error: INVALID_SOURCE_FEED_ERROR }, 400, origin), session);
   }
+  const parsedFilters = parseObservatoryFilters(url.searchParams);
+  if (!parsedFilters.ok) {
+    return attachBookmark(json({ success: false, error: parsedFilters.error }, 400, origin), session);
+  }
+  const filters = parsedFilters.filters;
   const sf = buildSourceFilter(source.feed);
+  // With `brand`, the geo + status cubes (no brand column) are swapped for
+  // the cubes that carry it over the SAME populations:
+  //   mapped / countries: threat_cube_geo  → threat_cube_arcs  (active, geolocated, + brand)
+  //   total:              threat_cube_status (active) → threat_cube_brand (active, + brand)
+  const byBrand = filters.brand !== null;
+  const cf = buildObservatoryCubeFilter(filters, { brandColumn: byBrand });
+  const mappedCube = byBrand ? "threat_cube_arcs" : "threat_cube_geo";
+  const filterSegment = observatoryFilterCacheSegment(filters);
 
   try {
     // KV cache, 30 min, refresh-warmed (stats move only when feeds/cubes move).
-    const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(source.feed)}`;
+    const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(source.feed)}${filterSegment}`;
     const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.stats);
     if (cached) {
       recordD1Reads(env, "observatory_stats", newTally());
@@ -975,14 +1170,26 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
     let brandsDistinctQueried = false;
     const [threats, threatsTotal, countries, campaigns, brands] = await Promise.all([
       session.prepare(
-        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_geo WHERE hour_bucket >= ?${sf.sql}`
-      ).bind(windowStart, ...sf.params).first<{ n: number }>(),
+        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM ${mappedCube} WHERE hour_bucket >= ?${sf.sql}${cf.sql}`
+      ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>(),
+      byBrand
+        ? session.prepare(
+          `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_brand WHERE hour_bucket >= ?${sf.sql}${cf.sql}`
+        ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>()
+        : session.prepare(
+          `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ? AND status = 'active'${sf.sql}${cf.sql}`
+        ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>(),
       session.prepare(
-        `SELECT COALESCE(SUM(threat_count), 0) AS n FROM threat_cube_status WHERE hour_bucket >= ? AND status = 'active'${sf.sql}`
-      ).bind(windowStart, ...sf.params).first<{ n: number }>(),
-      session.prepare(
-        `SELECT COUNT(DISTINCT country_code) AS n FROM threat_cube_geo WHERE hour_bucket >= ? AND country_code != 'XX'${sf.sql}`
-      ).bind(windowStart, ...sf.params).first<{ n: number }>(),
+        // Without sqlite_stat1 the planner answers COUNT(DISTINCT country_code)
+        // by walking ALL of idx_cube_geo_country_hour (covering when
+        // unfiltered). A severity / type filter makes that walk non-covering
+        // (a row lookup per entry over the whole cube), so the filtered geo
+        // read is pinned to the window's hour range. The unfiltered statement
+        // is left byte-identical.
+        `SELECT COUNT(DISTINCT country_code) AS n FROM ${mappedCube}${
+          !byBrand && cf.sql ? " INDEXED BY idx_cube_geo_hour" : ""
+        } WHERE hour_bucket >= ? AND country_code != 'XX'${sf.sql}${cf.sql}`
+      ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>(),
       session.prepare(
         // status='active' alone over-reports — 48% of "active" campaigns
         // had no threat update in 7+ days at audit time (2026-05-16).
@@ -997,13 +1204,19 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       // query filters on source_feed, so the segment must be in the key).
       cachedValue<{ n: number } | null>(
         env,
-        `observatory.brands_distinct:${periodToHours(period)}h:${sourceFeedCacheSegment(source.feed)}`,
+        `observatory.brands_distinct:${periodToHours(period)}h:${sourceFeedCacheSegment(source.feed)}${filterSegment}`,
         OBSERVATORY_BRANDS_DISTINCT_TTL_S,
         () => {
           brandsDistinctQueried = true;
+          // Same DISTINCT trap as the countries tile: a severity / type
+          // filter (without brand) would make the whole-index walk of
+          // idx_cube_brand_id_hour non-covering, so pin the hour range. With
+          // `brand` the equality seeks idx_cube_brand_id_hour by itself.
           return session.prepare(
-            `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threat_cube_brand WHERE hour_bucket >= ?${sf.sql}`
-          ).bind(windowStart, ...sf.params).first<{ n: number }>();
+            `SELECT COUNT(DISTINCT target_brand_id) AS n FROM threat_cube_brand${
+              !byBrand && cf.sql ? " INDEXED BY idx_cube_brand_hour" : ""
+            } WHERE hour_bucket >= ?${sf.sql}${cf.sql}`
+          ).bind(windowStart, ...sf.params, ...cf.params).first<{ n: number }>();
         },
       ),
     ]);
