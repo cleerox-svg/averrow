@@ -828,7 +828,6 @@ export function ObservatoryV3() {
         onRetry={() => void panelQuery.refetch()}
         onSelect={handlePanelSelect}
         placement={placement}
-        embedded={placement !== 'sheet'}
         question={takedownsOn && (lens === 'hosting' || lens === 'baseline') ? TAKEDOWN_QUESTION[lens] : undefined}
         note={takedownNote}
         onPreview={lens === 'operations' ? onPanelPreview : undefined}
@@ -853,8 +852,6 @@ export function ObservatoryV3() {
         source={source}
         visible
         mobile={placement === 'sheet'}
-        placement={placement === 'overlay' ? 'overlay' : 'dock'}
-        embedded={placement !== 'sheet'}
         onSelectNode={handleSelectNodeFromPanel}
       />
     )

@@ -37,6 +37,7 @@ export function PanelDock({ tab, onTab, eventCount, placement, label, contentKey
     <aside
       ref={asideRef}
       aria-label={label}
+      data-placement={placement}
       className={overlay
         ? 'absolute top-[60px] right-3 bottom-[88px] z-20 w-80 max-w-[calc(100%-24px)] flex flex-col overflow-y-auto rounded-xl animate-drawer-in motion-reduce:animate-none'
         : 'absolute top-[60px] right-0 bottom-[76px] z-20 w-80 flex flex-col overflow-y-auto animate-drawer-in motion-reduce:animate-none'}

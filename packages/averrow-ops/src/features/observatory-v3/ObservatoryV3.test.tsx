@@ -17,10 +17,10 @@ vi.mock('./components/ThreatMapV3', () => ({
 }));
 const panelProps = vi.fn();
 vi.mock('./components/SidePanel', () => ({
-  SidePanel: (p: { visible: boolean; mobile?: boolean; placement?: string; onSelectNode?: (n: unknown) => void }) => {
+  SidePanel: (p: { visible: boolean; mobile?: boolean; onSelectNode?: (n: unknown) => void }) => {
     panelProps(p);
     return (
-      <div data-testid={p.mobile ? 'side-panel-mobile' : 'side-panel'} data-visible={String(p.visible)} data-placement={p.placement}>
+      <div data-testid={p.mobile ? 'side-panel-mobile' : 'side-panel'} data-visible={String(p.visible)}>
         <button type="button" onClick={() => p.onSelectNode?.(node)}>pick-origin</button>
       </div>
     );
@@ -45,6 +45,8 @@ function route(routes: Routes) {
 }
 const urls = () => fetchMock.mock.calls.map(c => c[0] as string);
 const called = (prefix: string) => urls().some(u => u.startsWith(prefix));
+/** Where the PanelDock hosting a panel sits ('dock' | 'overlay'): the dock owns the geometry, not the panel. */
+const dockPlacement = (panel: HTMLElement) => panel.closest('aside')?.dataset.placement;
 
 let search = '';
 function Loc() { search = useLocation().search; return null; }
@@ -937,24 +939,24 @@ describe('ObservatoryV3 chrome', () => {
     window.innerWidth = 1440;
     const wide = renderAt('/observatory');
     const dock = await screen.findByTestId('side-panel');
-    expect(dock.dataset.placement).toBe('dock');
+    expect(dockPlacement(dock)).toBe('dock');
     wide.unmount();
     window.innerWidth = 1100;
     renderAt('/observatory');
     await screen.findByRole('button', { name: 'Show intelligence panel' });
     expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Show intelligence panel' }));
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('overlay');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('overlay');
   });
 
   it('re-flows on resize: shrinking the window closes the docked panel, widening docks it again', async () => {
     window.innerWidth = 1440;
     renderAt('/observatory');
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('dock');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('dock');
     act(() => { window.innerWidth = 1000; window.dispatchEvent(new Event('resize')); });
     await waitFor(() => expect(screen.queryByTestId('side-panel')).not.toBeInTheDocument());
     act(() => { window.innerWidth = 1500; window.dispatchEvent(new Event('resize')); });
-    expect((await screen.findByTestId('side-panel')).dataset.placement).toBe('dock');
+    expect(dockPlacement(await screen.findByTestId('side-panel'))).toBe('dock');
   });
 
   it('hides "Threat Landscape Clear" when the map is in its fatal fallback', async () => {

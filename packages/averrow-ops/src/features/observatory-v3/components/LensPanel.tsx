@@ -8,7 +8,6 @@
  */
 
 import type { ReactNode } from 'react';
-import { cn } from '@/lib/cn';
 import type { DrillTarget } from '../lib/drill';
 import { LENS_DEFS, type LensId } from '../lib/lenses';
 import { Badge } from '@/design-system/components';
@@ -22,7 +21,7 @@ export interface LensPanelProps {
   error: boolean;
   onRetry: () => void;
   onSelect: (target: DrillTarget) => void;
-  /** `dock`: right column. `overlay`: tablet float. `sheet`: content only (inside a PeekSheet). */
+  /** `dock` / `overlay`: in-flow content inside the PanelDock. `sheet`: content inside a PeekSheet, as a named group. */
   placement: 'dock' | 'overlay' | 'sheet';
   /** Replaces the lens's own question under its name (a measure of the lens can ask a different one). */
   question?: string;
@@ -32,9 +31,6 @@ export interface LensPanelProps {
   onPreview?: (target: DrillTarget | null) => void;
   /** Extra content after the list (e.g. the Operations lens's shared-infrastructure toggle). */
   aside?: ReactNode;
-  /** Rendered inside the PanelDock (which owns the aside, the tab strip and the scroll): plain in-flow content. */
-  embedded?: boolean;
-  className?: string;
 }
 
 /** Two joined dots: this row's links are drawn on the map. */
@@ -55,7 +51,7 @@ const TONE: Record<NonNullable<PanelSection['rows'][number]['tone']>, string> = 
   rising: 'var(--sev-critical-text)', falling: 'var(--sev-info-text)', neutral: 'var(--text-primary)',
 };
 
-export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside, embedded = false, className }: LensPanelProps) {
+export function LensPanel({ lens, section, loading, error, onRetry, onSelect, placement, question, note, onPreview, aside }: LensPanelProps) {
   const def = LENS_DEFS[lens];
   const body = (
     <div className="flex flex-col gap-3 p-4">
@@ -129,28 +125,6 @@ export function LensPanel({ lens, section, loading, error, onRetry, onSelect, pl
     </div>
   );
 
-  if (embedded) return body;
-  if (placement === 'sheet') return <div aria-label={`${def.label} panel`} role="group">{body}</div>;
-
-  const overlay = placement === 'overlay';
-  return (
-    <aside
-      aria-label={`${def.label} panel`}
-      className={cn(
-        'absolute z-20 w-80 max-w-[calc(100%-24px)] flex flex-col overflow-y-auto animate-drawer-in motion-reduce:animate-none',
-        overlay ? 'top-[60px] right-3 bottom-[88px] rounded-xl' : 'top-[60px] right-0 bottom-[76px]',
-        className,
-      )}
-      style={{
-        background: 'var(--bg-card-deep)',
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
-        border: overlay ? '1px solid var(--border-base)' : undefined,
-        borderLeft: '1px solid var(--border-base)',
-        boxShadow: overlay ? 'var(--card-shadow-elevated)' : 'var(--card-shadow-elevated), inset 1px 0 0 var(--border-base)',
-      }}
-    >
-      {body}
-    </aside>
-  );
+  // Docked / floating, the PanelDock owns the aside, the tab strip and the scroll; inside a PeekSheet it is a named group.
+  return placement === 'sheet' ? <div aria-label={`${def.label} panel`} role="group">{body}</div> : body;
 }

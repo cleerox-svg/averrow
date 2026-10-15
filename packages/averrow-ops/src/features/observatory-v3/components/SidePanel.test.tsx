@@ -42,12 +42,21 @@ describe('SidePanel', () => {
     expect(hrefs).toContain('/campaigns/geo/op-blue%2Fsky-%26-co');
   });
 
-  it('lets cards keep their height and the container scroll (no shrink + clip)', () => {
-    renderPanel();
-    const scroller = screen.getByLabelText('Intelligence panel').firstElementChild as HTMLElement;
-    expect(scroller.className).toMatch(/overflow-y-auto/);
-    expect(scroller.className).toMatch(/min-h-0/);
-    expect(scroller.className).toContain('[&>*]:shrink-0');
+  it('renders in-flow widgets for the PanelDock: cards keep their height, no scroller or aside of its own', () => {
+    const { container } = renderPanel();
+    // The PanelDock owns the aside, the tab strip and the scroll; a second scroller here would double-scroll.
+    expect(container.querySelector('aside')).toBeNull();
+    const widgets = container.firstElementChild as HTMLElement;
+    expect(widgets.className).toContain('[&>*]:shrink-0');
+    expect(widgets.className).not.toMatch(/overflow-y-auto/);
+  });
+
+  it('wraps the same widgets full-width for the phone sheet', () => {
+    const { container } = renderPanel({ mobile: true });
+    expect(container.querySelector('aside')).toBeNull();
+    const wrap = container.firstElementChild as HTMLElement;
+    expect(wrap.className).toBe('w-full');
+    expect((wrap.firstElementChild as HTMLElement).className).toContain('[&>*]:shrink-0');
   });
 
   it('top-origin rows are keyboard-operable buttons that select the busiest node of that country', async () => {
