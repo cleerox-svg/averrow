@@ -32,6 +32,9 @@
 }
 .shell-v4 > * { position: relative; z-index: 1; }
 
+/* Observatory wall screen: the shell is only the page background, one full-width column. */
+.shell-v4--wall { grid-template-columns: 1fr; }
+
 /* sidebar */
 .v4-side {
   background: var(--bg-sidebar);

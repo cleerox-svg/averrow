@@ -23,6 +23,8 @@ export interface ArrivalEvent {
   key: string;
   /** Severity of the trip that lands (lets callers keep only the loud ones). */
   severity?: string;
+  /** Threats the landing arc carries (sizes its ring, see `ringRadiusPx`). */
+  volume?: number;
 }
 
 /**
@@ -44,6 +46,7 @@ export function buildArrivalEvents(trips: readonly TripDatum[], cycleLength: num
       color: trip.color,
       key: `${end[0].toFixed(3)},${end[1].toFixed(3)}`,
       severity: trip.severity,
+      volume: trip.volume,
     });
   }
   events.sort((a, b) => a.time - b.time);

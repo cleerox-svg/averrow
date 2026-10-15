@@ -68,7 +68,9 @@ describe('ProjectionToggle: ONE button for Flat | Globe', () => {
 
   it('is a 29px MapLibre-sized control on a pointer device and a 44px target on touch', () => {
     const { rerender } = render(<ProjectionToggle projection="flat" onToggle={vi.fn()} />);
-    expect(screen.getByRole('button').style.width).toBe('29px');
+    // Desktop: 29px tall, at least 29px wide (it carries the "Flat | Globe" text); touch: a plain 44px icon.
+    expect(screen.getByRole('button').style.minWidth).toBe('29px');
+    expect(screen.getByRole('button').style.height).toBe('29px');
     rerender(<ProjectionToggle projection="flat" onToggle={vi.fn()} touch />);
     expect(screen.getByRole('button').style.width).toBe('44px');
     expect(screen.getByRole('button').style.height).toBe('44px');

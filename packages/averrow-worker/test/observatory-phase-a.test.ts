@@ -163,7 +163,7 @@ describe("resolveBrandTarget", () => {
 function arcRow(over: Partial<ArcRow>): ArcRow {
   return {
     source_lat: 50, source_lng: 30, threat_type: "phishing", source_country: "UA",
-    target_brand: "Obscure", target_domain: "obscure.example", target_sector: null,
+    target_brand_id: "b_obscure", target_brand: "Obscure", target_domain: "obscure.example", target_sector: null,
     hq_lat: null, hq_lng: null, hq_country: null, volume: 3,
     critical: 0, high: 1, medium: 2, low: 0, first_seen: null, last_seen: null, ...over,
   };
@@ -184,6 +184,8 @@ describe("assembleArcs", () => {
     expect(a.arcs.map((x) => x.target_precision)).toEqual(["hq", "country", "country"]);
     expect(a.arcs[0].targetPosition).toEqual([2, 1]);
     expect(a.arcs[0].severity).toBe("high");
+    expect(a.arcs.map((x) => x.target_brand_id)).toEqual(["b_obscure", "b_obscure", "b_obscure"]);
+    expect(assembleArcs([arcRow({ hq_country: "FR", target_brand_id: null })]).arcs[0].target_brand_id).toBeNull();
     expect(a.arcs[2].source_region).toBe("Unknown");
     expect(assembleArcs(rows)).toEqual(a);
   });

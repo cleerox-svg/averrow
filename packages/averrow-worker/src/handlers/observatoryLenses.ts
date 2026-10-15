@@ -52,6 +52,10 @@ import {
   parseObservatorySourceFeed,
   sourceFeedCacheSegment,
   SEVERITY_RANK,
+  parseObservatoryFilters,
+  hasObservatoryFilters,
+  observatoryFilterCacheSegment,
+  buildObservatoryCubeFilter,
 } from "./observatory";
 import { getCountryCentroid } from "../lib/country-centroids";
 import { rollupWindowStartDay } from "../lib/takedown-outcome-rollup";
@@ -1182,6 +1186,14 @@ export async function handleObservatoryCampaignsGeo(request: Request, env: Env):
 //                (the velocity cube has no severity dimension). The cube has
 //                no source_feed dimension either, so velocity + a source_feed
 //                other than all → 400.
+//   severity / threat_type / brand — optional cube filters, same parsing and
+//                key suffix as Phase A (parseObservatoryFilters; '' suffix
+//                when unfiltered, so existing keys are unchanged). Not
+//                supported with velocity → 400.
+//
+// `data.trend` — current vs prior equal-length window total + delta_pct
+// (computeTimelineTrend). The drill drawer reads it from
+// `/timeline?country=XX&period=…`; the read spans both windows in one query.
 //
 // Buckets: 24h → 24×1h, 7d → 168×1h, 30d → 120×6h, 90d → 90×1d. Buckets are
 // aligned to UTC boundaries (hour / 00-06-12-18 / midnight) and the LAST
@@ -1190,7 +1202,8 @@ export async function handleObservatoryCampaignsGeo(request: Request, env: Env):
 // partial extra point). Missing buckets are zero-filled.
 // Source: threat_cube_status (status='active') without `country`;
 // threat_cube_geo (active + geolocated) with it — both ACTIVE-only so the two
-// series are comparable.
+// series are comparable. With `brand`: threat_cube_brand without country,
+// threat_cube_arcs with it (the cubes that carry target_brand_id).
 const HOUR_MS = 3_600_000;
 
 export interface TimelineSpec {
@@ -1275,6 +1288,9 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
   const source = parseObservatorySourceFeed(url.searchParams.get("source_feed"));
   if (!source.ok) return badRequest(request, "invalid source_feed (expected all, feeds or spam_trap)");
   const feed = source.feed;
+  const parsedFilters = parseObservatoryFilters(url.searchParams);
+  if (!parsedFilters.ok) return badRequest(request, parsedFilters.error);
+  const filters = parsedFilters.filters;
   const spec = TIMELINE_SPECS[period];
   const ttl = period === "24h" ? LENS_TTL_S.timelineShort : LENS_TTL_S.timeline;
   const rawVelocity = url.searchParams.get("velocity");
@@ -1282,11 +1298,17 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
     const velocity = parseVelocityFlag(rawVelocity);
     if (!velocity) return badRequest(request, "velocity must be very_fast, fast or all");
     if (feed !== null) return badRequest(request, "source_feed is not supported with velocity");
+    // threat_cube_velocity has no severity / threat_type / brand dimension.
+    if (hasObservatoryFilters(filters)) {
+      return badRequest(request, "severity, threat_type and brand are not supported with velocity");
+    }
     return serveLens(request, env, "observatory_timeline",
       `${CACHE_NS}.timeline:${period}:all:${country ?? "all"}:v:${velocity}`, ttl, period,
       async (session, tally) => {
         const startMs = timelineStartMs(spec);
-        const binds: unknown[] = [toHourBucket(startMs)];
+        // One read covers the window AND the equal-length prior window
+        // (for `trend`); bucketing drops the prior rows (k < 0).
+        const binds: unknown[] = [toHourBucket(priorWindowStartMs(spec, startMs))];
         let where = "hour_bucket >= ?";
         if (country) { where += " AND country_code = ?"; binds.push(country); }
         if (velocity !== "all") { where += " AND flag = ?"; binds.push(velocity); }
@@ -1299,40 +1321,114 @@ export async function handleObservatoryTimeline(request: Request, env: Env): Pro
           GROUP BY hour_bucket
         `).bind(...binds).all<VelocityTimelineRow>();
         addToTally(tally, rows.meta);
+        const results = rows.results ?? [];
         return {
-          data: { bucket: spec.bucket, points: bucketVelocityTimeline(rows.results ?? [], spec, startMs) },
+          data: {
+            bucket: spec.bucket,
+            points: bucketVelocityTimeline(results, spec, startMs),
+            trend: computeTimelineTrend(results, spec, startMs),
+          },
           meta: { source_feed: "all", country, velocity },
         };
       });
   }
 
   return serveLens(request, env, "observatory_timeline",
-    `${CACHE_NS}.timeline:${period}:${sourceFeedCacheSegment(feed)}:${country ?? "all"}`, ttl, period,
+    `${CACHE_NS}.timeline:${period}:${sourceFeedCacheSegment(feed)}:${country ?? "all"}${observatoryFilterCacheSegment(filters)}`,
+    ttl, period,
     async (session, tally) => {
       const startMs = timelineStartMs(spec);
       const src = buildSourceFilter(feed);
-      const stmt = country
-        ? session.prepare(`
+      // Cube per (country?, brand?) — every one ACTIVE-only, so the series
+      // stay comparable:
+      //   neither        → threat_cube_status (status='active')
+      //   country        → threat_cube_geo    (active + geolocated)
+      //   brand          → threat_cube_brand  (active + brand)
+      //   country+brand  → threat_cube_arcs   (active + geolocated + brand)
+      const byBrand = filters.brand !== null;
+      const cube = country
+        ? (byBrand ? "threat_cube_arcs" : "threat_cube_geo")
+        : (byBrand ? "threat_cube_brand" : "threat_cube_status");
+      const cf = buildObservatoryCubeFilter(filters, { brandColumn: byBrand });
+      let where = "hour_bucket >= ?";
+      // One read covers the window AND the equal-length prior window (for
+      // `trend`); bucketTimeline drops the prior rows (k < 0).
+      const binds: unknown[] = [toHourBucket(priorWindowStartMs(spec, startMs))];
+      if (country) { where += " AND country_code = ?"; binds.push(country); }
+      if (cube === "threat_cube_status") where += " AND status = 'active'";
+      const rows = await session.prepare(`
             SELECT hour_bucket, SUM(threat_count) AS total,
               ${severitySums("severity", "threat_count")}
-            FROM threat_cube_geo
-            WHERE hour_bucket >= ? AND country_code = ?${src.sql}
+            FROM ${cube}
+            WHERE ${where}${src.sql}${cf.sql}
             GROUP BY hour_bucket
-          `).bind(toHourBucket(startMs), country, ...src.params)
-        : session.prepare(`
-            SELECT hour_bucket, SUM(threat_count) AS total,
-              ${severitySums("severity", "threat_count")}
-            FROM threat_cube_status
-            WHERE hour_bucket >= ? AND status = 'active'${src.sql}
-            GROUP BY hour_bucket
-          `).bind(toHourBucket(startMs), ...src.params);
-      const rows = await stmt.all<TimelineRow>();
+          `).bind(...binds, ...src.params, ...cf.params).all<TimelineRow>();
       addToTally(tally, rows.meta);
+      const results = rows.results ?? [];
       return {
-        data: { bucket: spec.bucket, points: bucketTimeline(rows.results ?? [], spec, startMs) },
+        data: {
+          bucket: spec.bucket,
+          points: bucketTimeline(results, spec, startMs),
+          trend: computeTimelineTrend(results, spec, startMs),
+        },
         meta: { source_feed: sourceFeedCacheSegment(feed), country },
       };
     });
+}
+
+// ── Prior-period trend (drill drawer delta) ───────────────────────────────────
+// `current` = active threats created in the timeline window (exactly the sum
+// of points[].total); `prior` = the immediately preceding window of the same
+// length; `delta_pct` = (current − prior) / prior × 100, one decimal, null
+// when prior is 0 (no baseline — the UI shows "new" / "n/a", never ∞).
+// Caveat: the cubes hold threats that are active NOW, bucketed by creation
+// hour, so older windows lose threats that have since gone inactive; the
+// current window also includes the partial current hour.
+
+export interface TimelineTrend {
+  current: number;
+  prior: number;
+  delta_pct: number | null;
+  /** ISO start of the current window (== points[0].t). */
+  current_start: string;
+  /** ISO start of the prior window; it ends at current_start. */
+  prior_start: string;
+}
+
+/** Start of the equal-length window preceding the timeline window. */
+export function priorWindowStartMs(spec: TimelineSpec, startMs: number): number {
+  return startMs - spec.points * spec.bucketMs;
+}
+
+/** Percentage change, one decimal; null when there is no prior baseline. */
+export function periodDeltaPct(current: number, prior: number): number | null {
+  if (!(prior > 0)) return null;
+  return Math.round(((current - prior) / prior) * 1000) / 10;
+}
+
+/** Pure: split hourly cube rows into the current and prior windows. */
+export function computeTimelineTrend(
+  rows: readonly { hour_bucket: string; total: number | null }[],
+  spec: TimelineSpec,
+  startMs: number,
+): TimelineTrend {
+  const priorStart = priorWindowStartMs(spec, startMs);
+  const end = startMs + spec.points * spec.bucketMs;
+  let current = 0;
+  let prior = 0;
+  for (const r of rows) {
+    const ms = Date.parse(`${r.hour_bucket.replace(" ", "T")}Z`);
+    if (!Number.isFinite(ms)) continue;
+    if (ms >= startMs && ms < end) current += num(r.total);
+    else if (ms >= priorStart && ms < startMs) prior += num(r.total);
+  }
+  return {
+    current,
+    prior,
+    delta_pct: periodDeltaPct(current, prior),
+    current_start: new Date(startMs).toISOString(),
+    prior_start: new Date(priorStart).toISOString(),
+  };
 }
 
 // ── 7. GET /api/observatory/actors ────────────────────────────────────────────

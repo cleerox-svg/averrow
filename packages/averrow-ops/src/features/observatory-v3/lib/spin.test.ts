@@ -38,9 +38,9 @@ describe('spinAllowed: the globe drifts only when nobody is using it', () => {
     expect(spinAllowed(w({ pointerOverChrome: true }))).toBe(false);
     expect(spinAllowed(w({ pointerOverChrome: false }))).toBe(true);
   });
-  it('once anybody has used the console this session it does not resume, however long it is left', () => {
-    expect(spinAllowed(w({ interacted: true, lastInteractionMs: 0 }))).toBe(false);
-    expect(spinAllowed(w({ interacted: false, lastInteractionMs: 0 }))).toBe(true);
+  it('resumes by itself once the idle time has passed since the last input (no session-long stop)', () => {
+    expect(spinAllowed(w({ nowMs: 5_000, lastInteractionMs: 4_000, idleMs: 12_000 }))).toBe(false);
+    expect(spinAllowed(w({ nowMs: 16_001, lastInteractionMs: 4_000, idleMs: 12_000 }))).toBe(true);
   });
 });
 

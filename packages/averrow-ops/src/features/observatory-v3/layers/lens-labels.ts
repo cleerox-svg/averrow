@@ -18,6 +18,7 @@ import { opCountRange, opNodePx, MAX_NODE_LABELS } from '../lib/lens/operations-
 import type { Projection } from '../lib/projection';
 import type { HostingModel } from '../lib/lens/hosting';
 import { confidenceBand, actorNodePx, type ActorModel } from '../lib/lens/actors';
+import type { MovementHop, MovementModel } from '../lib/lens/movement';
 import { placeLabels, type LabelCandidate, type Obstacle } from '../lib/label-placement';
 import { memoByModel, memoByModelAndKey } from './memo';
 
@@ -52,6 +53,26 @@ export interface NodeLabelSource {
   priority: number;
 }
 
+/** A migration trail's hop midpoint with what moved ("+3 IPs · AS4837"). One per event (its longest hop). */
+export interface MoveLabelSource {
+  id: string;
+  text: string;
+  position: LngLat;
+  before: LngLat;
+  after: LngLat;
+  /** The hop's ends (to skip hops too short for their label). */
+  from: LngLat;
+  to: LngLat;
+  /**
+   * The drawn path. The label sits at its midpoint unless that is off screen or behind the globe, then at the nearest
+   * path point that is on screen (see `placeLensLabels`).
+   */
+  path?: readonly LngLat[];
+  priority: number;
+  /** The selected event's label: kept in addition to the top moves. */
+  selected?: boolean;
+}
+
 export interface HostLabelSource {
   id: string;
   text: string;
@@ -76,6 +97,11 @@ export const MAX_HOST_CANDIDATES = 14;
 export const MAX_EDGE_LABELS = 10;
 export const MAX_HOST_LABELS = 8;
 export const MAX_ACTOR_LABELS = 10;
+/** Movement hop labels kept after de-dup: the top moves, plus the selected event's on top of that. */
+export const MAX_MOVE_LABELS = 3;
+/** Movement labels lean with their trail, but never past this (degrees): text at a steep angle is unreadable. */
+export const MOVE_LABEL_MAX_TILT = 35;
+export const MAX_MOVE_CANDIDATES = 40;
 
 const pathLength = (e: OpEdge): number => e.distances[e.distances.length - 1] ?? 0;
 
@@ -137,6 +163,39 @@ export const opNodeLabelSources = memoByModel((m: OperationsModel): NodeLabelSou
     });
 });
 
+/**
+ * One label per movement event, on its longest hop: every hop of an event says the same words, so repeating them
+ * along the trail is noise. The selected event outranks the rest, then the bigger moves.
+ */
+export const moveLabelSources = memoByModelAndKey((m: MovementModel, selectedEventId: string): MoveLabelSource[] => {
+  const best = new Map<string, MovementHop>();
+  for (const h of m.hops) {
+    if (!h.label || h.id.endsWith(':w')) continue;
+    const cur = best.get(h.eventId);
+    if (!cur || h.path.length > cur.path.length) best.set(h.eventId, h);
+    else if (h.path.length === cur.path.length && h.index < cur.index) best.set(h.eventId, h);
+  }
+  const out: MoveLabelSource[] = [];
+  for (const h of best.values()) {
+    const mid = Math.floor(h.path.length / 2);
+    const ev = m.byId.get(h.eventId);
+    const size = ev ? ev.counts.new_ips + ev.counts.new_serials + ev.counts.new_asns : 0;
+    out.push({
+      id: h.id,
+      text: h.label,
+      position: h.path[mid]!,
+      before: h.path[Math.max(0, mid - 1)]!,
+      after: h.path[Math.min(h.path.length - 1, mid + 1)]!,
+      from: h.from,
+      to: h.to,
+      path: h.path,
+      priority: (selectedEventId && h.eventId === selectedEventId ? 1e6 : 0) + size,
+      ...(selectedEventId && h.eventId === selectedEventId ? { selected: true } : null),
+    });
+  }
+  return out.sort((a, b) => b.priority - a.priority).slice(0, MAX_MOVE_CANDIDATES);
+});
+
 export const hostLabelSources = memoByModelAndKey((m: HostingModel, selectedId: string): HostLabelSource[] => {
   const out: HostLabelSource[] = [];
   m.rings.forEach((r, i) => {
@@ -170,6 +229,8 @@ export interface PlacedLabels {
   edges: PlacedEdgeLabel[];
   hosts: PlacedHostLabel[];
   actors: PlacedActorLabel[];
+  /** Movement hop labels ("+3 IPs · AS4837"); absent = none. Same shape as an edge label: laid along the hop. */
+  moves?: PlacedEdgeLabel[];
 }
 
 export const NO_LABELS: PlacedLabels = { opNodes: [], edges: [], hosts: [], actors: [] };
@@ -184,14 +245,59 @@ export interface PlaceInput {
   hosts: readonly HostLabelSource[];
   /** The Actors lens's country markers (optional: only that lens draws them). */
   actors?: readonly ActorLabelSource[];
+  /** The Movement lens's hop labels (already empty when the camera is too far out, see `moveLabelMinZoom`). */
+  moves?: readonly MoveLabelSource[];
   /** Discs the labels must clear (operation nodes, provider rings). */
   nodes: ReadonlyArray<{ position: LngLat; radiusPx: number; /** Provider id: its own label may sit against it. */ id?: string }>;
 }
 
 const CHAR_PX = 6.6; // 11px mono
+/** A movement label sits this far above its hop's midpoint (px), so the trail itself stays readable. */
+export const MOVE_LABEL_LIFT = -10;
 const LABEL_H = 14;
 /** Gap, px, between a node's bloom and its label: the same constant the layer offsets the text by. */
 export const NODE_LABEL_GAP = 2;
+
+/**
+ * The screen angle of a trail segment, for its label: turned right way up (a westward trail would otherwise print the
+ * words upside down) and limited to +-MOVE_LABEL_MAX_TILT degrees.
+ */
+export function tiltOf(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  let deg = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+  if (deg > 90) deg -= 180;
+  else if (deg < -90) deg += 180;
+  return Math.max(-MOVE_LABEL_MAX_TILT, Math.min(MOVE_LABEL_MAX_TILT, deg));
+}
+
+type Screen = { x: number; y: number; fade?: number };
+
+/**
+ * Where a movement label sits on its hop: the midpoint when it can be drawn, else the path point nearest the middle that
+ * can (on screen with room for the words, and not behind the globe). A long hop at a close zoom has its midpoint
+ * off the viewport while most of the trail is in it.
+ */
+function moveAnchor(
+  mv: MoveLabelSource, project: Project, size: { width: number; height: number }, half: number,
+): { position: LngLat; mid: Screen; a: Screen; b: Screen } | null {
+  const path = mv.path;
+  const usable = (p: Screen | null): p is Screen =>
+    !!p && p.x - half >= 0 && p.x + half <= size.width && p.y + MOVE_LABEL_LIFT - LABEL_H / 2 - 3 >= 0 && p.y + MOVE_LABEL_LIFT + LABEL_H / 2 + 3 <= size.height;
+  if (!path || path.length < 3) {
+    const mid = project(mv.position); const a = project(mv.before); const b = project(mv.after);
+    return mid && a && b ? { position: mv.position, mid, a, b } : null;
+  }
+  const centre = Math.floor(path.length / 2);
+  for (let d = 0; d < path.length; d++) {
+    for (const i of d === 0 ? [centre] : [centre - d, centre + d]) {
+      if (i < 1 || i > path.length - 2) continue;
+      const mid = project(path[i]!);
+      if (!usable(mid)) continue;
+      const a = project(path[i - 1]!); const b = project(path[i + 1]!);
+      if (a && b) return { position: path[i]!, mid, a, b };
+    }
+  }
+  return null;
+}
 
 /** Greedy screen-space placement of both label sets at the current camera. */
 export function placeLensLabels(input: PlaceInput, project: Project, size: { width: number; height: number }): PlacedLabels {
@@ -302,7 +408,33 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
       return { id: p.id, text: src.text, position: src.position, radiusPx: src.radiusPx, fade: actorFade.get(p.id) ?? 1 } satisfies PlacedActorLabel;
     });
 
-  return { opNodes, edges, hosts, actors };
+  // Movement: what moved along each trail, at the hop's midpoint, clear of every node and of the words placed above.
+  const moveCands: LabelCandidate[] = [];
+  const moveById = new Map<string, MoveLabelSource>();
+  const moveFade = new Map<string, number>();
+  for (const mv of input.moves ?? []) {
+    const f = project(mv.from);
+    const t = project(mv.to);
+    // A hop too short on screen to carry its words gets none (the tooltip and drawer have them).
+    if (f && t && Math.hypot(t.x - f.x, t.y - f.y) < mv.text.length * CHAR_PX + 28) continue;
+    const half = (mv.text.length * CHAR_PX) / 2 + 3;
+    const anchor = moveAnchor(mv, project, size, half);
+    if (!anchor) continue;
+    moveCands.push({ id: mv.id, text: mv.text, x: anchor.mid.x, y: anchor.mid.y, dy: MOVE_LABEL_LIFT, priority: mv.priority, angle: tiltOf(anchor.a, anchor.b) });
+    moveById.set(mv.id, { ...mv, position: anchor.position });
+    moveFade.set(mv.id, anchor.mid.fade ?? 1);
+  }
+  const moveObstacles = actorObstacles.concat(actors.flatMap(a => {
+    const p = project(a.position);
+    return p ? [{ x: p.x, y: p.y + a.radiusPx + 10, r: (a.text.length * CHAR_PX) / 2 }] : [];
+  }));
+  const moves = moveCands.length === 0 ? [] : placeLabels(moveCands, { width: size.width, height: size.height, charPx: CHAR_PX, heightPx: LABEL_H, max: MAX_MOVE_LABELS + ((input.moves ?? []).some(m => m.selected) ? 1 : 0), obstacles: moveObstacles })
+    .map(p => {
+      const src = moveById.get(p.id)!;
+      return { id: p.id, text: src.text, position: src.position, angle: p.angle, fade: moveFade.get(p.id) ?? 1 } satisfies PlacedEdgeLabel;
+    });
+
+  return moves.length > 0 ? { opNodes, edges, hosts, actors, moves } : { opNodes, edges, hosts, actors };
 }
 
 const samePos = (a: LngLat, b: LngLat): boolean => a[0] === b[0] && a[1] === b[1];
@@ -332,5 +464,11 @@ export function stablePlacement(prev: PlacedLabels, next: PlacedLabels): PlacedL
     const n = next.actors[i]!;
     return a.id === n.id && a.text === n.text && a.radiusPx === n.radiusPx && samePos(a.position, n.position) && sameFade(a.fade ?? 1, n.fade ?? 1);
   });
-  return nodesSame && edgesSame && hostsSame && actorsSame ? prev : next;
+  const pm = prev.moves ?? [];
+  const nm = next.moves ?? [];
+  const movesSame = pm.length === nm.length && pm.every((e, i) => {
+    const n = nm[i]!;
+    return e.id === n.id && e.text === n.text && samePos(e.position, n.position) && Math.round(e.angle) === Math.round(n.angle) && sameFade(e.fade ?? 1, n.fade ?? 1);
+  });
+  return nodesSame && edgesSame && hostsSame && actorsSame && movesSame ? prev : next;
 }

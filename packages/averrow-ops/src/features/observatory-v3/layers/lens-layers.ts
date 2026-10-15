@@ -59,7 +59,7 @@ import {
   type PulseExtensionProps, type RingMaskExtensionProps, type DashFlowExtensionProps,
 } from '../anim';
 import { memoByModel, memoByModelAndKey } from './memo';
-import { NODE_LABEL_GAP, type PlacedLabels, type PlacedEdgeLabel, type PlacedHostLabel, type PlacedActorLabel, type PlacedNodeLabel } from './lens-labels';
+import { NODE_LABEL_GAP, MOVE_LABEL_LIFT, type PlacedLabels, type PlacedEdgeLabel, type PlacedHostLabel, type PlacedActorLabel, type PlacedNodeLabel } from './lens-labels';
 
 // ─── Types shared with ThreatMapV3 ──────────────────────────
 
@@ -371,6 +371,8 @@ const fadedText = (base: Rgba) => (d: object): Rgba => {
   return fade === undefined || fade >= 1 ? base : [base[0], base[1], base[2], Math.round(base[3] * Math.max(0, fade))];
 };
 const TEXT_COLOR_AT = fadedText(TEXT_COLOR);
+/** Movement hop labels: `--text-secondary` (white at 72%) over the dark halo; the basemap is dark in both themes. */
+const MOVE_TEXT_COLOR_AT = fadedText([255, 255, 255, 184]);
 const HALO_COLOR_AT = fadedText(TEXT_OUTLINE);
 
 /**
@@ -876,6 +878,7 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
   const animTime = reducedMotion ? 0 : frame.seconds;
   const out: Layer[] = [];
   const dimmedEvent = (id: string): boolean => sel.movementId !== null && id !== sel.movementId;
+  const hopLabels = input.labels.moves ?? [];
 
   if (m.hops.length > 0) {
     // De-duplicate wrapped twins for the static drawing.
@@ -944,6 +947,24 @@ function movementLayers(input: LensLayerInput, frame: LensFrame): Layer[] {
         capRounded: true,
       }));
     }
+  }
+
+  // What moved, written on the map at each trail's hop midpoint ("+3 IPs · AS4837"): placed in screen space when the
+  // camera settles, so they fit, do not collide and are left out at the world view (see `moveLabelMinZoom`).
+  if (hopLabels.length > 0) {
+    pushHaloed(out, v => new TextLayer<PlacedEdgeLabel>({
+      id: `movement-hop-labels${v.suffix}`,
+      ...labelStyle(input.projection),
+      getColor: v.suffix === '' ? MOVE_TEXT_COLOR_AT : v.getColor,
+      data: hopLabels,
+      getPosition: l => l.position,
+      getText: l => l.text,
+      getAngle: l => -l.angle,
+      getSize: LABEL_PX,
+      getTextAnchor: 'middle',
+      getAlignmentBaseline: 'center',
+      getPixelOffset: shifted([0, MOVE_LABEL_LIFT], v),
+    }));
   }
 
   if (m.pulses.length > 0) {

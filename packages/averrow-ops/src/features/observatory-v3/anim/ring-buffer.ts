@@ -14,6 +14,8 @@
 import type { Rgba } from '../lib/map-colors';
 
 export const DEFAULT_RING_CAPACITY = 256;
+/** Full radius (px) of a ring that was spawned without one. */
+export const DEFAULT_RING_RADIUS_PX = 22;
 
 /** Far enough in the past that (animTime - start) is always beyond any duration. */
 const EMPTY_START = -1e9;
@@ -26,6 +28,8 @@ export interface RingSpawn {
   /** Life, seconds. */
   duration: number;
   color: Rgba;
+  /** Full radius in px for layers that size rings per instance (0 / absent = the layer's default, `DEFAULT_RING_RADIUS_PX`). */
+  radius?: number;
 }
 
 /** Deck's per-object accessor context (subset we use). */
@@ -45,6 +49,7 @@ export class RingBuffer {
   readonly colors: Uint8ClampedArray; // r, g, b, a per slot
   readonly starts: Float32Array;
   readonly durations: Float32Array;
+  readonly radii: Float32Array;
 
   private head = 0;
   private spawned = 0;
@@ -57,6 +62,7 @@ export class RingBuffer {
     this.colors = new Uint8ClampedArray(capacity * 4);
     this.starts = new Float32Array(capacity).fill(EMPTY_START);
     this.durations = new Float32Array(capacity).fill(1);
+    this.radii = new Float32Array(capacity);
   }
 
   /** Number of rings pushed since creation / clear (monotonic; may exceed capacity). */
@@ -77,6 +83,7 @@ export class RingBuffer {
     this.colors[slot * 4 + 3] = ring.color[3] ?? 255;
     this.starts[slot] = ring.start;
     this.durations[slot] = ring.duration;
+    this.radii[slot] = ring.radius && ring.radius > 0 ? ring.radius : 0;
     return slot;
   }
 
@@ -132,6 +139,8 @@ export class RingBuffer {
 
   readonly getStart = (_: number, info: AccessorInfo): number => this.starts[info.index]!;
   readonly getDuration = (_: number, info: AccessorInfo): number => this.durations[info.index]!;
+  /** Per-ring full radius, px (the default for a ring spawned without one). */
+  readonly getRadius = (_: number, info: AccessorInfo): number => this.radii[info.index]! || DEFAULT_RING_RADIUS_PX;
 }
 
 /**
@@ -146,11 +155,13 @@ export function ringBufferLayerProps(buffer: RingBuffer) {
     getLineColor: buffer.getColor,
     getRingStart: buffer.getStart,
     getRingDuration: buffer.getDuration,
+    getRadius: buffer.getRadius,
     updateTriggers: {
       getPosition: v,
       getLineColor: v,
       getRingStart: v,
       getRingDuration: v,
+      getRadius: v,
     },
   };
 }

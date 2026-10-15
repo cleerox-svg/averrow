@@ -44,3 +44,25 @@ export function useElementSize(ref: RefObject<HTMLElement | null>): { width: num
   }, [ref]);
   return size;
 }
+
+/**
+ * Live height of an element that comes and goes (a callback ref, so it is measured whenever it mounts; 0 while absent).
+ * `useElementSize` binds once to a ref that must exist at mount, which a conditionally rendered row does not.
+ */
+export function useMeasuredHeight(): [(el: HTMLElement | null) => void, number] {
+  const [el, setEl] = useState<HTMLElement | null>(null);
+  const [height, setHeight] = useState(0);
+  useIsoLayoutEffect(() => {
+    if (!el) { setHeight(0); return; }
+    const measure = () => setHeight(prev => (prev === el.offsetHeight ? prev : el.offsetHeight));
+    measure();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return [setEl, height];
+}

@@ -207,9 +207,19 @@ export function outletLayoutFor(pathname: string): OutletLayout {
   return BLEED_ROUTE_PREFIXES.some((p) => path === p || path.startsWith(p + '/')) ? 'bleed' : 'padded';
 }
 
+/**
+ * The Observatory wall screen (`/observatory?wall=1`): a fullscreen picture for a display, so the shell draws none of its
+ * chrome (no sidebar, top bar, banner or version footer). Scoped to that one route + flag; every other page is untouched.
+ */
+export function isWallScreen(pathname: string, search: string): boolean {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  return path === FILL_ROUTE_PREFIX && new URLSearchParams(search).get('wall') === '1';
+}
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
+  const wall = isWallScreen(location.pathname, location.search);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const sideRef = useRef<HTMLElement>(null);
@@ -298,6 +308,20 @@ export function ShellV4() {
   };
 
   const openPalette = () => { skipFocusRestore.current = true; setDrawerOpen(false); setPaletteOpen(true); };
+
+  if (wall) {
+    return (
+      <div className="shell-v4 shell-v4--wall">
+        <section className="v4-main">
+          <div className="v4-outlet">
+            <div className="v4-page v4-page--fill">{enrollmentLocked ? null : <Outlet />}</div>
+          </div>
+        </section>
+        <FirstSignInPasskeyPrompt />
+        <PasskeyEnrollmentGate />
+      </div>
+    );
+  }
 
   return (
     <div className={'shell-v4' + (drawerOpen ? ' drawer-open' : '')}>

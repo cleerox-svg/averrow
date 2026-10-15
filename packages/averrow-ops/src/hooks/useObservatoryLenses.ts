@@ -14,8 +14,8 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { roleHasPermission } from '@/lib/permissions';
 import {
-  POLL, buildObservatoryUrl, clampLimit, observatoryKeys, shape, sourceParam,
-  type ObservatoryQueryResult,
+  POLL, activeFilters, buildObservatoryUrl, clampLimit, filterParams, observatoryKeys, shape, sourceParam,
+  type ObservatoryFilters, type ObservatoryQueryResult,
 } from './useObservatory';
 
 // ─── Types (mirror packages/averrow-worker/src/handlers/observatoryLenses.ts) ──
@@ -141,9 +141,21 @@ export interface TimelinePoint {
   fast?: number;
 }
 
+/** This window's total against the equal-length window before it (`/timeline`, used by the country drawer). */
+export interface TimelineTrend {
+  current: number;
+  prior: number;
+  /** `(current - prior) / prior * 100`, one decimal; null when `prior` is 0. */
+  delta_pct: number | null;
+  current_start?: string;
+  prior_start?: string;
+}
+
 export interface TimelineData {
   bucket: '1h' | '6h' | '1d';
   points: TimelinePoint[];
+  /** Optional: absent on older payloads. */
+  trend?: TimelineTrend;
 }
 
 export interface ActorListItem {
@@ -335,16 +347,18 @@ export function useCampaignsGeo(opts: Opts = {}): ObservatoryQueryResult<LensPay
 }
 
 export function useObservatoryTimeline(
-  opts: Opts & { period?: string; source?: string; country?: string | null; velocity?: VelocityFilter | null } = {},
+  opts: Opts & { period?: string; source?: string; country?: string | null; velocity?: VelocityFilter | null; filters?: ObservatoryFilters } = {},
 ): ObservatoryQueryResult<LensPayload<TimelineData>> {
   const { enabled = true, period = '7d', source = 'all', country = null, velocity = null } = opts;
   // The velocity cube has no source dimension (the server answers 400 for velocity + a source): never send both.
   const src = velocity ? 'all' : source;
+  // ...and none for velocity + a data filter either (400): the velocity series is never filtered.
+  const filters = velocity ? undefined : opts.filters;
   return shape(useQuery({
-    queryKey: observatoryKeys.lens('timeline', { period, source: src, country, velocity }),
+    queryKey: observatoryKeys.lens('timeline', { period, source: src, country, velocity, ...(activeFilters(filters) ? { f: JSON.stringify(activeFilters(filters)) } : {}) }),
     queryFn: ({ signal }) => fetchLens<TimelineData>(
       buildObservatoryUrl('/api/observatory/timeline', {
-        period, source_feed: sourceParam(src), country: country ?? undefined, velocity: velocity ?? undefined,
+        period, source_feed: sourceParam(src), country: country ?? undefined, velocity: velocity ?? undefined, ...filterParams(filters),
       }),
       signal,
     ),

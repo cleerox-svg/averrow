@@ -22,7 +22,10 @@ import { greatCirclePath } from '../../anim/great-circle';
 import { glslMod } from '../../anim/shader-math';
 import type { ArrivalEvent } from '../../anim/arrivals';
 import { CYCLE_LENGTH } from '../trips';
+import { globeFitZoom } from '../projection';
+import type { Projection } from '../projection';
 import { countryCenter, iso2 } from './placement';
+import { normAsn } from '../search';
 
 /** Clock units one hop takes (60 u/s => 1.5 s). */
 export const HOP_UNITS = 90;
@@ -45,6 +48,8 @@ export interface MovementHop {
   /** Per-vertex clock timestamps (TripsLayer), spanning HOP_UNITS. */
   timestamps: number[];
   startUnits: number;
+  /** What moved, short enough for the map ("+3 IPs · AS4837"); '' when the event names nothing. */
+  label: string;
 }
 
 export interface MovementPulse {
@@ -64,6 +69,39 @@ export interface MovementModel {
   byId: Map<string, Movement>;
   /** Events that produced nothing drawable (no placeable country at all). */
   unplaced: number;
+}
+
+const plural = (n: number, one: string, many: string): string => `+${n} ${n === 1 ? one : many}`;
+
+/**
+ * What moved, in a few words, for the on-map label: the biggest new-infrastructure count first ("+3 IPs"), then the
+ * network it landed on ("AS4837", or "+2 ASNs" when the event does not name one). '' when it names nothing at all.
+ */
+export function moveLabelText(m: Pick<Movement, 'counts' | 'to'>): string {
+  const { new_ips, new_serials, new_asns } = m.counts;
+  const parts: string[] = [];
+  if (new_ips > 0) parts.push(plural(new_ips, 'IP', 'IPs'));
+  else if (new_serials > 0) parts.push(plural(new_serials, 'cert', 'certs'));
+  const landed = m.to.asns.map(normAsn).find((a): a is string => a !== null);
+  if (landed) parts.push(landed);
+  else if (new_asns > 0) parts.push(plural(new_asns, 'ASN', 'ASNs'));
+  return parts.join(' · ');
+}
+
+/**
+ * The lowest camera zoom at which the hop labels are drawn. At the world view the trails of a dozen events converge on a
+ * few countries and the words would pile up, so they appear once there is room: a fixed zoom on the flat map; on the
+ * globe, the zoom that fits the planet (where it opens) less a little. The globe never needed more: only the hops on the
+ * near hemisphere are placeable, and the label count is capped.
+ */
+/** Flat-map zoom below which the hop labels stay off: at the world view the trails converge and the words pile up. */
+export const MOVE_LABEL_MIN_ZOOM_FLAT = 2.2;
+
+/** Zoom the globe may sit below its fit zoom (the planet a little smaller than the free area) and still label hops. */
+export const MOVE_LABEL_GLOBE_SLACK = 0.3;
+
+export function moveLabelMinZoom(projection: Projection, canvas: { width: number; height: number }): number {
+  return projection === 'globe' ? globeFitZoom(canvas.width, canvas.height) - MOVE_LABEL_GLOBE_SLACK : MOVE_LABEL_MIN_ZOOM_FLAT;
 }
 
 function placeable(list: readonly string[]): string[] {
@@ -125,13 +163,13 @@ export function buildMovementModel(
           const stamps = (base: number) => path.map((_, i) => base + (i / (path.length - 1)) * HOP_UNITS);
           hops.push({
             id: `${m.id}:${f}-${t}`, eventId: m.id, clusterName: m.cluster_name, index: seq,
-            fromCc: f, toCc: t, from: a, to: b, path, timestamps: stamps(start), startUnits: start,
+            fromCc: f, toCc: t, from: a, to: b, path, timestamps: stamps(start), startUnits: start, label: moveLabelText(m),
           });
           // A hop that would run past the end of the cycle carries on after the wrap.
           if (start + HOP_UNITS * 2 > cycle) {
             hops.push({
               id: `${m.id}:${f}-${t}:w`, eventId: m.id, clusterName: m.cluster_name, index: seq,
-              fromCc: f, toCc: t, from: a, to: b, path, timestamps: stamps(start - cycle), startUnits: start - cycle,
+              fromCc: f, toCc: t, from: a, to: b, path, timestamps: stamps(start - cycle), startUnits: start - cycle, label: moveLabelText(m),
             });
           }
           ringEvents.push(

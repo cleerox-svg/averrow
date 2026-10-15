@@ -9,6 +9,8 @@
  *   TRAFFIC   threat traffic underneath: Off | Nodes | Nodes + Flow
  *   Beams     static attack corridors
  *   Colour    severity | threat type
+ *   SEVERITY  critical / high / medium / low as toggles (the `sev` filter; none on = every severity). The threat-type and
+ *             brand filters live in the filters card (see ToolbarControls), and every active filter is a removable chip.
  *
  * (Flat | Globe is a MAP control, not a lens control: it lives in the map's zoom cluster, see ProjectionToggle.)
  *
@@ -22,7 +24,10 @@ import { useCallback, useId, useState, type ReactNode } from 'react';
 import { Activity, BarChart3, Bot, CircleDot, EyeOff, Flame, Palette, Route, Scale, ScatterChart, Server, ShieldCheck, Zap } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import type { LayerToggles, LensId } from '../lib/lenses';
-import type { ColorBy, Measure, ThreatView } from '../lib/url-state';
+import type { ColorBy, Measure, Severity, ThreatView } from '../lib/url-state';
+import { SEVERITY_IDS } from '../lib/url-state';
+import { sevText } from '../lib/map-colors';
+import { toggleSeverity } from '../lib/filters';
 import { announceTraffic, trafficModeOf, trafficPatch, TRAFFIC_LABEL, type TrafficMode } from '../lib/controls';
 
 export interface ControlRailProps {
@@ -36,11 +41,19 @@ export interface ControlRailProps {
   onView: (view: ThreatView) => void;
   onMeasure: (measure: Measure) => void;
   onColorBy: (colorBy: ColorBy) => void;
+  /** Severity filter (empty = all). Omit `onSev` to hide the severity chips. */
+  sev?: readonly Severity[];
+  onSev?: (sev: Severity[]) => void;
   /** Holds `manage_takedowns`: only then are the Takedowns measures offered (the server refuses them to every other role). */
   canSeeTakedowns?: boolean;
   /** `rail`: 44px icon column (tablet / desktop). `panel`: labelled 44px rows (phone filters card). */
   layout?: 'rail' | 'panel';
   className?: string;
+  /**
+   * `panel` only. `severity`: just the severity filter (the phone card shows it next to the threat types); `rest`: everything
+   * else; `all` (default): both. Nothing is rendered when the part has nothing to show.
+   */
+  part?: 'all' | 'severity' | 'rest';
 }
 
 interface Item {
@@ -112,8 +125,8 @@ function Group({ label, items, layout }: { label: string; items: Item[]; layout:
 }
 
 export function ControlRail({
-  lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, canSeeTakedowns = false,
-  layout = 'rail', className,
+  lens, layers, view, measure, colorBy, reducedMotion, onLayers, onView, onMeasure, onColorBy, sev = [], onSev, canSeeTakedowns = false,
+  layout = 'rail', className, part = 'all',
 }: ControlRailProps) {
   const [announcement, setAnnouncement] = useState('');
   const say = useCallback((msg: string) => setAnnouncement(prev => (prev === msg ? `${msg}​` : msg)), []);
@@ -146,6 +159,24 @@ export function ControlRail({
     },
   ];
 
+  const SEV_NOTE: Record<Severity, string> = {
+    critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low',
+  };
+  const sevItems: Item[] = onSev
+    ? SEVERITY_IDS.map(id => ({
+      id: `sev-${id}`,
+      label: `Severity: ${SEV_NOTE[id]}`,
+      hint: sev.length === 0 ? `Show only ${id} threats (select more to add)` : sev.includes(id) ? `Stop filtering to ${id}` : `Also show ${id} threats`,
+      icon: icon(<span aria-hidden className="font-mono text-[11px] font-bold leading-none" style={{ color: sevText(id) }}>{id.charAt(0).toUpperCase()}</span>),
+      pressed: sev.includes(id),
+      onPress: () => {
+        const next = toggleSeverity(sev, id);
+        onSev(next);
+        say(next.length === 0 || next.length === SEVERITY_IDS.length ? 'Severity filter off: all severities' : `Severity filter: ${next.join(', ')}`);
+      },
+    }))
+    : [];
+
   const viewItems: Item[] =
     lens === 'threats'
       ? [
@@ -171,6 +202,17 @@ export function ControlRail({
   const traffickable = !(lens === 'threats' && (view === 'heat' || view === 'fast')) && !(lens === 'baseline' && measure === 'bot');
 
   const panel = layout === 'panel';
+  if (part === 'severity') {
+    // Same conditions as the group below: only where threat traffic is drawn.
+    if (!panel || !traffickable || sevItems.length === 0) return null;
+    return (
+      <div className={cn('flex flex-col gap-1.5', className)} data-layout={layout} data-part="severity">
+        <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div>
+        <Group label="Severity filter" items={sevItems} layout={layout} />
+        <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>
+      </div>
+    );
+  }
   return (
     <div
       className={cn(panel ? 'flex flex-col gap-3' : 'flex flex-col items-center gap-1.5 rounded-xl p-[3px]', className)}
@@ -197,6 +239,12 @@ export function ControlRail({
           <Group label="Threat traffic underneath" items={trafficItems} layout={layout} />
           {!panel && <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
           <Group label="Map options" items={extras} layout={layout} />
+          {sevItems.length > 0 && !(panel && part === 'rest') && (
+            <>
+              {panel ? <div className="font-mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--text-tertiary)' }}>Severity filter</div> : <div aria-hidden className="w-6 h-px my-0.5" style={{ background: 'var(--border-base)' }} />}
+              <Group label="Severity filter" items={sevItems} layout={layout} />
+            </>
+          )}
         </>
       )}
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</span>

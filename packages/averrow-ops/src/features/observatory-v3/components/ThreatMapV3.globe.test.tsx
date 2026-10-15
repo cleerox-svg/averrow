@@ -98,7 +98,6 @@ import { ThreatMapV3, releaseOwnedGl, type ThreatMapV3Props } from './ThreatMapV
 import { GLOBE_MAX_ZOOM, FLAT_MAX_ZOOM, GLOBE_SKY, GLOBE_DEPTH_BIAS, GLOBE_START_CENTER } from '../lib/projection';
 import { buildHostingModel } from '../lib/lens/hosting';
 import { resetCompatWarnings } from '../lib/maplibre-compat';
-import { resetSpinSession } from '../lib/use-idle-spin';
 import { noLayers } from '../lib/lenses';
 import { NO_SELECTION } from '../layers/lens-layers';
 
@@ -368,7 +367,6 @@ describe('ThreatMapV3 projection: idle spin wiring', () => {
   let queue: Array<(ts: number) => void>;
   let nowMs: number;
   beforeEach(() => {
-    resetSpinSession();
     queue = [];
     nowMs = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
@@ -418,12 +416,14 @@ describe('ThreatMapV3 projection: idle spin wiring', () => {
     expect(spinMoves().length).toBeGreaterThan(0);
   });
 
-  it('a press ends the drift for the session', () => {
+  it('a press pauses the drift and it resumes after the idle time (it does not end for the session)', () => {
     render(<ThreatMapV3 {...base} projection="globe" spinIdleMs={500} />);
     ready();
     act(() => { window.dispatchEvent(new Event('pointerdown')); });
-    frame(100); frame(5000); frame(60_000); frame(60_100);
-    expect(spinMoves()).toHaveLength(0);
+    frame(100);
+    expect(spinMoves()).toHaveLength(0); // just pressed: waiting
+    frame(5000); frame(5100);
+    expect(spinMoves().length).toBeGreaterThan(0);
   });
 
   it('lens labels are hidden while the globe drifts and placed again where it stops', () => {
@@ -475,7 +475,7 @@ describe('ThreatMapV3 globe: clicks go through MapLibre like the flat map', () =
     render(<ThreatMapV3 {...base} projection="globe" onSelect={onSelect} />);
     ready();
     const o = overlays[0]!;
-    o.pickObject.mockReturnValue(pick(o, 'beam-core', arc));
+    o.pickObject.mockReturnValue(pick(o, 'arc-pick', arc));
     click();
     expect(onSelect).toHaveBeenCalledWith({ kind: 'arc', arc });
   });

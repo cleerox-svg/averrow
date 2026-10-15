@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type * as maplibregl from 'maplibre-gl';
-import { useIdleSpin, resetSpinSession, hasInteractedThisSession, SPIN_EVENT_KEY, type UseIdleSpinOptions } from './use-idle-spin';
+import { useIdleSpin, isMapGesture, SPIN_EVENT_KEY, type UseIdleSpinOptions } from './use-idle-spin';
 import { SPIN_DEG_PER_S } from './spin';
 
 // A manual frame clock: rAF callbacks queue up and `frame(ts)` runs them at that timestamp.
@@ -42,7 +42,6 @@ function setup(over: Partial<UseIdleSpinOptions> = {}, mapOpts: { moving?: boole
 }
 
 beforeEach(() => {
-  resetSpinSession();
   queue = [];
   now = 0;
   vi.spyOn(performance, 'now').mockImplementation(() => now);
@@ -87,36 +86,50 @@ describe('useIdleSpin', () => {
     expect(s.jumpTo.mock.calls.length).toBeGreaterThan(spun); // resumed
   });
 
-  it.each(['pointerdown', 'wheel', 'keydown', 'touchstart'])('%s counts as an interaction: the drift is over for the session', ev => {
+  it.each(['pointerdown', 'wheel', 'keydown', 'touchstart'])('%s pauses the drift at once and it RESUMES after the idle time (no session-long stop)', ev => {
     const s = setup();
-    frame(100); frame(900);
-    now = 950;
+    frame(100); frame(1100); frame(1200);
+    const spun = s.jumpTo.mock.calls.length;
+    expect(spun).toBeGreaterThan(0);
+    now = 1250;
     act(() => { window.dispatchEvent(new Event(ev)); });
-    expect(hasInteractedThisSession()).toBe(true);
-    frame(1100); frame(1300);
-    expect(s.jumpTo).not.toHaveBeenCalled();
-    frame(60_000); frame(60_100);
-    expect(s.jumpTo).not.toHaveBeenCalled(); // however long it is left
-    expect(queue).toHaveLength(0); // and the loop has stopped rather than polling for nothing
+    frame(1300);
+    expect(s.jumpTo).toHaveBeenCalledTimes(spun); // paused on the very next frame
+    frame(2200);
+    expect(s.jumpTo).toHaveBeenCalledTimes(spun); // 950 ms since the input: still waiting
+    expect(queue.length).toBeGreaterThan(0); // the loop stays alive to resume
+    frame(2300); frame(2400);
+    expect(s.jumpTo.mock.calls.length).toBeGreaterThan(spun); // and it is turning again
   });
 
-  it('an interaction that happens before the globe is showing (choosing it) ends the drift too', () => {
+  it('a press on a map control (the projection toggle) is not a map gesture: it does not even restart the idle timer', () => {
+    const s = setup();
+    frame(100); frame(1100); frame(1200);
+    const spun = s.jumpTo.mock.calls.length;
+    const toggle = document.createElement('button');
+    toggle.setAttribute('data-control', 'projection');
+    toggle.setAttribute('data-spin-exempt', '');
+    const inner = document.createElement('span');
+    toggle.appendChild(inner);
+    document.body.appendChild(toggle);
+    now = 1250;
+    act(() => { inner.dispatchEvent(new Event('pointerdown', { bubbles: true })); });
+    frame(1300);
+    expect(s.jumpTo.mock.calls.length).toBeGreaterThan(spun); // still turning
+    expect(isMapGesture(inner)).toBe(false);
+    toggle.remove();
+    expect(isMapGesture(document.body)).toBe(true);
+    expect(isMapGesture(null)).toBe(true);
+  });
+
+  it('choosing the globe (a press on the flat map first) does not end the drift: it starts after the idle time', () => {
     const s = setup({ projection: 'flat' });
     act(() => { window.dispatchEvent(new Event('pointerdown')); });
     s.hook.rerender({ projection: 'globe' });
-    frame(100); frame(5000); frame(5100);
+    frame(100); frame(900);
     expect(s.jumpTo).not.toHaveBeenCalled();
-    expect(queue).toHaveLength(0);
-  });
-
-  it('a later mount in the same session does not drift either', () => {
-    act(() => { window.dispatchEvent(new Event('pointerdown')); }); // before any hook (page load interaction)
-    const first = setup();
-    first.hook.unmount();
-    resetSpinSession();
-    const fresh = setup();
-    frame(100); frame(5000); frame(5100);
-    expect(fresh.jumpTo).toHaveBeenCalled();
+    frame(1200); frame(1300);
+    expect(s.jumpTo).toHaveBeenCalled();
   });
 
   it('holds while the pointer is over the page\'s chrome, and resumes after the idle time once it is back over the map', () => {

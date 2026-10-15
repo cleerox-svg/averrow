@@ -20,6 +20,7 @@ import { buildCampaignsModel } from './lens/campaigns';
 import { buildActorModel } from './lens/actors';
 import { buildMovementModel } from './lens/movement';
 import { buildVelocityModel } from './lens/velocity';
+import type { ObservatoryFilters } from '@/hooks/useObservatory';
 import { buildTakedownCountryModel, buildTakedownProviderModel } from './lens/takedowns';
 import { useCountryGeometry } from './country-geometry';
 
@@ -37,9 +38,11 @@ export interface UseLensDataArgs {
   replayNowMs: number;
   /** Operations lens: also return the clusters flagged as shared infrastructure. */
   includeShared?: boolean;
+  /** Severity / threat type / brand filters, applied to the replay histogram (never to the Fast view's velocity series). */
+  filters?: ObservatoryFilters;
 }
 
-export function useLensData({ needs, period, source, actorId, timelineCountry, replayNowMs, includeShared = false }: UseLensDataArgs) {
+export function useLensData({ needs, period, source, actorId, timelineCountry, replayNowMs, includeShared = false, filters }: UseLensDataArgs) {
   const operationsQ = useOperationsGeo({ enabled: needs.operations, includeShared });
   const movementsQ = useMovements({ enabled: needs.movements, period });
   const providersQ = useProvidersGeo({ enabled: needs.providers });
@@ -49,7 +52,7 @@ export function useLensData({ needs, period, source, actorId, timelineCountry, r
   const actorDetailQ = useActorDetail(actorId, { enabled: needs.actors });
   // The Fast view's replay bar is the velocity series (no source split: the server 400s velocity + a source).
   const timelineQ = useObservatoryTimeline({
-    enabled: needs.timeline, period, source, country: timelineCountry, velocity: needs.velocity ? 'all' : null,
+    enabled: needs.timeline, period, source, country: timelineCountry, velocity: needs.velocity ? 'all' : null, filters,
   });
   const velocityQ = useVelocityNodes({ enabled: needs.velocity, period });
   // Requires manage_takedowns: the hook never requests either for any other role.

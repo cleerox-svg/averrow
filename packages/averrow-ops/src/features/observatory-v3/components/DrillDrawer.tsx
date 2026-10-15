@@ -20,7 +20,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { Check, Link2, X } from 'lucide-react';
+import { tabUrl } from '@/lib/workspaceRoutes';
+import { trendView, type DrillTrend } from '../lib/trend';
 import { Badge, StatTile, statFitEm, KitButton } from '@/design-system/components';
 import { cn } from '@/lib/cn';
 import { relativeTime } from '@/lib/time';
@@ -50,6 +52,87 @@ export interface DrillDrawerProps {
   canSeeTakedowns?: boolean;
   /** Where focus goes on close when whatever opened the drawer is no longer in the document. */
   fallbackFocus?: () => HTMLElement | null;
+  /**
+   * "vs prior period": this window's total against the one before (`useDrillTrend`, country targets). Optional: when it is
+   * absent nothing is rendered, so the drawer works unchanged while the data is loading or unavailable.
+   */
+  trend?: DrillTrend | null;
+  /** The active brand filter (a brand id): "Open in Threats" carries it as `brand_id`. */
+  brandId?: string | null;
+}
+
+// ─── Actions: Copy link, Open in Threats ────────────────────
+
+/** The country a node / country target belongs to (ISO-2), or null: the targets that can open the Threats list. */
+export function threatsCountry(t: DrillTarget): string | null {
+  if (t.kind === 'country') return iso2(t.code);
+  if (t.kind === 'node') return iso2(t.node.country_code);
+  return null;
+}
+
+/**
+ * The Threats list for a country: the console's Threats tab with `country=XX` (the page seeds its table from `country` and
+ * `brand_id`), plus the active brand filter as `brand_id` so the list matches what the map was showing.
+ */
+export function threatsHref(countryCode: string, brandId?: string | null): string {
+  return tabUrl('threats', { country: countryCode, ...(brandId ? { brand_id: brandId } : null) });
+}
+
+/** Copy the current page address (the selection is in the URL, so it is the link to THIS drawer). */
+export async function copyCurrentLink(): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(window.location.href);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function DrillActions({ target, brandId }: { target: DrillTarget; brandId?: string | null }) {
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const cc = threatsCountry(target);
+  const onCopy = async () => {
+    const ok = await copyCurrentLink();
+    setStatus(ok ? 'copied' : 'failed');
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setStatus('idle'), 2200);
+  };
+  const btn = 'ds-focusable inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 font-mono text-[11px] min-h-[30px] max-[899px]:min-h-[44px]';
+  const style = { border: '1px solid var(--border-base)', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: 'pointer' } as const;
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-drill-actions>
+      <button type="button" onClick={onCopy} className={btn} style={style}>
+        {status === 'copied' ? <Check size={12} aria-hidden /> : <Link2 size={12} aria-hidden />}
+        {status === 'copied' ? 'Link copied' : 'Copy link'}
+      </button>
+      {cc && (
+        <Link to={threatsHref(cc, brandId)} className={btn} style={{ ...style, textDecoration: 'none' }}>
+          Open in Threats <span aria-hidden>→</span>
+        </Link>
+      )}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {status === 'copied' ? 'Link copied to the clipboard' : status === 'failed' ? 'Could not copy the link' : ''}
+      </span>
+      {status === 'failed' && <span className="font-mono text-[11px]" style={{ color: 'var(--sev-high-text)' }}>Copy failed: copy the address bar instead</span>}
+    </div>
+  );
+}
+
+/** "vs prior period ▲ 12%" — renders nothing when there is no usable trend. */
+export function TrendChip({ trend }: { trend?: DrillTrend | null }) {
+  const v = trendView(trend);
+  if (!v) return null;
+  // More threats is the bad direction.
+  const color = v.direction === 'up' ? 'var(--sev-high-text)' : v.direction === 'down' ? 'var(--sev-info-text)' : v.direction === 'new' ? 'var(--amber-text)' : 'var(--text-tertiary)';
+  return (
+    <div className="flex items-baseline gap-2 font-mono text-[11px]" data-trend aria-label={`vs prior period: ${v.label}`} style={{ color: 'var(--text-tertiary)' }}>
+      <span>vs prior period</span>
+      <span className="font-bold" style={{ color }}>{v.text}</span>
+    </div>
+  );
 }
 
 // ─── Escape scoping (kept from the old detail card) ─────────
@@ -642,7 +725,7 @@ function MovementBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'moveme
 
 // ─── Drawer ─────────────────────────────────────────────────
 
-export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTakedowns = true, fallbackFocus }: DrillDrawerProps) {
+export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTakedowns = true, fallbackFocus, trend, brandId }: DrillDrawerProps) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -684,6 +767,8 @@ export function DrillDrawer({ target, data, onClose, onSelect, variant, canSeeTa
 
   const body = (
     <div key={drillKey(target)} className="flex flex-col gap-3.5">
+      <DrillActions target={target} brandId={brandId} />
+      <TrendChip trend={trend} />
       {target.kind === 'node' && <NodeBody t={target} onSelect={onSelect} />}
       {target.kind === 'arc' && <ArcBody t={target} onSelect={onSelect} />}
       {target.kind === 'country' && <CountryBody t={target} data={data} onSelect={onSelect} canSeeTakedowns={canSeeTakedowns} />}

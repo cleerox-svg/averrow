@@ -6,7 +6,7 @@ import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ToastProvider } from '@/components/ui/Toast';
-import { ShellV4, outletLayoutFor } from './ShellV4';
+import { ShellV4, outletLayoutFor, isWallScreen } from './ShellV4';
 
 const mocks = vi.hoisted(() => ({ useAuth: vi.fn(), useOpenAlertCount: vi.fn() }));
 vi.mock('@/lib/auth', () => ({ useAuth: mocks.useAuth }));
@@ -71,5 +71,33 @@ describe('ShellV4 outlet gutter class', () => {
   it('gives Observatory the fill variant', () => {
     const { container } = renderAt('/observatory');
     expect(container.querySelector('.v4-outlet > .v4-page')).toHaveClass('v4-page--fill');
+  });
+});
+
+describe('Observatory wall screen', () => {
+  it('only /observatory?wall=1 is a wall screen', () => {
+    expect(isWallScreen('/observatory', '?wall=1')).toBe(true);
+    expect(isWallScreen('/observatory/', '?lens=threats&wall=1')).toBe(true);
+    expect(isWallScreen('/observatory', '')).toBe(false);
+    expect(isWallScreen('/observatory', '?wall=0')).toBe(false);
+    expect(isWallScreen('/console', '?wall=1')).toBe(false);
+  });
+
+  it('renders no sidebar, top bar or version footer, just the page', () => {
+    const { container, getByTestId } = renderAt('/observatory?wall=1');
+    expect(container.querySelector('.v4-side')).toBeNull();
+    expect(container.querySelector('.v4-top')).toBeNull();
+    expect(container.querySelector('.v4-verline')).toBeNull();
+    expect(container.querySelector('.v4-banner-wrap')).toBeNull();
+    expect(container.querySelector('.shell-v4--wall')).not.toBeNull();
+    expect(container.querySelector('.v4-outlet > .v4-page')).toHaveClass('v4-page--fill');
+    expect(getByTestId('page')).toBeInTheDocument();
+  });
+
+  it('the console keeps its chrome', () => {
+    const { container } = renderAt('/observatory');
+    expect(container.querySelector('.v4-side')).not.toBeNull();
+    expect(container.querySelector('.v4-top')).not.toBeNull();
+    expect(container.querySelector('.shell-v4--wall')).toBeNull();
   });
 });
