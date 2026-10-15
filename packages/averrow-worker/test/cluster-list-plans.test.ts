@@ -26,6 +26,7 @@ import { handleListClusters, handleProviderIntelligence, handleProviderClusters 
 import { handleAttributionBacklog } from "../src/handlers/admin/attribution";
 import { handleIntelCriticalBanner } from "../src/handlers/intel";
 import { handleTrendNexusActive } from "../src/handlers/trends";
+import { attributorAgent } from "../src/agents/attributor";
 import type { Env } from "../src/types";
 
 const LEGACY = 76_220;
@@ -82,7 +83,7 @@ type ClusterBody = { data: Array<{ id: string; status: string; threat_count: num
 
 async function planReads(raw: SqliteDb): Promise<{
   list: Planned; backlog: Planned; backlogTotals: Planned; intelCount: Planned;
-  providerClusters: Planned; trendsNexus: Planned; bannerIp: Planned;
+  providerClusters: Planned; trendsNexus: Planned; bannerIp: Planned; attributorPending: Planned;
   listBody: ClusterBody; providerBody: ClusterBody; trendsBody: ClusterBody;
   bannerBody: { data: { events: Array<{ kind: string; link: string }> } };
 }> {
@@ -103,6 +104,12 @@ async function planReads(raw: SqliteDb): Promise<{
   const bnres = await handleIntelCriticalBanner(new Request("https://averrow.com/api/intel/critical-banner"), env);
   expect(bnres.status, await bnres.clone().text()).toBe(200);
   const bannerBody = await bnres.json() as { data: { events: Array<{ kind: string; link: string }> } };
+  // Drive the real attributor so its pending-cluster SELECT comes from
+  // source. Run last: it stamps attribution_attempted_at on the batch it picks.
+  const ares = await attributorAgent.execute({
+    env, runId: "run_plan_pin", agentName: "attributor", input: {}, triggeredBy: null,
+  });
+  expect(ares.itemsProcessed, JSON.stringify(log.filter((e) => e.error))).toBeGreaterThan(0);
   const explain = (e: StatementLogEntry): Planned => ({
     sql: e.sql,
     rows: e.rows ?? 0,
@@ -122,6 +129,7 @@ async function planReads(raw: SqliteDb): Promise<{
     providerClusters: pick(/agent_notes, first_detected, last_seen FROM infrastructure_clusters WHERE .* AND asns LIKE \?/),
     trendsNexus: pick(/first_detected AS created_at FROM infrastructure_clusters/),
     bannerIp: pick(/FROM infrastructure_clusters WHERE id >= 'cluster_ip_'/),
+    attributorPending: pick(/SELECT id FROM infrastructure_clusters WHERE status = 'active' AND retired_reason IS NULL AND actor_id IS NULL/),
     listBody, providerBody, trendsBody, bannerBody,
   };
 }
@@ -188,6 +196,19 @@ describe.skipIf(!hasSqlite())("cluster top-N list reads — plans on the migrate
         expect(p.plan).toMatch(BANNER_PLAN);
         expect(p.plan).not.toContain("idx_clusters_threat_count");
         expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
+      });
+
+      it("attributorPending (attributor pending-cluster read): seeks the partial live-rows index; sorts only live rows", () => {
+        const p = modes[mode]!.attributorPending;
+        // Depends on notRetiredClusterSql() emitting the bare `retired_reason IS NULL`
+        // that matches the partial index predicate; otherwise it falls back to
+        // idx_clusters_status and sorts ~70K retired rows.
+        expect(p.sql.replace(/\s+/g, " ")).toContain("retired_reason IS NULL");
+        expect(p.plan).toMatch(/SEARCH infrastructure_clusters USING INDEX idx_clusters_live_status_threat_count \(status=\?\)/);
+        expect(p.plan).not.toMatch(/INDEX idx_clusters_status \(/);
+        expect(p.plan).not.toContain("idx_clusters_threat_count");
+        expect(p.plan).not.toMatch(/SCAN infrastructure_clusters/);
+        expect(p.rows).toBeGreaterThan(0);
       });
 
       it("provider clusters / trends / banner return live operations only", () => {
