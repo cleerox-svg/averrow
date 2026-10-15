@@ -90,14 +90,18 @@ export function moveLabelText(m: Pick<Movement, 'counts' | 'to'>): string {
 
 /**
  * The lowest camera zoom at which the hop labels are drawn. At the world view the trails of a dozen events converge on a
- * few countries and the words would pile up, so they appear once there is room: a fixed zoom on the flat map, a little
- * past the zoom that fits the whole planet on the globe.
+ * few countries and the words would pile up, so they appear once there is room: a fixed zoom on the flat map; on the
+ * globe, the zoom that fits the planet (where it opens) less a little. The globe never needed more: only the hops on the
+ * near hemisphere are placeable, and the label count is capped.
  */
 /** Flat-map zoom below which the hop labels stay off: at the world view the trails converge and the words pile up. */
 export const MOVE_LABEL_MIN_ZOOM_FLAT = 2.2;
 
+/** Zoom the globe may sit below its fit zoom (the planet a little smaller than the free area) and still label hops. */
+export const MOVE_LABEL_GLOBE_SLACK = 0.3;
+
 export function moveLabelMinZoom(projection: Projection, canvas: { width: number; height: number }): number {
-  return projection === 'globe' ? globeFitZoom(canvas.width, canvas.height) + 0.5 : MOVE_LABEL_MIN_ZOOM_FLAT;
+  return projection === 'globe' ? globeFitZoom(canvas.width, canvas.height) - MOVE_LABEL_GLOBE_SLACK : MOVE_LABEL_MIN_ZOOM_FLAT;
 }
 
 function placeable(list: readonly string[]): string[] {

@@ -63,6 +63,11 @@ export interface MoveLabelSource {
   /** The hop's ends (to skip hops too short for their label). */
   from: LngLat;
   to: LngLat;
+  /**
+   * The drawn path. The label sits at its midpoint unless that is off screen or behind the globe, then at the nearest
+   * path point that is on screen (see `placeLensLabels`).
+   */
+  path?: readonly LngLat[];
   priority: number;
   /** The selected event's label: kept in addition to the top moves. */
   selected?: boolean;
@@ -183,6 +188,7 @@ export const moveLabelSources = memoByModelAndKey((m: MovementModel, selectedEve
       after: h.path[Math.min(h.path.length - 1, mid + 1)]!,
       from: h.from,
       to: h.to,
+      path: h.path,
       priority: (selectedEventId && h.eventId === selectedEventId ? 1e6 : 0) + size,
       ...(selectedEventId && h.eventId === selectedEventId ? { selected: true } : null),
     });
@@ -261,6 +267,36 @@ export function tiltOf(a: { x: number; y: number }, b: { x: number; y: number })
   if (deg > 90) deg -= 180;
   else if (deg < -90) deg += 180;
   return Math.max(-MOVE_LABEL_MAX_TILT, Math.min(MOVE_LABEL_MAX_TILT, deg));
+}
+
+type Screen = { x: number; y: number; fade?: number };
+
+/**
+ * Where a movement label sits on its hop: the midpoint when it can be drawn, else the path point nearest the middle that
+ * can (on screen with room for the words, and not behind the globe). A long hop at a close zoom has its midpoint
+ * off the viewport while most of the trail is in it.
+ */
+function moveAnchor(
+  mv: MoveLabelSource, project: Project, size: { width: number; height: number }, half: number,
+): { position: LngLat; mid: Screen; a: Screen; b: Screen } | null {
+  const path = mv.path;
+  const usable = (p: Screen | null): p is Screen =>
+    !!p && p.x - half >= 0 && p.x + half <= size.width && p.y + MOVE_LABEL_LIFT - LABEL_H / 2 - 3 >= 0 && p.y + MOVE_LABEL_LIFT + LABEL_H / 2 + 3 <= size.height;
+  if (!path || path.length < 3) {
+    const mid = project(mv.position); const a = project(mv.before); const b = project(mv.after);
+    return mid && a && b ? { position: mv.position, mid, a, b } : null;
+  }
+  const centre = Math.floor(path.length / 2);
+  for (let d = 0; d < path.length; d++) {
+    for (const i of d === 0 ? [centre] : [centre - d, centre + d]) {
+      if (i < 1 || i > path.length - 2) continue;
+      const mid = project(path[i]!);
+      if (!usable(mid)) continue;
+      const a = project(path[i - 1]!); const b = project(path[i + 1]!);
+      if (a && b) return { position: path[i]!, mid, a, b };
+    }
+  }
+  return null;
 }
 
 /** Greedy screen-space placement of both label sets at the current camera. */
@@ -377,17 +413,16 @@ export function placeLensLabels(input: PlaceInput, project: Project, size: { wid
   const moveById = new Map<string, MoveLabelSource>();
   const moveFade = new Map<string, number>();
   for (const mv of input.moves ?? []) {
-    const mid = project(mv.position);
-    const a = project(mv.before);
-    const b = project(mv.after);
     const f = project(mv.from);
     const t = project(mv.to);
-    if (!mid || !a || !b) continue;
     // A hop too short on screen to carry its words gets none (the tooltip and drawer have them).
     if (f && t && Math.hypot(t.x - f.x, t.y - f.y) < mv.text.length * CHAR_PX + 28) continue;
-    moveCands.push({ id: mv.id, text: mv.text, x: mid.x, y: mid.y, dy: MOVE_LABEL_LIFT, priority: mv.priority, angle: tiltOf(a, b) });
-    moveById.set(mv.id, mv);
-    moveFade.set(mv.id, mid.fade ?? 1);
+    const half = (mv.text.length * CHAR_PX) / 2 + 3;
+    const anchor = moveAnchor(mv, project, size, half);
+    if (!anchor) continue;
+    moveCands.push({ id: mv.id, text: mv.text, x: anchor.mid.x, y: anchor.mid.y, dy: MOVE_LABEL_LIFT, priority: mv.priority, angle: tiltOf(anchor.a, anchor.b) });
+    moveById.set(mv.id, { ...mv, position: anchor.position });
+    moveFade.set(mv.id, anchor.mid.fade ?? 1);
   }
   const moveObstacles = actorObstacles.concat(actors.flatMap(a => {
     const p = project(a.position);
