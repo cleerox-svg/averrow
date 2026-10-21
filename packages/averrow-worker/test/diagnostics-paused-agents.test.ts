@@ -15,13 +15,18 @@
  *   4. The run lookup is bounded: per-agent agent_id = ? point lookup with
  *      ORDER BY started_at DESC LIMIT ? (index seek), issued as ONE batch.
  *   5. No paused agents → no agent_runs query at all.
+ *   6. A failed paused read degrades to `paused: []` + `paused_error` (and
+ *      `paused_count: null`) instead of 500-ing the whole endpoint.
  */
 
 import { describe, it, expect } from "vitest";
 import {
   fetchPausedAgents,
+  fetchPausedAgentsSafe,
+  handlePlatformDiagnostics,
   PAUSED_AGENT_RECENT_RUNS,
 } from "../src/handlers/diagnostics";
+import type { Env } from "../src/types";
 
 interface ConfigRow {
   agent_id: string;
@@ -164,5 +169,78 @@ describe("fetchPausedAgents", () => {
     expect(await fetchPausedAgents(db, NOW)).toEqual([]);
     expect(batchCalls()).toBe(0);
     expect(sqls.some((s) => /FROM\s+agent_runs/i.test(s))).toBe(false);
+  });
+});
+
+describe("paused read failure degrades instead of failing the endpoint", () => {
+  const failingConfigsDb = (inner: () => D1Database) => {
+    const base = inner();
+    return {
+      ...base,
+      prepare(sql: string) {
+        if (/FROM\s+agent_configs/i.test(sql) && /enabled\s*=\s*0/i.test(sql)) {
+          throw new Error("D1_ERROR: no such column: paused_after_n_failures");
+        }
+        return base.prepare(sql);
+      },
+    } as unknown as D1Database;
+  };
+
+  it("fetchPausedAgentsSafe returns paused: [] + paused_error", async () => {
+    const db = failingConfigsDb(() => makeDb([], []).db);
+    await expect(fetchPausedAgents(db, NOW)).rejects.toThrow(/no such column/);
+    expect(await fetchPausedAgentsSafe(db, NOW)).toEqual({
+      paused: [],
+      paused_error: "D1_ERROR: no such column: paused_after_n_failures",
+    });
+  });
+
+  it("fetchPausedAgentsSafe passes rows through with paused_error null", async () => {
+    const { db } = makeDb(
+      [{ agent_id: "sparrow", enabled: 0, paused_reason: "manual", paused_at: "2026-10-21 06:00:00", paused_after_n_failures: null, consecutive_failures: 0 }],
+      [],
+    );
+    const out = await fetchPausedAgentsSafe(db, NOW);
+    expect(out.paused_error).toBeNull();
+    expect(out.paused.map((a) => a.agent_id)).toEqual(["sparrow"]);
+  });
+
+  it("handlePlatformDiagnostics still returns 200 with paused_error when the paused read fails", async () => {
+    // Every other query answers empty; only the paused agent_configs read throws.
+    const empty = (): D1PreparedStatement => {
+      const stmt = {
+        bind: () => stmt,
+        all: async () => ({ results: [], success: true, meta: {} }),
+        first: async () => null,
+        run: async () => ({ results: [], success: true, meta: { changes: 0 } }),
+        raw: async () => [],
+      };
+      return stmt as unknown as D1PreparedStatement;
+    };
+    const db = {
+      prepare(sql: string) {
+        if (/FROM\s+agent_configs/i.test(sql) && /enabled\s*=\s*0/i.test(sql)) {
+          throw new Error("D1_ERROR: simulated paused read failure");
+        }
+        return empty();
+      },
+      batch: async (stmts: unknown[]) => stmts.map(() => ({ results: [], success: true, meta: {} })),
+    } as unknown as D1Database;
+    const kv = { get: async () => null, put: async () => undefined, delete: async () => undefined };
+    const env = { DB: db, CACHE: kv } as unknown as Env;
+
+    const res = await handlePlatformDiagnostics(
+      new Request("https://averrow.test/api/internal/platform-diagnostics?hours=6"),
+      env,
+    );
+    const body = (await res.json()) as {
+      success: boolean;
+      data: { agent_mesh: { paused: unknown[]; paused_error?: string; summary: { paused_count: number | null } } };
+    };
+    expect(res.status).toBe(200);
+    expect(body.success).toBe(true);
+    expect(body.data.agent_mesh.paused).toEqual([]);
+    expect(body.data.agent_mesh.paused_error).toBe("D1_ERROR: simulated paused read failure");
+    expect(body.data.agent_mesh.summary.paused_count).toBeNull();
   });
 });

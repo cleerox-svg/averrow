@@ -799,6 +799,16 @@ export const strategistAgent: AgentModule = {
         clusterErrors: clusterErrors.length,
       },
       agentOutputs: outputs,
+      // Some (not all — that threw above) clusters failed: the run did real
+      // work but skipped part of it, so finalize 'partial' (completed_at set)
+      // instead of a quiet 'success'.
+      ...(clusterErrors.length > 0
+        ? {
+            degraded: {
+              reason: `${clusterErrors.length} cluster(s) failed (${clustersOk} ok); first (${clusterErrors[0]!.key}): ${clusterErrors[0]!.error}`,
+            },
+          }
+        : {}),
     };
   },
 };

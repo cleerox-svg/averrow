@@ -201,6 +201,58 @@ describe.skipIf(!hasSqlite())("strategist — no data-derived LIKE over D1's 50-
       expect(result.itemsCreated).toBe(2);
     });
 
+    it("a clean run is not degraded", async () => {
+      for (let i = 0; i < 5; i++) addThreat({ registrar: LONG_REGISTRAR });
+      const result = await run();
+      expect(result.output.clusterErrors).toBe(0);
+      expect(result.degraded).toBeUndefined();
+    });
+
+    /** Run with the per-cluster threat-link UPDATE failing for `badRegistrars`. */
+    async function runFailingRegistrars(badRegistrars: string[]) {
+      const real = d1FromSqlite(raw, { swallow: swallowAbsent, log });
+      const db = new Proxy(real, {
+        get(target, prop, receiver) {
+          if (prop !== "prepare") return Reflect.get(target, prop, receiver) as unknown;
+          return (sql: string) => {
+            const stmt = target.prepare(sql);
+            if (!/UPDATE threats SET campaign_id = \?\s+WHERE registrar = \?/.test(sql)) return stmt;
+            return {
+              ...stmt,
+              bind: (...args: unknown[]) => {
+                if (badRegistrars.includes(args[1] as string)) {
+                  return { run: async () => { throw new Error("D1_ERROR: simulated cluster failure"); } };
+                }
+                return stmt.bind(...args);
+              },
+            };
+          };
+        },
+      });
+      const env = { DB: db, CACHE: fakeKv(), AI_MODE: "rules_only" } as never;
+      return strategistAgent.execute({ env, runId: "strat-run", agentName: "strategist", input: {}, triggeredBy: null });
+    }
+
+    it("some clusters fail → run completes degraded ('partial') with the first error", async () => {
+      for (let i = 0; i < 5; i++) addThreat({ registrar: LONG_REGISTRAR });
+      for (let i = 0; i < 5; i++) addThreat({ registrar: LONGER_REGISTRAR });
+
+      const result = await runFailingRegistrars([LONGER_REGISTRAR]);
+
+      expect(result.output.clusterErrors).toBe(1);
+      expect(result.degraded).toBeDefined();
+      expect(result.degraded!.reason).toBe(
+        `1 cluster(s) failed (1 ok); first (registrar:${LONGER_REGISTRAR}): D1_ERROR: simulated cluster failure`,
+      );
+    });
+
+    it("every cluster fails → execute() throws (failed run, breaker counts it)", async () => {
+      for (let i = 0; i < 5; i++) addThreat({ registrar: LONG_REGISTRAR });
+      await expect(runFailingRegistrars([LONG_REGISTRAR])).rejects.toThrow(
+        /strategist: all 1 clusters failed; first \(registrar:NICENIC/,
+      );
+    });
+
     it("no statement binds a LIKE pattern from data", async () => {
       for (let i = 0; i < 5; i++) addThreat({ registrar: LONGER_REGISTRAR });
       await run();

@@ -77,6 +77,8 @@ export const sparrowAgent: AgentModule = {
     // Each creator below catches and counts a per-candidate write failure
     // instead of throwing, so one bad row can't fail the whole run (a NULL
     // brand_id on one abuse-report candidate auto-paused Sparrow in 2026-06).
+    // The tallies are surfaced on the run at the end of execute()
+    // (degraded on some failures, thrown when every candidate failed).
     // ── Phase B: Auto-create takedowns from malicious URL scan results ──
     const urlTally = await createTakedownsFromMaliciousUrls(env);
     const urlTakedowns = urlTally.created;
@@ -112,11 +114,12 @@ export const sparrowAgent: AgentModule = {
       abuse_report: abuseTally,
     };
     const draftFailures = Object.values(draftTallies).reduce((n, t) => n + t.failed, 0);
+    const draftsCreated = Object.values(draftTallies).reduce((n, t) => n + t.created, 0);
+    const firstDraftError = Object.values(draftTallies).find((t) => t.firstError !== null)?.firstError ?? null;
     if (draftFailures > 0) {
-      const firstError = Object.values(draftTallies).find((t) => t.firstError !== null)?.firstError ?? null;
       outputs.push({
         type: "diagnostic",
-        summary: `${draftFailures} takedown draft candidate(s) failed to write and were skipped${firstError ? ` (first: ${firstError})` : ""}`,
+        summary: `${draftFailures} takedown draft candidate(s) failed to write and were skipped${firstDraftError ? ` (first: ${firstDraftError})` : ""}`,
         severity: "high",
         details: Object.fromEntries(
           Object.entries(draftTallies).map(([k, t]) => [k, { created: t.created, failed: t.failed, first_error: t.firstError }]),
@@ -434,7 +437,24 @@ export const sparrowAgent: AgentModule = {
       console.error('[Sparrow] Phase H error:', err instanceof Error ? err.message : String(err));
     }
 
+    // Surface caught draft failures on the run itself (checked after the
+    // later phases so existing drafts are still verified/submitted):
+    //   every candidate failed and none was drafted → throw, so agent_runs
+    //     records 'failed' + error_message and the circuit breaker counts it;
+    //   some failed → degraded ('partial' with completed_at set), so a source
+    //     whose candidates all fail while others succeed is still visible.
+    // A degraded/failed run is also the visibility mitigation for a
+    // permanently-failing candidate that keeps its LIMIT-10 slot (see the
+    // note at createTakedownsFromAbuseReports' selection).
+    if (draftFailures > 0 && draftsCreated === 0) {
+      throw new Error(`sparrow: all ${draftFailures} takedown draft candidate(s) failed; first: ${firstDraftError ?? "unknown"}`);
+    }
+    const degraded = draftFailures > 0
+      ? { reason: `${draftFailures} takedown draft candidate(s) failed (${draftsCreated} created); first: ${firstDraftError ?? "unknown"}` }
+      : undefined;
+
     return {
+      ...(degraded ? { degraded } : {}),
       itemsProcessed,
       itemsCreated: itemsCreated + socialEvidenceAttached,
       itemsUpdated: providersResolved + domainsVerified + autoSubmitted + followupsFired,
@@ -684,6 +704,14 @@ async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
 // INSERT throw (SQLITE_CONSTRAINT_NOTNULL) on every run, failing Sparrow
 // three times in a row on 2026-06-30 until it auto-paused. They are left
 // unstamped, so a message later attributed to a brand is picked up then.
+//
+// Known limit (accepted, no attempt counter): a message whose draft write
+// fails every time is never stamped and keeps its slot in this fixed-order
+// LIMIT 10, so ten such messages would starve newer reports (the url_scan /
+// lookalike / social / app-store / dark-web selections share the shape).
+// It cannot happen silently: any caught failure finalizes the run 'partial'
+// (AgentResult.degraded) or, when nothing was drafted, 'failed' — see the
+// end of execute().
 export async function createTakedownsFromAbuseReports(env: Env): Promise<DraftTally> {
   const messages = await env.DB.prepare(`
     SELECT id, org_id, brand_id, classification, severity, promoted_threat_ids
@@ -719,14 +747,11 @@ export async function createTakedownsFromAbuseReports(env: Env): Promise<DraftTa
       } catch { threatIds = []; }
 
       if (threatIds.length > 0) {
-        const placeholders = threatIds.map(() => "?").join(",");
-        const promoted = await env.DB.prepare(
-          `SELECT id, malicious_url, malicious_domain FROM threats WHERE id IN (${placeholders})`,
-        ).bind(...threatIds).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
+        const promoted = await loadPromotedThreats(env, threatIds);
 
         const severity = msg.severity === "CRITICAL" ? "CRITICAL" : "HIGH";
 
-        for (const t of promoted.results) {
+        for (const t of promoted) {
           const domain = t.malicious_domain;
           if (!domain) continue;
           const url = t.malicious_url;
@@ -805,9 +830,31 @@ export async function createTakedownsFromAbuseReports(env: Env): Promise<DraftTa
   return tally;
 }
 
+// D1 caps a statement at 100 bound parameters; a message's promoted_threat_ids
+// list is unbounded, so the IN lookup is chunked (same 90 as
+// lib/cluster-attribution-inherit.ts IN_CHUNK). Ids are de-duplicated first —
+// IN already ignores duplicates, so the returned rows are unchanged.
+const PROMOTED_IN_CHUNK = 90;
+
+async function loadPromotedThreats(
+  env: Env,
+  threatIds: string[],
+): Promise<Array<{ id: string; malicious_url: string | null; malicious_domain: string | null }>> {
+  const ids = [...new Set(threatIds)];
+  const out: Array<{ id: string; malicious_url: string | null; malicious_domain: string | null }> = [];
+  for (let i = 0; i < ids.length; i += PROMOTED_IN_CHUNK) {
+    const part = ids.slice(i, i + PROMOTED_IN_CHUNK);
+    const rows = await env.DB.prepare(
+      `SELECT id, malicious_url, malicious_domain FROM threats WHERE id IN (${part.map(() => "?").join(",")})`,
+    ).bind(...part).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
+    out.push(...rows.results);
+  }
+  return out;
+}
+
 // ─── Phase C: Impersonation Profiles → Takedown ────────────────────
 
-async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> {
+export async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> {
   const impersonations = await env.DB.prepare(`
     SELECT sp.*, b.name as brand_name
     FROM social_profiles sp
@@ -842,7 +889,10 @@ async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> 
 
       const takedownId = crypto.randomUUID();
       const owningOrgId = await resolveOwningOrgId(env, profile.brand_id as string);
-      await env.DB.prepare(`
+      // Atomic draft + evidence: the dedup is `id NOT IN (SELECT source_id
+      // FROM takedown_requests …)`, so a draft committed without its evidence
+      // could never be redrafted. A failure rolls both back.
+      await env.DB.batch([env.DB.prepare(`
         INSERT INTO takedown_requests (
           id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
           source_type, source_id, evidence_summary, evidence_detail,
@@ -864,10 +914,10 @@ async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> 
         (provider?.abuse_api_type as string) || "form",
         confidenceScore >= 0.8 ? "HIGH" : "MEDIUM",
         confidenceScore >= 0.8 ? 70 : 50,
-      ).run();
+      ),
 
       // Create evidence record
-      await env.DB.prepare(`
+      env.DB.prepare(`
         INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
         VALUES (?, ?, 'ai_report', 'Social Profile Assessment', ?, ?, datetime('now'))
       `).bind(
@@ -882,7 +932,7 @@ async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> 
           classification: profile.classification,
           brand_name: brandName,
         }),
-      ).run();
+      )]);
 
       tally.created++;
     } catch (err) {
@@ -895,7 +945,7 @@ async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> 
 
 // ─── Phase C2: App-Store Impersonations → Takedown ────────────────
 
-async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<DraftTally> {
+export async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<DraftTally> {
   let impersonations: { results: Record<string, unknown>[] };
   try {
     impersonations = await env.DB.prepare(`
@@ -950,7 +1000,8 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<Draf
 
       const takedownId = crypto.randomUUID();
       const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
-      await env.DB.prepare(`
+      // Atomic draft + evidence (same NOT IN dedup reasoning as Phase C).
+      await env.DB.batch([env.DB.prepare(`
         INSERT INTO takedown_requests (
           id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
           source_type, source_id, evidence_summary, evidence_detail,
@@ -972,10 +1023,10 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<Draf
         (provider?.abuse_api_type as string) || "form",
         severity,
         severity === "CRITICAL" ? 85 : 70,
-      ).run();
+      ),
 
       // Evidence record mirrors the pattern used for social profiles.
-      await env.DB.prepare(`
+      env.DB.prepare(`
         INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
         VALUES (?, ?, 'app_store_listing', 'App-Store Listing Assessment', ?, ?, datetime('now'))
       `).bind(
@@ -996,7 +1047,7 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<Draf
           brand_name: brandName,
           signals: signalsJson,
         }),
-      ).run();
+      )]);
 
       tally.created++;
     } catch (err) {
@@ -1009,7 +1060,7 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<Draf
 
 // ─── Phase C3: Dark-Web Confirmed Mentions → Takedown ─────────────
 
-async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally> {
+export async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally> {
   let mentions: { results: Record<string, unknown>[] };
   try {
     mentions = await env.DB.prepare(`
@@ -1059,7 +1110,8 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally>
 
       const takedownId = crypto.randomUUID();
       const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
-      await env.DB.prepare(`
+      // Atomic draft + evidence (same NOT IN dedup reasoning as Phase C).
+      await env.DB.batch([env.DB.prepare(`
         INSERT INTO takedown_requests (
           id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
           source_type, source_id, evidence_summary, evidence_detail,
@@ -1081,9 +1133,9 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally>
         (provider?.abuse_api_type as string) || "email",
         severity,
         severity === "CRITICAL" ? 85 : 65,
-      ).run();
+      ),
 
-      await env.DB.prepare(`
+      env.DB.prepare(`
         INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
         VALUES (?, ?, 'dark_web_mention', 'Dark-Web Mention Evidence', ?, ?, datetime('now'))
       `).bind(
@@ -1103,7 +1155,7 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally>
           brand_name: brandName,
           snippet_length: snippet.length,
         }),
-      ).run();
+      )]);
 
       tally.created++;
     } catch (err) {

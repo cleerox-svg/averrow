@@ -1095,8 +1095,8 @@ function sqliteUtcMs(ts: string): number {
  * breaker state directly.
  *
  * Cost: one read of agent_configs (tiny table), then ONE `db.batch` of
- * per-agent point lookups that seek `idx_agent_runs_agent_started`
- * (agent_id, started_at DESC) with `LIMIT PAUSED_AGENT_RECENT_RUNS` — the
+ * per-agent point lookups that seek the agent_runs (agent_id, started_at
+ * DESC) index with `LIMIT PAUSED_AGENT_RECENT_RUNS` — the
  * error filter runs in JS so a manually-paused agent with a long clean
  * history can't turn the lookup into a walk of its whole run history.
  */
@@ -1149,6 +1149,22 @@ export async function fetchPausedAgents(
       last_error_at: errRun?.started_at ?? null,
     };
   });
+}
+
+/**
+ * fetchPausedAgents for the diagnostics Promise.all: a failure (missing
+ * column, D1 blip) degrades to `paused: []` + `paused_error` instead of
+ * rejecting the whole endpoint with a 500.
+ */
+export async function fetchPausedAgentsSafe(
+  db: D1Database,
+  nowMs: number = Date.now(),
+): Promise<{ paused: PausedAgentDiag[]; paused_error: string | null }> {
+  try {
+    return { paused: await fetchPausedAgents(db, nowMs), paused_error: null };
+  } catch (err) {
+    return { paused: [], paused_error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /** GET /api/admin/platform-diagnostics  (JWT admin auth)
@@ -1933,7 +1949,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     const pageAnalysisP = buildPageAnalysisDiag(env);
     const velocityP = buildVelocityDiag(env);
     const nrdRetentionP = buildNrdRetentionDiag(env);
-    const pausedAgentsP = fetchPausedAgents(env.DB);
+    const pausedAgentsP = fetchPausedAgentsSafe(env.DB);
 
     // ── Execute all in parallel ─────────────────────────────────────
     const [
@@ -2288,7 +2304,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // removed.
           // 14: additive `agent_mesh.paused[]` + `agent_mesh.summary.paused_count`
           // (circuit-broken / manually paused agents from agent_configs,
-          // which never appear in per_agent). No field removed.
+          // which never appear in per_agent); on a failed read paused=[],
+          // paused_count=null + agent_mesh.paused_error. No field removed.
           endpoint_version: 14,
         },
 
@@ -2461,7 +2478,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             total_failures: agentMeshMerged.reduce((s, a) => s + a.failed, 0),
             total_killed: agentMeshMerged.reduce((s, a) => s + (a.killed_runs ?? 0), 0),
             stalled_count: stalled.results.length,
-            paused_count: pausedAgents.length,
+            // null (not 0) when the paused read failed — see paused_error.
+            paused_count: pausedAgents.paused_error === null ? pausedAgents.paused.length : null,
           },
           per_agent: agentMeshMerged,
           stalled: stalled.results,
@@ -2469,7 +2487,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // (paused_reason 'auto:consecutive_failures') and manual pauses.
           // A paused agent writes no agent_runs rows, so it is absent from
           // per_agent; this is the only place it shows up.
-          paused: pausedAgents,
+          paused: pausedAgents.paused,
+          ...(pausedAgents.paused_error !== null ? { paused_error: pausedAgents.paused_error } : {}),
         },
 
         cron_health: cronHealth.results,
