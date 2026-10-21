@@ -605,6 +605,10 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
           : { Status: 0, Answer: [] },
       )));
       try {
+        // The agent reads the wall clock; pin it to NOW so the enqueued rows
+        // (stamped NOW) are not expired out of the claim window as real time passes.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(NOW);
         const ctxBase = { env, runId: "r", agentName: "page_capture", triggeredBy: "api" };
         // agent_events isn't in the derived schema — swallow just that insert.
         const res1 = await pageCaptureAgent.execute({ ...ctxBase, env: { ...env, DB: withEventsSwallowed(env.DB) } as Env, input: { trigger: "manual" } });
@@ -616,6 +620,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       } finally {
         mockDriver = null;
         vi.unstubAllGlobals();
+        vi.useRealTimers();
       }
     });
 
@@ -900,6 +905,10 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       mockDriver = fakeDriver({}, { openFails: true }).driver;
       const events: string[] = [];
       try {
+        // The agent reads the wall clock; pin it to NOW so the enqueued rows
+        // (stamped NOW) are not expired out of the claim window as real time passes.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(NOW);
         const dbEv = Object.assign(Object.create(db) as D1Database, {
           prepare: (sql: string) => (sql.includes("INSERT INTO agent_events")
             ? { bind: (...a: unknown[]) => ({ run: async () => { events.push(String(a[1])); return { meta: {} }; } }) } as unknown as D1PreparedStatement
@@ -911,6 +920,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
         expect(JSON.parse(events[0]!)).toMatchObject({ run_id: "r9", error: expect.stringMatching(/browser session unavailable/) });
       } finally {
         mockDriver = null;
+        vi.useRealTimers();
       }
     });
   });
