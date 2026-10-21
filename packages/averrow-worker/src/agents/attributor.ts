@@ -20,7 +20,19 @@
  *      actor_id IS NULL, outside the RETRY_COOLDOWN_DAYS window) and
  *      stamps `attribution_attempted_at` so the backlog's
  *      attempted/never-attempted split stays meaningful.
- *   2. Runs the OTX → cluster inheritance post-pass.
+ *   2. Runs the OTX → cluster inheritance post-pass — only for clusters
+ *      that pass the inheritance policy (specific-evidence lane, no
+ *      multi-tenant-ASN member, >= 2 agreeing OTX members covering >= 10%,
+ *      <= 250 members; decideInheritedActor) — bounded per run
+ *      (≤ MAX_MEMBER_WRITES_PER_RUN member rows, batched writes, and a
+ *      wall-clock budget — see lib/cluster-attribution-inherit.ts). A
+ *      larger backlog drains over successive runs; `otx_inheritance
+ *      .stopped_reason` in the run output says when one remains.
+ *
+ * Dispatch: the hourly orchestrator tick (inline await at hour % 4 === 1,
+ * cron/orchestrator.ts) and Flight Control stall recovery (ctx.waitUntil).
+ * Both share their host invocation's CPU / subrequest / wall-clock budget
+ * with many other agents, so this run must stay short.
  *
  * It never sets `actor_id` from free text and never calls
  * `recordAttribution` itself.
@@ -114,7 +126,7 @@ export const attributorAgent: AgentModule = {
   trigger: "scheduled",
   requiresApproval: false,
   // 60 declared → 90-min ceiling. Kept from the Haiku era; the rules-only
-  // run is a bounded stamp batch + one SQL inheritance pass.
+  // run is a bounded stamp batch + one budget-bounded SQL inheritance pass.
   stallThresholdMinutes: 60,
   parallelMax: 1,
   // No AI calls since AI Strategy Phase 1 — pure SQL. Cap=0 surfaces regressions.

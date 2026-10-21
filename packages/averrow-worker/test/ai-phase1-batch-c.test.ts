@@ -142,17 +142,21 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
     raw = openDerivedDb(ATTRIBUTOR_TABLES);
     spy = installFetchSpy();
     raw.exec(`INSERT INTO threat_actors (id, name, aliases, status) VALUES ('act_laz', 'Lazarus Group', '["Hidden Cobra"]', 'active')`);
-    // c_otx: one member OTX-attributed to Lazarus, one sibling un-attributed.
-    raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('c_otx', 'AS9009 cluster', 2, 'active')`);
+    // cluster_ip_198.51.100.9: a per-IP (specific-evidence) cluster with two
+    // members OTX-attributed to Lazarus and one sibling un-attributed — the
+    // shape the inheritance policy admits (lib/cluster-attribution-inherit.ts).
+    raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES ('cluster_ip_198.51.100.9', 'Shared IP 198.51.100.9', 3, 'active')`);
     // c_hint: free text names an actor (attacker-controlled), no OTX evidence.
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, agent_notes, threat_count, status) VALUES ('c_hint', 'Lazarus Group apps', 'developer_name=Lazarus Group', 5, 'active')`);
     // c_legacy: retired (superseded) but status 'active' — the attributor
     // must never pick it up (stamped list below excludes it).
     raw.exec(`INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, retired_reason) VALUES ('c_legacy', 'AS9009 legacy copy', 900, 'active', 'superseded')`);
-    raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t1','otx','phishing','active','c_otx')`);
-    raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t2','feedx','phishing','active','c_otx')`);
+    raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t1','otx','phishing','active','cluster_ip_198.51.100.9')`);
+    raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t1b','otx','phishing','active','cluster_ip_198.51.100.9')`);
+    raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t2','feedx','phishing','active','cluster_ip_198.51.100.9')`);
     raw.exec(`INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES ('t3','appstore','phishing','active','c_hint')`);
     raw.exec(`INSERT INTO threat_attributions (id, threat_id, actor_id, source, confidence) VALUES ('tat_otx_t1', 't1', 'act_laz', 'otx', 'medium')`);
+    raw.exec(`INSERT INTO threat_attributions (id, threat_id, actor_id, source, confidence) VALUES ('tat_otx_t1b', 't1b', 'act_laz', 'otx', 'medium')`);
   });
 
   it("makes zero fetches, stamps attempts, and still applies OTX inheritance", async () => {
@@ -165,14 +169,14 @@ describe.skipIf(!hasSqlite())("attributor run (real SQLite)", () => {
     const stamped = raw.prepare(
       `SELECT id FROM infrastructure_clusters WHERE attribution_attempted_at IS NOT NULL ORDER BY id`,
     ).all() as Array<{ id: string }>;
-    expect(stamped.map((r) => r.id)).toEqual(["c_hint", "c_otx"]);
+    expect(stamped.map((r) => r.id)).toEqual(["c_hint", "cluster_ip_198.51.100.9"]);
 
     // OTX inheritance onto sibling t2.
     const inherited = raw.prepare(
       `SELECT threat_id, actor_id FROM threat_attributions WHERE id LIKE 'tat_otxinherit_%'`,
     ).all() as Array<{ threat_id: string; actor_id: string }>;
     expect(inherited).toEqual([{ threat_id: "t2", actor_id: "act_laz" }]);
-    const otxCluster = raw.prepare(`SELECT actor_id FROM infrastructure_clusters WHERE id = 'c_otx'`).all() as Array<{ actor_id: string | null }>;
+    const otxCluster = raw.prepare(`SELECT actor_id FROM infrastructure_clusters WHERE id = 'cluster_ip_198.51.100.9'`).all() as Array<{ actor_id: string | null }>;
     expect(otxCluster[0]!.actor_id).toBe("act_laz");
 
     expect((result.output as { otx_inheritance: { members_attributed: number } }).otx_inheritance.members_attributed).toBe(1);

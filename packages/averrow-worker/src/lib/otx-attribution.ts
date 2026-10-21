@@ -247,21 +247,35 @@ export async function upsertActorByName(
  * derived from your source's record (e.g. `tat_nexus_${clusterId}_${threatId}`)
  * so repeated runs don't duplicate rows.
  */
+export interface RecordAttributionArgs {
+  id: string;
+  threatId: string;
+  actorId: string;
+  source: AttributionSource;
+  sourcePulseId?: string | null;
+  sourcePulseName?: string | null;
+  actorNameRaw?: string | null;
+  confidence?: 'confirmed' | 'high' | 'medium' | 'low';
+  metadata?: Record<string, unknown>;
+}
+
 export async function recordAttribution(
   db: D1Database,
-  args: {
-    id: string;
-    threatId: string;
-    actorId: string;
-    source: AttributionSource;
-    sourcePulseId?: string | null;
-    sourcePulseName?: string | null;
-    actorNameRaw?: string | null;
-    confidence?: 'confirmed' | 'high' | 'medium' | 'low';
-    metadata?: Record<string, unknown>;
-  },
+  args: RecordAttributionArgs,
 ): Promise<void> {
-  await db
+  await recordAttributionStmt(db, args).run();
+}
+
+/**
+ * The bound INSERT OR IGNORE behind `recordAttribution`, unexecuted, so a
+ * bulk writer can send many rows in one `db.batch()` round-trip instead of
+ * one awaited statement per row (lib/cluster-attribution-inherit.ts).
+ */
+export function recordAttributionStmt(
+  db: D1Database,
+  args: RecordAttributionArgs,
+): D1PreparedStatement {
+  return db
     .prepare(`
       INSERT OR IGNORE INTO threat_attributions
         (id, threat_id, actor_id, source, source_pulse_id, source_pulse_name,
@@ -278,8 +292,7 @@ export async function recordAttribution(
       args.actorNameRaw ?? null,
       args.confidence ?? 'medium',
       args.metadata ? JSON.stringify(args.metadata) : null,
-    )
-    .run();
+    );
 }
 
 /**
