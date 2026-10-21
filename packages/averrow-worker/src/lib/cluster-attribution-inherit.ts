@@ -21,7 +21,8 @@
 // unsafe table rebuild. We reuse 'nexus' (cluster-scoped inference,
 // same convention the attributor's own member fan-out uses) and make
 // inherited rows unambiguously identifiable by:
-//   * a stable id prefix `tat_otxinherit_` (queryable, dedup key)
+//   * a stable id prefix `tat_otxinherit_` (queryable) + a SHA-256 of
+//     (cluster, threat) — see inheritedAttributionId
 //   * `metadata.inherited = true` + `metadata.inherit_origin = 'otx'`
 //   * confidence 'low' -- strictly weaker than the 'medium' the direct
 //     OTX pulse attribution carries (never higher than the source).
@@ -29,6 +30,7 @@
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import { recordAttributionStmt, type AttributionSource } from './otx-attribution';
 import { isRetiredCluster } from './cluster-status';
+import { hashToken } from './hash';
 
 // ─── Pure decision function (no I/O, no clock) ───────────────────────
 
@@ -74,6 +76,26 @@ export function decideInheritedActor(
   if (!entry) return null;
   const [actor_id, actor_name] = entry;
   return { actor_id, actor_name, confidence: 'low', source: 'nexus' };
+}
+
+/** Fixed prefix of every inherited row id (queryable provenance). */
+export const INHERITED_ID_PREFIX = 'tat_otxinherit_';
+
+/**
+ * Deterministic, unique, bounded id for one inherited member row:
+ * `tat_otxinherit_` + hex SHA-256 of `${clusterId}|${threatId}` (79 chars).
+ *
+ * The id used to be `tat_otxinherit_${clusterId}_${threatId}`, which
+ * recordAttributionStmt clips to 100 chars. Prod live cluster ids reach 77
+ * chars (2026-10-21: 70 of 314 live clusters are >48) and threat ids reach
+ * 36 (UUIDs), so for a long cluster id every member clipped to the SAME id:
+ * INSERT OR IGNORE kept one row and dropped the rest forever. A digest is
+ * fixed-length regardless of either input, so it can't collide that way.
+ * Rows written under the old scheme stay valid: the member read excludes a
+ * threat that has ANY attribution row, whatever its id.
+ */
+export async function inheritedAttributionId(clusterId: string, threatId: string): Promise<string> {
+  return INHERITED_ID_PREFIX + (await hashToken(`${clusterId}|${threatId}`));
 }
 
 // ─── I/O orchestration ───────────────────────────────────────────────
@@ -304,9 +326,10 @@ export async function inheritOtxActorsToClusters(
            AND actor_id IS NULL
       `).bind(decision.actor_id, clusterId));
     }
-    for (const threatId of members) {
+    const ids = await Promise.all(members.map((threatId) => inheritedAttributionId(clusterId, threatId)));
+    members.forEach((threatId, idx) => {
       stmts.push(recordAttributionStmt(db, {
-        id: `tat_otxinherit_${clusterId}_${threatId}`,
+        id: ids[idx]!,
         threatId,
         actorId: decision.actor_id,
         source: decision.source,
@@ -321,9 +344,8 @@ export async function inheritOtxActorsToClusters(
           actor_name: decision.actor_name,
         },
       }));
-    }
+    });
 
-    let attempted = 0;
     let wroteForCluster = 0;
     for (let i = 0; i < stmts.length; i += WRITE_BATCH) {
       if (i > 0 && now() >= deadline) {
@@ -341,12 +363,17 @@ export async function inheritOtxActorsToClusters(
           wroteForCluster++;
         }
       });
-      attempted += hasStamp ? slice.length - 1 : slice.length;
     }
 
     if (wroteForCluster > 0) result.clusters_inherited++;
     result.members_attributed += wroteForCluster;
-    writeBudget -= attempted;
+    // Charge the cap by rows actually written (meta.changes), not rows
+    // attempted: an ignored insert (id collision, or a concurrent writer that
+    // attributed the threat between our read and write) costs no D1 write,
+    // and charging it would let a cluster whose inserts keep being ignored
+    // eat the whole per-run cap and starve every cluster sorted after it.
+    // The wall-clock deadline still bounds a run that writes little.
+    writeBudget -= wroteForCluster;
     if (result.stopped_reason === 'deadline') break;
   }
 

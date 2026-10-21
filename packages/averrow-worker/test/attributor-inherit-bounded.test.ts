@@ -17,6 +17,8 @@ import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types"
 import { hasSqlite, openMigratedDb, d1FromSqlite, type SqliteDb } from "./sqlite-d1-harness";
 import {
   inheritOtxActorsToClusters,
+  inheritedAttributionId,
+  INHERITED_ID_PREFIX,
   MAX_MEMBER_WRITES_PER_RUN,
   WRITE_BATCH,
 } from "../src/lib/cluster-attribution-inherit";
@@ -229,5 +231,90 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
     expect(result.itemsCreated).toBe(MAX_MEMBER_WRITES_PER_RUN);
     // + the pending-cluster SELECT and the stamp batch.
     expect(c.roundTrips).toBeLessThan(150);
+  });
+});
+
+// QA 2026-10-21: the inherited id was `tat_otxinherit_${clusterId}_${threatId}`
+// and recordAttributionStmt clips ids to 100 chars. Prod live cluster ids
+// reach 77 chars and threat ids are 36-char UUIDs, so every member of a
+// long-id cluster clipped to ONE id: INSERT OR IGNORE kept 1 row and ignored
+// the rest forever, and since the cap was charged per attempted row those
+// ignored members ate the per-run budget every run.
+describe.skipIf(!hasSqlite())("attributor — inherited ids are unique for long cluster ids", () => {
+  const LONG = `cluster_asn_as4837_malware_distribution_${"x".repeat(40)}`; // 80 chars
+  const MEMBERS = 30;
+  const uuid = (i: number) => `0000${String(i).padStart(4, "0")}-1111-4222-8333-444455556666`;
+  let raw: SqliteDb;
+  let db: D1Database;
+
+  function seedLong(r: SqliteDb, id: string, members: number, offset: number): string[] {
+    r.prepare("INSERT OR IGNORE INTO threat_actors (id, name) VALUES ('ta_long', 'Long')").run();
+    r.prepare(
+      "INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES (?, ?, ?, 'active')",
+    ).run(id, id, members + 1);
+    const threat = r.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id) VALUES (?, 'test', 'phishing', ?)");
+    const otx = uuid(offset);
+    threat.run(otx, id);
+    r.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, ?, 'ta_long', 'otx')").run(`otx_${otx}`, otx);
+    const ids: string[] = [];
+    for (let i = 1; i <= members; i++) {
+      const tid = uuid(offset + i);
+      threat.run(tid, id);
+      ids.push(tid);
+    }
+    return ids;
+  }
+
+  beforeEach(() => {
+    raw = openMigratedDb();
+    db = d1FromSqlite(raw);
+  });
+
+  it("writes every member of a >=72-char cluster with distinct ids <= 100 chars; rerun writes 0", async () => {
+    expect(LONG.length).toBeGreaterThanOrEqual(72);
+    // The old scheme would have overflowed the 100-char clip.
+    expect(`tat_otxinherit_${LONG}_${uuid(1)}`.length).toBeGreaterThan(100);
+    const members = seedLong(raw, LONG, MEMBERS, 0);
+
+    const r = await inheritOtxActorsToClusters(db);
+    expect(r.members_attributed).toBe(MEMBERS);
+    expect(r.stopped_reason).toBeNull();
+
+    const rows = raw.prepare(
+      "SELECT id, threat_id, actor_id FROM threat_attributions WHERE id LIKE 'tat_otxinherit_%'",
+    ).all() as Array<{ id: string; threat_id: string; actor_id: string }>;
+    expect(rows).toHaveLength(MEMBERS);
+    expect(new Set(rows.map((x) => x.id)).size).toBe(MEMBERS);
+    expect(new Set(rows.map((x) => x.threat_id))).toEqual(new Set(members));
+    for (const x of rows) {
+      expect(x.id.length).toBeLessThanOrEqual(100);
+      expect(x.id.startsWith(INHERITED_ID_PREFIX)).toBe(true);
+      expect(x.actor_id).toBe("ta_long");
+      expect(x.id).toBe(await inheritedAttributionId(LONG, x.threat_id));
+    }
+
+    const again = await inheritOtxActorsToClusters(db);
+    expect(again.members_attributed).toBe(0);
+    expect(again.stopped_reason).toBeNull();
+  });
+
+  it("ignored inserts do not burn the write cap (later clusters still drain)", async () => {
+    // Cluster A sorts first; its members' inherited ids are already taken by
+    // rows on another threat, so every insert for A is ignored. With the cap
+    // set to A's size, charging attempts would stop the run before B.
+    const A = `cluster_a_${"y".repeat(70)}`;
+    const B = `cluster_b_${"z".repeat(70)}`;
+    const aMembers = seedLong(raw, A, MEMBERS, 0);
+    seedLong(raw, B, 20, 1000);
+    raw.prepare("INSERT INTO threats (id, source_feed, threat_type) VALUES ('squatter', 'test', 'phishing')").run();
+    const squat = raw.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, 'squatter', 'ta_long', 'manual')");
+    for (const tid of aMembers) squat.run(await inheritedAttributionId(A, tid));
+
+    const r = await inheritOtxActorsToClusters(db, { maxMemberWrites: MEMBERS });
+    expect(r.members_attributed).toBe(20);
+    const bRows = raw.prepare(
+      "SELECT COUNT(*) AS n FROM threat_attributions ta JOIN threats t ON t.id = ta.threat_id WHERE t.cluster_id = ? AND ta.id LIKE 'tat_otxinherit_%'",
+    ).all(B)[0] as { n: number };
+    expect(bRows.n).toBe(20);
   });
 });
