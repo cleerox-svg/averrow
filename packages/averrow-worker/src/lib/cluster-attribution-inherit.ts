@@ -26,8 +26,8 @@
 //   * confidence 'low' -- strictly weaker than the 'medium' the direct
 //     OTX pulse attribution carries (never higher than the source).
 
-import type { D1Database } from '@cloudflare/workers-types';
-import { recordAttribution, type AttributionSource } from './otx-attribution';
+import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
+import { recordAttributionStmt, type AttributionSource } from './otx-attribution';
 import { isRetiredCluster } from './cluster-status';
 
 // ─── Pure decision function (no I/O, no clock) ───────────────────────
@@ -93,6 +93,13 @@ export interface InheritResult {
   members_attributed: number;
   /** Clusters whose cluster-level actor_id was set from the inheritance. */
   clusters_actor_set: number;
+  /**
+   * Why the write step stopped before reaching every eligible cluster:
+   * 'write_cap' (MAX_MEMBER_WRITES_PER_RUN reached) or 'deadline' (wall-
+   * clock budget). null = every eligible cluster was processed. Either
+   * non-null value means a backlog remains for the next run.
+   */
+  stopped_reason: 'write_cap' | 'deadline' | null;
 }
 
 interface DiscoveryRow {
@@ -101,12 +108,30 @@ interface DiscoveryRow {
   actor_name: string | null;
 }
 
-// Bound total inherited writes per invocation so a large first-run
-// backlog can't blow the worker's wall-clock budget. Hourly cadence
-// (attributor post-pass) drains the remainder; idempotency makes every
-// re-run cheap (already-attributed members drop out of the candidate
-// member scan, so drained clusters cost ~0).
-const MAX_MEMBER_WRITES_PER_RUN = 5000;
+// Bound total inherited writes per invocation so a large backlog can't
+// blow the worker's wall-clock / subrequest budget. The attributor's
+// cadence (orchestrator hour % 4 === 1, plus FC stall recovery) drains the
+// remainder; idempotency makes every re-run cheap (already-attributed
+// members drop out of the member read, so drained clusters cost ~0).
+export const MAX_MEMBER_WRITES_PER_RUN = 5000;
+// Statements per db.batch() round-trip in the write step. 5,000 member
+// rows = 50 round-trips (was 5,000 sequential awaits). Each statement
+// binds 9 params, well under D1's 100-per-statement cap.
+export const WRITE_BATCH = 100;
+// Default wall-clock budget for the whole pass. The attributor shares its
+// host invocation (the hourly orchestrator tick, or FC's waitUntil) with
+// many other agents, so it must finish in well under a minute or two and
+// leave the rest for the next run rather than be killed mid-loop.
+export const DEFAULT_INHERIT_BUDGET_MS = 90_000;
+
+export interface InheritOptions {
+  /** Cap on member rows written this call (default MAX_MEMBER_WRITES_PER_RUN). */
+  maxMemberWrites?: number;
+  /** Wall-clock budget for the call, ms (default DEFAULT_INHERIT_BUDGET_MS). */
+  budgetMs?: number;
+  /** Clock injection for tests. */
+  now?: () => number;
+}
 // D1 caps bound parameters at 100 per statement (NOT SQLite's 999). The
 // former 800 here failed the attributor in prod once >100 clusters won the
 // inheritance decision ("too many SQL variables at offset 281" = the 101st
@@ -120,13 +145,21 @@ const IN_CHUNK = 90;
  * un-attributed siblings. Idempotent: reruns write 0 new rows.
  *
  * Efficiency: candidate discovery is a single grouped join over the
- * OTX-attribution index (no per-cluster N+1); member selection for the
- * winning clusters is chunked IN(...) queries. No full scan of threats.
+ * OTX-attribution index (no per-cluster N+1). Per eligible cluster: one
+ * indexed member read LIMITed to the remaining write budget, then
+ * ceil(rows / WRITE_BATCH) batched writes. D1 round-trips per call are
+ * bounded by ~2 + eligible/IN_CHUNK + eligible + cap/WRITE_BATCH + eligible
+ * (≈120 at prod size), not by member count. No full scan of threats.
  */
 export async function inheritOtxActorsToClusters(
   db: D1Database,
+  opts: InheritOptions = {},
 ): Promise<InheritResult> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + (opts.budgetMs ?? DEFAULT_INHERIT_BUDGET_MS);
+  const maxMemberWrites = opts.maxMemberWrites ?? MAX_MEMBER_WRITES_PER_RUN;
   const result: InheritResult = {
+    stopped_reason: null,
     clusters_scanned: 0,
     clusters_ambiguous: 0,
     clusters_conflict_skipped: 0,
@@ -217,42 +250,62 @@ export async function inheritOtxActorsToClusters(
   }
   if (eligible.length === 0) return result;
 
-  // Step 3 — pull un-attributed members for eligible clusters. A member
-  // is "un-attributed" when it has no threat_attributions row at all;
-  // this guarantees we never stack a conflicting second attribution on
-  // a threat that's already been attributed by any source.
-  const membersByCluster = new Map<string, string[]>();
-  for (const chunk of chunkArray(eligible, IN_CHUNK)) {
+  // Steps 3 + 4 — per eligible cluster, in sorted order (stable progress
+  // under the cap, run to run): read at most the remaining write budget of
+  // its un-attributed members, then write their inherited rows plus the
+  // cluster-level actor stamp in db.batch() chunks of WRITE_BATCH.
+  //
+  // A member is "un-attributed" when it has no threat_attributions row at
+  // all, so we never stack a conflicting second attribution on a threat any
+  // source already attributed. Deterministic ids + INSERT OR IGNORE keep
+  // this idempotent; the cluster stamp is guarded on actor_id IS NULL so it
+  // never overrides a real classification and is a no-op on rerun.
+  //
+  // Prod 2026-10-21: this step used to read every eligible member at once
+  // (~44K rows; one ASN cluster alone has 33K) and await one INSERT per
+  // member. At ~170ms per D1 round-trip the 5,000-row cap needed ~14
+  // minutes, so both attributor runs died with their host invocation
+  // mid-loop (agent_runs left 'partial' with completed_at NULL). Now the
+  // read is LIMITed to the budget, writes cost one round-trip per
+  // WRITE_BATCH rows, and a wall-clock budget stops the pass cleanly
+  // between round-trips. The remainder drains on later runs.
+  let writeBudget = maxMemberWrites;
+  for (const clusterId of eligible) {
+    if (writeBudget <= 0) {
+      result.stopped_reason = 'write_cap';
+      break;
+    }
+    if (now() >= deadline) {
+      result.stopped_reason = 'deadline';
+      break;
+    }
+    const decision = chosen.get(clusterId)!;
+
     const rows = await db.prepare(`
-      SELECT t.id AS threat_id, t.cluster_id AS cluster_id
+      SELECT t.id AS threat_id
       FROM threats t
-      WHERE t.cluster_id IN (${placeholders(chunk.length)})
+      WHERE t.cluster_id = ?
         AND NOT EXISTS (
           SELECT 1 FROM threat_attributions ta WHERE ta.threat_id = t.id
         )
-    `).bind(...chunk).all<{ threat_id: string; cluster_id: string }>();
-    for (const r of rows.results ?? []) {
-      const list = membersByCluster.get(r.cluster_id) ?? [];
-      list.push(r.threat_id);
-      membersByCluster.set(r.cluster_id, list);
+      LIMIT ?
+    `).bind(clusterId, writeBudget).all<{ threat_id: string }>();
+    const members = (rows.results ?? []).map((r) => r.threat_id);
+
+    const stmts: D1PreparedStatement[] = [];
+    // Cluster-level actor stamp goes first in the cluster's first batch, so
+    // a deadline stop mid-cluster still leaves the cluster named.
+    const stampActor = (clusterActor.get(clusterId) ?? null) === null;
+    if (stampActor) {
+      stmts.push(db.prepare(`
+        UPDATE infrastructure_clusters
+           SET actor_id = ?
+         WHERE id = ?
+           AND actor_id IS NULL
+      `).bind(decision.actor_id, clusterId));
     }
-  }
-
-  // Step 4 — write inherited attribution rows + optionally stamp the
-  // cluster-level actor. Deterministic id keeps this idempotent
-  // (INSERT OR IGNORE inside recordAttribution); the cluster stamp is
-  // guarded on actor_id being null so it never overrides a real
-  // classification and is a no-op on rerun.
-  let writeBudget = MAX_MEMBER_WRITES_PER_RUN;
-  for (const clusterId of eligible) {
-    if (writeBudget <= 0) break;
-    const decision = chosen.get(clusterId)!;
-    const members = membersByCluster.get(clusterId) ?? [];
-
-    let wroteForCluster = 0;
     for (const threatId of members) {
-      if (writeBudget <= 0) break;
-      await recordAttribution(db, {
+      stmts.push(recordAttributionStmt(db, {
         id: `tat_otxinherit_${clusterId}_${threatId}`,
         threatId,
         actorId: decision.actor_id,
@@ -267,25 +320,34 @@ export async function inheritOtxActorsToClusters(
           cluster_id: clusterId,
           actor_name: decision.actor_name,
         },
+      }));
+    }
+
+    let attempted = 0;
+    let wroteForCluster = 0;
+    for (let i = 0; i < stmts.length; i += WRITE_BATCH) {
+      if (i > 0 && now() >= deadline) {
+        result.stopped_reason = 'deadline';
+        break;
+      }
+      const slice = stmts.slice(i, i + WRITE_BATCH);
+      const res = await db.batch(slice);
+      const hasStamp = i === 0 && stampActor;
+      res.forEach((r, k) => {
+        const changed = (r?.meta?.changes ?? 0) > 0;
+        if (hasStamp && k === 0) {
+          if (changed) result.clusters_actor_set++;
+        } else if (changed) {
+          wroteForCluster++;
+        }
       });
-      wroteForCluster++;
-      result.members_attributed++;
-      writeBudget--;
+      attempted += hasStamp ? slice.length - 1 : slice.length;
     }
 
     if (wroteForCluster > 0) result.clusters_inherited++;
-
-    // Stamp the cluster-level actor when it has none yet. Bounded to the
-    // null case so a Haiku classification is never clobbered.
-    if ((clusterActor.get(clusterId) ?? null) === null) {
-      const upd = await db.prepare(`
-        UPDATE infrastructure_clusters
-           SET actor_id = ?
-         WHERE id = ?
-           AND actor_id IS NULL
-      `).bind(decision.actor_id, clusterId).run();
-      if (upd.meta.changes && upd.meta.changes > 0) result.clusters_actor_set++;
-    }
+    result.members_attributed += wroteForCluster;
+    writeBudget -= attempted;
+    if (result.stopped_reason === 'deadline') break;
   }
 
   return result;
