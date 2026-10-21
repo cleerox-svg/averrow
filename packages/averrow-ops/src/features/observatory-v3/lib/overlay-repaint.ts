@@ -30,9 +30,11 @@ function deckOf(overlay: unknown): RepaintableDeck | null {
 /** Refresh deck's canvas size and draw now. Returns true when a draw was issued. Never throws (a failed draw is deck's next frame). */
 export function repaintDeckNow(overlay: unknown): boolean {
   const deck = deckOf(overlay);
-  if (!deck || typeof deck.redraw !== 'function') return false;
+  // Both members are required: a draw without the size refresh would render at the OLD size into the new buffer
+  // (one stretched frame), which is worse than deck's own next-frame redraw.
+  if (!deck || typeof deck.redraw !== 'function' || typeof deck._updateCanvasSize !== 'function') return false;
   try {
-    deck._updateCanvasSize?.();
+    deck._updateCanvasSize();
     deck.redraw('Canvas resized');
     return true;
   } catch {

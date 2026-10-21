@@ -16,10 +16,10 @@ describe('repaintDeckNow: the resized deck canvas is redrawn in the same frame',
     expect(repaintDeckNow({ _deck: { redraw: () => { throw new Error('gl lost'); } } })).toBe(false);
   });
 
-  it('works without _updateCanvasSize', () => {
+  it('does not draw without _updateCanvasSize (a stale-size draw would be mis-scaled; deck redraws next frame)', () => {
     const redraw = vi.fn();
-    expect(repaintDeckNow({ _deck: { redraw } })).toBe(true);
-    expect(redraw).toHaveBeenCalledTimes(1);
+    expect(repaintDeckNow({ _deck: { redraw } })).toBe(false);
+    expect(redraw).not.toHaveBeenCalled();
   });
 });
 
@@ -29,7 +29,7 @@ describe('repaintOnResizeProps', () => {
     const props = repaintOnResizeProps(() => overlay);
     expect(() => props.onResize()).not.toThrow(); // resize before the overlay is assigned
     const redraw = vi.fn();
-    overlay = { _deck: { redraw } };
+    overlay = { _deck: { _updateCanvasSize: () => {}, redraw } };
     props.onResize();
     expect(redraw).toHaveBeenCalledWith('Canvas resized');
   });

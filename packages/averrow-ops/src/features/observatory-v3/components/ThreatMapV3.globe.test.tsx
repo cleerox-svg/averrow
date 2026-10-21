@@ -158,7 +158,7 @@ describe('ThreatMapV3 projection: flat is untouched', () => {
     const deviceProps = overlays[0]!.props.deviceProps as { onResize: () => void } | undefined;
     expect(typeof deviceProps?.onResize).toBe('function');
     const redraw = vi.fn();
-    (overlays[0] as unknown as { _deck: { redraw: () => void } })._deck = { redraw };
+    (overlays[0] as unknown as { _deck: { _updateCanvasSize: () => void; redraw: () => void } })._deck = { _updateCanvasSize: () => {}, redraw };
     deviceProps!.onResize();
     expect(redraw).toHaveBeenCalledTimes(1);
   });

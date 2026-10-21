@@ -1240,8 +1240,7 @@ function ThreatMapV3Inner({
       const interleaved = kind === 'globe';
       // The overlaid (flat) deck owns a canvas that luma wipes on every resize: repaint it in the same frame (lib/overlay-repaint.ts).
       // The interleaved globe draws into MapLibre's own canvas, which MapLibre repaints itself.
-      let created: MapboxOverlay | null = null;
-      created = new MapboxOverlay({
+      const created: MapboxOverlay = new MapboxOverlay({
         interleaved,
         ...(interleaved ? globeOverlayProps() : { deviceProps: repaintOnResizeProps(() => created) }),
         layers, onClick: handlers.clickEmpty, pickingRadius });
