@@ -74,29 +74,55 @@ export const sparrowAgent: AgentModule = {
       });
     }
 
+    // Each creator below catches and counts a per-candidate write failure
+    // instead of throwing, so one bad row can't fail the whole run (a NULL
+    // brand_id on one abuse-report candidate auto-paused Sparrow in 2026-06).
     // ── Phase B: Auto-create takedowns from malicious URL scan results ──
-    const urlTakedowns = await createTakedownsFromMaliciousUrls(env);
-    itemsCreated += urlTakedowns;
+    const urlTally = await createTakedownsFromMaliciousUrls(env);
+    const urlTakedowns = urlTally.created;
 
     // ── Phase C: Auto-create takedowns from impersonation social profiles ──
-    const socialTakedowns = await createTakedownsFromImpersonations(env);
-    itemsCreated += socialTakedowns;
+    const socialTally = await createTakedownsFromImpersonations(env);
+    const socialTakedowns = socialTally.created;
 
     // ── Phase C2: Auto-create takedowns from app-store impersonations ──
-    const appStoreTakedowns = await createTakedownsFromAppStoreImpersonations(env);
-    itemsCreated += appStoreTakedowns;
+    const appStoreTally = await createTakedownsFromAppStoreImpersonations(env);
+    const appStoreTakedowns = appStoreTally.created;
 
     // ── Phase C3: Auto-create takedowns from confirmed dark-web mentions ──
-    const darkWebTakedowns = await createTakedownsFromDarkWebMentions(env);
-    itemsCreated += darkWebTakedowns;
+    const darkWebTally = await createTakedownsFromDarkWebMentions(env);
+    const darkWebTakedowns = darkWebTally.created;
 
     // ── Phase B2: Auto-create takedowns from active lookalike/typosquat domains ──
-    const lookalikeTakedowns = await createTakedownsFromLookalikes(env);
-    itemsCreated += lookalikeTakedowns;
+    const lookalikeTally = await createTakedownsFromLookalikes(env);
+    const lookalikeTakedowns = lookalikeTally.created;
 
     // ── Phase B3: Auto-create takedowns from abuse-mailbox-confirmed phishing ──
-    const abuseTakedowns = await createTakedownsFromAbuseReports(env);
-    itemsCreated += abuseTakedowns;
+    const abuseTally = await createTakedownsFromAbuseReports(env);
+    const abuseTakedowns = abuseTally.created;
+
+    itemsCreated += urlTakedowns + socialTakedowns + appStoreTakedowns + darkWebTakedowns + lookalikeTakedowns + abuseTakedowns;
+
+    const draftTallies: Record<string, DraftTally> = {
+      url: urlTally,
+      social: socialTally,
+      app_store: appStoreTally,
+      dark_web: darkWebTally,
+      lookalike: lookalikeTally,
+      abuse_report: abuseTally,
+    };
+    const draftFailures = Object.values(draftTallies).reduce((n, t) => n + t.failed, 0);
+    if (draftFailures > 0) {
+      const firstError = Object.values(draftTallies).find((t) => t.firstError !== null)?.firstError ?? null;
+      outputs.push({
+        type: "diagnostic",
+        summary: `${draftFailures} takedown draft candidate(s) failed to write and were skipped${firstError ? ` (first: ${firstError})` : ""}`,
+        severity: "high",
+        details: Object.fromEntries(
+          Object.entries(draftTallies).map(([k, t]) => [k, { created: t.created, failed: t.failed, first_error: t.firstError }]),
+        ),
+      });
+    }
 
     if (urlTakedowns > 0 || socialTakedowns > 0 || appStoreTakedowns > 0 || darkWebTakedowns > 0 || lookalikeTakedowns > 0 || abuseTakedowns > 0) {
       const totalNew = urlTakedowns + socialTakedowns + appStoreTakedowns + darkWebTakedowns + lookalikeTakedowns + abuseTakedowns;
@@ -420,6 +446,9 @@ export const sparrowAgent: AgentModule = {
         social_takedowns: socialTakedowns,
         app_store_takedowns: appStoreTakedowns,
         dark_web_takedowns: darkWebTakedowns,
+        lookalike_takedowns: lookalikeTakedowns,
+        abuse_report_takedowns: abuseTakedowns,
+        takedown_draft_failures: draftFailures,
         evidence_assembled: evidenceAssembled,
         social_evidence_attached: socialEvidenceAttached,
         providers_resolved: providersResolved,
@@ -436,7 +465,7 @@ export const sparrowAgent: AgentModule = {
 
 // ─── Phase B: Malicious URL → Takedown ─────────────────────────────
 
-async function createTakedownsFromMaliciousUrls(env: Env): Promise<number> {
+async function createTakedownsFromMaliciousUrls(env: Env): Promise<DraftTally> {
   const unlinkedMalicious = await env.DB.prepare(`
     SELECT usr.*, b.name as brand_name, b.canonical_domain as brand_domain
     FROM url_scan_results usr
@@ -448,77 +477,84 @@ async function createTakedownsFromMaliciousUrls(env: Env): Promise<number> {
     LIMIT 10
   `).all();
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const result of unlinkedMalicious.results) {
-    const hostingProvider = result.hosting_provider as string | null;
+    try {
+      const hostingProvider = result.hosting_provider as string | null;
 
-    // Look up hosting provider from takedown_providers
-    const provider = hostingProvider
-      ? await env.DB.prepare(
-          "SELECT * FROM takedown_providers WHERE provider_name LIKE ? LIMIT 1"
-        ).bind(`%${hostingProvider}%`).first()
-      : null;
+      // Look up hosting provider from takedown_providers
+      const provider = hostingProvider
+        ? await env.DB.prepare(
+            "SELECT * FROM takedown_providers WHERE provider_name LIKE ? LIMIT 1"
+          ).bind(`%${hostingProvider}%`).first()
+        : null;
 
-    const confidenceScore = (result.confidence_score as number) || 0;
-    const maliciousReasons: string[] = JSON.parse((result.malicious_reasons as string) || "[]");
-    const brandName = (result.brand_name as string) || "unknown brand";
-    const url = result.url as string;
-    const domain = result.domain as string;
+      const confidenceScore = (result.confidence_score as number) || 0;
+      const maliciousReasons: string[] = JSON.parse((result.malicious_reasons as string) || "[]");
+      const brandName = (result.brand_name as string) || "unknown brand";
+      const url = result.url as string;
+      const domain = result.domain as string;
 
-    const takedownId = crypto.randomUUID();
-    const owningOrgId = await resolveOwningOrgId(env, result.brand_id as string | null);
-    await env.DB.prepare(`
-      INSERT INTO takedown_requests (
-        id, org_id, brand_id, module_key, target_type, target_value, target_url,
-        source_type, source_id, evidence_summary, evidence_detail,
-        provider_name, provider_abuse_contact, provider_method,
-        status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'url_scan', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
-    `).bind(
-      takedownId,
-      owningOrgId,
-      result.brand_id as string | null,
-      domain,
-      url,
-      String(result.id),
-      `Malicious URL detected targeting ${brandName}. ${maliciousReasons.join(". ")}.`,
-      `URL: ${url}\nDomain: ${domain}\nConfidence: ${Math.round(confidenceScore * 100)}%\nReasons: ${maliciousReasons.join(", ")}`,
-      (provider?.provider_name as string) || null,
-      (provider?.abuse_email as string) || (provider?.abuse_url as string) || null,
-      (provider?.abuse_api_type as string) || "email",
-      confidenceScore >= 0.8 ? "HIGH" : "MEDIUM",
-      confidenceScore >= 0.8 ? 70 : 50,
-    ).run();
-
-    // Link the scan result to the takedown
-    await env.DB.prepare(
-      "UPDATE url_scan_results SET takedown_id = ? WHERE id = ?"
-    ).bind(takedownId, result.id).run();
-
-    // Create evidence record
-    await env.DB.prepare(`
-      INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-      VALUES (?, ?, 'url_scan', 'URL Scan Result', ?, ?, datetime('now'))
-    `).bind(
-      crypto.randomUUID(),
-      takedownId,
-      `URL: ${url}\nDomain: ${domain}\nMalicious: Yes (${Math.round(confidenceScore * 100)}% confidence)\nReasons:\n${maliciousReasons.map((r: string) => "  - " + r).join("\n")}`,
-      JSON.stringify({
-        url,
+      const takedownId = crypto.randomUUID();
+      const owningOrgId = await resolveOwningOrgId(env, result.brand_id as string | null);
+      // One atomic batch (draft + link + evidence): a failure rolls the
+      // candidate back whole, so the unlinked row is retried next run
+      // instead of leaving an orphan draft that would be re-drafted.
+      await env.DB.batch([env.DB.prepare(`
+        INSERT INTO takedown_requests (
+          id, org_id, brand_id, module_key, target_type, target_value, target_url,
+          source_type, source_id, evidence_summary, evidence_detail,
+          provider_name, provider_abuse_contact, provider_method,
+          status, severity, priority_score, requested_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'url_scan', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      `).bind(
+        takedownId,
+        owningOrgId,
+        result.brand_id as string | null,
         domain,
-        confidence_score: confidenceScore,
-        reasons: maliciousReasons,
-        hosting_provider: hostingProvider,
-        known_threat_id: result.known_threat_id,
-        source_capture_id: result.source_id,
-      }),
-    ).run();
+        url,
+        String(result.id),
+        `Malicious URL detected targeting ${brandName}. ${maliciousReasons.join(". ")}.`,
+        `URL: ${url}\nDomain: ${domain}\nConfidence: ${Math.round(confidenceScore * 100)}%\nReasons: ${maliciousReasons.join(", ")}`,
+        (provider?.provider_name as string) || null,
+        (provider?.abuse_email as string) || (provider?.abuse_url as string) || null,
+        (provider?.abuse_api_type as string) || "email",
+        confidenceScore >= 0.8 ? "HIGH" : "MEDIUM",
+        confidenceScore >= 0.8 ? 70 : 50,
+      ),
 
-    created++;
+      // Link the scan result to the takedown
+      env.DB.prepare(
+        "UPDATE url_scan_results SET takedown_id = ? WHERE id = ?"
+      ).bind(takedownId, result.id),
+
+      // Create evidence record
+      env.DB.prepare(`
+        INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+        VALUES (?, ?, 'url_scan', 'URL Scan Result', ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(),
+        takedownId,
+        `URL: ${url}\nDomain: ${domain}\nMalicious: Yes (${Math.round(confidenceScore * 100)}% confidence)\nReasons:\n${maliciousReasons.map((r: string) => "  - " + r).join("\n")}`,
+        JSON.stringify({
+          url,
+          domain,
+          confidence_score: confidenceScore,
+          reasons: maliciousReasons,
+          hosting_provider: hostingProvider,
+          known_threat_id: result.known_threat_id,
+          source_capture_id: result.source_id,
+        }),
+      )]);
+
+      tally.created++;
+    } catch (err) {
+      recordDraftFailure(tally, "url_scan", result.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // ─── Phase B2: Active Lookalike / Typosquat Domain → Takedown ──────
@@ -536,7 +572,7 @@ async function createTakedownsFromMaliciousUrls(env: Env): Promise<number> {
 // rows would create drafts Phase G skips — left for the operator surface),
 // each row is drafted at most once (takedown_id link), and only
 // registered domains with a live web/MX footprint qualify.
-async function createTakedownsFromLookalikes(env: Env): Promise<number> {
+async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
   const candidates = await env.DB.prepare(`
     SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type,
            ld.threat_level, ld.ai_assessment, ld.has_mx, ld.has_web,
@@ -552,74 +588,79 @@ async function createTakedownsFromLookalikes(env: Env): Promise<number> {
     LIMIT 10
   `).all();
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const ld of candidates.results) {
-    const brandId = ld.brand_id as string | null;
-    // Only auto-draft for customer (org-owned) brands. An orgless draft
-    // would be skipped by Phase G (org_id IS NOT NULL) and just litter the
-    // queue, so leave non-customer lookalikes for the operator surface.
-    const owningOrgId = await resolveOwningOrgId(env, brandId);
-    if (owningOrgId === null) continue;
+    try {
+      const brandId = ld.brand_id as string | null;
+      // Only auto-draft for customer (org-owned) brands. An orgless draft
+      // would be skipped by Phase G (org_id IS NOT NULL) and just litter the
+      // queue, so leave non-customer lookalikes for the operator surface.
+      const owningOrgId = await resolveOwningOrgId(env, brandId);
+      if (owningOrgId === null) continue;
 
-    const domain = ld.domain as string;
-    const threatLevel = (ld.threat_level as string) || "HIGH";
-    const permutationType = (ld.permutation_type as string) || "lookalike";
-    const brandName = (ld.brand_name as string) || "a monitored brand";
-    const signals = [
-      ld.has_web ? "live web server" : null,
-      ld.has_mx ? "mail (MX) records" : null,
-      ld.resolves_to ? `resolves to ${ld.resolves_to}` : null,
-    ].filter(Boolean).join(", ");
+      const domain = ld.domain as string;
+      const threatLevel = (ld.threat_level as string) || "HIGH";
+      const permutationType = (ld.permutation_type as string) || "lookalike";
+      const brandName = (ld.brand_name as string) || "a monitored brand";
+      const signals = [
+        ld.has_web ? "live web server" : null,
+        ld.has_mx ? "mail (MX) records" : null,
+        ld.resolves_to ? `resolves to ${ld.resolves_to}` : null,
+      ].filter(Boolean).join(", ");
 
-    const takedownId = crypto.randomUUID();
-    await env.DB.prepare(`
-      INSERT INTO takedown_requests (
-        id, org_id, brand_id, module_key, target_type, target_value, target_url,
-        source_type, source_id, evidence_summary, evidence_detail,
-        provider_name, provider_abuse_contact, provider_method,
-        status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'domain', 'domain', ?, null, 'lookalike', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
-    `).bind(
-      takedownId,
-      owningOrgId,
-      brandId,
-      domain,
-      String(ld.id),
-      `Active ${permutationType} lookalike domain impersonating ${brandName}: ${domain}${signals ? ` (${signals})` : ""}.`,
-      `Domain: ${domain}\nPermutation: ${permutationType}\nThreat level: ${threatLevel}\nSignals: ${signals || "registered"}${ld.ai_assessment ? `\nAssessment: ${ld.ai_assessment}` : ""}`,
-      threatLevel === "CRITICAL" ? "CRITICAL" : "HIGH",
-      threatLevel === "CRITICAL" ? 80 : 65,
-    ).run();
-
-    // Link back so we don't re-draft + the lookalike UI can show status.
-    await env.DB.prepare(
-      "UPDATE lookalike_domains SET takedown_id = ? WHERE id = ?"
-    ).bind(takedownId, ld.id).run();
-
-    // Evidence record (mirrors Phase B).
-    await env.DB.prepare(`
-      INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-      VALUES (?, ?, 'lookalike', 'Lookalike Domain Detection', ?, ?, datetime('now'))
-    `).bind(
-      crypto.randomUUID(),
-      takedownId,
-      `Domain: ${domain}\nPermutation type: ${permutationType}\nThreat level: ${threatLevel}\nRegistered: Yes\nSignals: ${signals || "registered"}`,
-      JSON.stringify({
+      const takedownId = crypto.randomUUID();
+      // Atomic draft + link + evidence (same reasoning as Phase B).
+      await env.DB.batch([env.DB.prepare(`
+        INSERT INTO takedown_requests (
+          id, org_id, brand_id, module_key, target_type, target_value, target_url,
+          source_type, source_id, evidence_summary, evidence_detail,
+          provider_name, provider_abuse_contact, provider_method,
+          status, severity, priority_score, requested_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 'domain', 'domain', ?, null, 'lookalike', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      `).bind(
+        takedownId,
+        owningOrgId,
+        brandId,
         domain,
-        permutation_type: permutationType,
-        threat_level: threatLevel,
-        has_mx: ld.has_mx,
-        has_web: ld.has_web,
-        resolves_to: ld.resolves_to,
-        lookalike_id: ld.id,
-      }),
-    ).run();
+        String(ld.id),
+        `Active ${permutationType} lookalike domain impersonating ${brandName}: ${domain}${signals ? ` (${signals})` : ""}.`,
+        `Domain: ${domain}\nPermutation: ${permutationType}\nThreat level: ${threatLevel}\nSignals: ${signals || "registered"}${ld.ai_assessment ? `\nAssessment: ${ld.ai_assessment}` : ""}`,
+        threatLevel === "CRITICAL" ? "CRITICAL" : "HIGH",
+        threatLevel === "CRITICAL" ? 80 : 65,
+      ),
 
-    created++;
+      // Link back so we don't re-draft + the lookalike UI can show status.
+      env.DB.prepare(
+        "UPDATE lookalike_domains SET takedown_id = ? WHERE id = ?"
+      ).bind(takedownId, ld.id),
+
+      // Evidence record (mirrors Phase B).
+      env.DB.prepare(`
+        INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+        VALUES (?, ?, 'lookalike', 'Lookalike Domain Detection', ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(),
+        takedownId,
+        `Domain: ${domain}\nPermutation type: ${permutationType}\nThreat level: ${threatLevel}\nRegistered: Yes\nSignals: ${signals || "registered"}`,
+        JSON.stringify({
+          domain,
+          permutation_type: permutationType,
+          threat_level: threatLevel,
+          has_mx: ld.has_mx,
+          has_web: ld.has_web,
+          resolves_to: ld.resolves_to,
+          lookalike_id: ld.id,
+        }),
+      )]);
+
+      tally.created++;
+    } catch (err) {
+      recordDraftFailure(tally, "lookalike", ld.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // ─── Phase B3: Abuse-Mailbox Confirmed Phishing → Takedown ─────────
@@ -636,13 +677,21 @@ async function createTakedownsFromLookalikes(env: Env): Promise<number> {
 // it directly. Each message is processed once (takedown_drafted_at stamp),
 // and we skip domains the org already has an active takedown for (avoids
 // double-actioning a domain Phase B/B2 drafted).
-async function createTakedownsFromAbuseReports(env: Env): Promise<number> {
+//
+// Brandless messages are excluded at selection: takedown_requests.brand_id
+// is NOT NULL, and a message the classifier couldn't tie to a brand has no
+// one to file on behalf of. Before this filter, one such message made the
+// INSERT throw (SQLITE_CONSTRAINT_NOTNULL) on every run, failing Sparrow
+// three times in a row on 2026-06-30 until it auto-paused. They are left
+// unstamped, so a message later attributed to a brand is picked up then.
+export async function createTakedownsFromAbuseReports(env: Env): Promise<DraftTally> {
   const messages = await env.DB.prepare(`
     SELECT id, org_id, brand_id, classification, severity, promoted_threat_ids
     FROM abuse_inbox_messages
     WHERE classification IN ('phishing', 'malware')
       AND severity IN ('HIGH', 'CRITICAL')
       AND org_id IS NOT NULL
+      AND brand_id IS NOT NULL
       AND promoted_threat_ids IS NOT NULL
       -- An open-model "likely" verdict is never takedown evidence, even if
       -- a future path were to promote its URLs.
@@ -651,97 +700,114 @@ async function createTakedownsFromAbuseReports(env: Env): Promise<number> {
     ORDER BY received_at DESC
     LIMIT 10
   `).all<{
-    id: string; org_id: number; brand_id: string | null;
+    id: string; org_id: number; brand_id: string;
     classification: string; severity: string; promoted_threat_ids: string | null;
   }>();
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const msg of messages.results) {
-    let threatIds: string[] = [];
+    // A message is stamped only when every promoted threat was handled, so a
+    // failed draft is retried next run (the open-takedown check below keeps
+    // the retry from double-drafting the domains that did succeed).
+    let messageFailed = false;
     try {
-      const parsed = JSON.parse(msg.promoted_threat_ids || "[]");
-      if (Array.isArray(parsed)) threatIds = parsed.filter((x): x is string => typeof x === "string");
-    } catch { threatIds = []; }
+      let threatIds: string[] = [];
+      try {
+        const parsed = JSON.parse(msg.promoted_threat_ids || "[]");
+        if (Array.isArray(parsed)) threatIds = parsed.filter((x): x is string => typeof x === "string");
+      } catch { threatIds = []; }
 
-    if (threatIds.length > 0) {
-      const placeholders = threatIds.map(() => "?").join(",");
-      const promoted = await env.DB.prepare(
-        `SELECT id, malicious_url, malicious_domain FROM threats WHERE id IN (${placeholders})`,
-      ).bind(...threatIds).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
+      if (threatIds.length > 0) {
+        const placeholders = threatIds.map(() => "?").join(",");
+        const promoted = await env.DB.prepare(
+          `SELECT id, malicious_url, malicious_domain FROM threats WHERE id IN (${placeholders})`,
+        ).bind(...threatIds).all<{ id: string; malicious_url: string | null; malicious_domain: string | null }>();
 
-      const severity = msg.severity === "CRITICAL" ? "CRITICAL" : "HIGH";
+        const severity = msg.severity === "CRITICAL" ? "CRITICAL" : "HIGH";
 
-      for (const t of promoted.results) {
-        const domain = t.malicious_domain;
-        if (!domain) continue;
-        const url = t.malicious_url;
+        for (const t of promoted.results) {
+          const domain = t.malicious_domain;
+          if (!domain) continue;
+          const url = t.malicious_url;
 
-        // Don't double-action a domain the org already has an open takedown
-        // for (Phase B/B2 may have drafted it, or a prior abuse report).
-        const existing = await env.DB.prepare(
-          `SELECT 1 FROM takedown_requests
-           WHERE org_id = ? AND target_value = ?
-             AND status NOT IN ('failed', 'expired', 'withdrawn')
-           LIMIT 1`,
-        ).bind(msg.org_id, domain).first();
-        if (existing) continue;
+          try {
+            // Don't double-action a domain the org already has an open takedown
+            // for (Phase B/B2 may have drafted it, or a prior abuse report).
+            const existing = await env.DB.prepare(
+              `SELECT 1 FROM takedown_requests
+               WHERE org_id = ? AND target_value = ?
+                 AND status NOT IN ('failed', 'expired', 'withdrawn')
+               LIMIT 1`,
+            ).bind(msg.org_id, domain).first();
+            if (existing) continue;
 
-        const takedownId = crypto.randomUUID();
-        await env.DB.prepare(`
-          INSERT INTO takedown_requests (
-            id, org_id, brand_id, module_key, target_type, target_value, target_url,
-            source_type, source_id, evidence_summary, evidence_detail,
-            provider_name, provider_abuse_contact, provider_method,
-            status, severity, priority_score, requested_by, created_at, updated_at
-          ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'abuse_report', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
-        `).bind(
-          takedownId,
-          msg.org_id,
-          msg.brand_id,
-          domain,
-          url,
-          msg.id,
-          `Confirmed ${msg.classification} reported to the Abuse Mailbox: ${url ?? domain}.`,
-          `Domain: ${domain}\nURL: ${url ?? "—"}\nClassification: ${msg.classification}\nSeverity: ${msg.severity}\nSource: customer abuse report (ref ${msg.id})`,
-          severity,
-          severity === "CRITICAL" ? 85 : 70,
-        ).run();
+            const takedownId = crypto.randomUUID();
+            // Atomic draft + evidence: a failure leaves neither behind.
+            await env.DB.batch([
+              env.DB.prepare(`
+                INSERT INTO takedown_requests (
+                  id, org_id, brand_id, module_key, target_type, target_value, target_url,
+                  source_type, source_id, evidence_summary, evidence_detail,
+                  provider_name, provider_abuse_contact, provider_method,
+                  status, severity, priority_score, requested_by, created_at, updated_at
+                ) VALUES (?, ?, ?, 'domain', 'url', ?, ?, 'abuse_report', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
+              `).bind(
+                takedownId,
+                msg.org_id,
+                msg.brand_id,
+                domain,
+                url,
+                msg.id,
+                `Confirmed ${msg.classification} reported to the Abuse Mailbox: ${url ?? domain}.`,
+                `Domain: ${domain}\nURL: ${url ?? "—"}\nClassification: ${msg.classification}\nSeverity: ${msg.severity}\nSource: customer abuse report (ref ${msg.id})`,
+                severity,
+                severity === "CRITICAL" ? 85 : 70,
+              ),
+              env.DB.prepare(`
+                INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+                VALUES (?, ?, 'abuse_report', 'Abuse Mailbox Report', ?, ?, datetime('now'))
+              `).bind(
+                crypto.randomUUID(),
+                takedownId,
+                `Reported to the Abuse Mailbox and AI-confirmed as ${msg.classification} (${msg.severity}).\nDomain: ${domain}\nURL: ${url ?? "—"}`,
+                JSON.stringify({
+                  abuse_message_id: msg.id,
+                  threat_id: t.id,
+                  classification: msg.classification,
+                  severity: msg.severity,
+                  domain,
+                  url,
+                }),
+              ),
+            ]);
 
-        await env.DB.prepare(`
-          INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-          VALUES (?, ?, 'abuse_report', 'Abuse Mailbox Report', ?, ?, datetime('now'))
-        `).bind(
-          crypto.randomUUID(),
-          takedownId,
-          `Reported to the Abuse Mailbox and AI-confirmed as ${msg.classification} (${msg.severity}).\nDomain: ${domain}\nURL: ${url ?? "—"}`,
-          JSON.stringify({
-            abuse_message_id: msg.id,
-            threat_id: t.id,
-            classification: msg.classification,
-            severity: msg.severity,
-            domain,
-            url,
-          }),
-        ).run();
-
-        created++;
+            tally.created++;
+          } catch (err) {
+            messageFailed = true;
+            recordDraftFailure(tally, "abuse_report", `${msg.id}/${t.id}`, err);
+          }
+        }
       }
-    }
 
-    // Mark processed regardless of how many drafts resulted, so the message
-    // isn't re-scanned every run.
-    await env.DB.prepare(
-      `UPDATE abuse_inbox_messages SET takedown_drafted_at = datetime('now') WHERE id = ?`,
-    ).bind(msg.id).run();
+      // Mark processed regardless of how many drafts resulted, so the message
+      // isn't re-scanned every run — unless a draft failed and should retry.
+      if (!messageFailed) {
+        await env.DB.prepare(
+          `UPDATE abuse_inbox_messages SET takedown_drafted_at = datetime('now') WHERE id = ?`,
+        ).bind(msg.id).run();
+      }
+    } catch (err) {
+      recordDraftFailure(tally, "abuse_report", msg.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // ─── Phase C: Impersonation Profiles → Takedown ────────────────────
 
-async function createTakedownsFromImpersonations(env: Env): Promise<number> {
+async function createTakedownsFromImpersonations(env: Env): Promise<DraftTally> {
   const impersonations = await env.DB.prepare(`
     SELECT sp.*, b.name as brand_name
     FROM social_profiles sp
@@ -756,76 +822,80 @@ async function createTakedownsFromImpersonations(env: Env): Promise<number> {
     LIMIT 10
   `).all();
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const profile of impersonations.results) {
-    const platform = ((profile.platform as string) || "").toLowerCase();
-    const handle = profile.handle as string;
-    const confidenceScore = (profile.impersonation_score as number) || 0;
-    const brandName = profile.brand_name as string;
+    try {
+      const platform = ((profile.platform as string) || "").toLowerCase();
+      const handle = profile.handle as string;
+      const confidenceScore = (profile.impersonation_score as number) || 0;
+      const brandName = profile.brand_name as string;
 
-    // Look up platform abuse contact
-    const provider = await env.DB.prepare(
-      "SELECT * FROM takedown_providers WHERE provider_type = 'social_platform' AND LOWER(provider_name) LIKE ? LIMIT 1"
-    ).bind(`%${platform}%`).first();
+      // Look up platform abuse contact
+      const provider = await env.DB.prepare(
+        "SELECT * FROM takedown_providers WHERE provider_type = 'social_platform' AND LOWER(provider_name) LIKE ? LIMIT 1"
+      ).bind(`%${platform}%`).first();
 
-    const evidenceText = (profile.ai_evidence_draft as string)
-      || (profile.ai_assessment as string)
-      || `Account @${handle} on ${platform} is impersonating ${brandName}.`;
+      const evidenceText = (profile.ai_evidence_draft as string)
+        || (profile.ai_assessment as string)
+        || `Account @${handle} on ${platform} is impersonating ${brandName}.`;
 
-    const takedownId = crypto.randomUUID();
-    const owningOrgId = await resolveOwningOrgId(env, profile.brand_id as string);
-    await env.DB.prepare(`
-      INSERT INTO takedown_requests (
-        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
-        source_type, source_id, evidence_summary, evidence_detail,
-        provider_name, provider_abuse_contact, provider_method,
-        status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'social', 'social_profile', ?, ?, ?, 'social_profile', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
-    `).bind(
-      takedownId,
-      owningOrgId,
-      profile.brand_id as string,
-      `@${handle}`,
-      platform,
-      (profile.profile_url as string) || null,
-      String(profile.id),
-      `Impersonation account @${handle} on ${platform} targeting ${brandName}. Confidence: ${Math.round(confidenceScore * 100)}%.`,
-      evidenceText,
-      (provider?.provider_name as string) || platform,
-      (provider?.abuse_url as string) || null,
-      (provider?.abuse_api_type as string) || "form",
-      confidenceScore >= 0.8 ? "HIGH" : "MEDIUM",
-      confidenceScore >= 0.8 ? 70 : 50,
-    ).run();
-
-    // Create evidence record
-    await env.DB.prepare(`
-      INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-      VALUES (?, ?, 'ai_report', 'Social Profile Assessment', ?, ?, datetime('now'))
-    `).bind(
-      crypto.randomUUID(),
-      takedownId,
-      evidenceText,
-      JSON.stringify({
+      const takedownId = crypto.randomUUID();
+      const owningOrgId = await resolveOwningOrgId(env, profile.brand_id as string);
+      await env.DB.prepare(`
+        INSERT INTO takedown_requests (
+          id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
+          source_type, source_id, evidence_summary, evidence_detail,
+          provider_name, provider_abuse_contact, provider_method,
+          status, severity, priority_score, requested_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 'social', 'social_profile', ?, ?, ?, 'social_profile', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      `).bind(
+        takedownId,
+        owningOrgId,
+        profile.brand_id as string,
+        `@${handle}`,
         platform,
-        handle,
-        url: profile.profile_url,
-        confidence_score: confidenceScore,
-        classification: profile.classification,
-        brand_name: brandName,
-      }),
-    ).run();
+        (profile.profile_url as string) || null,
+        String(profile.id),
+        `Impersonation account @${handle} on ${platform} targeting ${brandName}. Confidence: ${Math.round(confidenceScore * 100)}%.`,
+        evidenceText,
+        (provider?.provider_name as string) || platform,
+        (provider?.abuse_url as string) || null,
+        (provider?.abuse_api_type as string) || "form",
+        confidenceScore >= 0.8 ? "HIGH" : "MEDIUM",
+        confidenceScore >= 0.8 ? 70 : 50,
+      ).run();
 
-    created++;
+      // Create evidence record
+      await env.DB.prepare(`
+        INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+        VALUES (?, ?, 'ai_report', 'Social Profile Assessment', ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(),
+        takedownId,
+        evidenceText,
+        JSON.stringify({
+          platform,
+          handle,
+          url: profile.profile_url,
+          confidence_score: confidenceScore,
+          classification: profile.classification,
+          brand_name: brandName,
+        }),
+      ).run();
+
+      tally.created++;
+    } catch (err) {
+      recordDraftFailure(tally, "social_profile", profile.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // ─── Phase C2: App-Store Impersonations → Takedown ────────────────
 
-async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<number> {
+async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<DraftTally> {
   let impersonations: { results: Record<string, unknown>[] };
   try {
     impersonations = await env.DB.prepare(`
@@ -846,96 +916,100 @@ async function createTakedownsFromAppStoreImpersonations(env: Env): Promise<numb
     `).all<Record<string, unknown>>();
   } catch {
     // app_store_listings may not exist in a given deployment — gracefully skip.
-    return 0;
+    return newDraftTally();
   }
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const row of impersonations.results) {
-    const store = ((row.store as string) || "").toLowerCase();
-    const appName = (row.app_name as string) || "unknown app";
-    const devName = (row.developer_name as string) || "unknown developer";
-    const bundleId = (row.bundle_id as string) || null;
-    const appUrl = (row.app_url as string) || null;
-    const score = (row.impersonation_score as number) || 0;
-    const severity = ((row.severity as string) || "HIGH").toUpperCase() as "HIGH" | "CRITICAL";
-    const brandName = (row.brand_name as string) || "unknown brand";
-    const signalsJson = (row.impersonation_signals as string) || "[]";
-    const classificationReason = (row.classification_reason as string) || null;
+    try {
+      const store = ((row.store as string) || "").toLowerCase();
+      const appName = (row.app_name as string) || "unknown app";
+      const devName = (row.developer_name as string) || "unknown developer";
+      const bundleId = (row.bundle_id as string) || null;
+      const appUrl = (row.app_url as string) || null;
+      const score = (row.impersonation_score as number) || 0;
+      const severity = ((row.severity as string) || "HIGH").toUpperCase() as "HIGH" | "CRITICAL";
+      const brandName = (row.brand_name as string) || "unknown brand";
+      const signalsJson = (row.impersonation_signals as string) || "[]";
+      const classificationReason = (row.classification_reason as string) || null;
 
-    // Provider lookup: app-store abuse contact. Free-text match on provider_name.
-    // Example seed rows: "Apple App Store", "Google Play Store".
-    const provider = await env.DB.prepare(
-      "SELECT * FROM takedown_providers WHERE provider_type = 'app_store' AND LOWER(provider_name) LIKE ? LIMIT 1"
-    ).bind(`%${store}%`).first();
+      // Provider lookup: app-store abuse contact. Free-text match on provider_name.
+      // Example seed rows: "Apple App Store", "Google Play Store".
+      const provider = await env.DB.prepare(
+        "SELECT * FROM takedown_providers WHERE provider_type = 'app_store' AND LOWER(provider_name) LIKE ? LIMIT 1"
+      ).bind(`%${store}%`).first();
 
-    // Evidence text: prefer AI assessment (populated by the scanner's Haiku
-    // review for suspicious rows that got promoted), fall back to the rule-
-    // based classification reason, then to a templated summary.
-    const aiAssessment = (row.ai_assessment as string) || null;
-    const evidenceText = aiAssessment
-      ?? classificationReason
-      ?? `App "${appName}" on ${store} by "${devName}" is impersonating ${brandName}${bundleId ? ` (bundle ID: ${bundleId})` : ""}. Impersonation score: ${Math.round(score * 100)}%.`;
+      // Evidence text: prefer AI assessment (populated by the scanner's Haiku
+      // review for suspicious rows that got promoted), fall back to the rule-
+      // based classification reason, then to a templated summary.
+      const aiAssessment = (row.ai_assessment as string) || null;
+      const evidenceText = aiAssessment
+        ?? classificationReason
+        ?? `App "${appName}" on ${store} by "${devName}" is impersonating ${brandName}${bundleId ? ` (bundle ID: ${bundleId})` : ""}. Impersonation score: ${Math.round(score * 100)}%.`;
 
-    const takedownId = crypto.randomUUID();
-    const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
-    await env.DB.prepare(`
-      INSERT INTO takedown_requests (
-        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
-        source_type, source_id, evidence_summary, evidence_detail,
-        provider_name, provider_abuse_contact, provider_method,
-        status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'app_store', 'mobile_app', ?, ?, ?, 'app_store', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
-    `).bind(
-      takedownId,
-      owningOrgId,
-      row.brand_id as string,
-      bundleId ?? appName,
-      store,
-      appUrl,
-      String(row.id),
-      `App-store impersonation "${appName}" on ${store} by "${devName}" targeting ${brandName}. Confidence: ${Math.round(score * 100)}%.`,
-      evidenceText,
-      (provider?.provider_name as string) || (store === "ios" ? "Apple App Store" : store),
-      (provider?.abuse_url as string) || (provider?.abuse_email as string) || null,
-      (provider?.abuse_api_type as string) || "form",
-      severity,
-      severity === "CRITICAL" ? 85 : 70,
-    ).run();
-
-    // Evidence record mirrors the pattern used for social profiles.
-    await env.DB.prepare(`
-      INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-      VALUES (?, ?, 'app_store_listing', 'App-Store Listing Assessment', ?, ?, datetime('now'))
-    `).bind(
-      crypto.randomUUID(),
-      takedownId,
-      evidenceText,
-      JSON.stringify({
+      const takedownId = crypto.randomUUID();
+      const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
+      await env.DB.prepare(`
+        INSERT INTO takedown_requests (
+          id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
+          source_type, source_id, evidence_summary, evidence_detail,
+          provider_name, provider_abuse_contact, provider_method,
+          status, severity, priority_score, requested_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 'app_store', 'mobile_app', ?, ?, ?, 'app_store', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      `).bind(
+        takedownId,
+        owningOrgId,
+        row.brand_id as string,
+        bundleId ?? appName,
         store,
-        app_name: appName,
-        app_id: row.app_id,
-        bundle_id: bundleId,
-        developer_name: devName,
-        developer_id: row.developer_id ?? null,
-        app_url: appUrl,
-        impersonation_score: score,
-        classification: row.classification,
+        appUrl,
+        String(row.id),
+        `App-store impersonation "${appName}" on ${store} by "${devName}" targeting ${brandName}. Confidence: ${Math.round(score * 100)}%.`,
+        evidenceText,
+        (provider?.provider_name as string) || (store === "ios" ? "Apple App Store" : store),
+        (provider?.abuse_url as string) || (provider?.abuse_email as string) || null,
+        (provider?.abuse_api_type as string) || "form",
         severity,
-        brand_name: brandName,
-        signals: signalsJson,
-      }),
-    ).run();
+        severity === "CRITICAL" ? 85 : 70,
+      ).run();
 
-    created++;
+      // Evidence record mirrors the pattern used for social profiles.
+      await env.DB.prepare(`
+        INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+        VALUES (?, ?, 'app_store_listing', 'App-Store Listing Assessment', ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(),
+        takedownId,
+        evidenceText,
+        JSON.stringify({
+          store,
+          app_name: appName,
+          app_id: row.app_id,
+          bundle_id: bundleId,
+          developer_name: devName,
+          developer_id: row.developer_id ?? null,
+          app_url: appUrl,
+          impersonation_score: score,
+          classification: row.classification,
+          severity,
+          brand_name: brandName,
+          signals: signalsJson,
+        }),
+      ).run();
+
+      tally.created++;
+    } catch (err) {
+      recordDraftFailure(tally, "app_store", row.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // ─── Phase C3: Dark-Web Confirmed Mentions → Takedown ─────────────
 
-async function createTakedownsFromDarkWebMentions(env: Env): Promise<number> {
+async function createTakedownsFromDarkWebMentions(env: Env): Promise<DraftTally> {
   let mentions: { results: Record<string, unknown>[] };
   try {
     mentions = await env.DB.prepare(`
@@ -956,88 +1030,112 @@ async function createTakedownsFromDarkWebMentions(env: Env): Promise<number> {
     `).all<Record<string, unknown>>();
   } catch {
     // dark_web_mentions may not exist in a given deployment — gracefully skip.
-    return 0;
+    return newDraftTally();
   }
 
-  let created = 0;
+  const tally = newDraftTally();
 
   for (const row of mentions.results) {
-    const source = ((row.source as string) || "").toLowerCase();
-    const sourceUrl = (row.source_url as string) || "";
-    const brandName = (row.brand_name as string) || "unknown brand";
-    const matchType = (row.match_type as string) || "unknown";
-    const matchedTermsJson = (row.matched_terms as string) || "[]";
-    const snippet = (row.content_snippet as string) || "";
-    const severity = ((row.severity as string) || "HIGH").toUpperCase() as "HIGH" | "CRITICAL";
-    const classificationReason = (row.classification_reason as string) || null;
+    try {
+      const source = ((row.source as string) || "").toLowerCase();
+      const sourceUrl = (row.source_url as string) || "";
+      const brandName = (row.brand_name as string) || "unknown brand";
+      const matchType = (row.match_type as string) || "unknown";
+      const matchedTermsJson = (row.matched_terms as string) || "[]";
+      const snippet = (row.content_snippet as string) || "";
+      const severity = ((row.severity as string) || "HIGH").toUpperCase() as "HIGH" | "CRITICAL";
+      const classificationReason = (row.classification_reason as string) || null;
 
-    // Provider lookup: paste-host abuse contact. Free-text match.
-    // Example seed rows: "Pastebin", "Doxbin", "Telegram".
-    const provider = await env.DB.prepare(
-      "SELECT * FROM takedown_providers WHERE provider_type = 'paste_host' AND LOWER(provider_name) LIKE ? LIMIT 1"
-    ).bind(`%${source}%`).first();
+      // Provider lookup: paste-host abuse contact. Free-text match.
+      // Example seed rows: "Pastebin", "Doxbin", "Telegram".
+      const provider = await env.DB.prepare(
+        "SELECT * FROM takedown_providers WHERE provider_type = 'paste_host' AND LOWER(provider_name) LIKE ? LIMIT 1"
+      ).bind(`%${source}%`).first();
 
-    const aiAssessment = (row.ai_assessment as string) || null;
-    const evidenceText = aiAssessment
-      ?? classificationReason
-      ?? `Confirmed ${source} mention of ${brandName} via ${matchType} match.${snippet ? `\n\nExcerpt:\n${snippet}` : ""}`;
+      const aiAssessment = (row.ai_assessment as string) || null;
+      const evidenceText = aiAssessment
+        ?? classificationReason
+        ?? `Confirmed ${source} mention of ${brandName} via ${matchType} match.${snippet ? `\n\nExcerpt:\n${snippet}` : ""}`;
 
-    const takedownId = crypto.randomUUID();
-    const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
-    await env.DB.prepare(`
-      INSERT INTO takedown_requests (
-        id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
-        source_type, source_id, evidence_summary, evidence_detail,
-        provider_name, provider_abuse_contact, provider_method,
-        status, severity, priority_score, requested_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'dark_web', 'paste', ?, ?, ?, 'dark_web_mention', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
-    `).bind(
-      takedownId,
-      owningOrgId,
-      row.brand_id as string,
-      sourceUrl,
-      source,
-      sourceUrl,
-      String(row.id),
-      `Confirmed dark-web mention of ${brandName} on ${source} (${matchType} match, ${severity}).`,
-      evidenceText,
-      (provider?.provider_name as string) || source,
-      (provider?.abuse_email as string) || (provider?.abuse_url as string) || null,
-      (provider?.abuse_api_type as string) || "email",
-      severity,
-      severity === "CRITICAL" ? 85 : 65,
-    ).run();
-
-    await env.DB.prepare(`
-      INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-      VALUES (?, ?, 'dark_web_mention', 'Dark-Web Mention Evidence', ?, ?, datetime('now'))
-    `).bind(
-      crypto.randomUUID(),
-      takedownId,
-      evidenceText,
-      JSON.stringify({
+      const takedownId = crypto.randomUUID();
+      const owningOrgId = await resolveOwningOrgId(env, row.brand_id as string);
+      await env.DB.prepare(`
+        INSERT INTO takedown_requests (
+          id, org_id, brand_id, module_key, target_type, target_value, target_platform, target_url,
+          source_type, source_id, evidence_summary, evidence_detail,
+          provider_name, provider_abuse_contact, provider_method,
+          status, severity, priority_score, requested_by, created_at, updated_at
+        ) VALUES (?, ?, ?, 'dark_web', 'paste', ?, ?, ?, 'dark_web_mention', ?, ?, ?, ?, ?, ?, 'draft', ?, ?, null, datetime('now'), datetime('now'))
+      `).bind(
+        takedownId,
+        owningOrgId,
+        row.brand_id as string,
+        sourceUrl,
         source,
-        source_url: sourceUrl,
-        source_channel: row.source_channel ?? null,
-        source_author: row.source_author ?? null,
-        posted_at: row.posted_at ?? null,
-        match_type: matchType,
-        matched_terms: matchedTermsJson,
-        classification: row.classification,
+        sourceUrl,
+        String(row.id),
+        `Confirmed dark-web mention of ${brandName} on ${source} (${matchType} match, ${severity}).`,
+        evidenceText,
+        (provider?.provider_name as string) || source,
+        (provider?.abuse_email as string) || (provider?.abuse_url as string) || null,
+        (provider?.abuse_api_type as string) || "email",
         severity,
-        brand_name: brandName,
-        snippet_length: snippet.length,
-      }),
-    ).run();
+        severity === "CRITICAL" ? 85 : 65,
+      ).run();
 
-    created++;
+      await env.DB.prepare(`
+        INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
+        VALUES (?, ?, 'dark_web_mention', 'Dark-Web Mention Evidence', ?, ?, datetime('now'))
+      `).bind(
+        crypto.randomUUID(),
+        takedownId,
+        evidenceText,
+        JSON.stringify({
+          source,
+          source_url: sourceUrl,
+          source_channel: row.source_channel ?? null,
+          source_author: row.source_author ?? null,
+          posted_at: row.posted_at ?? null,
+          match_type: matchType,
+          matched_terms: matchedTermsJson,
+          classification: row.classification,
+          severity,
+          brand_name: brandName,
+          snippet_length: snippet.length,
+        }),
+      ).run();
+
+      tally.created++;
+    } catch (err) {
+      recordDraftFailure(tally, "dark_web_mention", row.id, err);
+    }
   }
 
-  return created;
+  return tally;
 }
 
 // Need Env type for helper functions
 import type { Env } from "../types";
+
+// Per-source result of a takedown-draft creator. A candidate whose writes
+// fail is counted here and skipped — never thrown out of the agent, so one
+// bad row can't fail (and eventually auto-pause) the whole Sparrow run.
+export interface DraftTally {
+  created: number;
+  failed: number;
+  firstError: string | null;
+}
+
+function newDraftTally(): DraftTally {
+  return { created: 0, failed: 0, firstError: null };
+}
+
+function recordDraftFailure(tally: DraftTally, source: string, candidateId: unknown, err: unknown): void {
+  tally.failed++;
+  if (tally.firstError === null) {
+    tally.firstError = `${source} ${String(candidateId)}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
 
 // Resolve the primary org owning a brand. Returns null when the brand
 // isn't bound to any org (cross-cutting threats with no tenant
