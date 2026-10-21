@@ -26,6 +26,18 @@ function makeEnv() {
   return { raw, env, audits };
 }
 
+/** One active, geolocated threat two hours ago — inside a days=1 window. */
+function seedThreatTwoHoursAgo(raw: ReturnType<typeof openMigratedDb>): void {
+  const at = new Date(Date.now() - 2 * 3_600_000).toISOString().slice(0, 19).replace("T", " ");
+  raw.prepare(
+    `INSERT INTO threats (id, source_feed, threat_type, malicious_url, malicious_domain, severity, status, country_code, lat, lng, created_at)
+     VALUES ('t_cube', 'test', 'phishing', 'https://x.example/', 'x.example', 'high', 'active', 'US', 40.1, -75.2, ?)`,
+  ).run(at);
+}
+
+const geoRows = (raw: ReturnType<typeof openMigratedDb>): number =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM threat_cube_geo").all()[0] as { n: number }).n;
+
 const call = (path: string, env: Env, auth: string | null = `Bearer ${SECRET}`) => {
   const headers = new Headers();
   if (auth !== null) headers.set("Authorization", auth);
@@ -45,6 +57,7 @@ describe.skipIf(!hasSqlite())(`${PATH}`, () => {
 
   it("delegates to handleCubeBackfill: dry_run streams per-hour NDJSON + summary, writes no cube rows, audits once", async () => {
     const { raw, env, audits } = makeEnv();
+    seedThreatTwoHoursAgo(raw);
     const res = await call(`${PATH}?cube=all&days=1&dry_run=true`, env);
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/x-ndjson");
@@ -55,8 +68,8 @@ describe.skipIf(!hasSqlite())(`${PATH}`, () => {
     expect(lines[lines.length - 1]).toMatchObject({
       done: true, total_hours: 24, resume_from: null, dry_run: true, cube: "all", window_days: 1,
     });
-    const n = (raw.prepare("SELECT COUNT(*) AS n FROM threat_cube_geo").all()[0] as { n: number }).n;
-    expect(n).toBe(0);
+    // A threat sits in the window, so a non-dry run WOULD write a geo row.
+    expect(geoRows(raw)).toBe(0);
 
     expect(audits).toHaveLength(1);
     // (id, user_id, action, resource_type, resource_id, details, ip, ua, outcome)
@@ -77,6 +90,20 @@ describe.skipIf(!hasSqlite())(`${PATH}`, () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({ done: true, total_hours: 0, cube: "geo" });
     expect(JSON.parse(audits[0]![5] as string)).toMatchObject({ cube: "geo", resume_from: resume });
+  }, 60_000);
+
+  it("a real (non-dry) run writes the cube rows the dry run left alone", async () => {
+    const { raw, env } = makeEnv();
+    seedThreatTwoHoursAgo(raw);
+    const lines = await ndjson(await call(`${PATH}?cube=geo&days=1`, env));
+    expect(lines[lines.length - 1]).toMatchObject({ done: true, dry_run: false });
+    expect(geoRows(raw)).toBe(1);
+  }, 60_000);
+
+  it("caps raw param strings stored in the audit row", async () => {
+    const { env, audits } = makeEnv();
+    await call(`${PATH}?cube=${"x".repeat(500)}`, env);
+    expect((JSON.parse(audits[0]![5] as string) as { cube: string }).cube).toHaveLength(64);
   }, 60_000);
 
   it("invalid cube → handler's 400, audited as failure", async () => {

@@ -595,10 +595,6 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
 
     it("M2: non-cron dispatch (internal /run, FC recovery) captures ONE page; the cron runs a batch; session always closed", async () => {
-      // The agent reads the wall clock; pin it to NOW so the enqueued rows
-      // (stamped NOW) are not expired out of the claim window as real time passes.
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NOW);
       await enqueueAutoCaptures(db, [1, 2, 3].map((i) => ({ threatId: `t${i}`, maliciousUrl: `https://kit${i}.example-phish.com/` })), NOW);
       const fd = fakeDriver({});
       mockDriver = fd.driver;
@@ -609,6 +605,10 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
           : { Status: 0, Answer: [] },
       )));
       try {
+        // The agent reads the wall clock; pin it to NOW so the enqueued rows
+        // (stamped NOW) are not expired out of the claim window as real time passes.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(NOW);
         const ctxBase = { env, runId: "r", agentName: "page_capture", triggeredBy: "api" };
         // agent_events isn't in the derived schema — swallow just that insert.
         const res1 = await pageCaptureAgent.execute({ ...ctxBase, env: { ...env, DB: withEventsSwallowed(env.DB) } as Env, input: { trigger: "manual" } });
@@ -901,14 +901,14 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
 
     it("lows: the agent still emits its agent_events row when the run throws", async () => {
-      // The agent reads the wall clock; pin it to NOW so the enqueued rows
-      // (stamped NOW) are not expired out of the claim window as real time passes.
-      vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(NOW);
       await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
       mockDriver = fakeDriver({}, { openFails: true }).driver;
       const events: string[] = [];
       try {
+        // The agent reads the wall clock; pin it to NOW so the enqueued rows
+        // (stamped NOW) are not expired out of the claim window as real time passes.
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(NOW);
         const dbEv = Object.assign(Object.create(db) as D1Database, {
           prepare: (sql: string) => (sql.includes("INSERT INTO agent_events")
             ? { bind: (...a: unknown[]) => ({ run: async () => { events.push(String(a[1])); return { meta: {} }; } }) } as unknown as D1PreparedStatement

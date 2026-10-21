@@ -374,12 +374,15 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
           userId: null,
           resourceType: 'threat_cubes',
           outcome: res.ok ? 'success' : 'failure',
+          // outcome reflects whether the params were ACCEPTED (res.ok is
+          // known before any hour runs); per-hour results are in the stream.
+          // Raw param strings are capped so a caller can't bloat the row.
           details: {
             actor: 'internal',
-            cube: url.searchParams.get('cube'),
-            days: url.searchParams.get('days'),
+            cube: url.searchParams.get('cube')?.slice(0, 64) ?? null,
+            days: url.searchParams.get('days')?.slice(0, 64) ?? null,
             dry_run: url.searchParams.get('dry_run') === 'true',
-            resume_from: url.searchParams.get('resume_from'),
+            resume_from: url.searchParams.get('resume_from')?.slice(0, 64) ?? null,
           },
           request,
         });
