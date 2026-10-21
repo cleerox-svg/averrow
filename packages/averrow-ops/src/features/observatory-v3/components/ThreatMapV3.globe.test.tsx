@@ -152,6 +152,17 @@ describe('ThreatMapV3 projection: flat is untouched', () => {
     expect(container(c).style.left).toBe('0px');
   });
 
+  it('flat repaints the deck canvas in the same frame luma resizes it (no one-frame blank of every node on a phone resize)', () => {
+    render(<ThreatMapV3 {...base} />);
+    ready();
+    const deviceProps = overlays[0]!.props.deviceProps as { onResize: () => void } | undefined;
+    expect(typeof deviceProps?.onResize).toBe('function');
+    const redraw = vi.fn();
+    (overlays[0] as unknown as { _deck: { redraw: () => void } })._deck = { redraw };
+    deviceProps!.onResize();
+    expect(redraw).toHaveBeenCalledTimes(1);
+  });
+
   it('flat draws the bezier corridor (2D points), as before', () => {
     render(<ThreatMapV3 {...base} />);
     ready();
@@ -172,6 +183,7 @@ describe('ThreatMapV3 projection: globe', () => {
     expect(lastMap().setSky).toHaveBeenCalledWith(GLOBE_SKY);
     expect(overlays).toHaveLength(1);
     expect(overlays[0]!.props.interleaved).toBe(true);
+    expect(overlays[0]!.props.deviceProps).toBeUndefined(); // the globe draws into MapLibre's own canvas: nothing of deck's to repaint
     expect(overlays[0]!.props.views).toBeDefined();
     expect(overlays[0]!.props.parameters).toEqual({ depthBias: GLOBE_DEPTH_BIAS, depthWriteEnabled: false });
     expect(container(c).dataset.projection).toBe('globe');

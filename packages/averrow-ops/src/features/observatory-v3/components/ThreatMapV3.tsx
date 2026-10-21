@@ -75,6 +75,7 @@ import {
   ringRadiusPx, replayDotState, sampleDots, DEFAULT_RING_RADIUS_PX,
   type PulseExtensionProps, type RingExtensionProps, type ArrivalEvent,
 } from '../anim';
+import { repaintOnResizeProps } from '../lib/overlay-repaint';
 import { useSlottedNodesGen, nodeTransitions, isGhostNode } from '../lib/node-transitions';
 import { moveLabelMinZoom } from '../lib/lens/movement';
 import {
@@ -1237,10 +1238,14 @@ function ThreatMapV3Inner({
       overlay.setProps({ layers, onClick: handlers.clickEmpty, pickingRadius });
     } else if (layers.length > 0) {
       const interleaved = kind === 'globe';
-      overlay = new MapboxOverlay({
+      // The overlaid (flat) deck owns a canvas that luma wipes on every resize: repaint it in the same frame (lib/overlay-repaint.ts).
+      // The interleaved globe draws into MapLibre's own canvas, which MapLibre repaints itself.
+      let created: MapboxOverlay | null = null;
+      created = new MapboxOverlay({
         interleaved,
-        ...(interleaved ? globeOverlayProps() : {}),
+        ...(interleaved ? globeOverlayProps() : { deviceProps: repaintOnResizeProps(() => created) }),
         layers, onClick: handlers.clickEmpty, pickingRadius });
+      overlay = created;
       map.addControl(overlay as unknown as maplibregl.IControl);
       slots[kind] = overlay;
     }
