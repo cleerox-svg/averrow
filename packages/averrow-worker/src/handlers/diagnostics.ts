@@ -1058,6 +1058,99 @@ export function deriveWorkflowRunTotals(wf: {
   };
 }
 
+/** One circuit-broken (or manually paused) agent in `agent_mesh.paused[]`. */
+export interface PausedAgentDiag {
+  agent_id: string;
+  paused_reason: string | null;
+  paused_at: string | null;
+  paused_after_n_failures: number | null;
+  consecutive_failures: number;
+  /** Hours since `paused_at`; null when `paused_at` is missing/unparseable. */
+  hours_paused: number | null;
+  /** Newest non-null `agent_runs.error_message` among the agent's last
+   *  PAUSED_AGENT_RECENT_RUNS runs (truncated to 500 chars); null if none. */
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
+/** Cap on paused agents reported (agent_configs is ~50 rows total). */
+export const PAUSED_AGENT_LIMIT = 50;
+/** Runs inspected per paused agent when looking for `last_error`. */
+export const PAUSED_AGENT_RECENT_RUNS = 20;
+
+/** D1 `datetime('now')` text (`YYYY-MM-DD HH:MM:SS`, UTC, no zone) → ms. */
+function sqliteUtcMs(ts: string): number {
+  const s = ts.trim();
+  if (/[zZ]|[+-]\d\d:?\d\d$/.test(s)) return Date.parse(s);
+  return Date.parse(s.replace(' ', 'T') + 'Z');
+}
+
+/**
+ * `agent_mesh.paused[]` — every `agent_configs` row with `enabled = 0`.
+ *
+ * `agent_mesh.per_agent` is a GROUP BY over `agent_runs` in the window, so
+ * an agent whose circuit breaker tripped (executeAgent skips it, so it
+ * writes no rows) simply vanished from diagnostics — strategist, sparrow
+ * and attributor sat paused for weeks with no hint. This block reads the
+ * breaker state directly.
+ *
+ * Cost: one read of agent_configs (tiny table), then ONE `db.batch` of
+ * per-agent point lookups that seek `idx_agent_runs_agent_started`
+ * (agent_id, started_at DESC) with `LIMIT PAUSED_AGENT_RECENT_RUNS` — the
+ * error filter runs in JS so a manually-paused agent with a long clean
+ * history can't turn the lookup into a walk of its whole run history.
+ */
+export async function fetchPausedAgents(
+  db: D1Database,
+  nowMs: number = Date.now(),
+): Promise<PausedAgentDiag[]> {
+  const configs = await db.prepare(`
+    SELECT agent_id, paused_reason, paused_at, paused_after_n_failures,
+           consecutive_failures
+      FROM agent_configs
+     WHERE enabled = 0
+     ORDER BY paused_at ASC, agent_id ASC
+     LIMIT ?
+  `).bind(PAUSED_AGENT_LIMIT).all<{
+    agent_id: string;
+    paused_reason: string | null;
+    paused_at: string | null;
+    paused_after_n_failures: number | null;
+    consecutive_failures: number | null;
+  }>();
+  const rows = configs.results ?? [];
+  if (rows.length === 0) return [];
+
+  const stmt = db.prepare(`
+    SELECT error_message, started_at
+      FROM agent_runs
+     WHERE agent_id = ?
+     ORDER BY started_at DESC
+     LIMIT ?
+  `);
+  const runBatches = await db.batch<{ error_message: string | null; started_at: string }>(
+    rows.map((r) => stmt.bind(r.agent_id, PAUSED_AGENT_RECENT_RUNS)),
+  );
+
+  return rows.map((r, i) => {
+    const runs = runBatches[i]?.results ?? [];
+    const errRun = runs.find((run) => run.error_message != null && run.error_message !== '');
+    const pausedMs = r.paused_at ? sqliteUtcMs(r.paused_at) : NaN;
+    return {
+      agent_id: r.agent_id,
+      paused_reason: r.paused_reason,
+      paused_at: r.paused_at,
+      paused_after_n_failures: r.paused_after_n_failures,
+      consecutive_failures: r.consecutive_failures ?? 0,
+      hours_paused: Number.isFinite(pausedMs)
+        ? Math.round(((nowMs - pausedMs) / 3_600_000) * 10) / 10
+        : null,
+      last_error: errRun?.error_message ? errRun.error_message.slice(0, 500) : null,
+      last_error_at: errRun?.started_at ?? null,
+    };
+  });
+}
+
 /** GET /api/admin/platform-diagnostics  (JWT admin auth)
  *  GET /api/internal/platform-diagnostics (AVERROW_INTERNAL_SECRET auth) */
 export async function handlePlatformDiagnostics(request: Request, env: Env): Promise<Response> {
@@ -1840,6 +1933,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     const pageAnalysisP = buildPageAnalysisDiag(env);
     const velocityP = buildVelocityDiag(env);
     const nrdRetentionP = buildNrdRetentionDiag(env);
+    const pausedAgentsP = fetchPausedAgents(env.DB);
 
     // ── Execute all in parallel ─────────────────────────────────────
     const [
@@ -1858,6 +1952,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       pageAnalysis,
       velocity,
       nrdRetention,
+      pausedAgents,
     ] = await Promise.all([
       clockP, enrichmentP, cartoQueueP, cartoQueueRawP, cartoExhaustedP, cartoExhaustedByFeedP, domainGeoDrainableP,
       geoCoverageP,
@@ -1874,6 +1969,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       pageAnalysisP,
       velocityP,
       nrdRetentionP,
+      pausedAgentsP,
     ]);
 
     // Reconcile workflow-agent rollups into agent_mesh.per_agent shape.
@@ -2190,7 +2286,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // 13: additive `nrd_retention.phantom_hold_clamped` (tiered
           // retention: 30d hot, brand_matched kept, R2 archive). No field
           // removed.
-          endpoint_version: 13,
+          // 14: additive `agent_mesh.paused[]` + `agent_mesh.summary.paused_count`
+          // (circuit-broken / manually paused agents from agent_configs,
+          // which never appear in per_agent). No field removed.
+          endpoint_version: 14,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2362,9 +2461,15 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
             total_failures: agentMeshMerged.reduce((s, a) => s + a.failed, 0),
             total_killed: agentMeshMerged.reduce((s, a) => s + (a.killed_runs ?? 0), 0),
             stalled_count: stalled.results.length,
+            paused_count: pausedAgents.length,
           },
           per_agent: agentMeshMerged,
           stalled: stalled.results,
+          // agent_configs.enabled = 0 — tripped breakers
+          // (paused_reason 'auto:consecutive_failures') and manual pauses.
+          // A paused agent writes no agent_runs rows, so it is absent from
+          // per_agent; this is the only place it shows up.
+          paused: pausedAgents,
         },
 
         cron_health: cronHealth.results,

@@ -91,6 +91,7 @@ const TOOLS: ToolDef[] = [
       "Comprehensive platform health check. Returns enrichment pipeline state " +
       "(stuck pile, cartographer queue, enrichment throughput), per-feed failure " +
       "rates with auto-pause risk, per-agent run counts with stall detection, " +
+      "circuit-broken/paused agents (agent_mesh.paused), " +
       "backlog trends, AI spend, and cron health. This is the primary diagnostic tool.",
     inputSchema: {
       type: "object",

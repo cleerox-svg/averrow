@@ -1684,6 +1684,7 @@ The endpoint `GET /api/internal/platform-diagnostics?hours=N` returns:
 | `feeds.recent_errors[]` | Last 20 failed pull error messages with timestamps |
 | `agent_mesh.per_agent[]` | Per-agent: `total_runs`, `success`, `partial`, `failed`, `running`, `last_completed_at`, `last_error`, `total_records_processed`, `avg_duration_ms`, `dispatch_source` (`agent_runs` or `workflow`), `cooldown_skipped` (workflow-only), `legacy_inline` (only when an agent has BOTH workflow runs AND historical `agent_runs` rows — e.g. nexus pre-PR-D inline-recovery rows). Workflow-dispatched agents (currently just nexus) read from `agent_activity_log` event types `workflow_dispatched` / `batch_complete` / `workflow_dispatch_failed` / `workflow_cooldown_skip` rather than `agent_runs`. The query is a bare `GROUP BY agent_id` over `agent_runs` with no registry allowlist, so handler-dispatched writers that aren't a registered `AgentModule` (e.g. `daily_briefing`, see `docs/AI_AGENTS.md`) surface here too. |
 | `agent_mesh.stalled[]` | Runs stuck in 'running' state >15 minutes |
+| `agent_mesh.paused[]` | Every `agent_configs` row with `enabled = 0` (tripped breaker `auto:consecutive_failures` or manual): `paused_reason`, `paused_at`, `hours_paused`, `paused_after_n_failures`, `last_error`. Paused agents write no `agent_runs`, so they are absent from `per_agent` — read this block. |
 | `cron_health[]` | `navigator` (+ historical `fast_tick`), `flight_control`, `orchestrator` run counts + success rate |
 | `backlog_trends` | Per-pipeline: `current`, `previous`, `trend` (negative = draining) |
 | `ai_spend_24h` | Per-agent: `calls`, `input_tokens`, `output_tokens`, `cost_usd`. Says what AI *cost*, not whether it *works* — a zero-cost window is identical for "nothing to classify" and "every call HTTP 400". Read `ai_health` for that. |
@@ -1707,7 +1708,7 @@ or **"assess the platform"**:
 1. Run `./scripts/platform-diagnostics.sh` (or `./scripts/platform-diagnostics.sh 24` for a wider window)
 2. Parse the JSON response
 3. Report findings organized by priority:
-   - **Critical:** stuck_pile > 0, feeds at_risk with pct_to_auto_pause >= 80%, stalled agents, failed cron, `ai_health.agents_all_failing` non-empty (AI outage — quote `first_error`)
+   - **Critical:** stuck_pile > 0, feeds at_risk with pct_to_auto_pause >= 80%, stalled agents, `agent_mesh.paused[]` non-empty (agent circuit-broken/paused — quote `paused_reason` + `last_error`), failed cron, `ai_health.agents_all_failing` non-empty (AI outage — quote `first_error`)
    - **Warning:** feeds with failure_rate > 50%, enriched_last_hour < 20, cartographer_queue growing, `ai_health.hours_since_last_call` > 2 (or `null`) — benign only if every `per_agent[].attempted` is 0 AND ingestion is genuinely quiet; a silent ledger on a platform that is ingesting threats is suspect, not healthy
    - **Healthy:** everything else — summarize briefly
 4. If enriched_last_hour looks suspiciously low, note it may be mid-cycle and suggest re-checking in 15 min
