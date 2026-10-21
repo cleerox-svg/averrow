@@ -8,6 +8,10 @@
 // with their host invocation mid-loop and were left agent_runs
 // status='partial' with completed_at NULL.
 //
+// Since the 2026-10-21 inheritance policy no single cluster can be that
+// large (<= INHERIT_MAX_CLUSTER_MEMBERS), so the fixture reaches the cap
+// with many qualifying clusters instead.
+//
 // These tests pin the fix with a prod-shaped fixture: D1 round-trips per
 // call are bounded independently of member count, a wall-clock budget stops
 // the pass cleanly, and the backlog still drains completely over runs.
@@ -21,6 +25,8 @@ import {
   INHERITED_ID_PREFIX,
   MAX_MEMBER_WRITES_PER_RUN,
   WRITE_BATCH,
+  INHERIT_MAX_CLUSTER_MEMBERS,
+  INHERIT_MIN_OTX_COVERAGE,
 } from "../src/lib/cluster-attribution-inherit";
 import { attributorAgent } from "../src/agents/attributor";
 import type { Env } from "../src/types";
@@ -30,6 +36,8 @@ const D1_MAX_BINDS = 100;
 interface Counter {
   /** D1 round-trips: each standalone statement execution, each batch call. */
   roundTrips: number;
+  /** db.batch() calls (write round-trips). */
+  batches: number;
   maxBatch: number;
   maxBinds: number;
 }
@@ -63,6 +71,7 @@ function counting(db: D1Database, c: Counter): D1Database {
       if (prop === "batch") {
         return async (stmts: D1PreparedStatement[]) => {
           c.roundTrips++;
+          c.batches++;
           c.maxBatch = Math.max(c.maxBatch, stmts.length);
           inBatch++;
           try {
@@ -77,55 +86,81 @@ function counting(db: D1Database, c: Counter): D1Database {
   });
 }
 
-// Prod-shaped (2026-10-21), scaled down so the suite stays fast:
-//   * one huge ASN-lane winner (prod: cluster_asn_as4837_malware_distribution,
-//     33,118 un-attributed) — here 12,000, i.e. > 2 runs of the cap;
-//   * 20 mid-size winners with no cluster actor yet (prod: 21 others, 77–2,999);
-//   * 10 winners already fully inherited with actor set (prod: 12, 0 left);
+// Prod-shaped load, under the 2026-10-21 inheritance policy (only
+// specific-evidence clusters of <= INHERIT_MAX_CLUSTER_MEMBERS members with
+// >= 2 agreeing OTX members covering >= 10% may inherit). The cap is now
+// reached by MANY qualifying clusters, not one huge one:
+//   * QUAL qualifying clusters (half cert-serial, half per-IP), each at the
+//     size cap with 10% OTX coverage → QUAL * TO_WRITE rows, > 2 runs of the
+//     cap;
+//   * DONE qualifying clusters already fully inherited with actor set;
+//   * the prod ASN shape (cluster_asn_as4837_malware_distribution: one OTX
+//     member among thousands) → lane-skipped, nothing written;
+//   * a qualifying-looking per-IP cluster whose members sit on Hostinger
+//     (AS47583) → multi-tenant skip, an oversize per-IP cluster → size skip;
 //   * one ambiguous cluster (two OTX actors) and one retired winner.
-const BIG = 12_000;
-const MID_CLUSTERS = 20;
-const MID_MEMBERS = 150;
+const SIZE = INHERIT_MAX_CLUSTER_MEMBERS; // members incl. the OTX ones
+const OTX_PER = Math.ceil(SIZE * INHERIT_MIN_OTX_COVERAGE); // 25 → exactly 10%
+const TO_WRITE = SIZE - OTX_PER; // 225 un-attributed per cluster
+const QUAL = 50;
 const DONE_CLUSTERS = 10;
-const EXPECTED_TOTAL = BIG + MID_CLUSTERS * MID_MEMBERS;
+const DONE_INHERITED = 175;
+const EXPECTED_TOTAL = QUAL * TO_WRITE; // 11,250
+// Clusters that reach the member-stats read (rules 1 + 3 pass, not retired).
+const STATS_READS = QUAL + DONE_CLUSTERS + 2;
+
+const qualId = (i: number) =>
+  i % 2 === 0
+    ? `cluster_cert_${String(i).padStart(4, "0")}${"ab".repeat(8)}`
+    : `cluster_ip_10.1.${Math.floor(i / 200)}.${i % 200}`;
 
 function seed(raw: SqliteDb): void {
   raw.exec("BEGIN");
-  raw.prepare("INSERT INTO threat_actors (id, name) VALUES ('ta_big', 'Big'), ('ta_mid', 'Mid'), ('ta_done', 'Done'), ('ta_x', 'X')").run();
+  raw.prepare("INSERT INTO threat_actors (id, name) VALUES ('ta_big', 'Big'), ('ta_q', 'Q'), ('ta_done', 'Done'), ('ta_x', 'X')").run();
   const cluster = raw.prepare(
-    "INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, actor_id, retired_reason) VALUES (?, ?, ?, 'active', ?, ?)",
+    "INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status, actor_id, retired_reason, agent_notes) VALUES (?, ?, ?, 'active', ?, ?, ?)",
   );
-  const threat = raw.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id) VALUES (?, 'test', 'phishing', ?)");
+  const threat = raw.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id, asn) VALUES (?, 'test', 'phishing', ?, ?)");
   const attr = raw.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, ?, ?, ?)");
 
-  // Threat ids are short like prod's UUIDs, so the inherited row id stays
-  // under recordAttribution's 100-char id slice.
   let n = 0;
-  const addCluster = (id: string, members: number, actor: string, clusterActor: string | null, retired: string | null, inheritedAlready: boolean) => {
-    cluster.run(id, id, members + 1, clusterActor, retired);
-    const otxThreat = `thr_${n++}`;
-    threat.run(otxThreat, id);
-    attr.run(`otx_${id}`, otxThreat, actor, "otx");
-    for (let i = 0; i < members; i++) {
+  const addCluster = (o: {
+    id: string; otx: number; plain: number; actor: string; clusterActor?: string | null;
+    retired?: string | null; inheritedAlready?: boolean; asn?: string | null; notes?: string | null;
+  }) => {
+    cluster.run(o.id, o.id, o.otx + o.plain, o.clusterActor ?? null, o.retired ?? null, o.notes ?? null);
+    for (let k = 0; k < o.otx; k++) {
       const tid = `thr_${n++}`;
-      threat.run(tid, id);
-      if (inheritedAlready) attr.run(`tat_otxinherit_${id}_${tid}`, tid, actor, "nexus");
+      threat.run(tid, o.id, o.asn ?? "AS64500");
+      attr.run(`otx_${tid}`, tid, o.actor, "otx");
+    }
+    for (let i = 0; i < o.plain; i++) {
+      const tid = `thr_${n++}`;
+      threat.run(tid, o.id, o.asn ?? "AS64500");
+      if (o.inheritedAlready) attr.run(`tat_otxinherit_${o.id}_${tid}`, tid, o.actor, "nexus");
     }
   };
 
-  addCluster("cluster_asn_as4837_malware_distribution", BIG, "ta_big", null, null, false);
-  for (let i = 0; i < MID_CLUSTERS; i++) addCluster(`cluster_subnet_mid_${String(i).padStart(2, "0")}`, MID_MEMBERS, "ta_mid", null, null, false);
-  for (let i = 0; i < DONE_CLUSTERS; i++) addCluster(`cluster_asn_done_${i}`, 200, "ta_done", "ta_done", null, true);
-  addCluster("cluster_retired", 50, "ta_mid", null, "shared_infra", false);
-  addCluster("cluster_ambiguous", 50, "ta_mid", null, null, false);
-  raw.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id) VALUES ('amb_otx2', 'test', 'phishing', 'cluster_ambiguous')").run();
+  const certNotes = JSON.stringify({ cluster_type: "ssl_cert_serial", ssl_cert_serial: "0a1b" });
+  for (let i = 0; i < QUAL; i++) {
+    addCluster({ id: qualId(i), otx: OTX_PER, plain: TO_WRITE, actor: "ta_q", notes: i % 2 === 0 ? certNotes : null });
+  }
+  for (let i = 0; i < DONE_CLUSTERS; i++) {
+    addCluster({ id: `cluster_ip_10.9.0.${i}`, otx: OTX_PER, plain: DONE_INHERITED, actor: "ta_done", clusterActor: "ta_done", inheritedAlready: true });
+  }
+  addCluster({ id: "cluster_asn_as4837_malware_distribution", otx: 1, plain: 2_000, actor: "ta_big", asn: "AS4837" });
+  addCluster({ id: "cluster_ip_192.0.2.10", otx: 5, plain: 20, actor: "ta_q", asn: "AS47583 Hostinger International Limited" });
+  addCluster({ id: "cluster_ip_192.0.2.11", otx: 40, plain: SIZE, actor: "ta_q" });
+  addCluster({ id: "cluster_ip_192.0.2.12", otx: 5, plain: 20, actor: "ta_q", retired: "shared_infra" });
+  addCluster({ id: "cluster_ip_192.0.2.13", otx: 5, plain: 20, actor: "ta_q" });
+  raw.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id) VALUES ('amb_otx2', 'test', 'phishing', 'cluster_ip_192.0.2.13')").run();
   raw.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES ('otx_amb2', 'amb_otx2', 'ta_x', 'otx')").run();
   raw.exec("COMMIT");
 }
 
 const inheritedCount = (raw: SqliteDb): number =>
   (raw.prepare("SELECT COUNT(*) AS n FROM threat_attributions WHERE id LIKE 'tat_otxinherit_%' AND source = 'nexus'").all()[0] as { n: number }).n
-  - DONE_CLUSTERS * 200;
+  - DONE_CLUSTERS * DONE_INHERITED;
 
 describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run (2026-10-21 hang)", () => {
   let raw: SqliteDb;
@@ -135,7 +170,7 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
   beforeEach(() => {
     raw = openMigratedDb();
     seed(raw);
-    c = { roundTrips: 0, maxBatch: 0, maxBinds: 0 };
+    c = { roundTrips: 0, batches: 0, maxBatch: 0, maxBinds: 0 };
     db = counting(d1FromSqlite(raw), c);
   });
 
@@ -145,14 +180,21 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
     expect(r.members_attributed).toBe(MAX_MEMBER_WRITES_PER_RUN);
     expect(r.stopped_reason).toBe("write_cap");
     expect(inheritedCount(raw)).toBe(MAX_MEMBER_WRITES_PER_RUN);
+    expect(r.clusters_skipped_lane).toBe(1);
+    expect(r.clusters_skipped_multitenant).toBe(1);
+    expect(r.clusters_skipped_size).toBe(1);
+    expect(r.clusters_ambiguous).toBe(1);
+    expect(r.clusters_retired_skipped).toBe(1);
 
-    // Old code: ~5,000 sequential INSERTs + 1 per stamped cluster. New code:
-    // discovery + Step 2 + ≤1 read per eligible cluster reached + ceil(cap /
-    // WRITE_BATCH) batches + ≤1 extra batch per cluster boundary.
-    const eligible = 1 + MID_CLUSTERS + DONE_CLUSTERS;
-    const bound = 2 + eligible + Math.ceil(MAX_MEMBER_WRITES_PER_RUN / WRITE_BATCH) + eligible;
+    // discovery + cluster-row chunks + one bounded stats read per candidate
+    // + ≤1 member read per eligible cluster reached + ceil(cap / WRITE_BATCH)
+    // batches + ≤1 extra batch per cluster boundary.
+    const scanned = QUAL + DONE_CLUSTERS + 5;
+    const reached = DONE_CLUSTERS + Math.ceil(MAX_MEMBER_WRITES_PER_RUN / TO_WRITE);
+    const bound = 1 + Math.ceil(scanned / 90) + STATS_READS + reached + Math.ceil(MAX_MEMBER_WRITES_PER_RUN / WRITE_BATCH) + reached;
     expect(c.roundTrips).toBeLessThanOrEqual(bound);
-    expect(c.roundTrips).toBeLessThan(150);
+    // Independent of member count: far fewer round-trips than rows written.
+    expect(c.roundTrips).toBeLessThan(MAX_MEMBER_WRITES_PER_RUN / 20);
     expect(c.maxBatch).toBeLessThanOrEqual(WRITE_BATCH);
     expect(c.maxBinds).toBeLessThanOrEqual(D1_MAX_BINDS);
   });
@@ -166,36 +208,40 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
     }
     const total = runs.reduce((s, r) => s + r.members_attributed, 0);
     expect(total).toBe(EXPECTED_TOTAL);
+    expect(runs.length).toBeGreaterThanOrEqual(3);
     // A run that lands exactly on the cap reports 'write_cap' even if
     // nothing is left, so allow one trailing empty run.
     expect(runs.length).toBeLessThanOrEqual(Math.ceil(EXPECTED_TOTAL / MAX_MEMBER_WRITES_PER_RUN) + 1);
     expect(inheritedCount(raw)).toBe(EXPECTED_TOTAL);
 
-    // Every member of every winning live cluster is attributed, with the
-    // cluster's own actor; retired + ambiguous clusters untouched.
+    // Every inherited row carries its cluster's actor; skipped clusters are
+    // untouched.
     const wrongActor = raw.prepare(`
       SELECT COUNT(*) AS n FROM threat_attributions ta JOIN threats t ON t.id = ta.threat_id
        WHERE ta.id LIKE 'tat_otxinherit_%'
-         AND ta.actor_id != CASE WHEN t.cluster_id LIKE 'cluster_asn_as4837%' THEN 'ta_big'
-                                 WHEN t.cluster_id LIKE 'cluster_subnet_mid_%' THEN 'ta_mid'
-                                 ELSE 'ta_done' END`).all()[0] as { n: number };
+         AND ta.actor_id != CASE WHEN t.cluster_id LIKE 'cluster_ip_10.9.%' THEN 'ta_done' ELSE 'ta_q' END`).all()[0] as { n: number };
     expect(wrongActor.n).toBe(0);
     const untouched = raw.prepare(`
       SELECT COUNT(*) AS n FROM threats t
-       WHERE t.cluster_id IN ('cluster_retired', 'cluster_ambiguous')
+       WHERE t.cluster_id IN ('cluster_asn_as4837_malware_distribution', 'cluster_ip_192.0.2.10',
+                              'cluster_ip_192.0.2.11', 'cluster_ip_192.0.2.12', 'cluster_ip_192.0.2.13')
          AND EXISTS (SELECT 1 FROM threat_attributions ta WHERE ta.threat_id = t.id AND ta.source = 'nexus')`).all()[0] as { n: number };
     expect(untouched.n).toBe(0);
     const actors = raw.prepare(`
       SELECT id, actor_id FROM infrastructure_clusters
-       WHERE id IN ('cluster_asn_as4837_malware_distribution', 'cluster_subnet_mid_19', 'cluster_retired', 'cluster_ambiguous')
-       ORDER BY id`).all();
+       WHERE id IN (?, ?, 'cluster_asn_as4837_malware_distribution', 'cluster_ip_192.0.2.10',
+                    'cluster_ip_192.0.2.11', 'cluster_ip_192.0.2.12', 'cluster_ip_192.0.2.13')
+       ORDER BY id`).all(qualId(0), qualId(QUAL - 1));
     expect(actors).toEqual([
-      { id: "cluster_ambiguous", actor_id: null },
-      { id: "cluster_asn_as4837_malware_distribution", actor_id: "ta_big" },
-      { id: "cluster_retired", actor_id: null },
-      { id: "cluster_subnet_mid_19", actor_id: "ta_mid" },
-    ]);
-    expect(runs.reduce((s, r) => s + r.clusters_actor_set, 0)).toBe(1 + MID_CLUSTERS);
+      { id: "cluster_asn_as4837_malware_distribution", actor_id: null },
+      { id: qualId(0), actor_id: "ta_q" },
+      { id: qualId(QUAL - 1), actor_id: "ta_q" },
+      { id: "cluster_ip_192.0.2.10", actor_id: null },
+      { id: "cluster_ip_192.0.2.11", actor_id: null },
+      { id: "cluster_ip_192.0.2.12", actor_id: null },
+      { id: "cluster_ip_192.0.2.13", actor_id: null },
+    ].sort((a, b) => (a.id < b.id ? -1 : 1)));
+    expect(runs.reduce((s, r) => s + r.clusters_actor_set, 0)).toBe(QUAL);
 
     // Idempotent once drained.
     const again = await inheritOtxActorsToClusters(db);
@@ -204,23 +250,33 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
     expect(again.stopped_reason).toBeNull();
   });
 
-  it("stops cleanly at the wall-clock budget between round-trips and resumes next run", async () => {
-    // Each clock read advances 1s; a 10s budget allows only a few batches.
-    let t = 0;
-    const now = () => (t += 1_000);
+  it("stops cleanly at the wall-clock budget between write round-trips and resumes next run", async () => {
+    // The clock advances 1s per write batch; a 10s budget allows ~10 batches.
+    const now = () => c.batches * 1_000;
     const r = await inheritOtxActorsToClusters(db, { budgetMs: 10_000, now });
 
     expect(r.stopped_reason).toBe("deadline");
     expect(r.members_attributed).toBeGreaterThan(0);
     expect(r.members_attributed).toBeLessThan(MAX_MEMBER_WRITES_PER_RUN);
     expect(inheritedCount(raw)).toBe(r.members_attributed);
-    // The cluster it was working on is already named.
-    const big = raw.prepare("SELECT actor_id FROM infrastructure_clusters WHERE id = 'cluster_asn_as4837_malware_distribution'").all()[0];
-    expect(big).toEqual({ actor_id: "ta_big" });
+    // The first cluster it worked on is already named.
+    const first = raw.prepare("SELECT actor_id FROM infrastructure_clusters WHERE id = ?").all(qualId(0))[0];
+    expect(first).toEqual({ actor_id: "ta_q" });
 
     const next = await inheritOtxActorsToClusters(db);
     expect(next.members_attributed).toBe(MAX_MEMBER_WRITES_PER_RUN);
     expect(inheritedCount(raw)).toBe(r.members_attributed + MAX_MEMBER_WRITES_PER_RUN);
+  });
+
+  it("a deadline during the member-stats reads stops before any write", async () => {
+    let t = 0;
+    const now = () => (t += 1_000);
+    const r = await inheritOtxActorsToClusters(db, { budgetMs: 5_000, now });
+    expect(r.stopped_reason).toBe("deadline");
+    expect(r.members_attributed).toBe(0);
+    expect(r.clusters_actor_set).toBe(0);
+    expect(c.batches).toBe(0);
+    expect(inheritedCount(raw)).toBe(0);
   });
 
   it("attributorAgent.execute finishes on the prod-shaped fixture in bounded round-trips", async () => {
@@ -229,8 +285,7 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
       env, runId: "run_test", agentName: "attributor", input: {}, triggeredBy: null,
     });
     expect(result.itemsCreated).toBe(MAX_MEMBER_WRITES_PER_RUN);
-    // + the pending-cluster SELECT and the stamp batch.
-    expect(c.roundTrips).toBeLessThan(150);
+    expect(c.roundTrips).toBeLessThan(MAX_MEMBER_WRITES_PER_RUN / 20);
   });
 });
 
@@ -241,8 +296,11 @@ describe.skipIf(!hasSqlite())("attributor — OTX inheritance is bounded per run
 // the rest forever, and since the cap was charged per attempted row those
 // ignored members ate the per-run budget every run.
 describe.skipIf(!hasSqlite())("attributor — inherited ids are unique for long cluster ids", () => {
-  const LONG = `cluster_asn_as4837_malware_distribution_${"x".repeat(40)}`; // 80 chars
+  // cert-serial lane (agent_notes NULL → serial), so the policy admits it.
+  const LONG = `cluster_cert_${"x".repeat(67)}`; // 80 chars
   const MEMBERS = 30;
+  // >= 2 agreeing OTX members and >= 10% coverage for both fixtures.
+  const OTX = 4;
   const uuid = (i: number) => `0000${String(i).padStart(4, "0")}-1111-4222-8333-444455556666`;
   let raw: SqliteDb;
   let db: D1Database;
@@ -251,11 +309,13 @@ describe.skipIf(!hasSqlite())("attributor — inherited ids are unique for long 
     r.prepare("INSERT OR IGNORE INTO threat_actors (id, name) VALUES ('ta_long', 'Long')").run();
     r.prepare(
       "INSERT INTO infrastructure_clusters (id, cluster_name, threat_count, status) VALUES (?, ?, ?, 'active')",
-    ).run(id, id, members + 1);
+    ).run(id, id, members + OTX);
     const threat = r.prepare("INSERT INTO threats (id, source_feed, threat_type, cluster_id) VALUES (?, 'test', 'phishing', ?)");
-    const otx = uuid(offset);
-    threat.run(otx, id);
-    r.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, ?, 'ta_long', 'otx')").run(`otx_${otx}`, otx);
+    for (let k = 0; k < OTX; k++) {
+      const otx = uuid(offset + 500 + k);
+      threat.run(otx, id);
+      r.prepare("INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, ?, 'ta_long', 'otx')").run(`otx_${otx}`, otx);
+    }
     const ids: string[] = [];
     for (let i = 1; i <= members; i++) {
       const tid = uuid(offset + i);
@@ -302,8 +362,8 @@ describe.skipIf(!hasSqlite())("attributor — inherited ids are unique for long 
     // Cluster A sorts first; its members' inherited ids are already taken by
     // rows on another threat, so every insert for A is ignored. With the cap
     // set to A's size, charging attempts would stop the run before B.
-    const A = `cluster_a_${"y".repeat(70)}`;
-    const B = `cluster_b_${"z".repeat(70)}`;
+    const A = `cluster_cert_a_${"y".repeat(70)}`;
+    const B = `cluster_cert_b_${"z".repeat(70)}`;
     const aMembers = seedLong(raw, A, MEMBERS, 0);
     seedLong(raw, B, 20, 1000);
     raw.prepare("INSERT INTO threats (id, source_feed, threat_type) VALUES ('squatter', 'test', 'phishing')").run();

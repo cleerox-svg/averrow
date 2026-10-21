@@ -66,23 +66,28 @@ describe.skipIf(!hasSqlite())("attributor — D1 100-variable bind limit", () =>
     const otx = raw.prepare(
       "INSERT INTO threat_attributions (id, threat_id, actor_id, source) VALUES (?, ?, ?, 'otx')",
     );
-    // 150 live clusters, each: one OTX-named member + two un-attributed siblings.
+    // 150 live per-IP clusters, each: two OTX members naming the same actor
+    // (the inheritance quorum) + two un-attributed siblings.
     for (let i = 0; i < WINNING_CLUSTERS; i++) {
-      cluster.run(cid(i), `c${i}`, 3, null);
+      cluster.run(cid(i), `c${i}`, 4, null);
       threat.run(`thr_${i}_otx`, cid(i));
+      threat.run(`thr_${i}_otx2`, cid(i));
       threat.run(`thr_${i}_a`, cid(i));
       threat.run(`thr_${i}_b`, cid(i));
       otx.run(`tat_${i}`, `thr_${i}_otx`, "ta_1");
+      otx.run(`tat_${i}_2`, `thr_${i}_otx2`, "ta_1");
     }
     // A retired cluster that would otherwise win, and an ambiguous one.
     cluster.run("cluster_retired", "retired", 2, "shared_infra");
     threat.run("thr_r_otx", "cluster_retired");
     threat.run("thr_r_a", "cluster_retired");
     otx.run("tat_r", "thr_r_otx", "ta_1");
-    cluster.run("cluster_ambiguous", "ambiguous", 3, null);
-    threat.run("thr_x1", "cluster_ambiguous");
-    threat.run("thr_x2", "cluster_ambiguous");
-    threat.run("thr_x3", "cluster_ambiguous");
+    // Per-IP (specific lane) so it is the actor disagreement, not the lane
+    // rule, that skips it.
+    cluster.run("cluster_ip_192.0.2.250", "ambiguous", 3, null);
+    threat.run("thr_x1", "cluster_ip_192.0.2.250");
+    threat.run("thr_x2", "cluster_ip_192.0.2.250");
+    threat.run("thr_x3", "cluster_ip_192.0.2.250");
     otx.run("tat_x1", "thr_x1", "ta_1");
     otx.run("tat_x2", "thr_x2", "ta_2");
   });
@@ -109,13 +114,17 @@ describe.skipIf(!hasSqlite())("attributor — D1 100-variable bind limit", () =>
 
     // Every chunk landed: the clusters past the first chunk got their actor too.
     const unset = raw.prepare(
-      "SELECT COUNT(*) AS n FROM infrastructure_clusters WHERE id LIKE 'cluster_ip_%' AND actor_id IS NULL",
+      "SELECT COUNT(*) AS n FROM infrastructure_clusters WHERE id LIKE 'cluster_ip_10.0.%' AND actor_id IS NULL",
     ).all()[0] as { n: number };
     expect(unset.n).toBe(0);
     // Retired cluster untouched.
     const retired = raw.prepare("SELECT actor_id FROM infrastructure_clusters WHERE id = 'cluster_retired'").all()[0] as
       { actor_id: string | null };
     expect(retired.actor_id).toBeNull();
+    // Ambiguous cluster untouched.
+    const ambiguous = raw.prepare("SELECT actor_id FROM infrastructure_clusters WHERE id = 'cluster_ip_192.0.2.250'").all()[0] as
+      { actor_id: string | null };
+    expect(ambiguous.actor_id).toBeNull();
 
     // Idempotent re-run: nothing new written, still under the cap.
     const again = await inheritOtxActorsToClusters(db);

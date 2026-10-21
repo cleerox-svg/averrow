@@ -20,7 +20,10 @@
  *      actor_id IS NULL, outside the RETRY_COOLDOWN_DAYS window) and
  *      stamps `attribution_attempted_at` so the backlog's
  *      attempted/never-attempted split stays meaningful.
- *   2. Runs the OTX → cluster inheritance post-pass, bounded per run
+ *   2. Runs the OTX → cluster inheritance post-pass — only for clusters
+ *      that pass the inheritance policy (specific-evidence lane, no
+ *      multi-tenant-ASN member, >= 2 agreeing OTX members covering >= 10%,
+ *      <= 250 members; decideInheritedActor) — bounded per run
  *      (≤ MAX_MEMBER_WRITES_PER_RUN member rows, batched writes, and a
  *      wall-clock budget — see lib/cluster-attribution-inherit.ts). A
  *      larger backlog drains over successive runs; `otx_inheritance
