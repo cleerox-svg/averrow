@@ -595,6 +595,10 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
 
     it("M2: non-cron dispatch (internal /run, FC recovery) captures ONE page; the cron runs a batch; session always closed", async () => {
+      // The agent reads the wall clock; pin it to NOW so the enqueued rows
+      // (stamped NOW) are not expired out of the claim window as real time passes.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
       await enqueueAutoCaptures(db, [1, 2, 3].map((i) => ({ threatId: `t${i}`, maliciousUrl: `https://kit${i}.example-phish.com/` })), NOW);
       const fd = fakeDriver({});
       mockDriver = fd.driver;
@@ -616,6 +620,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
       } finally {
         mockDriver = null;
         vi.unstubAllGlobals();
+        vi.useRealTimers();
       }
     });
 
@@ -896,6 +901,10 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
 
     it("lows: the agent still emits its agent_events row when the run throws", async () => {
+      // The agent reads the wall clock; pin it to NOW so the enqueued rows
+      // (stamped NOW) are not expired out of the claim window as real time passes.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(NOW);
       await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: "https://acme-sso-login.com/" }], NOW);
       mockDriver = fakeDriver({}, { openFails: true }).driver;
       const events: string[] = [];
@@ -911,6 +920,7 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
         expect(JSON.parse(events[0]!)).toMatchObject({ run_id: "r9", error: expect.stringMatching(/browser session unavailable/) });
       } finally {
         mockDriver = null;
+        vi.useRealTimers();
       }
     });
   });
