@@ -58,6 +58,35 @@ const D1_BATCH_LIMIT = 500;
 export const DELETE_PROGRESS_BASE = 10_000_000_000;
 
 /**
+ * Rows per diff-import chunk (one existence read + its write batches +
+ * one progress write). Larger than D1_BATCH_LIMIT on purpose: the chunk
+ * is the unit of D1 *round-trips*, and the writes inside it are still
+ * split into ≤D1_BATCH_LIMIT-statement batches.
+ */
+const DIFF_CHUNK_ROWS = 2000;
+
+/**
+ * Default ceiling on D1 round-trips one runGeoipDiffImport call may make.
+ *
+ * Every D1 call (and every R2 read) is a Workers *subrequest*, capped per
+ * invocation by `[limits] subrequests` (50,000 in wrangler.toml), and a
+ * Workflow step shares its invocation's budget. The old diff loop spent
+ * ~7-8 round-trips per 500 rows (six 90-key `IN (...)` existence SELECTs,
+ * a write batch, a progress UPDATE) ≈ 52-59K for a 3.66M-row release, so
+ * every attempt hit "Too many subrequests" at ~3.1-3.57M rows (prod
+ * 2026-10-11..21: stalls at 3,569,500 / 3,570,000 / 3,570,500 ≈
+ * 50,000 / 7 × 500). Once the budget is gone, the step's retries and
+ * the workflow's own failure-logging UPDATE also fail, so the log row
+ * stayed 'running' until Flight Control reaped it hours later.
+ *
+ * With the range existence read the whole diff is ~4-13K round-trips;
+ * this guard is the backstop that turns any future regression into a
+ * clean, logged failure (with headroom left for the failure write)
+ * instead of a silent multi-hour stall.
+ */
+export const DIFF_SUBREQUEST_BUDGET = 40_000;
+
+/**
  * 64-bit content hash of a geo_ip_ranges row's mutable fields, as 16
  * lowercase hex chars. Used by the diff loader to decide whether an
  * incoming row differs from what's already live, so unchanged rows are
@@ -136,7 +165,8 @@ export interface GeoipImportOptions {
    * geo_ip_refresh_log.last_committed_row so a subsequent retry
    * can pass it back as resumeFromRow.
    *
-   * The callback runs once per ~500 rows (D1_BATCH_LIMIT). It MUST
+   * The callback runs once per ~500 rows (D1_BATCH_LIMIT) in the full
+   * import and once per DIFF_CHUNK_ROWS (~2000) in the diff import. It MUST
    * be a single D1 UPDATE — anything heavier compounds with the
    * batch flush cost. Errors are swallowed (logged via console.warn)
    * so a transient D1 hiccup on the progress write can't kill an
@@ -451,6 +481,13 @@ export interface GeoipDiffImportOptions extends GeoipImportOptions {
    * and delete-resuming attempts.
    */
   resumeRowsDeleted?: number;
+
+  /**
+   * Maximum D1 round-trips (incl. progress callbacks) this call may make
+   * before it aborts with a descriptive error. Defaults to
+   * DIFF_SUBREQUEST_BUDGET. Exposed for tests.
+   */
+  subrequestBudget?: number;
 }
 
 interface DiffRow {
@@ -561,7 +598,75 @@ export async function runGeoipDiffImport(
     lastKey = k;
   };
 
+  // Per-call D1 round-trip accounting (see DIFF_SUBREQUEST_BUDGET).
+  const subrequestBudget = options.subrequestBudget ?? DIFF_SUBREQUEST_BUDGET;
+  let subrequests = 0;
+  const spend = (n: number, phase: string) => {
+    subrequests += n;
+    if (subrequests > subrequestBudget) {
+      throw new Error(
+        `GeoIP diff exceeded its subrequest budget (${subrequestBudget}) in the ${phase} ` +
+          `phase at Blocks row ${rowsProcessed}; aborting before the invocation's ` +
+          `[limits] subrequests cap so the failure can still be logged.`,
+      );
+    }
+  };
+
   let buffer: DiffRow[] = [];
+
+  /** Existence check for one chunk: start_ip_int → live row_hash. */
+  const loadExistingHashes = async (keys: number[]): Promise<Map<number, string | null>> => {
+    const existingHash = new Map<number, string | null>();
+    if (keys.length === 0) return existingHash;
+
+    // Fast path: MaxMind's Blocks CSV is sorted by network, so a chunk's
+    // keys are strictly ascending and ONE primary-key range read covers
+    // them all (2 bound vars, 1 round-trip). The range may also return
+    // live keys absent from the chunk (ranges MaxMind dropped — the
+    // delete pass removes those); they are simply never looked up. The
+    // LIMIT bounds the result if a huge dropped region sits inside the
+    // range; a truncated read falls back to the exact IN lookup below.
+    let ascending = true;
+    for (let i = 1; i < keys.length; i++) {
+      if (keys[i]! <= keys[i - 1]!) { ascending = false; break; }
+    }
+    if (ascending) {
+      const cap = keys.length * 2;
+      spend(1, "insert");
+      const range = await db
+        .prepare(
+          `SELECT start_ip_int, row_hash FROM geo_ip_ranges
+            WHERE start_ip_int BETWEEN ? AND ?
+            ORDER BY start_ip_int LIMIT ?`,
+        )
+        .bind(keys[0]!, keys[keys.length - 1]!, cap)
+        .all<{ start_ip_int: number; row_hash: string | null }>();
+      if (range.results.length < cap) {
+        for (const e of range.results) existingHash.set(e.start_ip_int, e.row_hash);
+        return existingHash;
+      }
+    }
+
+    // Fallback: exact IN lookup. The `?` count of a single statement is
+    // bound by D1's per-statement variable cap (100) — NOT the
+    // db.batch() statement-count cap that D1_BATCH_LIMIT (500) targets —
+    // so sub-chunk the IN(...) (an unsliced IN fails with "too many SQL
+    // variables at offset 282: SQLITE_ERROR"). Keep below 100 with headroom.
+    const SELECT_VAR_LIMIT = 90;
+    for (let i = 0; i < keys.length; i += SELECT_VAR_LIMIT) {
+      const slice = keys.slice(i, i + SELECT_VAR_LIMIT);
+      spend(1, "insert");
+      const existing = await db
+        .prepare(
+          `SELECT start_ip_int, row_hash FROM geo_ip_ranges
+            WHERE start_ip_int IN (${slice.map(() => "?").join(",")})`,
+        )
+        .bind(...slice)
+        .all<{ start_ip_int: number; row_hash: string | null }>();
+      for (const e of existing.results) existingHash.set(e.start_ip_int, e.row_hash);
+    }
+    return existingHash;
+  };
 
   const processChunk = async () => {
     if (buffer.length === 0) return;
@@ -574,27 +679,7 @@ export async function runGeoipDiffImport(
       buffer = [];
       return;
     }
-    const keys = buffer.map((r) => r.startIp);
-    // The existence check is a SINGLE statement, so its `?` count is
-    // bound by D1's per-statement variable cap (100) — NOT the
-    // db.batch() statement-count cap that D1_BATCH_LIMIT (500) targets.
-    // Sub-chunk the IN(...) here independently: a 500-key buffer would
-    // otherwise emit `IN (?×500)` and fail with
-    // "too many SQL variables at offset 282: SQLITE_ERROR". Keep below
-    // 100 with headroom.
-    const SELECT_VAR_LIMIT = 90;
-    const existingHash = new Map<number, string | null>();
-    for (let i = 0; i < keys.length; i += SELECT_VAR_LIMIT) {
-      const slice = keys.slice(i, i + SELECT_VAR_LIMIT);
-      const existing = await db
-        .prepare(
-          `SELECT start_ip_int, row_hash FROM geo_ip_ranges
-            WHERE start_ip_int IN (${slice.map(() => "?").join(",")})`,
-        )
-        .bind(...slice)
-        .all<{ start_ip_int: number; row_hash: string | null }>();
-      for (const e of existing.results) existingHash.set(e.start_ip_int, e.row_hash);
-    }
+    const existingHash = await loadExistingHashes(buffer.map((r) => r.startIp));
 
     const writes: D1PreparedStatement[] = [];
     for (const r of buffer) {
@@ -609,9 +694,15 @@ export async function runGeoipDiffImport(
         rowsUnchanged++;
       }
     }
-    if (writes.length > 0) await db.batch(writes);
+    // A chunk (DIFF_CHUNK_ROWS) can exceed the per-batch statement cap,
+    // so split its writes into ≤D1_BATCH_LIMIT batches.
+    for (let i = 0; i < writes.length; i += D1_BATCH_LIMIT) {
+      spend(1, "insert");
+      await db.batch(writes.slice(i, i + D1_BATCH_LIMIT));
+    }
     buffer = [];
     if (onProgress) {
+      spend(1, "insert");
       try {
         await onProgress(rowsProcessed);
       } catch (err) {
@@ -661,7 +752,7 @@ export async function runGeoipDiffImport(
       lng: row.lng,
       hash: computeRowHash(range.end, countryCode, countryName, region, city, row.postalCode, row.lat, row.lng),
     });
-    if (buffer.length >= D1_BATCH_LIMIT) await processChunk();
+    if (buffer.length >= DIFF_CHUNK_ROWS) await processChunk();
   });
   await processChunk();
 
@@ -692,11 +783,13 @@ export async function runGeoipDiffImport(
   let deleteBatch: D1PreparedStatement[] = [];
   const flushDeletes = async () => {
     if (deleteBatch.length === 0) return;
+    spend(1, "delete");
     await db.batch(deleteBatch);
     deleteBatch = [];
   };
   const PAGE = 5000;
   for (;;) {
+    spend(1, "delete");
     const page = await db
       .prepare(
         `SELECT start_ip_int FROM geo_ip_ranges
@@ -719,6 +812,7 @@ export async function runGeoipDiffImport(
     // guarantees the persist-after-durable invariant above.
     await flushDeletes();
     if (options.onDeleteProgress) {
+      spend(1, "delete");
       try {
         await options.onDeleteProgress({
           deleteCursor: cursor,

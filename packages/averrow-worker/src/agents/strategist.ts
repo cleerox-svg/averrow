@@ -38,6 +38,78 @@ export function isOverRunBudget(runStart: number, now: number, budgetMs: number 
   return now - runStart > budgetMs;
 }
 
+/**
+ * Cluster key kinds Strategist writes into `campaigns.attack_pattern`:
+ *   {"type":"shared_ip","ip":"…",…} and {"type":"shared_registrar","registrar":"…"}.
+ * The JSON path is a code constant, never caller data.
+ */
+const CAMPAIGN_KEY_PATHS = {
+  shared_ip: "$.ip",
+  shared_registrar: "$.registrar",
+} as const;
+export type CampaignKeyType = keyof typeof CAMPAIGN_KEY_PATHS;
+
+/**
+ * ASCII-only lowercase — the same folding SQLite's built-in `lower()` (and
+ * LIKE's case-insensitivity) applies without ICU. JS `toLowerCase()` would also
+ * fold non-ASCII letters and disagree with the SQL side for e.g. "É".
+ */
+export function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+}
+
+/**
+ * Resolve existing campaigns for a set of cluster keys in ONE statement.
+ *
+ * Replaces the per-cluster `attack_pattern LIKE '%<key>%'` probes. D1 caps a
+ * LIKE/GLOB pattern at 50 bytes (verified against prod 2026-10-21: a 50-byte
+ * pattern runs, 51 bytes raises "LIKE or GLOB pattern too complex"), so the
+ * registrar probe `%"registrar":"<name>"%` (16 bytes of framing) threw for any
+ * registrar over 34 bytes — e.g. "NICENIC INTERNATIONAL GROUP CO., LIMITED"
+ * (40) — and the uncaught D1_ERROR failed the whole run until the breaker
+ * auto-paused the agent. The IP probe was a bare substring match, so
+ * 1.2.3.4 also matched a campaign for 11.2.3.45.
+ *
+ * Semantics: exact match on the parsed JSON field, ASCII case-insensitive
+ * (what the anchored LIKE effectively did, minus its accidental `_`/`%`
+ * wildcards and JSON-escaping misses). Rows whose attack_pattern is not valid
+ * JSON (prod holds a hand-seeded comma list) are skipped by the CASE guard —
+ * CASE evaluates in order, so json_extract never sees them and cannot throw.
+ * When several campaigns share a key the lowest rowid wins, matching the old
+ * unordered `.first()` over a table scan.
+ *
+ * Read cost: one scan of `campaigns` (~6K rows) per call, vs one scan per
+ * cluster (up to 30/run) before.
+ */
+export async function loadCampaignIdsByKey(
+  db: D1Database,
+  type: CampaignKeyType,
+  values: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const keys = [...new Set(values.map(asciiLower))];
+  if (keys.length === 0) return out;
+  const placeholders = keys.map(() => "?").join(",");
+  const rows = await db.prepare(
+    // GROUP BY k + bare `id` beside MIN(rid): SQLite returns `id` from the
+    // min-rowid row of each group, so at most one row per key comes back
+    // (prod holds hundreds of pre-dedup duplicate registrar campaigns).
+    `SELECT k, id, MIN(rid) AS rid FROM (
+       SELECT id, rowid AS rid,
+              CASE WHEN json_valid(attack_pattern) THEN
+                CASE WHEN json_extract(attack_pattern, '$.type') = ?
+                     THEN lower(json_extract(attack_pattern, ?)) END
+              END AS k
+         FROM campaigns
+        WHERE attack_pattern IS NOT NULL
+     )
+     WHERE k IN (${placeholders})
+     GROUP BY k`
+  ).bind(type, CAMPAIGN_KEY_PATHS[type], ...keys).all<{ k: string; id: string; rid: number }>();
+  for (const r of rows.results) out.set(r.k, r.id);
+  return out;
+}
+
 export const strategistAgent: AgentModule = {
   name: "strategist",
   displayName: "Strategist",
@@ -92,6 +164,9 @@ export const strategistAgent: AgentModule = {
     let itemsCreated = 0;
     let itemsUpdated = 0;
     const outputs: AgentOutputEntry[] = [];
+    // Per-cluster isolation tallies (see the try/catch in each cluster loop).
+    let clustersOk = 0;
+    const clusterErrors: Array<{ key: string; error: string }> = [];
 
     // ─── Strategy 1: IP-based clustering ────────────────────────
     // Find IPs hosting 3+ active threats (likely infrastructure)
@@ -157,199 +232,208 @@ export const strategistAgent: AgentModule = {
       }
     }
 
+    // Existing campaign per IP, resolved in one statement (see
+    // loadCampaignIdsByKey — replaces a per-IP data-derived LIKE probe).
+    const ipCampaignIds = await loadCampaignIdsByKey(env.DB, "shared_ip", allClusterIps);
+
     for (const cluster of ipClusters.results) {
       // Budget guard: stop the AI-driven IP loop before the run can be killed.
       if (isOverRunBudget(runStart, Date.now())) { budgetHit = true; break; }
       itemsProcessed++;
 
-      // Check if a campaign already exists for this IP
-      const existing = await env.DB.prepare(
-        `SELECT id FROM campaigns WHERE attack_pattern LIKE ?`
-      ).bind(`%${cluster.ip_address}%`).first<{ id: string }>();
+      // Per-cluster isolation: one bad cluster (odd data, transient D1 error)
+      // is recorded and skipped instead of failing the whole run.
+      try {
+        const existingId = ipCampaignIds.get(asciiLower(cluster.ip_address));
 
-      let campaignId: string;
+        let campaignId: string;
 
-      if (existing) {
-        campaignId = existing.id;
-        // Get old count before update
-        const oldCount = await env.DB.prepare(
-          `SELECT threat_count FROM campaigns WHERE id = ?`
-        ).bind(campaignId).first<{ threat_count: number }>();
-        // Update existing campaign
-        await env.DB.prepare(
-          `UPDATE campaigns SET
-             last_seen = datetime('now'),
-             threat_count = (SELECT COUNT(*) FROM threats WHERE campaign_id = ?),
-             status = 'active'
-           WHERE id = ?`
-        ).bind(campaignId, campaignId).run();
-        itemsUpdated++;
-        // Get new count and notify on escalation
-        const newCount = await env.DB.prepare(
-          `SELECT name, threat_count FROM campaigns WHERE id = ?`
-        ).bind(campaignId).first<{ name: string; threat_count: number }>();
-        const addedThreats = (newCount?.threat_count ?? 0) - (oldCount?.threat_count ?? 0);
-        if (addedThreats > 0 && newCount) {
+        if (existingId) {
+          campaignId = existingId;
+          // Get old count before update
+          const oldCount = await env.DB.prepare(
+            `SELECT threat_count FROM campaigns WHERE id = ?`
+          ).bind(campaignId).first<{ threat_count: number }>();
+          // Update existing campaign
+          await env.DB.prepare(
+            `UPDATE campaigns SET
+               last_seen = datetime('now'),
+               threat_count = (SELECT COUNT(*) FROM threats WHERE campaign_id = ?),
+               status = 'active'
+             WHERE id = ?`
+          ).bind(campaignId, campaignId).run();
+          itemsUpdated++;
+          // Get new count and notify on escalation
+          const newCount = await env.DB.prepare(
+            `SELECT name, threat_count FROM campaigns WHERE id = ?`
+          ).bind(campaignId).first<{ name: string; threat_count: number }>();
+          const addedThreats = (newCount?.threat_count ?? 0) - (oldCount?.threat_count ?? 0);
+          if (addedThreats > 0 && newCount) {
+            try {
+              await createNotification(env, {
+                // N1: explicit super_admin audience — campaign escalation is
+                // intelligence the operator acts on, not tenant brand business.
+                audience: 'super_admin',
+                type: 'campaign_escalation',
+                severity: 'medium',
+                title: `Campaign growing: ${newCount.name}`,
+                message: `${addedThreats} new threats added to campaign`,
+                link: `/campaigns/${campaignId}`,
+                metadata: { campaign_id: campaignId },
+              });
+            } catch (e) {
+              console.error(`[strategist] escalation notification error:`, e);
+            }
+
+            // NX4: re-check significance on escalation. The "spike" branch
+            // is the relevant one here — a campaign that just 3x'd is the
+            // canonical "growing fast" signal we want to surface to the
+            // affected tenants. Volume + wide-net branches re-trigger when
+            // already-significant campaigns add more threats; the fanout
+            // helper is idempotent so re-firing is safe.
+            try {
+              const tcAgoRow = await env.DB.prepare(
+                `SELECT COUNT(*) AS n FROM threats
+                  WHERE campaign_id = ?
+                    AND created_at < datetime('now', '-24 hours')`
+              ).bind(campaignId).first<{ n: number }>();
+              const bcRow = await env.DB.prepare(
+                `SELECT brand_count_at_first_detection AS n FROM campaigns WHERE id = ?`
+              ).bind(campaignId).first<{ n: number }>();
+              const sigEsc = evaluateCampaignSignificance({
+                threat_count: newCount.threat_count,
+                threat_count_24h_ago: tcAgoRow?.n ?? 0,
+                brand_count_at_first_detection: bcRow?.n ?? 0,
+              });
+              if (sigEsc.significant) {
+                await createBrandAlertsForCampaign(env, {
+                  campaign_id: campaignId,
+                  campaign_name: newCount.name,
+                  threat_count: newCount.threat_count,
+                  reasons: sigEsc.reasons,
+                });
+              }
+            } catch (e) {
+              console.error(`[strategist] escalation fanout error:`, e);
+            }
+          }
+        } else {
+          // Create new campaign — use pre-fetched context maps (no per-IP DB calls)
+          campaignId = crypto.randomUUID();
+          const fallbackName = `IP-cluster-${cluster.ip_address.replace(/\./g, "-")}`;
+
+          const campDomainsList = (ipDomainsMap.get(cluster.ip_address) ?? []).slice(0, 10);
+          const campBrandsList  = (ipBrandsMap.get(cluster.ip_address) ?? []).slice(0, 5);
+          const campProvidersList = (ipProvidersMap.get(cluster.ip_address) ?? []).slice(0, 3);
+
+          // Generate AI name at creation time (fall back to technical ID if Haiku fails)
+          let name = fallbackName;
+          const nameResult = await generateCampaignName(env, callCtx, {
+            domains: campDomainsList,
+            target_brands: campBrandsList,
+            threat_types: cluster.types ? cluster.types.split(",") : [],
+            providers: campProvidersList,
+            threat_count: cluster.threat_count,
+            ip_count: 1,
+          });
+          if (nameResult.success && nameResult.data?.name) {
+            name = nameResult.data.name;
+          }
+
+          // NX4: snapshot brand_count_at_first_detection for the
+          // significance rule. Counts distinct brands among threats sharing
+          // this campaign's IP — same scope as the upcoming threats-table
+          // assignment a few lines below.
+          const brandCountRow = await env.DB.prepare(`
+            SELECT COUNT(DISTINCT target_brand_id) AS n
+              FROM threats
+             WHERE ip_address = ?
+               AND target_brand_id IS NOT NULL
+               AND status = 'active'
+          `).bind(cluster.ip_address).first<{ n: number }>();
+          const brandCountAtFirst = brandCountRow?.n ?? 0;
+
+          // description stores the technical ID; name gets the AI name (or fallback)
+          await env.DB.prepare(
+            `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
+             VALUES (?, ?, ?, ?, ?, 'active', ?)`
+          ).bind(
+            campaignId, name, fallbackName, cluster.threat_count,
+            JSON.stringify({
+              type: "shared_ip",
+              ip: cluster.ip_address,
+              sources: cluster.sources,
+              threat_types: cluster.types,
+            }),
+            brandCountAtFirst,
+          ).run();
+          ipCampaignIds.set(asciiLower(cluster.ip_address), campaignId);
+          itemsCreated++;
+
+          outputs.push({
+            type: "correlation",
+            summary: `New campaign detected: "${name}" — ${cluster.threat_count} threats sharing IP ${cluster.ip_address}`,
+            severity: cluster.threat_count >= 10 ? "high" : "medium",
+            details: {
+              ip: cluster.ip_address,
+              threat_count: cluster.threat_count,
+              sources: cluster.sources.split(","),
+              ai_name: name,
+            },
+          });
+
+          // Notify: new campaign identified
           try {
             await createNotification(env, {
-              // N1: explicit super_admin audience — campaign escalation is
-              // intelligence the operator acts on, not tenant brand business.
+              // N1: explicit super_admin audience — "new campaign identified"
+              // is intel for the operator. NX4 fans out per-brand tenant
+              // alerts when the campaign passes the significance threshold.
               audience: 'super_admin',
-              type: 'campaign_escalation',
+              type: 'agent_milestone',
               severity: 'medium',
-              title: `Campaign growing: ${newCount.name}`,
-              message: `${addedThreats} new threats added to campaign`,
+              title: 'New campaign identified',
+              message: `Strategist found: ${name}`,
               link: `/campaigns/${campaignId}`,
               metadata: { campaign_id: campaignId },
             });
           } catch (e) {
-            console.error(`[strategist] escalation notification error:`, e);
+            console.error(`[strategist] notification error:`, e);
           }
 
-          // NX4: re-check significance on escalation. The "spike" branch
-          // is the relevant one here — a campaign that just 3x'd is the
-          // canonical "growing fast" signal we want to surface to the
-          // affected tenants. Volume + wide-net branches re-trigger when
-          // already-significant campaigns add more threats; the fanout
-          // helper is idempotent so re-firing is safe.
-          try {
-            const tcAgoRow = await env.DB.prepare(
-              `SELECT COUNT(*) AS n FROM threats
-                WHERE campaign_id = ?
-                  AND created_at < datetime('now', '-24 hours')`
-            ).bind(campaignId).first<{ n: number }>();
-            const bcRow = await env.DB.prepare(
-              `SELECT brand_count_at_first_detection AS n FROM campaigns WHERE id = ?`
-            ).bind(campaignId).first<{ n: number }>();
-            const sigEsc = evaluateCampaignSignificance({
-              threat_count: newCount.threat_count,
-              threat_count_24h_ago: tcAgoRow?.n ?? 0,
-              brand_count_at_first_detection: bcRow?.n ?? 0,
-            });
-            if (sigEsc.significant) {
+          // NX4: tenant fan-out. New campaigns can be significant on
+          // first detection via the "wide net" branch (>=10 brands) or
+          // the volume branch (>=20 threats). Spike branch is moot here
+          // (no 24h-ago baseline at creation). Fanout helper is itself
+          // tier-gated + idempotent — safe to call unconditionally past
+          // the significance check.
+          const sigNew = evaluateCampaignSignificance({
+            threat_count: cluster.threat_count,
+            threat_count_24h_ago: 0,
+            brand_count_at_first_detection: brandCountAtFirst,
+          });
+          if (sigNew.significant) {
+            try {
               await createBrandAlertsForCampaign(env, {
                 campaign_id: campaignId,
-                campaign_name: newCount.name,
-                threat_count: newCount.threat_count,
-                reasons: sigEsc.reasons,
+                campaign_name: name,
+                threat_count: cluster.threat_count,
+                reasons: sigNew.reasons,
               });
+            } catch (e) {
+              console.error('[strategist] campaign fanout error:', e);
             }
-          } catch (e) {
-            console.error(`[strategist] escalation fanout error:`, e);
           }
         }
-      } else {
-        // Create new campaign — use pre-fetched context maps (no per-IP DB calls)
-        campaignId = crypto.randomUUID();
-        const fallbackName = `IP-cluster-${cluster.ip_address.replace(/\./g, "-")}`;
 
-        const campDomainsList = (ipDomainsMap.get(cluster.ip_address) ?? []).slice(0, 10);
-        const campBrandsList  = (ipBrandsMap.get(cluster.ip_address) ?? []).slice(0, 5);
-        const campProvidersList = (ipProvidersMap.get(cluster.ip_address) ?? []).slice(0, 3);
-
-        // Generate AI name at creation time (fall back to technical ID if Haiku fails)
-        let name = fallbackName;
-        const nameResult = await generateCampaignName(env, callCtx, {
-          domains: campDomainsList,
-          target_brands: campBrandsList,
-          threat_types: cluster.types ? cluster.types.split(",") : [],
-          providers: campProvidersList,
-          threat_count: cluster.threat_count,
-          ip_count: 1,
-        });
-        if (nameResult.success && nameResult.data?.name) {
-          name = nameResult.data.name;
-        }
-
-        // NX4: snapshot brand_count_at_first_detection for the
-        // significance rule. Counts distinct brands among threats sharing
-        // this campaign's IP — same scope as the upcoming threats-table
-        // assignment a few lines below.
-        const brandCountRow = await env.DB.prepare(`
-          SELECT COUNT(DISTINCT target_brand_id) AS n
-            FROM threats
-           WHERE ip_address = ?
-             AND target_brand_id IS NOT NULL
-             AND status = 'active'
-        `).bind(cluster.ip_address).first<{ n: number }>();
-        const brandCountAtFirst = brandCountRow?.n ?? 0;
-
-        // description stores the technical ID; name gets the AI name (or fallback)
+        // Assign unlinked threats to this campaign
         await env.DB.prepare(
-          `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
-           VALUES (?, ?, ?, ?, ?, 'active', ?)`
-        ).bind(
-          campaignId, name, fallbackName, cluster.threat_count,
-          JSON.stringify({
-            type: "shared_ip",
-            ip: cluster.ip_address,
-            sources: cluster.sources,
-            threat_types: cluster.types,
-          }),
-          brandCountAtFirst,
-        ).run();
-        itemsCreated++;
-
-        outputs.push({
-          type: "correlation",
-          summary: `New campaign detected: "${name}" — ${cluster.threat_count} threats sharing IP ${cluster.ip_address}`,
-          severity: cluster.threat_count >= 10 ? "high" : "medium",
-          details: {
-            ip: cluster.ip_address,
-            threat_count: cluster.threat_count,
-            sources: cluster.sources.split(","),
-            ai_name: name,
-          },
-        });
-
-        // Notify: new campaign identified
-        try {
-          await createNotification(env, {
-            // N1: explicit super_admin audience — "new campaign identified"
-            // is intel for the operator. NX4 fans out per-brand tenant
-            // alerts when the campaign passes the significance threshold.
-            audience: 'super_admin',
-            type: 'agent_milestone',
-            severity: 'medium',
-            title: 'New campaign identified',
-            message: `Strategist found: ${name}`,
-            link: `/campaigns/${campaignId}`,
-            metadata: { campaign_id: campaignId },
-          });
-        } catch (e) {
-          console.error(`[strategist] notification error:`, e);
-        }
-
-        // NX4: tenant fan-out. New campaigns can be significant on
-        // first detection via the "wide net" branch (>=10 brands) or
-        // the volume branch (>=20 threats). Spike branch is moot here
-        // (no 24h-ago baseline at creation). Fanout helper is itself
-        // tier-gated + idempotent — safe to call unconditionally past
-        // the significance check.
-        const sigNew = evaluateCampaignSignificance({
-          threat_count: cluster.threat_count,
-          threat_count_24h_ago: 0,
-          brand_count_at_first_detection: brandCountAtFirst,
-        });
-        if (sigNew.significant) {
-          try {
-            await createBrandAlertsForCampaign(env, {
-              campaign_id: campaignId,
-              campaign_name: name,
-              threat_count: cluster.threat_count,
-              reasons: sigNew.reasons,
-            });
-          } catch (e) {
-            console.error('[strategist] campaign fanout error:', e);
-          }
-        }
+          `UPDATE threats SET campaign_id = ?
+           WHERE ip_address = ? AND campaign_id IS NULL AND status = 'active'`
+        ).bind(campaignId, cluster.ip_address).run();
+        clustersOk++;
+      } catch (e) {
+        clusterErrors.push({ key: `ip:${cluster.ip_address}`, error: e instanceof Error ? e.message : String(e) });
       }
-
-      // Assign unlinked threats to this campaign
-      await env.DB.prepare(
-        `UPDATE threats SET campaign_id = ?
-         WHERE ip_address = ? AND campaign_id IS NULL AND status = 'active'`
-      ).bind(campaignId, cluster.ip_address).run();
     }
 
     // ─── Strategy 2: Domain-pattern clustering ──────────────────
@@ -398,118 +482,136 @@ export const strategistAgent: AgentModule = {
       }
     }
 
+    // Dedup: mirror the IP path — resolve an existing campaign for each
+    // registrar BEFORE spending a Haiku call + INSERTing a duplicate. The match
+    // is exact on the parsed {"type":"shared_registrar","registrar":"..."}
+    // field (ASCII case-insensitive), so distinct registrars that share a
+    // prefix — "Gname" vs "Gname.com Pte. Ltd." — never collide, and a
+    // shared_ip pattern can't match. This used to be a per-registrar
+    // `LIKE '%"registrar":"<name>"%'`, which exceeded D1's 50-byte LIKE pattern
+    // cap for registrars over 34 bytes and failed the run (2026-10-02 →
+    // auto-paused). See loadCampaignIdsByKey.
+    const regCampaignIds = await loadCampaignIdsByKey(env.DB, "shared_registrar", allRegistrars);
+
     for (const cluster of registrarClusters.results) {
       // Budget guard: stop the AI-driven registrar loop before the run can be killed.
       if (isOverRunBudget(runStart, Date.now())) { budgetHit = true; break; }
       itemsProcessed++;
 
-      // Dedup: mirror the IP path — check for an existing campaign for this
-      // registrar BEFORE spending a Haiku call + INSERTing a duplicate. Before
-      // this, the registrar path unconditionally created a new campaign and
-      // burned an AI name every run, unlike the IP path. The attack_pattern
-      // JSON for a registrar cluster is
-      // {"type":"shared_registrar","registrar":"..."}, so anchor the probe to
-      // the "registrar":"<value>" key/value (not a bare substring) to avoid
-      // merging distinct registrars that share a prefix — e.g. "Gname" must
-      // not collide with a "Gname.com Pte. Ltd." campaign. The shared_registrar
-      // type guard keeps it from matching a shared_ip pattern that happens to
-      // contain the word "registrar".
-      const existing = await env.DB.prepare(
-        `SELECT id FROM campaigns WHERE attack_pattern LIKE '%shared_registrar%' AND attack_pattern LIKE ?`
-      ).bind(`%"registrar":"${cluster.registrar}"%`).first<{ id: string }>();
+      try {
+        const existingId = regCampaignIds.get(asciiLower(cluster.registrar));
 
-      let campaignId: string;
+        let campaignId: string;
 
-      if (existing) {
-        campaignId = existing.id;
-        // Refresh the existing campaign — no new INSERT, no wasted AI call.
-        await env.DB.prepare(
-          `UPDATE campaigns SET
-             last_seen = datetime('now'),
-             threat_count = (SELECT COUNT(*) FROM threats WHERE campaign_id = ?),
-             status = 'active'
-           WHERE id = ?`
-        ).bind(campaignId, campaignId).run();
-        itemsUpdated++;
-      } else {
-        campaignId = crypto.randomUUID();
-        const fallbackName = `Registrar-cluster-${cluster.registrar.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 30)}`;
+        if (existingId) {
+          campaignId = existingId;
+          // Refresh the existing campaign — no new INSERT, no wasted AI call.
+          await env.DB.prepare(
+            `UPDATE campaigns SET
+               last_seen = datetime('now'),
+               threat_count = (SELECT COUNT(*) FROM threats WHERE campaign_id = ?),
+               status = 'active'
+             WHERE id = ?`
+          ).bind(campaignId, campaignId).run();
+          itemsUpdated++;
+        } else {
+          campaignId = crypto.randomUUID();
+          const fallbackName = `Registrar-cluster-${cluster.registrar.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 30)}`;
 
-        // Use pre-fetched context maps (no per-registrar DB calls)
-        const regDomainsList = (regDomainsMap.get(cluster.registrar) ?? []).slice(0, 10);
-        const regBrandsList  = (regBrandsMap.get(cluster.registrar) ?? []).slice(0, 5);
+          // Use pre-fetched context maps (no per-registrar DB calls)
+          const regDomainsList = (regDomainsMap.get(cluster.registrar) ?? []).slice(0, 10);
+          const regBrandsList  = (regBrandsMap.get(cluster.registrar) ?? []).slice(0, 5);
 
-        let name = fallbackName;
-        const nameResult = await generateCampaignName(env, callCtx, {
-          domains: regDomainsList,
-          target_brands: regBrandsList,
-          threat_types: [],
-          providers: [cluster.registrar],
-          threat_count: cluster.threat_count,
-        });
-        if (nameResult.success && nameResult.data?.name) {
-          name = nameResult.data.name;
-        }
+          let name = fallbackName;
+          const nameResult = await generateCampaignName(env, callCtx, {
+            domains: regDomainsList,
+            target_brands: regBrandsList,
+            threat_types: [],
+            providers: [cluster.registrar],
+            threat_count: cluster.threat_count,
+          });
+          if (nameResult.success && nameResult.data?.name) {
+            name = nameResult.data.name;
+          }
 
-        // NX4: snapshot brand_count_at_first_detection for the
-        // significance rule. Counts distinct brands among threats
-        // sharing this registrar — same scope as the threats-table
-        // assignment immediately below.
-        const regBrandCountRow = await env.DB.prepare(`
-          SELECT COUNT(DISTINCT target_brand_id) AS n
-            FROM threats
-           WHERE registrar = ?
-             AND target_brand_id IS NOT NULL
-             AND status = 'active'
-             AND created_at >= datetime('now', '-7 days')
-        `).bind(cluster.registrar).first<{ n: number }>();
-        const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
+          // NX4: snapshot brand_count_at_first_detection for the
+          // significance rule. Counts distinct brands among threats
+          // sharing this registrar — same scope as the threats-table
+          // assignment immediately below.
+          const regBrandCountRow = await env.DB.prepare(`
+            SELECT COUNT(DISTINCT target_brand_id) AS n
+              FROM threats
+             WHERE registrar = ?
+               AND target_brand_id IS NOT NULL
+               AND status = 'active'
+               AND created_at >= datetime('now', '-7 days')
+          `).bind(cluster.registrar).first<{ n: number }>();
+          const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
 
-        await env.DB.prepare(
-          `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
-           VALUES (?, ?, ?, ?, ?, 'active', ?)`
-        ).bind(
-          campaignId, name, fallbackName, cluster.threat_count,
-          JSON.stringify({ type: "shared_registrar", registrar: cluster.registrar }),
-          regBrandCountAtFirst,
-        ).run();
+          await env.DB.prepare(
+            `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
+             VALUES (?, ?, ?, ?, ?, 'active', ?)`
+          ).bind(
+            campaignId, name, fallbackName, cluster.threat_count,
+            JSON.stringify({ type: "shared_registrar", registrar: cluster.registrar }),
+            regBrandCountAtFirst,
+          ).run();
+          regCampaignIds.set(asciiLower(cluster.registrar), campaignId);
 
-        itemsCreated++;
+          itemsCreated++;
 
-        outputs.push({
-          type: "correlation",
-          summary: `Registrar campaign: "${name}" — ${cluster.threat_count} threats via ${cluster.registrar}`,
-          severity: "medium",
-          details: { registrar: cluster.registrar, count: cluster.threat_count, ai_name: name },
-        });
+          outputs.push({
+            type: "correlation",
+            summary: `Registrar campaign: "${name}" — ${cluster.threat_count} threats via ${cluster.registrar}`,
+            severity: "medium",
+            details: { registrar: cluster.registrar, count: cluster.threat_count, ai_name: name },
+          });
 
-        // NX4: tenant fan-out for new registrar-cluster campaigns —
-        // same gating as the IP-cluster path above.
-        const regSig = evaluateCampaignSignificance({
-          threat_count: cluster.threat_count,
-          threat_count_24h_ago: 0,
-          brand_count_at_first_detection: regBrandCountAtFirst,
-        });
-        if (regSig.significant) {
-          try {
-            await createBrandAlertsForCampaign(env, {
-              campaign_id: campaignId,
-              campaign_name: name,
-              threat_count: cluster.threat_count,
-              reasons: regSig.reasons,
-            });
-          } catch (e) {
-            console.error('[strategist] registrar-campaign fanout error:', e);
+          // NX4: tenant fan-out for new registrar-cluster campaigns —
+          // same gating as the IP-cluster path above.
+          const regSig = evaluateCampaignSignificance({
+            threat_count: cluster.threat_count,
+            threat_count_24h_ago: 0,
+            brand_count_at_first_detection: regBrandCountAtFirst,
+          });
+          if (regSig.significant) {
+            try {
+              await createBrandAlertsForCampaign(env, {
+                campaign_id: campaignId,
+                campaign_name: name,
+                threat_count: cluster.threat_count,
+                reasons: regSig.reasons,
+              });
+            } catch (e) {
+              console.error('[strategist] registrar-campaign fanout error:', e);
+            }
           }
         }
-      }
 
-      // Assign unlinked threats to this campaign (new or existing).
-      await env.DB.prepare(
-        `UPDATE threats SET campaign_id = ?
-         WHERE registrar = ? AND campaign_id IS NULL AND status = 'active'
-           AND created_at >= datetime('now', '-7 days')`
-      ).bind(campaignId, cluster.registrar).run();
+        // Assign unlinked threats to this campaign (new or existing).
+        await env.DB.prepare(
+          `UPDATE threats SET campaign_id = ?
+           WHERE registrar = ? AND campaign_id IS NULL AND status = 'active'
+             AND created_at >= datetime('now', '-7 days')`
+        ).bind(campaignId, cluster.registrar).run();
+        clustersOk++;
+      } catch (e) {
+        clusterErrors.push({ key: `registrar:${cluster.registrar}`, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    // Every attempted cluster failed → the run is genuinely broken; surface it
+    // as a failed run (agent_runs.error_message) rather than a quiet success.
+    if (clusterErrors.length > 0 && clustersOk === 0) {
+      throw new Error(`strategist: all ${clusterErrors.length} clusters failed; first (${clusterErrors[0]!.key}): ${clusterErrors[0]!.error}`);
+    }
+    if (clusterErrors.length > 0) {
+      outputs.push({
+        type: "diagnostic",
+        summary: `Strategist skipped ${clusterErrors.length} cluster(s) after errors; ${clustersOk} processed`,
+        severity: "high",
+        details: { cluster_errors: clusterErrors.slice(0, 5), cluster_error_count: clusterErrors.length, clusters_ok: clustersOk },
+      });
     }
 
     // ─── Update campaign brand/provider counts ──────────────────
@@ -694,8 +796,19 @@ export const strategistAgent: AgentModule = {
         // Surface truncated runs so operators can tell "processed everything"
         // from "hit the wall-clock guard"; residual clusters roll to next tick.
         budget_truncated: budgetHit,
+        clusterErrors: clusterErrors.length,
       },
       agentOutputs: outputs,
+      // Some (not all — that threw above) clusters failed: the run did real
+      // work but skipped part of it, so finalize 'partial' (completed_at set)
+      // instead of a quiet 'success'.
+      ...(clusterErrors.length > 0
+        ? {
+            degraded: {
+              reason: `${clusterErrors.length} cluster(s) failed (${clustersOk} ok); first (${clusterErrors[0]!.key}): ${clusterErrors[0]!.error}`,
+            },
+          }
+        : {}),
     };
   },
 };

@@ -107,8 +107,13 @@ interface DiscoveryRow {
 // re-run cheap (already-attributed members drop out of the candidate
 // member scan, so drained clusters cost ~0).
 const MAX_MEMBER_WRITES_PER_RUN = 5000;
-// SQLite bound-parameter ceiling is 999; stay well under it for IN(...).
-const IN_CHUNK = 800;
+// D1 caps bound parameters at 100 per statement (NOT SQLite's 999). The
+// former 800 here failed the attributor in prod once >100 clusters won the
+// inheritance decision ("too many SQL variables at offset 281" = the 101st
+// `?` of the Step 2 lookup) and auto-paused it 2026-07-21. Each IN(...)
+// below binds only the chunk, so 90 leaves headroom like the repo's other
+// *_CHUNK = 90 constants (lib/cluster-retirement.ts, lib/provider-trends.ts).
+const IN_CHUNK = 90;
 
 /**
  * Inherit single-actor OTX attributions from cluster members onto their
@@ -178,7 +183,9 @@ export async function inheritOtxActorsToClusters(
   const clusterActor = new Map<string, string | null>();
   const retiredClusters = new Set<string>();
   for (const chunk of chunkArray(winners, IN_CHUNK)) {
-    // Retired rows (retired_reason superseded / shared_infra — see
+    // Not filtered with notRetiredClusterSql() on purpose: the row is read so
+    // a retired cluster is counted in clusters_retired_skipped and dropped
+    // below (isRetiredCluster). Retired rows (retired_reason superseded / shared_infra — see
     // lib/cluster-status.ts) are not operations: never inherit onto them or
     // fan an actor out to their members.
     const rows = await db.prepare(`

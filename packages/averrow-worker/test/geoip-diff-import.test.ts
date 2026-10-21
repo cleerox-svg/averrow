@@ -37,8 +37,14 @@ class FakeD1 {
    *  resume tests to prove the insert/update pass is truly skipped
    *  (zero upserts) rather than merely idempotent. */
   upsertCount = 0;
+  /** Every D1 round-trip (.all / .first / .batch) — each one is a
+   *  Workers subrequest in prod, capped per invocation. */
+  roundTrips = 0;
+  /** Number of single-statement range existence reads issued. */
+  rangeReads = 0;
   prepare(sql: string) { return new FakeStmt(this, sql); }
   async batch(stmts: FakeStmt[]) {
+    this.roundTrips++;
     const out = [];
     for (const s of stmts) out.push(await s.run());
     return out;
@@ -51,6 +57,7 @@ class FakeStmt {
   bind(...a: unknown[]) { this.args = a; return this; }
 
   async first<T>(): Promise<T> {
+    this.db.roundTrips++;
     if (this.sql.includes("COUNT(*)")) {
       return { n: this.db.rows.size } as unknown as T;
     }
@@ -58,6 +65,18 @@ class FakeStmt {
   }
 
   async all<T>(): Promise<{ results: T[] }> {
+    this.db.roundTrips++;
+    if (this.sql.includes("WHERE start_ip_int BETWEEN")) {
+      this.db.rangeReads++;
+      const [lo, hi, limit] = this.args as number[];
+      const keys = [...this.db.rows.keys()]
+        .filter((k) => k >= lo! && k <= hi!)
+        .sort((a, b) => a - b)
+        .slice(0, limit);
+      return {
+        results: keys.map((k) => ({ start_ip_int: k, row_hash: this.db.rows.get(k)!.row_hash })) as unknown as T[],
+      };
+    }
     if (this.sql.includes("WHERE start_ip_int IN")) {
       if (this.args.length > this.db.maxInVars) this.db.maxInVars = this.args.length;
       const results = (this.args as number[])
@@ -164,11 +183,12 @@ describe("runGeoipDiffImport", () => {
     // Regression for "too many SQL variables at offset 282: SQLITE_ERROR":
     // the per-chunk existence SELECT must sub-chunk its IN(...) below D1's
     // 100-param-per-statement limit, independent of D1_BATCH_LIMIT (500).
-    // 250 distinct rows forces multiple existence-check chunks and a
-    // mid-stream processChunk flush.
+    // 250 distinct rows forces multiple IN sub-chunks. Rows are fed in
+    // DESCENDING order so the chunk is not ascending and the loader takes
+    // the IN(...) fallback instead of the single range read.
     const db = new FakeD1();
     const rows: string[] = [];
-    for (let i = 0; i < 250; i++) {
+    for (let i = 249; i >= 0; i--) {
       // Distinct /24 networks: 10.x.y.0/24 for i = x*256 + y.
       const x = Math.floor(i / 256);
       const y = i % 256;
@@ -540,6 +560,114 @@ describe("runGeoipDiffImport", () => {
     ])));
 
     expect(r.rowsDeleted).toBe(1);
+  });
+});
+
+// ── Subrequest budget (prod 2026-10-11..21 stall regression) ──────────
+//
+// Every D1 round-trip is a Workers subrequest, capped per invocation by
+// `[limits] subrequests = 50_000`. The old loop spent ~7-8 round-trips
+// per 500 Blocks rows (six 90-key IN SELECTs + write batch + progress
+// UPDATE), so every refresh died at ~3.1-3.57M of ~3.66M rows (stalls at
+// 3,569,500 / 3,570,000 / 3,570,500 ≈ 50,000 / 7 × 500) and Flight
+// Control reaped the run hours later.
+describe("runGeoipDiffImport subrequest budget", () => {
+  const PROD_BLOCKS_ROWS = 3_662_958;
+  const PROD_SUBREQUEST_CAP = 50_000;
+
+  const rowLine = (i: number, lat = 37.4) => {
+    const x = Math.floor(i / 256);
+    const y = i % 256;
+    return `10.${x}.${y}.0/24,1,1,,0,0,94043,${lat},-122.0,1000`;
+  };
+
+  it("projects a full prod-sized diff (with progress writes) well under the per-invocation subrequest cap", async () => {
+    const N = 20_000;
+    const seed: string[] = [];
+    for (let i = 0; i < N; i++) seed.push(rowLine(i));
+    const db = new FakeD1();
+    await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(seed)));
+
+    // Second release with a realistic ~1-2% churn: every 75th row changes,
+    // every 97th row is dropped.
+    const next: string[] = [];
+    for (let i = 0; i < N; i++) {
+      if (i % 97 === 0) continue;
+      next.push(rowLine(i, i % 75 === 0 ? 40.1 : 37.4));
+    }
+
+    db.roundTrips = 0;
+    let progressCalls = 0;
+    const r = await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(next)), {
+      onProgress: async () => { progressCalls++; },
+      onInsertPhaseComplete: async () => { progressCalls++; },
+      onDeleteProgress: async () => { progressCalls++; },
+    });
+
+    expect(r.rowsDeleted).toBeGreaterThan(0);
+    expect(r.rowsUpdated).toBeGreaterThan(0);
+    // The existence check is ONE range read per chunk, never IN slices.
+    expect(db.maxInVars).toBe(0);
+    expect(db.rangeReads).toBeGreaterThan(0);
+
+    const perRow = (db.roundTrips + progressCalls) / N;
+    const projected = perRow * PROD_BLOCKS_ROWS;
+    // Old loop: ~14-16 per 1000 rows → ~51-59K projected (over the cap).
+    // Require < half the cap so the steps sharing the invocation keep
+    // ample headroom.
+    expect(projected).toBeLessThan(PROD_SUBREQUEST_CAP / 2);
+  });
+
+  it("every-row-changed (bootstrap-like) diff still projects under the cap", async () => {
+    const N = 10_000;
+    const seed: string[] = [];
+    const next: string[] = [];
+    for (let i = 0; i < N; i++) {
+      seed.push(rowLine(i));
+      next.push(rowLine(i, 41.0));
+    }
+    const db = new FakeD1();
+    await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(seed)));
+    db.roundTrips = 0;
+    let progressCalls = 0;
+    const r = await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(next)), {
+      onProgress: async () => { progressCalls++; },
+      onDeleteProgress: async () => { progressCalls++; },
+    });
+    expect(r.rowsUpdated).toBe(N);
+    const projected = ((db.roundTrips + progressCalls) / N) * PROD_BLOCKS_ROWS;
+    expect(projected).toBeLessThan(PROD_SUBREQUEST_CAP * 0.8);
+  });
+
+  it("falls back to the exact IN lookup when the range read is truncated, and stays correct", async () => {
+    const seed: string[] = [];
+    for (let i = 0; i < 10; i++) seed.push(rowLine(i));
+    const db = new FakeD1();
+    await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(seed)));
+
+    // Only the first and last keys survive: the range [k0, k9] holds 10
+    // live rows ≥ the 2×2 cap → truncated → IN fallback.
+    const r = await runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks([
+      rowLine(0),
+      rowLine(9),
+    ])));
+    expect(db.maxInVars).toBeGreaterThan(0);
+    expect(r.rowsUnchanged).toBe(2);
+    expect(r.rowsInserted).toBe(0);
+    expect(r.rowsDeleted).toBe(8);
+    expect(db.rows.size).toBe(2);
+  });
+
+  it("aborts with a descriptive error instead of running past its budget", async () => {
+    const rows: string[] = [];
+    for (let i = 0; i < 6000; i++) rows.push(rowLine(i));
+    const db = new FakeD1();
+    await expect(
+      runGeoipDiffImport(db as never, new FakeZip(LOCATIONS, blocks(rows)), {
+        onProgress: async () => {},
+        subrequestBudget: 3,
+      }),
+    ).rejects.toThrow(/subrequest budget \(3\)/);
   });
 });
 
