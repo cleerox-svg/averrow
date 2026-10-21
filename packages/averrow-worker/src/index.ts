@@ -354,6 +354,38 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         });
       }
 
+      // POST /api/internal/cubes/backfill?cube=…&days=N[&dry_run=true][&resume_from=YYYY-MM-DD HH:00:00]
+      // Internal-secret mirror of POST /api/admin/cube-backfill (requireAdmin):
+      // same handler (handleCubeBackfill), same query contract, same NDJSON
+      // stream with a 25s budget + `resume_from` in the summary line. One
+      // audit_log row per authorized call (actor 'internal', user_id NULL),
+      // outcome 'failure' when the handler rejects the params.
+      if (url.pathname === '/api/internal/cubes/backfill' && request.method === 'POST') {
+        const internalSecret = (env as unknown as Record<string, unknown>).AVERROW_INTERNAL_SECRET as string | undefined;
+        const authHeader = request.headers.get('Authorization');
+        if (!timingSafeBearerEq(authHeader, internalSecret)) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        const { handleCubeBackfill } = await import('./handlers/admin/cubes');
+        const res = await handleCubeBackfill(request, env);
+        const { audit } = await import('./lib/audit');
+        await audit(env, {
+          action: 'cube_backfill.internal',
+          userId: null,
+          resourceType: 'threat_cubes',
+          outcome: res.ok ? 'success' : 'failure',
+          details: {
+            actor: 'internal',
+            cube: url.searchParams.get('cube'),
+            days: url.searchParams.get('days'),
+            dry_run: url.searchParams.get('dry_run') === 'true',
+            resume_from: url.searchParams.get('resume_from'),
+          },
+          request,
+        });
+        return res;
+      }
+
       // POST /api/internal/phantom-domains/match
       // W2.3 phantom-squat MATCHER post-pass (spec §7) — internal-secret
       // variant of POST /api/admin/phantom-domains/match, for MCP / cron
