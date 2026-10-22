@@ -46,13 +46,22 @@ import { logFeedDiagnostic } from "../lib/feedDiagnostic";
  *     published unscored and get its score days later. This lane surfaces
  *     CVEs published in the last 30 days, modified ≥6h after publication,
  *     that are now high/critical, as "updated" entries. It never counts
- *     toward the "new" totals.
+ *     toward the "new" totals. An "updated" entry is emitted only when it
+ *     is newly reportable — never named in a digest before, or its tier
+ *     rose since (`NvdCursorState.reported`, bounded at REPORTED_MAX) — and
+ *     the summary names NEW criticals before updated ones.
+ *
+ * Each fetched page is cut to `SlimCve` at once (no CPE trees, ≤5 refs).
  *
  * Run time is bounded to ~60s (SOFT/HARD_BUDGET_MS) because the feed holds
  * a slot of the inline-awaited `runAllFeeds` pool in the hourly tick; a
  * backlog drains over several hourly runs instead. The previous run's
  * overlap ids (`pubTail`) are dropped from the "new" set, and a cursor that
- * stops moving for STALL_RUN_LIMIT runs fails the pull.
+ * stops moving for STALL_RUN_LIMIT runs fails the pull. That stall check
+ * only catches the specific case where page 1 of a run lands but the pub
+ * lane makes no forward progress (e.g. a resume page lands, every later
+ * page fails); a run whose first page fails throws on its own, and a lane
+ * that keeps advancing slowly is never "stalled".
  */
 
 const NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0";
@@ -70,7 +79,7 @@ const MIN_PAGE_SIZE = 100;
  * 18 + 1 + 18 + 3 + 18 = 58s ≤ 60s. Each timeout halves the page size.
  */
 export const FETCH_TIMEOUT_MS = 18_000;
-/** Attempts per page (transient failures only: timeout, network, 429, 5xx). */
+/** Attempts per page (transient failures only: timeout, network, 403, 429, 5xx). */
 export const FETCH_ATTEMPTS = 3;
 /** Extra backoff before a retry, on top of the rate-limit spacing. */
 const RETRY_BACKOFF_MS = [1_000, 3_000];
@@ -130,19 +139,47 @@ export interface NvdCvssMetric {
   baseSeverity?: string;
 }
 
+export interface NvdMetrics {
+  cvssMetricV40?: NvdCvssMetric[];
+  cvssMetricV31?: NvdCvssMetric[];
+  cvssMetricV30?: NvdCvssMetric[];
+  cvssMetricV2?: NvdCvssMetric[];
+}
+
+/**
+ * A CVE as the NVD 2.0 API returns it. Only the fields this module reads
+ * are typed; `configurations` / `weaknesses` (large CPE trees) are listed so
+ * fixtures can carry them, and are dropped by `slimCve` on arrival.
+ */
 export interface NvdCve {
   id: string;
   published?: string;
   lastModified?: string;
   vulnStatus?: string;
   descriptions?: Array<{ lang: string; value: string }>;
-  metrics?: {
-    cvssMetricV40?: NvdCvssMetric[];
-    cvssMetricV31?: NvdCvssMetric[];
-    cvssMetricV30?: NvdCvssMetric[];
-    cvssMetricV2?: NvdCvssMetric[];
-  };
+  metrics?: NvdMetrics;
   references?: Array<{ url?: string }>;
+  configurations?: unknown[];
+  weaknesses?: unknown[];
+}
+
+/**
+ * What a run keeps in memory per CVE until the digest: classification and
+ * digest fields only. A full NVD object carries the CPE configuration tree
+ * and every reference, which for a multi-page backlog run is most of the
+ * memory; `slimCve` cuts each page down right after `res.json()`.
+ */
+export interface SlimCve {
+  id: string;
+  published?: string;
+  lastModified?: string;
+  vulnStatus?: string;
+  /** Scored CVSS entries only (unscored ones are ignored by pickCvss/maxCvss). */
+  metrics: NvdMetrics;
+  /** English description, cut to DESCRIPTION_MAX chars. */
+  description: string;
+  /** First REFERENCE_MAX reference URLs. */
+  references: string[];
 }
 
 interface NvdResponse {
@@ -151,6 +188,11 @@ interface NvdResponse {
   totalResults?: number;
   vulnerabilities?: Array<{ cve?: NvdCve }>;
 }
+
+/** Longest description any digest field uses (`details[].description`). */
+const DESCRIPTION_MAX = 500;
+/** References kept per CVE (`details[].references`). */
+const REFERENCE_MAX = 5;
 
 // ─── CVSS selection ─────────────────────────────────────────────────
 
@@ -183,12 +225,54 @@ function hasScore(m: NvdCvssMetric): boolean {
   return typeof m.cvssData?.baseScore === "number";
 }
 
+/** Anything carrying NVD `metrics` — a raw `NvdCve` or a `SlimCve`. */
+type HasMetrics = { metrics?: NvdMetrics };
+
+/** Keep only the CVSS fields pickCvss / maxCvss read, scored entries only. */
+function slimMetrics(metrics: NvdMetrics | undefined): NvdMetrics {
+  const out: NvdMetrics = {};
+  for (const [key] of METRIC_ORDER) {
+    const list = (metrics?.[key] ?? []).filter(hasScore).map((m): NvdCvssMetric => {
+      const slim: NvdCvssMetric = {
+        cvssData: {
+          baseScore: m.cvssData?.baseScore,
+          ...(m.cvssData?.version !== undefined ? { version: m.cvssData.version } : {}),
+          ...(m.cvssData?.baseSeverity !== undefined ? { baseSeverity: m.cvssData.baseSeverity } : {}),
+        },
+      };
+      if (m.source !== undefined) slim.source = m.source;
+      if (m.type !== undefined) slim.type = m.type;
+      if (m.baseSeverity !== undefined) slim.baseSeverity = m.baseSeverity;
+      return slim;
+    });
+    if (list.length > 0) out[key] = list;
+  }
+  return out;
+}
+
+/** Cut a raw NVD CVE down to what classification and the digest use. */
+export function slimCve(raw: NvdCve): SlimCve {
+  const slim: SlimCve = {
+    id: raw.id,
+    metrics: slimMetrics(raw.metrics),
+    description: (raw.descriptions?.find((d) => d.lang === "en")?.value ?? "").slice(0, DESCRIPTION_MAX),
+    references: (raw.references ?? [])
+      .map((r) => r.url)
+      .filter((u): u is string => typeof u === "string" && u.length > 0)
+      .slice(0, REFERENCE_MAX),
+  };
+  if (raw.published !== undefined) slim.published = raw.published;
+  if (raw.lastModified !== undefined) slim.lastModified = raw.lastModified;
+  if (raw.vulnStatus !== undefined) slim.vulnStatus = raw.vulnStatus;
+  return slim;
+}
+
 /**
  * Preferred CVSS metric: v4.0 > v3.1 > v3.0 > v2; within a version NVD's
  * own ('Primary') score, else the CNA-provided ('Secondary') one — a
  * freshly published CVE often carries only the CNA's score.
  */
-export function pickCvss(cve: NvdCve): CvssPick | null {
+export function pickCvss(cve: HasMetrics): CvssPick | null {
   for (const [key, version] of METRIC_ORDER) {
     const list = (cve.metrics?.[key] ?? []).filter(hasScore);
     const m = list.find((x) => x.type === "Primary") ?? list[0];
@@ -206,7 +290,7 @@ export function pickCvss(cve: NvdCve): CvssPick | null {
 }
 
 /** Highest base score any source assigns under any CVSS version. */
-export function maxCvss(cve: NvdCve): number | null {
+export function maxCvss(cve: HasMetrics): number | null {
   let max: number | null = null;
   for (const [key] of METRIC_ORDER) {
     for (const m of cve.metrics?.[key] ?? []) {
@@ -230,7 +314,7 @@ function cvssToSeverity(score: number | null | undefined): Severity {
  * version/source scores it ≥ 9.0 — a version preference must never hide a
  * 9.x from the digest.
  */
-export function classifyCve(cve: NvdCve): Severity {
+export function classifyCve(cve: HasMetrics): Severity {
   const preferred = cvssToSeverity(pickCvss(cve)?.score);
   const max = maxCvss(cve);
   return max !== null && max >= 9.0 ? "critical" : preferred;
@@ -265,7 +349,24 @@ export interface NvdCursorState {
   pubTail: string[];
   /** Consecutive runs where page 1 landed but the pub lane didn't advance. */
   stalledRuns: number;
+  /**
+   * High/critical CVEs already named in a digest, with the SEVERITY_RANK of
+   * the tier they were last reported at, least recently reported first.
+   * A `mod`-lane CVE is reported as "updated" only when it is absent here or
+   * its tier rose, so an NVD reference/CPE/status touch (and the mod lane's
+   * 15-min overlap re-read) doesn't re-report it. Bounded by REPORTED_MAX:
+   * the oldest entries are evicted. Serialized as [id, rank] pairs.
+   */
+  reported: Array<[string, number]>;
 }
+
+/**
+ * Max ids in `NvdCursorState.reported`. ~21 bytes per `["CVE-2026-109618",4]`
+ * pair → ≤ ~110 KB of KV value. Only high/critical CVEs are recorded (tens
+ * per day), so 5,000 covers well past UPDATED_MAX_AGE_MS (30 days) — the
+ * oldest a CVE can be and still be reported as "updated".
+ */
+export const REPORTED_MAX = 5_000;
 
 function isIso(v: unknown): v is string {
   return typeof v === "string" && Number.isFinite(Date.parse(v));
@@ -307,7 +408,59 @@ export function parseCursorState(raw: string | null): NvdCursorState {
     : [];
   const stalled =
     typeof o.stalledRuns === "number" && Number.isInteger(o.stalledRuns) && o.stalledRuns >= 0 ? o.stalledRuns : 0;
-  return { v: 1, pub: parseLane(o.pub), mod: parseLane(o.mod), pubTail: tail, stalledRuns: stalled };
+  const reported = new Map<string, number>();
+  if (Array.isArray(o.reported)) {
+    for (const e of o.reported) {
+      if (
+        Array.isArray(e) &&
+        typeof e[0] === "string" &&
+        e[0].length > 0 &&
+        e[0].length <= 40 &&
+        typeof e[1] === "number" &&
+        Number.isInteger(e[1]) &&
+        e[1] >= 0 &&
+        e[1] <= SEVERITY_RANK.critical
+      ) {
+        // Re-insert so a duplicate id keeps its LAST position (most recent).
+        reported.delete(e[0]);
+        reported.set(e[0], e[1]);
+      }
+    }
+  }
+  return {
+    v: 1,
+    pub: parseLane(o.pub),
+    mod: parseLane(o.mod),
+    pubTail: tail,
+    stalledRuns: stalled,
+    reported: [...reported].slice(-REPORTED_MAX),
+  };
+}
+
+/**
+ * Record `entries` as reported at their current tier, most recent last,
+ * evicting the oldest past REPORTED_MAX. Only high/critical entries are
+ * recorded: lower tiers are never "updated" candidates, and a CVE first
+ * reported below high that later turns high/critical is a tier rise anyway.
+ */
+export function recordReported(
+  reported: Array<[string, number]>,
+  entries: Array<{ id: string; severity: Severity }>,
+): Array<[string, number]> {
+  const map = new Map(reported);
+  for (const e of entries) {
+    const rank = SEVERITY_RANK[e.severity];
+    if (rank < SEVERITY_RANK.high) continue;
+    map.delete(e.id);
+    map.set(e.id, rank);
+  }
+  return [...map].slice(-REPORTED_MAX);
+}
+
+/** A `mod`-lane CVE is newly reportable when never reported or its tier rose. */
+function isNewlyReportable(reported: Map<string, number>, id: string, severity: Severity): boolean {
+  const prev = reported.get(id);
+  return prev === undefined || SEVERITY_RANK[severity] > prev;
 }
 
 /** NVD timestamps carry no zone ("2026-10-22T11:50:00.000"); they are UTC. */
@@ -330,21 +483,30 @@ export function pubProgressed(b: LaneState, a: LaneState): boolean {
 /**
  * Ids the NEXT run will re-read from the pub lane, i.e. what must not be
  * reported as new again:
- *   - in-flight window: the last RESUME_OVERLAP results fetched (the resume
- *     re-reads them by index);
+ *   - window part-read (nextIndex > 0): the last RESUME_OVERLAP results
+ *     fetched (the resume re-reads them by index);
+ *   - fresh window (nextIndex 0, opened just before the budget stop): CVEs
+ *     published at or after the window start — the next run reads it from
+ *     index 0, i.e. from cursor − CURSOR_OVERLAP_MS;
  *   - no window: CVEs published at or after cursor − CURSOR_OVERLAP_MS (the
  *     next window starts there).
  * Derived from THIS run's fetch only (re-read ids included), so it can't grow
  * without bound; capped at TAIL_MAX, keeping the most recent.
  */
-function computePubTail(fetched: NvdCve[], lane: LaneState): string[] {
+function computePubTail(fetched: SlimCve[], lane: LaneState): string[] {
   const ids = new Set<string>();
-  if (lane.window) {
+  if (lane.window && lane.window.nextIndex > 0) {
     for (const c of fetched.slice(-RESUME_OVERLAP)) ids.add(c.id);
-  } else if (lane.cursor) {
-    const cut = Date.parse(lane.cursor) - CURSOR_OVERLAP_MS;
-    for (const c of fetched) {
-      if (parseNvdTime(c.published) >= cut) ids.add(c.id);
+  } else {
+    const cut = lane.window
+      ? Date.parse(lane.window.start)
+      : lane.cursor
+        ? Date.parse(lane.cursor) - CURSOR_OVERLAP_MS
+        : NaN;
+    if (Number.isFinite(cut)) {
+      for (const c of fetched) {
+        if (parseNvdTime(c.published) >= cut) ids.add(c.id);
+      }
     }
   }
   return [...ids].slice(-TAIL_MAX);
@@ -400,8 +562,21 @@ function buildUrl(run: RunCtx, lane: LaneName, w: LaneWindow, startIndex: number
   return run.baseUrl + "?" + params.toString();
 }
 
+/**
+ * Retryable HTTP statuses. NVD has historically answered rate limiting
+ * with 403 rather than 429, and the Worker's egress IPs are shared, so a
+ * 403 is treated as a rate-limit hit and retried with the usual backoff.
+ */
 function isTransientStatus(status: number): boolean {
-  return status === 429 || status >= 500;
+  return status === 403 || status === 429 || status >= 500;
+}
+
+/** One fetched page, CVEs already slimmed. */
+interface NvdPage {
+  cves: SlimCve[];
+  /** Raw result count (pagination math), incl. entries without an id. */
+  returned: number;
+  totalResults: number;
 }
 
 /**
@@ -415,7 +590,7 @@ async function fetchPage(
   lane: LaneName,
   w: LaneWindow,
   startIndex: number,
-): Promise<NvdResponse | null> {
+): Promise<NvdPage | null> {
   let lastError = "";
   for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++) {
     const backoff = attempt > 1 ? (RETRY_BACKOFF_MS[attempt - 2] ?? 5_000) : 0;
@@ -443,14 +618,25 @@ async function fetchPage(
       });
       if (res.ok) {
         try {
-          return (await res.json()) as NvdResponse;
+          const body = (await res.json()) as NvdResponse;
+          // Slim at once: the raw page (CPE trees, every reference) is
+          // dropped here instead of living until the digest.
+          const vulns = body.vulnerabilities ?? [];
+          return {
+            cves: vulns
+              .map((v) => v.cve)
+              .filter((c): c is NvdCve => !!c?.id)
+              .map(slimCve),
+            returned: vulns.length,
+            totalResults: typeof body.totalResults === "number" ? body.totalResults : 0,
+          };
         } catch (err) {
           lastError = `NVD JSON parse failed: ${err instanceof Error ? err.message : String(err)}`;
         }
       } else {
         lastError = `NVD HTTP ${res.status}`;
         if (!isTransientStatus(res.status)) {
-          // 4xx other than 429 (bad params, bad apiKey) won't fix itself.
+          // 4xx other than 403/429 (bad params, bad apiKey) won't fix itself.
           throw new NonTransientError(lastError);
         }
       }
@@ -478,7 +664,7 @@ async function fetchPage(
 }
 
 interface LaneOutcome {
-  cves: NvdCve[];
+  cves: SlimCve[];
   pages: number;
   /** True when the lane reached "now" with nothing pending. */
   caughtUp: boolean;
@@ -526,26 +712,23 @@ async function drainLane(
 
     const startIndex = resumed ? Math.max(0, w.nextIndex - RESUME_OVERLAP) : w.nextIndex;
     resumed = false;
-    let body: NvdResponse | null;
+    let page: NvdPage | null;
     try {
-      body = await fetchPage(run, lane, w, startIndex);
+      page = await fetchPage(run, lane, w, startIndex);
     } catch (err) {
       out.error = err instanceof Error ? err.message : String(err);
       return out;
     }
-    if (body === null) {
+    if (page === null) {
       out.budgetStop = true;
       return out;
     }
     out.pages++;
 
-    const vulns = (body.vulnerabilities ?? [])
-      .map((v) => v.cve)
-      .filter((c): c is NvdCve => !!c?.id);
-    for (const c of vulns) out.cves.push(c);
+    for (const c of page.cves) out.cves.push(c);
 
-    const returned = body.vulnerabilities?.length ?? 0;
-    const total = typeof body.totalResults === "number" ? body.totalResults : 0;
+    const returned = page.returned;
+    const total = page.totalResults;
     w.nextIndex = startIndex + returned;
 
     if (returned === 0 || w.nextIndex >= total) {
@@ -565,21 +748,26 @@ async function drainLane(
 // ─── Digest ─────────────────────────────────────────────────────────
 
 interface DigestEntry {
-  cve: NvdCve;
+  cve: SlimCve;
   kind: "new" | "updated";
   severity: Severity;
   pick: CvssPick | null;
   max: number | null;
 }
 
-function entryOf(cve: NvdCve, kind: "new" | "updated"): DigestEntry {
+function entryOf(cve: SlimCve, kind: "new" | "updated"): DigestEntry {
   return { cve, kind, severity: classifyCve(cve), pick: pickCvss(cve), max: maxCvss(cve) };
 }
 
-/** Severity tier first, then preferred score, then max score, then id. */
+/**
+ * Severity tier first, then new before updated (a newly published CVE is
+ * the headline; an "updated" one is a re-score of something older), then
+ * preferred score, then max score, then id.
+ */
 export function compareEntries(a: DigestEntry, b: DigestEntry): number {
   return (
     SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] ||
+    (a.kind === b.kind ? 0 : a.kind === "new" ? -1 : 1) ||
     (b.pick?.score ?? -1) - (a.pick?.score ?? -1) ||
     (b.max ?? -1) - (a.max ?? -1) ||
     a.cve.id.localeCompare(b.cve.id)
@@ -603,25 +791,31 @@ function scoreLabel(e: DigestEntry): string {
   return e.max !== null && e.max > e.pick.score ? `${base}, max ${e.max.toFixed(1)}` : base;
 }
 
-function englishDescription(cve: NvdCve): string {
-  return cve.descriptions?.find((d) => d.lang === "en")?.value ?? "";
-}
-
-function uniqueById(cves: NvdCve[]): NvdCve[] {
-  const seen = new Map<string, NvdCve>();
+/**
+ * One copy per id: the most recently modified one (overlap re-reads), chosen
+ * BEFORE dropping Rejected — a CVE rejected after an earlier copy was read
+ * must disappear, not fall back to the stale pre-rejection copy.
+ */
+function uniqueById(cves: SlimCve[]): SlimCve[] {
+  const seen = new Map<string, SlimCve>();
   for (const c of cves) {
-    if (c.vulnStatus === "Rejected") continue;
     const prev = seen.get(c.id);
-    // Keep the most recently modified copy (overlap re-reads).
-    if (!prev || (c.lastModified ?? "") >= (prev.lastModified ?? "")) seen.set(c.id, c);
+    if (!prev) {
+      seen.set(c.id, c);
+      continue;
+    }
+    const tc = parseNvdTime(c.lastModified);
+    const tp = parseNvdTime(prev.lastModified);
+    // Later copy wins ties and an unparseable previous timestamp.
+    if (!Number.isFinite(tp) || (Number.isFinite(tc) && tc >= tp)) seen.set(c.id, c);
   }
-  return [...seen.values()];
+  return [...seen.values()].filter((c) => c.vulnStatus !== "Rejected");
 }
 
 /** `mod`-lane CVE worth surfacing as "updated" (see module header). */
-function isLateUpdate(cve: NvdCve, nowMs: number): boolean {
-  const pub = Date.parse(cve.published ?? "");
-  const mod = Date.parse(cve.lastModified ?? "");
+function isLateUpdate(cve: SlimCve, nowMs: number): boolean {
+  const pub = parseNvdTime(cve.published);
+  const mod = parseNvdTime(cve.lastModified);
   if (!Number.isFinite(pub) || !Number.isFinite(mod)) return false;
   if (nowMs - pub > UPDATED_MAX_AGE_MS) return false;
   if (mod - pub < UPDATED_MIN_LAG_MS) return false;
@@ -672,13 +866,30 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
         if (last !== null) coldStartMs = Math.max(last - COLD_START_REREAD_MS, run.startedAt - MAX_RANGE_MS);
       }
 
+      // Failure paths save the cursor, then fail the pull. A KV error while
+      // saving is logged, never thrown: the NVD / stall error is the one the
+      // circuit breaker and feed_pull_history must see.
+      const saveCursorThenThrow = async (original: Error): Promise<never> => {
+        try {
+          await env.CACHE.put(CURSOR_KEY, JSON.stringify(state));
+        } catch (kvErr) {
+          await logFeedDiagnostic(env.DB, {
+            feedName: "nvd_cve", url: CURSOR_KEY, method: "KV_PUT", httpStatus: null, bodyPreview: "",
+            errorMessage: `cursor not saved while failing the pull (${original.message}): ${
+              kvErr instanceof Error ? kvErr.message : String(kvErr)
+            }`,
+          });
+        }
+        throw original;
+      };
+
       const pub = await drainLane(run, "pub", state.pub, coldStartMs);
 
       // A first page that never landed = NVD is down: fail the pull so the
       // circuit breaker sees it. Anything fetched before a later failure is
       // kept and the run succeeds with a warning.
       if (pub.error && pub.pages === 0) {
-        if (JSON.stringify(state) !== before) await env.CACHE.put(CURSOR_KEY, JSON.stringify(state));
+        if (JSON.stringify(state) !== before) await saveCursorThenThrow(new Error(pub.error));
         throw new Error(pub.error);
       }
 
@@ -688,12 +899,13 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       state.pubTail = computePubTail(pub.cves, state.pub);
       state.stalledRuns = pubProgressed(pubBefore, state.pub) ? 0 : state.stalledRuns + 1;
       if (state.stalledRuns >= STALL_RUN_LIMIT) {
-        await env.CACHE.put(CURSOR_KEY, JSON.stringify(state));
-        throw new Error(
-          `NVD pub cursor stalled: no forward progress for ${state.stalledRuns} consecutive runs ` +
-            `(cursor ${state.pub.cursor ?? "none"}, window ${state.pub.window?.start ?? "none"} ` +
-            `index ${state.pub.window?.nextIndex ?? 0})` +
-            (pub.error ? `: ${pub.error}` : ""),
+        await saveCursorThenThrow(
+          new Error(
+            `NVD pub cursor stalled: no forward progress for ${state.stalledRuns} consecutive runs ` +
+              `(cursor ${state.pub.cursor ?? "none"}, window ${state.pub.window?.start ?? "none"} ` +
+              `index ${state.pub.window?.nextIndex ?? 0})` +
+              (pub.error ? `: ${pub.error}` : ""),
+          ),
         );
       }
 
@@ -715,8 +927,13 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       const pubCves = uniqueById(pub.cves);
       const newCves = pubCves.filter((c) => !prevTail.has(c.id));
       const pubIds = new Set(pubCves.map((c) => c.id));
+      // "updated" only when newly reportable: never named before, or its tier
+      // rose since (e.g. unscored → critical, high → critical). NVD touches a
+      // CVE for reference adds, CPE passes and status changes too; those, and
+      // the mod lane's own overlap re-read, must not re-report it.
+      const reportedMap = new Map(state.reported);
       const updated = uniqueById(mod?.cves ?? []).filter(
-        (c) => !pubIds.has(c.id) && isLateUpdate(c, nowMs),
+        (c) => !pubIds.has(c.id) && isLateUpdate(c, nowMs) && isNewlyReportable(reportedMap, c.id, classifyCve(c)),
       );
       const itemsFetched = pub.cves.length + (mod?.cves.length ?? 0);
 
@@ -758,14 +975,21 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
         null,
       );
 
-      const criticals = ranked.filter((e) => e.severity === "critical");
-      const criticalList = criticals
-        .slice(0, SUMMARY_CRITICAL_IDS)
-        .map((e) => `${e.cve.id} (${scoreLabel(e)}${e.kind === "updated" ? ", updated" : ""})`)
-        .join(", ");
+      // Summary criticals: NEW ones take the slots first; "updated" ones only
+      // fill what is left, in their own labelled sentence. The Observer reads
+      // only the summary, so a burst of re-scored CVEs must never push a newly
+      // published critical into "[+N more]".
+      const newCriticals = rankedNew.filter((e) => e.severity === "critical");
+      const updatedCriticals = rankedUpdated.filter((e) => e.severity === "critical");
+      const shownNew = newCriticals.slice(0, SUMMARY_CRITICAL_IDS);
+      const shownUpdated = updatedCriticals.slice(0, SUMMARY_CRITICAL_IDS - shownNew.length);
+      const listOf = (es: DigestEntry[]) => es.map((e) => `${e.cve.id} (${scoreLabel(e)})`).join(", ");
       const topEntries = ranked
         .slice(0, 5)
-        .map((e) => `${e.cve.id} (${scoreLabel(e)}) — ${englishDescription(e.cve).slice(0, 120)}`)
+        .map(
+          (e) =>
+            `${e.cve.id} (${scoreLabel(e)}${e.kind === "updated" ? ", updated" : ""}) — ${e.cve.description.slice(0, 120)}`,
+        )
         .join("\n");
 
       const parts = [
@@ -779,24 +1003,30 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
           `${rankedUpdated.length} recently published high/critical CVEs newly scored or updated.`,
         );
       }
-      if (criticals.length > 0) {
-        const more = criticals.length - SUMMARY_CRITICAL_IDS;
-        parts.push(`CRITICAL (CVSS >= 9.0): ${criticalList}${more > 0 ? ` [+${more} more]` : ""}.`);
+      if (newCriticals.length > 0) {
+        const more = newCriticals.length - shownNew.length;
+        parts.push(`CRITICAL (CVSS >= 9.0): ${listOf(shownNew)}${more > 0 ? ` [+${more} more]` : ""}.`);
+      }
+      if (updatedCriticals.length > 0) {
+        const more = updatedCriticals.length - shownUpdated.length;
+        parts.push(
+          shownUpdated.length > 0
+            ? `UPDATED to CRITICAL (re-scored, published earlier): ${listOf(shownUpdated)}${more > 0 ? ` [+${more} more]` : ""}.`
+            : `UPDATED to CRITICAL (re-scored, published earlier): ${more} (see details).`,
+        );
       }
       if (pub.budgetStop || pub.error) parts.push("Backfill in progress — more CVEs follow next run.");
       const summary = `${parts.join(" ")} Most severe:\n${topEntries}`;
 
+      const detailEntries = selectDetails(ranked);
       const details = JSON.stringify(
-        selectDetails(ranked).map((e) => ({
+        detailEntries.map((e) => ({
           cve: e.cve.id,
           cvss: e.pick?.score ?? null,
           severity_band: e.pick?.band ?? null,
           published: e.cve.published,
-          description: englishDescription(e.cve).slice(0, 500) || null,
-          references: (e.cve.references ?? [])
-            .slice(0, 5)
-            .map((r) => r.url)
-            .filter(Boolean),
+          description: e.cve.description || null,
+          references: e.cve.references,
           // Additive fields (2026-10-22).
           severity: e.severity,
           cvss_version: e.pick?.version ?? null,
@@ -816,6 +1046,14 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       )
         .bind(`nvd_${nowMs}`, summary, digestSeverity, details)
         .run();
+
+      // Digest landed: remember the CVEs it named (saved with the cursor by
+      // finish). Entries cut from `details` aren't recorded, so a later
+      // "updated" copy of one of them can still be reported.
+      state.reported = recordReported(
+        state.reported,
+        detailEntries.map((e) => ({ id: e.cve.id, severity: e.severity })),
+      );
 
       return finish(1);
     },
