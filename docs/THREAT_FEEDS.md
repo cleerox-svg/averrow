@@ -180,9 +180,22 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
 | **CISA KEV** | `cisa_kev.ts` | US CISA | Known exploited vulnerabilities — writes an insight digest to `agent_outputs`, not `threats` |
-| **NVD CVE** | `nvd_cve.ts` | NIST NVD | Full CVE 2.0 catalog, sliding 24h window of newly-published CVEs — also writes an insight digest to `agent_outputs`, not `threats` (a CVE isn't an IP/URL/domain IOC) |
+| **NVD CVE** | `nvd_cve.ts` | NIST NVD | Full CVE 2.0 catalog, pulled from a KV cursor so it catches up after outages (see [NVD CVE details](#nvd-cve-details)) — writes one insight digest per run to `agent_outputs`, not `threats` (a CVE isn't an IP/URL/domain IOC) |
 | **CISA Iran IOCs** | `cisa_iran_iocs.ts` | US CISA | Iran-related campaign IOCs |
 | **EPSS** | `epss.ts` | FIRST.org | Exploit Prediction Scoring System — top CVEs by 30-day exploitation probability; writes an insight digest to `agent_outputs`, not `threats`. Prioritizes the vuln signal class alongside CISA KEV / NVD (migration 0248) |
+
+#### NVD CVE details
+
+`feeds/nvd_cve.ts` (rewritten 2026-10-22 after it missed PHP2Shell, CVE-2026-109618/109619, while auto-paused).
+
+- **Two lanes, one KV cursor.** State lives in `env.CACHE` under `nvd_cve:cursor:v1` (JSON: per lane `cursor` + in-flight `window {start, end, nextIndex}`), the same KV-cursor convention as `circl_osint`.
+  - `pub` (runs first): CVEs by **published** date from the cursor (minus a 15-min overlap for NVD indexing lag). Each window is fixed and at most 120 days (NVD's limit), paginated with `startIndex`/`totalResults` at 500 results per page. The cursor moves to the window end only after every page is in; if the run stops part-way, the next run resumes at the stored index (re-reading 25 results for safety).
+  - `mod` (runs only when `pub` has caught up): CVEs by **lastModified** date, looking back at most 30 days. NVD scoring often lags publication, so a CVE published unscored can turn critical days later. This lane reports CVEs published in the last 30 days, modified at least 6h after publication, that are now high or critical. They appear as `kind: "updated"` and never count as new.
+  - **Cold start** (no KV cursor): `feed_status.last_successful_pull` minus 25h. That re-reads the old module's last 24h window (which may have been cut off at 2000 results) plus the whole outage gap. With no history it goes back 7 days.
+- **Budget and rate limits.** One run stops starting pages at 120s and never starts a request it can't finish by 180s; what's left resumes next run and the pull succeeds with a `warning`. Requests are spaced 6.5s apart without a key (NVD allows 5 per 30s) and 0.7s apart with one (50 per 30s). The timeout is 25s per request, with 3 attempts on timeout/network/429/5xx; the page size halves after a timeout, down to 100. A 4xx other than 429 fails at once. The pull fails, which feeds the circuit breaker, only when the first page of the run can't be fetched. Otherwise, pages already fetched are digested and the cursor is saved.
+- **Optional API key.** Set the `NVD_API_KEY` Worker secret (`wrangler secret put NVD_API_KEY`) and it is sent as the `apiKey` header, never in the URL. Without it the feed still works, just slower to catch up.
+- **CVSS.** The score shown is from the preferred metric: v4.0 first, then v3.1, v3.0, v2. Within a version, NVD's `Primary` metric comes first, then the CNA's `Secondary` one, because new CVEs often carry only the CNA's v4 score. A CVE is **critical** when any version or source scores it 9.0 or higher.
+- **Digest** (`agent_outputs`, `agent_id='sentinel'`, `type='insight'`, summary prefix `NVD CVE Update:`). The Observer reads only `summary`, so the summary names up to 15 critical CVE ids with their scores. `details` is sorted by severity tier, then score, before it is cut: every critical is kept (up to 150), then the list is filled to 50 entries. Each entry has the original keys (`cve`, `cvss`, `severity_band`, `published`, `description`, `references`) plus `severity`, `cvss_version`, `cvss_source_type`, `cvss_source`, `max_cvss`, `last_modified` and `kind`. A run with nothing new writes no row. Overlap re-reads can repeat a CVE in two consecutive digests.
 
 ### Ingest Feeds — Domains / Certificates
 
