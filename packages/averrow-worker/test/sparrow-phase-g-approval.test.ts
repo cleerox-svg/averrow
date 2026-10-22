@@ -38,6 +38,8 @@ interface Candidate {
   severity: string; status: string;
   requested_at: string | null; requested_by: string | null;
   staff_severity_set_at: string | null;
+  /** The SELECT's org_brands re-check (1 = the org still holds the brand). */
+  brand_owned: number;
 }
 
 class MockKV {
@@ -116,7 +118,7 @@ function cand(id: string, overrides: Partial<Candidate>): Candidate {
     evidence_summary: "phish", evidence_detail: null,
     provider_name: "GoDaddy", provider_abuse_contact: null, provider_method: "email",
     severity: "CRITICAL", status: "draft", requested_at: null, requested_by: null,
-    staff_severity_set_at: null,
+    staff_severity_set_at: null, brand_owned: 1,
     ...overrides,
   };
 }
@@ -143,7 +145,7 @@ describe("Sparrow Phase G — customer approval is provenance-checked (G21)", ()
   it("semi_auto: staff-set 'requested' row is HELD (not auto-filed); customer is asked to approve", async () => {
     const { env, flips } = makeEnv([STAFF_SET], "semi_auto");
     const res = await runPhaseGAutoSubmit(env);
-    expect(res).toEqual({ submitted: 0, skipped: 1 });
+    expect(res).toEqual({ submitted: 0, skipped: 1, skipped_brand_not_owned: 0 });
     expect(dispatchSubmission).not.toHaveBeenCalled();
     expect(flips).toEqual([]);
     expect(createNotification).toHaveBeenCalledWith(env, expect.objectContaining({ type: "takedown_awaiting_approval" }));
@@ -159,7 +161,7 @@ describe("Sparrow Phase G — customer approval is provenance-checked (G21)", ()
   it("semi_auto: customer-approved CRITICAL row is sent", async () => {
     const { env, flips } = makeEnv([CUSTOMER_APPROVED], "semi_auto");
     const res = await runPhaseGAutoSubmit(env);
-    expect(res).toEqual({ submitted: 1, skipped: 0 });
+    expect(res).toEqual({ submitted: 1, skipped: 0, skipped_brand_not_owned: 0 });
     expect(dispatchedIds()).toEqual(["customer-approved"]);
     expect(flips).toEqual(["customer-approved"]);
   });
@@ -174,7 +176,7 @@ describe("Sparrow Phase G — customer approval is provenance-checked (G21)", ()
   it("semi_auto mixed batch: only the customer-approved and policy-auto rows go out", async () => {
     const { env } = makeEnv([STAFF_SET, CUSTOMER_APPROVED, POLICY_AUTO_DRAFT, STAFF_APPROVER], "semi_auto");
     const res = await runPhaseGAutoSubmit(env);
-    expect(res).toEqual({ submitted: 2, skipped: 2 });
+    expect(res).toEqual({ submitted: 2, skipped: 2, skipped_brand_not_owned: 0 });
     expect(dispatchedIds().sort()).toEqual(["customer-approved", "policy-auto"]);
   });
 

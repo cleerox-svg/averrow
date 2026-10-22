@@ -313,7 +313,7 @@ export async function handleConvertLeadToTenant(
       // Owned now → start lookalike takedown drafting immediately
       // (best-effort, deferred, never throws). Drafts only: Phase G
       // submits nothing until the customer signs an authorization.
-      scheduleOwnedLookalikeDrafts(env, workerCtx, brandId, 'leadConversion');
+      scheduleOwnedLookalikeDrafts(env, workerCtx, brandId, orgId, 'leadConversion');
     } catch { /* dup, fine */ }
 
     // monitored_brands row links brand -> tenant scope. Per product spec,

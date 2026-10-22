@@ -17,10 +17,20 @@
 -- Identification:
 --   rows     — source = 'nexus' AND id >= 'tat_otxinherit_'
 --              AND id < 'tat_otxinherit`' AND metadata.inherited = 1
+--              AND observed_at < '2026-10-21 18:27:00'
 --              ('`' is the character after '_', so the id range is exactly
 --              the prefix and is a PK range seek). The 194 May-2026
 --              source='nexus' rows are outside the prefix and untouched.
---   clusters — actor_id set, an inherited row for that cluster
+--              Time bound: the strict-policy writer shipped in #1860
+--              (deployed 2026-10-21 18:27 UTC) emits rows with the same id
+--              prefix, source and inherited flag. Prod at authoring: 11,047
+--              rows, newest observed_at 2026-10-21 13:22:25, none after the
+--              deploy — so the cutoff covers every old-policy row and a
+--              strict-policy row written before this migration applies is
+--              never revoked. observed_at is datetime('now') text
+--              ('YYYY-MM-DD HH:MM:SS', migration 0135 default; the writer
+--              never sets it), so the string comparison is chronological.
+--   clusters — actor_id set, an inherited pre-cutoff row for that cluster
 --              (source_pulse_id = cluster id) names the SAME actor, and no
 --              source='manual' row exists for the cluster. Inheritance only
 --              ever stamped actor_id (never attribution_attempted_at or any
@@ -55,18 +65,26 @@
 --          r.observed_at, r.metadata
 --     FROM threat_attributions_revoked r
 --    WHERE r.revoke_reason = 'otx_inheritance_policy_2026-10'
---      AND EXISTS (SELECT 1 FROM threats t WHERE t.id = r.threat_id);
+--      AND EXISTS (SELECT 1 FROM threats t WHERE t.id = r.threat_id)
+--      AND (r.actor_id IS NULL
+--           OR EXISTS (SELECT 1 FROM threat_actors a WHERE a.id = r.actor_id));
 --
 --   UPDATE infrastructure_clusters
 --      SET actor_id = (SELECT c.actor_id FROM cluster_actor_revocations c
 --                       WHERE c.cluster_id = infrastructure_clusters.id)
 --    WHERE actor_id IS NULL
---      AND id IN (SELECT cluster_id FROM cluster_actor_revocations
---                  WHERE revoke_reason = 'otx_inheritance_policy_2026-10');
+--      AND id IN (SELECT r.cluster_id FROM cluster_actor_revocations r
+--                  WHERE r.revoke_reason = 'otx_inheritance_policy_2026-10'
+--                    AND (r.actor_id IS NULL
+--                         OR EXISTS (SELECT 1 FROM threat_actors a
+--                                     WHERE a.id = r.actor_id)));
 --
 -- (The threats EXISTS guard skips rows whose threat retention has since
 -- removed — threat_attributions.threat_id is an enforced FK. The
--- actor_id IS NULL guard never overwrites a cluster attributed since.)
+-- threat_actors guard skips rows/clusters whose actor has since been
+-- deleted — actor_id is an FK too, and one missing actor must not abort the
+-- whole restore. The actor_id IS NULL guard never overwrites a cluster
+-- attributed since.)
 
 CREATE TABLE IF NOT EXISTS threat_attributions_revoked (
   id                 TEXT PRIMARY KEY,
@@ -112,7 +130,10 @@ SELECT ic.id, ic.actor_id, datetime('now'), 'otx_inheritance_policy_2026-10'
      SELECT 1 FROM threat_attributions x
       WHERE x.source_pulse_id = ic.id
         AND x.actor_id = ic.actor_id
+        AND x.source = 'nexus'
         AND x.id >= 'tat_otxinherit_' AND x.id < 'tat_otxinherit`'
+        AND json_extract(x.metadata, '$.inherited') = 1
+        AND x.observed_at < '2026-10-21 18:27:00'
    )
    AND NOT EXISTS (
      SELECT 1 FROM threat_attributions m
@@ -130,7 +151,8 @@ SELECT ta.id, ta.threat_id, ta.actor_id, ta.source, ta.source_pulse_id,
   FROM threat_attributions ta
  WHERE ta.source = 'nexus'
    AND ta.id >= 'tat_otxinherit_' AND ta.id < 'tat_otxinherit`'
-   AND json_extract(ta.metadata, '$.inherited') = 1;
+   AND json_extract(ta.metadata, '$.inherited') = 1
+   AND ta.observed_at < '2026-10-21 18:27:00';
 
 -- 2. Clear the cluster stamps — only where the cluster still carries the
 --    backed-up actor AND a backed-up inherited row for it is still present
@@ -149,6 +171,7 @@ UPDATE infrastructure_clusters
          SELECT 1 FROM threat_attributions x
           WHERE x.source_pulse_id = infrastructure_clusters.id
             AND x.id >= 'tat_otxinherit_' AND x.id < 'tat_otxinherit`'
+            AND x.observed_at < '2026-10-21 18:27:00'
             AND x.id IN (
                   SELECT r.id FROM threat_attributions_revoked r
                    WHERE r.revoke_reason = 'otx_inheritance_policy_2026-10'
@@ -163,7 +186,8 @@ DELETE FROM threat_attributions
           WHERE r.revoke_reason = 'otx_inheritance_policy_2026-10'
        )
    AND source = 'nexus'
-   AND id >= 'tat_otxinherit_' AND id < 'tat_otxinherit`';
+   AND id >= 'tat_otxinherit_' AND id < 'tat_otxinherit`'
+   AND observed_at < '2026-10-21 18:27:00';
 
 -- 4. Audit summary (one row per revoke_reason; OR IGNORE keeps the first).
 INSERT OR IGNORE INTO attribution_revocation_runs

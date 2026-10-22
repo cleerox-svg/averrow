@@ -11,9 +11,14 @@
  *   - a cluster with a manual attribution keeps its actor (its inherited
  *     rows are still revoked);
  *   - a cluster whose actor differs from the inherited one keeps it;
+ *   - a strict-policy row written AFTER the #1860 deploy cutoff (same id
+ *     prefix / source / inherited flag) and its cluster stamp are untouched;
+ *   - a prefixed row that is not flagged inherited never makes its cluster a
+ *     candidate (clusters_cleared stays exact);
  *   - status / attribution_attempted_at are never touched;
  *   - one summary row records the counts;
- *   - a further application is a no-op, and the restore recipe round-trips.
+ *   - a further application is a no-op, and the restore recipe round-trips —
+ *     skipping (not aborting on) a backed-up row whose actor was deleted.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -51,7 +56,7 @@ function seed(): SqliteDb {
   const threat = db.prepare(
     "INSERT INTO threats (id, source_feed, threat_type, status, cluster_id) VALUES (?, 'test', 'phishing', 'active', ?)",
   );
-  for (let i = 1; i <= 10; i++) threat.run(`t${i}`, null);
+  for (let i = 1; i <= 12; i++) threat.run(`t${i}`, null);
 
   const cluster = db.prepare(
     `INSERT INTO infrastructure_clusters (id, asns, status, actor_id, attribution_attempted_at, retired_reason)
@@ -62,6 +67,8 @@ function seed(): SqliteDb {
   cluster.run("cluster_ip_manual", "active", "ta_apt_x", null);            // kept: manual row
   cluster.run("cluster_ip_other_actor", "active", "ta_apt_y", null);       // kept: actor differs
   cluster.run("cluster_ip_untouched", "active", "ta_apt_y", null);         // kept: no inheritance
+  cluster.run("cluster_ip_strict", "active", "ta_apt_x", null);            // kept: post-cutoff strict-policy row only
+  cluster.run("cluster_ip_unflagged", "active", "ta_apt_x", null);         // kept: prefixed row lacks inherited=1
 
   const attr = db.prepare(
     `INSERT INTO threat_attributions
@@ -74,6 +81,12 @@ function seed(): SqliteDb {
   attr.run("tat_otxinherit_bbb1", "t3", "ta_apt_x", "nexus", "cluster_asn_retired", "APT X", "APT X", "low", "2026-09-01 00:00:00", INHERITED_META("cluster_asn_retired"));
   attr.run("tat_otxinherit_ccc1", "t4", "ta_apt_x", "nexus", "cluster_ip_manual", "APT X", "APT X", "low", "2026-09-01 00:00:00", INHERITED_META("cluster_ip_manual"));
   attr.run("tat_otxinherit_ddd1", "t5", "ta_apt_x", "nexus", "cluster_ip_other_actor", "APT X", "APT X", "low", "2026-09-01 00:00:00", INHERITED_META("cluster_ip_other_actor"));
+  // Strict-policy row written at/after #1860's deploy (2026-10-21 18:27 UTC)
+  // — same prefix/source/flag, but outside the revocation window: untouched.
+  attr.run("tat_otxinherit_eee1", "t11", "ta_apt_x", "nexus", "cluster_ip_strict", "APT X", "APT X", "low", "2026-10-21 18:27:00", INHERITED_META("cluster_ip_strict"));
+  // Prefixed, pre-cutoff, but NOT flagged inherited — neither the row nor
+  // its cluster is a candidate.
+  attr.run("tat_otxinherit_fff1", "t12", "ta_apt_x", "nexus", "cluster_ip_unflagged", "APT X", "APT X", "low", "2026-09-01 00:00:00", null);
   // Manual attribution on cluster_ip_manual — keeps its actor stamp.
   attr.run("tat_manual_cluster_ip_manual_t6", "t6", "ta_apt_x", "manual", "cluster_ip_manual", null, null, "confirmed", "2026-10-01 00:00:00", null);
   // May-2026 non-inherited source='nexus' row — untouched.
@@ -91,6 +104,8 @@ const SURVIVORS = [
   "tat_nexus_may_1",
   "tat_otx_1",
   "tat_otxinherit",
+  "tat_otxinherit_eee1",
+  "tat_otxinherit_fff1",
   "tat_otxinherita",
 ];
 const REVOKED = [
@@ -109,6 +124,21 @@ function snapshot(db: SqliteDb): unknown {
     clusters: all(db, "SELECT id, actor_id, status, attribution_attempted_at, retired_reason FROM infrastructure_clusters ORDER BY id"),
     runs: all(db, "SELECT * FROM attribution_revocation_runs"),
   };
+}
+
+function runRestoreRecipe(db: SqliteDb): void {
+  const block = MIGRATION.slice(
+    MIGRATION.indexOf("── Restore recipe"),
+    MIGRATION.indexOf("-- (The threats EXISTS guard"),
+  );
+  const recipe = block.split("\n")
+    .filter((l) => l.startsWith("--"))
+    .map((l) => l.replace(/^--\s?/, ""))
+    .join("\n");
+  const restoreSql = recipe.slice(recipe.indexOf("INSERT OR IGNORE INTO threat_attributions"));
+  expect(restoreSql).toContain("UPDATE infrastructure_clusters");
+  expect(restoreSql).toContain("FROM threat_actors a WHERE a.id = r.actor_id");
+  for (const stmt of splitStatements(restoreSql)) db.exec(`${stmt};`);
 }
 
 describe.skipIf(!hasSqlite())("migration 0309 — revoke OTX-inherited attributions", () => {
@@ -149,6 +179,8 @@ describe.skipIf(!hasSqlite())("migration 0309 — revoke OTX-inherited attributi
       { id: "cluster_ip_inherit_only", actor_id: null, status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
       { id: "cluster_ip_manual", actor_id: "ta_apt_x", status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
       { id: "cluster_ip_other_actor", actor_id: "ta_apt_y", status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
+      { id: "cluster_ip_strict", actor_id: "ta_apt_x", status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
+      { id: "cluster_ip_unflagged", actor_id: "ta_apt_x", status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
       { id: "cluster_ip_untouched", actor_id: "ta_apt_y", status: "active", attribution_attempted_at: "2026-10-20 00:00:00", retired_reason: null },
     ]);
 
@@ -170,6 +202,20 @@ describe.skipIf(!hasSqlite())("migration 0309 — revoke OTX-inherited attributi
     expect(snapshot(db)).toEqual(before);
   });
 
+  it("the cutoff is exclusive: the last pre-deploy second is revoked, the deploy second is not", () => {
+    const db = seed();
+    db.prepare(
+      `INSERT INTO threat_attributions
+         (id, threat_id, actor_id, source, source_pulse_id, confidence, observed_at, metadata)
+       VALUES ('tat_otxinherit_zzz1', 't9', 'ta_apt_x', 'nexus', 'cluster_ip_inherit_only', 'low', '2026-10-21 18:26:59', ?)`,
+    ).run(INHERITED_META("cluster_ip_inherit_only"));
+    applyMigration(db);
+    expect(count(db, "SELECT COUNT(*) AS n FROM threat_attributions WHERE id = 'tat_otxinherit_zzz1'")).toBe(0);
+    expect(count(db, "SELECT COUNT(*) AS n FROM threat_attributions_revoked WHERE id = 'tat_otxinherit_zzz1'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM threat_attributions WHERE id = 'tat_otxinherit_eee1'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM threat_attributions_revoked WHERE id = 'tat_otxinherit_eee1'")).toBe(0);
+  });
+
   it("the header restore recipe puts rows and cluster actors back", () => {
     const db = seed();
     const original = {
@@ -178,19 +224,39 @@ describe.skipIf(!hasSqlite())("migration 0309 — revoke OTX-inherited attributi
     };
     applyMigration(db);
 
-    const block = MIGRATION.slice(
-      MIGRATION.indexOf("── Restore recipe"),
-      MIGRATION.indexOf("-- (The threats EXISTS guard"),
-    );
-    const recipe = block.split("\n")
-      .filter((l) => l.startsWith("--"))
-      .map((l) => l.replace(/^--\s?/, ""))
-      .join("\n");
-    const restoreSql = recipe.slice(recipe.indexOf("INSERT OR IGNORE INTO threat_attributions"));
-    expect(restoreSql).toContain("UPDATE infrastructure_clusters");
-    for (const stmt of splitStatements(restoreSql)) db.exec(`${stmt};`);
+    runRestoreRecipe(db);
 
     expect(all(db, "SELECT * FROM threat_attributions ORDER BY id")).toEqual(original.attrs);
     expect(all(db, "SELECT id, actor_id FROM infrastructure_clusters ORDER BY id")).toEqual(original.clusters);
+  });
+
+  it("the restore recipe skips a backed-up row/cluster whose actor was deleted, without aborting", () => {
+    const db = seed();
+    db.prepare("INSERT INTO threat_actors (id, name) VALUES ('ta_apt_z', 'APT Z')").run();
+    db.prepare(
+      `INSERT INTO infrastructure_clusters (id, asns, status, actor_id, attribution_attempted_at, retired_reason)
+       VALUES ('cluster_ip_gone_actor', '[]', 'active', 'ta_apt_z', '2026-10-20 00:00:00', NULL)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO threat_attributions
+         (id, threat_id, actor_id, source, source_pulse_id, confidence, observed_at, metadata)
+       VALUES ('tat_otxinherit_ggg1', 't10', 'ta_apt_z', 'nexus', 'cluster_ip_gone_actor', 'low', '2026-09-01 00:00:00', ?)`,
+    ).run(INHERITED_META("cluster_ip_gone_actor"));
+    const original = {
+      attrs: all(db, "SELECT * FROM threat_attributions WHERE id <> 'tat_otxinherit_ggg1' ORDER BY id"),
+      clusters: all(db, "SELECT id, actor_id FROM infrastructure_clusters WHERE id <> 'cluster_ip_gone_actor' ORDER BY id"),
+    };
+    applyMigration(db);
+    expect(count(db, "SELECT COUNT(*) AS n FROM threat_attributions_revoked WHERE id = 'tat_otxinherit_ggg1'")).toBe(1);
+    expect(count(db, "SELECT COUNT(*) AS n FROM cluster_actor_revocations WHERE cluster_id = 'cluster_ip_gone_actor'")).toBe(1);
+
+    // The actor is deleted after the revocation (the backups carry no FK).
+    db.exec("DELETE FROM threat_actors WHERE id = 'ta_apt_z'");
+    runRestoreRecipe(db);
+
+    // Everything else is restored exactly; the orphaned row/cluster are skipped.
+    expect(all(db, "SELECT * FROM threat_attributions ORDER BY id")).toEqual(original.attrs);
+    expect(all(db, "SELECT id, actor_id FROM infrastructure_clusters WHERE id <> 'cluster_ip_gone_actor' ORDER BY id")).toEqual(original.clusters);
+    expect(all(db, "SELECT actor_id FROM infrastructure_clusters WHERE id = 'cluster_ip_gone_actor'")).toEqual([{ actor_id: null }]);
   });
 });

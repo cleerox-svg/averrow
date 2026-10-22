@@ -167,7 +167,7 @@ export async function handleCreateOrg(
         }
         // Owned now → start lookalike takedown drafting immediately
         // (best-effort, deferred, never throws).
-        scheduleOwnedLookalikeDrafts(env, workerCtx, brand.brand_id, 'org_create');
+        scheduleOwnedLookalikeDrafts(env, workerCtx, brand.brand_id, orgId, 'org_create');
       } catch { /* skip duplicates */ }
     }
   }
@@ -829,7 +829,7 @@ export async function handleAssignOrgBrand(
     }
     // Owned now → start lookalike takedown drafting immediately
     // (best-effort, deferred, never throws).
-    scheduleOwnedLookalikeDrafts(env, workerCtx, body.brand_id, 'assign_org_brand');
+    scheduleOwnedLookalikeDrafts(env, workerCtx, body.brand_id, orgId, 'assign_org_brand');
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE")) {
       return json({ success: false, error: "Brand already assigned to this organization" }, 409, origin);

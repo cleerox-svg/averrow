@@ -13,6 +13,13 @@
  * lead-conversion staff placeholder is an org_members seat, not a brand
  * ownership signal, and plays no part.
  *
+ * Org-scoped: the caller passes the org that just inserted the claim, and
+ * drafting runs only when that org IS the brand's resolved owner
+ * (owningOrgIdSql — earliest claimant). A later claimant of a brand another
+ * org already owns drafts nothing; the original owner keeps its drafts via
+ * the cron. The hook can never draft into a different org than resolution
+ * picks.
+ *
  * Contract:
  *  - Best-effort and deferred: the work runs under `waitUntil` and every
  *    failure (including a failed module import) is caught, so the brand-add
@@ -31,21 +38,26 @@ export function scheduleOwnedLookalikeDrafts(
   env: Env,
   workerCtx: ExecutionContext | undefined,
   brandId: string,
+  orgId: number | string,
   logTag: string,
 ): void {
   if (!workerCtx) return;
+  // org_brands.org_id is INTEGER; a route param arrives as a string, and an
+  // integer-vs-text comparison never matches in SQLite, so normalise here.
+  const org = typeof orgId === "number" ? orgId : Number(orgId);
+  if (!Number.isSafeInteger(org)) return;
   try {
-    workerCtx.waitUntil(runOwnedLookalikeDrafts(env, brandId, logTag));
+    workerCtx.waitUntil(runOwnedLookalikeDrafts(env, brandId, org, logTag));
   } catch (err) {
     console.error(`[${logTag}] lookalike draft scheduling failed:`, err);
   }
 }
 
 /** Never rejects — exported for tests. */
-export async function runOwnedLookalikeDrafts(env: Env, brandId: string, logTag: string): Promise<void> {
+export async function runOwnedLookalikeDrafts(env: Env, brandId: string, orgId: number, logTag: string): Promise<void> {
   try {
     const { createTakedownsFromLookalikesForBrand } = await import("../agents/sparrow");
-    const tally = await createTakedownsFromLookalikesForBrand(env, brandId);
+    const tally = await createTakedownsFromLookalikesForBrand(env, brandId, orgId);
     if (tally.failed > 0) {
       console.error(`[${logTag}] lookalike drafting for ${brandId}: ${tally.failed} failed (first: ${tally.firstError})`);
     }
