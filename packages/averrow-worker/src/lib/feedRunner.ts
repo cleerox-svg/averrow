@@ -325,7 +325,7 @@ export interface FeedConfigRow {
   consecutive_failure_threshold?: number | null;
 }
 
-interface FeedStatusRow {
+export interface FeedStatusRow {
   feed_name: string;
   last_successful_pull: string | null;
   health_status: string;
@@ -1039,11 +1039,46 @@ export async function runAllFeeds(
 
 // ─── Schedule Check ──────────────────────────────────────────────
 
+/** Fraction of the schedule interval a feed may be "early" and still be due. */
+const DUE_TOLERANCE_FRACTION = 0.2;
+/** Floor: sub-hourly crons (e.g. every 5 min) keep the original 60 s trigger-jitter allowance. */
+const DUE_TOLERANCE_MIN_MS = 60_000;
+/**
+ * Cap. Must stay well under the 60-min dispatcher cadence minus the worst
+ * in-tick start jitter, or a feed could run one tick early (e.g. a 2h feed
+ * at 1h elapsed). 20 min leaves >30 min of margin.
+ */
+const DUE_TOLERANCE_MAX_MS = 20 * 60_000;
+
+/**
+ * How far short of the full interval a feed may be and still count as due.
+ *
+ * `feed_status.last_successful_pull` is stamped at pull COMPLETION, but the
+ * due check runs at the START of the next tick. Every dispatcher here fires
+ * hourly (orchestrator `:07`), and a feed's completion lands minutes after
+ * the tick (slow upstream, FEED_CONCURRENCY pool queuing, or its position in
+ * the sequential social/enrichment chains, which start anywhere from :12 to
+ * :21). With a fixed 60 s tolerance the next due tick sees `interval − a few
+ * minutes` elapsed, skips, and the feed runs one tick late — an hourly feed
+ * every 2h, a 6h feed every 7h (prod 2026-10-22: nvd_cve, taxii_otx, ipsum,
+ * circl_pdns, …). A proportional tolerance absorbs that run-duration /
+ * dispatch-position jitter without extra D1 reads or a migration.
+ *
+ *   5-min → 60 s · 30-min → 6 min · hourly → 12 min · ≥ 2h → 20 min
+ */
+export function dueToleranceMs(intervalMs: number): number {
+  return Math.min(
+    DUE_TOLERANCE_MAX_MS,
+    Math.max(DUE_TOLERANCE_MIN_MS, intervalMs * DUE_TOLERANCE_FRACTION),
+  );
+}
+
 /**
  * Simple interval-based check derived from cron expression.
  * Parses the minute field of the cron to determine interval.
+ * Exported for tests.
  */
-function shouldRunNow(config: FeedConfigRow, status: FeedStatusRow | undefined, now: Date): boolean {
+export function shouldRunNow(config: FeedConfigRow, status: FeedStatusRow | undefined, now: Date): boolean {
   if (!status) return true; // No status row = never run before
 
   // Circuit breaker: if a previous failure stamped a next_retry_at in
@@ -1064,8 +1099,9 @@ function shouldRunNow(config: FeedConfigRow, status: FeedStatusRow | undefined, 
   const lastPull = status.last_successful_pull;
   const lastRun = new Date(lastPull.includes('Z') || lastPull.includes('+') ? lastPull : lastPull + 'Z').getTime();
 
-  // 60s tolerance: cron triggers may fire slightly before the exact interval boundary
-  return now.getTime() - lastRun >= intervalMs - 60_000;
+  // Proportional tolerance: last_successful_pull is a completion time, the
+  // check runs at the next tick's start — see dueToleranceMs.
+  return now.getTime() - lastRun >= intervalMs - dueToleranceMs(intervalMs);
 }
 
 export function parseCronIntervalMs(cron: string): number {
