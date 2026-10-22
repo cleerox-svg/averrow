@@ -9,6 +9,7 @@ import { sendInviteEmail } from "../lib/invite-email";
 import { sendTestWebhook } from "../lib/webhooks";
 import { validateOutboundWebhookUrl } from "../lib/url-guard";
 import { syncOrgModulesToPlan } from "../lib/entitlements";
+import { scheduleOwnedLookalikeDrafts } from "../lib/lookalike-ownership-drafts";
 import { ORG_PUBLIC_SELECT_SQL, orgPublicSelectSql, toPublicOrg, redactWebhookUrl } from "../lib/org-public";
 import type { Env } from "../types";
 import type { AuthContext } from "../middleware/auth";
@@ -164,6 +165,9 @@ export async function handleCreateOrg(
               console.error('[org_create] alert backfill failed:', err)),
           );
         }
+        // Owned now → start lookalike takedown drafting immediately
+        // (best-effort, deferred, never throws).
+        scheduleOwnedLookalikeDrafts(env, workerCtx, brand.brand_id, orgId, 'org_create');
       } catch { /* skip duplicates */ }
     }
   }
@@ -823,6 +827,9 @@ export async function handleAssignOrgBrand(
           console.error('[assign_org_brand] alert backfill failed:', err)),
       );
     }
+    // Owned now → start lookalike takedown drafting immediately
+    // (best-effort, deferred, never throws).
+    scheduleOwnedLookalikeDrafts(env, workerCtx, body.brand_id, orgId, 'assign_org_brand');
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE")) {
       return json({ success: false, error: "Brand already assigned to this organization" }, 409, origin);

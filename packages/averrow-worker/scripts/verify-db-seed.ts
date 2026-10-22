@@ -84,6 +84,18 @@ const ASSERTIONS: Assertion[] = [
     min: 1,
     source: "0290_bot_traffic_snapshots.sql",
   },
+  {
+    label: "OTX-inherited attributions backed up before revocation (11,047 verified 2026-10-22)",
+    query: "SELECT COUNT(*) AS n FROM threat_attributions_revoked WHERE revoke_reason = 'otx_inheritance_policy_2026-10'",
+    min: 11000,
+    source: "0309_revoke_otx_inherited_attributions.sql",
+  },
+  {
+    label: "OTX-inheritance revocation summary row written",
+    query: "SELECT COUNT(*) AS n FROM attribution_revocation_runs WHERE revoke_reason = 'otx_inheritance_policy_2026-10' AND actor = 'system:migration_0309'",
+    min: 1,
+    source: "0309_revoke_otx_inherited_attributions.sql",
+  },
 ];
 
 interface D1Row { n: number }

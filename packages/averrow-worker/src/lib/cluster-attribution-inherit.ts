@@ -33,10 +33,11 @@
 //                  the cluster's members.
 //   5. size     -- cluster members <= INHERIT_MAX_CLUSTER_MEMBERS.
 //
-// Existing inherited rows (tat_otxinherit_*, and cluster actor_id stamps
-// they produced) PREDATE this policy and are NOT revoked here -- most were
-// written under the old single-member rule. Revocation is an open owner
-// decision; this module only stops new ones.
+// Inherited rows written before this policy (tat_otxinherit_*, and the
+// cluster actor_id stamps they produced) were revoked by migration 0309
+// (owner decision 2026-10-22); backups live in threat_attributions_revoked /
+// cluster_actor_revocations (restore recipe in the migration header). This
+// module only writes rows that pass the policy.
 //
 // Provenance: the `source` column carries a hard CHECK constraint
 // (migration 0135) limiting it to 'otx' | 'nexus' | 'manual' | 'news',

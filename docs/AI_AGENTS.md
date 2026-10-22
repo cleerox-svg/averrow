@@ -315,6 +315,36 @@ Gates, all required: org entitlement (`org_modules`) + signed
 `takedown_monthly_cap_reached` tenant notification once per org per month).
 Kill switch: flip the var back to `'draft'`.
 
+**Lookalike drafts (Phase B2, 2026-10-22):** candidates come ONLY from
+org-owned brands, and ownership is filtered IN the selection SQL
+(`owningOrgIdSql`, the same `org_brands` subquery `resolveOwningOrgId` runs for
+phases B/D/E/F). **Owner = the earliest claim** (`ORDER BY created_at ASC, id
+ASC`). `is_primary` does not rank: it is set by the caller of
+`POST /api/orgs/:orgId/brands`, and with `UNIQUE(org_id, brand_id)` it only
+marks one org's primary brand, so ranking on it let a later claimant take a
+brand over. Before this, the 10-row `LIMIT` was taken across all
+brands and orgless rows were dropped afterwards; with ~4.2K eligible
+lookalikes and 4 org-owned, every run filled its 10 slots with unowned brands
+and drafted nothing. Other filters are unchanged (`registered = 1`, no
+`takedown_id`, HIGH/CRITICAL, not `benign`/`taken_down`, web or MX). Order is
+CRITICAL first, then oldest `first_seen`, then `id`; drafted rows leave the
+set, so the owned backlog drains at 10 per run. **Drafting starts on
+ownership:** every `INSERT INTO org_brands` path (`handleCreateOrg`,
+`handleAssignOrgBrand`, `handleConvertLeadToTenant`) calls
+`scheduleOwnedLookalikeDrafts` (`lib/lookalike-ownership-drafts.ts`), which
+runs `createTakedownsFromLookalikesForBrand` (same SQL + insert code, scoped to
+the brand, ≤10) under `waitUntil`. The hook is org-scoped: it gets the org
+that inserted the claim and drafts only when that org is the resolved owner,
+so a later claimant of an owned brand drafts nothing (the cron keeps drafting
+into the owner). It is best-effort and never fails the
+request. The draft batch is conditional on `takedown_id IS NULL`, so the hook
+and the cron never double-draft one row. These are drafts only: Phase G
+authorization, policy and caps still decide every submission. Because consent
+is per org/module, not per brand, Phase G also re-checks that
+`org_brands(org_id, brand_id)` still exists for each takedown (in its
+candidate SELECT and again in the atomic claim `UPDATE`); if not, the row
+stays in draft and is counted in `auto_submit_skipped_brand_not_owned`.
+
 **Inputs:** Active threats with resolved hosting/registrar attribution
 **Outputs:** Takedown submissions tracked in `takedowns` table; `agent_outputs` entries
 
@@ -381,7 +411,7 @@ Nexus correlates shared infrastructure into `infrastructure_clusters` rows that 
 Attributor (codename `ATTRIBUTOR`) is Phase C of the Threat Actors rebuild. **It makes no AI call and never names an actor from cluster free text** (AI Strategy Phase 1 #6 — the former Haiku "name the APT" call resolved 0.4% of clusters and minted `threat_actors` rows from guesses). Per run it:
 
 1. Pulls up to 25 pending clusters (`status='active'`, `actor_id IS NULL`, outside the 7-day `RETRY_COOLDOWN_DAYS` window) and stamps `attribution_attempted_at`, so the backlog's attempted / never-attempted split stays meaningful.
-2. Runs the OTX → cluster inheritance post-pass (`inheritOtxActorsToClusters`, `lib/cluster-attribution-inherit.ts`, pure SQL). Since 2026-10-21 a cluster inherits (actor stamp and member rows) only when ALL hold (`decideInheritedActor`): specific-evidence lane (cert-serial / cert-SAN / per-IP — `isBridgeKind(classifyClusterKind(...))`; never ASN, /24, registrar, app-store, dark-web); no member's own `threats.asn` in `MULTI_TENANT_ASNS` (the cluster `asns` column is not trusted); ≥ `INHERIT_MIN_OTX_MEMBERS` (2) distinct OTX members, all naming one actor; OTX members ≥ `INHERIT_MIN_OTX_COVERAGE` (10%) of members; members ≤ `INHERIT_MAX_CLUSTER_MEMBERS` (250). The run output (`otx_inheritance`) carries `clusters_skipped_lane` / `_multitenant` / `_quorum` / `_coverage` / `_size` alongside `clusters_ambiguous`. Inherited rows written before this policy are not revoked (owner decision pending).
+2. Runs the OTX → cluster inheritance post-pass (`inheritOtxActorsToClusters`, `lib/cluster-attribution-inherit.ts`, pure SQL). Since 2026-10-21 a cluster inherits (actor stamp and member rows) only when ALL hold (`decideInheritedActor`): specific-evidence lane (cert-serial / cert-SAN / per-IP — `isBridgeKind(classifyClusterKind(...))`; never ASN, /24, registrar, app-store, dark-web); no member's own `threats.asn` in `MULTI_TENANT_ASNS` (the cluster `asns` column is not trusted); ≥ `INHERIT_MIN_OTX_MEMBERS` (2) distinct OTX members, all naming one actor; OTX members ≥ `INHERIT_MIN_OTX_COVERAGE` (10%) of members; members ≤ `INHERIT_MAX_CLUSTER_MEMBERS` (250). The run output (`otx_inheritance`) carries `clusters_skipped_lane` / `_multitenant` / `_quorum` / `_coverage` / `_size` alongside `clusters_ambiguous`. Inherited rows written before this policy (11,047 `tat_otxinherit_*` rows and the 95 cluster `actor_id` stamps they produced) were revoked by migration 0309 (owner decision 2026-10-22). The migration matches only rows with `observed_at` before the #1860 deploy (2026-10-21 18:27 UTC), so rows the strict-policy writer adds are never revoked. Backups sit in `threat_attributions_revoked` / `cluster_actor_revocations`, summary in `attribution_revocation_runs`, restore recipe in the migration header.
 
 Actor naming therefore comes only from specific evidence (OTX pulse attribution) or a human via the Attribution Backlog. The backlog endpoint ranks clusters whose free text mentions a known actor name/alias (`clusterHasActorHint`, `actor_hint` field) — an ordering hint only, because that text is attacker-controlled.
 

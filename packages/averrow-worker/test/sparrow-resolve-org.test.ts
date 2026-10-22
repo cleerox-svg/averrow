@@ -62,6 +62,11 @@ describe("Sparrow takedown creators stamp module_key", () => {
   it("declares the helper itself", () => {
     expect(SPARROW_SRC).toContain("async function resolveOwningOrgId");
     expect(SPARROW_SRC).toContain("FROM org_brands");
-    expect(SPARROW_SRC).toContain("ORDER BY is_primary DESC");
+    // Earliest claimant owns the brand (PR #1862 appsec review): is_primary
+    // is caller-set and must never rank ownership, or a later claimant with
+    // is_primary=1 takes the brand over. Behaviour is pinned end-to-end in
+    // test/sparrow-owned-lookalike-drafts.test.ts.
+    expect(SPARROW_SRC).toContain("ORDER BY created_at ASC, id ASC");
+    expect(SPARROW_SRC).not.toContain("ORDER BY is_primary DESC");
   });
 });

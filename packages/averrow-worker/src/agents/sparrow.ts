@@ -404,16 +404,18 @@ export const sparrowAgent: AgentModule = {
     // ── Phase G: Auto-submit drafts where authorized ──────────────
     let autoSubmitted = 0;
     let autoSubmitSkipped = 0;
+    let autoSubmitSkippedBrandNotOwned = 0;
     try {
       const phaseG = await runPhaseGAutoSubmit(env);
       autoSubmitted     = phaseG.submitted;
       autoSubmitSkipped = phaseG.skipped;
+      autoSubmitSkippedBrandNotOwned = phaseG.skipped_brand_not_owned;
       if (autoSubmitted > 0) {
         outputs.push({
           type: "insight",
           summary: `Auto-submitted ${autoSubmitted} takedown draft(s) via the dispatcher`,
           severity: "info",
-          details: { submitted: autoSubmitted, skipped: autoSubmitSkipped },
+          details: { submitted: autoSubmitted, skipped: autoSubmitSkipped, skipped_brand_not_owned: autoSubmitSkippedBrandNotOwned },
         });
       }
     } catch (err) {
@@ -476,6 +478,7 @@ export const sparrowAgent: AgentModule = {
         takedown_domains_resurrected: domainsResurrected,
         auto_submitted: autoSubmitted,
         auto_submit_skipped: autoSubmitSkipped,
+        auto_submit_skipped_brand_not_owned: autoSubmitSkippedBrandNotOwned,
         followups_fired: followupsFired,
       },
       agentOutputs: outputs,
@@ -588,15 +591,63 @@ async function createTakedownsFromMaliciousUrls(env: Env): Promise<DraftTally> {
 // authorization + policy mode + caps permit. This adds drafts; it does
 // not bypass any consent gate.
 //
-// Conservative on purpose: only org-owned brands are drafted (orgless
-// rows would create drafts Phase G skips — left for the operator surface),
-// each row is drafted at most once (takedown_id link), and only
-// registered domains with a live web/MX footprint qualify.
-async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
-  const candidates = await env.DB.prepare(`
+// Only org-owned brands are drafted (owner decision 2026-10-22: "candidates
+// ONLY from org-owned brands"; an orgless draft would be skipped by Phase G
+// and just litter the queue). Ownership is decided IN the selection, not
+// after it: the old shape took the top 10 rows across ALL brands and only
+// then dropped orgless ones, and with ~4.2K eligible lookalikes of which 4
+// were org-owned every run's 10 slots went to unowned brands — 0 lookalike
+// drafts were ever created. The predicate is owningOrgIdSql(), the same
+// subquery resolveOwningOrgId runs, so "owned" (earliest claimant — see
+// owningOrgIdSql) has one definition across every Sparrow phase. Drafts
+// always land in the RESOLVED owner's org, never in whichever org happened
+// to trigger the run.
+//
+// Order: CRITICAL before HIGH, then oldest first (first_seen ASC, id as the
+// tie-break). Every drafted row leaves the set (takedown_id link), so the
+// owned backlog drains deterministically at LOOKALIKE_DRAFT_LIMIT per run.
+// A brand that becomes owned is also drafted immediately by
+// createTakedownsFromLookalikesForBrand (called from the org_brands insert
+// paths via lib/lookalike-ownership-drafts.ts) instead of waiting up to 6h —
+// but only when the inserting org IS the resolved owner, so a later claimant
+// of an already-owned brand can't pull its drafts into its own org.
+//
+// Each row is drafted at most once even when the cron and an ownership hook
+// race: the draft insert and the link update are both conditional on
+// `takedown_id IS NULL` inside one atomic batch, and the evidence row is
+// conditional on the draft existing. Only registered domains with a live
+// web/MX footprint qualify. Drafting only — Phase G's authorization, policy
+// and caps decide any submission.
+export async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
+  return draftOwnedLookalikeTakedowns(env, null);
+}
+
+/**
+ * Brand-scoped Phase B2, run when `orgId` has just claimed `brandId` so its
+ * lookalike drafts start immediately. Same selection (plus the brand filter
+ * AND `owningOrgIdSql(brand) = orgId`), same insert code, same per-call
+ * limit. Drafts nothing when `orgId` is not the brand's resolved owner (e.g.
+ * a later claimant of a brand another org already owns) — the hook can never
+ * draft into a different org than resolution picks. A second call is a no-op
+ * because drafted rows carry takedown_id. Throws only if the selection read
+ * fails — per-candidate write failures are tallied like the cron path.
+ */
+export async function createTakedownsFromLookalikesForBrand(env: Env, brandId: string, orgId: number): Promise<DraftTally> {
+  return draftOwnedLookalikeTakedowns(env, { brandId, orgId });
+}
+
+const LOOKALIKE_DRAFT_LIMIT = 10;
+
+async function draftOwnedLookalikeTakedowns(
+  env: Env,
+  scope: { brandId: string; orgId: number } | null,
+): Promise<DraftTally> {
+  const owningOrg = owningOrgIdSql("ld.brand_id");
+  const select = env.DB.prepare(`
     SELECT ld.id, ld.brand_id, ld.domain, ld.permutation_type,
            ld.threat_level, ld.ai_assessment, ld.has_mx, ld.has_web,
-           ld.resolves_to, b.name AS brand_name
+           ld.resolves_to, b.name AS brand_name,
+           ${owningOrg} AS owning_org_id
     FROM lookalike_domains ld
     JOIN brands b ON b.id = ld.brand_id
     WHERE ld.registered = 1
@@ -604,20 +655,19 @@ async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
       AND ld.threat_level IN ('HIGH', 'CRITICAL')
       AND ld.status NOT IN ('benign', 'taken_down')
       AND (ld.has_web = 1 OR ld.has_mx = 1)
-    ORDER BY CASE ld.threat_level WHEN 'CRITICAL' THEN 0 ELSE 1 END, ld.first_seen DESC
-    LIMIT 10
-  `).all();
+      AND ${owningOrg} IS NOT NULL
+      ${scope === null ? "" : `AND ld.brand_id = ? AND ${owningOrg} = ?`}
+    ORDER BY CASE ld.threat_level WHEN 'CRITICAL' THEN 0 ELSE 1 END, ld.first_seen ASC, ld.id ASC
+    LIMIT ${LOOKALIKE_DRAFT_LIMIT}
+  `);
+  const candidates = await (scope === null ? select : select.bind(scope.brandId, scope.orgId)).all();
 
   const tally = newDraftTally();
 
   for (const ld of candidates.results) {
     try {
-      const brandId = ld.brand_id as string | null;
-      // Only auto-draft for customer (org-owned) brands. An orgless draft
-      // would be skipped by Phase G (org_id IS NOT NULL) and just litter the
-      // queue, so leave non-customer lookalikes for the operator surface.
-      const owningOrgId = await resolveOwningOrgId(env, brandId);
-      if (owningOrgId === null) continue;
+      const candidateBrandId = ld.brand_id as string;
+      const owningOrgId = ld.owning_org_id as number;
 
       const domain = ld.domain as string;
       const threatLevel = (ld.threat_level as string) || "HIGH";
@@ -630,35 +680,42 @@ async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
       ].filter(Boolean).join(", ");
 
       const takedownId = crypto.randomUUID();
-      // Atomic draft + link + evidence (same reasoning as Phase B).
-      await env.DB.batch([env.DB.prepare(`
+      // Atomic draft + link + evidence (same reasoning as Phase B). Every
+      // statement is conditional, so if a concurrent drafter (cron vs
+      // ownership hook) already linked this row the batch writes nothing
+      // instead of a duplicate draft.
+      const results = await env.DB.batch([env.DB.prepare(`
         INSERT INTO takedown_requests (
           id, org_id, brand_id, module_key, target_type, target_value, target_url,
           source_type, source_id, evidence_summary, evidence_detail,
           provider_name, provider_abuse_contact, provider_method,
           status, severity, priority_score, requested_by, created_at, updated_at
-        ) VALUES (?, ?, ?, 'domain', 'domain', ?, null, 'lookalike', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now'))
+        )
+        SELECT ?, ?, ?, 'domain', 'domain', ?, null, 'lookalike', ?, ?, ?, null, null, 'email', 'draft', ?, ?, null, datetime('now'), datetime('now')
+        WHERE EXISTS (SELECT 1 FROM lookalike_domains WHERE id = ? AND takedown_id IS NULL)
       `).bind(
         takedownId,
         owningOrgId,
-        brandId,
+        candidateBrandId,
         domain,
         String(ld.id),
         `Active ${permutationType} lookalike domain impersonating ${brandName}: ${domain}${signals ? ` (${signals})` : ""}.`,
         `Domain: ${domain}\nPermutation: ${permutationType}\nThreat level: ${threatLevel}\nSignals: ${signals || "registered"}${ld.ai_assessment ? `\nAssessment: ${ld.ai_assessment}` : ""}`,
         threatLevel === "CRITICAL" ? "CRITICAL" : "HIGH",
         threatLevel === "CRITICAL" ? 80 : 65,
+        ld.id,
       ),
 
       // Link back so we don't re-draft + the lookalike UI can show status.
       env.DB.prepare(
-        "UPDATE lookalike_domains SET takedown_id = ? WHERE id = ?"
+        "UPDATE lookalike_domains SET takedown_id = ? WHERE id = ? AND takedown_id IS NULL"
       ).bind(takedownId, ld.id),
 
-      // Evidence record (mirrors Phase B).
+      // Evidence record (mirrors Phase B), only for a draft this batch wrote.
       env.DB.prepare(`
         INSERT INTO takedown_evidence (id, takedown_id, evidence_type, title, content_text, metadata_json, created_at)
-        VALUES (?, ?, 'lookalike', 'Lookalike Domain Detection', ?, ?, datetime('now'))
+        SELECT ?, ?, 'lookalike', 'Lookalike Domain Detection', ?, ?, datetime('now')
+        WHERE EXISTS (SELECT 1 FROM takedown_requests WHERE id = ?)
       `).bind(
         crypto.randomUUID(),
         takedownId,
@@ -672,9 +729,11 @@ async function createTakedownsFromLookalikes(env: Env): Promise<DraftTally> {
           resolves_to: ld.resolves_to,
           lookalike_id: ld.id,
         }),
+        takedownId,
       )]);
 
-      tally.created++;
+      // A lost race wrote nothing — neither a draft nor a failure.
+      if (Number(results[0]?.meta?.changes ?? 0) > 0) tally.created++;
     } catch (err) {
       recordDraftFailure(tally, "lookalike", ld.id, err);
     }
@@ -1189,18 +1248,41 @@ function recordDraftFailure(tally: DraftTally, source: string, candidateId: unkn
   }
 }
 
-// Resolve the primary org owning a brand. Returns null when the brand
-// isn't bound to any org (cross-cutting threats with no tenant
-// owner — these stay SOC-initiated and Phase G skips them).
-async function resolveOwningOrgId(env: Env, brandId: string | null): Promise<number | null> {
+// Resolve the org owning a brand (owningOrgIdSql — earliest claimant), used
+// by phases B/D/E/F. Returns null when the brand isn't bound to any org
+// (cross-cutting threats with no tenant owner — these stay SOC-initiated and
+// Phase G skips them). Exported for tests.
+export async function resolveOwningOrgId(env: Env, brandId: string | null): Promise<number | null> {
   if (!brandId) return null;
   const row = await env.DB.prepare(
-    `SELECT org_id FROM org_brands
-     WHERE brand_id = ?
-     ORDER BY is_primary DESC
-     LIMIT 1`,
-  ).bind(brandId).first<{ org_id: number }>();
-  return row ? row.org_id : null;
+    `SELECT ${owningOrgIdSql("?")} AS org_id`,
+  ).bind(brandId).first<{ org_id: number | null }>();
+  return row?.org_id ?? null;
+}
+
+// The single definition of "the org that owns a brand": the EARLIEST
+// org_brands claim (created_at, then the AUTOINCREMENT id for a same-second
+// tie — both are DB-assigned, never caller-set). Shared by resolveOwningOrgId
+// (phases B/D/E/F) and the Phase B2 lookalike selection + ownership hook, so
+// every phase agrees on one owner.
+//
+// is_primary deliberately does NOT rank here. It is caller-set (any org
+// admin's POST /api/orgs/:orgId/brands passes it), and org_brands is
+// UNIQUE(org_id, brand_id), so it only says which of ONE org's brands is
+// its primary — it says nothing about which org owns a brand. Ranking on it
+// (the old is_primary-first ordering) let a later claimant with
+// is_primary=1 take over a brand another org already owned and receive its
+// drafts/submissions. Earliest-claimant-wins means a new claim can never
+// change the owner while the original claim stands. (Verifying ownership
+// on tenant assignment is a separate, pending owner decision.)
+//
+// `brandIdExpr` is a fixed column reference or the `?` placeholder — never
+// caller data. Seeks idx_ob_brand (brand_id) and sorts that brand's few rows.
+function owningOrgIdSql(brandIdExpr: "?" | "ld.brand_id"): string {
+  return `(SELECT org_id FROM org_brands
+     WHERE brand_id = ${brandIdExpr}
+     ORDER BY created_at ASC, id ASC
+     LIMIT 1)`;
 }
 
 // ─── Phase G: Auto-Submit Authorized Drafts ─────────────────────────
@@ -1250,10 +1332,14 @@ interface PhaseGRow {
   requested_at:           string | null;
   requested_by:           string | null;
   staff_severity_set_at:  string | null;
+  /** 1 while org_brands(org_id, brand_id) still exists, else 0. */
+  brand_owned:            number;
 }
 
 /** Exported for tests (test/sparrow-phase-g-approval.test.ts). */
-export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number; skipped: number }> {
+export async function runPhaseGAutoSubmit(
+  env: Env,
+): Promise<{ submitted: number; skipped: number; skipped_brand_not_owned: number }> {
   // status='draft'     → policy decides (auto / approval-hold / off)
   // status='requested' → auto-submits in any non-off posture ONLY when the
   //                      CUSTOMER approved it (isCustomerApproved — G21); a
@@ -1264,7 +1350,9 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
             tr.evidence_summary, tr.evidence_detail,
             tr.provider_name, tr.provider_abuse_contact, tr.provider_method,
             tr.severity, tr.status, tr.requested_at, tr.requested_by,
-            tr.staff_severity_set_at
+            tr.staff_severity_set_at,
+            EXISTS (SELECT 1 FROM org_brands ob
+                     WHERE ob.org_id = tr.org_id AND ob.brand_id = tr.brand_id) AS brand_owned
      FROM takedown_requests tr
      WHERE tr.status IN ('draft', 'requested')
        AND tr.org_id IS NOT NULL
@@ -1276,6 +1364,8 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
 
   let submitted = 0;
   let skipped   = 0;
+  // Subset of `skipped`: the takedown's org no longer holds the brand.
+  let skippedBrandNotOwned = 0;
 
   const { isModuleAuthorized, isUnderMonthlyTakedownCap, getActiveAuthorization } = await import("../lib/takedown-authorizations");
   const { dispatchSubmission } = await import("../lib/takedown-submitters");
@@ -1305,6 +1395,13 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
       const orgId   = row.org_id;
       const modKey  = row.module_key as ModuleKey | null;
       if (orgId === null || modKey === null) { skipped++; continue; }
+
+      // Brand re-check: consent (takedown_authorizations) is per org/module,
+      // not per brand, so a takedown is only submitted in the org's name
+      // while that org still holds the brand in org_brands. A removed claim
+      // leaves the row in draft for ops. The atomic claim (further down) repeats the
+      // check atomically. Indexed (UNIQUE(org_id, brand_id)), no binds.
+      if (row.brand_owned !== 1) { skipped++; skippedBrandNotOwned++; continue; }
 
       // Both gates: entitlement (org_modules) AND consent (takedown_authorizations).
       const [enabled, authorized] = await Promise.all([
@@ -1417,12 +1514,17 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
       // hand-submit). The policy was judged on the status read above; pin the
       // claim to exactly that status so a customer withdrawal (or any other
       // status change) between the read and now means changes=0 → no send.
+      // Also pinned to the org still holding the brand (the brand re-check
+      // above, repeated so a claim removal in between can't slip through).
       const claim = await env.DB.prepare(
         `UPDATE takedown_requests
          SET status = 'submitted',
              submitted_at = datetime('now'),
              updated_at   = datetime('now')
-         WHERE id = ? AND status = ?`,
+         WHERE id = ? AND status = ?
+           AND EXISTS (SELECT 1 FROM org_brands ob
+                        WHERE ob.org_id = takedown_requests.org_id
+                          AND ob.brand_id = takedown_requests.brand_id)`,
       ).bind(row.id, row.status).run();
       if (!claim.meta || claim.meta.changes !== 1) { skipped++; continue; }
       claimedId = row.id;
@@ -1507,7 +1609,7 @@ export async function runPhaseGAutoSubmit(env: Env): Promise<{ submitted: number
     }
   }
 
-  return { submitted, skipped };
+  return { submitted, skipped, skipped_brand_not_owned: skippedBrandNotOwned };
 }
 
 // ─── Phase H: SLA-Breach Follow-Ups ─────────────────────────────────
