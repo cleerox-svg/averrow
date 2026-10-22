@@ -47,6 +47,12 @@ import { logFeedDiagnostic } from "../lib/feedDiagnostic";
  *     CVEs published in the last 30 days, modified ≥6h after publication,
  *     that are now high/critical, as "updated" entries. It never counts
  *     toward the "new" totals.
+ *
+ * Run time is bounded to ~60s (SOFT/HARD_BUDGET_MS) because the feed holds
+ * a slot of the inline-awaited `runAllFeeds` pool in the hourly tick; a
+ * backlog drains over several hourly runs instead. The previous run's
+ * overlap ids (`pubTail`) are dropped from the "new" set, and a cursor that
+ * stops moving for STALL_RUN_LIMIT runs fails the pull.
  */
 
 const NVD_API = "https://services.nvd.nist.gov/rest/json/cves/2.0";
@@ -58,24 +64,32 @@ export const CURSOR_KEY = "nvd_cve:cursor:v1";
 export const PAGE_SIZE = 500;
 /** Floor for the adaptive page size (halved after a timed-out attempt). */
 const MIN_PAGE_SIZE = 100;
-/** Per-request timeout. */
-export const FETCH_TIMEOUT_MS = 25_000;
+/**
+ * Per-request timeout. Sized so a page that times out on every attempt
+ * still gets all FETCH_ATTEMPTS inside HARD_BUDGET_MS:
+ * 18 + 1 + 18 + 3 + 18 = 58s ≤ 60s. Each timeout halves the page size.
+ */
+export const FETCH_TIMEOUT_MS = 18_000;
 /** Attempts per page (transient failures only: timeout, network, 429, 5xx). */
 export const FETCH_ATTEMPTS = 3;
 /** Extra backoff before a retry, on top of the rate-limit spacing. */
-const RETRY_BACKOFF_MS = [2_000, 5_000];
+const RETRY_BACKOFF_MS = [1_000, 3_000];
 /** Minimum spacing between requests: 5 req / 30s without a key, 50 with. */
 export const SPACING_NO_KEY_MS = 6_500;
 export const SPACING_WITH_KEY_MS = 700;
 
 /**
- * Wall-clock budget for one run (the feed runs inside the hourly
- * orchestrator tick). No new PAGE starts after SOFT_BUDGET_MS; no new
- * REQUEST (incl. a retry) starts unless it can time out before
- * HARD_BUDGET_MS. Unfinished work resumes from the cursor next run.
+ * Wall-clock budget for one run. The feed runs inside the hourly
+ * orchestrator tick: `runAllFeeds` holds one of FEED_CONCURRENCY (4) pool
+ * slots for the whole run and the orchestrator awaits it inline before
+ * Sentinel / agent dispatch, so a long NVD run delays the whole tick.
+ * No new PAGE starts at or after SOFT_BUDGET_MS; no REQUEST (incl. a retry)
+ * starts unless it can time out by HARD_BUDGET_MS. Without a key that is
+ * ~7 requests per run (6.5s spacing → starts at 0, 6.5, …, 39s); unfinished
+ * work resumes from the cursor next hour.
  */
-export const SOFT_BUDGET_MS = 120_000;
-export const HARD_BUDGET_MS = 180_000;
+export const SOFT_BUDGET_MS = 40_000;
+export const HARD_BUDGET_MS = 60_000;
 
 /** NVD rejects a date range longer than 120 days. Stay a minute under. */
 const MAX_RANGE_MS = 120 * 86_400_000 - 60_000;
@@ -84,6 +98,10 @@ const CURSOR_OVERLAP_MS = 15 * 60_000;
 /** On a mid-window resume, re-read this many results before the stored index
  *  (absorbs index shifts when a CVE inside the window is re-modified). */
 const RESUME_OVERLAP = 25;
+/** Max CVE ids carried in `pubTail` (overlap dedupe across runs). */
+export const TAIL_MAX = 500;
+/** Consecutive runs that fetched a page but moved no cursor → fail the pull. */
+export const STALL_RUN_LIMIT = 3;
 /** Cold start from feed_status.last_successful_pull: re-read its 24h window + 1h. */
 const COLD_START_REREAD_MS = 25 * 3_600_000;
 /** Cold start with no cursor and no feed_status history. */
@@ -239,6 +257,14 @@ export interface NvdCursorState {
   v: 1;
   pub: LaneState;
   mod: LaneState;
+  /**
+   * Ids of `pub` CVEs the next run will re-read (cursor overlap / resume
+   * overlap). Dropped from the next digest's "new" set so an overlap
+   * re-read is not reported twice. Bounded by TAIL_MAX.
+   */
+  pubTail: string[];
+  /** Consecutive runs where page 1 landed but the pub lane didn't advance. */
+  stalledRuns: number;
 }
 
 function isIso(v: unknown): v is string {
@@ -276,7 +302,52 @@ export function parseCursorState(raw: string | null): NvdCursorState {
     }
   }
   const o = obj && typeof obj === "object" ? (obj as Record<string, unknown>) : {};
-  return { v: 1, pub: parseLane(o.pub), mod: parseLane(o.mod) };
+  const tail = Array.isArray(o.pubTail)
+    ? o.pubTail.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 40).slice(-TAIL_MAX)
+    : [];
+  const stalled =
+    typeof o.stalledRuns === "number" && Number.isInteger(o.stalledRuns) && o.stalledRuns >= 0 ? o.stalledRuns : 0;
+  return { v: 1, pub: parseLane(o.pub), mod: parseLane(o.mod), pubTail: tail, stalledRuns: stalled };
+}
+
+/** NVD timestamps carry no zone ("2026-10-22T11:50:00.000"); they are UTC. */
+function parseNvdTime(v: string | undefined): number {
+  if (!v) return NaN;
+  return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v + "Z");
+}
+
+/** Did the pub lane move forward between `b` (run start) and `a` (run end)? */
+export function pubProgressed(b: LaneState, a: LaneState): boolean {
+  const bc = b.cursor ? Date.parse(b.cursor) : -Infinity;
+  const ac = a.cursor ? Date.parse(a.cursor) : -Infinity;
+  if (ac !== bc) return ac > bc;
+  const ai = a.window?.nextIndex ?? 0;
+  const sameWindow =
+    !!b.window && !!a.window && b.window.start === a.window.start && b.window.end === a.window.end;
+  return sameWindow ? ai > (b.window?.nextIndex ?? 0) : ai > 0;
+}
+
+/**
+ * Ids the NEXT run will re-read from the pub lane, i.e. what must not be
+ * reported as new again:
+ *   - in-flight window: the last RESUME_OVERLAP results fetched (the resume
+ *     re-reads them by index);
+ *   - no window: CVEs published at or after cursor − CURSOR_OVERLAP_MS (the
+ *     next window starts there).
+ * Derived from THIS run's fetch only (re-read ids included), so it can't grow
+ * without bound; capped at TAIL_MAX, keeping the most recent.
+ */
+function computePubTail(fetched: NvdCve[], lane: LaneState): string[] {
+  const ids = new Set<string>();
+  if (lane.window) {
+    for (const c of fetched.slice(-RESUME_OVERLAP)) ids.add(c.id);
+  } else if (lane.cursor) {
+    const cut = Date.parse(lane.cursor) - CURSOR_OVERLAP_MS;
+    for (const c of fetched) {
+      if (parseNvdTime(c.published) >= cut) ids.add(c.id);
+    }
+  }
+  return [...ids].slice(-TAIL_MAX);
 }
 
 /** feed_status stores 'YYYY-MM-DD HH:MM:SS' (UTC, no zone). */
@@ -580,6 +651,11 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
 
       const state = parseCursorState(await env.CACHE.get(CURSOR_KEY));
       const before = JSON.stringify(state);
+      const pubBefore: LaneState = {
+        cursor: state.pub.cursor,
+        window: state.pub.window ? { ...state.pub.window } : null,
+      };
+      const prevTail = new Set(state.pubTail);
 
       // Cold start (no KV cursor): re-read the whole 24h window of the last
       // successful pull of the OLD module (+1h) and everything since. That
@@ -606,6 +682,21 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
         throw new Error(pub.error);
       }
 
+      // Page 1 landed. Track whether the pub lane moved; STALL_RUN_LIMIT runs
+      // in a row without movement fail the pull, so the circuit breaker and
+      // Flight Control see a stuck cursor instead of a warning forever.
+      state.pubTail = computePubTail(pub.cves, state.pub);
+      state.stalledRuns = pubProgressed(pubBefore, state.pub) ? 0 : state.stalledRuns + 1;
+      if (state.stalledRuns >= STALL_RUN_LIMIT) {
+        await env.CACHE.put(CURSOR_KEY, JSON.stringify(state));
+        throw new Error(
+          `NVD pub cursor stalled: no forward progress for ${state.stalledRuns} consecutive runs ` +
+            `(cursor ${state.pub.cursor ?? "none"}, window ${state.pub.window?.start ?? "none"} ` +
+            `index ${state.pub.window?.nextIndex ?? 0})` +
+            (pub.error ? `: ${pub.error}` : ""),
+        );
+      }
+
       let mod: LaneOutcome | null = null;
       if (pub.caughtUp && !pub.error) {
         mod = await drainLane(run, "mod", state.mod, coldStartMs);
@@ -619,10 +710,13 @@ export function createNvdCveFeed(overrides: Partial<NvdDeps> = {}): FeedModule {
       if (!mod && !pub.error) warnings.push("mod lane skipped: pub lane catching up");
 
       const nowMs = deps.now();
-      const newCves = uniqueById(pub.cves);
-      const newIds = new Set(newCves.map((c) => c.id));
+      // Overlap re-reads of CVEs the previous run already digested are
+      // fetched (cheap) but not reported as new again.
+      const pubCves = uniqueById(pub.cves);
+      const newCves = pubCves.filter((c) => !prevTail.has(c.id));
+      const pubIds = new Set(pubCves.map((c) => c.id));
       const updated = uniqueById(mod?.cves ?? []).filter(
-        (c) => !newIds.has(c.id) && isLateUpdate(c, nowMs),
+        (c) => !pubIds.has(c.id) && isLateUpdate(c, nowMs),
       );
       const itemsFetched = pub.cves.length + (mod?.cves.length ?? 0);
 
