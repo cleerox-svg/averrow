@@ -129,6 +129,9 @@ export interface Env {
   GREYNOISE_API_KEY?: string;
   // SecLookup domain + IP intelligence
   SECLOOKUP_API_KEY?: string;
+  // NIST NVD CVE 2.0 API key (optional — raises the rate limit from 5 to
+  // 50 requests / 30s; sent as the `apiKey` header by feeds/nvd_cve.ts)
+  NVD_API_KEY?: string;
   // Pulsedive IOC risk scoring (free REST tier)
   PULSEDIVE_API_KEY?: string;
   // Anthropic Admin API (optional — budget verification)
