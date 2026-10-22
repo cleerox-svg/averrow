@@ -315,6 +315,25 @@ Gates, all required: org entitlement (`org_modules`) + signed
 `takedown_monthly_cap_reached` tenant notification once per org per month).
 Kill switch: flip the var back to `'draft'`.
 
+**Lookalike drafts (Phase B2, 2026-10-22):** candidates come ONLY from
+org-owned brands, and ownership is filtered IN the selection SQL
+(`owningOrgIdSql`, the same `org_brands` subquery `resolveOwningOrgId` runs —
+primary row first). Before this, the 10-row `LIMIT` was taken across all
+brands and orgless rows were dropped afterwards; with ~4.2K eligible
+lookalikes and 4 org-owned, every run filled its 10 slots with unowned brands
+and drafted nothing. Other filters are unchanged (`registered = 1`, no
+`takedown_id`, HIGH/CRITICAL, not `benign`/`taken_down`, web or MX). Order is
+CRITICAL first, then oldest `first_seen`, then `id`; drafted rows leave the
+set, so the owned backlog drains at 10 per run. **Drafting starts on
+ownership:** every `INSERT INTO org_brands` path (`handleCreateOrg`,
+`handleAssignOrgBrand`, `handleConvertLeadToTenant`) calls
+`scheduleOwnedLookalikeDrafts` (`lib/lookalike-ownership-drafts.ts`), which
+runs `createTakedownsFromLookalikesForBrand` (same SQL + insert code, scoped to
+the brand, ≤10) under `waitUntil`. It is best-effort and never fails the
+request. The draft batch is conditional on `takedown_id IS NULL`, so the hook
+and the cron never double-draft one row. These are drafts only: Phase G
+authorization, policy and caps still decide every submission.
+
 **Inputs:** Active threats with resolved hosting/registrar attribution
 **Outputs:** Takedown submissions tracked in `takedowns` table; `agent_outputs` entries
 

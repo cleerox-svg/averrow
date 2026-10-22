@@ -15,6 +15,7 @@ import { emailMatchesScannedDomain } from "../lib/free-scan-view";
 import { sendLeadOutreachEmail } from "../lib/lead-outreach-email";
 import { createQualifiedReport } from "./qualifiedReport";
 import { normalizeLeadEmail } from "./brandScan";
+import { scheduleOwnedLookalikeDrafts } from "../lib/lookalike-ownership-drafts";
 import type { Env } from "../types";
 
 interface QualifiedReportPayload {
@@ -309,6 +310,10 @@ export async function handleConvertLeadToTenant(
             console.error('[leadConversion] alert backfill failed:', err)),
         );
       }
+      // Owned now → start lookalike takedown drafting immediately
+      // (best-effort, deferred, never throws). Drafts only: Phase G
+      // submits nothing until the customer signs an authorization.
+      scheduleOwnedLookalikeDrafts(env, workerCtx, brandId, 'leadConversion');
     } catch { /* dup, fine */ }
 
     // monitored_brands row links brand -> tenant scope. Per product spec,
