@@ -91,22 +91,18 @@ describe('tenant Shell mobile navigation drawer', () => {
     document.body.style.overflow = '';
   });
 
-  it('hamburger starts closed and toggles open and closed with aria state and label', async () => {
+  it('hamburger starts closed, opens the drawer and reflects it in aria-expanded', async () => {
     const user = userEvent.setup();
-    renderShell();
+    const { container } = renderShell();
     const btn = screen.getByRole('button', { name: 'Open navigation' });
     expect(btn).toHaveAttribute('aria-expanded', 'false');
     expect(btn).toHaveAttribute('aria-controls', 'tenant-sidebar');
 
     await user.click(btn);
-    const opened = screen.getAllByRole('button', { name: 'Close navigation' });
-    const toggle = opened.find((b) => b.hasAttribute('aria-expanded'))!;
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.queryByRole('button', { name: 'Open navigation' })).toBeNull();
+    expect(btn).toHaveAttribute('aria-expanded', 'true');
 
-    await user.click(toggle);
-    const reopened = screen.getByRole('button', { name: 'Open navigation' });
-    expect(reopened).toHaveAttribute('aria-expanded', 'false');
+    await user.click(closeBtn(container));
+    expect(btn).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('aside is a modal dialog only while open', async () => {

@@ -35,7 +35,8 @@ const MODULE_PATHS: Record<ModuleKey, string> = {
   threat_actor:  '/modules/threat-actor',
 };
 
-const NAV_BASE = 'flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-colors';
+// min-h-11: 44px touch targets in the mobile drawer; desktop keeps its density.
+const NAV_BASE = 'flex items-center gap-3 px-3 py-2 min-h-11 md:min-h-0 rounded-lg text-[13px] transition-colors';
 const NAV_INACTIVE = 'text-white/55 hover:bg-white/[0.04] hover:text-white/85';
 const NAV_ACTIVE   = 'bg-amber/[0.10] text-amber border border-amber/[0.20]';
 
@@ -69,7 +70,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
         // column left ~150px of content at 390px and made every page scroll
         // horizontally). From md up it is the static column it always was.
         'w-60 shrink-0 h-full flex flex-col bg-bg-sidebar border-r border-white/[0.06]',
-        'fixed inset-y-0 left-0 z-40 transition-[transform,visibility] duration-200 motion-reduce:transition-none md:static md:z-auto md:translate-x-0 md:visible',
+        'fixed inset-y-0 left-0 z-40 transition-[transform,visibility] motion-reduce:transition-none md:static md:z-auto md:translate-x-0 md:visible',
         // Opening flips visibility instantly (0s) so focus can move in on the same
         // frame; closing keeps it visible for the 200ms slide-out, then hides it.
         open
@@ -79,13 +80,13 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
     >
       <div className="px-4 py-4 border-b border-white/[0.05] flex items-start justify-between gap-2">
         <AverrowLogo />
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2 md:gap-1">
         <button
           type="button"
           onClick={cycleTheme}
           aria-label={themeLabelFor(theme)}
           title={themeLabelFor(theme)}
-          className="p-1.5 rounded text-white/55 hover:text-white/95 hover:bg-white/[0.06] transition-colors"
+          className="inline-flex h-11 w-11 md:h-auto md:w-auto md:p-1.5 items-center justify-center rounded text-white/55 hover:text-white/95 hover:bg-white/[0.06] transition-colors"
         >
           <ThemeIcon size={14} />
         </button>
@@ -94,7 +95,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
           ref={closeRef}
           onClick={onClose}
           aria-label="Close navigation"
-          className="md:hidden inline-flex h-11 w-11 -mr-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors"
+          className="md:hidden inline-flex h-11 w-11 -mr-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors ds-focusable"
         >
           <X size={20} />
         </button>
@@ -104,6 +105,7 @@ export function Sidebar({ open = false, onClose, closeRef }: { open?: boolean; o
       {/* Route changes close the drawer (Shell); this also closes it when the
           tapped link is the page you're already on. */}
       <nav
+        aria-label="Primary"
         className="flex-1 overflow-y-auto overscroll-contain py-3 px-2 space-y-4"
         onClick={(e) => { if ((e.target as Element).closest('a')) onClose?.(); }}
       >

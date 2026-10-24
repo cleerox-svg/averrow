@@ -15,7 +15,7 @@ import { useAuth } from '@/lib/auth';
 // SHARED_LOGIN_SPEC §3 rule. Initials only — never the Google
 // profile picture.
 
-export function TopBar({ navOpen = false, onToggleNav, hamburgerRef }: { navOpen?: boolean; onToggleNav?: () => void; hamburgerRef?: Ref<HTMLButtonElement> }) {
+export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?: boolean; onOpenNav?: () => void; hamburgerRef?: Ref<HTMLButtonElement> }) {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -55,15 +55,17 @@ export function TopBar({ navOpen = false, onToggleNav, hamburgerRef }: { navOpen
 
   return (
     <header className="h-14 shrink-0 flex items-center justify-between gap-2 px-4 md:px-6 border-b border-white/[0.05] bg-bg-page/80 backdrop-blur">
-      {onToggleNav && (
+      {onOpenNav && (
+        // Only ever opens: while the drawer is open this button sits inside
+        // the inert page content, so closing goes through the drawer.
         <button
           type="button"
           ref={hamburgerRef}
-          onClick={onToggleNav}
-          aria-label={navOpen ? 'Close navigation' : 'Open navigation'}
+          onClick={onOpenNav}
+          aria-label="Open navigation"
           aria-controls="tenant-sidebar"
           aria-expanded={navOpen}
-          className="md:hidden shrink-0 p-2 -ml-2 rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors"
+          className="md:hidden shrink-0 inline-flex h-11 w-11 -ml-2 items-center justify-center rounded-lg text-white/85 hover:bg-white/[0.06] transition-colors ds-focusable"
         >
           <Menu size={20} />
         </button>
