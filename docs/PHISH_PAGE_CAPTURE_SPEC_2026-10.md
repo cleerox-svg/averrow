@@ -126,3 +126,14 @@ Merge only after (1) exists — deploy fails on a missing bucket binding.
 - Captured pages contain brand logos and possibly victim emails pre-filled in
   URLs — staff-only, private bucket, 180-day expiry.
 - Cloaked kits will often render a decoy/blank page — recorded as `blocked`.
+  `anti_bot_wall` is `offsite_redirect` when the browser ended on a known
+  decoy front door the target was not already on (`isDecoyRedirect`,
+  `lib/page-capture.ts`; checked first, ahead of `cf_challenge` / `blank_page`).
+  Matching is on the final host, in three tiers: content sites (any path),
+  vendor marketing front doors (any path), and user-content platforms
+  (homepage / locale path only); tenant and product subdomains are never
+  decoys. Such captures are excluded from takedown evidence — at success time
+  and in the catch-up probe, which falls back to an older real capture.
+  The IdP backfill (`POST /api/admin/backfills/idp-impersonation`) enqueues
+  captures only for live threats (`status='active'`, seen within the 7-day
+  `CAPTURE_STALE_QUEUE_DAYS`).
