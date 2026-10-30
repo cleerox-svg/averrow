@@ -95,7 +95,8 @@ export async function diagnosticFetch(
   let bodyPreview: string;
   try {
     const text = await clone.text();
-    bodyPreview = redact(text.slice(0, 200));
+    // Redact before truncating so a key straddling the cut can't leak a prefix.
+    bodyPreview = redact(text).slice(0, 200);
   } catch {
     bodyPreview = "<could not read body>";
   }

@@ -130,6 +130,16 @@ describe("urlhaus (bulk)", () => {
     expect(String(diagBinds[0]![1])).not.toContain("test-key");
   });
 
+  it("does not leak a key prefix when the key straddles the 200-char preview cut", async () => {
+    const page = "x".repeat(195) + "test-key trailing";
+    globalThis.fetch = vi.fn(async () => ({
+      ...resp(page), ok: false, status: 404, statusText: "Not Found", clone: () => resp(page),
+    })) as unknown as typeof fetch;
+    const { env, diagBinds } = makeEnv();
+    await expect(urlhaus.ingest({ env, feedName: "urlhaus", feedUrl: "https://x" })).rejects.toThrow();
+    expect(String(diagBinds[0]![1])).not.toContain("test-");
+  });
+
   it("re-throws a network error with the key redacted", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("Fetch API cannot load: https://urlhaus-api.abuse.ch/v2/files/exports/test-key/recent.csv");
