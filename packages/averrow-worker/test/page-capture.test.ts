@@ -45,6 +45,7 @@ import {
   CAPTURE_MAX_HOSTS_PER_PAGE, CAPTURE_TARGET_DEDUP_DAYS, HOST_CAP_NOTE,
   CATCHUP_CURSOR_KEY, CATCHUP_SCAN, CATCHUP_SQL, catchUpCaptureEvidence,
   captureTargetKey, makeNavigationGuard, makePageHostBudget, storeCapture,
+  DECOY_REDIRECT_DOMAINS, OFFSITE_REDIRECT_WALL, isDecoyRedirect,
 } from "../src/lib/page-capture";
 import { applySecurityHeaders } from "../src/middleware/security";
 import { signJWT } from "../src/lib/jwt";
@@ -925,6 +926,104 @@ describe.skipIf(!hasSqlite())("page capture pipeline (real SQLite)", () => {
     });
   });
 
+  // ─── Decoy redirects (scanner cloaking) ───────────────────────────
+  describe("decoy redirects", () => {
+    const TARGET = "https://acme-okta-verify.com/";
+    const youtube = raw({
+      finalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      redirectChain: [TARGET, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+      title: "Rick Astley - Never Gonna Give You Up (Official Video) - YouTube",
+      formActions: ["/results"],
+      bodyText: "Rick Astley Never Gonna Give You Up",
+    });
+    const seedTakedown = (id: string, threatId: string, created = "2026-10-12 00:00:00"): void => {
+      rawDb.prepare(`INSERT INTO takedown_requests (id, brand_id, target_type, target_value, evidence_summary, source_type, source_id, status, created_at)
+        VALUES (?, 'b1', 'domain', 'x', 'x', 'threat', ?, 'draft', ?)`).run(id, threatId, created);
+    };
+
+    it("an off-site bounce to a known decoy is stored blocked/offsite_redirect and never linked as evidence", async () => {
+      insertThreat("t1");
+      seedTakedown("td1", "t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: TARGET }], NOW);
+      const stats = await runPageCapture(env, { driver: fakeDriver({ [TARGET]: youtube }).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ claimed: 1, blocked: 1, captured: 0, evidence_linked: 0 });
+
+      const row = rows(`SELECT * FROM page_captures`)[0]!;
+      expect(row).toMatchObject({ status: "blocked", anti_bot_wall: OFFSITE_REDIRECT_WALL, final_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+      // The screenshot is still stored (staff can see what the kit served us).
+      expect(row["desktop_key"]).toBeTruthy();
+      const meta = JSON.parse(new TextDecoder().decode(r2.store.get(`captures/2026/10/${String(row["id"])}/meta.json`)!.bytes)) as Record<string, unknown>;
+      expect(meta).toMatchObject({ anti_bot_wall: "offsite_redirect", status: "blocked", final_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
+
+      // Neither the success-time linker nor catch-up attaches the decoy.
+      expect(rows(`SELECT * FROM takedown_evidence`)).toEqual([]);
+      expect(rows(`SELECT screenshot_url FROM takedown_requests`)).toEqual([{ screenshot_url: null }]);
+      expect((await catchUpCaptureEvidence(env, NOW)).linked).toBe(0);
+      expect(rows(`SELECT * FROM takedown_evidence`)).toEqual([]);
+      expect(await linkCaptureEvidence(db, String(row["id"]), "t1", {
+        status: "blocked", desktopKey: "k/desktop.png", mobileKey: null, desktopSha: "d", mobileSha: null, htmlSha: null,
+        finalUrl: "https://www.youtube.com/", antiBotWall: OFFSITE_REDIRECT_WALL,
+      }, NOW)).toBe(0);
+    });
+
+    it("a redirect within the target's registrable domain (www / login subdomain) is captured and linked", async () => {
+      insertThreat("t1");
+      seedTakedown("td1", "t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: TARGET }], NOW);
+      const sub = raw({ finalUrl: "https://login.acme-okta-verify.com/signin", redirectChain: [TARGET, "https://www.acme-okta-verify.com/", "https://login.acme-okta-verify.com/signin"] });
+      const stats = await runPageCapture(env, { driver: fakeDriver({ [TARGET]: sub }).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ captured: 1, blocked: 0, evidence_linked: 1 });
+      expect(rows(`SELECT status, anti_bot_wall FROM page_captures`)).toEqual([{ status: "captured", anti_bot_wall: null }]);
+    });
+
+    it("an off-site redirect to a NON-decoy domain (shortener → kit) is captured: that page is the evidence", async () => {
+      const SHORT = "https://bit.ly/3xAcme";
+      insertThreat("t1");
+      seedTakedown("td1", "t1");
+      await enqueueAutoCaptures(db, [{ threatId: "t1", maliciousUrl: SHORT }], NOW);
+      const kit = raw({ finalUrl: "https://acme-sso-login.com/signin", redirectChain: [SHORT, "https://acme-sso-login.com/signin"] });
+      const stats = await runPageCapture(env, { driver: fakeDriver({ [SHORT]: kit }).driver, now: () => NOW, resolve: resolveHost });
+      expect(stats).toMatchObject({ captured: 1, evidence_linked: 1 });
+      expect(rows(`SELECT status, anti_bot_wall FROM page_captures`)).toEqual([{ status: "captured", anti_bot_wall: null }]);
+    });
+
+    it("catch-up skips a newer decoy capture and falls back to an older real one (direct and alias), plan unchanged", async () => {
+      const seedCap = (id: string, threatId: string, key: string, wall: string | null, created: string): void => {
+        rawDb.prepare(
+          `INSERT INTO page_captures (id, threat_id, target_url, target_key, status, desktop_key, desktop_sha256, anti_bot_wall, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'd', ?, ?)`,
+        ).run(id, threatId, `https://${key}`, key, wall ? "blocked" : "captured", `captures/2026/10/${id}/desktop.png`, wall, created);
+      };
+      // Direct: t1's newest capture is the decoy; an older one is the kit.
+      seedCap("pc_good", "t1", "acme-okta-verify.com/", null, "2026-10-11 00:00:00");
+      seedCap("pc_decoy", "t1", "acme-okta-verify.com/", OFFSITE_REDIRECT_WALL, "2026-10-11 12:00:00");
+      // Alias: t2 was deduped onto a target whose only good capture is older than its decoy.
+      seedCap("pc_alias_good", "t3", "kit.example.net/", null, "2026-10-10 00:00:00");
+      seedCap("pc_alias_decoy", "t3", "kit.example.net/", OFFSITE_REDIRECT_WALL, "2026-10-11 06:00:00");
+      rawDb.exec(`INSERT INTO page_capture_targets (target_key, threat_id, created_at) VALUES ('kit.example.net/', 't2', '2026-10-11 07:00:00')`);
+      // Only-decoy threat: nothing to link.
+      seedCap("pc_only_decoy", "t4", "decoy-only.example/", OFFSITE_REDIRECT_WALL, "2026-10-11 00:00:00");
+      seedTakedown("td1", "t1");
+      seedTakedown("td2", "t2");
+      seedTakedown("td4", "t4");
+
+      const r = await catchUpCaptureEvidence(env, NOW);
+      expect(r).toMatchObject({ scanned: 3, linked: 2 });
+      expect(rows(`SELECT id, screenshot_url FROM takedown_requests ORDER BY id`)).toEqual([
+        { id: "td1", screenshot_url: "/api/intel/captures/pc_good/screenshot?variant=desktop" },
+        { id: "td2", screenshot_url: "/api/intel/captures/pc_alias_good/screenshot?variant=desktop" },
+        { id: "td4", screenshot_url: null },
+      ]);
+      expect(rows(`SELECT id FROM takedown_evidence ORDER BY id`)).toEqual([{ id: "tde_pc_alias_good_td2" }, { id: "tde_pc_good_td1" }]);
+
+      const plan = rawDb.prepare(`EXPLAIN QUERY PLAN ${CATCHUP_SQL}`).all("2026-09-28 00:00:00", "~", "~", "~", CATCHUP_SCAN)
+        .map((x) => String((x as { detail: string }).detail)).join(" | ");
+      expect(plan).toMatch(/SEARCH pc USING INDEX idx_page_captures_threat_created \(threat_id=\?\)/);
+      expect(plan).toMatch(/SEARCH pc USING INDEX idx_page_captures_target_created \(target_key=\?\)/);
+      expect(plan).not.toMatch(/SCAN (tr|pc|pt)\b/);
+    });
+  });
+
   // ─── Retention sweep ──────────────────────────────────────────────
   describe("retention sweep", () => {
     const seedStored = (id: string, status: string, expiresAt: string): void => {
@@ -1096,6 +1195,35 @@ describe("page capture pure helpers", () => {
     expect(detectAntiBotWall({ title: "", bodyText: "Verifying you are human. This may take a few seconds.", formActions: [] })).toBe("cf_challenge");
     expect(detectAntiBotWall({ title: "", bodyText: "   ", formActions: [] })).toBe("blank_page");
     expect(detectAntiBotWall({ title: "Sign in", bodyText: "Email", formActions: [""] })).toBeNull();
+  });
+
+  it("detectAntiBotWall: off-site decoy bounce is offsite_redirect, ahead of challenge / blank", () => {
+    const page = { title: "Sign in", bodyText: "Email", formActions: [""] };
+    const t = "https://acme-okta-verify.com/login";
+    expect(detectAntiBotWall({ ...page, targetUrl: t, finalUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" })).toBe(OFFSITE_REDIRECT_WALL);
+    // Whatever renders on the decoy is the decoy's page — even a challenge or blank.
+    expect(detectAntiBotWall({ title: "Just a moment...", bodyText: "", formActions: [], targetUrl: t, finalUrl: "https://www.google.com/sorry" })).toBe("offsite_redirect");
+    expect(detectAntiBotWall({ title: "", bodyText: "", formActions: [], targetUrl: t, finalUrl: "https://youtu.be/x" })).toBe("offsite_redirect");
+    // Same registrable domain (subdomain / www hop) → not a decoy.
+    expect(detectAntiBotWall({ ...page, targetUrl: t, finalUrl: "https://login.acme-okta-verify.com/x" })).toBeNull();
+    // Off-site but not a decoy (shortener → kit) → evidence.
+    expect(detectAntiBotWall({ ...page, targetUrl: "https://bit.ly/abc", finalUrl: "https://acme-sso-login.com/" })).toBeNull();
+    // Missing final URL / text-only callers → old behaviour.
+    expect(detectAntiBotWall({ ...page, targetUrl: t, finalUrl: null })).toBeNull();
+    expect(detectAntiBotWall({ title: "", bodyText: "", formActions: [], targetUrl: t, finalUrl: t })).toBe("blank_page");
+  });
+
+  it("isDecoyRedirect: PSL-aware registrable comparison; targets ON a decoy domain are not decoys", () => {
+    expect(isDecoyRedirect("https://acme.okta.com/", "https://login.okta.com/")).toBe(false); // same eTLD+1
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://login.okta.com/")).toBe(true);
+    expect(isDecoyRedirect("https://kit.co.uk/", "https://www.microsoft.com/")).toBe(true);
+    expect(isDecoyRedirect("https://acme.github.io/", "https://github.com/")).toBe(true); // tenant host ≠ provider
+    expect(isDecoyRedirect("http://203.0.113.9/login", "https://www.google.com/")).toBe(true); // IP target
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://203.0.113.9/")).toBe(false);
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://www.YouTube.com./")).toBe(true);
+    expect(isDecoyRedirect("https://acme-okta.com/", "not a url")).toBe(false);
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://youtube.com.evil.net/")).toBe(false);
+    expect(DECOY_REDIRECT_DOMAINS.has("bit.ly")).toBe(false);
   });
 
   it("CaptureRefusedError is distinguishable from transient errors", () => {

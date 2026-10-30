@@ -15,7 +15,8 @@ import { audit } from "../../lib/audit";
 import type { Env } from "../../types";
 import type { AuthContext } from "../../middleware/auth";
 import { IDP_FAMILY_TECHNIQUES } from "../../lib/idp-impersonation";
-import { tagThreat, loadBrandTokens, idpTagUpdateStmt, lookalikeIdpLure } from "../../lib/idp-tagging";
+import { tagThreat, loadBrandTokens, idpTagUpdateStmt, isIdpFamilyTag, lookalikeIdpLure } from "../../lib/idp-tagging";
+import { enqueueAutoCaptures, type AutoCaptureItem } from "../../lib/page-capture";
 import { generateIdpLurePermutations } from "../../lib/dnstwist";
 import { MONITORED_BRAND_PREDICATE_SQL } from "../../lib/monitored-brands";
 import { storeLookalikePermutations } from "../../scanners/lookalike-domains";
@@ -51,10 +52,13 @@ async function readCursor(env: Env, key: string): Promise<number> {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-async function runBatches(env: Env, stmts: D1PreparedStatement[]): Promise<void> {
+/** Runs `stmts` in UPDATE_BATCH chunks; results in statement order. */
+async function runBatches(env: Env, stmts: D1PreparedStatement[]): Promise<D1Result[]> {
+  const out: D1Result[] = [];
   for (let i = 0; i < stmts.length; i += UPDATE_BATCH) {
-    await env.DB.batch(stmts.slice(i, i + UPDATE_BATCH));
+    out.push(...await env.DB.batch(stmts.slice(i, i + UPDATE_BATCH)));
   }
+  return out;
 }
 
 const FAMILY_PLACEHOLDERS = IDP_FAMILY_TECHNIQUES.map(() => "?").join(", ");
@@ -90,6 +94,9 @@ export async function backfillThreatIdpTags(env: Env, limit: number): Promise<Id
     : new Map<string, string[]>();
 
   const stmts: D1PreparedStatement[] = [];
+  // Parallel to `stmts`: the capture candidate for each UPDATE (null when the
+  // tag is not IdP-family — those never queue a capture).
+  const captureItems: Array<AutoCaptureItem | null> = [];
   for (const r of rows) {
     const tag = tagThreat(r, r.target_brand_id ? tokens.get(r.target_brand_id) : undefined);
     if (!tag.impersonated_idp) continue;
@@ -97,8 +104,25 @@ export async function backfillThreatIdpTags(env: Env, limit: number): Promise<Id
     // The UPDATE re-checks the technique guard so a concurrent writer that
     // set a non-family technique is never overwritten.
     stmts.push(idpTagUpdateStmt(env.DB, r.id, tag));
+    captureItems.push(isIdpFamilyTag(tag)
+      ? { threatId: r.id, maliciousUrl: r.malicious_url, maliciousDomain: r.malicious_domain }
+      : null);
   }
-  await runBatches(env, stmts);
+  const results = await runBatches(env, stmts);
+
+  // Newly IdP-tagged → page-capture queue, like every other tagging site
+  // (lib/brandDetect.ts tagIdpAfterBrandMatch). Only rows the UPDATE actually
+  // changed. enqueueAutoCaptures never throws per chunk; the extra catch keeps
+  // a capture-queue failure from failing a pass whose tags already landed.
+  const toCapture = captureItems.filter((it, i): it is AutoCaptureItem =>
+    it !== null && (results[i]?.meta?.changes ?? 0) > 0);
+  if (toCapture.length > 0) {
+    try {
+      await enqueueAutoCaptures(env.DB, toCapture);
+    } catch {
+      // Best-effort — tagging is the backfill's job; captures re-cover later.
+    }
+  }
 
   const next = rows[rows.length - 1]!.rid;
   await env.CACHE.put(IDP_BACKFILL_THREAT_CURSOR_KEY, String(next));

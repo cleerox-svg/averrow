@@ -37,7 +37,7 @@ import {
   type IdpVector,
 } from "../lib/idp-impersonation";
 import { brandTokensFrom } from "../lib/idp-tagging";
-import { CAPTURE_DETAIL_LIMIT, CAPTURE_DETAIL_SQL, toCaptureView, type CaptureRow, type CaptureView } from "../lib/page-capture";
+import { CAPTURE_DETAIL_SQL, captureDetailBinds, toCaptureView, type CaptureRow, type CaptureView } from "../lib/page-capture";
 import {
   VECTORS,
   d1Time,
@@ -411,10 +411,25 @@ export function mitreUrl(id: string): string {
 const isoOrNull = (v: string | null): string | null => (v ? toIso(v) : null);
 const flag = (v: number | null): boolean | null => (v === null ? null : v !== 0);
 
+/**
+ * Domain age at READ time. `threats.domain_age_days` is a snapshot taken at
+ * enrichment, so next to `domain_created_at` (which the UI renders relative to
+ * now) it goes stale. When `domain_created_at` parses, the age is whole days
+ * from it to `now` (floored, never negative); otherwise the stored column.
+ */
+export function domainAgeDays(createdAt: string | null, stored: number | null, now: Date): number | null {
+  if (createdAt) {
+    const ms = Date.parse(toIso(createdAt));
+    if (Number.isFinite(ms)) return Math.max(0, Math.floor((now.getTime() - ms) / 86_400_000));
+  }
+  return stored;
+}
+
 export async function getIdentityDetection(
   env: Env,
   request: Request,
   threatId: string,
+  now: Date = new Date(),
 ): Promise<IdentityDetectionDetail | null> {
   const db = getReadSession(env, getDbContext(request));
   const [row, takedown, captureRows] = await Promise.all([
@@ -444,8 +459,8 @@ export async function getIdentityDetection(
         ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
         LIMIT 1`,
     ).bind(threatId).first<{ id: string; status: string; updated_at: string | null }>(),
-    // idx_page_captures_threat_created (migration 0290).
-    db.prepare(CAPTURE_DETAIL_SQL).bind(threatId, CAPTURE_DETAIL_LIMIT).all<CaptureRow>(),
+    // Direct + page_capture_targets alias captures, indexed (migration 0290).
+    db.prepare(CAPTURE_DETAIL_SQL).bind(...captureDetailBinds(threatId)).all<CaptureRow>(),
   ]);
 
   const vector = row ? techniqueToVector(row.technique) : null;
@@ -479,7 +494,7 @@ export async function getIdentityDetection(
     },
     registration: {
       domain_created_at: isoOrNull(row.domain_created_at),
-      domain_age_days: row.domain_age_days,
+      domain_age_days: domainAgeDays(row.domain_created_at, row.domain_age_days, now),
       weaponization_hours: row.weaponization_hours,
       weaponization_flag: row.weaponization_flag,
     },

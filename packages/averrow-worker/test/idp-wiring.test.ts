@@ -14,8 +14,9 @@ import { computeIdentityThreats, parseIdentityWindow } from "../src/handlers/ide
 import {
   parseIdpBackfillLimit, parseIdpLureTopupBrands, topUpIdpLures, IDP_LURE_TOPUP_CURSOR_KEY,
   handleBackfillIdpImpersonation, handleIdpLureTopup,
-  IDP_BACKFILL_THREAT_CURSOR_KEY, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY,
+  IDP_BACKFILL_THREAT_CURSOR_KEY, IDP_BACKFILL_LOOKALIKE_CURSOR_KEY, backfillThreatIdpTags,
 } from "../src/handlers/admin/idpBackfill";
+import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv } from "./sqlite-d1-harness";
 import type { AuthContext } from "../src/middleware/auth";
 import { classifyIdpImpersonation } from "../src/lib/idp-impersonation";
 import type { Env } from "../src/types";
@@ -463,5 +464,44 @@ describe("IdP-lure attribution keeps impersonated_idp unchanged", () => {
     expect(tagThreat({ malicious_domain: "okta-acme.com" }, ["Acme", "acme"]))
       .toEqual({ technique: "idp_lookalike", impersonated_idp: "okta" });
     expect(tagThreat({ malicious_domain: "okta-login-secure.com" }).impersonated_idp).toBe("okta");
+  });
+});
+
+describe.skipIf(!hasSqlite())("IdP backfill queues page captures (real SQLite)", () => {
+  it("enqueues only threats whose tag UPDATE actually changed, like every other tagging site", async () => {
+    const raw = openDerivedDb(["threats", "page_captures", "page_capture_targets", "brands"]);
+    const d1 = d1FromSqlite(raw);
+    const ins = raw.prepare(
+      `INSERT INTO threats (id, source_feed, threat_type, malicious_domain, malicious_url, technique, impersonated_idp, status, created_at)
+       VALUES (?, 'openphish', 'phishing', ?, ?, ?, ?, 'active', '2026-10-20 00:00:00')`,
+    );
+    ins.run("t_new", "acme-sso.okta.com", "https://acme-sso.okta.com/login", null, null);
+    ins.run("t_raced", "globex-sso.okta.com", null, null, null);
+    ins.run("t_already", "initech.okta.com", null, "idp_tenant_abuse", "okta");
+    ins.run("t_plain", "example-shop.com", null, null, null);
+
+    let firstBatch = true;
+    const DB = Object.assign(Object.create(d1) as D1Database, {
+      prepare: (q: string) => d1.prepare(q),
+      batch: async (stmts: D1PreparedStatement[]) => {
+        // A concurrent writer stamps a non-family technique between the scan
+        // and the UPDATE → the guard matches 0 rows → no capture queued.
+        if (firstBatch) raw.exec(`UPDATE threats SET technique = 'clickfix' WHERE id = 't_raced'`);
+        firstBatch = false;
+        return d1.batch(stmts);
+      },
+    });
+    const env = { DB, CACHE: fakeKv() } as unknown as Env;
+
+    const r = await backfillThreatIdpTags(env, 100);
+    expect(r).toMatchObject({ scanned: 4, tagged: 2, done: true });
+    const caps = raw.prepare(`SELECT threat_id, target_url, status FROM page_captures ORDER BY threat_id`).all();
+    expect(caps).toEqual([{ threat_id: "t_new", target_url: "https://acme-sso.okta.com/login", status: "queued" }]);
+    expect(raw.prepare(`SELECT threat_id FROM page_capture_targets`).all()).toEqual([{ threat_id: "t_new" }]);
+
+    // Re-run after a cursor reset: nothing changes, nothing new is queued.
+    await env.CACHE.delete(IDP_BACKFILL_THREAT_CURSOR_KEY);
+    expect((await backfillThreatIdpTags(env, 100)).tagged).toBe(0);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM page_captures`).get()).toEqual({ n: 1 });
   });
 });
