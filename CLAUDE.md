@@ -1427,7 +1427,7 @@ construction.
 **Absence of `'active'` is not the presence of a decision to stop.** If
 you need "did a human choose this brand", read `monitored_brands` or
 `org_brands`. If you need "does the platform cover this brand", read
-`tier`. Five OSINT feeds (`mastodon`/`reddit`/`github`/`telegram`/`hibp`)
+`tier`. Four OSINT feeds (`mastodon`/`reddit`/`github`/`telegram`)
 and `brand-scoring.ts` still filter on `monitoring_status='active'` and
 are consequently narrower than intended — a latent bug, not a policy.
 

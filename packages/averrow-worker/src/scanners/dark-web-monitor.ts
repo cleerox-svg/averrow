@@ -1,7 +1,7 @@
 /**
  * Dark-Web Mention Monitoring
  *
- * Scans paste archives (PSBDMP first; Telegram / HIBP / Flare / DarkOwl
+ * Scans paste archives (PSBDMP first; Telegram / Flare / DarkOwl
  * land in subsequent slices via the `source` column on dark_web_mentions)
  * for mentions of a brand, its domain, executives, or known threat-actor
  * aliases. Pure classification logic + a per-brand scanner that upserts

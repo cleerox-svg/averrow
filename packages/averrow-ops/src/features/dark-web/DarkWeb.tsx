@@ -33,7 +33,6 @@ const SOURCE_LABELS: Record<string, string> = {
   pastebin:        'Pastebin',
   telegram:        'Telegram leak channel',
   ransomware_leak: 'Ransomware leak site',
-  hibp:            'HIBP',
   flare:           'Flare',
   darkowl:         'DarkOwl',
 };
@@ -43,7 +42,6 @@ const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'pastebin',        label: 'Pastebin' },
   { value: 'telegram',        label: 'Telegram' },
   { value: 'ransomware_leak', label: 'Ransomware leak' },
-  { value: 'hibp',            label: 'HIBP' },
 ];
 
 const SEVERITY_OPTIONS: Array<{ value: string; label: string }> = [

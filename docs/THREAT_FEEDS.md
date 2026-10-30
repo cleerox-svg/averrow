@@ -279,7 +279,6 @@ Enrichment feeds run **after** ingest. They query existing threats and annotate 
 |------|------|--------|-------------|
 | **SURBL** | `surbl.ts` | SURBL DNS | Domain reputation DNSBL lookups |
 | **VirusTotal** | `virustotal.ts` | VT v3 API | Per-URL / per-domain scan verdicts |
-| **HIBP Stealer Logs** | `hibp.ts` | HaveIBeenPwned | Credential exposure from stealer log dumps |
 | **Google Safe Browsing** | `googleSafeBrowsing.ts` | GSB v4 | Phishing / malware URL classification |
 | **Spamhaus DBL** | `spamhausDbl.ts` | Spamhaus | Domain blocklist reputation |
 | **AbuseIPDB** | `abuseipdb.ts` | AbuseIPDB | IP abuse confidence score |
@@ -287,6 +286,8 @@ Enrichment feeds run **after** ingest. They query existing threats and annotate 
 | **GreyNoise** | `greynoise.ts` | GreyNoise | Internet-wide scanner / noise classification |
 | **SecLookup** | `seclookup.ts` | SecLookup | Domain / IP threat intelligence lookup |
 | **Pulsedive** | `pulsedive.ts` | Pulsedive | IOC risk scoring (domain/ip) via the free REST API — calibrates confidence/severity from Pulsedive's risk level. Dedicated cron (`27 */4 * * *`); self-gates when `PULSEDIVE_API_KEY` is unset. Pulsedive's STIX/TAXII export is paid, so this is REST enrichment, not a TAXII ingest (migration 0250) |
+
+**Retired — HIBP Stealer Logs (`hibp_stealer_logs`, 2026-10-30).** The Have I Been Pwned stealer-log feed needed a paid HIBP Pro subscription that will not be purchased. It was registered disabled (migration 0051), never pulled, and `HIBP_API_KEY` was never set. The module (`feeds/hibp.ts`), its registration and the `HIBP_API_KEY` binding type were removed; migration 0310 stamps `feed_configs.paused_reason` as retired (row kept, `enabled = 0`). The unused `stealer_log_results` table (0051) is left in place as history. The platform has no credential-exposure / stealer-log source.
 
 ## Circuit Breaker Pattern
 
@@ -338,10 +339,11 @@ Safe domain logic is in `packages/averrow-worker/src/lib/safeDomains.ts`. Domain
 
 The file `packages/averrow-worker/src/threat-feeds.ts` contains legacy Phase 1 adapters for:
 
-- Have I Been Pwned (Pwned Passwords)
 - PhishTank (direct API)
 - URLhaus (on-demand query)
 - AbuseIPDB
 - EmailRep.io
+
+(The Have I Been Pwned Pwned-Passwords and email-breach helpers that used to live here had no callers and were removed with the HIBP retirement, 2026-10-30.)
 
 These normalize signals to a `ThreatSignal` format and store them in the `threat_signals` table. The v2 feed modules in `packages/averrow-worker/src/feeds/` are the current standard.

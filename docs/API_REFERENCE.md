@@ -744,9 +744,9 @@ or `'google_play_store'`. When `source_type='app_store_listing'` and
 
 ## Dark-Web Mention Monitoring
 
-Paste-archive mention scanner (PSBDMP initially; Telegram, HIBP, Flare,
-and DarkOwl land in future slices via the `source` column without schema
-changes). Per-brand scanner fans out watch terms (brand name, aliases,
+Paste-archive mention scanner (PSBDMP initially; Telegram, Flare and
+DarkOwl land in future slices via the `source` column without schema
+changes; the HIBP source was retired 2026-10-30 and will not be built). Per-brand scanner fans out watch terms (brand name, aliases,
 domain, executive names from `brands.executive_names`) against the paste
 archive, fetches candidate bodies, and classifies each. Threat-actor
 aliases from the `threat_actors` table are cross-referenced as a

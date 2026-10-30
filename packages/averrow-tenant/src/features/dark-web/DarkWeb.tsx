@@ -27,7 +27,6 @@ const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'pastebin',        label: 'Pastebin' },
   { value: 'telegram',        label: 'Telegram' },
   { value: 'ransomware_leak', label: 'Ransomware leak' },
-  { value: 'hibp',            label: 'HIBP' },
 ];
 
 const SEVERITY_OPTIONS: Array<{ value: string; label: string }> = [

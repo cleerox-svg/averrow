@@ -502,7 +502,7 @@ export const observerAgent: AgentModule = {
       }
     } catch { /* app_store_listings table may not exist yet */ }
 
-    // ─── Dark-web mentions (paste archives today; Telegram / HIBP / Flare later) ──
+    // ─── Dark-web mentions (paste archives today; Telegram / Flare later) ──
     let darkWebContext = "";
     try {
       const dwSummary = await env.DB.prepare(`

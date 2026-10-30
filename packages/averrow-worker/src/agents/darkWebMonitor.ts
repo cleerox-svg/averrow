@@ -19,7 +19,7 @@ import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from ".
 export const darkWebMonitorAgent: AgentModule = {
   name: "dark_web_monitor",
   displayName: "Sounder",
-  description: "Dark-web echolocation — pings paste archives + leak forums for brand mentions (Pastebin today; Telegram / HIBP / Flare later)",
+  description: "Dark-web echolocation — pings paste archives + leak forums for brand mentions (Pastebin today; Telegram / Flare later)",
   color: "#C83C3C",
   trigger: "scheduled",
   requiresApproval: false,

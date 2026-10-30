@@ -37,7 +37,6 @@ import { mastodon } from "./mastodon";
 // ─── Enrichment Feed Modules ────────────────────────────────────
 import { surbl } from "./surbl";
 import { virustotal } from "./virustotal";
-import { hibp_stealer_logs } from "./hibp";
 import { google_safe_browsing } from "./googleSafeBrowsing";
 import { spamhaus_dbl } from "./spamhausDbl";
 import { abuseipdb } from "./abuseipdb";
@@ -192,7 +191,6 @@ export const socialModules: Record<string, FeedModule> = {
 export const enrichmentModules: Record<string, FeedModule> = {
   surbl,
   virustotal,
-  hibp_stealer_logs,
   google_safe_browsing,
   spamhaus_dbl,
   abuseipdb,

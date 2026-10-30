@@ -1011,7 +1011,6 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
       SECLOOKUP_API_KEY: !!env.SECLOOKUP_API_KEY,
       VIRUSTOTAL_API_KEY: !!env.VIRUSTOTAL_API_KEY,
       ABUSEIPDB_API_KEY: !!env.ABUSEIPDB_API_KEY,
-      HIBP_API_KEY: !!env.HIBP_API_KEY,
       GOOGLE_SAFE_BROWSING_KEY: !!env.GOOGLE_SAFE_BROWSING_KEY,
     };
     const missing = Object.entries(keyStatus).filter(([, v]) => !v).map(([k]) => k);
@@ -1023,7 +1022,7 @@ async function runThreatFeedScan(env: Env, ctx: ExecutionContext, scheduledTime:
     }
   }
 
-  // Enrichment feeds (SURBL, VirusTotal, HIBP) — run AFTER ingest feeds
+  // Enrichment feeds (SURBL, VirusTotal, …) — run AFTER ingest feeds
   try {
     const enrichmentNames = Object.keys(enrichmentModules);
     console.log(`[cron] About to run enrichment feeds...`);

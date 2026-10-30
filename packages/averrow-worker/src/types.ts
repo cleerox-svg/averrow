@@ -105,7 +105,6 @@ export interface Env {
   // Threat intelligence feeds (optional)
   OTX_API_KEY?: string;
   ABUSEIPDB_API_KEY?: string;
-  HIBP_API_KEY?: string;
   // CIRCL Passive DNS
   CIRCL_PDNS_USER?: string;
   CIRCL_PDNS_PASS?: string;
