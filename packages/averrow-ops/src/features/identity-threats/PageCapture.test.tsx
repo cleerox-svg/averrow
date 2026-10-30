@@ -209,6 +209,17 @@ describe('Page capture group', () => {
     expect(document.querySelector('[data-offdomain]')).toHaveTextContent('collector.evil.ru');
   });
 
+  it('treats pages.dev tenants as different sites, but www/apex of one tenant as the same', async () => {
+    await open([cap({ final_url: 'https://acme-login.pages.dev/', form_action_hosts: ['collector.pages.dev'] })], 'analyst', 'acme-login.pages.dev');
+    expect(document.querySelector('[data-offdomain]')).toHaveTextContent('collector.pages.dev');
+  });
+
+  it('does not warn for www of the same pages.dev tenant', async () => {
+    await open([cap({ final_url: 'https://www.acme-login.pages.dev/', form_action_hosts: ['acme-login.pages.dev'] })], 'analyst', 'acme-login.pages.dev');
+    expect(document.querySelector('[data-offdomain]')).toBeNull();
+    expect(document.querySelector('[data-redirect-note]')).toBeNull();
+  });
+
   it('collapses redirect chains longer than 2', async () => {
     await open([cap({ redirect_chain: ['https://a.test/', 'https://b.test/', 'https://c.test/'] })]);
     expect(screen.queryByText('https://b.test/')).toBeNull();

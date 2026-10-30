@@ -23,8 +23,23 @@ function hostOf(url: string | null | undefined): string | null {
  * Not a Public Suffix List lookup; never use for security decisions.
  */
 const GENERIC_SLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac']);
+// Shared-hosting platforms where every tenant is a different site, so the
+// registrable unit is one label deeper (acme.pages.dev, not pages.dev).
+// Short subset mirroring SHARED_HOSTING_DOMAINS in
+// packages/averrow-worker/src/lib/safeDomains.ts; display-only.
+const SHARED_HOSTING = new Set([
+  'pages.dev', 'workers.dev', 'github.io', 'gitlab.io', 'web.app', 'firebaseapp.com',
+  'netlify.app', 'vercel.app', 'herokuapp.com', 'blogspot.com', 'wordpress.com',
+  'azurewebsites.net', 'azurestaticapps.net', 'appspot.com', 'run.app', 'onrender.com',
+  'fly.dev', 'glitch.me', 'repl.co', 'r2.dev', 'weebly.com', 'wixsite.com',
+  'myshopify.com', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'sites.google.com',
+]);
+
 export function registrableDomain(host: string): string {
   const labels = host.toLowerCase().split('.').filter(Boolean);
+  for (let i = 1; i < labels.length; i++) {
+    if (SHARED_HOSTING.has(labels.slice(i).join('.'))) return labels.slice(i - 1).join('.');
+  }
   if (labels.length <= 2) return labels.join('.');
   const take = labels[labels.length - 1].length === 2 && GENERIC_SLDS.has(labels[labels.length - 2]) ? 3 : 2;
   return labels.slice(-take).join('.');
