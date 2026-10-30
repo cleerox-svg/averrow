@@ -479,7 +479,14 @@ describe.skipIf(!hasSqlite())("IdP backfill queues page captures (real SQLite)",
     ins.run("t_raced", "globex-sso.okta.com", null, null, null);
     ins.run("t_already", "initech.okta.com", null, "idp_tenant_abuse", "okta");
     ins.run("t_plain", "example-shop.com", null, null, null);
-
+    // Tagged, but not live → no auto-capture: down, and observed too long ago.
+    ins.run("t_inactive", "hooli-sso.okta.com", null, null, null);
+    raw.exec(`UPDATE threats SET status = 'down' WHERE id = 't_inactive'`);
+    ins.run("t_old", "umbrella-sso.okta.com", null, null, null);
+    raw.exec(`UPDATE threats SET created_at = '2026-09-01 00:00:00', last_seen = '2026-09-02 00:00:00' WHERE id = 't_old'`);
+    // Old row re-observed recently (last_seen wins over created_at) → live.
+    ins.run("t_reseen", "wayne-sso.okta.com", null, null, null);
+    raw.exec(`UPDATE threats SET created_at = '2026-08-01 00:00:00', last_seen = '2026-10-21 00:00:00' WHERE id = 't_reseen'`);
     let firstBatch = true;
     const DB = Object.assign(Object.create(d1) as D1Database, {
       prepare: (q: string) => d1.prepare(q),
@@ -493,15 +500,43 @@ describe.skipIf(!hasSqlite())("IdP backfill queues page captures (real SQLite)",
     });
     const env = { DB, CACHE: fakeKv() } as unknown as Env;
 
-    const r = await backfillThreatIdpTags(env, 100);
-    expect(r).toMatchObject({ scanned: 4, tagged: 2, done: true });
+    const now = new Date("2026-10-22T00:00:00Z");
+    const r = await backfillThreatIdpTags(env, 100, now);
+    expect(r).toMatchObject({ scanned: 7, tagged: 5, done: true });
     const caps = raw.prepare(`SELECT threat_id, target_url, status FROM page_captures ORDER BY threat_id`).all();
-    expect(caps).toEqual([{ threat_id: "t_new", target_url: "https://acme-sso.okta.com/login", status: "queued" }]);
-    expect(raw.prepare(`SELECT threat_id FROM page_capture_targets`).all()).toEqual([{ threat_id: "t_new" }]);
+    expect(caps).toEqual([
+      { threat_id: "t_new", target_url: "https://acme-sso.okta.com/login", status: "queued" },
+      { threat_id: "t_reseen", target_url: "https://wayne-sso.okta.com/", status: "queued" },
+    ]);
+    // The non-live rows were still tagged.
+    expect(raw.prepare(`SELECT technique FROM threats WHERE id IN ('t_inactive', 't_old')`).all())
+      .toEqual([{ technique: "idp_tenant_abuse" }, { technique: "idp_tenant_abuse" }]);
 
     // Re-run after a cursor reset: nothing changes, nothing new is queued.
     await env.CACHE.delete(IDP_BACKFILL_THREAT_CURSOR_KEY);
-    expect((await backfillThreatIdpTags(env, 100)).tagged).toBe(0);
-    expect(raw.prepare(`SELECT COUNT(*) AS n FROM page_captures`).get()).toEqual({ n: 1 });
+    expect((await backfillThreatIdpTags(env, 100, now)).tagged).toBe(0);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM page_captures`).get()).toEqual({ n: 2 });
+  });
+
+  it("queues per completed chunk: a later chunk failing keeps earlier chunks' captures", async () => {
+    const raw = openDerivedDb(["threats", "page_captures", "page_capture_targets", "brands"]);
+    const d1 = d1FromSqlite(raw);
+    const ins = raw.prepare(
+      `INSERT INTO threats (id, source_feed, threat_type, malicious_domain, status, created_at)
+       VALUES (?, 'openphish', 'phishing', ?, 'active', '2026-10-21 00:00:00')`,
+    );
+    for (let i = 0; i < 60; i++) ins.run(`t${String(i).padStart(2, "0")}`, `tenant${i}.okta.com`);
+    // UPDATE_BATCH = 50: tag chunk 1 = 50 statements, tag chunk 2 = the last
+    // 10 (chunk 1's enqueue batches are 50 statements each) — fail chunk 2.
+    const failing = Object.assign(Object.create(d1) as D1Database, {
+      prepare: (q: string) => d1.prepare(q),
+      batch: async (stmts: D1PreparedStatement[]) => {
+        if (stmts.length === 10) throw new Error("chunk 2 down");
+        return d1.batch(stmts);
+      },
+    });
+    const env = { DB: failing, CACHE: fakeKv() } as unknown as Env;
+    await expect(backfillThreatIdpTags(env, 100, new Date("2026-10-22T00:00:00Z"))).rejects.toThrow(/chunk 2 down/);
+    expect(raw.prepare(`SELECT COUNT(*) AS n FROM page_captures`).get()).toEqual({ n: 50 });
   });
 });

@@ -45,7 +45,7 @@ import {
   CAPTURE_MAX_HOSTS_PER_PAGE, CAPTURE_TARGET_DEDUP_DAYS, HOST_CAP_NOTE,
   CATCHUP_CURSOR_KEY, CATCHUP_SCAN, CATCHUP_SQL, catchUpCaptureEvidence,
   captureTargetKey, makeNavigationGuard, makePageHostBudget, storeCapture,
-  DECOY_REDIRECT_DOMAINS, OFFSITE_REDIRECT_WALL, isDecoyRedirect,
+  DECOY_REDIRECT_HOSTS, CONTENT_DECOY_HOSTS, OFFSITE_REDIRECT_WALL, isDecoyRedirect,
 } from "../src/lib/page-capture";
 import { applySecurityHeaders } from "../src/middleware/security";
 import { signJWT } from "../src/lib/jwt";
@@ -1213,17 +1213,41 @@ describe("page capture pure helpers", () => {
     expect(detectAntiBotWall({ title: "", bodyText: "", formActions: [], targetUrl: t, finalUrl: t })).toBe("blank_page");
   });
 
-  it("isDecoyRedirect: PSL-aware registrable comparison; targets ON a decoy domain are not decoys", () => {
-    expect(isDecoyRedirect("https://acme.okta.com/", "https://login.okta.com/")).toBe(false); // same eTLD+1
-    expect(isDecoyRedirect("https://acme-okta.com/", "https://login.okta.com/")).toBe(true);
-    expect(isDecoyRedirect("https://kit.co.uk/", "https://www.microsoft.com/")).toBe(true);
-    expect(isDecoyRedirect("https://acme.github.io/", "https://github.com/")).toBe(true); // tenant host ≠ provider
+  it("isDecoyRedirect: matches the final HOST front door (apex / www. / m.), with a path rule", () => {
+    const lure = "https://acme-okta-verify.com/login";
+    // The incident: an Okta lure bouncing the scanner to Rick Astley.
+    expect(isDecoyRedirect(lure, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(true);
+    expect(isDecoyRedirect(lure, "https://m.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(true);
+    expect(isDecoyRedirect(lure, "https://youtu.be/dQw4w9WgXcQ")).toBe(true);
+    // Vendor front page → decoy; the attacker's own tenant / the real consent page → evidence.
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://www.okta.com/")).toBe(true);
+    expect(isDecoyRedirect("https://acme-okta.com/", "https://acme-sso.okta.com/")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://www.microsoft.com/en-us/")).toBe(true);
+    expect(isDecoyRedirect(lure, "https://www.microsoft.com/en-us")).toBe(true);
+    expect(isDecoyRedirect(lure, "https://www.apple.com/uk/")).toBe(true);
+    // Kits hosted ON a listed platform, reached through a shortener → evidence.
+    for (const fin of [
+      "https://sites.google.com/view/x", "https://docs.google.com/forms/d/e/x/viewform", "https://forms.office.com/r/x",
+      "https://onedrive.live.com/?id=x", "https://express.adobe.com/page/x/", "https://www.dropbox.com/s/abc",
+      "https://www.paypal.com/invoice/p/1", "https://github.com/attacker/kit", "https://na2.docusign.net/Signing/x",
+    ]) {
+      expect(isDecoyRedirect("https://bit.ly/abc", fin), fin).toBe(false);
+      expect(isDecoyRedirect("https://1drv.ms/u/s!x", fin), fin).toBe(false);
+    }
+    // Same site, product surface → front page IS a bounce; the decoy page itself is not.
+    expect(isDecoyRedirect("https://docs.google.com/forms/d/e/x/viewform", "https://www.google.com/")).toBe(true);
+    expect(isDecoyRedirect("https://youtube.com/watch?v=1", "https://www.youtube.com/watch?v=1")).toBe(false);
+    expect(isDecoyRedirect("https://www.okta.com/", "https://www.okta.com/")).toBe(false);
+    // Other shapes.
     expect(isDecoyRedirect("http://203.0.113.9/login", "https://www.google.com/")).toBe(true); // IP target
-    expect(isDecoyRedirect("https://acme-okta.com/", "https://203.0.113.9/")).toBe(false);
-    expect(isDecoyRedirect("https://acme-okta.com/", "https://www.YouTube.com./")).toBe(true);
-    expect(isDecoyRedirect("https://acme-okta.com/", "not a url")).toBe(false);
-    expect(isDecoyRedirect("https://acme-okta.com/", "https://youtube.com.evil.net/")).toBe(false);
-    expect(DECOY_REDIRECT_DOMAINS.has("bit.ly")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://203.0.113.9/")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://www.YouTube.com./watch")).toBe(true);
+    expect(isDecoyRedirect(lure, "not a url")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://youtube.com.evil.net/")).toBe(false);
+    expect(isDecoyRedirect(lure, "https://www.google.co.uk/")).toBe(false); // ccTLD variants deliberately absent
+    expect(DECOY_REDIRECT_HOSTS.has("bit.ly")).toBe(false);
+    for (const h of CONTENT_DECOY_HOSTS) expect(DECOY_REDIRECT_HOSTS.has(h)).toBe(true);
   });
 
   it("CaptureRefusedError is distinguishable from transient errors", () => {
