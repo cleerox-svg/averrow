@@ -25,11 +25,13 @@ const COL_IOC_VALUE = 14;
 const COL_SEVERITY = 15;
 const COL_MALWARE_FAMILY = 23;
 
-function makeEnv(): { env: Env; threatBinds: unknown[][] } {
+function makeEnv(): { env: Env; threatBinds: unknown[][]; diagBinds: unknown[][] } {
   const threatBinds: unknown[][] = [];
+  const diagBinds: unknown[][] = [];
   const stmt = (sql: string) => ({
     __sql: sql,
     bind(...args: unknown[]) {
+      if (/INSERT INTO agent_outputs/i.test(sql)) diagBinds.push(args);
       return {
         __sql: sql,
         __args: args,
@@ -52,7 +54,7 @@ function makeEnv(): { env: Env; threatBinds: unknown[][] } {
       },
     },
   } as unknown as Env;
-  return { env, threatBinds };
+  return { env, threatBinds, diagBinds };
 }
 
 function resp(body: unknown) {
@@ -104,6 +106,48 @@ describe("urlhaus (bulk)", () => {
     expect(down[COL_IP]).toBe("1.2.3.4");
     expect(down[COL_SEVERITY]).toBe("medium");
     expect(down[COL_STATUS]).toBe("down");
+  });
+
+  it("fetches the community-API export with the key in the path, and redacts it in the diagnostic row", async () => {
+    mockFetch("# empty\n");
+    const { env, diagBinds } = makeEnv();
+    await urlhaus.ingest({ env, feedName: "urlhaus", feedUrl: "https://x" });
+    const fetched = vi.mocked(globalThis.fetch).mock.calls[0]![0];
+    expect(fetched).toBe("https://urlhaus-api.abuse.ch/v2/files/exports/test-key/recent.csv");
+    const summary = String(diagBinds[0]![1]);
+    expect(summary).toContain("/exports/REDACTED/recent.csv");
+    expect(summary).not.toContain("test-key");
+  });
+
+  it("redacts the key from an error page that echoes the path", async () => {
+    const page = "The requested URL /v2/files/exports/test-key/recent.csv was not found";
+    globalThis.fetch = vi.fn(async () => ({
+      ...resp(page), ok: false, status: 404, statusText: "Not Found", clone: () => resp(page),
+    })) as unknown as typeof fetch;
+    const { env, diagBinds } = makeEnv();
+    await expect(urlhaus.ingest({ env, feedName: "urlhaus", feedUrl: "https://x" }))
+      .rejects.toThrow("URLhaus HTTP 404");
+    expect(String(diagBinds[0]![1])).not.toContain("test-key");
+  });
+
+  it("re-throws a network error with the key redacted", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError("Fetch API cannot load: https://urlhaus-api.abuse.ch/v2/files/exports/test-key/recent.csv");
+    }) as unknown as typeof fetch;
+    const { env, diagBinds } = makeEnv();
+    const err = await urlhaus.ingest({ env, feedName: "urlhaus", feedUrl: "https://x" }).catch((e: unknown) => e);
+    expect(String((err as Error).message)).toContain("/exports/REDACTED/");
+    expect(String((err as Error).message)).not.toContain("test-key");
+    expect(String(diagBinds[0]![1])).not.toContain("test-key");
+  });
+
+  it("fails loudly when ABUSECH_AUTH_KEY is missing", async () => {
+    mockFetch("");
+    const { env } = makeEnv();
+    (env as { ABUSECH_AUTH_KEY?: string }).ABUSECH_AUTH_KEY = "";
+    await expect(urlhaus.ingest({ env, feedName: "urlhaus", feedUrl: "https://x" }))
+      .rejects.toThrow(/ABUSECH_AUTH_KEY not configured/);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
 
