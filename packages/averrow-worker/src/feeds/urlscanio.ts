@@ -22,13 +22,16 @@ import { isDuplicate, markSeen, insertThreat } from "../lib/feedRunner";
  */
 const URLSCAN_API = "https://urlscan.io/api/v1/search/";
 const SIZE = 200;
-// Pull "recent + flagged malicious" — kind:phishing is conservative;
-// score>=70 catches things urlscan's own heuristics flag without
-// requiring a `verdicts.malicious=true` consensus (which is lagging).
-const QUERY = "(verdicts.overall.malicious:true OR verdicts.urlscan.score:>=70) AND date:>now-2h";
+// Pull "recent + tagged malicious". The free plan refuses searches on
+// `verdicts.*` (HTTP 403 "Your current plan does not allow you to
+// search field 'verdicts.overall.malicious'" — the feed was disabled
+// for this on 2026-07-23), so select on submitter tags instead. Tags
+// are noisier than urlscan's own verdict; Sentinel re-scores every row.
+export const URLSCAN_QUERY =
+  "task.tags:(phishing OR phish OR malicious OR malware OR scam) AND date:>now-2h";
 
 interface UrlscanResult {
-  task?: { url?: string; uuid?: string; visibility?: string; time?: string };
+  task?: { url?: string; uuid?: string; visibility?: string; time?: string; tags?: string[] };
   page?: {
     url?: string;
     domain?: string;
@@ -73,7 +76,7 @@ function pickThreatType(categories: string[] | undefined): "phishing" | "malware
 
 export const urlscanio: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    const params = new URLSearchParams({ q: QUERY, size: String(SIZE) });
+    const params = new URLSearchParams({ q: URLSCAN_QUERY, size: String(SIZE) });
     const url = (ctx.feedUrl || URLSCAN_API) + (ctx.feedUrl?.includes("?") ? "&" : "?") + params.toString();
 
     const headers: Record<string, string> = {
@@ -127,7 +130,10 @@ export const urlscanio: FeedModule = {
 
         const domain = r.page?.domain?.toLowerCase() || extractDomain(targetUrl);
         const score = r.verdicts?.overall?.score ?? r.verdicts?.urlscan?.score;
-        const categories = r.verdicts?.overall?.categories;
+        // Verdict categories when the plan returns them, else the tags we selected on.
+        const categories = r.verdicts?.overall?.categories?.length
+          ? r.verdicts.overall.categories
+          : r.task?.tags;
 
         // Pack urlscan-specific metadata into ioc_value so analyst /
         // future visual-hash pipeline can pull the screenshot and
