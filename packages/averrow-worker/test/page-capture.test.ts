@@ -1250,6 +1250,57 @@ describe("page capture pure helpers", () => {
     for (const h of CONTENT_DECOY_HOSTS) expect(DECOY_REDIRECT_HOSTS.has(h)).toBe(true);
   });
 
+  it("isDecoyRedirect round 2: tiers, Wikipedia editions, Microsoft login, locale and Google pass-through paths", () => {
+    const lure = "https://acme-okta-verify.com/login";
+    const d = (fin: string, target = lure): boolean => isDecoyRedirect(target, fin);
+    // Regression anchors.
+    expect(d("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(true);
+    expect(d("https://acme-sso.okta.com/", "https://acme-okta.com/")).toBe(false);
+    expect(d("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x")).toBe(false);
+
+    // 1. Wikipedia language editions (+ mobile) are the front door; other hosts aren't.
+    for (const fin of ["https://en.wikipedia.org/wiki/Phishing", "https://simple.wikipedia.org/wiki/Phishing",
+      "https://pt-br.wikipedia.org/wiki/X", "https://de.m.wikipedia.org/wiki/X", "https://www.wikipedia.org/"]) {
+      expect(d(fin), fin).toBe(true);
+    }
+    expect(d("https://en.wikipedia.org.evil.net/wiki/X")).toBe(false);
+    expect(d("https://login.wikipedia.org.attacker.com/")).toBe(false);
+    // Yahoo regional left alone (not a front door).
+    expect(d("https://uk.yahoo.com/")).toBe(false);
+
+    // 2. Brand front doors: any path on apex / www / m.
+    for (const fin of ["https://www.microsoft.com/en-us/microsoft-365", "https://www.apple.com/lae/",
+      "https://www.okta.com/pricing", "https://www.amazon.com/gp/help", "https://www.netflix.com/browse",
+      "https://www.cloudflare.com/learning/", "https://www.office.com/launch/word", "https://www.msn.com/en-us/news"]) {
+      expect(d(fin), fin).toBe(true);
+    }
+    expect(d("https://forms.office.com/r/x")).toBe(false); // product subdomain, still evidence
+    // Microsoft login: a decoy unless it's an OAuth request (client_id).
+    expect(d("https://login.microsoftonline.com/")).toBe(true);
+    expect(d("https://login.microsoftonline.com/common/login")).toBe(true);
+    expect(d("https://login.microsoftonline.com/common/oauth2/authorize?response_type=code&client_id=abc")).toBe(false);
+    // …and only that login host.
+    expect(d("https://login.okta.com/")).toBe(false);
+    expect(d("https://login.live.com/")).toBe(false);
+
+    // 3. Homepage tier: "/" or a real locale shape only.
+    for (const fin of ["https://www.dropbox.com/", "https://www.paypal.com/en-us", "https://www.paypal.com/en_GB/",
+      "https://www.linkedin.com/", "https://www.facebook.com/"]) {
+      expect(d(fin), fin).toBe(true);
+    }
+    for (const fin of ["https://github.com/tj", "https://x.com/ev", "https://www.paypal.com/me", "https://www.dropbox.com/sh",
+      "https://www.dropbox.com/s/abc", "https://www.paypal.com/invoice/p/1", "https://www.facebook.com/acme.login"]) {
+      expect(d(fin), fin).toBe(false);
+    }
+
+    // 4. google.com AMP viewer / redirector can render attacker content.
+    expect(d("https://www.google.com/amp/s/attacker.example/page")).toBe(false);
+    expect(d("https://www.google.com/url?q=https://attacker.example/")).toBe(false);
+    expect(d("https://www.google.com/search?q=x")).toBe(true);
+    expect(d("https://www.google.com/urls")).toBe(true); // only the /url path itself
+    expect(d("https://www.google.com/", "https://docs.google.com/forms/x")).toBe(true);
+  });
+
   it("CaptureRefusedError is distinguishable from transient errors", () => {
     expect(new CaptureRefusedError("x")).toBeInstanceOf(Error);
     expect(new CaptureRefusedError("x").name).toBe("CaptureRefusedError");

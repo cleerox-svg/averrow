@@ -514,55 +514,77 @@ export function formActionHosts(actions: string[], baseUrl: string | null): stri
  *  takedown evidence — the screenshot is the decoy's page, not the kit's. */
 export const OFFSITE_REDIRECT_WALL = "offsite_redirect";
 
-/**
- * Hosts of the major benign destinations phishing kits bounce scanners /
- * headless browsers to. A deliberate list, NOT "any off-site redirect": a
- * target that is a redirector or shortener legitimately lands on the kit on
- * another domain, and that capture IS evidence.
+/*
+ * Decoy destinations phishing kits bounce scanners / headless browsers to. A
+ * deliberate list, NOT "any off-site redirect": a target that is a redirector
+ * or shortener legitimately lands on the kit on another domain, and that
+ * capture IS evidence.
  *
  * Matched on the FINAL HOST, never the registrable domain: only the listed
- * apex or its `www.` / `m.` front door counts (`DECOY_FRONT_DOOR_LABELS`).
- * Every other subdomain is a product or tenant surface where the attack
- * itself lives — an attacker's own IdP tenant (acme-sso.okta.com), the real
- * OAuth consent page an oauth_consent_phishing lure lands on
- * (login.microsoftonline.com/…/authorize?client_id=…), kits hosted on the
+ * apex or its `www.` / `m.` front door counts (`DECOY_FRONT_DOOR_LABELS`; plus
+ * Wikipedia language editions and login.microsoftonline.com, below). Every
+ * other subdomain is a product or tenant surface where the attack itself
+ * lives — an attacker's own IdP tenant (acme-sso.okta.com), kits hosted on the
  * platform (sites.google.com, docs.google.com/forms, forms.office.com,
  * onedrive.live.com, express.adobe.com). Those captures are evidence.
+ *
+ * Three path tiers, by how much of the front door can carry attacker content:
+ *   - CONTENT_DECOY_HOSTS — any path (a video, a search, an article), except
+ *     google.com's AMP viewer / redirector paths (GOOGLE_PASSTHROUGH_PATH),
+ *     which can render attacker content;
+ *   - BRAND_FRONT_DOOR_DECOY_HOSTS — any path: vendor marketing sites with no
+ *     user content on apex / www / m (www.microsoft.com/en-us/microsoft-365,
+ *     www.apple.com/lae/, www.okta.com/pricing);
+ *   - HOMEPAGE_DECOY_HOSTS — `/` or a locale (`/en-us`, `/en_GB/`) only:
+ *     these serve user content on www (www.dropbox.com/s/…,
+ *     www.paypal.com/invoice/…, github.com/<user>, x.com/<handle>).
  *
  * gTLD hosts only — ccTLD variants (google.co.uk, amazon.de …) are left out on
  * purpose: under some ccTLDs a look-alike second level is registrable by
  * anyone, and the bare host match here has no PSL check to tell them apart.
  */
-export const DECOY_REDIRECT_HOSTS: ReadonlySet<string> = new Set([
-  // Video / search / portals
-  "youtube.com", "youtu.be", "google.com", "bing.com", "yahoo.com", "duckduckgo.com", "wikipedia.org", "msn.com",
-  // Microsoft / identity providers (kits bounce bots to the vendor's front page)
-  "microsoft.com", "office.com", "office365.com", "live.com", "outlook.com", "microsoftonline.com", "okta.com",
-  // Big consumer brands
-  "apple.com", "icloud.com", "amazon.com", "facebook.com", "instagram.com", "whatsapp.com", "x.com", "twitter.com",
-  "linkedin.com", "netflix.com", "paypal.com",
-  // SaaS / document lures
-  "github.com", "adobe.com", "dropbox.com", "docusign.com", "docusign.net", "cloudflare.com",
-]);
-
-/**
- * Pure content decoys: ANY path on their front door counts (a kit bounces
- * bots to a video, a search, an article). For every other decoy host the path
- * must be the homepage — `/` or one locale-ish segment (`/en-us`, `/en-us/`,
- * `/uk/`) — because deeper paths are user content (www.dropbox.com/s/…,
- * www.paypal.com/invoice/…, github.com/<user>/<repo>).
- */
 export const CONTENT_DECOY_HOSTS: ReadonlySet<string> = new Set([
   "youtube.com", "youtu.be", "wikipedia.org", "bing.com", "google.com", "msn.com", "duckduckgo.com", "yahoo.com",
 ]);
+export const BRAND_FRONT_DOOR_DECOY_HOSTS: ReadonlySet<string> = new Set([
+  "microsoft.com", "office.com", "office365.com", "apple.com", "amazon.com", "netflix.com", "cloudflare.com", "okta.com",
+]);
+export const HOMEPAGE_DECOY_HOSTS: ReadonlySet<string> = new Set([
+  "dropbox.com", "paypal.com", "github.com", "docusign.com", "docusign.net", "adobe.com", "facebook.com",
+  "instagram.com", "x.com", "twitter.com", "linkedin.com", "whatsapp.com", "icloud.com", "live.com", "outlook.com",
+  "microsoftonline.com",
+]);
+/** Every decoy front-door base host (union of the three tiers). */
+export const DECOY_REDIRECT_HOSTS: ReadonlySet<string> = new Set([
+  ...CONTENT_DECOY_HOSTS, ...BRAND_FRONT_DOOR_DECOY_HOSTS, ...HOMEPAGE_DECOY_HOSTS,
+]);
+
+/**
+ * Microsoft's real sign-in page is a classic bounce target — a decoy on any
+ * path UNLESS the URL carries `client_id`: that is an OAuth authorize/consent
+ * request, i.e. where an oauth_consent_phishing lure deliberately lands
+ * (evidence). Deliberately this one host only — other login hosts host
+ * tenants (acme-sso.okta.com) and are never decoys.
+ */
+const MS_LOGIN_HOST = "login.microsoftonline.com";
 
 /** The only subdomain labels that are a decoy host's front door. */
 const DECOY_FRONT_DOOR_LABELS = ["www.", "m."] as const;
-/** `/`, or a single locale-ish segment: `/en`, `/en-us`, `/en_GB/`, `/zh-hans`. */
-const HOMEPAGE_PATH = /^\/(?:[a-z]{2}(?:[-_][a-z]{2,4})?\/?)?$/i;
+/** Wikipedia language editions (en., pt-br., simple., optionally .m) — no
+ *  user-hosted content, so they are the wikipedia.org front door. */
+const WIKIPEDIA_EDITION = /^(?:[a-z]{2,3}(?:-[a-z]+)?|simple)(?:\.m)?\.wikipedia\.org$/;
+/** `/`, or a real locale shape `/xx-yy` / `/xx_yy` (optional trailing slash).
+ *  A bare two-letter segment is NOT a locale here: github.com/tj, x.com/ev,
+ *  paypal.com/me, dropbox.com/sh are user content / share links. */
+const HOMEPAGE_PATH = /^\/(?:[a-z]{2}[-_][a-z]{2,4}\/?)?$/i;
+/** google.com paths that can render attacker-chosen content: the AMP viewer
+ *  and the /url redirector. Not decoys. */
+const GOOGLE_PASSTHROUGH_PATH = /^\/(?:amp|url)(?:\/|$)/i;
 
-/** Lowercased host (no trailing dot) of an http(s) URL; null otherwise. */
-function urlHost(url: string | null | undefined): { host: string; path: string } | null {
+interface ParsedUrl { host: string; path: string; params: URLSearchParams }
+
+/** Lowercased host (no trailing dot), path and query of an http(s) URL. */
+function parseHttpUrl(url: string | null | undefined): ParsedUrl | null {
   if (!url) return null;
   let u: URL;
   try {
@@ -572,34 +594,44 @@ function urlHost(url: string | null | undefined): { host: string; path: string }
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") return null;
   const host = u.hostname.toLowerCase().replace(/\.$/, "");
-  return host ? { host, path: u.pathname } : null;
+  return host ? { host, path: u.pathname, params: u.searchParams } : null;
 }
 
-/** `www.youtube.com` / `m.youtube.com` / `youtube.com` → `youtube.com`. */
+/** `www.youtube.com` / `m.youtube.com` / `youtube.com` → `youtube.com`;
+ *  `en.wikipedia.org` → `wikipedia.org`; anything else unchanged. */
 function frontDoorBase(host: string): string {
+  if (WIKIPEDIA_EDITION.test(host)) return "wikipedia.org";
   for (const p of DECOY_FRONT_DOOR_LABELS) {
     if (host.startsWith(p)) return host.slice(p.length);
   }
   return host;
 }
 
+/** Does `fin` land on a decoy page? Returns the decoy's base host, or null. */
+function decoyBase(fin: ParsedUrl): string | null {
+  if (fin.host === MS_LOGIN_HOST) return fin.params.has("client_id") ? null : MS_LOGIN_HOST;
+  const base = frontDoorBase(fin.host);
+  if (CONTENT_DECOY_HOSTS.has(base)) {
+    return base === "google.com" && GOOGLE_PASSTHROUGH_PATH.test(fin.path) ? null : base;
+  }
+  if (BRAND_FRONT_DOOR_DECOY_HOSTS.has(base)) return base;
+  if (HOMEPAGE_DECOY_HOSTS.has(base)) return HOMEPAGE_PATH.test(fin.path) ? base : null;
+  return null;
+}
+
 /**
- * True when the capture ended on a known decoy page: the final host is a
- * DECOY_REDIRECT_HOSTS entry's apex / `www.` / `m.`, the path qualifies
- * (any path for CONTENT_DECOY_HOSTS, else the homepage), and the target was
- * NOT that same front door. Comparing hosts (not registrable domains) means a
- * same-site bounce from a product surface to the front page —
+ * True when the capture ended on a known decoy page (decoyBase) and the
+ * target was NOT that same front door. Comparing hosts (not registrable
+ * domains) means a same-site bounce from a product surface to the front page —
  * docs.google.com/forms/… → www.google.com/ — IS a decoy, while a target that
  * already was the decoy page (youtube.com/watch → www.youtube.com/watch) is
  * not. Pure.
  */
 export function isDecoyRedirect(targetUrl: string | null | undefined, finalUrl: string | null | undefined): boolean {
-  const fin = urlHost(finalUrl);
-  if (!fin) return false;
-  const base = frontDoorBase(fin.host);
-  if (!DECOY_REDIRECT_HOSTS.has(base)) return false;
-  if (!CONTENT_DECOY_HOSTS.has(base) && !HOMEPAGE_PATH.test(fin.path)) return false;
-  const tgt = urlHost(targetUrl);
+  const fin = parseHttpUrl(finalUrl);
+  const base = fin ? decoyBase(fin) : null;
+  if (!base) return false;
+  const tgt = parseHttpUrl(targetUrl);
   return !tgt || frontDoorBase(tgt.host) !== base;
 }
 
