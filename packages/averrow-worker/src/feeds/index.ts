@@ -1,13 +1,14 @@
 import type { FeedModule } from "./types";
 
 // ─── Ingest Feed Modules ────────────────────────────────────────
+// Retired 2026-10-30 (dead upstreams, migration 0311): phishtank,
+// phishstats, cryptoscamdb, talos_ips, c2_tracker. Their historical
+// threats rows keep their source_feed labels; only ingestion is gone.
 import { certstream } from "./certstream";
-import { phishtank } from "./phishtank";
 import { urlhaus } from "./urlhaus";
 import { openphish } from "./openphish";
 import { threatfox } from "./threatfox";
 import { feodo } from "./feodo";
-// PhishStats removed 2026-03 — service dead (522/404)
 import { phishdestroy } from "./phishdestroy";
 import { nrd_hagezi } from "./nrd_hagezi";
 import { dshield } from "./dshield";
@@ -22,7 +23,6 @@ import { cisa_iran_iocs } from "./cisa_iran_iocs";
 
 // ─── Ingest Feed Modules (continued) ────────────────────────────
 import { blocklist_de } from "./blocklistde";
-import { c2_tracker } from "./c2tracker";
 import { spamhaus_drop } from "./spamhausDrop";
 import { tor_exit_nodes } from "./torExitNodes";
 import { emerging_threats } from "./emergingThreats";
@@ -51,24 +51,19 @@ import { typosquat_scanner } from "./typosquat_scanner";
 
 // ─── Tier-A volume adds (OSINT-expansion plan) ─────────────────
 // Public, no-auth phishing feeds that complement the existing
-// openphish / phishtank / urlhaus corpus. Each lands as its own
-// feed_configs row + module here.
-import { phishstats } from "./phishstats";
+// openphish / urlhaus corpus. Each lands as its own feed_configs
+// row + module here.
 import { urlscanio } from "./urlscanio";
 
 // ─── No-auth supplemental feeds ────────────────────────────────
 // NIST NVD full CVE catalog (supplements CISA KEV with broader
-// vuln coverage) + CryptoScamDB (crypto-specific phishing /
-// scam URLs, valuable for fintech customers) + DigitalSide.it
-// OSINT lists + TweetFeed (researcher-curated IOCs from X) +
-// DataPlane (first-party honeypot mesh, attacker IPs by attack
-// category) + Talos IP blocklist (Snort community).
+// vuln coverage) + DigitalSide.it OSINT lists + TweetFeed
+// (researcher-curated IOCs from X) + DataPlane (first-party
+// honeypot mesh, attacker IPs by attack category).
 import { nvd_cve } from "./nvd_cve";
-import { cryptoscamdb } from "./cryptoscamdb";
 import { digitalside_osint } from "./digitalside_osint";
 import { tweetfeed } from "./tweetfeed";
 import { dataplane } from "./dataplane";
-import { talos_ips } from "./talos_ips";
 
 // ─── Generic STIX/TAXII 2.1 Consumer ────────────────────────────
 // One module shared across every TAXII-backed collection; each
@@ -112,7 +107,6 @@ import { cf_radar_bots } from "./cf_radar_bots";
  */
 export const feedModules: Record<string, FeedModule> = {
   ct_logs: certstream,
-  phishtank,
   urlhaus,
   openphish,
   threatfox,
@@ -128,7 +122,6 @@ export const feedModules: Record<string, FeedModule> = {
   cisa_kev,
   malwarebazaar,
   blocklist_de,
-  c2_tracker,
   spamhaus_drop,
   tor_exit_nodes,
   emerging_threats,
@@ -138,17 +131,14 @@ export const feedModules: Record<string, FeedModule> = {
   cisa_iran_iocs,
 
   // Tier-A volume adds — public, no-auth phishing feeds.
-  phishstats,
   urlscanio,
 
-  // Supplemental no-auth feeds — vulnerabilities + crypto scams
+  // Supplemental no-auth feeds — vulnerabilities
   // + researcher-curated IOCs + honeypot-derived attacker IPs.
   nvd_cve,
-  cryptoscamdb,
   digitalside_osint,
   tweetfeed,
   dataplane,
-  talos_ips,
 
   // STIX/TAXII collections — all dispatch to the same generic
   // module; the per-collection params live in feed_configs columns.

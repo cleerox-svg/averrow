@@ -79,7 +79,7 @@ The platform is personal. An influencer is a person, not a company. A talent man
 | DNS & certificate monitoring | Suspicious cert issuance, DNS hijacking signals |
 | Email security posture | DMARC, DKIM, SPF assessment |
 | Corporate social brand monitoring | Company handle squatting, logo misuse, brand mention threats on social platforms |
-| Threat intelligence feeds | URLhaus, OpenPhish, PhishTank, CF Scanner, custom feeds |
+| Threat intelligence feeds | URLhaus, OpenPhish, CF Scanner, custom feeds |
 | AI threat assessment | Analyst agent, Observer briefings, correlation scoring |
 | Spam trap network | Honeypot infrastructure for phishing intelligence |
 | Multi-tenant architecture | Org-level isolation, team management, role-based access at org level |

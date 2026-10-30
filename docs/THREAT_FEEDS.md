@@ -95,8 +95,9 @@ to *enrich* existing threats (bulk insert would lose that, and both pull
 ≤100 rows so there's no reap risk); `otx_alienvault` also writes
 `threat_actors` / `threat_attributions`; `typosquat_scanner` is an internal generator, not
 a list fetch; `certstream` carries CT cert columns + a paired Durable
-Object. Disabled/dead feeds (`phishtank`, `phishstats`, `cryptoscamdb`,
-`talos_ips`, `urlscanio`, `digitalside_osint`) are skipped.
+Object. Disabled/dead feeds (`urlscanio`, `digitalside_osint`) are
+skipped; `phishtank`, `phishstats`, `cryptoscamdb` and `talos_ips` were
+retired 2026-10-30 (see "Retired feeds" below).
 
 > **Cross-feed note:** the KV dedup key (`dedup:{iocType}:{iocValue}`) is
 > NOT feed-scoped, so the old per-row path let one feed's `markSeen`
@@ -128,7 +129,7 @@ Each ingested threat is classified into one of these types:
 
 ## Feed Registry
 
-All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 40 entries), `socialModules` (4 entries), or `enrichmentModules` (10 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
+All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into one of three maps: `feedModules` (ingest — 36 entries), `socialModules` (4 entries), or `enrichmentModules` (10 entries). The `feed_name` key must match the `feed_configs.feed_name` column.
 
 **Cadence:** every ingest/social feed and 7 of the 10 enrichment feeds run inside the hourly orchestrator tick (`7 * * * *` in `wrangler.toml`) via `runAllFeeds` / `runAllSocialFeeds` / `runAllEnrichmentFeeds` — each feed's actual per-tick eligibility is decided by `shouldRunNow` (`lib/feedRunner.ts:940`), not by a per-feed cron trigger in `wrangler.toml`. That check is: skip while `feed_status.next_retry_at` is still in the future (the circuit breaker, see `CLAUDE.md §6`); otherwise run when the elapsed time since `feed_status.last_successful_pull` has reached the interval `parseCronIntervalMs` derives from that feed's own `feed_configs.schedule_cron` string, less a proportional tolerance (`dueToleranceMs`: 20% of the interval, floor 60 s, cap 20 min — so 5-min feeds keep 60 s, hourly feeds get 12 min, 2h+ feeds 20 min). The tolerance exists because `last_successful_pull` is stamped at pull *completion* while the check runs at the *start* of the next tick; with the old fixed 60 s, any feed finishing a few minutes after the tick (slow upstream, concurrency-pool queuing, late slot in the social/enrichment chain) was skipped one tick and ran at interval + 1h (fixed 2026-10-22). A feed with no `feed_status` row, or none with a successful pull yet, always runs. Three enrichment feeds are the exception: **GreyNoise** (`19 */4 * * *`, every 4h), **SecLookup** (`21 * * * *`, hourly), and **Pulsedive** (`27 */4 * * *`, every 4h) run on dedicated crons (`DEDICATED_ENRICHMENT_FEEDS` in `lib/feedRunner.ts`, skipped by `runAllEnrichmentFeeds` inside the orchestrator tick) because their per-IOC rate-limit sleeps would starve the shared enrichment chain — see `CLAUDE.md §6` for the full rationale and cron table.
 
@@ -136,16 +137,13 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 
 | Feed | File | Source | Description |
 |------|------|--------|-------------|
-| **PhishTank** | `phishtank.ts` | Community-sourced | Verified phishing URLs via CIRCL API |
 | **OpenPhish** | `openphish.ts` | Automated detection | Machine-detected phishing URLs |
 | **PhishDestroy** | `phishdestroy.ts` | phishdestroy/destroylist (`raw.githubusercontent.com/.../main/list.json`) | Curated phishing/scam domain list: a JSON array (~218K entries), sorted alphabetically, no timestamps. **Diff ingestion:** each run compares the list against the previous run's snapshot (sorted 64-bit domain hashes in KV `feed:phishdestroy:snapshot:v1`) and inserts only domains that are new and not already in `threats`, at most 1,000 per run; the remainder carries to the next run. The first run records a baseline and inserts nothing, so the back-catalog is never bulk-ingested. If `feed_configs.source_url` returns 404, the feed falls back to the canonical URL and writes a WARNING to that pull's `feed_pull_history.error_message`. Rows are IdP-tagged at ingest |
-| **PhishStats** | `phishstats.ts` | Community-sourced | Public phishing URL feed, score 0-10 mapped to severity |
 | **urlscan.io** | `urlscanio.ts` | Public URL scanner | Recently-flagged-malicious public submissions (no auth, ~1/hr) |
-| **CryptoScamDB** | `cryptoscamdb.ts` | Community-maintained | Crypto/web3 phishing + fake-exchange scam URLs |
 | **Phishing.Database** | `phishing_database.ts` | Phishing-Database/Phishing.Database | PyFunceble-validated phishing DOMAINS — the NEW-today (freshly-added) list; domain-level signal complementing the URL feeds (migration 0248) |
 | **Scam-Blocklist** | `scam_blocklist.ts` | jarelllama/Scam-Blocklist | Newly-created scam/fraud domains (fake stores, crypto drainers, brand-impersonation shops) (migration 0248) |
 
-> **PhishStats history:** removed 2026-03 (upstream dead — 522/404), then re-added as part of the Tier-A OSINT-expansion volume adds (`feeds/index.ts:56,119`) once the endpoint came back up. Currently registered and active — do not treat the old removal note as current.
+> **PhishStats, PhishTank and CryptoScamDB were retired 2026-10-30** — see "Retired feeds" below.
 
 ### Ingest Feeds — Malware
 
@@ -166,13 +164,11 @@ All feeds are registered in `packages/averrow-worker/src/feeds/index.ts` into on
 | **DShield** | `dshield.ts` | SANS ISC | Top attacking IP addresses |
 | **CINS Army** | `cins_army.ts` | Sentinel IPS | Malicious IP blocklist |
 | **Blocklist.de** | `blocklistde.ts` | Blocklist.de | IPs attacking SSH/FTP/Web services |
-| **C2 Tracker** | `c2tracker.ts` | montysecurity | Known C2 infrastructure (Cobalt Strike, Sliver, etc.) |
 | **C2 Intel Feeds** | `c2intelfeeds.ts` | drb-ra | Aggregated C2 intel from multiple sources |
 | **Spamhaus DROP** | `spamhausDrop.ts` | Spamhaus | Bulk hijacked / criminal netblocks |
 | **Tor Exit Nodes** | `torExitNodes.ts` | Tor Project | Current exit node list (tagged, not inherently malicious) |
 | **Emerging Threats** | `emergingThreats.ts` | Proofpoint ET | Compromised IPs rule set |
 | **DataPlane** | `dataplane.ts` | dataplane.org | First-party honeypot mesh; rotates 1 of 6 attack-category lists per hourly tick (`hour % 6`) |
-| **Talos IPs** | `talos_ips.ts` | Cisco Talos | Snort community IP blocklist (daily-refreshed, plain-text) |
 | **IPsum** | `ipsum.ts` | stamparm/ipsum | Daily union of 30+ IP blocklists WITH a per-IP score (number of lists flagging it); ingested at score>=3 for tunable confidence. The score is the value-add over the individual blocklists above; overlap is absorbed by the `threatId` PK dedup (migration 0248) |
 
 ### Ingest Feeds — Vulnerability / Campaign Intelligence
@@ -288,6 +284,20 @@ Enrichment feeds run **after** ingest. They query existing threats and annotate 
 | **Pulsedive** | `pulsedive.ts` | Pulsedive | IOC risk scoring (domain/ip) via the free REST API — calibrates confidence/severity from Pulsedive's risk level. Dedicated cron (`27 */4 * * *`); self-gates when `PULSEDIVE_API_KEY` is unset. Pulsedive's STIX/TAXII export is paid, so this is REST enrichment, not a TAXII ingest (migration 0250) |
 
 **Retired — HIBP Stealer Logs (`hibp_stealer_logs`, 2026-10-30).** The Have I Been Pwned stealer-log feed needed a paid HIBP Pro subscription that will not be purchased. It was registered disabled (migration 0051), never pulled, and `HIBP_API_KEY` was never set. The module (`feeds/hibp.ts`), its registration and the `HIBP_API_KEY` binding type were removed; migration 0310 stamps `feed_configs.paused_reason` as retired (row kept, `enabled = 0`). The unused `stealer_log_results` table (0051) is left in place as history. The platform has no credential-exposure / stealer-log source.
+
+### Retired feeds — dead upstreams (2026-10-30)
+
+Owner decision 2026-10-30. All five had been disabled since migration 0252 (2026-07-23, `paused_reason = 'manual:upstream_dead …'`). Their modules and `feedModules` registrations were removed; migration 0311 stamps each `feed_configs.paused_reason` as `retired-2026-10-30: …` (rows kept, `enabled = 0`, `updated_at` set). A re-enable is a no-op: `runAllFeeds` skips a config row with no registered module and `POST /api/feeds/:id/trigger` answers 501.
+
+| Feed (`feed_name`) | Former module | Why |
+|---|---|---|
+| `phishtank` | `phishtank.ts` | PhishTank closed to anonymous access / unreliable |
+| `phishstats` | `phishstats.ts` | phishstats.info offline (its third disable — 0014, 0212, 0252) |
+| `cryptoscamdb` | `cryptoscamdb.ts` | GitHub list returns 404 (upstream moved to YAML) |
+| `talos_ips` | `talos_ips.ts` | Cisco Talos removed the public IP blocklist |
+| `c2_tracker` | `c2tracker.ts` | montysecurity/C2-Tracker archived, `data/` removed |
+
+**Historical rows are kept and still handled.** Existing `threats` rows keep their `source_feed` values, and everything that labels, scores or classifies by those names is unchanged: Sentinel's feed-confidence tiers, `threatScoring.ts` feed trust, `admin-classify` high-confidence feeds, the abuse-mailbox domain-feed list, and `c2_intel_feeds`' dedup against existing `c2_tracker` rows. Flight Control's daily `c2_overlap` check (c2_tracker IPs seen in other feeds) was removed with the feed, since its corpus is frozen. The PhishTank-via-CIRCL lookup in `threat-feeds.ts` (below) is a separate path into `threat_signals` and is not part of this retirement.
 
 ## Circuit Breaker Pattern
 
