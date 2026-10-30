@@ -15,7 +15,8 @@ import { audit } from "../../lib/audit";
 import type { Env } from "../../types";
 import type { AuthContext } from "../../middleware/auth";
 import { IDP_FAMILY_TECHNIQUES } from "../../lib/idp-impersonation";
-import { tagThreat, loadBrandTokens, idpTagUpdateStmt, lookalikeIdpLure } from "../../lib/idp-tagging";
+import { tagThreat, loadBrandTokens, idpTagUpdateStmt, isIdpFamilyTag, lookalikeIdpLure } from "../../lib/idp-tagging";
+import { CAPTURE_STALE_QUEUE_DAYS, enqueueAutoCaptures, type AutoCaptureItem } from "../../lib/page-capture";
 import { generateIdpLurePermutations } from "../../lib/dnstwist";
 import { MONITORED_BRAND_PREDICATE_SQL } from "../../lib/monitored-brands";
 import { storeLookalikePermutations } from "../../scanners/lookalike-domains";
@@ -67,12 +68,36 @@ interface ThreatScanRow {
   technique: string | null;
   impersonated_idp: string | null;
   target_brand_id: string | null;
+  status: string | null;
+  /** COALESCE(last_seen, created_at) — when the threat was last observed. */
+  seen_at: string | null;
 }
 
-export async function backfillThreatIdpTags(env: Env, limit: number): Promise<IdpBackfillPassResult> {
+/** Epoch ms of a D1 `YYYY-MM-DD HH:MM:SS` (UTC) or ISO timestamp; NaN otherwise. */
+function tsMs(v: string | null): number {
+  if (!v) return Number.NaN;
+  return Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v) ? `${v.replace(" ", "T")}Z` : v);
+}
+
+/**
+ * A back-tagged threat earns its one auto-capture only while it is plausibly
+ * live: `status='active'` and observed within CAPTURE_STALE_QUEUE_DAYS (the
+ * same window after which an unclaimed queue row is parked as failed). Dead
+ * historical rows must not jump the newest-first queue and burn their only
+ * automatic capture on a page that is long gone — staff can still capture
+ * them manually.
+ */
+export function isLiveCaptureCandidate(r: Pick<ThreatScanRow, "status" | "seen_at">, now: Date): boolean {
+  if (r.status !== "active") return false;
+  const ms = tsMs(r.seen_at);
+  return Number.isFinite(ms) && ms >= now.getTime() - CAPTURE_STALE_QUEUE_DAYS * 86_400_000;
+}
+
+export async function backfillThreatIdpTags(env: Env, limit: number, now: Date = new Date()): Promise<IdpBackfillPassResult> {
   const cursor = await readCursor(env, IDP_BACKFILL_THREAT_CURSOR_KEY);
   const res = await env.DB.prepare(
-    `SELECT rowid AS rid, id, malicious_domain, malicious_url, technique, impersonated_idp, target_brand_id
+    `SELECT rowid AS rid, id, malicious_domain, malicious_url, technique, impersonated_idp, target_brand_id,
+            status, COALESCE(last_seen, created_at) AS seen_at
        FROM threats
       WHERE rowid > ?
         AND (technique IS NULL OR technique IN (${FAMILY_PLACEHOLDERS}))
@@ -90,6 +115,9 @@ export async function backfillThreatIdpTags(env: Env, limit: number): Promise<Id
     : new Map<string, string[]>();
 
   const stmts: D1PreparedStatement[] = [];
+  // Parallel to `stmts`: the capture candidate for each UPDATE (null when the
+  // tag is not IdP-family or the threat is not live — those never queue).
+  const captureItems: Array<AutoCaptureItem | null> = [];
   for (const r of rows) {
     const tag = tagThreat(r, r.target_brand_id ? tokens.get(r.target_brand_id) : undefined);
     if (!tag.impersonated_idp) continue;
@@ -97,8 +125,31 @@ export async function backfillThreatIdpTags(env: Env, limit: number): Promise<Id
     // The UPDATE re-checks the technique guard so a concurrent writer that
     // set a non-family technique is never overwritten.
     stmts.push(idpTagUpdateStmt(env.DB, r.id, tag));
+    captureItems.push(isIdpFamilyTag(tag) && isLiveCaptureCandidate(r, now)
+      ? { threatId: r.id, maliciousUrl: r.malicious_url, maliciousDomain: r.malicious_domain }
+      : null);
   }
-  await runBatches(env, stmts);
+
+  // Per chunk: tag, then queue that chunk's newly IdP-tagged threats for page
+  // capture (like every other tagging site — lib/brandDetect.ts
+  // tagIdpAfterBrandMatch), so a later chunk failing doesn't lose captures for
+  // chunks whose tags already landed. Only rows the UPDATE MATCHED: SQLite's
+  // `changes` counts matched rows, not changed values — the loop above already
+  // dropped rows whose stored tag is unchanged, so 0 here means the technique
+  // guard refused the row (a concurrent non-family writer). enqueueAutoCaptures
+  // swallows its own chunk errors; the catch keeps any other capture-queue
+  // failure from failing a pass whose tags already landed.
+  for (let i = 0; i < stmts.length; i += UPDATE_BATCH) {
+    const results = await env.DB.batch(stmts.slice(i, i + UPDATE_BATCH));
+    const toCapture = captureItems.slice(i, i + UPDATE_BATCH).filter((it, k): it is AutoCaptureItem =>
+      it !== null && (results[k]?.meta?.changes ?? 0) > 0);
+    if (toCapture.length === 0) continue;
+    try {
+      await enqueueAutoCaptures(env.DB, toCapture, now);
+    } catch {
+      // Best-effort — tagging is the backfill's job; staff can capture manually.
+    }
+  }
 
   const next = rows[rows.length - 1]!.rid;
   await env.CACHE.put(IDP_BACKFILL_THREAT_CURSOR_KEY, String(next));

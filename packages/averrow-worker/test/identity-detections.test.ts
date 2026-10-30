@@ -9,6 +9,7 @@ import { hasSqlite, openDerivedDb, d1FromSqlite, fakeKv, type SqliteDb, type Sta
 import { splitStatements } from "./migration-schema";
 import {
   buildDetectionWhere,
+  domainAgeDays,
   decodeDetectionCursor,
   encodeDetectionCursor,
   getIdentityDetection,
@@ -20,9 +21,10 @@ import {
   type DetectionQuery,
 } from "../src/handlers/identityDetections";
 import { IDP_MITRE } from "../src/lib/idp-impersonation";
+import { captureDetailBinds } from "../src/lib/page-capture";
 import type { Env } from "../src/types";
 
-const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests", "page_captures"];
+const TABLES = ["threats", "brands", "hosting_providers", "infrastructure_clusters", "takedown_requests", "page_captures", "page_capture_targets"];
 const NOW = new Date("2026-10-10T12:00:00Z");
 const MIGRATIONS_DIR = resolve(__dirname, "..", "migrations");
 
@@ -234,7 +236,7 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
   });
 
   it("detail: full shape for a family threat", async () => {
-    const d = await getIdentityDetection(env, req(), "t01");
+    const d = await getIdentityDetection(env, req(), "t01", NOW);
     expect(d).toMatchObject({
       threat_id: "t01", technique: "idp_tenant_abuse", vector: "idp_tenant", idp: "okta", idp_label: "Okta",
       brand_name: "Acme", matched_lure: "acme-sso.okta.com",
@@ -312,8 +314,56 @@ describe.skipIf(!hasSqlite())("IdP detections drill-down (real SQLite)", () => {
       screenshot_desktop_url: null, html_download_url: null, captured_at: null });
 
     const sql = log.find((l) => l.sql.includes("FROM page_captures"))!.sql;
-    const plan = raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("t01", 5).map((r) => String((r as { detail: string }).detail)).join(" | ");
+    const plan = raw.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...captureDetailBinds("t01")).map((r) => String((r as { detail: string }).detail)).join(" | ");
     expect(plan).toMatch(/SEARCH page_captures USING INDEX idx_page_captures_threat_created \(threat_id=\?\)/);
+    expect(plan).toMatch(/SEARCH pt USING INDEX idx_page_capture_targets_threat \(threat_id=\?\)/);
+    expect(plan).toMatch(/SEARCH pc USING INDEX idx_page_captures_target_created \(target_key=\?\)/);
+    expect(plan).toMatch(/SEARCH page_captures USING INDEX sqlite_autoindex_page_captures_1 \(id=\?\)/);
+    expect(plan).not.toMatch(/SCAN (page_captures|pc|pt)\b/);
+  });
+
+  it("detail: captures[] include a capture reached via a page_capture_targets alias, deduped, newest first", async () => {
+    const ins = raw.prepare(
+      `INSERT INTO page_captures (id, threat_id, target_url, target_key, status, queued_at, created_at, desktop_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // t02 was deduped onto t09's capture of the same page (alias only); t09's
+    // own capture is reachable both directly and via its own alias.
+    ins.run("pc_t09", "t09", "https://globex-okta.com/login", "globex-okta.com/login", "captured",
+      "2026-10-09 09:00:00", "2026-10-09 09:00:00", "captures/2026/10/pc_t09/desktop.png");
+    ins.run("pc_other", "t03", "https://acme-sso.com/login", "acme-sso.com/login", "captured",
+      "2026-10-09 10:00:00", "2026-10-09 10:00:00", null);
+    raw.exec(`INSERT INTO page_capture_targets (target_key, threat_id, created_at)
+      VALUES ('globex-okta.com/login', 't09', '2026-10-09 09:00:00'),
+             ('globex-okta.com/login', 't02', '2026-10-09 09:30:00')`);
+
+    const d2 = await getIdentityDetection(env, req(), "t02", NOW);
+    expect(d2!.captures.map((c) => c.id)).toEqual(["pc_t09"]);
+    expect(d2!.captures[0]!.screenshot_desktop_url).toBe("/api/intel/captures/pc_t09/screenshot?variant=desktop");
+    // Direct + own alias → one row, not two.
+    expect((await getIdentityDetection(env, req(), "t09", NOW))!.captures.map((c) => c.id)).toEqual(["pc_t09"]);
+
+    // A later manual capture on t02 itself sorts ahead of the alias capture.
+    ins.run("pc_t02_manual", "t02", "https://globex-okta.com/login", "globex-okta.com/login", "queued",
+      "2026-10-10 11:00:00", "2026-10-10 11:00:00", null);
+    expect((await getIdentityDetection(env, req(), "t02", NOW))!.captures.map((c) => c.id)).toEqual(["pc_t02_manual", "pc_t09"]);
+    expect(log.every((l) => !l.error)).toBe(true);
+  });
+
+  it("detail: domain_age_days is computed at read time from domain_created_at", async () => {
+    // Stored snapshot (9) is stale by 2026-10-30; created 2026-10-01 → 29 days.
+    const later = new Date("2026-10-30T08:00:00Z");
+    expect((await getIdentityDetection(env, req(), "t01", later))!.registration).toMatchObject({
+      domain_created_at: "2026-10-01T00:00:00Z", domain_age_days: 29,
+    });
+    // No created_at → the stored column; unparseable → stored; future → 0.
+    raw.exec(`UPDATE threats SET domain_created_at = NULL, domain_age_days = 4 WHERE id = 't02'`);
+    expect((await getIdentityDetection(env, req(), "t02", later))!.registration.domain_age_days).toBe(4);
+    expect(domainAgeDays("not a date", 7, later)).toBe(7);
+    expect(domainAgeDays("2026-11-02 00:00:00", 7, later)).toBe(0);
+    expect(domainAgeDays("2026-10-24T08:00:01Z", null, later)).toBe(5);
+    expect(domainAgeDays("2026-10-24", null, later)).toBe(6);
+    expect(domainAgeDays(null, null, later)).toBeNull();
   });
 
   it("EXPLAIN: detail takedown lookup is indexed on source_id", async () => {

@@ -17,10 +17,59 @@ function hostOf(url: string | null | undefined): string | null {
   try { return new URL(url.includes('://') ? url : `https://${url}`).hostname.toLowerCase(); } catch { return null; }
 }
 
-/** Form-action hosts that differ from the page's own host (case-insensitive). */
+/**
+ * Display-only registrable-domain approximation (last two labels, three when
+ * the second-to-last is a generic SLD under a 2-letter ccTLD, e.g. co.uk).
+ * Not a Public Suffix List lookup; never use for security decisions.
+ */
+const GENERIC_SLDS = new Set(['co', 'com', 'org', 'net', 'gov', 'edu', 'ac']);
+// Shared-hosting platforms where every tenant is a different site, so the
+// registrable unit is one label deeper (acme.pages.dev, not pages.dev).
+// Short subset mirroring SHARED_HOSTING_DOMAINS in
+// packages/averrow-worker/src/lib/safeDomains.ts; display-only.
+const SHARED_HOSTING = new Set([
+  'pages.dev', 'workers.dev', 'github.io', 'gitlab.io', 'web.app', 'firebaseapp.com',
+  'netlify.app', 'vercel.app', 'herokuapp.com', 'blogspot.com', 'wordpress.com',
+  'azurewebsites.net', 'azurestaticapps.net', 'appspot.com', 'run.app', 'onrender.com',
+  'fly.dev', 'glitch.me', 'repl.co', 'r2.dev', 'weebly.com', 'wixsite.com',
+  'myshopify.com', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'sites.google.com',
+]);
+
+export function registrableDomain(host: string): string {
+  const labels = host.toLowerCase().split('.').filter(Boolean);
+  for (let i = 1; i < labels.length; i++) {
+    if (SHARED_HOSTING.has(labels.slice(i).join('.'))) return labels.slice(i - 1).join('.');
+  }
+  if (labels.length <= 2) return labels.join('.');
+  const take = labels[labels.length - 1].length === 2 && GENERIC_SLDS.has(labels[labels.length - 2]) ? 3 : 2;
+  return labels.slice(-take).join('.');
+}
+
+/** True when the capture ended on a different site than the detection's own domain. */
+export function isOffsiteHost(finalHost: string | null, detectionHost: string | null): boolean {
+  if (!finalHost || !detectionHost) return false;
+  return registrableDomain(finalHost) !== registrableDomain(detectionHost);
+}
+
+/** The scanner was bounced to a decoy page: the screenshot is not the kit. */
+export function isDecoyCapture(c: PageCapture): boolean {
+  return c.status === 'blocked' && c.anti_bot_wall === 'offsite_redirect';
+}
+
+const NOT_THE_KIT = 'so this capture may not show the suspected phishing page.';
+function antiBotMessage(wall: string | null): string {
+  switch (wall) {
+    case 'cf_challenge': return `Our scanner hit a Cloudflare challenge, ${NOT_THE_KIT}`;
+    case 'blank_page': return `The page returned blank content to our scanner (a common way kits hide from automated scans), ${NOT_THE_KIT}`;
+    case null: return `The page hid behind an anti-bot check, ${NOT_THE_KIT}`;
+    default: return `The page hid behind an anti-bot check (${wall}), ${NOT_THE_KIT}`;
+  }
+}
+
+/** Form-action hosts on a different site (registrable domain) than the page's host. */
 export function offDomainHosts(pageHost: string | null, hosts: string[]): string[] {
   if (!pageHost) return [];
-  return hosts.filter((h) => h.toLowerCase() !== pageHost);
+  return hosts.filter((h) => isOffsiteHost(h.toLowerCase(), pageHost));
 }
 
 export function captureBadge(status: PageCaptureStatus): ReactNode {
@@ -51,6 +100,7 @@ function When({ iso }: { iso: string | null }) {
 // ── Viewer ─────────────────────────────────────────────────────────────────
 
 function Viewer({ capture, open, onOpenChange }: { capture: PageCapture; open: boolean; onOpenChange: (o: boolean) => void }) {
+  const decoy = isDecoyCapture(capture);
   const [variant, setVariant] = useState<'mobile' | 'desktop'>(capture.screenshot_mobile_url ? 'mobile' : 'desktop');
   const path = variant === 'mobile' ? capture.screenshot_mobile_url : capture.screenshot_desktop_url;
   const img = useAuthedBlobUrl(path, open);
@@ -62,7 +112,7 @@ function Viewer({ capture, open, onOpenChange }: { capture: PageCapture; open: b
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Page capture"
+      title={decoy ? 'Page capture — decoy page' : 'Page capture'}
       description={capture.final_url ? <span style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}>{capture.final_url}</span> : undefined}
       width="min(960px, calc(100vw - 32px))"
       presentation="dialog"
@@ -82,7 +132,7 @@ function Viewer({ capture, open, onOpenChange }: { capture: PageCapture; open: b
       )}
       <div className="flex justify-center overflow-auto" style={{ maxHeight: '70dvh' }}>
         {img.url ? (
-          <img src={img.url} alt={`${variant === 'mobile' ? 'Mobile' : 'Desktop'} screenshot of the captured page`} style={{ maxWidth: '100%', height: 'auto' }} />
+          <img src={img.url} alt={`${variant === 'mobile' ? 'Mobile' : 'Desktop'} screenshot of ${decoy ? 'a decoy page (not the phishing kit)' : 'the captured page'}`} style={{ maxWidth: '100%', height: 'auto' }} />
         ) : img.error ? (
           <ImageError onRetry={img.retry} />
         ) : (
@@ -104,13 +154,18 @@ function ImageError({ onRetry }: { onRetry: () => void }) {
 
 // ── Body of a finished capture ─────────────────────────────────────────────
 
-function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost: string | null }) {
+function CaptureDetails({ capture, detectionHost }: { capture: PageCapture; detectionHost: string | null }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [chainOpen, setChainOpen] = useState(false);
   const [dlError, setDlError] = useState(false);
   const [dlBusy, setDlBusy] = useState(false);
   const thumbPath = capture.screenshot_mobile_url ?? capture.screenshot_desktop_url;
   const thumb = useAuthedBlobUrl(thumbPath);
+  const decoy = isDecoyCapture(capture);
+  const finalHost = hostOf(capture.final_url);
+  const showRedirectNote = !decoy && (capture.status === 'captured' || capture.status === 'blocked') && isOffsiteHost(finalHost, detectionHost);
+  // Forms resolve against the page we landed on; a decoy's hosts are not the kit's.
+  const pageHost = finalHost ?? detectionHost;
   const off = offDomainHosts(pageHost, capture.form_action_hosts);
   const chain = capture.redirect_chain;
   const chainCollapsible = chain.length > 2;
@@ -133,17 +188,17 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
               <button
                 type="button"
                 onClick={() => setViewerOpen(true)}
-                aria-label="View page capture full screen"
+                aria-label={decoy ? 'View decoy page screenshot full screen' : 'View page capture full screen'}
                 className="block min-h-[44px] w-full cursor-pointer overflow-hidden rounded-lg bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
                 style={{ border: '1px solid var(--border-base)' }}
               >
                 <img
                   src={thumb.url}
-                  alt="Mobile screenshot of the captured page"
+                  alt={decoy ? 'Mobile screenshot of a decoy page (not the phishing kit)' : 'Mobile screenshot of the captured page'}
                   style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'cover', objectPosition: 'top' }}
                 />
               </button>
-              <p className="m-0 mt-1 text-[12px]" style={MUTED}>Tap to enlarge</p>
+              <p className="m-0 mt-1 text-[12px]" style={MUTED}>{decoy ? 'Tap to enlarge (decoy page, not the kit)' : 'Tap to enlarge'}</p>
             </>
           ) : thumb.error ? (
             <ImageError onRetry={thumb.retry} />
@@ -157,8 +212,15 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
         <Row label="Captured at"><When iso={capture.captured_at} /></Row>
         {capture.page_title && <Row label="Page title">{capture.page_title}</Row>}
         {capture.http_status !== null && <Row label="HTTP status">{capture.http_status}</Row>}
-        <Row label="Final URL">{capture.final_url ?? '—'}</Row>
-        <Row label="Login form posts to">
+        <Row label={decoy ? 'Decoy URL (where the scanner landed)' : 'Final URL'}>
+          {capture.final_url ?? '—'}
+          {showRedirectNote && (
+            <span data-redirect-note className="mt-1 block font-sans text-[12px]" style={MUTED}>
+              Redirected to another site: <strong className="font-mono">{finalHost}</strong>
+            </span>
+          )}
+        </Row>
+        {!decoy && <Row label="Login form posts to">
           {capture.form_action_hosts.length === 0 ? 'No login form found' : (
             <>
               {off.length > 0 && (
@@ -185,7 +247,7 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
               </ul>
             </>
           )}
-        </Row>
+        </Row>}
         {chain.length > 0 && (
           <Row label="Redirects">
             {chainCollapsible && (
@@ -212,7 +274,7 @@ function CaptureDetails({ capture, pageHost }: { capture: PageCapture; pageHost:
       {capture.html_download_url && (
         <div className="my-2">
           <Button type="button" variant="secondary" size="sm" onClick={() => { void onDownload(); }} loading={dlBusy}>
-            <Download aria-hidden="true" size={14} /> Download HTML (evidence)
+            <Download aria-hidden="true" size={14} /> Download HTML ({decoy ? 'decoy page' : 'evidence'})
           </Button>
           {dlError && <p role="alert" className="m-0 mt-1 text-[13px]" style={{ color: 'var(--sev-critical-text)' }}>Download failed. Try again.</p>}
         </div>
@@ -231,7 +293,9 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
   const captures = d.captures ?? [];
   const latest = captures[0];
   const older = captures.slice(1, 5);
-  const pageHost = hostOf(latest?.final_url) ?? hostOf(d.domain);
+  // Compare form hosts to the detection's own domain, not the final URL: a
+  // cloaked kit redirects the scanner elsewhere, so final_url can be a decoy.
+  const detectionHost = hostOf(d.domain);
   const pending = latest?.status === 'queued' || latest?.status === 'capturing';
 
   const errMsg = mutation.error
@@ -278,11 +342,19 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
     body = (
       <>
         {latest.status === 'blocked' && (
-          <p className="m-0 mb-2 text-[13px]" style={{ color: 'var(--sev-high-text)' }}>
-            Page hid behind an anti-bot check{latest.anti_bot_wall ? ` (${latest.anti_bot_wall})` : ''}.
-          </p>
+          <div
+            role="note"
+            data-blocked-note
+            className="mb-2 rounded-lg px-3 py-2 text-[13px]"
+            style={{ background: 'var(--sev-high-bg)', border: '1px solid var(--sev-high-border)', color: 'var(--sev-high-text)', overflowWrap: 'anywhere' }}
+          >
+            <AlertTriangle aria-hidden="true" size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
+            {isDecoyCapture(latest)
+              ? <><strong>Decoy page captured.</strong> The site sent our scanner to <strong className="font-mono">{hostOf(latest.final_url) ?? 'another site'}</strong> instead of the suspected phishing page (a common cloaking trick). The screenshot shows the decoy, not the kit, and is not used as takedown evidence.</>
+              : antiBotMessage(latest.anti_bot_wall)}
+          </div>
         )}
-        <CaptureDetails capture={latest} pageHost={pageHost} />
+        <CaptureDetails capture={latest} detectionHost={detectionHost} />
       </>
     );
   }
