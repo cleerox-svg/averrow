@@ -790,7 +790,7 @@ Apps: ${context.appStoreListings.slice(0, 5).map((a) =>
 ).join("; ")}`);
   }
 
-  // Dark-web mentions — paste archives today; Telegram / HIBP / Flare later.
+  // Dark-web mentions — paste archives today; Telegram / Flare later.
   if (context.darkWebMentions.length > 0) {
     const bySource: Record<string, number> = {};
     const byMatch: Record<string, number> = {};

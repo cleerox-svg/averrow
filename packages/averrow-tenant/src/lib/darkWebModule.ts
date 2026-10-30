@@ -100,7 +100,6 @@ export const SOURCE_LABELS: Record<string, string> = {
   pastebin:        'Pastebin',
   telegram:        'Telegram leak channel',
   ransomware_leak: 'Ransomware leak site',
-  hibp:            'HIBP',
   flare:           'Flare',
   darkowl:         'DarkOwl',
 };

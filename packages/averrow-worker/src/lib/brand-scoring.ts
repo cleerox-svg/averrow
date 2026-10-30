@@ -35,7 +35,7 @@ const WEIGHTS = {
   domain_risk: 0.12,           // lookalike domains
   campaign_association: 0.08,  // linked to active campaigns
   app_store_risk: 0.10,        // mobile-app impersonation (iOS; Google Play later)
-  dark_web_risk: 0.10,         // paste-archive mentions (Telegram / HIBP / Flare later)
+  dark_web_risk: 0.10,         // paste-archive mentions (Telegram / Flare later)
 };
 
 export interface BrandExposureResult {
@@ -109,7 +109,7 @@ export async function computeBrandExposureScore(
     (appStoreCounts?.suspicious || 0) * 10
   );
 
-  // 7. Dark-web risk — paste-archive mentions (Telegram / HIBP / Flare later).
+  // 7. Dark-web risk — paste-archive mentions (Telegram / Flare later).
   //    Confirmed weighs heavier than suspicious; severity already filters the
   //    feed before rows land here, so we don't double-weight by severity.
   const darkWebCounts = await env.DB.prepare(`

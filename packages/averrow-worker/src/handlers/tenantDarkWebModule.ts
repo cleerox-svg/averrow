@@ -4,8 +4,8 @@
 // table. Two endpoints:
 //
 //   GET /api/orgs/:orgId/modules/dark-web
-//     Per-brand summary across sources (pastebin, telegram, hibp,
-//     flare, darkowl, …).
+//     Per-brand summary across sources (pastebin, telegram, flare,
+//     darkowl, …).
 //
 //   GET /api/orgs/:orgId/modules/dark-web/brands/:brandId
 //     Per-brand drill-down: mentions with classification +

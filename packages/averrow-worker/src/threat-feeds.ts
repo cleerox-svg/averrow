@@ -2,11 +2,10 @@
  * Threat Feed Adapters — Phase 1
  *
  * External threat intelligence feed integrations:
- *   1. Have I Been Pwned (Pwned Passwords — free, no key)
- *   2. PhishTank via CIRCL public API (free, no key)
- *   3. URLhaus on-demand query (free, no key)
- *   4. AbuseIPDB (free tier, optional API key)
- *   5. EmailRep.io (free tier, no key for basic)
+ *   1. PhishTank via CIRCL public API (free, no key)
+ *   2. URLhaus on-demand query (free, no key)
+ *   3. AbuseIPDB (free tier, optional API key)
+ *   4. EmailRep.io (free tier, no key for basic)
  *
  * All adapters normalize signals to ThreatSignal format and store in D1.
  */
@@ -129,48 +128,7 @@ async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 1. Have I Been Pwned — Pwned Passwords API (free, no key)
-// ═══════════════════════════════════════════════════════════════════
-
-/**
- * Check password exposure count using k-anonymity API.
- * On-demand enrichment — NOT a cron feed.
- */
-export async function checkPasswordExposure(password: string): Promise<number> {
-  // SHA-1 hash the password
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-1", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-
-  const prefix = hashHex.slice(0, 5);
-  const suffix = hashHex.slice(5);
-
-  const res = await safeFetch(`https://api.pwnedpasswords.com/range/${prefix}`);
-  if (!res.ok) return 0;
-
-  const text = await res.text();
-  for (const line of text.split("\r\n")) {
-    const [hash, count] = line.split(":");
-    if (hash === suffix) return parseInt(count ?? "0", 10);
-  }
-  return 0;
-}
-
-/**
- * Stub for email breach check — requires HIBP_API_KEY (paid tier).
- */
-export async function checkEmailBreaches(
-  _email: string,
-  _apiKey?: string,
-): Promise<Array<{ name: string; domain: string; breachDate: string }>> {
-  // Requires HIBP_API_KEY — implement when paid tier is configured
-  return [];
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// 2. PhishTank via CIRCL Public API (free, no key)
+// 1. PhishTank via CIRCL Public API (free, no key)
 // ═══════════════════════════════════════════════════════════════════
 
 const CIRCL_BASE = "https://phishtankapi.circl.lu";
@@ -294,7 +252,7 @@ export async function syncPhishtankFeed(env: Env): Promise<{ fetched: number; ma
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 3. URLhaus — On-demand domain check (free, no key for read)
+// 2. URLhaus — On-demand domain check (free, no key for read)
 // ═══════════════════════════════════════════════════════════════════
 
 /** On-demand: check if a domain is distributing malware via URLhaus */
@@ -382,7 +340,7 @@ export async function syncUrlhausFeed(env: Env): Promise<{ fetched: number; matc
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 4. AbuseIPDB (free tier: 1000 checks/day, optional API key)
+// 3. AbuseIPDB (free tier: 1000 checks/day, optional API key)
 // ═══════════════════════════════════════════════════════════════════
 
 /** On-demand: check IP reputation via AbuseIPDB */
@@ -426,7 +384,7 @@ export async function checkIpReputation(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 5. EmailRep.io (free tier: 200 lookups/day, no key for basic)
+// 4. EmailRep.io (free tier: 200 lookups/day, no key for basic)
 // ═══════════════════════════════════════════════════════════════════
 
 /** On-demand: check email reputation via EmailRep.io */
