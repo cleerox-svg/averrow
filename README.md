@@ -12,7 +12,7 @@ Averrow monitors the internet for brand impersonation, phishing infrastructure, 
 - **Brand exposure scoring** — Composite risk from email posture, active threats, lookalike domains, and social impersonation
 - **Email security grading** — Outside-in SPF / DKIM / DMARC analysis with A+ through F report cards
 - **Lookalike domain detection** — Permutation generation + DNS monitoring for typosquats, homoglyphs, and combosquats
-- **Threat feed integration** — 38 feeds including Certificate Transparency logs, PhishTank, URLhaus, OpenPhish, ThreatFox, Cloudflare Radar, NRD feeds, CISA KEV, Spamhaus DBL/DROP, SURBL, Emerging Threats, and more
+- **Threat feed integration** — 38 feeds including Certificate Transparency logs, URLhaus, OpenPhish, ThreatFox, Cloudflare Radar, NRD feeds, CISA KEV, Spamhaus DBL/DROP, SURBL, Emerging Threats, and more
 - **OLAP analytics cubes** — Pre-aggregated hourly rollups by country, provider, and brand for sub-50ms dashboard queries
 - **Real-time event stream** — WebSocket push via Durable Objects for live threat notifications
 - **AI-generated intelligence** — Claude Haiku classifies and attributes; Claude Sonnet writes narrative briefings
