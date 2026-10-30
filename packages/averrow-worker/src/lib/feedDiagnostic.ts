@@ -52,20 +52,32 @@ export async function logFeedDiagnostic(
 /**
  * Wraps fetch() with diagnostic logging. Returns the Response.
  * On network errors, logs the error and re-throws.
+ *
+ * `secret` — pass the credential when it is embedded in the URL path or
+ * query. Every occurrence (raw and URI-encoded) is replaced with
+ * REDACTED in the diagnostic row (URL, body preview, error text — the
+ * row lands in agent_outputs.summary in plaintext), and a network error
+ * is re-thrown with the redacted message so feedRunner never stores it.
  */
 export async function diagnosticFetch(
   db: D1Database,
   feedName: string,
-  url: string,
+  fetchUrl: string,
   init?: RequestInit,
+  secret?: string,
 ): Promise<Response> {
   const method = init?.method ?? "GET";
+  const redact = (s: string): string => {
+    if (!secret) return s;
+    return s.split(secret).join("REDACTED").split(encodeURIComponent(secret)).join("REDACTED");
+  };
+  const url = redact(fetchUrl);
   let res: Response;
 
   try {
-    res = await fetch(url, init);
+    res = await fetch(fetchUrl, init);
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorMessage = redact(err instanceof Error ? err.message : String(err));
     await logFeedDiagnostic(db, {
       feedName,
       url,
@@ -74,6 +86,7 @@ export async function diagnosticFetch(
       bodyPreview: "",
       errorMessage,
     });
+    if (secret) throw new Error(errorMessage);
     throw err;
   }
 
@@ -82,7 +95,8 @@ export async function diagnosticFetch(
   let bodyPreview: string;
   try {
     const text = await clone.text();
-    bodyPreview = text.slice(0, 200);
+    // Redact before truncating so a key straddling the cut can't leak a prefix.
+    bodyPreview = redact(text).slice(0, 200);
   } catch {
     bodyPreview = "<could not read body>";
   }
@@ -93,7 +107,7 @@ export async function diagnosticFetch(
     method,
     httpStatus: res.status,
     bodyPreview,
-    errorMessage: res.ok ? null : `HTTP ${res.status} ${res.statusText}`,
+    errorMessage: res.ok ? null : redact(`HTTP ${res.status} ${res.statusText}`),
   });
 
   return res;

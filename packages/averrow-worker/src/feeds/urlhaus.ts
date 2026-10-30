@@ -3,25 +3,34 @@ import { threatId, extractDomain } from "./types";
 import { bulkInsertThreats } from "../lib/feedRunner";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
 
-const CSV_BULK_URL = "https://urlhaus.abuse.ch/downloads/csv_recent/";
+// The legacy urlhaus.abuse.ch/downloads/csv_recent/ endpoint now
+// returns HTTP 410. abuse.ch moved the exports to the community API,
+// which takes the Auth-Key as a path segment rather than a header.
+const CSV_EXPORT_BASE = "https://urlhaus-api.abuse.ch/v2/files/exports";
+
+export function urlhausExportUrl(authKey: string): string {
+  return `${CSV_EXPORT_BASE}/${encodeURIComponent(authKey)}/recent.csv`;
+}
 
 /**
  * URLhaus (abuse.ch) — Active malware distribution URLs.
- * Uses the CSV bulk download endpoint (GET) instead of the JSON API
- * which returns HTTP 405 on GET requests.
+ * Pulls the "recent" CSV export (URLs added in the past 30 days).
+ * The dump regenerates every 5 minutes — do not fetch more often.
  */
 export const urlhaus: FeedModule = {
   async ingest(ctx: FeedContext): Promise<FeedResult> {
-    // abuse.ch is deprecating anonymous access to its download
-    // endpoints — send the shared Auth-Key (same secret ThreatFox /
-    // MalwareBazaar already use) so this CSV pull keeps working once
-    // anonymous pulls are cut off. Harmless while still optional.
-    const res = await diagnosticFetch(ctx.env.DB, "urlhaus", CSV_BULK_URL, {
-      headers: {
-        "Auth-Key": ctx.env.ABUSECH_AUTH_KEY,
-        "User-Agent": "Averrow-ThreatIntel/1.0",
-      },
-    });
+    const authKey = ctx.env.ABUSECH_AUTH_KEY;
+    if (!authKey) throw new Error("URLhaus: ABUSECH_AUTH_KEY not configured");
+
+    // Shared abuse.ch key (ThreatFox / MalwareBazaar / Feodo / SSLBL).
+    // It sits in the URL path, so diagnosticFetch redacts it from logs.
+    const res = await diagnosticFetch(
+      ctx.env.DB,
+      "urlhaus",
+      urlhausExportUrl(authKey),
+      { headers: { "User-Agent": "Averrow-ThreatIntel/1.0" } },
+      authKey,
+    );
     if (!res.ok) throw new Error(`URLhaus HTTP ${res.status}`);
 
     const text = await res.text();
