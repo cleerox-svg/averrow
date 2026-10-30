@@ -118,6 +118,42 @@ describe('Page capture group', () => {
     expect(await screen.findByAltText('Mobile screenshot of the captured page')).toBeInTheDocument();
   });
 
+  it('blocked offsite_redirect explains the decoy and labels the screenshot', async () => {
+    await open([cap({ status: 'blocked', anti_bot_wall: 'offsite_redirect', final_url: 'https://www.youtube.com/watch?v=abc', form_action_hosts: [] })]);
+    expect(screen.getByText(/instead of the phishing page/)).toHaveTextContent('www.youtube.com');
+    expect(screen.getByText(/not used as takedown evidence/)).toBeInTheDocument();
+    expect(screen.queryByText(/anti-bot check/)).toBeNull();
+    expect(document.querySelector('[data-redirect-note]')).toBeNull();
+    expect(await screen.findByAltText('Mobile screenshot of a decoy page (not the phishing kit)')).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole('button', { name: /full screen/i }));
+    expect(await screen.findByText('Page capture — decoy page')).toBeInTheDocument();
+  });
+
+  it('uses human wording for cf_challenge and blank_page', async () => {
+    await open([cap({ status: 'blocked', anti_bot_wall: 'cf_challenge' })]);
+    expect(screen.getByText(/Cloudflare challenge/)).toBeInTheDocument();
+    expect(screen.queryByText(/cf_challenge/)).toBeNull();
+  });
+
+  it('shows a redirect note only when the final site differs from the detection domain', async () => {
+    await open([cap({ final_url: 'https://www.youtube.com/watch?v=abc', form_action_hosts: [] })]);
+    expect(document.querySelector('[data-redirect-note]')).toHaveTextContent('Redirected to another site: www.youtube.com');
+  });
+
+  it('hides the redirect note for a subdomain of the same site', async () => {
+    await open([cap({ final_url: 'https://www.okta-evil.com/signin', form_action_hosts: [] })]);
+    expect(document.querySelector('[data-redirect-note]')).toBeNull();
+  });
+
+  it('checks form hosts against the detection domain, not the redirected final URL', async () => {
+    await open([cap({
+      status: 'blocked', anti_bot_wall: 'offsite_redirect', final_url: 'https://www.youtube.com/watch?v=abc',
+      form_action_hosts: ['acme-login.okta-evil.com', 'collector.evil.ru'],
+    })]);
+    expect(document.querySelectorAll('[data-offdomain]')).toHaveLength(1);
+    expect(document.querySelector('[data-offdomain]')).toHaveTextContent('collector.evil.ru');
+  });
+
   it('failed shows error and Retry capture', async () => {
     await open([cap({ status: 'failed', error: 'navigation timeout', screenshot_mobile_url: null, screenshot_desktop_url: null })]);
     expect(screen.getByText('Capture failed: navigation timeout')).toBeInTheDocument();
