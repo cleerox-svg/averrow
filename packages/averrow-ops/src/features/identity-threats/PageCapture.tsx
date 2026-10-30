@@ -41,19 +41,20 @@ export function isDecoyCapture(c: PageCapture): boolean {
   return c.status === 'blocked' && c.anti_bot_wall === 'offsite_redirect';
 }
 
+const NOT_THE_KIT = 'so this capture may not show the suspected phishing page.';
 function antiBotMessage(wall: string | null): string {
   switch (wall) {
-    case 'cf_challenge': return 'The page was behind a Cloudflare challenge that our scanner could not pass.';
-    case 'blank_page': return 'The page returned blank content to our scanner, which is a common way kits hide from automated scans.';
-    case null: return 'Page hid behind an anti-bot check.';
-    default: return `Page hid behind an anti-bot check (${wall}).`;
+    case 'cf_challenge': return `Our scanner hit a Cloudflare challenge, ${NOT_THE_KIT}`;
+    case 'blank_page': return `The page returned blank content to our scanner (a common way kits hide from automated scans), ${NOT_THE_KIT}`;
+    case null: return `The page hid behind an anti-bot check, ${NOT_THE_KIT}`;
+    default: return `The page hid behind an anti-bot check (${wall}), ${NOT_THE_KIT}`;
   }
 }
 
-/** Form-action hosts that differ from the page's own host (case-insensitive). */
+/** Form-action hosts on a different site (registrable domain) than the page's host. */
 export function offDomainHosts(pageHost: string | null, hosts: string[]): string[] {
   if (!pageHost) return [];
-  return hosts.filter((h) => h.toLowerCase() !== pageHost);
+  return hosts.filter((h) => isOffsiteHost(h.toLowerCase(), pageHost));
 }
 
 export function captureBadge(status: PageCaptureStatus): ReactNode {
@@ -138,7 +139,7 @@ function ImageError({ onRetry }: { onRetry: () => void }) {
 
 // ── Body of a finished capture ─────────────────────────────────────────────
 
-function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCapture; pageHost: string | null; detectionHost: string | null }) {
+function CaptureDetails({ capture, detectionHost }: { capture: PageCapture; detectionHost: string | null }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [chainOpen, setChainOpen] = useState(false);
   const [dlError, setDlError] = useState(false);
@@ -148,6 +149,8 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
   const decoy = isDecoyCapture(capture);
   const finalHost = hostOf(capture.final_url);
   const showRedirectNote = !decoy && (capture.status === 'captured' || capture.status === 'blocked') && isOffsiteHost(finalHost, detectionHost);
+  // Forms resolve against the page we landed on; a decoy's hosts are not the kit's.
+  const pageHost = finalHost ?? detectionHost;
   const off = offDomainHosts(pageHost, capture.form_action_hosts);
   const chain = capture.redirect_chain;
   const chainCollapsible = chain.length > 2;
@@ -170,7 +173,7 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
               <button
                 type="button"
                 onClick={() => setViewerOpen(true)}
-                aria-label="View page capture full screen"
+                aria-label={decoy ? 'View decoy page screenshot full screen' : 'View page capture full screen'}
                 className="block min-h-[44px] w-full cursor-pointer overflow-hidden rounded-lg bg-transparent p-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
                 style={{ border: '1px solid var(--border-base)' }}
               >
@@ -180,7 +183,7 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
                   style={{ display: 'block', width: '100%', maxHeight: 240, objectFit: 'cover', objectPosition: 'top' }}
                 />
               </button>
-              <p className="m-0 mt-1 text-[12px]" style={MUTED}>Tap to enlarge</p>
+              <p className="m-0 mt-1 text-[12px]" style={MUTED}>{decoy ? 'Tap to enlarge (decoy page, not the kit)' : 'Tap to enlarge'}</p>
             </>
           ) : thumb.error ? (
             <ImageError onRetry={thumb.retry} />
@@ -194,15 +197,15 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
         <Row label="Captured at"><When iso={capture.captured_at} /></Row>
         {capture.page_title && <Row label="Page title">{capture.page_title}</Row>}
         {capture.http_status !== null && <Row label="HTTP status">{capture.http_status}</Row>}
-        <Row label="Final URL">
+        <Row label={decoy ? 'Decoy URL (where the scanner landed)' : 'Final URL'}>
           {capture.final_url ?? '—'}
           {showRedirectNote && (
-            <span data-redirect-note className="mt-1 block font-sans text-[12px]" style={{ color: 'var(--sev-high-text)' }}>
+            <span data-redirect-note className="mt-1 block font-sans text-[12px]" style={MUTED}>
               Redirected to another site: <strong className="font-mono">{finalHost}</strong>
             </span>
           )}
         </Row>
-        <Row label="Login form posts to">
+        {!decoy && <Row label="Login form posts to">
           {capture.form_action_hosts.length === 0 ? 'No login form found' : (
             <>
               {off.length > 0 && (
@@ -229,7 +232,7 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
               </ul>
             </>
           )}
-        </Row>
+        </Row>}
         {chain.length > 0 && (
           <Row label="Redirects">
             {chainCollapsible && (
@@ -256,7 +259,7 @@ function CaptureDetails({ capture, pageHost, detectionHost }: { capture: PageCap
       {capture.html_download_url && (
         <div className="my-2">
           <Button type="button" variant="secondary" size="sm" onClick={() => { void onDownload(); }} loading={dlBusy}>
-            <Download aria-hidden="true" size={14} /> Download HTML (evidence)
+            <Download aria-hidden="true" size={14} /> Download HTML ({decoy ? 'decoy page' : 'evidence'})
           </Button>
           {dlError && <p role="alert" className="m-0 mt-1 text-[13px]" style={{ color: 'var(--sev-critical-text)' }}>Download failed. Try again.</p>}
         </div>
@@ -278,7 +281,6 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
   // Compare form hosts to the detection's own domain, not the final URL: a
   // cloaked kit redirects the scanner elsewhere, so final_url can be a decoy.
   const detectionHost = hostOf(d.domain);
-  const pageHost = detectionHost ?? hostOf(latest?.final_url);
   const pending = latest?.status === 'queued' || latest?.status === 'capturing';
 
   const errMsg = mutation.error
@@ -325,13 +327,19 @@ export function PageCaptureGroup({ d }: { d: IdentityDetectionDetail }) {
     body = (
       <>
         {latest.status === 'blocked' && (
-          <p className="m-0 mb-2 text-[13px]" data-blocked-note style={{ color: 'var(--sev-high-text)' }}>
+          <div
+            role="note"
+            data-blocked-note
+            className="mb-2 rounded-lg px-3 py-2 text-[13px]"
+            style={{ background: 'var(--sev-high-bg)', border: '1px solid var(--sev-high-border)', color: 'var(--sev-high-text)', overflowWrap: 'anywhere' }}
+          >
+            <AlertTriangle aria-hidden="true" size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: '-2px' }} />
             {isDecoyCapture(latest)
-              ? <>The site sent our scanner to <strong className="font-mono">{hostOf(latest.final_url) ?? 'another site'}</strong> instead of the phishing page — a common cloaking trick. The screenshot shows the decoy, not the kit, and is not used as takedown evidence.</>
+              ? <><strong>Decoy page captured.</strong> The site sent our scanner to <strong className="font-mono">{hostOf(latest.final_url) ?? 'another site'}</strong> instead of the suspected phishing page (a common cloaking trick). The screenshot shows the decoy, not the kit, and is not used as takedown evidence.</>
               : antiBotMessage(latest.anti_bot_wall)}
-          </p>
+          </div>
         )}
-        <CaptureDetails capture={latest} pageHost={pageHost} detectionHost={detectionHost} />
+        <CaptureDetails capture={latest} detectionHost={detectionHost} />
       </>
     );
   }

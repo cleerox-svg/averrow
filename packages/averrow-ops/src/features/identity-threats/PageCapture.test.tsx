@@ -58,8 +58,8 @@ function detail(captures: PageCapture[]): IdentityDetectionDetail {
 let current: IdentityDetectionDetail;
 const detailCalls = () => get.mock.calls.filter((c) => /detections\/t1$/.test(c[0] as string)).length;
 
-async function open(captures: PageCapture[], role = 'analyst') {
-  current = detail(captures);
+async function open(captures: PageCapture[], role = 'analyst', domain?: string) {
+  current = domain ? { ...detail(captures), domain } : detail(captures);
   auth.mockReturnValue({ user: { role } });
   renderWithProviders(
     <DetectionsSection window="7d" filters={{}} filterLabels={[]} onClearFilters={() => undefined} />,
@@ -114,15 +114,20 @@ describe('Page capture group', () => {
 
   it('blocked shows anti-bot message and screenshot', async () => {
     await open([cap({ status: 'blocked', anti_bot_wall: 'cloudflare' })]);
-    expect(screen.getByText(/Page hid behind an anti-bot check \(cloudflare\)/)).toBeInTheDocument();
+    expect(screen.getByText(/anti-bot check \(cloudflare\), so this capture may not show the suspected phishing page/)).toBeInTheDocument();
     expect(await screen.findByAltText('Mobile screenshot of the captured page')).toBeInTheDocument();
   });
 
   it('blocked offsite_redirect explains the decoy and labels the screenshot', async () => {
     await open([cap({ status: 'blocked', anti_bot_wall: 'offsite_redirect', final_url: 'https://www.youtube.com/watch?v=abc', form_action_hosts: [] })]);
-    expect(screen.getByText(/instead of the phishing page/)).toHaveTextContent('www.youtube.com');
+    expect(document.querySelector('[data-blocked-note]')).toHaveTextContent(/Decoy page captured\..*www\.youtube\.com instead of the suspected phishing page/);
     expect(screen.getByText(/not used as takedown evidence/)).toBeInTheDocument();
     expect(screen.queryByText(/anti-bot check/)).toBeNull();
+    expect(screen.getByText('Decoy URL (where the scanner landed)')).toBeInTheDocument();
+    expect(screen.queryByText('Login form posts to')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Download HTML (decoy page)' })).toBeInTheDocument();
+    expect(screen.getByText('Tap to enlarge (decoy page, not the kit)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View decoy page screenshot full screen' })).toBeInTheDocument();
     expect(document.querySelector('[data-redirect-note]')).toBeNull();
     expect(await screen.findByAltText('Mobile screenshot of a decoy page (not the phishing kit)')).toBeInTheDocument();
     await userEvent.click(await screen.findByRole('button', { name: /full screen/i }));
@@ -135,6 +140,30 @@ describe('Page capture group', () => {
     expect(screen.queryByText(/cf_challenge/)).toBeNull();
   });
 
+  it('uses human wording for blank_page, a null wall and an unknown wall', async () => {
+    await open([cap({ status: 'blocked', anti_bot_wall: 'blank_page' })]);
+    expect(screen.getByText(/blank content to our scanner/)).toBeInTheDocument();
+    expect(screen.queryByText(/blank_page/)).toBeNull();
+  });
+
+  it('falls back for a blocked capture with no wall code', async () => {
+    await open([cap({ status: 'blocked', anti_bot_wall: null })]);
+    expect(screen.getByRole('note')).toHaveTextContent('The page hid behind an anti-bot check, so this capture may not show the suspected phishing page.');
+  });
+
+  it('does not warn when the form posts to www of the same site (apex to www)', async () => {
+    await open([cap({ final_url: 'https://www.okta-evil.com/login', form_action_hosts: ['www.okta-evil.com'] })]);
+    expect(document.querySelector('[data-offdomain]')).toBeNull();
+    expect(screen.queryByText(/Credentials would be sent/)).toBeNull();
+  });
+
+  it('does not warn for a shortener detection when the form posts to the landed site', async () => {
+    const c = cap({ final_url: 'https://kit.example.net/login', form_action_hosts: ['kit.example.net'] });
+    await open([c], 'analyst', 'bit.ly');
+    expect(document.querySelector('[data-offdomain]')).toBeNull();
+    expect(document.querySelector('[data-redirect-note]')).toHaveTextContent('kit.example.net');
+  });
+
   it('shows a redirect note only when the final site differs from the detection domain', async () => {
     await open([cap({ final_url: 'https://www.youtube.com/watch?v=abc', form_action_hosts: [] })]);
     expect(document.querySelector('[data-redirect-note]')).toHaveTextContent('Redirected to another site: www.youtube.com');
@@ -145,13 +174,13 @@ describe('Page capture group', () => {
     expect(document.querySelector('[data-redirect-note]')).toBeNull();
   });
 
-  it('checks form hosts against the detection domain, not the redirected final URL', async () => {
+  it('hides the login form row for a decoy capture, even with form hosts present', async () => {
     await open([cap({
       status: 'blocked', anti_bot_wall: 'offsite_redirect', final_url: 'https://www.youtube.com/watch?v=abc',
-      form_action_hosts: ['acme-login.okta-evil.com', 'collector.evil.ru'],
+      form_action_hosts: ['www.youtube.com', 'collector.evil.ru'],
     })]);
-    expect(document.querySelectorAll('[data-offdomain]')).toHaveLength(1);
-    expect(document.querySelector('[data-offdomain]')).toHaveTextContent('collector.evil.ru');
+    expect(screen.queryByText('Login form posts to')).toBeNull();
+    expect(document.querySelector('[data-offdomain]')).toBeNull();
   });
 
   it('failed shows error and Retry capture', async () => {
@@ -173,6 +202,11 @@ describe('Page capture group', () => {
     expect(screen.getByRole('note')).toHaveTextContent('Credentials would be sent to a different site than this page.');
     expect(screen.getByRole('note')).toHaveTextContent('collector.evil.ru');
     expect(document.querySelectorAll('[data-offdomain]')).toHaveLength(1);
+  });
+
+  it('still warns on a real off-site form host after a redirect', async () => {
+    await open([cap({ final_url: 'https://kit.example.net/login', form_action_hosts: ['collector.evil.ru'] })], 'analyst', 'bit.ly');
+    expect(document.querySelector('[data-offdomain]')).toHaveTextContent('collector.evil.ru');
   });
 
   it('collapses redirect chains longer than 2', async () => {
