@@ -66,7 +66,8 @@ describe.skipIf(!hasSqlite())("strategist — no data-derived LIKE over D1's 50-
     );
 
   beforeEach(() => {
-    raw = openDerivedDb(TABLES);
+    // The 0315 partial indexes the agent pins with INDEXED BY.
+    raw = openDerivedDb(TABLES, { indexes: ["idx_threats_no_campaign_ip", "idx_threats_no_campaign_registrar"] });
     enforceD1LikeLimit(raw);
     log = [];
     threatSeq = 0;
@@ -216,7 +217,7 @@ describe.skipIf(!hasSqlite())("strategist — no data-derived LIKE over D1's 50-
           if (prop !== "prepare") return Reflect.get(target, prop, receiver) as unknown;
           return (sql: string) => {
             const stmt = target.prepare(sql);
-            if (!/UPDATE threats SET campaign_id = \?\s+WHERE registrar = \?/.test(sql)) return stmt;
+            if (!/UPDATE threats (?:INDEXED BY \w+ )?SET campaign_id = \?\s+WHERE registrar = \?/.test(sql)) return stmt;
             return {
               ...stmt,
               bind: (...args: unknown[]) => {

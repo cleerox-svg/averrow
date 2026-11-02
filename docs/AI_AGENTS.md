@@ -242,6 +242,8 @@ The Strategist identifies coordinated threat campaigns by correlating shared inf
 
 When clusters are found, Claude Haiku generates descriptive campaign names (skipped under `AI_MODE=rules_only` — the campaign keeps its technical ID name). The former Haiku "coordinated campaigns" check was removed in Phase 1; infrastructure correlation across campaigns is NEXUS's connected-components post-pass. New campaigns are created in the `campaigns` table, and threats are linked via `campaign_id`.
 
+**D1 reads (migration 0315):** the "active, no campaign" lookups (IP GROUP BY, 7-day registrar GROUP BY, per-registrar `campaign_id` UPDATE, fallback distinct counts) pin the partial indexes `idx_threats_no_campaign_ip` / `idx_threats_no_campaign_registrar` with `INDEXED BY` via `withIndexHintFallback` — unpinned they planned via `idx_threats_campaign` and walked ~1.2M rows each. Keep each query's WHERE containing the index's partial terms verbatim. `campaigns.brand_count` / `provider_count` are recomputed for the campaigns the run created or grew; every campaign is recomputed once per UTC day by the first run that reaches the tail (KV day stamp `strategist:campaign_counts_full:<date>`, normally the 00:10 run), because analyst's geo-campaign links and later brand/provider enrichment change untouched campaigns' inputs. Between full refreshes the stored counts of untouched campaigns can lag up to a day; the campaign detail view computes live counts.
+
 **Inputs:** Uncampaigned active threats with shared infrastructure indicators
 **Outputs:** New/updated `campaigns` records; linked threats; `agent_outputs` entries
 
