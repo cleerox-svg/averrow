@@ -505,12 +505,18 @@ export function resolveBrandTarget(brand: BrandTargetInput): ResolvedTarget | nu
 // ── Response caching ──────────────────────────────────────────────────────────
 
 /**
- * Response TTLs (seconds). Navigator refresh-warms ahead of expiry: a warm
- * recomputes once the remaining TTL < min(1800, ttl/2) (lib/cache-refresh.ts
- * refreshMarginSeconds). nodes/stats/heatmap are 1800s so the 10-min Phase A
- * warm recomputes every OTHER tick (age 1200s) and the 15-min A2 warm once a
- * tick (age 900s) — neither lets the key lapse. At 900s the relative margin
- * (450s) would have made every Phase A warm a recompute.
+ * Response TTLs (seconds) for the 24h / 7d periods. 30d / 90d nodes, arcs,
+ * stats and heatmap use OBSERVATORY_LONG_PERIOD_TTL_S instead — always read
+ * a period-aware TTL through `observatoryTtl(kind, period)`.
+ *
+ * Navigator refresh-warms ahead of expiry: a warm recomputes once the key's
+ * age ≥ refreshAfterSeconds(ttl) = ttl − min(1800, ttl/2) − min(60, ttl/8)
+ * (lib/cache-refresh.ts). nodes/stats/heatmap are 1800s (threshold 840s) so
+ * the 10-min Phase A warm recomputes every OTHER tick (age 1200s) and the
+ * 15-min A2 warm once a tick (age 900s) — neither lets the key lapse. At 900s
+ * the relative margin (450s) would have made every Phase A warm a recompute.
+ * `arcsFallback` is the short TTL of a degraded raw-threats arcs result and
+ * applies to every period.
  */
 export const OBSERVATORY_TTL_S = {
   nodes: 1800,
@@ -522,6 +528,25 @@ export const OBSERVATORY_TTL_S = {
   heatmap: 1800,
   operations: 900,
 } as const;
+
+/**
+ * TTL (4h) for the 30d / 90d nodes, arcs, stats and heatmap keys. A 30- or
+ * 90-day aggregate barely moves in 4h, and at 1800s the 15-min A2 warm
+ * recomputed 30d nodes on every tick (96/day, ~33M D1 rows/day).
+ * refreshAfterSeconds(14400) = 14400 − 1800 − 60 = 12540s, so the A2 warm
+ * (every 900s) serves the key until age 12600s and recomputes there: one
+ * recompute per 3.5h ≈ 6.9/day per key. The key still has 1800s left at that
+ * point, i.e. one more A2 slot (age 13500s) before it could lapse.
+ */
+export const OBSERVATORY_LONG_PERIOD_TTL_S = 14400;
+
+/** Endpoints whose cache TTL depends on the period. */
+export type ObservatoryPeriodTtlKind = "nodes" | "arcs" | "stats" | "heatmap";
+
+/** Cache TTL (s) for an Observatory endpoint + period: 4h for 30d / 90d, else OBSERVATORY_TTL_S. */
+export function observatoryTtl(kind: ObservatoryPeriodTtlKind, period: ObservatoryPeriod): number {
+  return period === "30d" || period === "90d" ? OBSERVATORY_LONG_PERIOD_TTL_S : OBSERVATORY_TTL_S[kind];
+}
 
 // ── GET /api/observatory/nodes ─────────────────────────────────────────────────
 // Returns threat hotspot clusters for ScatterplotLayer.
@@ -569,11 +594,14 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
   const cubeFilter = buildObservatoryCubeFilter(filters, { brandColumn: false });
 
   try {
-    // KV cache, 30 min (refresh-warmed ahead of expiry). The geo cube's current + previous hour are rebuilt
-    // by Navigator every 5 min; the 6-hourly cube_healer reconciles older
-    // hours, so a 15-min-old 7-day aggregate is visually indistinguishable.
+    // KV cache, 30 min for 24h/7d, 4h for 30d/90d (observatoryTtl), refresh-
+    // warmed ahead of expiry. The geo cube's current + previous hour are
+    // rebuilt by Navigator every 5 min; the 6-hourly cube_healer reconciles
+    // older hours, so a 15-min-old 7-day aggregate is visually
+    // indistinguishable.
+    const ttl = observatoryTtl("nodes", period);
     const cacheKey = `observatory_nodes:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}${observatoryFilterCacheSegment(filters)}`;
-    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.nodes);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, ttl);
     if (cached) {
       // Cache hit — record zero D1 reads so attribution still shows
       // request volume.
@@ -582,13 +610,13 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
     }
 
     const tally = newTally();
-    const rows = await session.prepare(NODES_SQL(sourceFilter.sql + cubeFilter.sql))
-      .bind(windowStart, ...sourceFilter.params, ...cubeFilter.params, limit)
-      .all<NodeRow>();
+    const rows = await session.prepare(NODES_BASE_SQL(sourceFilter.sql + cubeFilter.sql))
+      .bind(windowStart, ...sourceFilter.params, ...cubeFilter.params)
+      .all<NodeBaseRow>();
     addToTally(tally, rows.meta);
 
-    const data = { success: true, data: (rows.results ?? []).map(shapeNode) };
-    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.nodes);
+    const data = { success: true, data: foldNodeCells(rows.results ?? [], limit).map(shapeNode) };
+    await writeRefreshableCache(env.CACHE, cacheKey, data, ttl);
     recordD1Reads(env, "observatory_nodes", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -596,64 +624,143 @@ export async function handleObservatoryNodes(request: Request, env: Env): Promis
   }
 }
 
-interface NodeRow {
-  lat: number; lng: number; threat_count: number;
+export interface NodeRow {
+  lat: number | null; lng: number | null; threat_count: number;
   critical: number; high: number; medium: number; low: number;
   country_code: string | null; top_threat_type: string | null;
 }
 
+/** One base-aggregation row: a 0.1° cell × country × type × lowered severity. */
+export interface NodeBaseRow {
+  lat: number | null;
+  lng: number | null;
+  country_code: string | null;
+  threat_type: string | null;
+  severity: string | null;
+  n: number | null;
+}
+
 /**
- * Nodes query. `g` is referenced three times, so SQLite (≥3.35) materialises
- * it once — the cube window is scanned a single time. Binds: window start,
- * source params, limit.
+ * Nodes base aggregation: the cube window grouped to 0.1° cell × country ×
+ * threat type × lowered severity. Binds: window start, source / cube filter
+ * params (no limit — `foldNodeCells` applies it after ordering).
+ *
+ * The per-cell fold (severity sums, top country, top type, ordering, LIMIT)
+ * used to run in SQL as cells / cc / tt CTE stages over a materialised `g`.
+ * D1 counts reads of those temp structures (g re-scanned 3×, two ROW_NUMBER
+ * window passes, automatic indexes for the LEFT JOINs): 346K rows_read for a
+ * 30d request whose base aggregation alone reads ~151K. The fold is a few
+ * thousand Map operations in the Worker.
  */
-export function NODES_SQL(sourceSql: string): string {
+export function NODES_BASE_SQL(sourceSql: string): string {
   return `
-      WITH g AS (
-        SELECT
-          ROUND(lat_bucket, 1) AS lat,
-          ROUND(lng_bucket, 1) AS lng,
-          country_code,
-          threat_type,
-          LOWER(severity) AS severity,
-          SUM(threat_count) AS n
-        FROM threat_cube_geo
-        WHERE hour_bucket >= ?${sourceSql}
-        GROUP BY 1, 2, 3, 4, 5
-      ),
-      cells AS (
-        SELECT
-          lat, lng,
-          SUM(n) AS threat_count,
-          ${severitySumsSql("severity", "n")}
-        FROM g
-        GROUP BY lat, lng
-        ORDER BY threat_count DESC, lat, lng
-        LIMIT ?
-      ),
-      cc AS (
-        SELECT lat, lng, country_code,
-          ROW_NUMBER() OVER (PARTITION BY lat, lng ORDER BY SUM(n) DESC, country_code) AS rn
-        FROM g
-        WHERE country_code != 'XX'
-        GROUP BY lat, lng, country_code
-      ),
-      tt AS (
-        SELECT lat, lng, threat_type,
-          ROW_NUMBER() OVER (PARTITION BY lat, lng ORDER BY SUM(n) DESC, threat_type) AS rn
-        FROM g
-        GROUP BY lat, lng, threat_type
-      )
       SELECT
-        c.lat, c.lng, c.threat_count,
-        c.critical, c.high, c.medium, c.low,
-        cc.country_code,
-        tt.threat_type AS top_threat_type
-      FROM cells c
-      LEFT JOIN cc ON cc.lat = c.lat AND cc.lng = c.lng AND cc.rn = 1
-      LEFT JOIN tt ON tt.lat = c.lat AND tt.lng = c.lng AND tt.rn = 1
-      ORDER BY c.threat_count DESC, c.lat, c.lng
+        ROUND(lat_bucket, 1) AS lat,
+        ROUND(lng_bucket, 1) AS lng,
+        country_code,
+        threat_type,
+        LOWER(severity) AS severity,
+        SUM(threat_count) AS n
+      FROM threat_cube_geo
+      WHERE hour_bucket >= ?${sourceSql}
+      GROUP BY 1, 2, 3, 4, 5
     `;
+}
+
+/** SQLite ascending order for a nullable number / string: NULL first. */
+function compareAscNullsFirst<T extends number | string>(a: T | null, b: T | null): number {
+  if (a === null) return b === null ? 0 : -1;
+  if (b === null) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Top key by summed count; ties break ascending (SQLite BINARY order, NULL
+ * first — what `ORDER BY SUM(n) DESC, key` with ROW_NUMBER picked).
+ */
+function topKey(sums: Map<string | null, number>): string | null {
+  let best: string | null = null;
+  let bestN = -Infinity;
+  let found = false;
+  for (const [key, n] of sums) {
+    if (!found || n > bestN || (n === bestN && compareAscNullsFirst(key, best) < 0)) {
+      best = key;
+      bestN = n;
+      found = true;
+    }
+  }
+  return best;
+}
+
+interface CellAcc {
+  lat: number | null;
+  lng: number | null;
+  threat_count: number;
+  critical: number; high: number; medium: number; low: number;
+  countries: Map<string | null, number>;
+  types: Map<string | null, number>;
+}
+
+/**
+ * Fold base rows into /nodes cells, exactly as the former SQL did:
+ *   - threat_count = SUM(n); critical/high/medium/low = SUM(n) for that
+ *     (already-lowered) severity, other severities count only in the total;
+ *   - country_code = highest-sum country, ties alphabetical; the 'XX'
+ *     sentinel (case-sensitive, like `!= 'XX'`) and NULL never qualify, so an
+ *     all-XX cell → null;
+ *   - top_threat_type = highest-sum type, ties alphabetical with NULL first
+ *     (SQLite's ascending NULL order);
+ *   - a NULL lat/lng cell never matched the old `=` LEFT JOINs, so it gets
+ *     null country / type (the cube's lat/lng are NOT NULL, so this is moot);
+ *   - ordered threat_count DESC, lat, lng (NULL first), then `limit`.
+ * `n` is NOT NULL in practice (threat_count NOT NULL); a NULL counts as 0.
+ */
+export function foldNodeCells(rows: readonly NodeBaseRow[], limit: number): NodeRow[] {
+  const cells = new Map<string, CellAcc>();
+  for (const r of rows) {
+    const key = `${r.lat}|${r.lng}`;
+    let c = cells.get(key);
+    if (!c) {
+      c = {
+        lat: r.lat, lng: r.lng, threat_count: 0,
+        critical: 0, high: 0, medium: 0, low: 0,
+        countries: new Map(), types: new Map(),
+      };
+      cells.set(key, c);
+    }
+    const n = r.n ?? 0;
+    c.threat_count += n;
+    switch (r.severity) {
+      case "critical": c.critical += n; break;
+      case "high": c.high += n; break;
+      case "medium": c.medium += n; break;
+      case "low": c.low += n; break;
+    }
+    if (r.country_code !== null && r.country_code !== "XX") {
+      c.countries.set(r.country_code, (c.countries.get(r.country_code) ?? 0) + n);
+    }
+    c.types.set(r.threat_type, (c.types.get(r.threat_type) ?? 0) + n);
+  }
+
+  const ordered = [...cells.values()].sort((a, b) =>
+    b.threat_count - a.threat_count
+    || compareAscNullsFirst(a.lat, b.lat)
+    || compareAscNullsFirst(a.lng, b.lng));
+
+  return ordered.slice(0, Math.max(0, limit)).map((c) => {
+    const joinable = c.lat !== null && c.lng !== null;
+    return {
+      lat: c.lat,
+      lng: c.lng,
+      threat_count: c.threat_count,
+      critical: c.critical,
+      high: c.high,
+      medium: c.medium,
+      low: c.low,
+      country_code: joinable ? topKey(c.countries) : null,
+      top_threat_type: joinable ? topKey(c.types) : null,
+    };
+  });
 }
 
 function shapeNode(r: NodeRow) {
@@ -796,7 +903,7 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
 
   try {
     const cacheKey = `observatory_arcs:${period}:${sourceFeedCacheSegment(source.feed)}${observatoryFilterCacheSegment(filters)}`;
-    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.arcs);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, observatoryTtl("arcs", period));
     if (cached) {
       recordD1Reads(env, "observatory_arcs", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -835,7 +942,9 @@ export async function handleObservatoryArcs(request: Request, env: Env): Promise
     // staleness. Navigator's refresh-warm rewrites the unfiltered 7d/24h/30d
     // keys ahead of expiry (CACHE_REFRESH_MARGIN_S), so the landing page no
     // longer hits the cold gap when the 2h TTL lapses between warms.
-    let cacheTtlSeconds: number = OBSERVATORY_TTL_S.arcs;
+    // 30d / 90d use 4h (observatoryTtl, 2026-11). A fallback result keeps
+    // the short arcsFallback TTL for every period.
+    let cacheTtlSeconds: number = observatoryTtl("arcs", period);
     let usedFallback = false;
 
     // Fallback only for the fully UNFILTERED window: a filter that matches
@@ -1166,9 +1275,10 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
   const filterSegment = observatoryFilterCacheSegment(filters);
 
   try {
-    // KV cache, 30 min, refresh-warmed (stats move only when feeds/cubes move).
+    // KV cache, 30 min for 24h/7d, 4h for 30d/90d (observatoryTtl),
+    // refresh-warmed (stats move only when feeds/cubes move).
     const cacheKey = `observatory_stats:${period}:${sourceFeedCacheSegment(source.feed)}${filterSegment}`;
-    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.stats);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, observatoryTtl("stats", period));
     if (cached) {
       recordD1Reads(env, "observatory_stats", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -1251,7 +1361,7 @@ export async function handleObservatoryStats(request: Request, env: Env): Promis
       },
     };
 
-    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.stats);
+    await writeRefreshableCache(env.CACHE, cacheKey, data, observatoryTtl("stats", period));
     recordD1Reads(env, "observatory_stats", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
@@ -1291,7 +1401,7 @@ export async function handleObservatoryHeatmap(request: Request, env: Env): Prom
     // Key built from the CANONICAL period, source segment and clamped limit
     // so out-of-range params can't amplify cache misses.
     const cacheKey = `observatory_heatmap:${period}:${sourceFeedCacheSegment(source.feed)}:${limit}`;
-    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, OBSERVATORY_TTL_S.heatmap);
+    const cached = await readRefreshableCache(request, env.CACHE, cacheKey, observatoryTtl("heatmap", period));
     if (cached) {
       recordD1Reads(env, "observatory_heatmap", newTally());
       return attachBookmark(json(JSON.parse(cached), 200, origin), session);
@@ -1304,7 +1414,7 @@ export async function handleObservatoryHeatmap(request: Request, env: Env): Prom
     addToTally(tally, rows.meta);
 
     const data = { success: true, data: rows.results ?? [] };
-    await writeRefreshableCache(env.CACHE, cacheKey, data, OBSERVATORY_TTL_S.heatmap);
+    await writeRefreshableCache(env.CACHE, cacheKey, data, observatoryTtl("heatmap", period));
     recordD1Reads(env, "observatory_heatmap", tally);
     return attachBookmark(json(data, 200, origin), session);
   } catch (err) {
