@@ -9,7 +9,7 @@ import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
-import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
+import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, hourlyWindowStart, toHourLabel, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import {
@@ -258,18 +258,22 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
 
   // AE SQL API: blob1 is the endpoint label (set by recordD1Reads),
   // double1 = rowsRead, double2 = rowsWritten, double3 = queries.
-  // Aggregate over the past 24h, top 20 endpoints by rows_read.
+  // Aggregate over the past 24h, top 40 endpoints by rows_read (raised from
+  // 20 when the per-job `agent:` / `cron:` / `workflow:` labels landed —
+  // see lib/d1-meter.ts). Every aggregate is weighted by _sample_interval:
+  // AE down-samples high-volume datasets, and a bare SUM/COUNT under-counts
+  // once it does.
   const sql = `
     SELECT
       blob1 AS endpoint,
-      SUM(double1) AS total_rows_read,
-      SUM(double3) AS total_queries,
-      COUNT() AS request_count
+      SUM(_sample_interval * double1) AS total_rows_read,
+      SUM(_sample_interval * double3) AS total_queries,
+      SUM(_sample_interval) AS request_count
     FROM trust_radar_d1_reads
     WHERE timestamp > NOW() - INTERVAL '1' DAY
     GROUP BY blob1
     ORDER BY total_rows_read DESC
-    LIMIT 20
+    LIMIT 40
   `;
 
   try {
@@ -296,23 +300,26 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
     const json = (await res.json()) as {
       data?: Array<{
         endpoint: string;
-        total_rows_read: number;
-        total_queries: number;
-        request_count: number;
+        total_rows_read: number | string;
+        total_queries: number | string;
+        request_count: number | string;
       }>;
     };
 
     const rows = json.data ?? [];
     return {
-      by_endpoint: rows.map((r) => ({
-        endpoint: r.endpoint,
-        total_rows_read: r.total_rows_read,
-        total_queries: r.total_queries,
-        request_count: r.request_count,
-        avg_rows_per_request: r.request_count > 0
-          ? Math.round(r.total_rows_read / r.request_count)
-          : 0,
-      })),
+      by_endpoint: rows.map((r) => {
+        // AE SQL can serialise sums as strings — coerce defensively.
+        const read = Number(r.total_rows_read) || 0;
+        const reqs = Number(r.request_count) || 0;
+        return {
+          endpoint: r.endpoint,
+          total_rows_read: read,
+          total_queries: Number(r.total_queries) || 0,
+          request_count: reqs,
+          avg_rows_per_request: reqs > 0 ? Math.round(read / reqs) : 0,
+        };
+      }),
       setup_required: false,
     };
   } catch (err) {
@@ -321,6 +328,98 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
       setup_required: false,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+// ─── Hourly per-job D1 attribution (AE) ─────────────────────────────
+// Same dataset as fetchD1EndpointAttribution, bucketed by UTC hour and
+// restricted to the per-job labels written by lib/d1-meter.ts
+// (`agent:` / `cron:` / `workflow:`, incl. `:bg` tails), top
+// D1_ATTRIBUTION_HOURLY_TOP per hour by rows_read. Covers exactly the same
+// whole-hour buckets as `d1_hourly` (hourlyWindowStart) with the same
+// `YYYY-MM-DDTHH:00:00Z` labels (toHourLabel), so the two join on `hour`.
+// The meter layers are exclusive, so these rows are disjoint: they can be
+// summed and compared against that hour's `d1_hourly.rows_read` — the
+// remainder is unmetered traffic (HTTP handlers, the GeoIP import, …).
+
+export const D1_ATTRIBUTION_HOURLY_TOP = 10;
+
+export interface D1HourlyAttributionRow {
+  hour: string;
+  endpoints: Array<{ endpoint: string; rows_read: number; rows_written: number; queries: number; points: number }>;
+}
+
+export async function fetchD1HourlyAttribution(
+  env: Env,
+  hoursBack: number,
+  now: Date = new Date(),
+): Promise<{ hours: D1HourlyAttributionRow[]; setup_required: boolean; error?: string }> {
+  const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
+  const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
+  if (!token || !accountId) return { hours: [], setup_required: true };
+
+  // The window start is derived from a Date we compute (never from request
+  // input) and interpolated into AE SQL, which has no bind parameters.
+  const start = hourlyWindowStart(hoursBack, now).toISOString().slice(0, 19).replace("T", " ");
+  // ORDER BY hour DESC so that if LIMIT ever truncates, the oldest hours go,
+  // not the newest.
+  const sql = `
+    SELECT
+      toStartOfInterval(timestamp, INTERVAL '1' HOUR) AS hour,
+      blob1 AS endpoint,
+      SUM(_sample_interval * double1) AS rows_read,
+      SUM(_sample_interval * double2) AS rows_written,
+      SUM(_sample_interval * double3) AS queries,
+      SUM(_sample_interval) AS points
+    FROM trust_radar_d1_reads
+    WHERE timestamp >= toDateTime('${start}')
+      AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:'))
+    GROUP BY hour, endpoint
+    ORDER BY hour DESC, rows_read DESC
+    LIMIT 5000
+  `;
+
+  try {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/analytics_engine/sql`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/plain" },
+        body: sql,
+      },
+    );
+    if (!res.ok) return { hours: [], setup_required: false, error: `AE SQL HTTP ${res.status}` };
+    const json = (await res.json()) as {
+      data?: Array<{
+        hour: string;
+        endpoint: string;
+        rows_read: number | string;
+        rows_written: number | string;
+        queries: number | string;
+        points: number | string;
+      }>;
+    };
+    const byHour = new Map<string, D1HourlyAttributionRow>();
+    for (const r of json.data ?? []) {
+      const hour = toHourLabel(String(r.hour));
+      const bucket = byHour.get(hour) ?? { hour, endpoints: [] };
+      bucket.endpoints.push({
+        endpoint: r.endpoint,
+        rows_read: Number(r.rows_read) || 0,
+        rows_written: Number(r.rows_written) || 0,
+        queries: Number(r.queries) || 0,
+        points: Number(r.points) || 0,
+      });
+      byHour.set(hour, bucket);
+    }
+    const out = Array.from(byHour.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    for (const h of out) {
+      h.endpoints.sort((a, b) => b.rows_read - a.rows_read);
+      h.endpoints = h.endpoints.slice(0, D1_ATTRIBUTION_HOURLY_TOP);
+    }
+    return { hours: out, setup_required: false };
+  } catch (err) {
+    return { hours: [], setup_required: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -1922,6 +2021,12 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // query param on the endpoint controls the window — falls back to
     // 12h when missing.
     const d1RecentP = fetchRecentWindowMetrics(env, hoursBack);
+    // Per-hour account-wide rows read/written (unsampled, database-level)
+    // + the matching per-job AE breakdown — the pair that attributes a
+    // spike hour to a job. Window = `hours`, capped at 48.
+    const hourlyWindow = clampHourlyWindow(hoursBack);
+    const d1HourlyP = fetchD1HourlyMetrics(env, hourlyWindow);
+    const d1HourlyAttributionP = fetchD1HourlyAttribution(env, hourlyWindow);
 
     // ─── 9. Module entitlements (v3 Phase A) ────────────────────────
     // Per-module count of orgs in each status. With 7 modules and a
@@ -1959,6 +2064,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       agentMesh, workflowAgentMesh, stalled, backlog,
       aiSpend, aiLedgerLast, aiCallHealth, cronHealth, totals, d1Metrics, d1Attribution,
       d1BudgetState, d1TopQueries, d1TopWriteQueries, d1BillingCycle, d1Recent,
+      d1Hourly, d1HourlyAttribution,
       cachedCountStats,
       moduleEntitlements,
       alertsByTier,
@@ -1976,6 +2082,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
       agentMeshP, workflowAgentMeshP, stalledP, backlogP,
       aiSpendP, aiLedgerLastP, aiCallHealthP, cronHealthP, totalsP, d1MetricsP, d1AttributionP,
       d1BudgetStateP, d1TopQueriesP, d1TopWriteQueriesP, d1BillingCycleP, d1RecentP,
+      d1HourlyP, d1HourlyAttributionP,
       getCachedCountStats(env),
       moduleEntitlementsP,
       alertsByTierP,
@@ -2308,7 +2415,13 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // paused_count=null + agent_mesh.paused_error. No field removed.
           // 15: additive `d1_top_queries_note` (top-N per-query numbers are
           // sampled estimates). No field removed.
-          endpoint_version: 15,
+          // 16: additive `d1_hourly` / `d1_hourly_error` (per-UTC-hour
+          // account-wide rows read/written, summed across DBs + per-DB
+          // split, window = `hours` capped at 48) and `d1_attribution_hourly`
+          // (per-hour top AE `agent:` / `cron:` / `workflow:` endpoints from
+          // lib/d1-meter.ts). `d1_attribution_24h` now weights by AE
+          // `_sample_interval` and returns top 40 (was 20). No field removed.
+          endpoint_version: 16,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2625,6 +2738,19 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // Reads from the trust_radar_d1_reads dataset that opt-in handlers
         // populate via lib/analytics.ts.
         d1_attribution_24h: d1Attribution,
+
+        // Per-UTC-hour account-wide D1 rows read/written (unsampled
+        // d1AnalyticsAdaptiveGroups, summed across every database, with a
+        // per_database split), oldest hour first, current partial hour
+        // included. Window = the `hours` param, capped at 48.
+        d1_hourly: d1Hourly.hours,
+        d1_hourly_error: d1Hourly.error ?? (d1Hourly.setup_required ? "CF_API_TOKEN / CF_ACCOUNT_ID not set" : null),
+
+        // Same hours (same labels, same buckets), top per-job AE endpoints
+        // (lib/d1-meter.ts): which `agent:` / `cron:` / `workflow:` owns each
+        // hour's reads. Meter layers are exclusive, so the rows are disjoint
+        // and summable; `cron:` / `cron:…:bg` is non-agent work only.
+        d1_attribution_hourly: d1HourlyAttribution,
 
         // Soft-cap state — proves the Navigator daily budget cap is
         // actually firing (or not). threshold_state goes ok → warn → skip

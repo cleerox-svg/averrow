@@ -5,6 +5,7 @@ import { cubeHealerAgent } from '../agents/cube-healer';
 import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platform-templates';
 import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
+import { withD1Meter } from '../lib/d1-meter';
 
 interface CronJobResult {
   job: string;
@@ -13,7 +14,34 @@ interface CronJobResult {
   details?: string;
 }
 
+/**
+ * Scheduled entry point. Meters the invocation's D1 reads/writes
+ * (lib/d1-meter.ts) and records them to Analytics Engine as:
+ *
+ *   `cron:<cron expression>`     — non-agent work up to runScheduled
+ *                                  returning: inline orchestrator steps,
+ *                                  handler-dispatched writers (daily_briefing,
+ *                                  daily_snapshots), cube builds, feeds;
+ *   `cron:<cron expression>:bg`  — non-agent work issued after that through
+ *                                  ctx.waitUntil, recorded once it settles.
+ *
+ * Layers are EXCLUSIVE: every agent dispatched inside (awaited or via
+ * waitUntil) runs through executeAgent, which re-meters from the raw
+ * bindings and records its own `agent:<agent_id>` row — those reads are NOT
+ * in the cron rows. `cron:` / `cron:…:bg` / `agent:` / `workflow:` rows are
+ * disjoint and sum to ≈ the total metered reads. The inline/`:bg` split is
+ * by time. Metering is skipped when AE is unbound.
+ */
 export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  await withD1Meter(
+    env,
+    `cron:${event.cron}`,
+    (meteredEnv, trackedCtx) => runScheduled(event, meteredEnv, trackedCtx ?? ctx),
+    ctx,
+  );
+}
+
+async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
   // ─── Navigator: lightweight sub-hour agent (*/5 * * * *, 30s CPU ceiling) ───
   // Runs on its own cron — independent of Flight Control's dispatch. FC only
   // observes Navigator's health, it does not manage when or how it runs.

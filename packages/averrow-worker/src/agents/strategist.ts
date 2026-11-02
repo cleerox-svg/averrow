@@ -11,6 +11,7 @@ import { generateCampaignName, checkCostGuard } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
 import { evaluateCampaignSignificance } from "../lib/campaign-significance";
 import { createBrandAlertsForCampaign } from "../lib/alert-fanout";
+import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 
 /**
  * Per-run wall-clock budget guard.
@@ -110,6 +111,58 @@ export async function loadCampaignIdsByKey(
   return out;
 }
 
+/**
+ * Recompute `campaigns.brand_count` / `provider_count`.
+ *
+ * `ids` = the campaigns this run created or grew (seeks campaigns by PK and
+ * each campaign's threats via idx_threats_campaign). `"all"` = every
+ * campaign (~6.2K campaigns, ~0.7M threat rows read in prod) — still needed
+ * once a day because other writers move the inputs of untouched campaigns:
+ * analyst links threats to geopolitical campaigns (`campaign_id = COALESCE`)
+ * and enrichment later sets target_brand_id / hosting_provider_id on
+ * threats that are already in a campaign.
+ */
+export async function refreshCampaignCounts(db: D1Database, ids: Iterable<string> | "all"): Promise<void> {
+  const SET = `UPDATE campaigns SET
+        brand_count = COALESCE(
+          (SELECT COUNT(DISTINCT target_brand_id) FROM threats WHERE campaign_id = campaigns.id AND target_brand_id IS NOT NULL), 0
+        ),
+        provider_count = COALESCE(
+          (SELECT COUNT(DISTINCT hosting_provider_id) FROM threats WHERE campaign_id = campaigns.id AND hosting_provider_id IS NOT NULL), 0
+        )`;
+  if (ids === "all") {
+    await db.prepare(SET).run();
+    return;
+  }
+  const list = [...new Set(ids)];
+  // ≤30 per run in practice (20 IP + 10 registrar clusters); chunked under
+  // D1's 100-bind cap regardless.
+  for (let i = 0; i < list.length; i += 90) {
+    const chunk = list.slice(i, i + 90);
+    await db.prepare(`${SET} WHERE id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk).run();
+  }
+}
+
+/** KV stamp: the full brand/provider count refresh ran on this UTC day. */
+export function fullCountRefreshKey(now: Date): string {
+  return `strategist:campaign_counts_full:${now.toISOString().slice(0, 10)}`;
+}
+
+/**
+ * True when no run has done the full count refresh yet on this UTC day.
+ * Day-stamp gate, no hour or minute gate (CLAUDE.md cron-audit rule): the
+ * 00:10 UTC run normally does it, and if that run is killed or orphaned the
+ * next run that reaches the tail picks it up. A KV read error fails open to
+ * the full refresh (the pre-0315 every-run behaviour).
+ */
+export async function shouldRunFullCountRefresh(kv: KVNamespace, now: Date): Promise<boolean> {
+  try {
+    return (await kv.get(fullCountRefreshKey(now))) === null;
+  } catch {
+    return true;
+  }
+}
+
 export const strategistAgent: AgentModule = {
   name: "strategist",
   displayName: "Strategist",
@@ -133,6 +186,8 @@ export const strategistAgent: AgentModule = {
     { kind: "d1_table", name: "campaigns" },
     { kind: "d1_table", name: "hosting_providers" },
     { kind: "d1_table", name: "threats" },
+    // Day stamp for the once-a-day full campaign count refresh.
+    { kind: "kv", namespace: "CACHE" },
   ],
   writes: [
     { kind: "d1_table", name: "campaigns" },
@@ -170,19 +225,31 @@ export const strategistAgent: AgentModule = {
 
     // ─── Strategy 1: IP-based clustering ────────────────────────
     // Find IPs hosting 3+ active threats (likely infrastructure)
-    const ipClusters = await env.DB.prepare(
+    //
+    // INDEXED BY idx_threats_no_campaign_ip (migration 0315): a covering,
+    // ip-ordered scan of only the active, campaign-less, has-IP rows. Unpinned,
+    // the planner took idx_threats_campaign (campaign_id=?) — stat1 can't see
+    // that NULL is ~80% of threats — and read ~2.0M rows. The WHERE must keep
+    // the index's partial terms verbatim; if it drifts (or the index is
+    // missing) withIndexHintFallback re-runs the query unhinted.
+    const ipClusters = await withIndexHintFallback(
       `SELECT ip_address, COUNT(*) as threat_count,
               GROUP_CONCAT(DISTINCT source_feed) as sources,
               GROUP_CONCAT(DISTINCT threat_type) as types
-       FROM threats
+       FROM threats INDEXED BY idx_threats_no_campaign_ip
        WHERE ip_address IS NOT NULL AND status = 'active' AND campaign_id IS NULL
        GROUP BY ip_address
        HAVING COUNT(*) >= 3
-       ORDER BY threat_count DESC LIMIT 20`
-    ).all<{
-      ip_address: string; threat_count: number;
-      sources: string; types: string;
-    }>();
+       ORDER BY threat_count DESC LIMIT 20`,
+      (q) => env.DB.prepare(q).all<{
+        ip_address: string; threat_count: number;
+        sources: string; types: string;
+      }>(),
+    );
+
+    // Campaigns created or grown this run — the only ones whose
+    // brand/provider counts need recomputing (see refreshCampaignCounts).
+    const touchedCampaignIds = new Set<string>();
 
     // ── Pre-batch context for all IP clusters ──────────────────────
     // Fetch domains, brands, and providers for all cluster IPs in 3 queries
@@ -430,6 +497,7 @@ export const strategistAgent: AgentModule = {
           `UPDATE threats SET campaign_id = ?
            WHERE ip_address = ? AND campaign_id IS NULL AND status = 'active'`
         ).bind(campaignId, cluster.ip_address).run();
+        touchedCampaignIds.add(campaignId);
         clustersOk++;
       } catch (e) {
         clusterErrors.push({ key: `ip:${cluster.ip_address}`, error: e instanceof Error ? e.message : String(e) });
@@ -438,15 +506,19 @@ export const strategistAgent: AgentModule = {
 
     // ─── Strategy 2: Domain-pattern clustering ──────────────────
     // Find domains with similar patterns (same registrar + recent creation)
-    const registrarClusters = await env.DB.prepare(
+    // INDEXED BY idx_threats_no_campaign_registrar (migration 0315): a
+    // covering range seek over the 7-day window of campaign-less rows.
+    // Unpinned it planned via idx_threats_campaign (~1.2M rows read).
+    const registrarClusters = await withIndexHintFallback(
       `SELECT registrar, COUNT(*) as threat_count
-       FROM threats
+       FROM threats INDEXED BY idx_threats_no_campaign_registrar
        WHERE registrar IS NOT NULL AND status = 'active' AND campaign_id IS NULL
          AND created_at >= datetime('now', '-7 days')
        GROUP BY registrar
        HAVING COUNT(*) >= 5
-       ORDER BY threat_count DESC LIMIT 10`
-    ).all<{ registrar: string; threat_count: number }>();
+       ORDER BY threat_count DESC LIMIT 10`,
+      (q) => env.DB.prepare(q).all<{ registrar: string; threat_count: number }>(),
+    );
 
     // ── Pre-batch context for all registrar clusters ───────────────
     const allRegistrars = registrarClusters.results.map(c => c.registrar);
@@ -454,6 +526,11 @@ export const strategistAgent: AgentModule = {
 
     const regDomainsMap = new Map<string, string[]>();
     const regBrandsMap = new Map<string, string[]>();
+    // NX4 brand_count_at_first_detection per registrar: distinct
+    // target_brand_id over the same 7-day active scope. Derived from the
+    // brands context read below instead of a per-registrar COUNT(DISTINCT)
+    // that planned via idx_threats_brand_created (~315K rows each, ≤10/run).
+    const regBrandIdsMap = new Map<string, Set<string>>();
 
     if (allRegistrars.length > 0) {
       const [regDomainsRes, regBrandsRes] = await Promise.all([
@@ -462,12 +539,16 @@ export const strategistAgent: AgentModule = {
            WHERE registrar IN (${regPlaceholders}) AND status = 'active' AND malicious_domain IS NOT NULL
              AND created_at >= datetime('now', '-7 days')`
         ).bind(...allRegistrars).all<{ registrar: string; malicious_domain: string }>(),
+        // LEFT JOIN + target_brand_id so one read yields both the brand
+        // names (non-NULL b.name, as the old inner join gave) and the
+        // distinct brand ids (dangling ids included, as the NX4 COUNT did).
         env.DB.prepare(
-          `SELECT DISTINCT t.registrar, b.name FROM threats t
-           JOIN brands b ON b.id = t.target_brand_id
+          `SELECT DISTINCT t.registrar, t.target_brand_id, b.name FROM threats t
+           LEFT JOIN brands b ON b.id = t.target_brand_id
            WHERE t.registrar IN (${regPlaceholders}) AND t.status = 'active'
+             AND t.target_brand_id IS NOT NULL
              AND t.created_at >= datetime('now', '-7 days')`
-        ).bind(...allRegistrars).all<{ registrar: string; name: string }>(),
+        ).bind(...allRegistrars).all<{ registrar: string; target_brand_id: string; name: string | null }>(),
       ]);
 
       for (const r of regDomainsRes.results) {
@@ -476,8 +557,14 @@ export const strategistAgent: AgentModule = {
         regDomainsMap.set(r.registrar, arr);
       }
       for (const r of regBrandsRes.results) {
+        const ids = regBrandIdsMap.get(r.registrar) ?? new Set<string>();
+        ids.add(r.target_brand_id);
+        regBrandIdsMap.set(r.registrar, ids);
+        if (r.name === null) continue;
+        // Rows are distinct on (registrar, id, name); two brands can share a
+        // name, so dedup to keep the old DISTINCT (registrar, name) list.
         const arr = regBrandsMap.get(r.registrar) ?? [];
-        arr.push(r.name);
+        if (!arr.includes(r.name)) arr.push(r.name);
         regBrandsMap.set(r.registrar, arr);
       }
     }
@@ -535,18 +622,10 @@ export const strategistAgent: AgentModule = {
           }
 
           // NX4: snapshot brand_count_at_first_detection for the
-          // significance rule. Counts distinct brands among threats
-          // sharing this registrar — same scope as the threats-table
-          // assignment immediately below.
-          const regBrandCountRow = await env.DB.prepare(`
-            SELECT COUNT(DISTINCT target_brand_id) AS n
-              FROM threats
-             WHERE registrar = ?
-               AND target_brand_id IS NOT NULL
-               AND status = 'active'
-               AND created_at >= datetime('now', '-7 days')
-          `).bind(cluster.registrar).first<{ n: number }>();
-          const regBrandCountAtFirst = regBrandCountRow?.n ?? 0;
+          // significance rule. Distinct brands among active threats sharing
+          // this registrar in the last 7 days (campaign or not) — from the
+          // pre-batched context read (see regBrandIdsMap).
+          const regBrandCountAtFirst = regBrandIdsMap.get(cluster.registrar)?.size ?? 0;
 
           await env.DB.prepare(
             `INSERT INTO campaigns (id, name, description, threat_count, attack_pattern, status, brand_count_at_first_detection)
@@ -589,11 +668,20 @@ export const strategistAgent: AgentModule = {
         }
 
         // Assign unlinked threats to this campaign (new or existing).
-        await env.DB.prepare(
-          `UPDATE threats SET campaign_id = ?
-           WHERE registrar = ? AND campaign_id IS NULL AND status = 'active'
-             AND created_at >= datetime('now', '-7 days')`
-        ).bind(campaignId, cluster.registrar).run();
+        // INDEXED BY idx_threats_no_campaign_registrar: a 7-day range of the
+        // campaign-less entries, registrar tested on the index entry. The
+        // redundant `registrar IS NOT NULL` spells out the partial-index term
+        // literally rather than relying on `registrar = ?` implying it. Each
+        // assignment removes its rows from the index, so later registrars
+        // read less. Unpinned: idx_threats_campaign, ~1.2M rows per UPDATE.
+        const cid = campaignId;
+        await withIndexHintFallback(
+          `UPDATE threats INDEXED BY idx_threats_no_campaign_registrar SET campaign_id = ?
+           WHERE registrar = ? AND registrar IS NOT NULL AND campaign_id IS NULL AND status = 'active'
+             AND created_at >= datetime('now', '-7 days')`,
+          (q) => env.DB.prepare(q).bind(cid, cluster.registrar).run(),
+        );
+        touchedCampaignIds.add(campaignId);
         clustersOk++;
       } catch (e) {
         clusterErrors.push({ key: `registrar:${cluster.registrar}`, error: e instanceof Error ? e.message : String(e) });
@@ -615,15 +703,20 @@ export const strategistAgent: AgentModule = {
     }
 
     // ─── Update campaign brand/provider counts ──────────────────
-    await env.DB.prepare(`
-      UPDATE campaigns SET
-        brand_count = COALESCE(
-          (SELECT COUNT(DISTINCT target_brand_id) FROM threats WHERE campaign_id = campaigns.id AND target_brand_id IS NOT NULL), 0
-        ),
-        provider_count = COALESCE(
-          (SELECT COUNT(DISTINCT hosting_provider_id) FROM threats WHERE campaign_id = campaigns.id AND hosting_provider_id IS NOT NULL), 0
-        )
-    `).run();
+    // Campaigns touched this run every run; every campaign once per UTC day
+    // (first run to get here — normally 00:10). See refreshCampaignCounts.
+    const now = new Date();
+    const fullCountRefresh = await shouldRunFullCountRefresh(env.CACHE, now);
+    if (fullCountRefresh) {
+      await refreshCampaignCounts(env.DB, "all");
+      try {
+        await env.CACHE.put(fullCountRefreshKey(now), "1", { expirationTtl: 2 * 86_400 });
+      } catch {
+        // Stamp lost → the next run repeats the full refresh; harmless.
+      }
+    } else if (touchedCampaignIds.size > 0) {
+      await refreshCampaignCounts(env.DB, touchedCampaignIds);
+    }
 
     // Mark stale campaigns as dormant
     await env.DB.prepare(`
@@ -751,12 +844,15 @@ export const strategistAgent: AgentModule = {
     // Always produce at least one output for diagnostics
     if (outputs.length === 0) {
       // Count eligible threats for clustering
-      const eligibleIp = await env.DB.prepare(
-        `SELECT COUNT(DISTINCT ip_address) as n FROM threats WHERE ip_address IS NOT NULL AND status = 'active' AND campaign_id IS NULL`
-      ).first<{ n: number }>();
-      const eligibleReg = await env.DB.prepare(
-        `SELECT COUNT(DISTINCT registrar) as n FROM threats WHERE registrar IS NOT NULL AND status = 'active' AND campaign_id IS NULL AND created_at >= datetime('now', '-7 days')`
-      ).first<{ n: number }>();
+      // Pinned to the 0315 partial indexes (covering; see Strategy 1/2).
+      const eligibleIp = await withIndexHintFallback(
+        `SELECT COUNT(DISTINCT ip_address) as n FROM threats INDEXED BY idx_threats_no_campaign_ip WHERE ip_address IS NOT NULL AND status = 'active' AND campaign_id IS NULL`,
+        (q) => env.DB.prepare(q).first<{ n: number }>(),
+      );
+      const eligibleReg = await withIndexHintFallback(
+        `SELECT COUNT(DISTINCT registrar) as n FROM threats INDEXED BY idx_threats_no_campaign_registrar WHERE registrar IS NOT NULL AND status = 'active' AND campaign_id IS NULL AND created_at >= datetime('now', '-7 days')`,
+        (q) => env.DB.prepare(q).first<{ n: number }>(),
+      );
       const totalCampaigns = await env.DB.prepare(
         `SELECT COUNT(*) as n FROM campaigns`
       ).first<{ n: number }>();
@@ -797,6 +893,8 @@ export const strategistAgent: AgentModule = {
         // from "hit the wall-clock guard"; residual clusters roll to next tick.
         budget_truncated: budgetHit,
         clusterErrors: clusterErrors.length,
+        // "all" on the once-a-day full refresh, else campaigns refreshed.
+        campaignCountsRefreshed: fullCountRefresh ? "all" : touchedCampaignIds.size,
       },
       agentOutputs: outputs,
       // Some (not all — that threw above) clusters failed: the run did real

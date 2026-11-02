@@ -772,6 +772,7 @@ export const REPO_MANIFEST: RepoInventory = {
         "cron"
       ],
       "reads": [
+        "CACHE",
         "DB",
         "brands",
         "campaigns",
@@ -783,8 +784,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 815,
-      "last_modified": "2026-11-02T01:16:24.629Z"
+      "loc": 913,
+      "last_modified": "2026-11-02T15:07:41.058Z"
     },
     {
       "name": "trademarkMonitor",

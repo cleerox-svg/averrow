@@ -135,6 +135,12 @@ interface GeoipRefreshEnv {
 }
 
 export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, GeoipRefreshParams> {
+  // Deliberately NOT D1-metered (lib/d1-meter.ts runWithWorkflowMeter, which
+  // every other Workflow uses): a full GeoLite2 import prepares + binds
+  // millions of statements (lib/geoip-import.ts), and the per-statement
+  // proxy allocation would land close to the step CPU limit. Its load is
+  // still visible per database in platform-diagnostics `d1_hourly` (it only
+  // touches GEOIP_DB) and in `geo_ip_refresh_log`.
   async run(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
     const refreshLogId = event.payload.refreshLogId;
     try {

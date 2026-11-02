@@ -10,6 +10,7 @@ import { runInAlertScope, drainAlertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS } from 
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry } from "./d1-retry";
+import { withD1Meter, isExecutionContextLike } from "./d1-meter";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -329,6 +330,48 @@ export async function executeAgent(
   input: Record<string, unknown> = {},
   triggeredBy: string | null = null,
   triggerType: TriggerType = "manual",
+): Promise<ExecuteAgentResult> {
+  // Per-job D1 attribution (lib/d1-meter.ts): the whole run — runner
+  // bookkeeping (agent_configs / approvals / agent_runs writes) plus the
+  // agent's own reads through ctx.env — executes against an env copy whose
+  // D1 bindings (DB, AUDIT_DB, GEOIP_DB, DNS_QUEUE_DB) are metered. The
+  // tally is written to Analytics Engine as `agent:<agent_id>` when the run
+  // settles, on every path (success, failure, circuit-open skip), and
+  // surfaces in platform-diagnostics `d1_attribution_24h` /
+  // `d1_attribution_hourly`. runSyncAgent goes through here, so sync agents
+  // are covered too.
+  //
+  // Exclusive layers: the caller's env may already be metered (cron
+  // invocation, Flight Control dispatching children, a Workflow) — meterEnv
+  // re-wraps the RAW bindings, so this run's reads are counted here only and
+  // not in the caller's row, and a child agent this run dispatches gets its
+  // own row in turn. When the input carries `_executionCtx`, the agent sees
+  // a waitUntil-tracking copy and its post-return tail is recorded as
+  // `agent:<agent_id>:bg`. agent_runs has no details/summary column, so the
+  // tally is not persisted to D1 — AE is the record. No-op when AE is not
+  // bound.
+  const execCtx = isExecutionContextLike(input._executionCtx) ? input._executionCtx : undefined;
+  return withD1Meter(
+    env,
+    `agent:${agentModule.name}`,
+    (meteredEnv, trackedCtx) =>
+      executeAgentMetered(
+        meteredEnv,
+        agentModule,
+        trackedCtx ? { ...input, _executionCtx: trackedCtx } : input,
+        triggeredBy,
+        triggerType,
+      ),
+    execCtx,
+  );
+}
+
+async function executeAgentMetered(
+  env: Env,
+  agentModule: AgentModule,
+  input: Record<string, unknown>,
+  triggeredBy: string | null,
+  triggerType: TriggerType,
 ): Promise<ExecuteAgentResult> {
   const agentId = agentModule.name;
 

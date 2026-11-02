@@ -42,6 +42,7 @@
 
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import type { Env } from '../types';
+import { runWithWorkflowMeter } from '../lib/d1-meter';
 
 interface CartographerMainParams {
   // Reserved for future per-phase parameterization (e.g. skip specific
@@ -50,7 +51,20 @@ interface CartographerMainParams {
 }
 
 export class CartographerMainWorkflow extends WorkflowEntrypoint<Env, CartographerMainParams> {
-  async run(_event: WorkflowEvent<CartographerMainParams>, step: WorkflowStep) {
+  // Per-run D1 attribution → AE `workflow:cartographer_main` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
+  async run(event: WorkflowEvent<CartographerMainParams>, step: WorkflowStep) {
+    return runWithWorkflowMeter(
+      'workflow:cartographer_main',
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(_event: WorkflowEvent<CartographerMainParams>, step: WorkflowStep) {
     // Log workflow start to agent_activity_log so the
     // platform-diagnostics handler's workflow-aware agent_mesh rollup
     // (PR-J) sees this as a fresh dispatch. Matches the nexus workflow

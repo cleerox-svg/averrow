@@ -15,6 +15,7 @@ import {
   runAsnLane,
   retireNonOperationalLaneClusters,
 } from '../lib/nexus-threat-lanes';
+import { runWithWorkflowMeter } from '../lib/d1-meter';
 
 type NexusWorkflowParams = {
   forceRefresh?: boolean;
@@ -40,7 +41,20 @@ export class NexusWorkflow extends WorkflowEntrypoint<Env, NexusWorkflowParams> 
    * 'workflow_dispatch_failed','workflow_cooldown_skip') — add
    * 'workflow_failed' there so it lands in `agent_mesh.per_agent.last_error`.
    */
+  // Per-run D1 attribution → AE `workflow:nexus_run` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
   async run(event: WorkflowEvent<NexusWorkflowParams>, step: WorkflowStep) {
+    return runWithWorkflowMeter(
+      'workflow:nexus_run',
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(event: WorkflowEvent<NexusWorkflowParams>, step: WorkflowStep) {
     try {
       return await this.execute(event, step);
     } catch (err) {

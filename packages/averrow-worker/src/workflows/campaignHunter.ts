@@ -22,6 +22,7 @@ import {
   runHuntAndSummarize,
   type ResolvedBrand,
 } from "../agents/campaign-hunter";
+import { runWithWorkflowMeter } from "../lib/d1-meter";
 
 export type CampaignHunterParams = {
   brandName: string;
@@ -51,7 +52,20 @@ async function logActivity(
 }
 
 export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunterParams> {
+  // Per-run D1 attribution → AE `workflow:campaign_hunter` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
   async run(event: WorkflowEvent<CampaignHunterParams>, step: WorkflowStep) {
+    return runWithWorkflowMeter(
+      "workflow:campaign_hunter",
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(event: WorkflowEvent<CampaignHunterParams>, step: WorkflowStep) {
     const params = event.payload;
     const runId = params.runId ?? crypto.randomUUID();
     const startMs = Date.now();
