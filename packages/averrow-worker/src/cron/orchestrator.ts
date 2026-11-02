@@ -5,8 +5,7 @@ import { cubeHealerAgent } from '../agents/cube-healer';
 import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platform-templates';
 import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
-import { meterEnv, trackWaitUntil } from '../lib/d1-meter';
-import { newTally, recordD1Reads, type D1Tally } from '../lib/analytics';
+import { withD1Meter } from '../lib/d1-meter';
 
 interface CronJobResult {
   job: string;
@@ -16,45 +15,30 @@ interface CronJobResult {
 }
 
 /**
- * Scheduled entry point. Meters every D1 read/write of the invocation
- * (lib/d1-meter.ts) and records it to Analytics Engine as two endpoints:
+ * Scheduled entry point. Meters the invocation's D1 reads/writes
+ * (lib/d1-meter.ts) and records them to Analytics Engine as:
  *
- *   `cron:<cron expression>`     — everything up to runScheduled returning
- *                                  (inline orchestrator steps, handler-
- *                                  dispatched writers such as daily_briefing /
- *                                  daily_snapshots, cube builds, AND the
- *                                  agents it awaits);
- *   `cron:<cron expression>:bg`  — reads issued after that, by work handed to
- *                                  ctx.waitUntil (FC-scaled agents, analyst,
- *                                  …), recorded once that tail settles.
+ *   `cron:<cron expression>`     — non-agent work up to runScheduled
+ *                                  returning: inline orchestrator steps,
+ *                                  handler-dispatched writers (daily_briefing,
+ *                                  daily_snapshots), cube builds, feeds;
+ *   `cron:<cron expression>:bg`  — non-agent work issued after that through
+ *                                  ctx.waitUntil, recorded once it settles.
  *
- * OVERLAP: an agent dispatched inside the invocation is ALSO recorded as its
- * own `agent:<agent_id>` row by executeAgent, so `cron:` rows and `agent:`
- * rows are not additive — the cron rows are the invocation total, the agent
- * rows are a breakdown of part of it. `cron:… − Σ agent:…` for the same
- * window ≈ the non-agent inline work. Metering is skipped when AE is unbound.
+ * Layers are EXCLUSIVE: every agent dispatched inside (awaited or via
+ * waitUntil) runs through executeAgent, which re-meters from the raw
+ * bindings and records its own `agent:<agent_id>` row — those reads are NOT
+ * in the cron rows. `cron:` / `cron:…:bg` / `agent:` / `workflow:` rows are
+ * disjoint and sum to ≈ the total metered reads. The inline/`:bg` split is
+ * by time. Metering is skipped when AE is unbound.
  */
 export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-  if (!env.AE) return runScheduled(event, env, ctx);
-  const tally = newTally();
-  const tracked = trackWaitUntil(ctx);
-  const endpoint = `cron:${event.cron}`;
-  try {
-    await runScheduled(event, meterEnv(env, tally), tracked.ctx);
-  } finally {
-    const inline: D1Tally = { ...tally };
-    recordD1Reads(env, endpoint, inline);
-    ctx.waitUntil(
-      tracked.settled().then(() => {
-        const bg: D1Tally = {
-          rowsRead: tally.rowsRead - inline.rowsRead,
-          rowsWritten: tally.rowsWritten - inline.rowsWritten,
-          queries: tally.queries - inline.queries,
-        };
-        if (bg.queries > 0) recordD1Reads(env, `${endpoint}:bg`, bg);
-      }),
-    );
-  }
+  await withD1Meter(
+    env,
+    `cron:${event.cron}`,
+    (meteredEnv, trackedCtx) => runScheduled(event, meteredEnv, trackedCtx ?? ctx),
+    ctx,
+  );
 }
 
 async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {

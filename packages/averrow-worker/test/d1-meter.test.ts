@@ -17,7 +17,7 @@ import { hasSqlite, openDerivedDb, type SqliteDb } from "./sqlite-d1-harness";
 import { meterD1, meterEnv, trackWaitUntil, runWithWorkflowMeter, withD1Meter } from "../src/lib/d1-meter";
 import { newTally, type D1Tally } from "../src/lib/analytics";
 import { executeAgent, type AgentModule } from "../src/lib/agentRunner";
-import { fetchD1HourlyMetrics, clampHourlyWindow } from "../src/lib/d1-budget";
+import { fetchD1HourlyMetrics, clampHourlyWindow, toHourLabel } from "../src/lib/d1-budget";
 import { fetchD1HourlyAttribution } from "../src/handlers/diagnostics";
 import type { Env } from "../src/types";
 
@@ -159,14 +159,26 @@ describe.skipIf(!hasSqlite())("meterD1 proxy", () => {
     expect(tally).toEqual<D1Tally>({ rowsRead: 4, rowsWritten: 0, queries: 2 });
   });
 
-  it("nested meters both count, and batch still unwraps to the real statement", async () => {
+  it("layers are exclusive: re-metering a metered binding hides the work from the outer tally", async () => {
     const outer = newTally();
     const inner = newTally();
-    const db = meterD1(meterD1(realishD1(seeded()), outer), inner);
-    await db.batch([db.prepare("SELECT * FROM t")]);
+    const outerDb = meterD1(realishD1(seeded()), outer);
+    await outerDb.prepare("SELECT * FROM t WHERE id = 1").all(); // outer's own read
+    const db = meterD1(outerDb, inner);
+    await db.batch([db.prepare("SELECT * FROM t")]); // batch still unwraps to the real statement
     await db.prepare("SELECT * FROM t WHERE id = 1").first();
-    expect(inner).toEqual(outer);
     expect(inner).toEqual<D1Tally>({ rowsRead: 4, rowsWritten: 0, queries: 2 });
+    expect(outer).toEqual<D1Tally>({ rowsRead: 1, rowsWritten: 0, queries: 1 });
+  });
+
+  it("meterEnv over an already-metered env is exclusive too", async () => {
+    const outer = newTally();
+    const inner = newTally();
+    const outerEnv = meterEnv({ DB: realishD1(seeded()) }, outer);
+    const innerEnv = meterEnv(outerEnv, inner);
+    await innerEnv.DB.prepare("SELECT * FROM t").all();
+    expect(inner.rowsRead).toBe(3);
+    expect(outer.queries).toBe(0);
   });
 
   it("withSession() statements and session batch are metered; getBookmark forwards", async () => {
@@ -277,6 +289,115 @@ describe.skipIf(!hasSqlite())("executeAgent D1 attribution", () => {
     expect(seen.env).toBe(env);
   });
 
+  /** Child agent: reads all 3 rows of t. Needs its own approval row. */
+  const child = { name: "analyst", execute: async (ctx: { env: Env }) => {
+    await ctx.env.DB.prepare("SELECT * FROM t").all();
+    return { itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0, output: {} };
+  } } as unknown as AgentModule;
+  const nestedDb = (): SqliteDb => {
+    const raw = agentDb();
+    raw.exec("INSERT INTO agent_approvals (agent_id, state, requested_at) VALUES ('analyst', 'approved', '2026-01-01 00:00:00'), ('flight_control', 'approved', '2026-01-01 00:00:00')");
+    return raw;
+  };
+  /** Parent (FC-style): one own 1-row read, optionally dispatching `child`. */
+  const parent = (mode: "none" | "await" | "waitUntil"): AgentModule => ({
+    name: "flight_control",
+    execute: async (ctx: { env: Env; input: Record<string, unknown> }) => {
+      await ctx.env.DB.prepare("SELECT * FROM t WHERE id = 1").all();
+      if (mode === "await") await executeAgent(ctx.env, child, {}, "test", "scheduled");
+      if (mode === "waitUntil") {
+        (ctx.input._executionCtx as ExecutionContext).waitUntil(executeAgent(ctx.env, child, {}, "test", "scheduled"));
+      }
+      return { itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0, output: {} };
+    },
+  }) as unknown as AgentModule;
+  const pointFor = (ae: ReturnType<typeof fakeAe>, label: string) =>
+    ae.points.filter((p) => p.blobs?.[0] === label).map((p) => p.doubles);
+  const ctxCollecting = (): { ctx: ExecutionContext; drain: () => Promise<void> } => {
+    const waited: Promise<unknown>[] = [];
+    const ctx = { waitUntil: (p: Promise<unknown>) => { waited.push(p); }, passThroughOnException: () => {} } as unknown as ExecutionContext;
+    const drain = async () => { for (let i = 0; i < waited.length; i++) await waited[i]; };
+    return { ctx, drain };
+  };
+
+  it("nested executeAgent (awaited, FC-style): the parent row excludes the child's reads", async () => {
+    const baseAe = fakeAe();
+    await executeAgent({ DB: realishD1(nestedDb()), AE: baseAe } as unknown as Env, parent("none"));
+    const ae = fakeAe();
+    await executeAgent({ DB: realishD1(nestedDb()), AE: ae } as unknown as Env, parent("await"));
+    expect(pointFor(ae, "agent:flight_control")).toEqual(pointFor(baseAe, "agent:flight_control"));
+    const childPoint = pointFor(ae, "agent:analyst");
+    expect(childPoint).toHaveLength(1);
+    expect(childPoint[0]![0]).toBeGreaterThanOrEqual(3);
+  });
+
+  it("nested executeAgent via waitUntil: the child gets its own row, the parent's :bg tail stays empty", async () => {
+    const base = ctxCollecting();
+    const baseAe = fakeAe();
+    await executeAgent({ DB: realishD1(nestedDb()), AE: baseAe } as unknown as Env, parent("none"), { _executionCtx: base.ctx });
+    await base.drain();
+    const c = ctxCollecting();
+    const ae = fakeAe();
+    await executeAgent({ DB: realishD1(nestedDb()), AE: ae } as unknown as Env, parent("waitUntil"), { _executionCtx: c.ctx });
+    await c.drain();
+    expect(pointFor(ae, "agent:flight_control")).toEqual(pointFor(baseAe, "agent:flight_control"));
+    expect(pointFor(ae, "agent:flight_control:bg")).toEqual([]);
+    expect(pointFor(ae, "agent:analyst")).toHaveLength(1);
+  });
+
+  it("an agent's own non-agent waitUntil reads are recorded as agent:<id>:bg", async () => {
+    const c = ctxCollecting();
+    const ae = fakeAe();
+    const mod = { name: "sentinel", execute: async (ctx: { env: Env; input: Record<string, unknown> }) => {
+      const env = ctx.env;
+      (ctx.input._executionCtx as ExecutionContext).waitUntil((async () => {
+        // After the runner's finalize writes — the split is by time.
+        await new Promise((r) => setTimeout(r, 5));
+        await env.DB.prepare("SELECT * FROM t").all();
+      })());
+      return { itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0, output: {} };
+    } } as unknown as AgentModule;
+    await executeAgent({ DB: realishD1(agentDb()), AE: ae } as unknown as Env, mod, { _executionCtx: c.ctx });
+    await c.drain();
+    expect(pointFor(ae, "agent:sentinel:bg")).toEqual([[3, 0, 1]]);
+  });
+
+  it("workflow → executeAgent: the workflow's step point excludes the agent's reads", async () => {
+    const ae = fakeAe();
+    const base = { DB: realishD1(nestedDb()), AE: ae } as unknown as Env;
+    let current: Env = base;
+    const step = { do: async (_n: string, cb: () => Promise<unknown>) => cb() };
+    await runWithWorkflowMeter("workflow:test", base, step, (e) => { current = e; }, async (s) => {
+      await s.do("one", async () => {
+        await current.DB.prepare("SELECT * FROM t WHERE id = 1").all();
+        await executeAgent(current, child, {}, "workflow", "scheduled");
+        return null;
+      });
+      return null;
+    });
+    expect(pointFor(ae, "workflow:test")).toEqual([[1, 0, 1]]);
+    expect(pointFor(ae, "agent:analyst")).toHaveLength(1);
+  });
+
+  it("cron layer → agents (awaited + waitUntil): cron / cron:bg rows hold only non-agent work", async () => {
+    const c = ctxCollecting();
+    const ae = fakeAe();
+    const env = { DB: realishD1(nestedDb()), AE: ae } as unknown as Env;
+    await withD1Meter(env, "cron:test", async (menv, tctx) => {
+      await menv.DB.prepare("SELECT * FROM t WHERE id = 1").all();       // inline, non-agent
+      await executeAgent(menv, child, {}, "cron", "scheduled");          // awaited agent
+      tctx!.waitUntil(executeAgent(menv, child, {}, "cron", "scheduled")); // waitUntil agent
+      tctx!.waitUntil((async () => {                                      // waitUntil, non-agent
+        await new Promise((r) => setTimeout(r, 5));
+        await menv.DB.prepare("SELECT * FROM t WHERE id >= 2").all();
+      })());
+    }, c.ctx);
+    await c.drain();
+    expect(pointFor(ae, "cron:test")).toEqual([[1, 0, 1]]);
+    expect(pointFor(ae, "cron:test:bg")).toEqual([[2, 0, 1]]);
+    expect(pointFor(ae, "agent:analyst")).toHaveLength(2);
+  });
+
   it("AE write failures stay non-fatal", async () => {
     const env = {
       DB: realishD1(agentDb()),
@@ -345,6 +466,13 @@ describe("hourly diagnostics fetchers", () => {
   const env = { CF_API_TOKEN: "tok", CF_ACCOUNT_ID: "acct" } as unknown as Env;
   afterEach(() => { vi.unstubAllGlobals(); });
 
+  it("toHourLabel normalises AE and GraphQL hour formats to one label", () => {
+    expect(toHourLabel("2026-11-02 06:00:00")).toBe("2026-11-02T06:00:00Z");
+    expect(toHourLabel("2026-11-02T06:00:00Z")).toBe("2026-11-02T06:00:00Z");
+    expect(toHourLabel("2026-11-02T06:00:00.000Z")).toBe("2026-11-02T06:00:00Z");
+    expect(toHourLabel("garbage")).toBe("garbage");
+  });
+
   it("clampHourlyWindow caps at 48 and floors at 1", () => {
     expect(clampHourlyWindow(168)).toBe(48);
     expect(clampHourlyWindow(0)).toBe(1);
@@ -391,12 +519,16 @@ describe("hourly diagnostics fetchers", () => {
       { hour: "2026-11-02 05:00:00", endpoint: "workflow:nexus_run", rows_read: 10, rows_written: 1, queries: 2, points: 3 },
     ];
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(String(init?.body)).toContain("INTERVAL '12' HOUR");
+      const body = String(init?.body);
+      // Same whole-hour window as d1_hourly: 12 buckets ending 06:xx.
+      expect(body).toContain("timestamp >= toDateTime('2026-11-01 19:00:00')");
+      expect(body).toContain("ORDER BY hour DESC");
       return new Response(JSON.stringify({ data }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    const r = await fetchD1HourlyAttribution(env, 12);
-    expect(r.hours.map((h) => h.hour)).toEqual(["2026-11-02 05:00:00", "2026-11-02 06:00:00"]);
+    const r = await fetchD1HourlyAttribution(env, 12, new Date("2026-11-02T06:30:00Z"));
+    // Same label format as d1_hourly, oldest first.
+    expect(r.hours.map((h) => h.hour)).toEqual(["2026-11-02T05:00:00Z", "2026-11-02T06:00:00Z"]);
     expect(r.hours[1]!.endpoints.map((e) => [e.endpoint, e.rows_read])).toEqual([
       ["agent:analyst", 6000],
       ["cron:7 * * * *", 5000],

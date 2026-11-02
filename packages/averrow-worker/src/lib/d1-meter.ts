@@ -39,18 +39,26 @@
  * Overhead: one Proxy per prepared/bound statement and a few
  * additions per result — negligible next to a D1 round trip.
  *
- * Nesting: metering an already-metered binding is fine — each layer
- * forwards to the one below and adds into its own tally (this is how an
- * agent's reads land in both its `agent:` row and the enclosing `cron:`
- * row).
+ * Layers are EXCLUSIVE: metering an already-metered binding unwraps it to
+ * the raw binding first, so the new layer's tally sees only the work done
+ * through it and the enclosing layer's tally does not. An agent run
+ * (`agent:`) inside a cron invocation (`cron:`), inside Flight Control
+ * (another `agent:`), or inside a Workflow (`workflow:`) is therefore
+ * counted once, in its own row — the rows are disjoint and summing every
+ * `agent:` / `cron:` / `cron:…:bg` / `workflow:` row approximates the total
+ * metered reads. A metered binding never wraps another metered binding, so
+ * there is never more than one proxy between a caller and D1.
  */
 
 import { newTally, recordD1Reads, writeD1Attribution, type D1Tally } from "./analytics";
 import type { Env } from "../types";
 
-// A metered statement answers this (module-private) key with the
-// statement it wraps, one layer down — batch() uses it to unwrap.
+// A metered statement answers this (module-private) key with the raw
+// statement it wraps — batch() uses it to unwrap.
 const INNER = Symbol("d1-meter.inner");
+// A metered database answers this key with the raw binding it wraps —
+// meterD1 uses it to keep layers exclusive (never proxy-on-proxy).
+const RAW_DB = Symbol("d1-meter.raw-db");
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -175,11 +183,23 @@ export function meterSession(session: D1DatabaseSession, tally: D1Tally): D1Data
   });
 }
 
-/** Wrap a D1 binding. Returned object is a drop-in D1Database. */
+/** The raw binding under a metered database (or `db` itself). */
+export function rawD1(db: D1Database): D1Database {
+  const raw: unknown = Reflect.get(db, RAW_DB);
+  return raw === undefined ? db : (raw as D1Database);
+}
+
+/**
+ * Wrap a D1 binding. Returned object is a drop-in D1Database. An
+ * already-metered binding is unwrapped first, so only `tally` counts the
+ * work done through the result (exclusive layers, see header).
+ */
 export function meterD1(db: D1Database, tally: D1Tally): D1Database {
-  return new Proxy(db, {
+  return new Proxy(rawD1(db), {
     get(target, prop) {
       switch (prop) {
+        case RAW_DB:
+          return target;
         case "prepare":
           return (query: string): D1PreparedStatement => meterStatement(target.prepare(query), tally);
         case "batch":
@@ -209,7 +229,11 @@ function isD1Like(v: unknown): v is D1Database {
 /** Env bindings that are D1 databases (all bill against the account). */
 export const METERED_D1_BINDINGS = ["DB", "AUDIT_DB", "GEOIP_DB", "DNS_QUEUE_DB"] as const;
 
-/** Shallow env copy whose bound D1 databases are metered into `tally`. */
+/**
+ * Shallow env copy whose bound D1 databases are metered into `tally` —
+ * exclusively: bindings already metered by an enclosing layer are re-wrapped
+ * from their raw binding, so the enclosing tally stops seeing this work.
+ */
 export function meterEnv<E extends object>(env: E, tally: D1Tally): E {
   const out: E = { ...env };
   const rec = out as unknown as Record<string, unknown>;
@@ -229,23 +253,54 @@ function aeOf(env: object): AnalyticsEngineDataset | undefined {
 
 /**
  * Run `fn` with a metered env and record the tally under `endpoint` when it
- * settles (success or throw). Metering is skipped entirely — `fn` gets the
- * original env — when no Analytics Engine dataset is bound, since there is
- * nowhere to record. The AE write is synchronous fire-and-forget and
- * non-fatal (recordD1Reads swallows errors).
+ * settles (success or throw). The env's D1 bindings are metered EXCLUSIVELY
+ * (see header): work `fn` hands to a nested withD1Meter / executeAgent is
+ * counted in that layer's row, not in this one.
+ *
+ * With `ctx`, `fn` receives a waitUntil-tracking copy of it; reads issued
+ * through this layer's env after `fn` returns (its waitUntil tail) are
+ * recorded once that tail settles, as a second point under
+ * `<endpoint>:bg`. The inline/`:bg` split is by time — a waitUntil promise's
+ * reads before `fn` returns land in the inline point — but the two points
+ * together are the layer's whole tally. Without `ctx`, reads after `fn`
+ * returns are not recorded.
+ *
+ * Metering is skipped entirely — `fn` gets the original env and ctx — when
+ * no Analytics Engine dataset is bound, since there is nowhere to record.
+ * AE writes are synchronous fire-and-forget and non-fatal.
  */
 export async function withD1Meter<R>(
   env: Env,
   endpoint: string,
-  fn: (meteredEnv: Env, tally: D1Tally) => Promise<R>,
+  fn: (meteredEnv: Env, trackedCtx: ExecutionContext | undefined) => Promise<R>,
+  ctx?: ExecutionContext,
 ): Promise<R> {
-  if (!aeOf(env)) return fn(env, newTally());
+  if (!aeOf(env)) return fn(env, ctx);
   const tally = newTally();
+  const tracked = ctx ? trackWaitUntil(ctx) : undefined;
   try {
-    return await fn(meterEnv(env, tally), tally);
+    return await fn(meterEnv(env, tally), tracked?.ctx);
   } finally {
-    recordD1Reads(env, endpoint, tally);
+    const inline: D1Tally = { ...tally };
+    recordD1Reads(env, endpoint, inline);
+    if (ctx && tracked) {
+      ctx.waitUntil(
+        tracked.settled().then(() => {
+          const bg: D1Tally = {
+            rowsRead: tally.rowsRead - inline.rowsRead,
+            rowsWritten: tally.rowsWritten - inline.rowsWritten,
+            queries: tally.queries - inline.queries,
+          };
+          if (bg.queries > 0) recordD1Reads(env, `${endpoint}:bg`, bg);
+        }),
+      );
+    }
   }
+}
+
+/** True for an ExecutionContext-shaped value (has a waitUntil function). */
+export function isExecutionContextLike(v: unknown): v is ExecutionContext {
+  return isRecord(v) && typeof v.waitUntil === "function";
 }
 
 /**

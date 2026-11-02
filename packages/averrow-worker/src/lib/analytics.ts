@@ -52,11 +52,14 @@ export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally): void 
  * shape, same non-fatal contract.
  *
  * Endpoint label conventions: handler labels (`observatory_nodes`, …),
- * `agent:<agent_id>` (lib/agentRunner.ts executeAgent / runSyncAgent),
- * `cron:<cron expression>` and `cron:<expr>:bg` (cron/orchestrator.ts
- * handleScheduled — inline phase and post-return waitUntil tail), and
- * `workflow:<name>` (src/workflows/*, one point per step). See
- * lib/d1-meter.ts for the overlap rules.
+ * `agent:<agent_id>` + `agent:<agent_id>:bg` (lib/agentRunner.ts
+ * executeAgent / runSyncAgent — the run, and its post-return waitUntil tail
+ * when it was given `_executionCtx`), `cron:<cron expression>` and
+ * `cron:<expr>:bg` (cron/orchestrator.ts handleScheduled — non-agent work,
+ * inline phase and post-return waitUntil tail), and `workflow:<name>`
+ * (src/workflows/*, one point per step; not geoip_refresh). The meter
+ * layers are exclusive (lib/d1-meter.ts), so these per-job rows are
+ * disjoint and can be summed.
  */
 export function writeD1Attribution(
   ae: AnalyticsEngineDataset | undefined,

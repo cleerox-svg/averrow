@@ -9,7 +9,7 @@ import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
-import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
+import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, hourlyWindowStart, toHourLabel, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import {
@@ -334,11 +334,13 @@ export async function fetchD1EndpointAttribution(env: Env): Promise<{
 // ─── Hourly per-job D1 attribution (AE) ─────────────────────────────
 // Same dataset as fetchD1EndpointAttribution, bucketed by UTC hour and
 // restricted to the per-job labels written by lib/d1-meter.ts
-// (`agent:` / `cron:` / `workflow:`), top D1_ATTRIBUTION_HOURLY_TOP per hour
-// by rows_read. Lines up with `d1_hourly` (database-level, unsampled) so a
-// spike hour can be attributed to a job. OVERLAP: `cron:` rows include the
-// agents they dispatched, which also have their own `agent:` rows — do not
-// add the two families together.
+// (`agent:` / `cron:` / `workflow:`, incl. `:bg` tails), top
+// D1_ATTRIBUTION_HOURLY_TOP per hour by rows_read. Covers exactly the same
+// whole-hour buckets as `d1_hourly` (hourlyWindowStart) with the same
+// `YYYY-MM-DDTHH:00:00Z` labels (toHourLabel), so the two join on `hour`.
+// The meter layers are exclusive, so these rows are disjoint: they can be
+// summed and compared against that hour's `d1_hourly.rows_read` — the
+// remainder is unmetered traffic (HTTP handlers, the GeoIP import, …).
 
 export const D1_ATTRIBUTION_HOURLY_TOP = 10;
 
@@ -350,14 +352,17 @@ export interface D1HourlyAttributionRow {
 export async function fetchD1HourlyAttribution(
   env: Env,
   hoursBack: number,
+  now: Date = new Date(),
 ): Promise<{ hours: D1HourlyAttributionRow[]; setup_required: boolean; error?: string }> {
   const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
   const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
   if (!token || !accountId) return { hours: [], setup_required: true };
 
-  // hoursBack is an integer clamped by the caller (clampHourlyWindow); it is
-  // interpolated into AE SQL, which has no bind parameters.
-  const hours = Math.max(1, Math.min(48, Math.floor(hoursBack)));
+  // The window start is derived from a Date we compute (never from request
+  // input) and interpolated into AE SQL, which has no bind parameters.
+  const start = hourlyWindowStart(hoursBack, now).toISOString().slice(0, 19).replace("T", " ");
+  // ORDER BY hour DESC so that if LIMIT ever truncates, the oldest hours go,
+  // not the newest.
   const sql = `
     SELECT
       toStartOfInterval(timestamp, INTERVAL '1' HOUR) AS hour,
@@ -367,10 +372,10 @@ export async function fetchD1HourlyAttribution(
       SUM(_sample_interval * double3) AS queries,
       SUM(_sample_interval) AS points
     FROM trust_radar_d1_reads
-    WHERE timestamp > NOW() - INTERVAL '${hours}' HOUR
+    WHERE timestamp >= toDateTime('${start}')
       AND (startsWith(blob1, 'agent:') OR startsWith(blob1, 'cron:') OR startsWith(blob1, 'workflow:'))
     GROUP BY hour, endpoint
-    ORDER BY hour ASC, rows_read DESC
+    ORDER BY hour DESC, rows_read DESC
     LIMIT 5000
   `;
 
@@ -396,7 +401,8 @@ export async function fetchD1HourlyAttribution(
     };
     const byHour = new Map<string, D1HourlyAttributionRow>();
     for (const r of json.data ?? []) {
-      const bucket = byHour.get(r.hour) ?? { hour: r.hour, endpoints: [] };
+      const hour = toHourLabel(String(r.hour));
+      const bucket = byHour.get(hour) ?? { hour, endpoints: [] };
       bucket.endpoints.push({
         endpoint: r.endpoint,
         rows_read: Number(r.rows_read) || 0,
@@ -404,7 +410,7 @@ export async function fetchD1HourlyAttribution(
         queries: Number(r.queries) || 0,
         points: Number(r.points) || 0,
       });
-      byHour.set(r.hour, bucket);
+      byHour.set(hour, bucket);
     }
     const out = Array.from(byHour.values()).sort((a, b) => a.hour.localeCompare(b.hour));
     for (const h of out) {
@@ -2740,10 +2746,10 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         d1_hourly: d1Hourly.hours,
         d1_hourly_error: d1Hourly.error ?? (d1Hourly.setup_required ? "CF_API_TOKEN / CF_ACCOUNT_ID not set" : null),
 
-        // Same hours, top per-job AE endpoints (lib/d1-meter.ts): which
-        // `agent:` / `cron:` / `workflow:` owns each hour's reads. `cron:`
-        // rows INCLUDE the agents they dispatched (which also appear as
-        // `agent:` rows) — never add the families together.
+        // Same hours (same labels, same buckets), top per-job AE endpoints
+        // (lib/d1-meter.ts): which `agent:` / `cron:` / `workflow:` owns each
+        // hour's reads. Meter layers are exclusive, so the rows are disjoint
+        // and summable; `cron:` / `cron:…:bg` is non-agent work only.
         d1_attribution_hourly: d1HourlyAttribution,
 
         // Soft-cap state — proves the Navigator daily budget cap is

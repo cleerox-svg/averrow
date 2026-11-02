@@ -838,6 +838,28 @@ export function clampHourlyWindow(hours: number): number {
   return Math.min(D1_HOURLY_MAX_HOURS, Math.max(1, Math.floor(hours)));
 }
 
+/**
+ * First (oldest) hour bucket of a `windowHours`-hour window ending with the
+ * current, partial hour. Shared by d1_hourly and d1_attribution_hourly so
+ * both cover exactly the same whole-hour buckets.
+ */
+export function hourlyWindowStart(windowHours: number, now: Date = new Date()): Date {
+  const topOfHour = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
+  return new Date(topOfHour - (clampHourlyWindow(windowHours) - 1) * 3_600_000);
+}
+
+/**
+ * Canonical hour label, `YYYY-MM-DDTHH:00:00Z` — the d1_hourly / CF GraphQL
+ * `datetimeHour` format. Accepts AE SQL's `YYYY-MM-DD HH:MM:SS` (UTC) too, so
+ * the two hourly blocks join on `hour`. Unparseable input is returned as-is.
+ */
+export function toHourLabel(raw: string): string {
+  const iso = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const ms = Date.parse(/(?:[zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
+  if (!Number.isFinite(ms)) return raw;
+  return `${new Date(Math.floor(ms / 3_600_000) * 3_600_000).toISOString().slice(0, 13)}:00:00Z`;
+}
+
 export async function fetchD1HourlyMetrics(
   env: Env,
   hoursBack: number = 24,
@@ -851,8 +873,7 @@ export async function fetchD1HourlyMetrics(
   }
 
   // Last N hour buckets INCLUDING the current (partial) hour.
-  const topOfHour = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
-  const start = new Date(topOfHour - (windowHours - 1) * 3_600_000).toISOString();
+  const start = hourlyWindowStart(windowHours, now).toISOString();
 
   const query = `
     query {
@@ -906,8 +927,9 @@ export async function fetchD1HourlyMetrics(
     const groups = parsed.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups ?? [];
     const byHour = new Map<string, D1HourlyRow>();
     for (const g of groups) {
-      const hour = g.dimensions?.datetimeHour;
-      if (!hour) continue;
+      const rawHour = g.dimensions?.datetimeHour;
+      if (!rawHour) continue;
+      const hour = toHourLabel(rawHour);
       const read = Number(g.sum?.rowsRead ?? 0) || 0;
       const written = Number(g.sum?.rowsWritten ?? 0) || 0;
       const row = byHour.get(hour) ?? { hour, rows_read: 0, rows_written: 0, per_database: [] };
