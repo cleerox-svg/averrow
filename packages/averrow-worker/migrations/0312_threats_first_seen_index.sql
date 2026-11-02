@@ -1,0 +1,39 @@
+-- 0312_threats_first_seen_index.sql
+-- D1 read-spend (2026-11, primary DB at ~714M rows read / 24h). Re-create
+-- idx_threats_first_seen, which no database built from these migrations
+-- has had since migration 0013.
+--
+-- ── Why it is missing ───────────────────────────────────────────────
+-- Migration 0001 created idx_threats_first_seen ON threats(first_seen DESC).
+-- Migration 0013 rebuilt `threats` (INSERT INTO threats_new … ; DROP TABLE
+-- threats; ALTER TABLE threats_new RENAME TO threats). DROP TABLE drops
+-- every index on the table, and 0013 re-created only four of 0001's
+-- indexes (brand_status, provider, campaign, type). idx_threats_first_seen
+-- was not one of them, so it went missing in prod AND in every fresh
+-- migration run. Migration 0277's header calls this an "out of band"
+-- drop; the drop was actually 0013. (0001's last_seen, created_at, ip,
+-- severity, status, source and country indexes went the same way; this
+-- migration only restores first_seen.)
+--
+-- ── Read cost it removes ────────────────────────────────────────────
+-- ~53 queries in src/ filter threats on `first_seen >= datetime('now', …)`.
+-- Every one that no first_seen-keyed partial index covers (analyst_backlog,
+-- gsb/dbl/seclookup/abuseipdb/greynoise/pdns_pending) full-scans ~1.51M
+-- threats rows, e.g.:
+--   agents/observer.ts       enrichment validation summary (24h)
+--                            1.51M rows/call, ~40.9M rows/day
+--   handlers/briefing.ts     threats_24h per brand, counts, recent criticals
+-- With the index each becomes a range SEARCH over the window only:
+--   SEARCH threats USING INDEX idx_threats_first_seen (first_seen>?)
+-- The partial pending indexes keep winning their own queries (verified by
+-- EXPLAIN QUERY PLAN in test/d1-read-spend-2026-11.test.ts).
+--
+-- ── Write cost ──────────────────────────────────────────────────────
+-- One index entry per threats INSERT, plus one per UPDATE that changes
+-- first_seen (rare: first_seen is set at ingest and not rewritten by the
+-- enrichment writers). One-time build: one pass over ~1.51M rows.
+--
+-- Same name and definition as migration 0001, so prod and fresh databases
+-- converge on one index. Additive only: CREATE INDEX IF NOT EXISTS.
+
+CREATE INDEX IF NOT EXISTS idx_threats_first_seen ON threats(first_seen DESC);

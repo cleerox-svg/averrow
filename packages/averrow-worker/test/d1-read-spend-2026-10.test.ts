@@ -190,18 +190,16 @@ describe.skipIf(!hasSqlite())("#2 threatAggregate ASN joins use idx_threats_asn"
 describe.skipIf(!hasSqlite())("#3 GSB queries use idx_threats_gsb_pending", () => {
   const db = openDerivedDb(["threats"]);
   replayIndexes(db, ["threats"]);
-  // Mirror PROD: migration 0001's idx_threats_first_seen exists in a
-  // migration-built schema but was dropped out of band in prod (verified
-  // read-only 2026-10-04: prod plans the GSB query as SCAN threats). Left
-  // in place, it would let the planner range-seek first_seen without
-  // 0277, and this test would pass whether or not the GSB index exists.
-  const hadFirstSeenIdx = (db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_threats_first_seen'",
-  ).all() as unknown[]).length === 1;
-  db.exec("DROP INDEX IF EXISTS idx_threats_first_seen");
-
-  it("the harness had idx_threats_first_seen to drop (prod-mirroring step is live)", () => {
-    expect(hadFirstSeenIdx).toBe(true);
+  // idx_threats_first_seen (0001, lost in 0013's table rebuild, restored
+  // by 0312) is present here, as in post-0312 prod. The assertions below
+  // therefore also prove the planner still prefers the partial
+  // idx_threats_gsb_pending over the full first_seen index. The "without
+  // any first_seen index" baseline lives in d1-read-spend-2026-11.test.ts.
+  it("the harness has idx_threats_first_seen (post-0312 prod state)", () => {
+    const n = (db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_threats_first_seen'",
+    ).all() as unknown[]).length;
+    expect(n).toBe(1);
   });
 
   const feedSql = sqlContaining(src("feeds/googleSafeBrowsing.ts"), ["gsb_checked = 0", "FROM threats"]);

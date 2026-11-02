@@ -15,11 +15,11 @@
 // request in that window answer all-null without retrying D1.
 //
 // Weaponization velocity (pct registered→live within 24h) was removed from
-// the public block (2026-10-05 review): the 30-day range over threats has
-// no first_seen index in prod (idx_threats_first_seen was dropped out of
-// band — see migration 0277), and the velocity writer only runs from an
-// admin endpoint, so the sample is usually below the n >= 30 floor anyway.
-// Re-add only behind a scheduled writer and an index or cube.
+// the public block (2026-10-05 review): at the time the 30-day range over
+// threats had no first_seen index in prod (migration 0013's table rebuild
+// lost idx_threats_first_seen; 0312 restores it), and the velocity writer
+// only runs from an admin endpoint, so the sample is usually below the
+// n >= 30 floor anyway. Re-add only behind a scheduled writer and a cube.
 //
 // Definitions (keep in sync with docs/API_REFERENCE.md):
 //   lookalikes_found_30d  — REGISTERED lookalikes DISCOVERED in the last 30
