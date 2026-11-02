@@ -362,7 +362,10 @@ export interface EmailSecurityStatsPayload {
  * shared email-posture rollup (lib/email-posture-rollup.ts — ONE cached
  * scan of `brands`, ~132K rows, shared with the Brands Intel aggregate and
  * Observer) instead of five scans of their own. Only the worst-brands
- * list still reads `brands` directly (it needs row data).
+ * list still reads `brands` directly (it needs row data), via the partial
+ * index idx_brands_worst_email_posture (migration 0314) — ~200 index
+ * entries + lookups instead of a full scan and sort. Keep its WHERE text
+ * equal to the index's partial WHERE or the planner falls back to a scan.
  */
 export async function emailSecurityStatsPayload(env: Env): Promise<EmailSecurityStatsPayload> {
   return cachedValue<EmailSecurityStatsPayload>(env, EMAIL_SECURITY_STATS_KEY, EMAIL_SECURITY_STATS_TTL_S, async () => {

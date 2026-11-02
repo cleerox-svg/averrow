@@ -7,6 +7,8 @@
  *      partial index full-scanned ~1.51M rows.
  *   #2 idx_brands_enrich_pending (migration 0313) for Flight Control's
  *      `backlog.brand_enrich` COUNT(*), which full-scanned ~132K brands.
+ *   #3 idx_brands_worst_email_posture (migration 0314) for the
+ *      email-security worst_brands list (full scan + sort of brands).
  *
  * Plans are taken against `openMigratedDb()`: every migration applied in
  * order, tables and indexes, including 0013's table rebuild. That
@@ -194,5 +196,55 @@ describe.skipIf(!hasSqlite())("#2 backlog.brand_enrich uses idx_brands_enrich_pe
     const db = openMigratedDb();
     const sql = sqlContaining(src("handlers/admin/backfills.ts"), ["SELECT COUNT(*) as n FROM brands", "enriched_at IS NULL"]);
     expect(plan(db, sql).join(" | ")).toMatch(/idx_brands_enrich_pending/);
+  });
+});
+
+// ─── #3 idx_brands_worst_email_posture ──────────────────────────────
+
+const worstBrandsSql = sqlContaining(src("handlers/emailSecurity.ts"), ["FROM brands b", "email_security_grade IN ('F', 'D', 'C')"]);
+
+describe.skipIf(!hasSqlite())("#3 worst_brands uses idx_brands_worst_email_posture (migration 0314)", () => {
+  const GRADES = ["A+", "A", "B", "C", "D", "F"];
+  function seedScored(db: SqliteDb): void {
+    db.exec("BEGIN");
+    const b = db.prepare(
+      "INSERT INTO brands (id, name, canonical_domain, email_security_score, email_security_grade) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (let i = 0; i < 10_000; i++) {
+      const scored = i % 4 !== 0;
+      // Distinct, shuffled scores (7919·i mod prime 10007 is a bijection for
+      // i < 10007) so the LIMIT-200 cutoff never lands inside a tie and the
+      // id-set comparison below doesn't depend on SQLite's tie-break order.
+      b.run(`w${i}`, `W${i}`, `w${i}.com`, scored ? ((i * 7919) % 10007) / 100 : null, scored ? GRADES[i % GRADES.length]! : null);
+    }
+    db.exec("COMMIT");
+    db.exec("ANALYZE");
+  }
+
+  it("baseline: without the index the list scans brands and sorts", () => {
+    const db = openMigratedDb({ exclude: ["0314_brands_worst_email_posture_index.sql"] });
+    const p = plan(db, worstBrandsSql).join(" | ");
+    expect(p).toMatch(/SCAN b\b/);
+    expect(p).toMatch(/USE TEMP B-TREE FOR ORDER BY/);
+  });
+
+  for (const [label, prep] of [["without table stats", () => {}], ["with ANALYZE stats", seedScored]] as const) {
+    it(`walks the partial index in score order, no sort (${label})`, () => {
+      const db = openMigratedDb();
+      prep(db);
+      const p = plan(db, worstBrandsSql).join(" | ");
+      expect(p).toMatch(/(SCAN|SEARCH) b USING INDEX idx_brands_worst_email_posture/);
+      expect(p).not.toMatch(/TEMP B-TREE/);
+    });
+  }
+
+  it("returns the same rows, in the same order, as the unindexed query", () => {
+    const db = openMigratedDb();
+    seedScored(db);
+    const viaIndex = db.prepare(worstBrandsSql).all() as Array<{ id: string; email_security_score: number }>;
+    const viaTable = db.prepare(worstBrandsSql.replace("FROM brands b", "FROM brands b NOT INDEXED")).all() as typeof viaIndex;
+    expect(viaIndex.length).toBe(200);
+    expect(viaIndex.map((r) => r.email_security_score)).toEqual(viaTable.map((r) => r.email_security_score));
+    expect(new Set(viaIndex.map((r) => r.id))).toEqual(new Set(viaTable.map((r) => r.id)));
   });
 });
