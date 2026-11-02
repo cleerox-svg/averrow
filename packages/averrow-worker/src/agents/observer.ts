@@ -12,6 +12,7 @@ import { generateInsight, checkCostGuard } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
 import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import { renderIntelSectorTrend } from "../lib/intel-templates";
+import { emailPostureRollup, gradeDistributionByCount } from "../lib/email-posture-rollup";
 
 export const observerAgent: AgentModule = {
   name: "observer",
@@ -223,13 +224,10 @@ export const observerAgent: AgentModule = {
     `).all<{ agent: string; summary: string }>();
 
     // ─── Email security posture ───────────────────────────────────
-    const emailGradeDistribution = await env.DB.prepare(`
-      SELECT email_security_grade AS grade, COUNT(*) AS count
-      FROM brands
-      WHERE email_security_grade IS NOT NULL
-      GROUP BY email_security_grade
-      ORDER BY count DESC
-    `).all<{ grade: string; count: number }>();
+    // Derived from the shared, 1h-cached email-posture rollup
+    // (lib/email-posture-rollup.ts) instead of its own full scan of
+    // `brands` — same grade → count result, ordered by count DESC.
+    const emailGradeDistribution = { results: gradeDistributionByCount(await emailPostureRollup(env)) };
 
     // D1 spend fix (CLAUDE.md §8): read the pre-computed
     // `brands.active_threat_count` column instead of JOIN-ing +

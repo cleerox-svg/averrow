@@ -1,0 +1,47 @@
+-- 0313_brands_enrich_pending_index.sql
+-- D1 read-spend (2026-11). Flight Control's `backlog.brand_enrich` counter
+-- (agents/flightControl.ts, measureBacklogs):
+--     SELECT COUNT(*) as count FROM brands
+--     WHERE enriched_at IS NULL AND canonical_domain IS NOT NULL
+-- has no index that serves it, so every fresh compute is a full
+-- `SCAN brands` over ~132K rows (prod insights: 132 calls/24h, 17.5M
+-- rows/day). brands has no index on enriched_at.
+--
+-- ── Why the index WHERE is only `enriched_at IS NULL` ───────────────
+-- brands.canonical_domain is declared NOT NULL (migrations 0001, 0042).
+-- SQLite drops `canonical_domain IS NOT NULL` from the query as
+-- always-true BEFORE it checks partial-index implication. A partial index
+-- whose WHERE also says `canonical_domain IS NOT NULL` is therefore never
+-- implied by the counter and is never used (verified with EXPLAIN QUERY
+-- PLAN: still `SCAN brands`). With the WHERE limited to
+-- `enriched_at IS NULL`, the index is implied whether or not the prod
+-- column carries the NOT NULL constraint.
+--
+-- Key (enriched_at, canonical_domain) makes it COVERING. enriched_at is
+-- always NULL inside this index, but SQLite only treats the query's
+-- `enriched_at IS NULL` term as covered when the column is in the index
+-- (keyed on canonical_domain alone it planned `SCAN … USING INDEX` with a
+-- table lookup per entry). canonical_domain covers the residual
+-- `canonical_domain IS NOT NULL` term if the prod column is nullable:
+--     SEARCH brands USING COVERING INDEX idx_brands_enrich_pending (enriched_at=?)
+-- It reads one index entry per PENDING brand instead of every brands row.
+-- The admin backfill-brand-enrichment count + batch
+-- (handlers/admin/backfills.ts) also filter `enriched_at IS NULL`, so they
+-- qualify for this index too.
+--
+-- The saving depends on the pending set staying small. Only the admin
+-- backfill and the single-brand enrich handler (handlers/brands.ts) write
+-- brands.enriched_at; nothing scheduled drains it. If most of the catalog
+-- is unenriched, this index is nearly as large as the table and the
+-- counter needs a longer TTL instead.
+--
+-- Write cost: one index entry per brand INSERT with no enriched_at, plus
+-- the canonical_domain update of a pending brand (rare). Each enrich
+-- (enriched_at set) deletes that brand's entry. One-time build: one pass
+-- over ~132K brands rows.
+--
+-- Additive only: CREATE INDEX IF NOT EXISTS, no table or column changes.
+
+CREATE INDEX IF NOT EXISTS idx_brands_enrich_pending
+  ON brands(enriched_at, canonical_domain)
+  WHERE enriched_at IS NULL;

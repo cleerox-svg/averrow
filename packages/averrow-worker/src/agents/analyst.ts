@@ -14,7 +14,7 @@ import { resolveMasterBrandName } from "../lib/threatScoring";
 import { getBrandSocialIntel } from "../lib/social-intel";
 import { computeBrandExposureScore } from "../lib/brand-scoring";
 import { getBrandById, bumpBrandThreatCountStmt } from "../db/brands";
-import { cachedValue } from "../lib/cached-value";
+import { loadBrandEnrichment } from "../lib/analyst-brand-enrichment";
 import { GenericBrandSet, isGenericBrand, isGenericBrandName, keywordMatchesHost, matchGenericBrand } from "../lib/brandDetect";
 
 // ─── Domain parsing utilities ─────────────────────────────────────
@@ -527,118 +527,6 @@ export const analystAgent: AgentModule = {
       }
     }
 
-    // ─── Phase 2.5: Enrichment validation context per brand ─────
-    // Split into 6 small queries (one per enrichment signal) to avoid the
-    // single-query OR-over-six-columns that forces a full active-table scan.
-    // See docs/runbooks/analyst-d1-diagnosis.md for EXPLAIN plans.
-    //
-    // KV-cached. Analyst is dispatched once per hourly orchestrator
-    // tick (ctx.waitUntil, ~3600s inter-run gap). The prior 1500s
-    // (25-min) TTL was SHORTER than that gap, so every scheduled run
-    // found the entry already expired → miss → the whole 7-query
-    // active-scan batch ran every hour. That is why the two heaviest
-    // slices still dominated the D1 top-queries report despite being
-    // "cached": dbl_listed GROUP BY = 73.2M reads/24h, vt_malicious
-    // AVG = 24.6M (surbl/vt/gsb/greynoise/seclookup add more on top).
-    // PR-BU fix: TTL raised to 3h so consecutive hourly runs reuse a
-    // warmed entry (~1 miss per 3 runs instead of every run). All 7
-    // signals are active-status snapshots feeding narrative insight
-    // generation — a few hours' staleness is well within tolerance,
-    // consistent with the original "not real-time" note.
-    const baseCond = "status = 'active' AND target_brand_id IS NOT NULL";
-    const enrichmentBatch = await cachedValue<{
-      surbl: Array<{ target_brand_id: string; cnt: number }>;
-      vt: Array<{ target_brand_id: string; cnt: number }>;
-      vtAvg: Array<{ target_brand_id: string; avg_mal: number | null }>;
-      gsb: Array<{ target_brand_id: string; cnt: number }>;
-      dbl: Array<{ target_brand_id: string; cnt: number }>;
-      greynoise: Array<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>;
-      seclookup: Array<{ target_brand_id: string; high_risk: number }>;
-    }>(env, "analyst.enrichment_by_brand", 10800, async () => {
-      const [surblRows, vtRows, vtAvgRows, gsbRows, dblRows, greynoiseRows, seclookupRows] = await Promise.all([
-        env.DB.prepare(
-          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND surbl_listed = 1 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; cnt: number }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; cnt: number }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id, ROUND(AVG(vt_malicious), 1) as avg_mal FROM threats WHERE ${baseCond} AND vt_malicious > 0 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; avg_mal: number | null }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND gsb_flagged = 1 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; cnt: number }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id, COUNT(*) as cnt FROM threats WHERE ${baseCond} AND dbl_listed = 1 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; cnt: number }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id,
-            SUM(CASE WHEN greynoise_noise = 1 AND greynoise_classification = 'benign' THEN 1 ELSE 0 END) as noise_scanners,
-            SUM(CASE WHEN greynoise_noise = 0 THEN 1 ELSE 0 END) as potentially_targeted
-          FROM threats WHERE ${baseCond} AND greynoise_checked = 1 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; noise_scanners: number; potentially_targeted: number }>(),
-        env.DB.prepare(
-          `SELECT target_brand_id, SUM(CASE WHEN seclookup_risk_score >= 80 THEN 1 ELSE 0 END) as high_risk
-          FROM threats WHERE ${baseCond} AND seclookup_checked = 1 GROUP BY target_brand_id`
-        ).all<{ target_brand_id: string; high_risk: number }>(),
-      ]);
-      return {
-        surbl: surblRows.results,
-        vt: vtRows.results,
-        vtAvg: vtAvgRows.results,
-        gsb: gsbRows.results,
-        dbl: dblRows.results,
-        greynoise: greynoiseRows.results,
-        seclookup: seclookupRows.results,
-      };
-    });
-    const surblRows = { results: enrichmentBatch.surbl };
-    const vtRows = { results: enrichmentBatch.vt };
-    const vtAvgRows = { results: enrichmentBatch.vtAvg };
-    const gsbRows = { results: enrichmentBatch.gsb };
-    const dblRows = { results: enrichmentBatch.dbl };
-    const greynoiseRows = { results: enrichmentBatch.greynoise };
-    const seclookupRows = { results: enrichmentBatch.seclookup };
-
-    // Pivot subquery results into the original per-brand shape
-    const enrichmentByBrand = new Map<string, {
-      target_brand_id: string;
-      surbl_confirmed: number;
-      vt_flagged: number;
-      vt_avg_malicious: number | null;
-      gsb_confirmed: number;
-      dbl_confirmed: number;
-      noise_scanners: number;
-      potentially_targeted: number;
-      seclookup_high_risk: number;
-    }>();
-
-    const getOrInit = (bid: string) => {
-      let entry = enrichmentByBrand.get(bid);
-      if (!entry) {
-        entry = {
-          target_brand_id: bid,
-          surbl_confirmed: 0, vt_flagged: 0, vt_avg_malicious: null,
-          gsb_confirmed: 0, dbl_confirmed: 0, noise_scanners: 0,
-          potentially_targeted: 0, seclookup_high_risk: 0,
-        };
-        enrichmentByBrand.set(bid, entry);
-      }
-      return entry;
-    };
-
-    for (const r of surblRows.results) getOrInit(r.target_brand_id).surbl_confirmed = r.cnt;
-    for (const r of vtRows.results) getOrInit(r.target_brand_id).vt_flagged = r.cnt;
-    for (const r of vtAvgRows.results) getOrInit(r.target_brand_id).vt_avg_malicious = r.avg_mal;
-    for (const r of gsbRows.results) getOrInit(r.target_brand_id).gsb_confirmed = r.cnt;
-    for (const r of dblRows.results) getOrInit(r.target_brand_id).dbl_confirmed = r.cnt;
-    for (const r of greynoiseRows.results) {
-      const e = getOrInit(r.target_brand_id);
-      e.noise_scanners = r.noise_scanners;
-      e.potentially_targeted = r.potentially_targeted;
-    }
-    for (const r of seclookupRows.results) getOrInit(r.target_brand_id).seclookup_high_risk = r.high_risk;
-
     // ─── Phase 3: Brand threat correlation escalation ──────────
     // After processing threats, run correlation for brands with new matches
     // (matchedBrandIds already populated by keyword pre-matches above)
@@ -714,7 +602,21 @@ export const analystAgent: AgentModule = {
     }
 
     // ─── Phase 3.5: Enrichment validation summaries per brand ──────
-    for (const bid of Array.from(matchedBrandIds).slice(0, 5)) {
+    // Aggregates are loaded for exactly the ≤5 brands this loop reports on
+    // (lib/analyst-brand-enrichment.ts: one indexed single-pass statement
+    // per brand, 3h per-brand KV cache) — previously seven catalog-wide
+    // GROUP BY target_brand_id scans over all active threats (~44M D1
+    // reads/day) whose result was read for these same ≤5 brands only.
+    const enrichmentBrandIds = Array.from(matchedBrandIds).slice(0, 5);
+    // Best-effort like the surrounding phases: a per-brand read failure
+    // must not discard the Phase 3 insights already produced this run.
+    let enrichmentByBrand: Awaited<ReturnType<typeof loadBrandEnrichment>> = new Map();
+    try {
+      enrichmentByBrand = await loadBrandEnrichment(env, enrichmentBrandIds);
+    } catch (enrichErr) {
+      console.error('[analyst] enrichment load failed:', enrichErr);
+    }
+    for (const bid of enrichmentBrandIds) {
       const enrichment = enrichmentByBrand.get(bid);
       if (enrichment && (enrichment.surbl_confirmed > 0 || enrichment.vt_flagged > 0 || enrichment.gsb_confirmed > 0 || enrichment.dbl_confirmed > 0 || enrichment.noise_scanners > 0 || enrichment.potentially_targeted > 0 || enrichment.seclookup_high_risk > 0)) {
         const brand = await getBrandById(env, bid);

@@ -601,11 +601,18 @@ export async function fetchComprehensiveBriefing(
     ),
 
     // K) Top Targeted Brands (24h)
+    // Unary `+` on t.target_brand_id keeps the brand indexes out of the
+    // plan: without it SQLite drove from brands (132K rows) and probed
+    // idx_threats_brand_created per brand, reading every brand-linked
+    // threat. Now it range-seeks the 24h window on idx_threats_first_seen
+    // (migration 0312) and PK-probes brands. The old
+    // `target_brand_id IS NOT NULL` term was implied by the inner join.
+    // Plan pinned in test/d1-read-spend-2026-11.test.ts.
     safeQuery<Array<{ name: string; threats_24h: number }>>(
       db,
       `SELECT b.name, COUNT(*) as threats_24h
-       FROM threats t JOIN brands b ON t.target_brand_id = b.id
-       WHERE t.first_seen >= datetime('now', '-24 hours') AND t.target_brand_id IS NOT NULL
+       FROM threats t JOIN brands b ON b.id = +t.target_brand_id
+       WHERE t.first_seen >= datetime('now', '-24 hours')
        GROUP BY b.name ORDER BY threats_24h DESC LIMIT 10`,
       [],
     ),
