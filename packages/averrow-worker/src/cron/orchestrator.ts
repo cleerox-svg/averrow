@@ -5,6 +5,8 @@ import { cubeHealerAgent } from '../agents/cube-healer';
 import { emitPlatformNotification, renderPlatformFeedSilent } from '../lib/platform-templates';
 import { dispatchWorkflow } from '../lib/workflow-dispatch';
 import type { Env } from '../types';
+import { meterEnv, trackWaitUntil } from '../lib/d1-meter';
+import { newTally, recordD1Reads, type D1Tally } from '../lib/analytics';
 
 interface CronJobResult {
   job: string;
@@ -13,7 +15,49 @@ interface CronJobResult {
   details?: string;
 }
 
+/**
+ * Scheduled entry point. Meters every D1 read/write of the invocation
+ * (lib/d1-meter.ts) and records it to Analytics Engine as two endpoints:
+ *
+ *   `cron:<cron expression>`     — everything up to runScheduled returning
+ *                                  (inline orchestrator steps, handler-
+ *                                  dispatched writers such as daily_briefing /
+ *                                  daily_snapshots, cube builds, AND the
+ *                                  agents it awaits);
+ *   `cron:<cron expression>:bg`  — reads issued after that, by work handed to
+ *                                  ctx.waitUntil (FC-scaled agents, analyst,
+ *                                  …), recorded once that tail settles.
+ *
+ * OVERLAP: an agent dispatched inside the invocation is ALSO recorded as its
+ * own `agent:<agent_id>` row by executeAgent, so `cron:` rows and `agent:`
+ * rows are not additive — the cron rows are the invocation total, the agent
+ * rows are a breakdown of part of it. `cron:… − Σ agent:…` for the same
+ * window ≈ the non-agent inline work. Metering is skipped when AE is unbound.
+ */
 export async function handleScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+  if (!env.AE) return runScheduled(event, env, ctx);
+  const tally = newTally();
+  const tracked = trackWaitUntil(ctx);
+  const endpoint = `cron:${event.cron}`;
+  try {
+    await runScheduled(event, meterEnv(env, tally), tracked.ctx);
+  } finally {
+    const inline: D1Tally = { ...tally };
+    recordD1Reads(env, endpoint, inline);
+    ctx.waitUntil(
+      tracked.settled().then(() => {
+        const bg: D1Tally = {
+          rowsRead: tally.rowsRead - inline.rowsRead,
+          rowsWritten: tally.rowsWritten - inline.rowsWritten,
+          queries: tally.queries - inline.queries,
+        };
+        if (bg.queries > 0) recordD1Reads(env, `${endpoint}:bg`, bg);
+      }),
+    );
+  }
+}
+
+async function runScheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
   // ─── Navigator: lightweight sub-hour agent (*/5 * * * *, 30s CPU ceiling) ───
   // Runs on its own cron — independent of Flight Control's dispatch. FC only
   // observes Navigator's health, it does not manage when or how it runs.

@@ -43,9 +43,29 @@ export function addToTally(
  * full URL) so aggregation keys stay tight.
  */
 export function recordD1Reads(env: Env, endpoint: string, tally: D1Tally): void {
-  if (!env.AE) return;
+  writeD1Attribution(env.AE, endpoint, tally);
+}
+
+/**
+ * Dataset-level form of recordD1Reads for callers whose env is not the
+ * main `Env` (Workflow entrypoints with a narrower env type). Same point
+ * shape, same non-fatal contract.
+ *
+ * Endpoint label conventions: handler labels (`observatory_nodes`, …),
+ * `agent:<agent_id>` (lib/agentRunner.ts executeAgent / runSyncAgent),
+ * `cron:<cron expression>` and `cron:<expr>:bg` (cron/orchestrator.ts
+ * handleScheduled — inline phase and post-return waitUntil tail), and
+ * `workflow:<name>` (src/workflows/*, one point per step). See
+ * lib/d1-meter.ts for the overlap rules.
+ */
+export function writeD1Attribution(
+  ae: AnalyticsEngineDataset | undefined,
+  endpoint: string,
+  tally: D1Tally,
+): void {
+  if (!ae) return;
   try {
-    env.AE.writeDataPoint({
+    ae.writeDataPoint({
       blobs: [endpoint],
       doubles: [tally.rowsRead, tally.rowsWritten, tally.queries],
       indexes: [endpoint],

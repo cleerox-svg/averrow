@@ -803,3 +803,126 @@ export async function fetchRecentWindowMetrics(
     return { ...empty(), setup_required: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
+
+// ─── Hourly account-wide breakdown (d1_hourly) ───────────────────────
+//
+// rows_read / rows_written per UTC hour, summed across every D1 database on
+// the account, with the per-database split for each hour. This is the
+// unsampled database-level view (d1AnalyticsAdaptiveGroups, NOT the sampled
+// per-query d1QueriesAdaptiveGroups), so a spike hour shows up with its true
+// size; pair it with the AE `d1_attribution_hourly` block (agent:/cron:/
+// workflow: endpoints) to see which job owns it. Same CF_API_TOKEN /
+// CF_ACCOUNT_ID pattern as fetchRecentWindowMetrics.
+
+/** Hard cap on the hourly window (the diagnostics `hours` param is clamped to it). */
+export const D1_HOURLY_MAX_HOURS = 48;
+
+export interface D1HourlyRow {
+  /** Top of the UTC hour, as CF returns it (e.g. 2026-11-02T06:00:00Z). */
+  hour: string;
+  rows_read: number;
+  rows_written: number;
+  per_database: Array<{ database_id: string; rows_read: number; rows_written: number }>;
+}
+
+export interface D1HourlyResult {
+  hours: D1HourlyRow[];
+  window_hours: number;
+  setup_required: boolean;
+  error?: string;
+}
+
+/** Clamp to [1, D1_HOURLY_MAX_HOURS]; non-finite → 6. */
+export function clampHourlyWindow(hours: number): number {
+  if (!Number.isFinite(hours)) return 6;
+  return Math.min(D1_HOURLY_MAX_HOURS, Math.max(1, Math.floor(hours)));
+}
+
+export async function fetchD1HourlyMetrics(
+  env: Env,
+  hoursBack: number = 24,
+  now: Date = new Date(),
+): Promise<D1HourlyResult> {
+  const windowHours = clampHourlyWindow(hoursBack);
+  const token = (env as unknown as Record<string, string | undefined>).CF_API_TOKEN;
+  const accountId = (env as unknown as Record<string, string | undefined>).CF_ACCOUNT_ID;
+  if (!token || !accountId) {
+    return { hours: [], window_hours: windowHours, setup_required: true };
+  }
+
+  // Last N hour buckets INCLUDING the current (partial) hour.
+  const topOfHour = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
+  const start = new Date(topOfHour - (windowHours - 1) * 3_600_000).toISOString();
+
+  const query = `
+    query {
+      viewer {
+        accounts(filter: { accountTag: "${accountId}" }) {
+          d1AnalyticsAdaptiveGroups(
+            filter: { datetimeHour_geq: "${start}" }
+            limit: 10000
+            orderBy: [datetimeHour_ASC]
+          ) {
+            sum { rowsRead rowsWritten }
+            dimensions { datetimeHour databaseId }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const res = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ query }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return {
+        hours: [], window_hours: windowHours, setup_required: false,
+        error: `CF GraphQL HTTP ${res.status}: ${body.slice(0, 200)}`,
+      };
+    }
+    const parsed = (await res.json()) as {
+      data?: {
+        viewer?: {
+          accounts?: Array<{
+            d1AnalyticsAdaptiveGroups?: Array<{
+              sum?: { rowsRead?: number; rowsWritten?: number };
+              dimensions?: { datetimeHour?: string; databaseId?: string };
+            }>;
+          }>;
+        };
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (parsed.errors?.length) {
+      return {
+        hours: [], window_hours: windowHours, setup_required: false,
+        error: parsed.errors.map((e) => e.message).slice(0, 3).join("; "),
+      };
+    }
+    const groups = parsed.data?.viewer?.accounts?.[0]?.d1AnalyticsAdaptiveGroups ?? [];
+    const byHour = new Map<string, D1HourlyRow>();
+    for (const g of groups) {
+      const hour = g.dimensions?.datetimeHour;
+      if (!hour) continue;
+      const read = Number(g.sum?.rowsRead ?? 0) || 0;
+      const written = Number(g.sum?.rowsWritten ?? 0) || 0;
+      const row = byHour.get(hour) ?? { hour, rows_read: 0, rows_written: 0, per_database: [] };
+      row.rows_read += read;
+      row.rows_written += written;
+      row.per_database.push({ database_id: g.dimensions?.databaseId ?? "unknown", rows_read: read, rows_written: written });
+      byHour.set(hour, row);
+    }
+    const hours = Array.from(byHour.values()).sort((a, b) => a.hour.localeCompare(b.hour));
+    for (const h of hours) h.per_database.sort((a, b) => b.rows_read - a.rows_read);
+    return { hours, window_hours: windowHours, setup_required: false };
+  } catch (err) {
+    return {
+      hours: [], window_hours: windowHours, setup_required: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}

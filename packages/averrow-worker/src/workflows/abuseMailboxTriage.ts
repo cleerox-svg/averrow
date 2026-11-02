@@ -23,9 +23,23 @@ import {
   type AbuseTriageParams,
   type TriagePipelineResult,
 } from "../lib/abuse-mailbox-triage-pipeline";
+import { runWithWorkflowMeter } from "../lib/d1-meter";
 
 export class AbuseMailboxTriageWorkflow extends WorkflowEntrypoint<Env, AbuseTriageParams> {
+  // Per-run D1 attribution → AE `workflow:abuse_mailbox_triage` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
   async run(event: WorkflowEvent<AbuseTriageParams>, step: WorkflowStep): Promise<TriagePipelineResult> {
+    return runWithWorkflowMeter(
+      "workflow:abuse_mailbox_triage",
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(event: WorkflowEvent<AbuseTriageParams>, step: WorkflowStep): Promise<TriagePipelineResult> {
     // step.do is generically constrained to Serializable returns; the
     // pipeline's step results are plain JSON objects/strings, so adapt with
     // a loose cast (same pattern as workflows/campaignHunter.ts).

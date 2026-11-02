@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from 'cloudflare:workers';
 import { PRIVATE_IP_SQL_FILTER } from '../lib/geoip';
+import { runWithWorkflowMeter } from '../lib/d1-meter';
 
 interface BackfillParams {
   batchSize: number;
@@ -12,7 +13,20 @@ interface BackfillEnv {
 }
 
 export class CartographerBackfillWorkflow extends WorkflowEntrypoint<BackfillEnv, BackfillParams> {
+  // Per-run D1 attribution → AE `workflow:cartographer_backfill` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
   async run(event: WorkflowEvent<BackfillParams>, step: WorkflowStep) {
+    return runWithWorkflowMeter(
+      'workflow:cartographer_backfill',
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(event: WorkflowEvent<BackfillParams>, step: WorkflowStep) {
     const BATCH_SIZE = event.payload.batchSize ?? 500;
 
     // Step 1: Count total backlog

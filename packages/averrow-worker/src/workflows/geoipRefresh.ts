@@ -85,6 +85,7 @@ import {
   atomicSwap as atomicSwapHelper,
   DELETE_PROGRESS_BASE,
 } from '../lib/geoip-import';
+import { runWithWorkflowMeter } from '../lib/d1-meter';
 
 interface GeoipRefreshParams {
   /** Refresh log row id created by the geoip_refresh agent (or the
@@ -135,7 +136,20 @@ interface GeoipRefreshEnv {
 }
 
 export class GeoipRefreshWorkflow extends WorkflowEntrypoint<GeoipRefreshEnv, GeoipRefreshParams> {
+  // Per-run D1 attribution → AE `workflow:geoip_refresh` (lib/d1-meter.ts):
+  // this.env is swapped for a metered copy for the duration of the run and
+  // the tally is flushed after every step.do callback.
   async run(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
+    return runWithWorkflowMeter(
+      'workflow:geoip_refresh',
+      this.env,
+      step,
+      (env) => { this.env = env; },
+      (meteredStep) => this.meteredRun(event, meteredStep),
+    );
+  }
+
+  private async meteredRun(event: WorkflowEvent<GeoipRefreshParams>, step: WorkflowStep) {
     const refreshLogId = event.payload.refreshLogId;
     try {
       return await this.runImpl(event, step);

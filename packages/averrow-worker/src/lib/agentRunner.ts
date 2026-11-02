@@ -10,6 +10,7 @@ import { runInAlertScope, drainAlertScope, ALERT_SCOPE_DRAIN_DEADLINE_MS } from 
 import type { Env } from "../types";
 import { createNotification } from "./notifications";
 import { withD1Retry } from "./d1-retry";
+import { withD1Meter } from "./d1-meter";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -329,6 +330,30 @@ export async function executeAgent(
   input: Record<string, unknown> = {},
   triggeredBy: string | null = null,
   triggerType: TriggerType = "manual",
+): Promise<ExecuteAgentResult> {
+  // Per-job D1 attribution (lib/d1-meter.ts): the whole run — runner
+  // bookkeeping (agent_configs / approvals / agent_runs writes) plus the
+  // agent's own reads through ctx.env — executes against an env copy whose
+  // D1 bindings (DB, AUDIT_DB, GEOIP_DB, DNS_QUEUE_DB) are metered. The
+  // tally is written to Analytics Engine as `agent:<agent_id>` when the run
+  // settles, on every path (success, failure, circuit-open skip), and
+  // surfaces in platform-diagnostics `d1_attribution_24h` /
+  // `d1_attribution_hourly`. runSyncAgent goes through here, so sync agents
+  // are covered too. Work an agent defers to ctx.waitUntil after returning
+  // is not in its row (it is in the enclosing `cron:` row). agent_runs has
+  // no details/summary column, so the tally is not persisted to D1 — AE is
+  // the record. No-op when AE is not bound.
+  return withD1Meter(env, `agent:${agentModule.name}`, (meteredEnv) =>
+    executeAgentMetered(meteredEnv, agentModule, input, triggeredBy, triggerType),
+  );
+}
+
+async function executeAgentMetered(
+  env: Env,
+  agentModule: AgentModule,
+  input: Record<string, unknown>,
+  triggeredBy: string | null,
+  triggerType: TriggerType,
 ): Promise<ExecuteAgentResult> {
   const agentId = agentModule.name;
 
