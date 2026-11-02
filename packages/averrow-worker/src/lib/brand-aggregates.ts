@@ -40,15 +40,12 @@ const BRAND_AGG_GRADE_RANK: Record<string, number> = {
  * Derived in memory from the shared email-posture rollup
  * (lib/email-posture-rollup.ts, one cached scan of `brands` per hour that
  * also feeds /api/email-security/stats and Observer). Previously three
- * scans of its own behind this 30-min cachedValue; a miss now costs one KV
- * read of the rollup (D1 only when the rollup itself has expired).
+ * scans of its own behind a 30-min cachedValue; no outer cache now — the
+ * rollup is already cached (1h), so a second wrapper would only stack
+ * staleness for the same single KV read.
  */
 export async function emailSecurityAggregate(env: Env): Promise<EmailSecurityAggregate> {
-  return cachedValue<EmailSecurityAggregate>(
-    // 30 min: the inputs move on the weekly email-security rescan cadence.
-    env, 'brand-aggregate.email-security', 1800,
-    async () => deriveEmailSecurityAggregate(await emailPostureRollup(env)),
-  );
+  return deriveEmailSecurityAggregate(await emailPostureRollup(env));
 }
 
 export function deriveEmailSecurityAggregate(rows: EmailPostureRollupRow[]): EmailSecurityAggregate {

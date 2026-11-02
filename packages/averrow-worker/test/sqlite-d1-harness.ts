@@ -61,11 +61,12 @@ export function openDerivedDb(tables: string[], opts: { indexes?: string[] } = {
  * whole index set, and a plan test that omits a competing index can pass
  * while production picks a worse plan.
  */
-export function openMigratedDb(): SqliteDb {
+export function openMigratedDb(opts: { exclude?: string[] } = {}): SqliteDb {
   const db = new DatabaseSync!(":memory:");
   db.exec("PRAGMA foreign_keys = OFF");
   const dir = resolve(__dirname, "..", "migrations");
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+  const exclude = new Set(opts.exclude ?? []);
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql") && !exclude.has(f)).sort()) {
     for (const stmt of splitStatements(readFileSync(resolve(dir, file), "utf8"))) db.exec(stmt);
   }
   return db;

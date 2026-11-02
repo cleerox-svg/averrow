@@ -76,10 +76,11 @@ describe.skipIf(!hasSqlite())("#1 migration 0312 restores idx_threats_first_seen
   });
 
   it("migration 0013's table rebuild is what removed it (baseline mirrors pre-0312 prod)", () => {
-    const db = openMigratedDb();
-    expect(hasIndex(db, "idx_threats_first_seen")).toBe(true);
+    expect(hasIndex(openMigratedDb(), "idx_threats_first_seen")).toBe(true);
     // Without 0312 the index does not exist: 0013 dropped `threats` and
     // re-created only four of 0001's indexes.
+    expect(hasIndex(openMigratedDb({ exclude: ["0312_threats_first_seen_index.sql"] }), "idx_threats_first_seen"))
+      .toBe(false);
     const m0013 = readFileSync(resolve(ROOT, "migrations/0013_new_feeds_and_threat_types.sql"), "utf8");
     expect(m0013).toMatch(/DROP TABLE threats;/);
     expect(m0013).not.toMatch(/idx_threats_first_seen/);

@@ -63,8 +63,8 @@ export const REPO_MANIFEST: RepoInventory = {
         "threats"
       ],
       "ai_models_referenced": [],
-      "loc": 1247,
-      "last_modified": "2026-11-02T01:24:08.632Z"
+      "loc": 1254,
+      "last_modified": "2026-11-02T01:39:47.665Z"
     },
     {
       "name": "appStoreMonitor",

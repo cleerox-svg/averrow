@@ -608,7 +608,14 @@ export const analystAgent: AgentModule = {
     // GROUP BY target_brand_id scans over all active threats (~44M D1
     // reads/day) whose result was read for these same ≤5 brands only.
     const enrichmentBrandIds = Array.from(matchedBrandIds).slice(0, 5);
-    const enrichmentByBrand = await loadBrandEnrichment(env, enrichmentBrandIds);
+    // Best-effort like the surrounding phases: a per-brand read failure
+    // must not discard the Phase 3 insights already produced this run.
+    let enrichmentByBrand: Awaited<ReturnType<typeof loadBrandEnrichment>> = new Map();
+    try {
+      enrichmentByBrand = await loadBrandEnrichment(env, enrichmentBrandIds);
+    } catch (enrichErr) {
+      console.error('[analyst] enrichment load failed:', enrichErr);
+    }
     for (const bid of enrichmentBrandIds) {
       const enrichment = enrichmentByBrand.get(bid);
       if (enrichment && (enrichment.surbl_confirmed > 0 || enrichment.vt_flagged > 0 || enrichment.gsb_confirmed > 0 || enrichment.dbl_confirmed > 0 || enrichment.noise_scanners > 0 || enrichment.potentially_targeted > 0 || enrichment.seclookup_high_risk > 0)) {

@@ -114,8 +114,10 @@ describe.skipIf(!hasSqlite())("#1 emailSecurityAggregate DMARC distribution", ()
     expect(log.every((e) => !e.error)).toBe(true);
   });
 
-  it("caches for 30 min (was 5)", () => {
-    expect(src("lib/brand-aggregates.ts")).toMatch(/'brand-aggregate\.email-security', 1800,/);
+  it("reads the shared 1h email-posture rollup instead of its own cache", () => {
+    const s = src("lib/brand-aggregates.ts");
+    expect(s).toMatch(/deriveEmailSecurityAggregate\(await emailPostureRollup\(env\)\)/);
+    expect(s).not.toMatch(/'brand-aggregate\.email-security'/);
   });
 });
 
