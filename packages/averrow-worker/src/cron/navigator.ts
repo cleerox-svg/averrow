@@ -673,11 +673,16 @@ async function runNavigatorImpl(
   //     recomputes once (~2 cube-hours + bounded index ranges,
   //     handlers/observatoryEvents.ts) while clients read KV in between. The
   //     key carries no `limit` (entries hold 100 items, sliced per request);
-  //   - A2 nodes/stats 24h/30d + heatmap 7d (1800s TTL, every 900s):
+  //   - A2 nodes/stats 24h + heatmap 7d (1800s TTL, every 900s):
   //     threshold 840s, so every A2 warm (age ≈900s) recomputes (4/h per
   //     key) even when tick jitter reads the age back as 899.x s — without
   //     the 60s skew such a warm landed exactly ON the old 900s threshold,
-  //     counted as a hit, and the key lapsed before the next warm.
+  //     counted as a hit, and the key lapsed before the next warm;
+  //   - A2 arcs 24h (7200s TTL): recompute at age 6300s (~14/day);
+  //   - A2 nodes/arcs/stats 30d (14400s TTL — observatoryTtl, 4h for
+  //     30d/90d): threshold 12540s, recompute at age 12600s (one per 3.5h,
+  //     ~7/day per key, was 96/day for nodes/stats), with one spare A2 slot
+  //     (13500s) before the key could lapse.
   // The operations list warms are plain fill-on-miss (1800s TTL).
   // Over the D1 soft-cap, A2/B/C drop out entirely and Phase A runs
   // unmarked (fill-on-miss), so no warm forces a recompute.

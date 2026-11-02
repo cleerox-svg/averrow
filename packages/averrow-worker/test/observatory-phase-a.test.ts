@@ -26,6 +26,9 @@ import {
   handleObservatoryLive,
   handleObservatoryOperations,
   OBSERVATORY_TTL_S,
+  OBSERVATORY_LONG_PERIOD_TTL_S,
+  OBSERVATORY_PERIODS,
+  observatoryTtl,
   BRAND_ID_PATTERN,
   type ArcRow,
 } from "../src/handlers/observatory";
@@ -288,6 +291,39 @@ describe("refresh margin is relative to the TTL", () => {
     }
   });
 
+  it("observatoryTtl: 4h for 30d/90d nodes/arcs/stats/heatmap; 24h/7d unchanged", () => {
+    expect(OBSERVATORY_LONG_PERIOD_TTL_S).toBe(14400);
+    for (const kind of ["nodes", "arcs", "stats", "heatmap"] as const) {
+      expect(observatoryTtl(kind, "24h")).toBe(OBSERVATORY_TTL_S[kind]);
+      expect(observatoryTtl(kind, "7d")).toBe(OBSERVATORY_TTL_S[kind]);
+      expect(observatoryTtl(kind, "30d")).toBe(14400);
+      expect(observatoryTtl(kind, "90d")).toBe(14400);
+    }
+    expect(OBSERVATORY_TTL_S.nodes).toBe(1800);
+    expect(OBSERVATORY_TTL_S.arcs).toBe(7200);
+    expect(OBSERVATORY_PERIODS).toEqual(["24h", "7d", "30d", "90d"]); // a new period must pick a TTL
+  });
+
+  it("A2 cadence (900s) on a 14400s key: ~7 recomputes/day (not 96), never lapses, survives one skipped warm", () => {
+    const ttl = OBSERVATORY_LONG_PERIOD_TTL_S;
+    expect(refreshMarginSeconds(ttl)).toBe(1800);
+    expect(refreshAfterSeconds(ttl)).toBe(12540);
+    let writtenAt = 0;
+    let recomputes = 0;
+    for (let k = 1; k <= 96; k++) {
+      const t = k * 900 + (k % 2 === 0 ? -0.6 : 0.6); // ±tick jitter
+      const age = t - writtenAt;
+      expect(age).toBeLessThan(ttl);
+      if (age >= refreshAfterSeconds(ttl)) { recomputes++; writtenAt = t; }
+    }
+    expect(recomputes).toBeGreaterThanOrEqual(6);
+    expect(recomputes).toBeLessThanOrEqual(8);
+    // The recompute lands at age ≈12600s; one skipped slot (13500s) still
+    // finds the key alive.
+    expect(12600 + 900).toBeLessThan(ttl);
+    expect(12600 - 0.6).toBeGreaterThanOrEqual(refreshAfterSeconds(ttl));
+  });
+
   it("skew stays a small fraction of short TTLs (threshold > 0)", () => {
     expect(refreshSkewSeconds(60)).toBe(7.5);
     expect(refreshAfterSeconds(60)).toBe(22.5);
@@ -536,5 +572,57 @@ describe.skipIf(!hasSqlite())("observatory handlers — real SQLite", () => {
     const m = log.length;
     await handleObservatoryStats(req("/api/observatory/stats?period=7d"), env);
     expect(log.length).toBe(m);
+  });
+});
+
+describe.skipIf(!hasSqlite())("period-aware TTLs are what the handlers write", () => {
+  it("30d/90d nodes, arcs, stats, heatmap write 14400s; 24h/7d keep theirs; the arcs fallback stays short", async () => {
+    const raw = openDerivedDb(TABLES);
+    geo(raw, { lat: 10, lng: 20, cc: "US", sev: "high", n: 2 });
+    const { env, kv } = makeEnv(raw);
+    for (const period of ["24h", "7d", "30d", "90d"] as const) {
+      await handleObservatoryNodes(req(`/api/observatory/nodes?period=${period}`), env);
+      await handleObservatoryStats(req(`/api/observatory/stats?period=${period}`), env);
+      await handleObservatoryHeatmap(req(`/api/observatory/heatmap?period=${period}`), env);
+      expect(kv.store.get(`observatory_nodes:${period}:all:2000`)?.ttl).toBe(observatoryTtl("nodes", period));
+      expect(kv.store.get(`observatory_stats:${period}:all`)?.ttl).toBe(observatoryTtl("stats", period));
+      expect(kv.store.get(`observatory_heatmap:${period}:all:10000`)?.ttl).toBe(observatoryTtl("heatmap", period));
+    }
+    expect(kv.store.get("observatory_nodes:30d:all:2000")?.ttl).toBe(14400);
+    expect(kv.store.get("observatory_nodes:7d:all:2000")?.ttl).toBe(1800);
+
+    // arcs: cube rows → period TTL; empty unfiltered cube → raw fallback, 300s for every period.
+    const brandRaw = openDerivedDb(TABLES);
+    brand(brandRaw, { id: "b1", name: "Acme", domain: "acme.example", hq_country: "CA" });
+    arcsCube(brandRaw, { brand: "b1", cc: "RU", sev: "high", n: 3 });
+    const withCube = makeEnv(brandRaw);
+    const empty = makeEnv(openDerivedDb(TABLES));
+    for (const period of ["7d", "30d", "90d"] as const) {
+      await handleObservatoryArcs(req(`/api/observatory/arcs?period=${period}`), withCube.env);
+      expect(withCube.kv.store.get(`observatory_arcs:${period}:all`)?.ttl).toBe(observatoryTtl("arcs", period));
+      const fb = await body<{ _fallback?: boolean }>(await handleObservatoryArcs(req(`/api/observatory/arcs?period=${period}`), empty.env));
+      expect(fb._fallback).toBe(true);
+      expect(empty.kv.store.get(`observatory_arcs:${period}:all`)?.ttl).toBe(OBSERVATORY_TTL_S.arcsFallback);
+    }
+  });
+
+  it("a 30d refresh warm serves the key until age 12540s, then recomputes", async () => {
+    const raw = openDerivedDb(TABLES);
+    geo(raw, { lat: 10, lng: 20, cc: "US", sev: "high", n: 2 });
+    const { env, kv, log } = makeEnv(raw);
+    const KEY = "observatory_nodes:30d:all:2000";
+    const path = "/api/observatory/nodes?period=30d";
+    await handleObservatoryNodes(req(path), env);
+    const age = (s: number) => {
+      const e = kv.store.get(KEY)!;
+      kv.store.set(KEY, { ...e, metadata: { cachedAt: Date.now() - s * 1000 } });
+    };
+    const n = log.length;
+    age(11700); // 13 A2 slots: the old 1800s TTL would have recomputed 13 times
+    await handleObservatoryNodes(markCacheRefresh(req(path)), env);
+    expect(log.length).toBe(n);
+    age(12600);
+    await handleObservatoryNodes(markCacheRefresh(req(path)), env);
+    expect(log.length).toBe(n + 1); // one base-aggregation statement per recompute
   });
 });

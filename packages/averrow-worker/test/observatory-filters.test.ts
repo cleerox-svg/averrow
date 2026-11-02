@@ -576,7 +576,7 @@ describe.skipIf(!hasSqlite())("filtered cube reads stay on the cube indexes", ()
         const cube = /FROM (threat_cube_\w+)/.exec(p.sql)![1]!;
         expect(p.plan, p.sql).toMatch(new RegExp(`SEARCH (\\w+ )?USING (COVERING )?INDEX (idx_cube_\\w+|sqlite_autoindex_${cube}_1)`));
         expect(p.plan, p.sql).not.toMatch(/\bSCAN threat_cube_/);
-        // /arcs aliases the cube as `c` (in /nodes `c` is the CTE `cells`).
+        // /arcs aliases the cube as `c`.
         if (/FROM threat_cube_arcs c\b/.test(p.sql)) expect(p.plan, p.sql).not.toMatch(/\bSCAN c\b/);
       }
       // COUNT(DISTINCT …) with a severity/type filter would otherwise walk

@@ -18,6 +18,9 @@ export const OPERATIONS_LIST_TTL_S = 1800;
 export const OPERATIONS_HISTORY_TTL_S = 21_600;
 /** Cluster total count (cachedCount). */
 export const OPERATIONS_TOTAL_TTL_S = 3600;
+/** /operations/stats `brands_targeted` — unfiltered DISTINCT over threat_cube_brand (cachedCount). */
+export const OPERATIONS_BRANDS_TARGETED_COUNT_KEY = "count.operations.brands_targeted";
+export const OPERATIONS_BRANDS_TARGETED_TTL_S = 3600;
 
 /** `status` filter values the list accepts (the CASE ordering below). Shared with /api/observatory/operations. */
 export const OPERATION_STATUSES: ReadonlySet<string> = new Set(LIVE_CLUSTER_STATUSES);
@@ -174,8 +177,9 @@ export async function handleOperationsStats(request: Request, env: Env): Promise
       return json(JSON.parse(cached), 200, origin);
     }
     const tally = newTally();
+    let brandsTargetedQueried = false;
 
-    const [clusterStats, campaignStats, brandStats, typeStats] = await Promise.all([
+    const [clusterStats, campaignStats, brandsTargeted, typeStats] = await Promise.all([
       env.DB.prepare(`
         SELECT COUNT(*) AS total,
                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -191,18 +195,26 @@ export async function handleOperationsStats(request: Request, env: Env): Promise
         `SELECT COUNT(*) AS total FROM campaigns
           WHERE status = 'active' AND last_seen >= datetime('now', '-7 days')`,
       ).first<{ total: number }>(),
-      env.DB.prepare(`
-        SELECT COUNT(DISTINCT target_brand_id) AS brands_targeted FROM threat_cube_brand
-      `).first<{ brands_targeted: number }>(),
+      // Unfiltered DISTINCT over the whole brand cube (~117K rows) — it ran
+      // on every operations_stats miss (Navigator Phase B warms every
+      // 15 min). The brand set moves slowly, so it gets its own 1h counter.
+      cachedCount(env, OPERATIONS_BRANDS_TARGETED_COUNT_KEY, OPERATIONS_BRANDS_TARGETED_TTL_S, async () => {
+        brandsTargetedQueried = true;
+        const r = await env.DB.prepare(`
+          SELECT COUNT(DISTINCT target_brand_id) AS brands_targeted FROM threat_cube_brand
+        `).first<{ brands_targeted: number }>();
+        return r?.brands_targeted ?? 0;
+      }),
       env.DB.prepare(`
         SELECT COUNT(DISTINCT threat_type) AS threat_types FROM threat_cube_status
         WHERE status = 'active' AND threat_type != 'unknown'
       `).first<{ threat_types: number }>(),
     ]);
-    // 4 .first() queries — meta unavailable, all cube-served.
-    // brands_targeted reads brand cube (already filters status='active');
-    // threat_types reads status cube with explicit status='active' filter.
-    tally.queries += 4;
+    // .first() queries — meta unavailable, all cube-served.
+    // brands_targeted reads brand cube (already filters status='active') and
+    // counts only when its cachedCount missed; threat_types reads status
+    // cube with explicit status='active' filter.
+    tally.queries += brandsTargetedQueried ? 4 : 3;
 
     const responseData = {
       success: true,
@@ -211,7 +223,7 @@ export async function handleOperationsStats(request: Request, env: Env): Promise
         accelerating: clusterStats?.accelerating ?? 0,
         total_clusters: clusterStats?.total ?? 0,
         campaigns_tracked: campaignStats?.total ?? 0,
-        brands_targeted: brandStats?.brands_targeted ?? 0,
+        brands_targeted: brandsTargeted,
         threat_types: typeStats?.threat_types ?? 0,
       },
     };
