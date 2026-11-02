@@ -192,7 +192,25 @@ export async function getBudgetDiagnostics(env: Env): Promise<BudgetDiagnostics>
   };
 }
 
-/** Per-query stat from CF d1QueriesAdaptiveGroups. */
+/**
+ * d1QueriesAdaptiveGroups is a SAMPLED dataset: each kept event carries a
+ * sample weight, and `count` / `sum.rowsRead` are weight-scaled estimates.
+ * Totals over many executions are reliable; a rarely-run query's count can
+ * be off by an order of magnitude while its avg rows/query still looks exact
+ * (both numerator and denominator are scaled). Observed 2026-11-02: FC's
+ * backlog.brand_enrich count reported 132 runs/24h; backlog_history proved
+ * 12 real executions (11× over). Verify a rare query's frequency from
+ * agent_runs / backlog_history / handler logs before acting on it; use
+ * d1AnalyticsAdaptiveGroups (d1_metrics_24h, d1_billing_cycle) for the
+ * account total.
+ */
+export const D1_TOP_QUERIES_SAMPLING_NOTE =
+  "Sampled estimates (CF d1QueriesAdaptiveGroups): query_count and rows_read are " +
+  "weight-scaled and can overstate a rarely-run query by ~10x while " +
+  "avg_rows_per_query stays accurate. Confirm a query's real frequency from " +
+  "agent_runs/backlog_history before acting; use d1_metrics_24h for the account total.";
+
+/** Per-query stat from CF d1QueriesAdaptiveGroups (sampled — see D1_TOP_QUERIES_SAMPLING_NOTE). */
 export interface D1QueryStat {
   /** Stable hash CF assigns to the SQL text (after parameter normalization). */
   query_hash: string;

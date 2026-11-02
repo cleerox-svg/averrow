@@ -9,7 +9,7 @@ import { json, corsHeaders } from "../lib/cors";
 import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
-import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics } from "../lib/d1-budget";
+import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
 import { cachedCount, getCachedCountStats } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import {
@@ -2306,7 +2306,9 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           // (circuit-broken / manually paused agents from agent_configs,
           // which never appear in per_agent); on a failed read paused=[],
           // paused_count=null + agent_mesh.paused_error. No field removed.
-          endpoint_version: 14,
+          // 15: additive `d1_top_queries_note` (top-N per-query numbers are
+          // sampled estimates). No field removed.
+          endpoint_version: 15,
         },
 
         brand_count_drift: brandCountDrift,
@@ -2639,6 +2641,8 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // when the fetch fails without grepping worker logs.
         d1_top_queries_24h: d1TopQueries.queries,
         d1_top_queries_error: d1TopQueries.error,
+        // Read this before trusting a single row (and the write view below).
+        d1_top_queries_note: D1_TOP_QUERIES_SAMPLING_NOTE,
 
         // Parallel top-N ordered by rowsWritten instead of rowsRead —
         // attributes write spend so the operator can tell which
