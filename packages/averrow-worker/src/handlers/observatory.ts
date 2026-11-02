@@ -630,19 +630,22 @@ export interface NodeRow {
   country_code: string | null; top_threat_type: string | null;
 }
 
-/** One base-aggregation row: a 0.1° cell × country × type × lowered severity. */
+/** One base-aggregation row: a 0.1° cell × country × type, severities as columns. */
 export interface NodeBaseRow {
   lat: number | null;
   lng: number | null;
   country_code: string | null;
   threat_type: string | null;
-  severity: string | null;
+  /** SUM(threat_count) over every severity (unranked ones count only here). */
   n: number | null;
+  critical: number | null; high: number | null; medium: number | null; low: number | null;
 }
 
 /**
  * Nodes base aggregation: the cube window grouped to 0.1° cell × country ×
- * threat type × lowered severity. Binds: window start, source / cube filter
+ * threat type, with the four ranked severities as conditional-sum columns
+ * (grouping by severity too returned ~4× the rows to the Worker — a 90d
+ * window would ship tens of thousands). Binds: window start, source / cube filter
  * params (no limit — `foldNodeCells` applies it after ordering).
  *
  * The per-cell fold (severity sums, top country, top type, ordering, LIMIT)
@@ -659,11 +662,11 @@ export function NODES_BASE_SQL(sourceSql: string): string {
         ROUND(lng_bucket, 1) AS lng,
         country_code,
         threat_type,
-        LOWER(severity) AS severity,
-        SUM(threat_count) AS n
+        SUM(threat_count) AS n,
+        ${severitySumsSql("severity", "threat_count")}
       FROM threat_cube_geo
       WHERE hour_bucket >= ?${sourceSql}
-      GROUP BY 1, 2, 3, 4, 5
+      GROUP BY 1, 2, 3, 4
     `;
 }
 
@@ -703,8 +706,9 @@ interface CellAcc {
 
 /**
  * Fold base rows into /nodes cells, exactly as the former SQL did:
- *   - threat_count = SUM(n); critical/high/medium/low = SUM(n) for that
- *     (already-lowered) severity, other severities count only in the total;
+ *   - threat_count = SUM(n); critical/high/medium/low = SUM of the base
+ *     rows' per-severity columns (LOWER(severity) match, as before); other
+ *     severities count only in the total;
  *   - country_code = highest-sum country, ties alphabetical; the 'XX'
  *     sentinel (case-sensitive, like `!= 'XX'`) and NULL never qualify, so an
  *     all-XX cell → null;
@@ -730,12 +734,10 @@ export function foldNodeCells(rows: readonly NodeBaseRow[], limit: number): Node
     }
     const n = r.n ?? 0;
     c.threat_count += n;
-    switch (r.severity) {
-      case "critical": c.critical += n; break;
-      case "high": c.high += n; break;
-      case "medium": c.medium += n; break;
-      case "low": c.low += n; break;
-    }
+    c.critical += r.critical ?? 0;
+    c.high += r.high ?? 0;
+    c.medium += r.medium ?? 0;
+    c.low += r.low ?? 0;
     if (r.country_code !== null && r.country_code !== "XX") {
       c.countries.set(r.country_code, (c.countries.get(r.country_code) ?? 0) + n);
     }
