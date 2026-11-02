@@ -1,7 +1,8 @@
 // Catalog-level aggregate queries for the Brands Intel page.
 //
 // Per PR13: each aggregate is a single GROUP BY (or small JOIN) over
-// the catalog. Wrapped in cachedValue (5min TTL; email-security 30min, posture 1h) so the Intel page
+// the catalog. Wrapped in cachedValue (5min TTL; posture 1h; email-security derives from
+// the shared 1h email-posture rollup in lib/email-posture-rollup.ts) so the Intel page
 // stays cheap even when the catalog grows to 100K+ brands. Per
 // CLAUDE.md: bare COUNT(*) FROM threats is a code-review red flag —
 // these aggregates use existing pre-computed columns where possible.
@@ -15,6 +16,10 @@
 import type { Env } from '../types';
 import { cachedValue } from './cached-value';
 import { cachedCount } from './cached-count';
+import {
+  emailPostureRollup, emailPostureTotals, gradeDistribution, dmarcDistribution,
+  type EmailPostureRollupRow,
+} from './email-posture-rollup';
 
 // ── Email Security ─────────────────────────────────────────────
 
@@ -26,74 +31,62 @@ export interface EmailSecurityAggregate {
   dmarc_enforcing:    number;     // policy IN ('quarantine','reject')
 }
 
+const BRAND_AGG_GRADE_RANK: Record<string, number> = {
+  'A+': 0, 'A': 1, 'A-': 2, 'B+': 3, 'B': 4, 'B-': 5,
+  'C+': 6, 'C': 7, 'C-': 8, 'D+': 9, 'D': 10, 'D-': 11, 'F': 12,
+};
+
+/**
+ * Derived in memory from the shared email-posture rollup
+ * (lib/email-posture-rollup.ts, one cached scan of `brands` per hour that
+ * also feeds /api/email-security/stats and Observer). Previously three
+ * scans of its own behind this 30-min cachedValue; a miss now costs one KV
+ * read of the rollup (D1 only when the rollup itself has expired).
+ */
 export async function emailSecurityAggregate(env: Env): Promise<EmailSecurityAggregate> {
   return cachedValue<EmailSecurityAggregate>(
     // 30 min: the inputs move on the weekly email-security rescan cadence.
     env, 'brand-aggregate.email-security', 1800,
-    async () => {
-      const grades = await env.DB.prepare(`
-        SELECT email_security_grade AS grade, COUNT(*) AS count
-        FROM brands
-        WHERE email_security_grade IS NOT NULL
-        GROUP BY email_security_grade
-        ORDER BY CASE email_security_grade
-          WHEN 'A+' THEN 0 WHEN 'A' THEN 1 WHEN 'A-' THEN 2
-          WHEN 'B+' THEN 3 WHEN 'B' THEN 4 WHEN 'B-' THEN 5
-          WHEN 'C+' THEN 6 WHEN 'C' THEN 7 WHEN 'C-' THEN 8
-          WHEN 'D+' THEN 9 WHEN 'D' THEN 10 WHEN 'D-' THEN 11
-          WHEN 'F'  THEN 12 ELSE 13 END
-      `).all<{ grade: string; count: number }>();
-
-      const totals = await env.DB.prepare(`
-        SELECT
-          SUM(CASE WHEN email_security_grade IS NOT NULL THEN 1 ELSE 0 END) AS graded,
-          SUM(CASE WHEN email_security_grade IS NULL     THEN 1 ELSE 0 END) AS ungraded
-        FROM brands
-      `).first<{ graded: number; ungraded: number }>();
-
-      // DMARC enforcement from each brand's LATEST scan — read from the
-      // denormalized brands.email_security_dmarc_policy column (migration
-      // 0255), the same source handlers/emailSecurity.ts switched to in
-      // bdc0f0c3. The previous form ran ROW_NUMBER() OVER (PARTITION BY
-      // brand_id) across the whole insert-only email_security_scans
-      // history (~511K rows, ~125M reads/24h).
-      //
-      // Population: `email_security_score IS NOT NULL` = "brand has been
-      // scanned" — every scan writer (cartographer, curator, orchestrator,
-      // the three emailSecurity handlers) sets score + grade + dmarc_policy
-      // + scanned_at in one UPDATE right after saveEmailSecurityScan, so
-      // this matches the old "brand has ≥1 scan row" population.
-      //
-      // NULL policy → 'none'. The old query split a NULL policy into
-      // 'unspecified' (dmarc_exists=1) vs 'none' (no record). brands has no
-      // dmarc_exists column, but checkDmarc (email-security.ts) defaults an
-      // existing record without `p=` to 'none', so a scan that found a
-      // DMARC record never stores a NULL policy: NULL means "no record".
-      // Only legacy scan rows written before that default could have
-      // produced 'unspecified'; such brands report 'none' until their next
-      // (weekly) rescan.
-      const dmarcRows = await env.DB.prepare(`
-        SELECT COALESCE(email_security_dmarc_policy, 'none') AS policy,
-               COUNT(*) AS count
-        FROM brands
-        WHERE email_security_score IS NOT NULL
-        GROUP BY policy
-        ORDER BY count DESC
-      `).all<{ policy: string; count: number }>();
-
-      const dmarcEnforcing = dmarcRows.results
-        .filter(r => r.policy === 'quarantine' || r.policy === 'reject')
-        .reduce((s, r) => s + r.count, 0);
-
-      return {
-        grade_distribution: grades.results,
-        total_graded:       totals?.graded ?? 0,
-        ungraded:           totals?.ungraded ?? 0,
-        dmarc_distribution: dmarcRows.results,
-        dmarc_enforcing:    dmarcEnforcing,
-      };
-    },
+    async () => deriveEmailSecurityAggregate(await emailPostureRollup(env)),
   );
+}
+
+export function deriveEmailSecurityAggregate(rows: EmailPostureRollupRow[]): EmailSecurityAggregate {
+  const totals = emailPostureTotals(rows);
+
+  // DMARC enforcement from each brand's LATEST scan — the denormalized
+  // brands.email_security_dmarc_policy column (migration 0255), not the
+  // insert-only email_security_scans history.
+  //
+  // Population: `email_security_score IS NOT NULL` = "brand has been
+  // scanned" — every scan writer (cartographer, curator, orchestrator,
+  // the three emailSecurity handlers) sets score + grade + dmarc_policy
+  // + scanned_at in one UPDATE right after saveEmailSecurityScan.
+  //
+  // NULL policy → 'none' (merged with an explicit 'none' bucket).
+  // checkDmarc (email-security.ts) defaults an existing record without
+  // `p=` to 'none', so a scan that found a DMARC record never stores a
+  // NULL policy: NULL means "no record".
+  const byPolicy = new Map<string, number>();
+  for (const r of dmarcDistribution(rows)) {
+    const policy = r.dmarc_policy ?? 'none';
+    byPolicy.set(policy, (byPolicy.get(policy) ?? 0) + r.count);
+  }
+  const dmarc = [...byPolicy]
+    .map(([policy, count]) => ({ policy, count }))
+    .sort((a, b) => b.count - a.count || (a.policy < b.policy ? -1 : a.policy > b.policy ? 1 : 0));
+
+  const dmarcEnforcing = dmarc
+    .filter(r => r.policy === 'quarantine' || r.policy === 'reject')
+    .reduce((s, r) => s + r.count, 0);
+
+  return {
+    grade_distribution: gradeDistribution(rows, (g) => BRAND_AGG_GRADE_RANK[g] ?? 13),
+    total_graded:       totals.graded,
+    ungraded:           totals.ungraded,
+    dmarc_distribution: dmarc,
+    dmarc_enforcing:    dmarcEnforcing,
+  };
 }
 
 // ── Pressure ─────────────────────────────────────────────

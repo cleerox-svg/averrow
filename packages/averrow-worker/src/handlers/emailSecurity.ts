@@ -16,7 +16,9 @@ import { runEmailSecurityScan, saveEmailSecurityScan } from '../email-security';
 import type { BIMIResult } from '../email-security';
 import { createAlert } from '../lib/alerts';
 import { cachedValue } from '../lib/cached-value';
-import { cachedCount } from '../lib/cached-count';
+import {
+  emailPostureRollup, emailPostureTotals, gradeDistribution, dmarcDistribution,
+} from '../lib/email-posture-rollup';
 import type { EmailSecurityScan, Env } from '../types';
 
 // ─── GET /api/email-security/:brandId ─────────────────────────────────────
@@ -318,103 +320,74 @@ export async function handleEmailSecurityStats(
 ): Promise<Response> {
   const origin = request.headers.get('Origin');
   try {
-    // D1 spend fix: this stats page is prewarmed by Navigator every
-    // 5 min (Phase C "Email Auth"). Its subqueries now read pre-computed
-    // columns on `brands` — the DMARC distribution reads the denormalized
-    // email_security_dmarc_policy column (migration 0255, Fix #4) instead
-    // of the old correlated `id IN (SELECT MAX(id) ... GROUP BY brand_id)`
-    // over the unbounded email_security_scans history (~43.8M reads/24h
-    // in the 2026-07 budget blowout). Wrap the whole computed payload in
-    // cachedValue: the response is deterministic given DB state and a
-    // few-min lag on a posture panel is invisible. KV reads don't count
-    // against the D1 budget, so every hit removes all of these scans from
-    // plan. TTL is 420s (not the 300s §8 default) so it doesn't land on
-    // Navigator's 5-min prewarm boundary — the observatory_arcs precedent.
-    const data = await cachedValue<{
-      grade_distribution: Array<{ grade: string; count: number }>;
-      dmarc_distribution: Array<{ dmarc_policy: string | null; count: number }>;
-      total_scanned: number;
-      total_unscanned: number;
-      average_score: number;
-      worst_brands: Array<{
-        id: string; name: string; canonical_domain: string;
-        email_security_score: number; email_security_grade: string;
-        active_threats: number;
-      }>;
-    }>(env, 'email_security_stats', 420, async () => {
-      const [gradeRows, totalScanned, totalUnscanned, worstBrands] = await Promise.all([
-        // Grade distribution
-        env.DB.prepare(`
-          SELECT email_security_grade AS grade, COUNT(*) AS count
-          FROM brands
-          WHERE email_security_grade IS NOT NULL
-          GROUP BY email_security_grade
-          ORDER BY CASE grade
-            WHEN 'A+' THEN 1 WHEN 'A' THEN 2 WHEN 'B' THEN 3
-            WHEN 'C' THEN 4 WHEN 'D' THEN 5 WHEN 'F' THEN 6 ELSE 7 END
-        `).all<{ grade: string; count: number }>(),
-
-        // Scanned total — 15-min cachedCount. This whole payload already
-        // sits behind the 420s cachedValue above, so these COUNTs only run
-        // on an outer-cache miss; the inner cache trims those residual
-        // full-table scans over brands (~9.6K rows) further.
-        cachedCount(env, 'count.brands.email_scored', 900, () =>
-          env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NOT NULL"
-          ).first<{ n: number }>().then((r) => r?.n ?? 0)),
-
-        // Unscanned count — same cache treatment.
-        cachedCount(env, 'count.brands.email_unscored', 900, () =>
-          env.DB.prepare(
-            "SELECT COUNT(*) AS n FROM brands WHERE email_security_score IS NULL"
-          ).first<{ n: number }>().then((r) => r?.n ?? 0)),
-
-        // Worst-protected brands (all F/D/C grades, up to 200)
-        env.DB.prepare(`
-          SELECT b.id, b.name, b.canonical_domain, b.email_security_score, b.email_security_grade,
-                 b.active_threat_count AS active_threats
-          FROM brands b
-          WHERE b.email_security_score IS NOT NULL AND b.email_security_grade IN ('F', 'D', 'C')
-          ORDER BY b.email_security_score ASC
-          LIMIT 200
-        `).all<{
-          id: string; name: string; canonical_domain: string;
-          email_security_score: number; email_security_grade: string;
-          active_threats: number;
-        }>(),
-      ]);
-
-      // DMARC policy distribution — reads the denormalized latest-scan
-      // column on `brands` (email_security_dmarc_policy, migration 0255)
-      // instead of the correlated MAX(id)-per-brand scan over the
-      // unbounded, insert-only email_security_scans history (Fix #4 —
-      // that scan was ~43.8M reads/24h). Same output shape: NULL policy
-      // stays its own GROUP BY bucket, aliased back to `dmarc_policy`.
-      const dmarcRows = await env.DB.prepare(`
-        SELECT email_security_dmarc_policy AS dmarc_policy, COUNT(*) AS count
-        FROM brands
-        WHERE email_security_score IS NOT NULL
-        GROUP BY email_security_dmarc_policy
-      `).all<{ dmarc_policy: string | null; count: number }>();
-
-      const avgRow = await env.DB.prepare(
-        "SELECT AVG(email_security_score) AS avg FROM brands WHERE email_security_score IS NOT NULL"
-      ).first<{ avg: number | null }>();
-
-      return {
-        grade_distribution: gradeRows.results,
-        dmarc_distribution: dmarcRows.results,
-        total_scanned: totalScanned,
-        total_unscanned: totalUnscanned,
-        average_score: Math.round(avgRow?.avg ?? 0),
-        worst_brands: worstBrands.results,
-      };
-    });
-
+    const data = await emailSecurityStatsPayload(env);
     return json({ success: true, data }, 200, origin);
   } catch (err) {
     return json({ success: false, error: "An internal error occurred" }, 500, origin);
   }
+}
+
+export const EMAIL_SECURITY_STATS_KEY = 'email_security_stats';
+/**
+ * 1h. D1 read-spend (2026-11): at the old 420s TTL this payload missed
+ * 108–124×/day — its only warm is indirect (Navigator Phase B warms the
+ * admin dashboard snapshot every 15 min, which composes this handler), and
+ * a 15-min warm can never hit a 7-min entry, so every warm recomputed it.
+ * At 1h roughly one warm in four pays the miss and every viewer between
+ * them reads KV. cachedValue never refreshes on a hit, so the 15-min warm
+ * does not shorten the TTL. A posture panel fed by a weekly rescan
+ * tolerates the lag (worst case ~2h: this entry can be built from a
+ * rollup that was itself up to 1h old).
+ */
+export const EMAIL_SECURITY_STATS_TTL_S = 3600;
+
+const STATS_GRADE_RANK: Record<string, number> = { 'A+': 1, 'A': 2, 'B': 3, 'C': 4, 'D': 5, 'F': 6 };
+
+export interface EmailSecurityStatsPayload {
+  grade_distribution: Array<{ grade: string; count: number }>;
+  dmarc_distribution: Array<{ dmarc_policy: string | null; count: number }>;
+  total_scanned: number;
+  total_unscanned: number;
+  average_score: number;
+  worst_brands: Array<{
+    id: string; name: string; canonical_domain: string;
+    email_security_score: number; email_security_grade: string;
+    active_threats: number;
+  }>;
+}
+
+/**
+ * The /api/email-security/stats payload. Grade + DMARC distributions,
+ * scanned/unscanned totals and the average score all derive from the
+ * shared email-posture rollup (lib/email-posture-rollup.ts — ONE cached
+ * scan of `brands`, ~132K rows, shared with the Brands Intel aggregate and
+ * Observer) instead of five scans of their own. Only the worst-brands
+ * list still reads `brands` directly (it needs row data).
+ */
+export async function emailSecurityStatsPayload(env: Env): Promise<EmailSecurityStatsPayload> {
+  return cachedValue<EmailSecurityStatsPayload>(env, EMAIL_SECURITY_STATS_KEY, EMAIL_SECURITY_STATS_TTL_S, async () => {
+    const [rollup, worstBrands] = await Promise.all([
+      emailPostureRollup(env),
+      // Worst-protected brands (all F/D/C grades, up to 200)
+      env.DB.prepare(`
+        SELECT b.id, b.name, b.canonical_domain, b.email_security_score, b.email_security_grade,
+               b.active_threat_count AS active_threats
+        FROM brands b
+        WHERE b.email_security_score IS NOT NULL AND b.email_security_grade IN ('F', 'D', 'C')
+        ORDER BY b.email_security_score ASC
+        LIMIT 200
+      `).all<EmailSecurityStatsPayload['worst_brands'][number]>(),
+    ]);
+    const totals = emailPostureTotals(rollup);
+    return {
+      grade_distribution: gradeDistribution(rollup, (g) => STATS_GRADE_RANK[g] ?? 7),
+      dmarc_distribution: dmarcDistribution(rollup),
+      total_scanned: totals.scored,
+      total_unscanned: totals.unscored,
+      average_score: Math.round(totals.average_score ?? 0),
+      worst_brands: worstBrands.results,
+    };
+  });
 }
 
 // ─── BIMI Alert Emitter ───────────────────────────────────────────────────
