@@ -212,7 +212,10 @@ describe.skipIf(!hasSqlite())("#3 worst_brands uses idx_brands_worst_email_postu
     );
     for (let i = 0; i < 10_000; i++) {
       const scored = i % 4 !== 0;
-      b.run(`w${i}`, `W${i}`, `w${i}.com`, scored ? (i * 37) % 100 : null, scored ? GRADES[i % GRADES.length]! : null);
+      // Distinct, shuffled scores (7919·i mod prime 10007 is a bijection for
+      // i < 10007) so the LIMIT-200 cutoff never lands inside a tie and the
+      // id-set comparison below doesn't depend on SQLite's tie-break order.
+      b.run(`w${i}`, `W${i}`, `w${i}.com`, scored ? ((i * 7919) % 10007) / 100 : null, scored ? GRADES[i % GRADES.length]! : null);
     }
     db.exec("COMMIT");
     db.exec("ANALYZE");
