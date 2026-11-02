@@ -3,6 +3,60 @@
 > Step 5 of the D1 CPU budget fix series.
 > Goal: eliminate structural D1 timeouts from analyst's two hottest queries.
 
+> **Status (2026-11-02):** the "Query B" design described in the historical
+> sections below (catalog-wide enrichment aggregates, first as one OR-of-6
+> `GROUP BY target_brand_id`, then as 7 subqueries, cached 3h under
+> `analyst.enrichment_by_brand`) is **SUPERSEDED** by the per-brand design in
+> "Current state" below (PR #1870). Query A and the diagnostic-COUNT removal
+> are unchanged.
+
+---
+
+## Current state: per-brand enrichment (PR #1870)
+
+`src/lib/analyst-brand-enrichment.ts` (`loadBrandEnrichment`,
+`BRAND_ENRICHMENT_SQL`) runs ONE single-pass statement per brand:
+
+```sql
+... FROM threats WHERE target_brand_id = ? AND status = 'active' GROUP BY target_brand_id
+```
+
+All seven signals are conditional aggregates in that one pass (the VT count and
+VT average share it). It seeks `idx_threats_brand_status (target_brand_id=? AND status=?)`.
+
+- **Scope:** only the brands Phase 3.5 reports on. In `src/agents/analyst.ts`,
+  `enrichmentBrandIds = Array.from(matchedBrandIds).slice(0, 5)` is loaded right
+  before the Phase 3.5 loop. The load is wrapped in try/catch: a failure is
+  `console.error`'d (`[analyst] enrichment load failed:`) and the run continues
+  with an empty map instead of failing.
+- **Cache:** per brand, 3h (`BRAND_ENRICHMENT_TTL_S = 10800`), via `cachedValue`
+  under `analyst.enrichment_brand.<brand_id>` (`brandEnrichmentCacheKey`), stored
+  in KV as `cv:analyst.enrichment_brand.<brand_id>`. A brand with no active
+  threats caches its empty (null) result and is absent from the returned map.
+- **Why it changed:** the old catalog-wide snapshot read ~314K rows per signal
+  and still missed its shared cache 44-52x/day, measured at ~44M rows/day, for
+  a result read for at most 5 brands. Caveat (2026-11-02): per-query Cloudflare
+  `d1QueriesAdaptiveGroups` numbers are sampled estimates that can overstate a
+  rarely-run query; see `D1_TOP_QUERIES_SAMPLING_NOTE` in `src/lib/d1-budget.ts`
+  and confirm frequency from `agent_runs` / `backlog_history`.
+
+**How to diagnose**
+
+1. Cache keys: `cv:analyst.enrichment_brand.<id>` should exist for recently
+   reported brands. The old `analyst.enrichment_by_brand` key must no longer be
+   written (the test below asserts the source no longer mentions it).
+2. Plan pin: `test/d1-read-spend-analyst-email.test.ts` ("the per-brand
+   statement seeks idx_threats_brand_status on the migrated schema") asserts
+   `SEARCH threats USING INDEX idx_threats_brand_status (target_brand_id=? AND status=?)`
+   and that `analyst.ts` keeps the `.slice(0, 5)` scope and the
+   `loadBrandEnrichment(env, enrichmentBrandIds)` call. It also pins value
+   equality with the old per-signal queries on a seeded SQLite.
+3. Behaviour/cache semantics: `test/analyst-enrichment.test.ts` (signal
+   boundaries, active-only, per-brand keys, TTL hit/recompute, empty-result
+   caching, KV-outage fall-through).
+4. Live: `d1_top_queries` should show the per-brand statement with a small
+   `avg_rows_per_query` (one brand's active threats), not a ~300K-row scan.
+
 ---
 
 ## Baseline: agent_runs stats (last 7 days)
@@ -79,7 +133,11 @@ wasted table lookups.
 
 ---
 
-## Query B: Enrichment aggregation (analyst.ts:241)
+## Query B: Enrichment aggregation (analyst.ts:241) — SUPERSEDED
+
+> **Historical.** This catalog-wide query no longer exists; replaced by the
+> per-brand single-pass statement (see "Current state" at the top, PR #1870).
+> Line numbers and SQL below describe the pre-fix code.
 
 ### Verbatim SQL
 
@@ -249,9 +307,12 @@ confirm which index is selected with real data distribution.
 
 ---
 
-## Post-Phase-C: EXPLAIN for UNION ALL subqueries
+## Post-Phase-C: EXPLAIN for UNION ALL subqueries — SUPERSEDED
 
-> Captured after rewriting Query B into 7 individual queries (Phase C).
+> **Historical.** Captured after rewriting Query B into 7 individual
+> catalog-wide queries (Phase C). That design (cached 3h under
+> `analyst.enrichment_by_brand`) was itself replaced by the per-brand
+> single-pass statement in PR #1870; see "Current state" at the top.
 
 ### Subquery plans
 
@@ -292,13 +353,13 @@ Built via `rg "FROM threats" packages/averrow-worker/src` cross-referenced with 
 
 | # | Index name | Callers | Decision |
 |---|-----------|---------|----------|
-| 1 | `idx_threats_brand_status` | handlers/brands.ts, handlers/threats.ts, analyst.ts (enrichment subqueries), observer.ts, tenantData.ts, emailSecurity.ts, brand-scoring.ts | **KEEP** — primary composite for brand+status queries |
+| 1 | `idx_threats_brand_status` | handlers/brands.ts, handlers/threats.ts, lib/analyst-brand-enrichment.ts (per-brand enrichment; was analyst.ts enrichment subqueries), observer.ts, tenantData.ts, emailSecurity.ts, brand-scoring.ts | **KEEP** — primary composite for brand+status queries |
 | 2 | `idx_threats_provider` | handlers/providers.ts (heavy), handlers/dashboard.ts, cartographer.ts, snapshots.ts | **KEEP** |
 | 3 | `idx_threats_campaign` | handlers/campaigns.ts (heavy), strategist.ts, nexusRun.ts | **KEEP** |
 | 4 | `idx_threats_type` | db/threats.ts:73, handlers/threats.ts:150, reports.ts, campaigns.ts | **KEEP** |
 | 5 | `idx_threats_severity` | handlers/threats.ts:158, reports.ts, enrichment.ts:182 (`WHERE severity IN (...)`) | **KEEP** — independent filter |
 | 6 | `idx_threats_status` | All callers also have other WHERE conditions. Every status query is served equally by `idx_threats_status_created(status, created_at DESC)` | **DROP** — strict prefix subset of #16 |
-| 7 | `idx_threats_first_seen` | feeds/abuseipdb.ts, spamhausDbl.ts, greynoise.ts, circlPassiveDns.ts, googleSafeBrowsing.ts, seclookup.ts, dashboard.ts, operations.ts, trends.ts, nexusRun.ts | **KEEP** — many enrichment feeds use `first_seen >= datetime(...)` |
+| 7 | `idx_threats_first_seen` | feeds/abuseipdb.ts, spamhausDbl.ts, greynoise.ts, circlPassiveDns.ts, googleSafeBrowsing.ts, seclookup.ts, dashboard.ts, operations.ts, trends.ts, nexusRun.ts | **KEEP** — many enrichment feeds use `first_seen >= datetime(...)`. **Correction:** this index did NOT exist on databases built from the migrations. Migration 0001 created it, but migration 0013's `threats` DROP + RENAME rebuild recreated only indexes 1-4 and dropped it (see also the note in migration 0277). Migration 0312 (PR #1870) re-created it (`CREATE INDEX IF NOT EXISTS idx_threats_first_seen ON threats(first_seen DESC)`). |
 | 8 | `idx_threats_last_seen` | observer.ts:143 (`WHERE last_seen >= datetime(...)`) | **KEEP** — one active caller |
 | 9 | `idx_threats_created_at` | db/threats.ts, handlers/threats.ts (ORDER BY), observer.ts, sentinel.ts, all dashboard/trend queries, analyst.ts Query A | **KEEP** — primary time-ordering index |
 | 10 | `idx_threats_domain` | handlers/threats.ts, enrichment.ts, virustotal.ts, analyst.ts, spamhausDbl.ts, provider-resolver.ts, url-scanner.ts, brands.ts, evidence-assembler.ts | **KEEP** — heavily used for lookups |
@@ -361,7 +422,7 @@ negligibly higher I/O per page.
 | Query | Baseline | Post-fix |
 |-------|----------|----------|
 | Query A (unlinked-threat lookup) | `SEARCH idx_threats_brand_created (target_brand_id=?)` | Same + `idx_threats_unlinked_recent` available (planner choice depends on data distribution) |
-| Query B (enrichment aggregate) | `SEARCH idx_threats_brand_status (...) + USE TEMP B-TREE FOR GROUP BY` | 7 subqueries, each: `SEARCH idx_threats_brand_status (...)` — no temp B-tree |
+| Query B (enrichment aggregate) | `SEARCH idx_threats_brand_status (...) + USE TEMP B-TREE FOR GROUP BY` | 7 subqueries, each: `SEARCH idx_threats_brand_status (...)` — no temp B-tree. **Superseded by PR #1870:** one per-brand statement, `SEARCH idx_threats_brand_status (target_brand_id=? AND status=?)`, only for the ≤5 reported brands |
 | Diagnostic COUNT (total) | `SCAN threats USING COVERING INDEX` | **Removed** |
 | Diagnostic COUNT (no brand) | `SEARCH idx_threats_unmatched` | **Removed** |
 | Diagnostic COUNT (no brand + domain) | `SEARCH idx_threats_unmatched + table lookup` | **Removed** |
