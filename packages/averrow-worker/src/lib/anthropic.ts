@@ -12,8 +12,12 @@
  * - Failed calls do NOT write a ledger row (no tokens consumed) but
  *   are logged to console with the agentId so operators can trace
  *   them to the right caller.
- * - When the `AI_MODE` var is "rules_only", every call throws
- *   AiDisabledError before any network or D1 access (see isAiRulesOnly).
+ * - When the `AI_MODE` var is "rules_only", or the agentId is not in a
+ *   declared `AI_CLAUDE_TASKS` allowlist, every call throws
+ *   AiDisabledError before any network or D1 access (see isAiTaskAllowed).
+ * - The platform spend throttle (budget_config ceiling, lib/ai-throttle.ts)
+ *   and the per-agent monthlyTokenCap (lib/per-agent-budget.ts) are both
+ *   enforced here, so no direct caller can bypass them.
  * - Callers get the raw Anthropic response back, so code that needs
  *   usage.input_tokens / output_tokens / tool_use.input for its own
  *   logic still has everything it needs.
@@ -33,6 +37,7 @@
 
 import { BudgetManager } from "./budgetManager";
 import { checkAgentBudget } from "./per-agent-budget";
+import { getAiThrottleReason } from "./ai-throttle";
 import type { Env } from "../types";
 
 const ANTHROPIC_API_VERSION = "2023-06-01";
@@ -81,7 +86,7 @@ export interface AnthropicResponse {
  */
 export type AnthropicEnv = Pick<
   Env,
-  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB" | "AI_MODE"
+  "ANTHROPIC_API_KEY" | "LRX_API_KEY" | "CF_ACCOUNT_ID" | "DB" | "AI_MODE" | "AI_CLAUDE_TASKS"
 > & {
   // Optional KV — Phase 5.1's per-agent budget gate uses CACHE for
   // its 60s decision cache. Test fixtures + the retired architect
@@ -205,16 +210,24 @@ export class AnthropicError extends Error {
   }
 }
 
-// ─── Rules-only switch (AI_MODE) ─────────────────────────────────
+// ─── Rules-only switch (AI_MODE) + per-task allowlist (AI_CLAUDE_TASKS) ──
 
 /**
  * Message prefix of the error callAnthropic throws when AI is switched
- * off platform-wide. lib/haiku.ts maps it to `failure_kind: 'throttled'`
+ * off — platform-wide (AI_MODE=rules_only) or for this task (agentId not
+ * in AI_CLAUDE_TASKS). lib/haiku.ts maps it to `failure_kind: 'throttled'`
  * (a deliberate skip), so `recordAiCall` counts it as skipped rather than
  * attempted and Flight Control's `platform_ai_calls_failing` never fires
  * for a decision we made on purpose.
  */
 export const AI_RULES_ONLY_PREFIX = "ai_rules_only:";
+
+/**
+ * Message prefix of the error callAnthropic throws when the platform
+ * spend throttle (budget_config hard/emergency) pauses the call. Also a
+ * deliberate skip ('throttled').
+ */
+export const AI_BUDGET_THROTTLED_PREFIX = "ai_budget_throttled:";
 
 /**
  * True when the `AI_MODE` var says the platform runs rules-only. Only the
@@ -227,17 +240,85 @@ export function isAiRulesOnly(env: { AI_MODE?: string }): boolean {
 }
 
 /**
- * Thrown by callAnthropic when AI_MODE is
- * "rules_only". Nothing — no network request, no budget pre-flight D1
- * read, no ledger write — happens before it is thrown. Subclass of
- * AnthropicError so every existing `catch` that narrows on AnthropicError
- * keeps working, and typed so callers can discriminate it without
+ * Parse the `AI_CLAUDE_TASKS` allowlist. Returns null when the var is
+ * unset or holds no ids ("no allowlist declared" — every task allowed).
+ * Entries are trimmed; matching is case-sensitive and exact.
+ */
+export function parseAiClaudeTasks(raw: string | undefined): ReadonlySet<string> | null {
+  if (raw === undefined) return null;
+  const ids = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
+/**
+ * May this agentId make a Claude call right now?
+ *
+ *   AI_MODE=rules_only                → no, for every task.
+ *   AI enabled, AI_CLAUDE_TASKS unset → yes, for every task (backward
+ *                                       compatible: envs and tests that
+ *                                       never declare the var behave as
+ *                                       before).
+ *   AI enabled, AI_CLAUDE_TASKS set   → only the listed agentIds (the
+ *                                       exact agentId passed to
+ *                                       callAnthropic / HaikuCallContext).
+ *
+ * Callers that branch on "will AI run for me?" to pick a rules path must
+ * use this with their own agentId, not isAiRulesOnly — a disallowed task
+ * should take the same quiet rules path a rules_only platform takes.
+ */
+export function isAiTaskAllowed(
+  env: { AI_MODE?: string; AI_CLAUDE_TASKS?: string },
+  agentId: string,
+): boolean {
+  if (isAiRulesOnly(env)) return false;
+  const allow = parseAiClaudeTasks(env.AI_CLAUDE_TASKS);
+  return allow === null || allow.has(agentId);
+}
+
+export type AiDisabledReason = "rules_only" | "task_not_allowed" | "budget_throttle";
+
+function aiDisabledMessage(agentId: string, reason: AiDisabledReason, detail?: string): string {
+  switch (reason) {
+    case "task_not_allowed":
+      return `${AI_RULES_ONLY_PREFIX} agentId not in AI_CLAUDE_TASKS — AI call skipped (agentId=${agentId})`;
+    case "budget_throttle":
+      return `${AI_BUDGET_THROTTLED_PREFIX} ${detail ?? "budget throttle"} — AI call skipped (agentId=${agentId})`;
+    case "rules_only":
+    default:
+      return `${AI_RULES_ONLY_PREFIX} AI_MODE=rules_only — AI call skipped (agentId=${agentId})`;
+  }
+}
+
+/**
+ * Thrown by callAnthropic when AI is deliberately not called: AI_MODE is
+ * "rules_only", the agentId is not in AI_CLAUDE_TASKS, or (subclass
+ * AiBudgetThrottledError) the platform spend throttle is engaged. No
+ * network request and no ledger write happen before it is thrown (the
+ * first two also make no D1/KV access). Subclass of AnthropicError so
+ * every existing `catch` that narrows on AnthropicError keeps working,
+ * and typed so callers can discriminate a deliberate skip without
  * matching on message text.
  */
 export class AiDisabledError extends AnthropicError {
-  constructor(agentId: string) {
-    super(`${AI_RULES_ONLY_PREFIX} AI_MODE=rules_only — AI call skipped (agentId=${agentId})`, agentId);
+  constructor(
+    agentId: string,
+    public readonly reason: AiDisabledReason = "rules_only",
+    detail?: string,
+  ) {
+    super(aiDisabledMessage(agentId, reason, detail), agentId);
     this.name = "AiDisabledError";
+  }
+}
+
+/**
+ * The platform spend throttle (lib/ai-throttle.ts, budget_config
+ * hard/emergency) paused this call. `throttleReason` is the bare reason
+ * string, e.g. "budget hard throttle (96% of $80)".
+ */
+export class AiBudgetThrottledError extends AiDisabledError {
+  constructor(agentId: string, public readonly throttleReason: string) {
+    super(agentId, "budget_throttle", throttleReason);
+    this.name = "AiBudgetThrottledError";
   }
 }
 
@@ -332,12 +413,28 @@ export async function callAnthropic(
     useGateway = true,
   } = opts;
 
-  // Rules-only switch — checked FIRST so a disabled platform makes no
-  // network request, no per-agent budget D1 read and writes no ledger
-  // row. This is the single choke point: every direct callAnthropic
-  // caller, and every lib/haiku.ts helper, passes through here.
+  // Rules-only switch + per-task allowlist — checked FIRST so a disabled
+  // task makes no network request, no budget D1/KV read and writes no
+  // ledger row. This is the single choke point: every direct
+  // callAnthropic caller, and every lib/haiku.ts helper, passes through
+  // here.
   if (isAiRulesOnly(env)) {
-    throw new AiDisabledError(agentId);
+    throw new AiDisabledError(agentId, "rules_only");
+  }
+  if (!isAiTaskAllowed(env, agentId)) {
+    throw new AiDisabledError(agentId, "task_not_allowed");
+  }
+
+  // ── Platform spend throttle (budget_config ceiling) ─────────
+  // Every real call honours it, not just the haiku.ts helpers. The
+  // decision is KV-cached for 60s (lib/ai-throttle.ts), so the steady
+  // state costs one KV read and no D1 read per call. Fails open.
+  if (env.DB) {
+    const throttled = await getAiThrottleReason(env);
+    if (throttled) {
+      console.warn(`[anthropic] spend throttle — agentId=${agentId}: ${throttled}`);
+      throw new AiBudgetThrottledError(agentId, throttled);
+    }
   }
 
   const apiKey = resolveApiKey(env, agentId);

@@ -153,6 +153,13 @@ export interface Env {
    *  Flight Control's platform_ai_calls_failing stays quiet.
    *  'enabled' or unset (the default) → AI calls proceed as normal. */
   AI_MODE?: 'rules_only' | 'enabled' | (string & {});
+  /** Per-task Claude allowlist (comma-separated agentIds, exact match after
+   *  trimming). Only consulted when AI is enabled: unset / empty → every
+   *  task may call Claude (backward compatible); set → only the listed
+   *  agentIds may, every other callAnthropic call is a deliberate skip
+   *  (AiDisabledError, failure_kind 'throttled'). See isAiTaskAllowed in
+   *  lib/anthropic.ts. */
+  AI_CLAUDE_TASKS?: string;
   /** Workers AI binding (wrangler.toml [ai]). Optional: absent in tests and
    *  any env without the binding — callers must degrade (lib/workers-ai.ts). */
   AI?: Ai;

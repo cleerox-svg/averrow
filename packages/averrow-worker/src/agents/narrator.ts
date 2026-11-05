@@ -583,7 +583,9 @@ export const narratorAgent: AgentModule = {
   stallThresholdMinutes: 1500,
   parallelMax: 1,
   costGuard: "enforced",
-  budget: { monthlyTokenCap: 5_000_000 },
+  // ≤5 Haiku narratives/day (MAX_PER_RUN) + staff "generate" clicks, ~6K
+  // tokens each. 2M ≤ $10 worst case — sizing table in lib/per-agent-budget.ts.
+  budget: { monthlyTokenCap: 2_000_000 },
   reads: [
     { kind: "d1_table", name: "alerts" },
     { kind: "d1_table", name: "app_store_listings" },

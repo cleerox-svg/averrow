@@ -40,7 +40,11 @@ export const abuseMailboxClassifierAgent: AgentModule = {
   stallThresholdMinutes: 30,
   parallelMax: 1,
   costGuard: "enforced",
-  budget: { monthlyTokenCap: 10_000_000 },
+  // Cap for the Anthropic second opinion (agentId abuse_mailbox_classifier,
+  // lib/abuse-mailbox-classifier.ts) — only used when ABUSE_AI_PROVIDER is
+  // not "workers_ai". ~2.5K Haiku tokens per call, <1/day. 2M ≤ $10 worst
+  // case — sizing table in lib/per-agent-budget.ts.
+  budget: { monthlyTokenCap: 2_000_000 },
   // Direct SQL surface is empty — delegates to lib/abuse-mailbox-*.
   reads: [],
   writes: [],

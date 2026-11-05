@@ -220,10 +220,12 @@ export const campaignHunterAgent: AgentModule = {
   stallThresholdMinutes: 10,
   parallelMax: 1,
   costGuard: "enforced",
-  // Multi-turn loop, Sonnet driver — pricier per run than a batch classifier.
-  // The global $50/mo cost guard + per-call gate are the real ceiling; this
-  // cap is the per-agent alarm.
-  budget: { monthlyTokenCap: 20_000_000 },
+  // Multi-turn loop, Sonnet driver — pricier per run than a batch classifier
+  // (≤12 turns, ~250K tokens ≈ $1 per investigation). Tightest $-equivalent
+  // cap of the AI_CLAUDE_TASKS allowlist: 1M tokens ≤ $15 even if every token
+  // billed at Sonnet's output rate (~4 runs/month realistic). Sizing table:
+  // lib/per-agent-budget.ts NON_MODULE_AGENT_CAPS.
+  budget: { monthlyTokenCap: 1_000_000 },
   // File-scoped declaration: the architect manifest's static extractor
   // only scans this agent file, which queries `brands` (brand resolution).
   // The investigation tools read threats / hosting_providers /

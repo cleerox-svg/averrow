@@ -60,9 +60,48 @@ export interface AgentBudgetSnapshot {
   overAlert: boolean;
 }
 
+/**
+ * Caps for agentIds that make Claude calls but are NOT registered
+ * AgentModules (lib helpers attributing under their own id). Without an
+ * entry here they would pass uncapped (see "Agent not in registry" above).
+ * A registered AgentModule's own `budget` always wins over this map.
+ *
+ * ── Free-credit sizing (2026-11, $100/month Anthropic credit) ──────────
+ * Prod enables Claude only for the AI_CLAUDE_TASKS allowlist
+ * (wrangler.toml). Caps are TOKENS (input + output, from
+ * agent_budget_rollups). The "hard worst" column prices every capped
+ * token at the model's OUTPUT rate — an upper bound no real call mix can
+ * reach (prompts are input-heavy):
+ *
+ *   agentId                       model    cap     hard worst   where the cap lives
+ *   campaign_hunter               Sonnet   1.0M    $15.00       agents/campaign-hunter.ts
+ *   abuse_mailbox_deep_analyzer   Sonnet   0.5M     $7.50       this map
+ *   abuse_mailbox_classifier      Haiku    2.0M    $10.00       agents/abuseMailboxClassifier.ts
+ *   evidence_assembler            Haiku    2.0M    $10.00       agents/evidence-assembler.ts
+ *   narrator                      Haiku    2.0M    $10.00       agents/narrator.ts
+ *   observer                      Haiku    2.0M    $10.00       agents/observer.ts
+ *                                                  ──────
+ *                                                  $62.50 / month
+ *
+ * (Sonnet $3 in / $15 out, Haiku $1 in / $5 out per 1M — COST_PER_MILLION
+ * in lib/budgetManager.ts.) On top of the per-agent caps, the platform
+ * ceiling (budget_config.monthly_limit_usd = $80, migration 0316) pauses
+ * every non-critical call at the hard throttle (95% = $76) inside
+ * callAnthropic. Both gates are KV-cached for 60s, so the overshoot is
+ * at most the calls in flight in one cache window (for campaign_hunter,
+ * one multi-turn run ≈ $1).
+ */
+const NON_MODULE_AGENT_CAPS: Readonly<Record<string, { cap: number; alertAt: number }>> = {
+  // Sonnet attribution narrative on HIGH/CRITICAL abuse-mailbox verdicts
+  // (lib/abuse-mailbox-deep-analyzer.ts). ~3K in + ~1K out per call →
+  // ~125 calls/month; volume is <1/day.
+  abuse_mailbox_deep_analyzer: { cap: 500_000, alertAt: 0.8 },
+};
+
 /** Read the agent's declared cap from the AgentModule registry.
- *  Returns null when the agent is not registered — enforcement
- *  treats null as "no cap declared, pass through". */
+ *  Falls back to NON_MODULE_AGENT_CAPS for unregistered lib-helper ids.
+ *  Returns null when neither declares a cap — enforcement treats null as
+ *  "no cap declared, pass through". */
 async function getDeclaredCap(agentId: string): Promise<{ cap: number; alertAt: number } | null> {
   // Lazy import — agentModules isn't available until the module
   // graph is fully constructed. The dynamic import gives the
@@ -71,7 +110,7 @@ async function getDeclaredCap(agentId: string): Promise<{ cap: number; alertAt: 
   // AI call.
   const { agentModules } = await import("../agents");
   const mod = (agentModules as Record<string, { budget: { monthlyTokenCap: number; alertAt?: number } } | undefined>)[agentId];
-  if (!mod) return null;
+  if (!mod) return NON_MODULE_AGENT_CAPS[agentId] ?? null;
   return {
     cap: mod.budget.monthlyTokenCap,
     alertAt: mod.budget.alertAt ?? 0.8,
