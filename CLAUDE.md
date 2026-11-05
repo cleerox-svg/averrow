@@ -473,7 +473,8 @@ sub-hourly latency matters).
 
 ### AI usage rules:
 - Before adding or changing an AI call, read `docs/AI_STRATEGY_2026-10.md` — it classifies every existing call (keep-on-Claude / move-to-Workers-AI / replace-with-rules / delete) and sets the provider direction.
-- **Prod currently runs `AI_MODE = "rules_only"`** (AI_STRATEGY Phase 0/1 done, see its "Status" section): no Anthropic request leaves the Worker. Sentinel, cartographer, attributor, seed-strategist and the lookalike scanner have no AI path at all; narrator severity and the strategist coordination check are rule-based. Any new AI call must handle `AiDisabledError` / `failure_kind: 'throttled'` as a quiet fallback.
+- **Prod runs `AI_MODE = "enabled"` narrowed by `AI_CLAUDE_TASKS`** (2026-11, `wrangler.toml` `[vars]`; staging and dev stay `rules_only`). The allowlist is exact agentIds: `observer,narrator,abuse_mailbox_classifier,abuse_mailbox_deep_analyzer,evidence_assembler,campaign_hunter`. `isAiTaskAllowed(env, agentId)` (`lib/anthropic.ts`): `rules_only` → no task; enabled + var unset/empty → EVERY task (so never unset it in prod while enabled); enabled + list → only those ids. Any other agentId gets `AiDisabledError` → `failure_kind: 'throttled'`, the same quiet rule-based path as `rules_only` (analyst, strategist, watchdog, monitors, news-watcher, advisories etc. stay off; sentinel, cartographer, attributor, seed-strategist and the lookalike scanner have no AI path at all). Callers that pre-check use `isAiTaskAllowed` with their own agentId, not `isAiRulesOnly`. To add or remove a task, edit the var — a `wrangler.toml` platform-switch change, so §9a owner-OK. Credit source and limits: `docs/runbooks/anthropic-credit-budget.md`. Any new AI call must handle `AiDisabledError` / `failure_kind: 'throttled'` as a quiet fallback.
+- **Spend is bounded centrally.** The `budget_config` throttle (`lib/ai-throttle.ts`, KV-cached 60s, fails open) is enforced inside `callAnthropic` for every caller, not just the `lib/haiku.ts` helpers: at the hard level (95%) non-critical calls throw `AiBudgetThrottledError` (`ai_budget_throttled:`, a deliberate skip). Migration 0316 lowers `monthly_limit_usd` to $80 (hard throttle at $76) to fit the owner's $100/month Max-plan API credit. Per-agent token caps (`lib/per-agent-budget.ts`; `NON_MODULE_AGENT_CAPS` covers the unregistered `abuse_mailbox_deep_analyzer`) put the allowlist's worst case at $62.50/month. Observer runs triggered by `pivot_detected` (`input.triggeredByEvent`) skip the AI call and the weekly report — the Claude budget is for the scheduled narrative.
 - **One Workers AI exception (2026-10):** the abuse-mailbox second opinion runs on Cloudflare Workers AI (`[ai]` binding, prod only; `lib/workers-ai.ts`) when `ABUSE_AI_PROVIDER = "workers_ai"` — its own switch, independent of `AI_MODE`. Verdicts are clamped (`clampWorkersAiVerdict`): "likely" phishing/malware or review — never benign or spam, never promoted, no Sonnet deep analysis, only rows the rules already reviewed, fixed text in tenant-visible columns, daily call cap (KV, fails closed); stored as `classified_by='workers_ai'`. Remove the var to turn it off. Everything else stays on the AI_STRATEGY Phase 2 plan.
 - **Haiku:** classification, scoring, short summaries — high volume
 - **Sonnet:** threat actor narratives, cluster briefs — sparingly
@@ -496,8 +497,9 @@ while every agent reported `success`. Rules that came out of it:
 
 - **`AI_MODE` platform switch** (`wrangler.toml` `[vars]`, plus the
   `staging` and `dev` envs; type `Env.AI_MODE`). Values `rules_only` |
-  `enabled`; **unset behaves as `enabled`**. Prod, staging and dev are all
-  set to `rules_only` today (AI_STRATEGY Phase 0/1). When `rules_only`,
+  `enabled`; **unset behaves as `enabled`**. Staging and dev are
+  `rules_only`; prod is `enabled` + `AI_CLAUDE_TASKS` (2026-11, see
+  "AI usage rules"). When `rules_only` (or a task is off the allowlist),
   `callAnthropic` (`lib/anthropic.ts`, `isAiRulesOnly()`) throws
   `AiDisabledError` before any network or D1 access, and the `lib/haiku.ts`
   helpers answer `failure_kind: 'throttled'` — a deliberate skip, not an
@@ -521,6 +523,12 @@ while every agent reported `success`. Rules that came out of it:
   Flight Control and
   `ai_health` read these key names back via `json_extract`; renaming one
   means updating both queries.
+  **Blind spot since the 2026-11 allowlist:** analyst is NOT in
+  `AI_CLAUDE_TASKS`, so its counters stay at 0 attempts and
+  `platform_ai_calls_failing` / `ai_health.agents_all_failing` cannot fire
+  when the allowlisted tasks hit HTTP 400 (credit exhausted). Detect that
+  outage via `ai_health.hours_since_last_call` (newest `budget_ledger` row) — see
+  `docs/runbooks/anthropic-credit-budget.md`.
 - **Do NOT use the legacy counters for outage detection.** Analyst's
   `haikuSuccesses` / `haikuFailures` are left as-is for the summary string
   operators read, but they are not an "is AI alive" test — they only

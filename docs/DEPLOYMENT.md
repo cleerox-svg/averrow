@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and configure:
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
-`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`, set to `"rules_only"` for production, `[env.staging]` and `[env.dev]`. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); `enabled`, or unset, lets calls proceed. See `CLAUDE.md` §6 "AI-call health". `ANTHROPIC_API_KEY` is therefore not exercised while `rules_only` is set. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
+`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`: `"rules_only"` for `[env.staging]` and `[env.dev]`, `"enabled"` for production, where `AI_CLAUDE_TASKS` (comma-separated agentIds) restricts which tasks may call Claude. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); `enabled` with the var unset allows every task. See `CLAUDE.md` §6 "AI-call health" and `docs/runbooks/anthropic-credit-budget.md`. In production `ANTHROPIC_API_KEY` must belong to the Console org linked to the Claude Max plan, or the included API credit is not used. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
 
 ## Local Development
 
@@ -111,6 +111,10 @@ The migration only removes the URLs from the audit log; it does not un-expose th
 - 0272 is a table swap (create / copy / drop / rename) with a `notification_deliveries` snapshot-and-restore around the `DROP` — an earlier swap (0215) lost delivery rows to the `ON DELETE CASCADE`. Apply it in a normal migration run, not piecemeal by hand.
 - The same rule applies to any future notification key: registry change and CHECK-widening migration ship together (see `docs/PLATFORM_DATA_DEPENDENCIES.md` §3).
 - **0274** (`0274_notifications_add_abuse_mailbox_inbound_stale.sql`) is the same swap for `platform_abuse_mailbox_inbound_stale` (Flight Control's abuse-mailbox inbound freshness guard). Same ordering rule and same verification: the `notifications` schema must contain `platform_abuse_mailbox_inbound_stale`.
+
+### Migration 0316 — AI spend ceiling lowered to $80 (2026-11)
+
+`0316_budget_config_free_credit.sql` is a non-destructive `UPDATE budget_config SET monthly_limit_usd = 80 WHERE id = 1 AND monthly_limit_usd > 80` (prod was $150; a lower operator-set value is kept; no row is a no-op). It ships with the change that sets prod `AI_MODE = "enabled"` + `AI_CLAUDE_TASKS`. Deploy order is not critical, but until it applies the throttle ceiling stays at the old limit. Verify: `SELECT monthly_limit_usd FROM budget_config WHERE id = 1` returns 80.
 
 ### Migration 0275 must land before the Worker with staff alert fields (PR-C)
 
