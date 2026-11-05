@@ -77,11 +77,14 @@ export interface AgentBudgetSnapshot {
  *   campaign_hunter               Sonnet   1.0M    $15.00       agents/campaign-hunter.ts
  *   abuse_mailbox_deep_analyzer   Sonnet   0.5M     $7.50       this map
  *   abuse_mailbox_classifier      Haiku    2.0M    $10.00       agents/abuseMailboxClassifier.ts
- *   evidence_assembler            Haiku    2.0M    $10.00       agents/evidence-assembler.ts
  *   narrator                      Haiku    2.0M    $10.00       agents/narrator.ts
  *   observer                      Haiku    2.0M    $10.00       agents/observer.ts
  *                                                  ──────
- *                                                  $62.50 / month
+ *                                                  $52.50 / month
+ *
+ * evidence_assembler keeps its 2M cap (agents/evidence-assembler.ts) but is
+ * NOT allowlisted in prod: its draft is auto-submitted to abuse desks, so
+ * it stays on the deterministic skeleton until a human-review gate exists.
  *
  * (Sonnet $3 in / $15 out, Haiku $1 in / $5 out per 1M — COST_PER_MILLION
  * in lib/budgetManager.ts.) On top of the per-agent caps, the platform

@@ -75,7 +75,7 @@ export const abuseMailboxClassifierAgent: AgentModule = {
         summary:
           `Abuse triage: rules ${rules.scanned} scanned (${rules.malicious} malicious, ${rules.review} review, ${rules.errors} errors); ` +
           (stats.skipped_rules_only
-            ? "AI pass skipped (rules_only); "
+            ? "AI pass skipped (AI unavailable: rules_only, not allowlisted, throttled or capped); "
             : `AI ${stats.classified} classified (${bc.phishing} phishing, ${bc.malware} malware, ${bc.spam} spam, ${bc.benign} benign, ${bc.ambiguous} ambiguous), ${stats.failed} failed; `) +
           `${sweep.sent}/${sweep.candidates} determinations swept`,
         severity: rules.malicious > 0 || bc.phishing > 0 || bc.malware > 0 ? "medium" : "info",

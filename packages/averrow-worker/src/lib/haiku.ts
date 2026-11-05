@@ -163,6 +163,24 @@ export function isDeliberateAiSkip(kind: HaikuFailureKind | null | undefined): b
 }
 
 /**
+ * True when a thrown error is a deliberate AI skip (AI_MODE=rules_only,
+ * not in AI_CLAUDE_TASKS, the platform spend throttle, or the per-agent
+ * monthlyTokenCap) — no request left for Anthropic.
+ *
+ * Also recognises the skip by its message marker when the error lost its
+ * class: a Cloudflare Workflow step re-throws what failed inside it as a
+ * plain Error (e.g. the NonRetryableError the Campaign Hunter workflow
+ * converts a skip into), and only the message survives. The three markers
+ * are this module's/lib/anthropic.ts's own prefixes and appear nowhere in
+ * an Anthropic error body.
+ */
+export function isDeliberateAiSkipError(err: unknown): boolean {
+  if (isDeliberateAiSkip(classifyAnthropicFailure(err))) return true;
+  if (!(err instanceof Error)) return false;
+  return [AI_RULES_ONLY_PREFIX, AI_BUDGET_THROTTLED_PREFIX, BUDGET_CAP_PREFIX].some((m) => err.message.includes(m));
+}
+
+/**
  * Strictly-API AI counters for one agent run, plus the one way to update
  * them. Shared by analyst / sentinel / cartographer so the three cannot
  * drift — Flight Control's `platform_ai_calls_failing` check and the

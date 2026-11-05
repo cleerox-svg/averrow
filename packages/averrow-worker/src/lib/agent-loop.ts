@@ -17,6 +17,13 @@
  */
 
 import { callAnthropic, type AnthropicMessage, type AnthropicContentBlock, type AnthropicResponse } from "./anthropic";
+import {
+  classifyAnthropicFailure,
+  isDeliberateAiSkipError,
+  newAiCallCounters,
+  recordAiCall,
+  type AiCallCounters,
+} from "./haiku";
 import type { Env } from "../types";
 
 /** Anthropic tool definition (JSON Schema input). */
@@ -34,7 +41,13 @@ export interface TrailEntry {
   result: string;
 }
 
-export type LoopStop = "submit_report" | "max_turns" | "end_turn";
+/**
+ * Why the loop stopped. `budget` = the per-run token budget
+ * (maxRunTokens) was used up; `ai_skipped` = a deliberate skip (AI_MODE /
+ * AI_CLAUDE_TASKS / spend throttle / per-agent cap) refused a turn — no
+ * request left, not a failure.
+ */
+export type LoopStop = "submit_report" | "max_turns" | "end_turn" | "budget" | "ai_skipped";
 
 export interface AgentLoopOptions {
   env: Env;
@@ -54,6 +67,14 @@ export interface AgentLoopOptions {
   maxTurns: number;
   /** Output tokens per turn. */
   maxTokensPerTurn?: number;
+  /**
+   * Per-run token budget (input + output, summed over turns). Checked
+   * after each turn: once usage reaches it the loop stops with
+   * `stoppedBy: "budget"` instead of starting another turn, so one run
+   * cannot blow far past the agent's monthly cap (which is only checked
+   * pre-flight, 60s-cached). Unset = no per-run budget.
+   */
+  maxRunTokens?: number;
   /** Optional durable-step wrapper (Workflow step.do). Defaults to a pass-through. */
   step?: <T>(label: string, fn: () => Promise<T>) => Promise<T>;
   /** Injectable model call — defaults to callAnthropic. Overridden in tests. */
@@ -66,6 +87,12 @@ export interface AgentLoopResult {
   turns: number;
   trail: TrailEntry[];
   stoppedBy: LoopStop;
+  /** Tokens billed across the run's model turns (input + output). */
+  tokensUsed: number;
+  /** Strictly-API counters (lib/haiku.ts) — one recordAiCall per turn. */
+  aiCalls: AiCallCounters;
+  /** Set when stoppedBy is "ai_skipped": the skip error's message. */
+  skipReason?: string;
 }
 
 function toolUseBlocks(content: AnthropicContentBlock[]): AnthropicContentBlock[] {
@@ -81,22 +108,43 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     { role: "user", content: opts.initialUserMessage },
   ];
   const trail: TrailEntry[] = [];
+  const aiCalls = newAiCallCounters();
+  let tokensUsed = 0;
+  const done = (turns: number, stoppedBy: LoopStop, finalReport: unknown | null = null, skipReason?: string): AgentLoopResult => ({
+    finalReport, turns, trail, stoppedBy, tokensUsed, aiCalls,
+    ...(skipReason !== undefined ? { skipReason } : {}),
+  });
 
   for (let turn = 1; turn <= opts.maxTurns; turn++) {
-    const resp = await wrap(`agent-loop-turn-${turn}`, () =>
-      invoke({
-        agentId: opts.agentId,
-        runId: opts.runId,
-        model: opts.model,
-        system: opts.system,
-        messages,
-        tools: opts.tools,
-        maxTokens,
-        // System prompt + tool defs are a stable prefix across every turn —
-        // cache it so turns 2..N read it at ~0.1x input cost.
-        cacheSystem: true,
-      }),
-    );
+    let resp: AnthropicResponse;
+    try {
+      resp = await wrap(`agent-loop-turn-${turn}`, () =>
+        invoke({
+          agentId: opts.agentId,
+          runId: opts.runId,
+          model: opts.model,
+          system: opts.system,
+          messages,
+          tools: opts.tools,
+          maxTokens,
+          // System prompt + tool defs are a stable prefix across every turn —
+          // cache it so turns 2..N read it at ~0.1x input cost.
+          cacheSystem: true,
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isDeliberateAiSkipError(err)) {
+        // No request left (or a Workflow step re-surfaced the skip). Stop
+        // quietly with whatever the earlier turns produced.
+        recordAiCall(aiCalls, { success: false, error: message, failure_kind: "throttled" }, false);
+        return done(turn - 1, "ai_skipped", null, message);
+      }
+      recordAiCall(aiCalls, { success: false, error: message, failure_kind: classifyAnthropicFailure(err) }, false);
+      throw err;
+    }
+    recordAiCall(aiCalls, { success: true }, true);
+    tokensUsed += (resp.usage?.input_tokens ?? 0) + (resp.usage?.output_tokens ?? 0);
 
     // Append the assistant turn verbatim — tool_use blocks must be preserved
     // for the next request to be a valid tool-use exchange.
@@ -108,13 +156,18 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     const calls = toolUseBlocks(resp.content);
     if (calls.length === 0) {
       // Model answered in prose with no tool call — nothing more to do.
-      return { finalReport: null, turns: turn, trail, stoppedBy: "end_turn" };
+      return done(turn, "end_turn");
     }
 
     // Terminal tool ends the loop with its structured input.
     const terminal = calls.find((b) => b.name === opts.terminalTool);
     if (terminal) {
-      return { finalReport: terminal.input ?? null, turns: turn, trail, stoppedBy: "submit_report" };
+      return done(turn, "submit_report", terminal.input ?? null);
+    }
+
+    // Per-run token budget: don't pay for tool execution + another turn.
+    if (opts.maxRunTokens !== undefined && tokensUsed >= opts.maxRunTokens) {
+      return done(turn, "budget");
     }
 
     const results: Array<Record<string, unknown>> = [];
@@ -136,5 +189,5 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
     messages.push({ role: "user", content: results });
   }
 
-  return { finalReport: null, turns: opts.maxTurns, trail, stoppedBy: "max_turns" };
+  return done(opts.maxTurns, "max_turns");
 }

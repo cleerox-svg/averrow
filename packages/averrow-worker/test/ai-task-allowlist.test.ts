@@ -89,9 +89,15 @@ describe("isAiTaskAllowed truth table", () => {
     ["rules_only beats a list that names the task", { AI_MODE: "rules_only", AI_CLAUDE_TASKS: "observer" }, "observer", false],
     ["rules_only with padding still blocks", { AI_MODE: " rules_only " }, "observer", false],
     ["unset mode + unset list -> allowed", {}, "anything", true],
-    ["enabled + unset list -> allowed", { AI_MODE: "enabled" }, "anything", true],
-    ["enabled + empty list -> allowed (no allowlist)", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "" }, "anything", true],
-    ["enabled + whitespace-only list -> allowed", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "  ,  " }, "anything", true],
+    ["unset mode + list -> list applies", { AI_CLAUDE_TASKS: "observer" }, "analyst", false],
+    ["enabled + unset list -> blocked (fail closed)", { AI_MODE: "enabled" }, "anything", false],
+    ["padded enabled + unset list -> blocked (fail closed)", { AI_MODE: " enabled " }, "anything", false],
+    ["enabled + empty list -> blocked (fail closed)", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "" }, "anything", false],
+    ["enabled + whitespace-only list -> blocked (fail closed)", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "  ,  " }, "anything", false],
+    ["enabled + bare comma -> blocked (fail closed)", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "," }, "anything", false],
+    ["enabled + '*' -> allowed (explicit allow-all)", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "*" }, "anything", true],
+    ["enabled + '*' among ids -> allowed", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "observer, * " }, "anything", true],
+    ["rules_only beats '*'", { AI_MODE: "rules_only", AI_CLAUDE_TASKS: "*" }, "anything", false],
     ["listed -> allowed", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "observer,narrator" }, "narrator", true],
     ["not listed -> blocked", { AI_MODE: "enabled", AI_CLAUDE_TASKS: "observer,narrator" }, "analyst", false],
     ["entries are trimmed", { AI_MODE: "enabled", AI_CLAUDE_TASKS: " observer , narrator " }, "narrator", true],
@@ -284,6 +290,8 @@ describe.skipIf(!hasSqlite())("per-agent cap + abuse classifier (real gates)", (
       CACHE: fakeKv({ "ai:throttle_reason": "" }),
       ANTHROPIC_API_KEY: "k",
       AI_MODE: "enabled",
+      // Explicit allow-all: with AI_MODE="enabled" an absent list fails closed.
+      AI_CLAUDE_TASKS: "*",
       ...over,
     }) as never;
 
@@ -401,6 +409,14 @@ describe("wrangler.toml AI_CLAUDE_TASKS", () => {
     expect(prodSection).toMatch(/^AI_MODE\s*=\s*"enabled"/m);
   });
 
+  it("excludes evidence_assembler (draft is auto-submitted to abuse desks; no human-review gate)", () => {
+    expect(prodIds).not.toContain("evidence_assembler");
+  });
+
+  it("does not use the '*' allow-all in prod", () => {
+    expect(prodIds).not.toContain("*");
+  });
+
   it("has no duplicates and no padding/case typos", () => {
     expect(new Set(prodIds).size).toBe(prodIds.length);
     for (const id of prodIds) expect(id).toMatch(/^[a-z][a-z0-9_]*$/);
@@ -428,7 +444,8 @@ describe("observer event-triggered runs", () => {
   it("source marks triggeredByEvent runs as a deliberate 'throttled' skip and skips the weekly narrative", () => {
     const src = readFileSync(resolve(__dirname, "..", "src/agents/observer.ts"), "utf8");
     expect(src).toMatch(/input\.triggeredByEvent/);
-    expect(src).toMatch(/failure_kind: "throttled"/);
+    // No synthetic AI result: event runs simply never call generateInsight.
+    expect(src).toMatch(/const insightResult = triggeredByEvent\s*\?\s*null/);
     expect(src).toMatch(/isSunday && isMorning && !triggeredByEvent/);
   });
 });

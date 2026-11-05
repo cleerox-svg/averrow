@@ -44,7 +44,7 @@ function makeEnv(verdictChanges: number): { env: Env; sqls: string[] } {
       return { success: true, meta: { changes: isVerdict ? verdictChanges : 1 } };
     },
   });
-  return { env: { DB: { prepare: (sql: string) => stmt(sql) }, AI_MODE: "enabled" } as unknown as Env, sqls };
+  return { env: { DB: { prepare: (sql: string) => stmt(sql) }, AI_MODE: "enabled", AI_CLAUDE_TASKS: "abuse_mailbox_classifier" } as unknown as Env, sqls };
 }
 
 describe("runAbuseClassifierBackfill — lost race", () => {

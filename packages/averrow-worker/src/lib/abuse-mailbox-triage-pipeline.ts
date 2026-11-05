@@ -42,7 +42,9 @@ export interface TriagePipelineResult {
   messageId: string;
   /** 'malicious' | 'review' | 'not_pending' */
   rules: string;
-  /** 'skipped' | 'skipped_rules_only' | 'classified' | 'failed' */
+  /** 'skipped' | 'skipped_ai_unavailable' | 'classified' | 'failed'.
+   *  skipped_ai_unavailable = a deliberate skip: AI_MODE=rules_only, not in
+   *  AI_CLAUDE_TASKS, the spend throttle, or the per-agent cap. */
   ai: string;
   delivery: DeliveryOutcome;
 }
@@ -68,13 +70,13 @@ export async function runAbuseTriagePipeline(
     // Workers AI has its own switch; AI_MODE=rules_only / AI_CLAUDE_TASKS
     // only block Anthropic.
     if (r.verdict.kind !== "review" || (!isAiTaskAllowed(env, "abuse_mailbox_classifier") && !isAbuseWorkersAiEnabled(env))) {
-      return { rules: r.verdict.kind, ai: r.verdict.kind === "review" ? "skipped_rules_only" : "skipped" };
+      return { rules: r.verdict.kind, ai: r.verdict.kind === "review" ? "skipped_ai_unavailable" : "skipped" };
     }
     const { runAbuseClassifierBackfill } = await import("./abuse-mailbox-classifier");
     const ai = await runAbuseClassifierBackfill(env, { messageId, limit: 1, deferDetermination: true });
     return {
       rules: "review",
-      ai: ai.classified > 0 ? "classified" : ai.skipped_rules_only ? "skipped_rules_only" : "failed",
+      ai: ai.classified > 0 ? "classified" : ai.skipped_rules_only ? "skipped_ai_unavailable" : "failed",
     };
   });
 

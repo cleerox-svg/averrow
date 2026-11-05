@@ -241,8 +241,9 @@ export function isAiRulesOnly(env: { AI_MODE?: string }): boolean {
 
 /**
  * Parse the `AI_CLAUDE_TASKS` allowlist. Returns null when the var is
- * unset or holds no ids ("no allowlist declared" — every task allowed).
- * Entries are trimmed; matching is case-sensitive and exact.
+ * unset or holds no ids ("no allowlist declared"). Entries are trimmed;
+ * matching is case-sensitive and exact. The entry `*` means "every task"
+ * (see isAiTaskAllowed).
  */
 export function parseAiClaudeTasks(raw: string | undefined): ReadonlySet<string> | null {
   if (raw === undefined) return null;
@@ -250,17 +251,29 @@ export function parseAiClaudeTasks(raw: string | undefined): ReadonlySet<string>
   return ids.length > 0 ? new Set(ids) : null;
 }
 
+/** The AI_CLAUDE_TASKS entry that allows every task. */
+export const AI_CLAUDE_TASKS_ALL = "*";
+
+/** True when AI_MODE is explicitly (trimmed) "enabled". */
+function isAiModeExplicitlyEnabled(env: { AI_MODE?: string }): boolean {
+  return env.AI_MODE?.trim() === "enabled";
+}
+
 /**
  * May this agentId make a Claude call right now?
  *
- *   AI_MODE=rules_only                → no, for every task.
- *   AI enabled, AI_CLAUDE_TASKS unset → yes, for every task (backward
- *                                       compatible: envs and tests that
- *                                       never declare the var behave as
- *                                       before).
- *   AI enabled, AI_CLAUDE_TASKS set   → only the listed agentIds (the
- *                                       exact agentId passed to
- *                                       callAnthropic / HaikuCallContext).
+ *   AI_MODE=rules_only                     → no, for every task.
+ *   AI_CLAUDE_TASKS lists ids              → only the listed agentIds (the
+ *                                            exact agentId passed to
+ *                                            callAnthropic /
+ *                                            HaikuCallContext); an entry
+ *                                            `*` allows every task.
+ *   AI_MODE="enabled", no list declared    → NO, for every task (fail
+ *                                            closed: unset / empty / "," /
+ *                                            whitespace). Use `*` to allow
+ *                                            everything deliberately.
+ *   AI_MODE unset (tests, legacy envs),    → yes, for every task (backward
+ *   no list declared                         compatible).
  *
  * Callers that branch on "will AI run for me?" to pick a rules path must
  * use this with their own agentId, not isAiRulesOnly — a disallowed task
@@ -272,7 +285,8 @@ export function isAiTaskAllowed(
 ): boolean {
   if (isAiRulesOnly(env)) return false;
   const allow = parseAiClaudeTasks(env.AI_CLAUDE_TASKS);
-  return allow === null || allow.has(agentId);
+  if (allow === null) return !isAiModeExplicitlyEnabled(env);
+  return allow.has(AI_CLAUDE_TASKS_ALL) || allow.has(agentId);
 }
 
 export type AiDisabledReason = "rules_only" | "task_not_allowed" | "budget_throttle";
