@@ -40,7 +40,11 @@ export const abuseMailboxClassifierAgent: AgentModule = {
   stallThresholdMinutes: 30,
   parallelMax: 1,
   costGuard: "enforced",
-  budget: { monthlyTokenCap: 10_000_000 },
+  // Cap for the Anthropic second opinion (agentId abuse_mailbox_classifier,
+  // lib/abuse-mailbox-classifier.ts) — only used when ABUSE_AI_PROVIDER is
+  // not "workers_ai". ~2.5K Haiku tokens per call, <1/day. 2M ≤ $10 worst
+  // case — sizing table in lib/per-agent-budget.ts.
+  budget: { monthlyTokenCap: 2_000_000 },
   // Direct SQL surface is empty — delegates to lib/abuse-mailbox-*.
   reads: [],
   writes: [],
@@ -71,7 +75,7 @@ export const abuseMailboxClassifierAgent: AgentModule = {
         summary:
           `Abuse triage: rules ${rules.scanned} scanned (${rules.malicious} malicious, ${rules.review} review, ${rules.errors} errors); ` +
           (stats.skipped_rules_only
-            ? "AI pass skipped (rules_only); "
+            ? "AI pass skipped (AI unavailable: rules_only, not allowlisted, throttled or capped); "
             : `AI ${stats.classified} classified (${bc.phishing} phishing, ${bc.malware} malware, ${bc.spam} spam, ${bc.benign} benign, ${bc.ambiguous} ambiguous), ${stats.failed} failed; `) +
           `${sweep.sent}/${sweep.candidates} determinations swept`,
         severity: rules.malicious > 0 || bc.phishing > 0 || bc.malware > 0 ? "medium" : "info",

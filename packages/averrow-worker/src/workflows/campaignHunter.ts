@@ -16,6 +16,7 @@
  */
 
 import { WorkflowEntrypoint, WorkflowStep, WorkflowEvent } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import type { Env } from "../types";
 import {
   resolveHunterBrand,
@@ -23,6 +24,7 @@ import {
   type ResolvedBrand,
 } from "../agents/campaign-hunter";
 import { runWithWorkflowMeter } from "../lib/d1-meter";
+import { isDeliberateAiSkipError } from "../lib/haiku";
 
 export type CampaignHunterParams = {
   brandName: string;
@@ -108,8 +110,24 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
     // step.do is generically constrained to Serializable returns; the loop's
     // step seam is unconstrained, so adapt with a loose cast (AnthropicResponse
     // and the resolved brand are plain JSON, so this is sound at runtime).
+    //
+    // A deliberate AI skip (AI_MODE / AI_CLAUDE_TASKS / spend throttle /
+    // per-agent cap) is re-thrown as NonRetryableError: retrying would only
+    // be refused again. The loop (lib/agent-loop.ts) recognises the skip by
+    // its message marker once it crosses the step boundary and stops with
+    // stoppedBy "ai_skipped" — finalised below as a skipped run, not a
+    // failure.
     const stepFn = <T>(label: string, fn: () => Promise<T>): Promise<T> =>
-      (step.do as (n: string, cb: () => Promise<unknown>) => Promise<unknown>)(label, fn) as Promise<T>;
+      (step.do as (n: string, cb: () => Promise<unknown>) => Promise<unknown>)(label, async () => {
+        try {
+          return await fn();
+        } catch (err) {
+          if (isDeliberateAiSkipError(err)) {
+            throw new NonRetryableError(err instanceof Error ? err.message : String(err));
+          }
+          throw err;
+        }
+      }) as Promise<T>;
 
     let summary;
     try {
@@ -158,15 +176,20 @@ export class CampaignHunterWorkflow extends WorkflowEntrypoint<Env, CampaignHunt
 
       await this.env.DB.prepare(
         `UPDATE agent_runs SET status = 'success', duration_ms = ?, records_processed = ?,
-           outputs_generated = ?, tokens_used = 0, completed_at = datetime('now') WHERE id = ?`,
-      ).bind(Date.now() - startMs, summary.itemsProcessed, outputsGenerated, runId).run();
+           outputs_generated = ?, tokens_used = ?, completed_at = datetime('now') WHERE id = ?`,
+      ).bind(Date.now() - startMs, summary.itemsProcessed, outputsGenerated, summary.tokensUsed, runId).run();
 
       await this.env.DB.prepare(
         `UPDATE agent_configs SET consecutive_failures = 0, updated_at = datetime('now') WHERE agent_id = ?`,
       ).bind(AGENT_ID).run();
 
+      // A deliberate AI skip finishes like any completed run (status
+      // 'success', the info diagnostic row says why) — never 'failed', never
+      // a critical activity row, never a consecutive_failures bump.
       await logActivity(this.env, "batch_complete",
-        `Campaign Hunter complete for ${brand.name} — ${JSON.stringify(summary.output)}`,
+        summary.aiSkipped
+          ? `Campaign Hunter skipped for ${brand.name} — AI not available: ${summary.aiSkipped.slice(0, 160)}`
+          : `Campaign Hunter complete for ${brand.name} — ${JSON.stringify(summary.output)}`,
         { run_id: runId, ...summary.output });
     });
 

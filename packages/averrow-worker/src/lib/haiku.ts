@@ -19,10 +19,13 @@ import {
   callAnthropicJSON,
   AnthropicError,
   AiDisabledError,
+  AiBudgetThrottledError,
   AI_RULES_ONLY_PREFIX,
+  AI_BUDGET_THROTTLED_PREFIX,
   isAiRulesOnly,
+  isAiTaskAllowed,
 } from "./anthropic";
-import { BudgetManager } from "./budgetManager";
+import { checkCostGuard } from "./ai-throttle";
 import { HOT_PATH_HAIKU } from "./ai-models";
 
 const HAIKU_MODEL = HOT_PATH_HAIKU;
@@ -118,7 +121,9 @@ export interface HaikuResponse<T> {
  * field we prefer), but the transport / response-shape failures carry no
  * typed discriminator, so these are matched on `.message`.
  *
- * Keep in sync with the throw sites in lib/anthropic.ts:
+ * Keep in sync with the throw sites in lib/anthropic.ts (the
+ * `ai_rules_only:` / `ai_budget_throttled:` skips are typed —
+ * AiDisabledError / AiBudgetThrottledError — and matched by class first):
  *   - `Anthropic fetch failed:`            callAnthropic fetch catch
  *   - `budget_cap_exceeded:`               callAnthropic budget pre-flight
  *   - `Anthropic response JSON parse failed:`  callAnthropic JSON.parse catch
@@ -155,6 +160,24 @@ const PARSE_MARKERS = [
  */
 export function isDeliberateAiSkip(kind: HaikuFailureKind | null | undefined): boolean {
   return kind === 'throttled' || kind === 'budget_cap';
+}
+
+/**
+ * True when a thrown error is a deliberate AI skip (AI_MODE=rules_only,
+ * not in AI_CLAUDE_TASKS, the platform spend throttle, or the per-agent
+ * monthlyTokenCap) — no request left for Anthropic.
+ *
+ * Also recognises the skip by its message marker when the error lost its
+ * class: a Cloudflare Workflow step re-throws what failed inside it as a
+ * plain Error (e.g. the NonRetryableError the Campaign Hunter workflow
+ * converts a skip into), and only the message survives. The three markers
+ * are this module's/lib/anthropic.ts's own prefixes and appear nowhere in
+ * an Anthropic error body.
+ */
+export function isDeliberateAiSkipError(err: unknown): boolean {
+  if (isDeliberateAiSkip(classifyAnthropicFailure(err))) return true;
+  if (!(err instanceof Error)) return false;
+  return [AI_RULES_ONLY_PREFIX, AI_BUDGET_THROTTLED_PREFIX, BUDGET_CAP_PREFIX].some((m) => err.message.includes(m));
 }
 
 /**
@@ -304,9 +327,12 @@ export function parseNewestFailure(
 export function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
   // AI_MODE=rules_only — a deliberate platform-wide skip, never an outage.
   // Checked before the generic AnthropicError branch (it is a subclass).
+  // AI_CLAUDE_TASKS refusals and the platform spend throttle are the same
+  // class (AiBudgetThrottledError is a subclass).
   if (err instanceof AiDisabledError) return 'throttled';
   if (!(err instanceof AnthropicError)) return 'api_error';
   if (err.message.startsWith(AI_RULES_ONLY_PREFIX)) return 'throttled';
+  if (err.message.startsWith(AI_BUDGET_THROTTLED_PREFIX)) return 'throttled';
   // Typed field first — an HTTP status is unambiguous.
   if (typeof err.status === 'number') return 'api_error';
   if (err.message.startsWith(BUDGET_CAP_PREFIX)) return 'budget_cap';
@@ -318,63 +344,35 @@ export function classifyAnthropicFailure(err: unknown): HaikuFailureKind {
 // ─── Cost guard (BudgetManager-backed) ───────────────────────────
 
 /**
- * Returns a string reason if non-critical AI calls should be paused
- * due to budget throttle, or null to proceed. Backed by BudgetManager
- * — same throttle ladder Flight Control uses.
+ * Re-exported from lib/ai-throttle.ts (moved there so lib/anthropic.ts can
+ * enforce the same throttle inside callAnthropic without an import cycle).
+ * Existing `import { checkCostGuard } from "../lib/haiku"` sites keep
+ * working.
  */
-export async function checkCostGuard(env: Env, critical: boolean): Promise<string | null> {
-  try {
-    const budget = new BudgetManager(env.DB);
-    const status = await budget.getStatus();
-    if (status.throttle_level === "emergency") {
-      return critical ? null : `budget emergency throttle (${status.pct_used}% of $${status.config.monthly_limit_usd})`;
-    }
-    if (status.throttle_level === "hard") {
-      return critical ? null : `budget hard throttle (${status.pct_used}% of $${status.config.monthly_limit_usd})`;
-    }
-    return null;
-  } catch (err) {
-    console.warn(`[haiku] checkCostGuard: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-}
+export { checkCostGuard };
 
 // ─── Internal call helpers ──────────────────────────────────────
 
 /**
- * Returns true when AI should be skipped for non-critical callers.
- *
- * Caches the throttle decision in KV (60s TTL) so that callers on the hot
- * path don't each run the budget_ledger SUM aggregation. The BudgetManager
- * query is the expensive part; this wrapper makes it effectively free for
- * the next minute once computed.
- *
- * When the budget is in hard/emergency throttle, every AI call site should
- * skip to the rule-based fallback. Without this gate, agents like Sentinel,
- * Cartographer Phase 2, and Analyst call Haiku in per-item loops and blow
- * past the configured monthly_limit_usd unchecked.
+ * The envelope every helper returns when AI won't run for this task:
+ * AI_MODE=rules_only, or the agentId is not in AI_CLAUDE_TASKS.
  */
-async function isAiThrottled(env: Env): Promise<string | null> {
-  try {
-    const cached = await env.CACHE.get("ai:throttle_reason");
-    if (cached !== null) {
-      return cached === "" ? null : cached;
-    }
-  } catch { /* fall through to recompute */ }
-
-  const blocked = await checkCostGuard(env, false);
-
-  try {
-    // Cache the decision for 60s. Empty string = not throttled. Non-empty = throttled reason.
-    await env.CACHE.put("ai:throttle_reason", blocked ?? "", { expirationTtl: 60 });
-  } catch { /* non-fatal */ }
-
-  return blocked;
+function aiDisabledSkip(env: Env): { success: false; error: string; failure_kind: HaikuFailureKind } {
+  return {
+    success: false,
+    error: isAiRulesOnly(env) ? 'throttled: AI_MODE=rules_only' : 'throttled: agentId not in AI_CLAUDE_TASKS',
+    failure_kind: 'throttled',
+  };
 }
 
-/** The envelope every helper returns when AI_MODE=rules_only. */
-function rulesOnlySkip(): { success: false; error: string; failure_kind: HaikuFailureKind } {
-  return { success: false, error: 'throttled: AI_MODE=rules_only', failure_kind: 'throttled' };
+/**
+ * Error text for a helper failure. The platform spend throttle is now
+ * enforced inside callAnthropic (one gate for every caller); keep the
+ * helpers' historical `throttled: <reason>` text for it.
+ */
+function helperErrorText(err: unknown): string {
+  if (err instanceof AiBudgetThrottledError) return `throttled: ${err.throttleReason}`;
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -388,16 +386,11 @@ async function callJsonSafe<T>(
   userMessage: string,
   maxTokens = 1024,
 ): Promise<HaikuResponse<T>> {
-  // AI_MODE=rules_only — answer before the budget gate so a disabled
-  // platform spends no KV/D1 read either. callAnthropic enforces the same
-  // switch for direct callers; this is just the cheaper early exit.
-  if (isAiRulesOnly(env)) return rulesOnlySkip();
-
-  // Global AI throttle gate — covers every agent on the hot path.
-  const throttled = await isAiThrottled(env);
-  if (throttled) {
-    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
-  }
+  // AI_MODE=rules_only / not in AI_CLAUDE_TASKS — callAnthropic enforces
+  // the same gate; this is just the cheaper early exit. The spend
+  // throttle and per-agent cap are enforced inside callAnthropic and come
+  // back through the catch below as 'throttled' / 'budget_cap'.
+  if (!isAiTaskAllowed(env, ctx.agentId)) return aiDisabledSkip(env);
 
   try {
     const { parsed, response } = await callAnthropicJSON<T>(env, {
@@ -415,8 +408,7 @@ async function callJsonSafe<T>(
       tokens_used: response.usage.input_tokens + response.usage.output_tokens,
     };
   } catch (err) {
-    const msg = err instanceof AnthropicError ? err.message : err instanceof Error ? err.message : String(err);
-    return { success: false, error: msg, failure_kind: classifyAnthropicFailure(err) };
+    return { success: false, error: helperErrorText(err), failure_kind: classifyAnthropicFailure(err) };
   }
 }
 
@@ -436,13 +428,8 @@ export async function callHaikuRaw(
   /** See HaikuFailureKind — set only when `success === false`. Additive. */
   failure_kind?: HaikuFailureKind;
 }> {
-  if (isAiRulesOnly(env)) return rulesOnlySkip();
-
-  // Global AI throttle gate — same path as callJsonSafe.
-  const throttled = await isAiThrottled(env);
-  if (throttled) {
-    return { success: false, error: `throttled: ${throttled}`, failure_kind: 'throttled' };
-  }
+  // Same early exit as callJsonSafe; spend throttle lives in callAnthropic.
+  if (!isAiTaskAllowed(env, ctx.agentId)) return aiDisabledSkip(env);
 
   try {
     const response = await callAnthropic(env, {
@@ -463,7 +450,7 @@ export async function callHaikuRaw(
   } catch (err) {
     return {
       success: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: helperErrorText(err),
       failure_kind: classifyAnthropicFailure(err),
     };
   }

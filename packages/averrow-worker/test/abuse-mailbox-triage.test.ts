@@ -391,7 +391,7 @@ describe.skipIf(!hasSqlite())("AI pass vs rules verdicts", () => {
     await runAbuseRulesPass(env);
     raw.prepare(`UPDATE abuse_inbox_messages SET classification_attempts = 2 WHERE id = 'a3'`).run();
 
-    const aiEnv = { ...env, AI_MODE: "enabled" } as unknown as Env;
+    const aiEnv = { ...env, AI_MODE: "enabled", AI_CLAUDE_TASKS: "abuse_mailbox_classifier" } as unknown as Env;
     const r = await runAbuseClassifierBackfill(aiEnv, { deferDetermination: true });
     expect(r.scanned).toBe(1); // only the review row
     expect(r.classified).toBe(0);

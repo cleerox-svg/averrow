@@ -194,7 +194,10 @@ export const evidenceAssemblerAgent: AgentModule = {
   stallThresholdMinutes: 5,
   parallelMax: 2,
   costGuard: "enforced",
-  budget: { monthlyTokenCap: 5_000_000 },
+  // Sparrow assembles ≤3 drafts per 6h run (≤12/day) + manual calls, ~5K
+  // Haiku tokens each. 2M ≤ $10 worst case — sizing table in
+  // lib/per-agent-budget.ts.
+  budget: { monthlyTokenCap: 2_000_000 },
   // Sync agent — caller (sparrow.execute or handler) reads intel +
   // writes takedown_evidence / takedown_requests. The agent only
   // owns the AI call.

@@ -55,6 +55,13 @@ export type CampaignHunterInput = z.infer<typeof CampaignHunterInputSchema>;
 
 /** Hard turn cap (Phase 1 stays conservative; spec default is 20). */
 const MAX_TURNS = 12;
+/**
+ * Per-run token budget (input + output across turns). A typical
+ * investigation is ~250K tokens (≈ $1 on Sonnet); the loop stops with
+ * stoppedBy "budget" once a run reaches this, so one run can't blow far
+ * past the 1M monthly cap (which is only checked pre-flight, 60s-cached).
+ */
+export const HUNTER_MAX_RUN_TOKENS = 250_000;
 const PROMPT_VERSION = "v1.0.0";
 
 const SYSTEM_PROMPT = [
@@ -114,6 +121,11 @@ export interface HuntSummary {
   itemsProcessed: number;
   itemsCreated: number;
   output: Record<string, unknown>;
+  /** Tokens billed by the run's model turns. */
+  tokensUsed: number;
+  /** Set when a deliberate AI skip (AI_MODE / AI_CLAUDE_TASKS / spend
+   *  throttle / per-agent cap) stopped the run — NOT a failure. */
+  aiSkipped?: string;
 }
 
 /** Run the agentic loop for a resolved brand and map the result into
@@ -146,8 +158,33 @@ export async function runHuntAndSummarize(opts: {
     runTool: buildHunterDispatch(env, brandCtx),
     initialUserMessage: goal,
     maxTurns: MAX_TURNS,
+    maxRunTokens: HUNTER_MAX_RUN_TOKENS,
     step: opts.step,
   });
+  // Strictly-API counters (lib/haiku.ts) — spread into every agent_outputs
+  // row this run writes so Flight Control's platform_ai_calls_failing and
+  // diagnostics ai_health see campaign_hunter's calls.
+  const ai = loop.aiCalls;
+  const tokensUsed = loop.tokensUsed;
+
+  // Deliberate skip: no request left (or the run was cut short by one).
+  // Recorded as skipped, never as a failure; keeps any partial trail.
+  if (loop.stoppedBy === "ai_skipped") {
+    agentOutputs.push({
+      type: "diagnostic",
+      summary: `campaign_hunter skipped for ${brand.name} after ${loop.turns} turn(s): AI not available (${loop.skipReason ?? "deliberate skip"})`,
+      severity: "info",
+      details: { stoppedBy: loop.stoppedBy, turns: loop.turns, trail: loop.trail, skipReason: loop.skipReason ?? null, promptVersion: PROMPT_VERSION, ...ai },
+    });
+    return {
+      agentOutputs,
+      itemsProcessed: loop.trail.length,
+      itemsCreated: 0,
+      output: { skipped: true, stoppedBy: loop.stoppedBy, turns: loop.turns, reason: loop.skipReason ?? null },
+      tokensUsed,
+      aiSkipped: loop.skipReason ?? "deliberate skip",
+    };
+  }
 
   // No structured report (model rambled, or hit the turn cap).
   if (loop.finalReport === null) {
@@ -155,13 +192,14 @@ export async function runHuntAndSummarize(opts: {
       type: "diagnostic",
       summary: `campaign_hunter ended without a report (${loop.stoppedBy}) after ${loop.turns} turns for ${brand.name}`,
       severity: "medium",
-      details: { stoppedBy: loop.stoppedBy, turns: loop.turns, trail: loop.trail, promptVersion: PROMPT_VERSION },
+      details: { stoppedBy: loop.stoppedBy, turns: loop.turns, tokensUsed, trail: loop.trail, promptVersion: PROMPT_VERSION, ...ai },
     });
     return {
       agentOutputs,
       itemsProcessed: loop.trail.length,
       itemsCreated: 0,
-      output: { stoppedBy: loop.stoppedBy, turns: loop.turns },
+      output: { stoppedBy: loop.stoppedBy, turns: loop.turns, tokensUsed },
+      tokensUsed,
     };
   }
 
@@ -173,13 +211,14 @@ export async function runHuntAndSummarize(opts: {
       type: "diagnostic",
       summary: `campaign_hunter report failed schema for ${brand.name}: ${issues.join("; ")}`,
       severity: "high",
-      details: { issues, raw: loop.finalReport, turns: loop.turns, trail: loop.trail, promptVersion: PROMPT_VERSION },
+      details: { issues, raw: loop.finalReport, turns: loop.turns, trail: loop.trail, promptVersion: PROMPT_VERSION, ...ai },
     });
     return {
       agentOutputs,
       itemsProcessed: loop.trail.length,
       itemsCreated: 0,
       output: { error: "report_schema_failed", issues },
+      tokensUsed,
     };
   }
   const report = reportParse.data;
@@ -196,6 +235,7 @@ export async function runHuntAndSummarize(opts: {
       stoppedBy: loop.stoppedBy,
       trail: loop.trail,
       promptVersion: PROMPT_VERSION,
+      ...ai,
     },
   });
 
@@ -204,6 +244,7 @@ export async function runHuntAndSummarize(opts: {
     itemsProcessed: loop.trail.length,
     itemsCreated: report.findings.length,
     output: { verdict: report.verdict, confidence: report.confidence, findings: report.findings.length, turns: loop.turns },
+    tokensUsed,
   };
 }
 
@@ -220,10 +261,12 @@ export const campaignHunterAgent: AgentModule = {
   stallThresholdMinutes: 10,
   parallelMax: 1,
   costGuard: "enforced",
-  // Multi-turn loop, Sonnet driver — pricier per run than a batch classifier.
-  // The global $50/mo cost guard + per-call gate are the real ceiling; this
-  // cap is the per-agent alarm.
-  budget: { monthlyTokenCap: 20_000_000 },
+  // Multi-turn loop, Sonnet driver — pricier per run than a batch classifier
+  // (≤12 turns, ~250K tokens ≈ $1 per investigation). Tightest $-equivalent
+  // cap of the AI_CLAUDE_TASKS allowlist: 1M tokens ≤ $15 even if every token
+  // billed at Sonnet's output rate (~4 runs/month realistic). Sizing table:
+  // lib/per-agent-budget.ts NON_MODULE_AGENT_CAPS.
+  budget: { monthlyTokenCap: 1_000_000 },
   // File-scoped declaration: the architect manifest's static extractor
   // only scans this agent file, which queries `brands` (brand resolution).
   // The investigation tools read threats / hosting_providers /
@@ -271,12 +314,16 @@ export const campaignHunterAgent: AgentModule = {
       brandDomain: input.brandDomain,
     });
 
+    // A deliberate AI skip returns normally (never throws), so executeAgent
+    // finishes the run without a failure and never bumps
+    // agent_configs.consecutive_failures for it.
     return {
       itemsProcessed: summary.itemsProcessed,
       itemsCreated: summary.itemsCreated,
       itemsUpdated: 0,
       output: summary.output,
       model: AGENT_LOOP_SONNET,
+      tokensUsed: summary.tokensUsed,
       agentOutputs: summary.agentOutputs,
     };
   },

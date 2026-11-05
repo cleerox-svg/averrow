@@ -34,7 +34,7 @@
 
 import type { AgentModule, AgentResult, AgentContext } from "../lib/agentRunner";
 import { checkCostGuard } from "../lib/haiku";
-import { isAiRulesOnly } from "../lib/anthropic";
+import { isAiTaskAllowed } from "../lib/anthropic";
 import { upsertActorByName } from "../lib/otx-attribution";
 import { parseRss, type RssItem } from "../lib/rss-parser";
 import { extractFromArticle, type NewsExtraction } from "../lib/news-extractor";
@@ -198,10 +198,11 @@ export const newsWatcherAgent: AgentModule = {
     // those articles would never be extracted once AI returns. Skip the
     // pass before fetching or inserting anything; the feeds keep a rolling
     // window, so the same items are picked up on a later AI-enabled run.
-    if (isAiRulesOnly(env)) {
+    // Same when AI is enabled but "news_watcher" is not in AI_CLAUDE_TASKS.
+    if (!isAiTaskAllowed(env, callCtx.agentId)) {
       return {
         itemsProcessed: 0, itemsCreated: 0, itemsUpdated: 0,
-        output: { skipped: true, reason: "AI_MODE=rules_only — extraction skipped, no articles ingested" },
+        output: { skipped: true, reason: "AI disabled for news_watcher (AI_MODE=rules_only or not in AI_CLAUDE_TASKS) — extraction skipped, no articles ingested" },
       };
     }
 

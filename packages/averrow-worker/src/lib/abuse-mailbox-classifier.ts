@@ -46,7 +46,8 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../types';
-import { callAnthropicJSON, AnthropicError, AiDisabledError, isAiRulesOnly } from './anthropic';
+import { callAnthropicJSON, AnthropicError, isAiTaskAllowed } from './anthropic';
+import { classifyAnthropicFailure, isDeliberateAiSkip } from './haiku';
 import { HOT_PATH_HAIKU } from './ai-models';
 import { detectDeviceCodePhishing } from './device-code-detector';
 import {
@@ -57,6 +58,9 @@ import { notifyAbuseVerdict, notifyNamedThreatIdentified } from './abuse-mailbox
 import { ABUSE_RESPONSE_LOOKBACK, parseJsonSafe } from './abuse-mailbox-shared';
 import { isAbuseWorkersAiEnabled, runWorkersAiJson, reserveWorkersAiCall, WorkersAiError } from './workers-ai';
 import { suspectPortion } from './abuse-mailbox-heuristics';
+
+/** budget_ledger / AI_CLAUDE_TASKS attribution for the Anthropic second opinion. */
+const ABUSE_CLASSIFIER_AGENT_ID = 'abuse_mailbox_classifier';
 
 /** Fixed operator-facing notification sentence per AI verdict — the AI
  *  counterpart of RULES_OPERATOR_NOTE (abuse-mailbox-rules-runner.ts).
@@ -354,9 +358,11 @@ async function classifyWithWorkersAi(env: Env, ctx: AbuseClassifyContext): Promi
  */
 export type ClassifyOutcome =
   | { ok: true; verdict: ClassifyResult }
-  // `aiDisabled` — AI_MODE=rules_only refused the call before any request
-  // left. A deliberate platform skip, not a classification failure: the
-  // caller must NOT spend a retry attempt or graduate the row on it.
+  // `aiDisabled` — a deliberate skip refused the call before any request
+  // left: AI_MODE=rules_only, not in AI_CLAUDE_TASKS, the platform spend
+  // throttle, or this agent's monthlyTokenCap. Not a classification
+  // failure: the caller must NOT spend a retry attempt or graduate the
+  // row on it.
   | { ok: false; error: string; aiDisabled?: true };
 
 export async function classifyAbuseMessageWithAI(
@@ -366,7 +372,7 @@ export async function classifyAbuseMessageWithAI(
   if (isAbuseWorkersAiEnabled(env)) return classifyWithWorkersAi(env, ctx);
   try {
     const { parsed } = await callAnthropicJSON<unknown>(env, {
-      agentId: 'abuse_mailbox_classifier',
+      agentId: ABUSE_CLASSIFIER_AGENT_ID,
       runId:   null,
       model:   HOT_PATH_HAIKU,
       system:  SYSTEM_PROMPT,
@@ -379,8 +385,9 @@ export async function classifyAbuseMessageWithAI(
     }
     return { ok: true, verdict };
   } catch (err) {
-    if (err instanceof AiDisabledError) {
-      return { ok: false, error: err.message.slice(0, 500), aiDisabled: true };
+    if (isDeliberateAiSkip(classifyAnthropicFailure(err))) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message.slice(0, 500), aiDisabled: true };
     }
     const message = err instanceof AnthropicError ? err.message
                   : err instanceof Error           ? err.message
@@ -493,7 +500,8 @@ export async function runAbuseClassifierBackfill(
   // Bumping classification_attempts here would burn the retry budget on
   // a deliberate skip and graduate rows within three ticks.
   const useWorkersAi = isAbuseWorkersAiEnabled(env);
-  if (isAiRulesOnly(env) && !useWorkersAi) {
+  // Same when AI is enabled but this task is not in AI_CLAUDE_TASKS.
+  if (!isAiTaskAllowed(env, ABUSE_CLASSIFIER_AGENT_ID) && !useWorkersAi) {
     return {
       scanned: 0, classified: 0, failed: 0,
       by_classification: {

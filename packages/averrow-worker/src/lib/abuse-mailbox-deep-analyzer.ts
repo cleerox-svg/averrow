@@ -28,6 +28,7 @@
 import type { Env } from "../types";
 import type { D1Database } from "@cloudflare/workers-types";
 import { callAnthropicJSON, AnthropicError } from "./anthropic";
+import { isDeliberateAiSkipError } from "./haiku";
 import { lookupGeoMmdb } from "./geoip-mmdb";
 
 const SONNET_MODEL = "claude-sonnet-4-5-20250929";
@@ -349,6 +350,12 @@ export async function runDeepAnalysis(
       model:              SONNET_MODEL,
     };
   } catch (err) {
+    if (isDeliberateAiSkipError(err)) {
+      // Deliberate skip (AI_MODE=rules_only, not in AI_CLAUDE_TASKS, the
+      // platform spend throttle, or the per-agent cap) — not an outage; no
+      // error log.
+      return null;
+    }
     if (err instanceof AnthropicError) {
       console.error("[abuse_mailbox_deep_analyzer] anthropic error:", err.message);
     } else {

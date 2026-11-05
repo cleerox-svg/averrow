@@ -17,7 +17,7 @@
 
 import type { FeedModule, FeedContext, FeedResult } from "./types";
 import { diagnosticFetch } from "../lib/feedDiagnostic";
-import { callAnthropicJSON, isAiRulesOnly } from "../lib/anthropic";
+import { callAnthropicJSON, isAiTaskAllowed } from "../lib/anthropic";
 import { HOT_PATH_HAIKU } from "../lib/ai-models";
 
 const DEFAULT_FEED_URL = "https://www.cisa.gov/cybersecurity-advisories/all.xml";
@@ -74,7 +74,8 @@ export const advisories: FeedModule = {
     // extraction loop entirely. Nothing is marked processed, so these
     // advisories are extracted on the first run after AI is re-enabled.
     // The fetch above still runs so the feed's pull health stays truthful.
-    if (isAiRulesOnly(ctx.env)) {
+    // Same when AI is enabled but "advisories" is not in AI_CLAUDE_TASKS.
+    if (!isAiTaskAllowed(ctx.env, "advisories")) {
       return { itemsFetched: items.length, itemsNew: 0, itemsDuplicate: 0, itemsError: 0 };
     }
 

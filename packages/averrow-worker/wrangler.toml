@@ -426,7 +426,32 @@ TENANT_DIGEST_MODE = "off"
 # 'enabled'    = AI calls proceed normally (also the behavior when unset).
 # Set to rules_only while the Anthropic account is unfunded; flip back to
 # 'enabled' only after credit is restored (or Workers AI lands in Phase 2).
-AI_MODE = "rules_only"
+# 2026-11: 'enabled' on the $100/month free Anthropic credit, narrowed by
+# AI_CLAUDE_TASKS below. staging/dev stay rules_only.
+AI_MODE = "enabled"
+# Per-task Claude allowlist (comma-separated agentIds, exact match; read by
+# isAiTaskAllowed in lib/anthropic.ts). Only consulted when AI_MODE allows AI.
+# Keep bulk callers (analyst inferBrand, strategist, watchdog, dark-web/
+# app-store monitors, …) OUT of this list.
+# Fail-closed: with AI_MODE = "enabled", an unset/empty list denies EVERY
+# task; `*` is the explicit allow-all (never use it in prod).
+# Every other agentId gets AiDisabledError → a quiet 'throttled' skip, same
+# rule-based path as rules_only. Kept to the low-volume, customer-facing
+# uses docs/AI_STRATEGY_2026-10.md §2/§8.1 keeps on Claude:
+#   observer                    #9  daily/weekly intel narrative (Haiku)
+#   narrator                    #10 brand threat story prose (Haiku; severity + alert gate stay rule-derived)
+#   abuse_mailbox_classifier    #15 abuse verdict second opinion (Haiku) — inert while ABUSE_AI_PROVIDER = workers_ai
+#   abuse_mailbox_deep_analyzer #16 attribution narrative (Sonnet)  — inert while ABUSE_AI_PROVIDER = workers_ai
+#   campaign_hunter             #25 multi-turn investigation (Sonnet), internal route only
+# Deliberately EXCLUDED: evidence_assembler (#23). Its AI draft overwrites
+# takedown_requests.evidence_detail, and Sparrow Phase G auto-submits that
+# text verbatim to provider abuse desks (TAKEDOWN_SEND_MODE = "live") — prompt
+# injection via attacker-controlled bios / WHOIS / page text could rewrite the
+# claims we send under our name. Its deterministic skeleton is used instead.
+# Re-add only once a human-review gate sits between the AI draft and send.
+# Spend is bounded by per-agent token caps (sizing table: lib/per-agent-budget.ts,
+# worst case $52.50/mo) and the budget_config ceiling ($80, migration 0316).
+AI_CLAUDE_TASKS = "observer,narrator,abuse_mailbox_classifier,abuse_mailbox_deep_analyzer,campaign_hunter"
 # Abuse-mailbox AI second opinion provider (docs/ABUSE_MAILBOX.md).
 # 'workers_ai' = Cloudflare Workers AI via the [ai] binding below (postpaid,
 #                independent of AI_MODE): verdicts are clamped to "likely

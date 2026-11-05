@@ -877,17 +877,25 @@ async function handleFetch(request: Request, env: Env, ctx: ExecutionContext): P
         // Dispatches the loop as a Workflow and returns a run_id to poll via
         // GET /api/internal/agents/campaign_hunter/status?run_id=...
         if (url.pathname === '/api/internal/agents/campaign_hunter/workflow') {
-          let body: { brandName?: string; brandDomain?: string; brandId?: string };
+          let rawBody: unknown;
           try {
-            body = await request.json();
+            rawBody = await request.json();
           } catch {
             return Response.json({ error: 'invalid JSON body' }, { status: 400 });
           }
-          const brandName = typeof body.brandName === 'string' ? body.brandName : '';
-          const brandDomain = typeof body.brandDomain === 'string' ? body.brandDomain : '';
-          if (!brandName || !brandDomain) {
-            return Response.json({ error: 'brandName and brandDomain are required' }, { status: 400 });
+          // Same input contract as the inline agent (charset/length bounds on
+          // brandName / brandDomain / brandId) — these strings reach the
+          // model prompt and the tools' SQL binds.
+          const { CampaignHunterInputSchema } = await import('./agents/campaign-hunter');
+          const parsedBody = CampaignHunterInputSchema.safeParse(rawBody);
+          if (!parsedBody.success) {
+            return Response.json({
+              error: 'invalid input',
+              issues: parsedBody.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+            }, { status: 400 });
           }
+          const { brandName, brandDomain } = parsedBody.data;
+          const body = parsedBody.data;
           const runId = crypto.randomUUID();
           const { dispatchWorkflow } = await import('./lib/workflow-dispatch');
           const outcome = await dispatchWorkflow(env, {
