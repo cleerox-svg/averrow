@@ -8,7 +8,7 @@
  */
 
 import type { AgentModule, AgentResult, AgentContext, AgentOutputEntry } from "../lib/agentRunner";
-import { generateInsight, checkCostGuard } from "../lib/haiku";
+import { generateInsight, checkCostGuard, type HaikuResponse, type HaikuBriefingItem } from "../lib/haiku";
 import { createNotification } from "../lib/notifications";
 import { SUBSCRIBER_MAY_WATCH_BRAND_SQL } from "../lib/brand-subscription-access";
 import { renderIntelSectorTrend } from "../lib/intel-templates";
@@ -24,6 +24,8 @@ export const observerAgent: AgentModule = {
   stallThresholdMinutes: 1500,
   parallelMax: 1,
   costGuard: "enforced",
+  // Daily + weekly Haiku narrative (~8K tokens each). 2M ≤ $10 worst case —
+  // sizing table in lib/per-agent-budget.ts.
   budget: { monthlyTokenCap: 2_000_000 },
   reads: [
     { kind: "d1_table", name: "agent_outputs" },
@@ -58,6 +60,15 @@ export const observerAgent: AgentModule = {
   async execute(ctx: AgentContext): Promise<AgentResult> {
     const { env, runId } = ctx;
     const callCtx = { agentId: "observer", runId };
+
+    // Event-triggered runs (pivot_detected → processAgentEvents, which sets
+    // input.triggeredByEvent) do the rule-based briefing only. The Claude
+    // budget (observer's 2M-token cap, AI_CLAUDE_TASKS) is reserved for the
+    // scheduled daily/weekly narrative — up to 10 events per hourly tick
+    // would otherwise drain it. Recorded as a deliberate skip, not a failure.
+    const triggeredByEvent = typeof ctx.input.triggeredByEvent === "string" && ctx.input.triggeredByEvent.length > 0
+      ? ctx.input.triggeredByEvent
+      : null;
 
     // Cost guard: observer is non-critical
     const blocked = await checkCostGuard(env, false);
@@ -636,7 +647,9 @@ export const observerAgent: AgentModule = {
     }
 
     // ─── Send to Haiku for intelligence briefing ─────────────────
-    const insightResult = await generateInsight(env, callCtx, {
+    const insightResult: HaikuResponse<{ items: HaikuBriefingItem[] }> = triggeredByEvent
+      ? { success: false, error: `throttled: event-triggered run (${triggeredByEvent}) — AI reserved for the scheduled narrative`, failure_kind: "throttled" }
+      : await generateInsight(env, callCtx, {
       period: "daily",
       threats_summary: {
         total_24h: totalNow,
@@ -898,7 +911,7 @@ export const observerAgent: AgentModule = {
     const isMorning = now.getUTCHours() < 7;
     let weeklyGenerated = false;
 
-    if (isSunday && isMorning) {
+    if (isSunday && isMorning && !triggeredByEvent) {
       try {
         // Check if we already generated one this week
         const existingWeekly = await env.DB.prepare(
@@ -1089,6 +1102,7 @@ export const observerAgent: AgentModule = {
         change_percent: changePercent,
         insights_generated: outputs.length,
         weekly_report_generated: weeklyGenerated,
+        ...(triggeredByEvent ? { ai_skipped: "event_triggered", triggered_by_event: triggeredByEvent } : {}),
       },
       model,
       tokensUsed: totalTokens,
