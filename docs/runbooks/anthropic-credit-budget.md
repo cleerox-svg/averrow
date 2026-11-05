@@ -8,7 +8,7 @@ Status (2026-11-05), `CLAUDE.md` §6 "AI usage rules" / "AI-call health".
 ## What is configured
 
 - `wrangler.toml` prod `[vars]`: `AI_MODE = "enabled"`,
-  `AI_CLAUDE_TASKS = "observer,narrator,abuse_mailbox_classifier,abuse_mailbox_deep_analyzer,evidence_assembler,campaign_hunter"`.
+  `AI_CLAUDE_TASKS = "observer,narrator,abuse_mailbox_classifier,abuse_mailbox_deep_analyzer,campaign_hunter"`.
   Staging and dev stay `rules_only`.
 - Credit source: the Claude Max plan's monthly $100 Anthropic API credit
   (https://platform.claude.com/docs/en/about-claude/api-credits-for-subscribers).
@@ -25,7 +25,7 @@ Status (2026-11-05), `CLAUDE.md` §6 "AI usage rules" / "AI-call health".
 | Console org spend limit | ~$90 hard stop | Console, Billing, "Spend limits" | Owner action (not in code). Leave auto-reload OFF for a hard stop. |
 | Platform throttle | `budget_config.monthly_limit_usd` = $80; hard throttle at 95% ($76), emergency 99% | `lib/ai-throttle.ts`, enforced inside `callAnthropic`; migration 0316 | Code |
 | Per-agent token caps | see table | `lib/per-agent-budget.ts`, agent `budget.monthlyTokenCap` | Code |
-| Allowlist | six agentIds | `AI_CLAUDE_TASKS`, `isAiTaskAllowed` in `lib/anthropic.ts` | `wrangler.toml` |
+| Allowlist | five agentIds | `AI_CLAUDE_TASKS`, `isAiTaskAllowed` in `lib/anthropic.ts` | `wrangler.toml` |
 
 The throttle decision is KV-cached for 60s (key `ai:throttle_reason`) and fails
 open on a KV/D1 error, so overshoot is bounded by one cache window of calls. A
@@ -43,12 +43,11 @@ model's output rate, an upper bound real call mixes cannot reach
 | campaign_hunter | Sonnet | 1.0M | $15.00 | `agents/campaign-hunter.ts` |
 | abuse_mailbox_deep_analyzer | Sonnet | 0.5M | $7.50 | `NON_MODULE_AGENT_CAPS` |
 | abuse_mailbox_classifier | Haiku | 2.0M | $10.00 | `agents/abuseMailboxClassifier.ts` |
-| evidence_assembler | Haiku | 2.0M | $10.00 | `agents/evidence-assembler.ts` |
 | narrator | Haiku | 2.0M | $10.00 | `agents/narrator.ts` |
 | observer | Haiku | 2.0M | $10.00 | `agents/observer.ts` |
-| Total | | | $62.50 / month | |
+| Total | | | $52.50 / month | |
 
-The abuse classifier and deep analyzer are inert while
+`evidence_assembler` keeps its 2M cap but is not allowlisted (its draft is auto-submitted to abuse desks; needs a human-review gate first). Campaign Hunter also has a 250K per-run token budget. The abuse classifier and deep analyzer are inert while
 `ABUSE_AI_PROVIDER = "workers_ai"`. Observer runs triggered by `pivot_detected`
 (`input.triggeredByEvent`) skip the AI call and the weekly report.
 
@@ -78,13 +77,15 @@ Symptom: Anthropic returns HTTP 400 "credit balance is too low" (no card charge
 if no purchased credit). Allowlisted agents hit `api_error`; they fall back to
 their rules/template paths, runs still report success or `partial`.
 
-Detection caveat: the strictly-API counters are instrumented for analyst only
-(`lib/haiku.ts` `recordAiCall`), and analyst is not allowlisted, so Flight
-Control's `platform_ai_calls_failing` and `ai_health.agents_all_failing` will
-not fire for these tasks. Watch instead:
+Detection: the strictly-API counters are on observer, narrator and
+campaign_hunter (analyst is not allowlisted). Flight Control raises
+`platform_ai_calls_failing` only for an agent with >= 3 attempts and 0
+successes in the window: narrator (up to 5 brands/run) can trip it, observer
+alone (<= 1-2 calls/day) cannot. So also watch:
 
-- `./scripts/platform-diagnostics.sh`: `ai_health.hours_since_last_call` growing
-  while allowlisted agents have run (newest `budget_ledger` row = last successful call).
+- `./scripts/platform-diagnostics.sh`: `ai_health.agents_all_failing` and
+  `ai_health.hours_since_last_call` growing while allowlisted agents have run
+  (newest `budget_ledger` row = last successful call).
 - `ai_spend_24h` dropping to zero.
 - Worker logs for `Anthropic HTTP 400`.
 
@@ -96,5 +97,6 @@ Response, least to most drastic:
    owner-OK applies.
 3. Set `AI_MODE = "rules_only"` to stop every Claude call (same §9a rule).
 
-Never leave `AI_CLAUDE_TASKS` unset or empty while `AI_MODE = "enabled"`: that
-allows every task, including the bulk callers that were deliberately turned off.
+With `AI_MODE = "enabled"`, an unset or empty `AI_CLAUDE_TASKS` denies every
+task (fails closed). `*` allows every task, including the bulk callers that
+were deliberately turned off; never use it in prod.

@@ -431,9 +431,8 @@ TENANT_DIGEST_MODE = "off"
 AI_MODE = "enabled"
 # Per-task Claude allowlist (comma-separated agentIds, exact match; read by
 # isAiTaskAllowed in lib/anthropic.ts). Only consulted when AI_MODE allows AI.
-# Unset/empty = every task may call Claude — NEVER leave it unset in prod
-# while AI_MODE is enabled, or the bulk callers (analyst inferBrand,
-# strategist, watchdog, dark-web/app-store monitors, …) come back.
+# Keep bulk callers (analyst inferBrand, strategist, watchdog, dark-web/
+# app-store monitors, …) OUT of this list.
 # Fail-closed: with AI_MODE = "enabled", an unset/empty list denies EVERY
 # task; `*` is the explicit allow-all (never use it in prod).
 # Every other agentId gets AiDisabledError → a quiet 'throttled' skip, same

@@ -33,7 +33,7 @@ Copy `.env.example` to `.env` and configure:
 
 See `packages/averrow-worker/wrangler.toml` for Worker bindings (D1, KV, R2).
 
-`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`: `"rules_only"` for `[env.staging]` and `[env.dev]`, `"enabled"` for production, where `AI_CLAUDE_TASKS` (comma-separated agentIds) restricts which tasks may call Claude. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); `enabled` with the var unset allows every task. See `CLAUDE.md` §6 "AI-call health" and `docs/runbooks/anthropic-credit-budget.md`. In production `ANTHROPIC_API_KEY` must belong to the Console org linked to the Claude Max plan, or the included API credit is not used. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
+`AI_MODE` is a Worker `[vars]` entry (not a secret) in `wrangler.toml`: `"rules_only"` for `[env.staging]` and `[env.dev]`, `"enabled"` for production, where `AI_CLAUDE_TASKS` (comma-separated agentIds) restricts which tasks may call Claude. `rules_only` makes every Anthropic call a deliberate skip (no request leaves the Worker); with `enabled`, an unset or empty list denies every task (fails closed; `*` allows all); `AI_MODE` unset keeps the legacy allow-all. See `CLAUDE.md` §6 "AI-call health" and `docs/runbooks/anthropic-credit-budget.md`. In production `ANTHROPIC_API_KEY` must belong to the Console org linked to the Claude Max plan, or the included API credit is not used. The platform-alert email uses the existing `RESEND_API_KEY` / `BRIEFING_RECIPIENT`.
 
 ## Local Development
 
