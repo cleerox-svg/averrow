@@ -28,9 +28,33 @@ const MODES = ['graphite', 'navy', 'light'];
 
 const DROP = (name) => name === '--text-on-amber' || name === '--amber' || name.startsWith('--amber-');
 const NEUTRAL = /^--(bg-[\w-]+|border|border-(base|strong|sidebar)|text-(primary|secondary|tertiary|muted|help|inverse))$/;
-// shell-v4.css redeclares these four on `.shell-v4` (deeper dark cards), so they
-// must be re-emitted with a `.shell-v4` selector or the shell would win.
-const SHELL_TOKENS = ['--bg-card', '--bg-card-deep', '--border-base', '--border-strong'];
+// shell-v4.css redeclares tokens on `.shell-v4` (deeper dark cards in dark mode,
+// boosted glows in every mode). A custom property declared on the shell element
+// beats the value inherited from :root, so every shell token that this file also
+// sets is re-emitted under a `… .shell-v4` selector (see shellOverrides()). The
+// list is parsed from shell-v4.css, never hand-kept.
+const SHELL_CSS = 'packages/averrow-ops/src/components/layout/shell-v4.css';
+
+/** Parse the `.shell-v4` token blocks of shell-v4.css -> { all: Map, dark: Map }. */
+function parseShell(src) {
+  const out = { all: new Map(), dark: new Map() };
+  const flat = src.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of flat.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const sel = m[1].trim().replace(/\s+/g, ' ');
+    const decls = [...m[2].matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)];
+    if (!decls.length || !/\.shell-v4\b/.test(sel)) continue;
+    let kind;
+    if (sel === '.shell-v4') kind = 'all';
+    else if (sel === ':root:not([data-theme="light"]) .shell-v4') kind = 'dark';
+    else throw new Error(`gen-appearance: unhandled shell-v4.css token selector "${sel}" - teach parseShell() about it`);
+    for (const d of decls) out[kind].set(d[1], d[2].trim());
+  }
+  return out;
+}
+const SHELL = parseShell(readFileSync(resolve(root, SHELL_CSS), 'utf8'));
+// Dark-only shell tokens are excluded from the shared dark layers (they are
+// emitted per base together with the .shell-v4 copy).
+const SHELL_TOKENS = [...SHELL.dark.keys()];
 
 // ── colour helpers ───────────────────────────────────────────────────
 const rgbOf = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
@@ -58,17 +82,28 @@ function unhsl([h, s, l]) {
 }
 const rgba = (c, a) => `rgba(${c.map(Math.round).join(', ')}, ${a})`;
 
-/** Lighten `primary` as far as primary-ink stays >= 4.5:1 on it (cap +6% L). */
-function lightenHover(primary, ink, palette) {
-  const p = rgbOf(primary), i = rgbOf(ink), [h, s, l] = hsl(p);
-  let best = null;
-  for (let d = 0.06; d >= 0; d -= 0.001) {
-    const c = unhsl([h, s, l + d]).map(Math.round);
-    if (contrast(c, i) >= 4.5) { best = c; break; }
+const alphaOf = (v) => { const m = /^rgba\(([^)]+)\)$/.exec(v); return m ? parseFloat(m[1].split(',')[3]) : 1; };
+const rgbOfAny = (v) => {
+  if (/^#[0-9a-f]{6}$/i.test(v)) return rgbOf(v);
+  const m = /^rgba?\(([^)]+)\)$/.exec(v);
+  if (!m) return null;
+  return m[1].split(',').slice(0, 3).map((x) => parseFloat(x));
+};
+
+class HoverContrastError extends Error {
+  constructor(msg) { super(msg); this.name = 'HoverContrastError'; }
+}
+// Hover/pressed DARKEN the fill (owner decision): the hover must be visibly
+// different from the fill (luminance ratio >= HOVER_MIN_STEP) and keep
+// primary-ink >= 4.5:1. Checked for every accent x mode; a miss is a build error.
+const HOVER_MIN_STEP = 1.1;
+function checkHover(where, map) {
+  const fill = rgbOf(map.get('--primary')), hover = rgbOf(map.get('--primary-hover'));
+  const ink = rgbOf(map.get('--primary-ink'));
+  const step = contrast(fill, hover), inkOn = contrast(ink, hover);
+  if (step < HOVER_MIN_STEP || inkOn < 4.5) {
+    throw new HoverContrastError(`${where}: --primary-hover ${map.get('--primary-hover')} fails (fill step ${step.toFixed(2)} < ${HOVER_MIN_STEP} or ink ${inkOn.toFixed(2)} < 4.5)`);
   }
-  const cand = hexOf(best);
-  // never go less light than the palette's own hover
-  return lum(rgbOf(cand)) > lum(rgbOf(palette)) ? cand : palette;
 }
 
 // ── review-fix overrides (applied on top of the palette values) ──────
@@ -83,8 +118,10 @@ const SEV_LOW_LIGHT = { ...SEV_LOW_DARK, '--sev-low-text': '#00519f' };
 // documented exception: sev-info is unified with its emerald healthy green.
 const OVERRIDES = {
   all: {
-    dark: { ...SEV_LOW_DARK },
-    light: { ...SEV_LOW_LIGHT, '--healthy': 'var(--green-text)' },
+    // --violet stays one purple in every accent (the palettes repainted it pink
+    // in indigo/violet and kept legacy #8B7CF6 in mono/lime).
+    dark: { ...SEV_LOW_DARK, '--violet': '#a855f7', '--violet-text': '#d8b4fe' },
+    light: { ...SEV_LOW_LIGHT, '--healthy': 'var(--green-text)', '--violet': '#a855f7', '--violet-text': '#7e22ce' },
     graphite: {
       // Graphite card vs page is ~1.1:1: stronger hairlines carry the separation.
       '--border-base': 'rgba(245, 245, 246, 0.11)', '--border': 'rgba(245, 245, 246, 0.11)',
@@ -92,17 +129,22 @@ const OVERRIDES = {
     },
   },
   indigo: {
-    // --violet stays "purple" in every accent (the palette repainted it pink).
-    dark: { '--violet': '#a855f7', '--violet-text': '#d8b4fe', '--tag-nexus': '#c084fc' },
-    light: { '--violet': '#a855f7', '--violet-text': '#7e22ce', '--tag-nexus': '#7e22ce' },
+    // Hover/pressed darken the fill (the palette hover was ~1.02:1 vs the fill).
+    dark: { '--tag-nexus': '#c084fc', '--primary-hover': '#4350ec', '--primary-pressed': '#3640d0' },
+    light: { '--tag-nexus': '#7e22ce' },
   },
   violet: {
-    // Pink-fuchsia NEXUS tag: not teal (cyan-text/healthy/orbital-teal) and not
-    // the violet primary. --violet: palette pink kept -> purple for the same reason as indigo.
-    dark: { '--violet': '#a855f7', '--violet-text': '#d8b4fe', '--tag-nexus': '#f0abfc' },
-    light: { '--violet': '#a855f7', '--violet-text': '#7e22ce', '--tag-nexus': '#a21caf' },
+    // Pink NEXUS tag: not teal (cyan-text/healthy/orbital-teal) and clearly not
+    // the violet primary.
+    dark: { '--tag-nexus': '#f0abfc', '--primary-hover': '#8338ec', '--primary-pressed': '#7020d6' },
+    light: { '--tag-nexus': '#be185d' },
   },
-  mono: { dark: {}, light: {} },
+  mono: {
+    // Mono's primary is a neutral, so chart series 1 cannot follow it: sky
+    // leads and the series shift down (tokens.css order: sky, teal, pink, magenta).
+    dark: { '--chart-1': '#38bdf8', '--chart-2': '#2dd4bf', '--chart-3': '#f472b6', '--chart-4': '#f07cf0', '--chart-5': '#a48cf8' },
+    light: { '--chart-1': '#0284c7', '--chart-2': '#0d9488', '--chart-3': '#db2777', '--chart-4': '#b021b0', '--chart-5': '#7c3aed' },
+  },
   lime: {
     // One emerald green: --green = --healthy (alias in tokens.css) = --sev-info.
     dark: {
@@ -111,6 +153,10 @@ const OVERRIDES = {
       '--sev-info-border': 'rgba(16, 185, 129, 0.15)', '--sev-info-glow': 'rgba(16, 185, 129, 0.4)',
     },
     light: {
+      // Accent-as-text moves to the near-black olive (palette #3c6200 read as
+      // the same family as the emerald healthy green).
+      '--primary-text': '#2a3a12', '--focus-ring': '#2a3a12', '--text-accent': '#2a3a12',
+      '--accent': '#2a3a12', '--accent-section': '#2a3a12',
       '--green': '#047857', '--green-text': '#047857', '--green-glow': 'rgba(4, 120, 87, 0.2)',
       '--sev-info': '#047857', '--sev-info-bg': 'rgba(4, 120, 87, 0.07)',
       '--sev-info-border': 'rgba(4, 120, 87, 0.15)', '--sev-info-glow': 'rgba(4, 120, 87, 0.4)',
@@ -151,10 +197,10 @@ for (const accent of ACCENTS) {
     apply(OVERRIDES[accent][kind]);
 
     const primary = rgbOf(map.get('--primary'));
-    // Hover: indigo/violet dark were barely distinguishable from the fill.
-    if (kind === 'dark' && (accent === 'indigo' || accent === 'violet')) {
-      map.set('--primary-hover', lightenHover(map.get('--primary'), map.get('--primary-ink'), map.get('--primary-hover')));
-    }
+    checkHover(`${accent}/${mode}`, map);
+    // Every hover alias is the one hover colour.
+    map.set('--btn-primary-bg-hover', map.get('--primary-hover'));
+    map.set('--accent-hover', map.get('--primary-hover'));
     map.set('--primary-border', rgba(primary, 0.38));
     map.set('--primary-tint-strong', rgba(primary, 0.22));
     map.set('--selection-bg', rgba(primary, kind === 'dark' ? 0.32 : 0.22));
@@ -185,6 +231,22 @@ const commonLight = intersect(allLight, (k) => NEUTRAL.test(k));
 // Links follow the accent (legacy: amber-text, defined in tokens.css).
 commonDark.set('--link', 'var(--primary-text)');
 commonLight.set('--link', 'var(--primary-text)');
+
+/** Shell tokens this file also sets for a combo. Dark-only shell tokens take
+ *  the accent value; all-mode tokens (the glows) keep the accent colour at the
+ *  shell's boosted alpha when the shell boosts it. */
+function shellOverrides(map, kind) {
+  const out = new Map();
+  const add = (k, v) => { if (map.has(k)) out.set(k, v); };
+  for (const [k, shellV] of SHELL.all) {
+    if (!map.has(k)) continue;
+    const v = map.get(k), c = rgbOfAny(v);
+    if (!c || alphaOf(shellV) <= alphaOf(v)) add(k, v);
+    else add(k, rgba(c, alphaOf(shellV)));
+  }
+  if (kind === 'dark') for (const k of SHELL.dark.keys()) add(k, map.get(k));
+  return out;
+}
 
 const fmt = (map) => [...map].map(([k, v]) => `  ${k}: ${v};`).join('\n');
 const block = (sel, map) => (map.size ? `${sel} {\n${fmt(map)}\n}\n` : '');
@@ -217,9 +279,10 @@ for (const accent of ACCENTS) {
     const sel = `${a}${name === 'navy' ? '[data-base="navy"]' : ':not([data-base="navy"])'}:not([data-theme="light"])`;
     const rest = minus(map, commonDark, accentDark);
     css += block(sel, rest);
-    css += block(`${sel} .shell-v4`, new Map(SHELL_TOKENS.map((k) => [k, map.get(k)])));
+    css += block(`${sel} .shell-v4`, shellOverrides(map, 'dark'));
   }
   css += block(`${a}[data-theme="light"]`, minus(light, commonLight));
+  css += block(`${a}[data-theme="light"] .shell-v4`, shellOverrides(light, 'light'));
 }
 
 writeFileSync(resolve(root, 'packages/shared/src/theme/appearance.css'), css);

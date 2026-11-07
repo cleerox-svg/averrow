@@ -13,6 +13,9 @@ export default {
         // Appearance system L2 (Phase 3) - resolve to legacy amber until a data-accent is set.
         primary: {
           // <alpha-value> keeps bg-primary/20 etc. working with var()-based colours.
+          // color-mix() has no hex fallback by design (Safari 16.2+ / Chrome 111+,
+          // the same floor as tokens.css). Alpha modifiers (/20) apply only to the
+          // color-mix entries; the plain var() entries (ink/text/tint) ignore them.
           DEFAULT: 'color-mix(in srgb, var(--primary) calc(<alpha-value> * 100%), transparent)',
           hover: 'color-mix(in srgb, var(--primary-hover) calc(<alpha-value> * 100%), transparent)',
           pressed: 'color-mix(in srgb, var(--primary-pressed) calc(<alpha-value> * 100%), transparent)',

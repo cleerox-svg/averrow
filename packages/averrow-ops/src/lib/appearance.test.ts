@@ -26,6 +26,9 @@ import { bootstrapTheme } from '@averrow/shared/theme';
 interface State { accent: string | null; base: string | null; theme: 'dark' | 'light' }
 interface Rule { selector: string; decls: Array<[string, string]> }
 
+/** Flat rule list. NOTE: @media / @container bodies are flattened - their
+ *  inner rules are read as if unconditional (the outer `@media (...) {` is
+ *  never part of a matched selector). No token rule under test lives in one. */
 function parseRules(css: string): Rule[] {
   const src = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@import[^;]*;/g, '');
   const rules: Rule[] = [];
@@ -131,6 +134,17 @@ function contrast(fg: RGBA, bg: RGBA): number {
   const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
   return (hi + 0.05) / (lo + 0.05);
 }
+
+/** HSL hue in degrees, or null for a neutral (saturation < 0.15). */
+function hueOf([r, g, b]: RGBA): number | null {
+  const [R, G, B] = [r / 255, g / 255, b / 255];
+  const M = Math.max(R, G, B), m = Math.min(R, G, B), d = M - m, l = (M + m) / 2;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (sat < 0.15) return null;
+  const h = M === R ? ((G - B) / d + 6) % 6 : M === G ? (B - R) / d + 2 : (R - G) / d + 4;
+  return h * 60;
+}
+const hueDist = (a: number, b: number) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
 // ── storage / attributes ─────────────────────────────────────────────
 
@@ -308,7 +322,7 @@ describe('accent layers', () => {
     expect(resolve(limeLight, '--sev-info')).toBe('#047857');
     const violetTag = resolve(computed({ accent: 'violet', base: null, theme: 'dark' }), '--tag-nexus');
     expect(violetTag).toBe('#f0abfc');
-    expect(resolve(computed({ accent: 'violet', base: null, theme: 'light' }), '--tag-nexus')).toBe('#a21caf');
+    expect(resolve(computed({ accent: 'violet', base: null, theme: 'light' }), '--tag-nexus')).toBe('#be185d');
     expect(resolve(computed({ accent: 'indigo', base: null, theme: 'dark' }), '--tag-nexus')).toBe('#c084fc');
     expect(resolve(computed({ accent: 'indigo', base: null, theme: 'light' }), '--tag-nexus')).toBe('#7e22ce');
   });
@@ -387,12 +401,19 @@ describe('severity stays constant across accents (lime sev-info excepted)', () =
     }
   });
 
-  it('--violet stays purple (not the palette pink) in every accent', () => {
+  it('--violet is one purple in every accent (not the palette pink, not legacy #8B7CF6)', () => {
     for (const accent of ACCENTS) {
-      const [r, g, b] = parseColor(resolve(computed({ accent, base: null, theme: 'dark' }), '--violet'));
-      expect(b, accent).toBeGreaterThan(g);
-      expect(r, accent).toBeLessThan(b);
+      const dark = computed({ accent, base: null, theme: 'dark' });
+      const light = computed({ accent, base: null, theme: 'light' });
+      expect(resolve(dark, '--violet'), accent).toBe('#a855f7');
+      expect(resolve(dark, '--violet-text'), accent).toBe('#d8b4fe');
+      expect(resolve(light, '--violet'), accent).toBe('#a855f7');
+      expect(resolve(light, '--violet-text'), accent).toBe('#7e22ce');
     }
+  });
+
+  it('legacy --violet is untouched', () => {
+    expect(resolve(computed({ accent: null, base: null, theme: 'dark' }), '--violet')).toBe('#8B7CF6');
   });
 });
 
@@ -446,10 +467,48 @@ describe('token-level contrast: new tokens', () => {
       expect(new Set(hexes).size).toBe(names.length);
     });
 
-    it('chart series never reuse amber or a severity hue', () => {
-      const banned = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info'].map((n) => resolve(c, n).toLowerCase());
-      for (const n of ['--chart-2', '--chart-3', '--chart-4', '--chart-5']) {
-        expect(banned).not.toContain(resolve(c, n).toLowerCase());
+    it('new chart series keep >= 25deg hue from status, severity, amber, primary and the other series', () => {
+      // Series 5 everywhere; mono also re-orders, so its series 4 is checked too.
+      const checked = accent === 'mono' ? ['--chart-4', '--chart-5'] : ['--chart-5'];
+      const others = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info',
+        '--status-warn', '--status-ok', '--status-bad', '--status-info', '--healthy', '--green',
+        '--primary', '--primary-text',
+        '--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6'];
+      for (const n of checked) {
+        const h = hueOf(over(col(n), col('--bg-card')));
+        expect(h, `${n} is a neutral`).not.toBeNull();
+        for (const o of others) {
+          if (o === n) continue;
+          const ho = hueOf(over(col(o), col('--bg-card')));
+          if (ho === null) continue; // neutrals (mono primary, chart-6) separate by hue
+          expect(hueDist(h!, ho), `${n} ${resolve(c, n)} vs ${o} ${resolve(c, o)}`).toBeGreaterThanOrEqual(25);
+        }
+      }
+    });
+
+    it('chart series never reuse amber or a severity value, and series 1 is not a neutral', () => {
+      const banned = ['--amber', '--sev-critical', '--sev-high', '--sev-medium', '--sev-low', '--sev-info', '--healthy']
+        .map((n) => resolve(c, n).toLowerCase());
+      for (const n of ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5']) {
+        expect(banned, n).not.toContain(resolve(c, n).toLowerCase());
+      }
+      expect(hueOf(col('--chart-1')), '--chart-1 must carry a hue').not.toBeNull();
+    });
+
+    it('--status-* text >= 4.5 on --bg-card', () => {
+      for (const n of ['--status-warn', '--status-ok', '--status-bad', '--status-info']) {
+        expect(contrast(col(n), col('--bg-card')), n).toBeGreaterThanOrEqual(AA);
+      }
+    });
+
+    it('hover darkens/steps visibly from the fill and keeps ink >= 4.5; all hover aliases agree', () => {
+      const fill = over(col('--primary'), col('--bg-card'));
+      const hover = over(col('--primary-hover'), col('--bg-card'));
+      const step = (Math.max(lum(fill), lum(hover)) + 0.05) / (Math.min(lum(fill), lum(hover)) + 0.05);
+      expect(step, `fill ${resolve(c, '--primary')} vs hover ${resolve(c, '--primary-hover')}`).toBeGreaterThanOrEqual(1.1);
+      expect(contrast(col('--primary-ink'), hover)).toBeGreaterThanOrEqual(AA);
+      for (const alias of ['--btn-primary-bg-hover', '--accent-hover']) {
+        expect(resolve(c, alias), alias).toBe(resolve(c, '--primary-hover'));
       }
     });
 
@@ -463,5 +522,73 @@ describe('token-level contrast: new tokens', () => {
       }
       expect(contrast(col('--disabled-fg'), bg)).toBeGreaterThanOrEqual(1.5);
     });
+  });
+});
+
+describe.each(['dark', 'light'] as const)('legacy look (%s): --status-* readable on --bg-card', (theme) => {
+  const c = computed({ accent: null, base: null, theme });
+  const col = (n: string) => parseColor(resolve(c, n));
+  it.each(['--status-warn', '--status-ok', '--status-bad', '--status-info'])('%s >= 4.5', (n) => {
+    expect(contrast(col(n), col('--bg-card'))).toBeGreaterThanOrEqual(AA);
+  });
+});
+
+describe('lime light accent-as-text is clearly not the healthy green', () => {
+  const c = computed({ accent: 'lime', base: null, theme: 'light' });
+  const col = (n: string) => parseColor(resolve(c, n));
+  it('--primary-text / --link is the near-black olive, >= 4.5 on card and page', () => {
+    expect(resolve(c, '--primary-text')).toBe('#2a3a12');
+    expect(resolve(c, '--link')).toBe('#2a3a12');
+    for (const s of ['--bg-card', '--bg-page']) {
+      expect(contrast(col('--link'), col(s)), s).toBeGreaterThanOrEqual(AA);
+    }
+    // >= 25deg away from healthy and far darker (healthy #047857 is a mid-tone).
+    expect(hueDist(hueOf(col('--link'))!, hueOf(col('--healthy'))!)).toBeGreaterThanOrEqual(25);
+    expect(lum(col('--healthy')) / lum(col('--link'))).toBeGreaterThan(2.5);
+  });
+});
+
+// ── shell-v4 re-emission ─────────────────────────────────────────────
+
+describe('appearance.css re-emits every shell-v4 token override it also sets', () => {
+  const shellCss = readFileSync(resolvePath(__dirname, '../components/layout/shell-v4.css'), 'utf8');
+  const shellRules = parseRules(shellCss);
+  const allMode = shellRules.filter((r) => r.selector === '.shell-v4').flatMap((r) => r.decls.map(([k]) => k));
+  const darkOnly = shellRules
+    .filter((r) => r.selector.replace(/\s+/g, ' ') === ':root:not([data-theme="light"]) .shell-v4')
+    .flatMap((r) => r.decls.map(([k]) => k));
+
+  it('shell-v4.css still declares the tokens this test expects to find', () => {
+    expect(allMode).toContain('--sev-critical-glow');
+    expect(darkOnly).toContain('--bg-card');
+  });
+
+  const shellSel = (accent: string, base: string | null, theme: 'dark' | 'light') => {
+    const a = `:root[data-accent="${accent}"]`;
+    if (theme === 'light') return `${a}[data-theme="light"] .shell-v4`;
+    return `${a}${base === 'navy' ? '[data-base="navy"]' : ':not([data-base="navy"])'}:not([data-theme="light"]) .shell-v4`;
+  };
+
+  it.each(combos)('%s / %s / %s', (accent, base, theme) => {
+    const state: State = { accent, base, theme };
+    const set = computed(state);
+    // tokens the appearance layer itself sets for this combo
+    const accentSets = new Set<string>();
+    for (const r of appearanceRules) {
+      for (const sel of r.selector.split(',').map((x) => x.trim())) {
+        if (matches(sel, state)) for (const [k] of r.decls) accentSets.add(k);
+      }
+    }
+    const shellRule = appearanceRules.find((r) => r.selector === shellSel(accent, base, theme));
+    const emitted = new Map(shellRule?.decls ?? []);
+    const expected = [...allMode, ...(theme === 'dark' ? darkOnly : [])].filter((k) => accentSets.has(k));
+    expect(expected.length).toBeGreaterThan(0);
+    for (const k of expected) {
+      expect(emitted.has(k), `${shellSel(accent, base, theme)} missing ${k}`).toBe(true);
+      // same colour as the accent value; alpha may be the shell's boost, never lower
+      const want = parseColor(resolve(set, k)), got = parseColor(emitted.get(k)!);
+      expect(got.slice(0, 3), k).toEqual(want.slice(0, 3));
+      expect(got[3], k).toBeGreaterThanOrEqual(want[3]);
+    }
   });
 });

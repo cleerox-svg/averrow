@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <!-- No-flash appearance bootstrap: applies data-theme / data-accent / data-base before
          first paint. The ACCENTS/BASES/DEFAULT_* literals MUST equal those exported by
-         packages/shared/src/theme/useAppearance.ts (a test enforces it). Theme resolution
+         packages/shared/src/theme/appearanceDefaults.ts (a test enforces it). Theme resolution
          sits outside the storage try/catch so blocked storage still gets the OS theme. -->
     <script>
       (function () {
@@ -30,6 +30,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <!-- body's text-white is a hard-coded white: in light mode (set before first
+         paint by the bootstrap above) inherited/pre-JS text would be invisible on
+         the light page, so light flips it to dark text. Dark is unchanged. -->
+    <style>[data-theme="light"] body.text-white { color: rgba(15, 20, 35, 0.96); }</style>
   </head>
   <body class="bg-bg-page text-white antialiased">
     <div id="root"></div>

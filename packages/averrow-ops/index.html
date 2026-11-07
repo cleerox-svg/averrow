@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <!-- No-flash appearance bootstrap: applies data-theme / data-accent / data-base before
          first paint. The ACCENTS/BASES/DEFAULT_* literals MUST equal those exported by
-         packages/shared/src/theme/useAppearance.ts (a test enforces it). Theme resolution
+         packages/shared/src/theme/appearanceDefaults.ts (a test enforces it). Theme resolution
          sits outside the storage try/catch so blocked storage still gets the OS theme. -->
     <script>
       (function () {
@@ -41,16 +41,25 @@
   </head>
   <body class="bg-cockpit text-parchment">
     <div id="root">
-      <div id="app-loading" style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:'JetBrains Mono',monospace;color:rgba(255,255,255,0.4);font-size:13px;flex-direction:column;gap:12px">
+      <div id="app-loading" style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:'JetBrains Mono',monospace;font-size:13px;flex-direction:column;gap:12px">
         <div>Loading...</div>
         <div id="loading-timeout" style="opacity:0;visibility:hidden;animation:show-timeout 0.3s 8s forwards;text-align:center">
-          <div style="font-size:11px;color:rgba(255,255,255,0.3);margin-bottom:8px">Taking longer than expected?</div>
-          <a href="/" style="color:#00d4ff;font-size:12px;text-decoration:none">&larr; Return to homepage</a>
+          <div class="app-loading-hint" style="font-size:11px;margin-bottom:8px">Taking longer than expected?</div>
+          <a class="app-loading-link" href="/" style="font-size:12px;text-decoration:none">&larr; Return to homepage</a>
         </div>
       </div>
     </div>
     <style>
       @keyframes show-timeout { to { opacity: 1; visibility: visible; } }
+      /* Pre-JS loading colours follow the theme the inline bootstrap set
+         (literals: the app stylesheet may not have loaded yet). Dark = the
+         original values; light = readable dark text on the light page. */
+      #app-loading { color: rgba(255,255,255,0.4); }
+      #app-loading .app-loading-hint { color: rgba(255,255,255,0.3); }
+      #app-loading .app-loading-link { color: #00d4ff; }
+      [data-theme="light"] #app-loading { color: rgba(15,20,35,0.62); }
+      [data-theme="light"] #app-loading .app-loading-hint { color: rgba(15,20,35,0.62); }
+      [data-theme="light"] #app-loading .app-loading-link { color: #155e75; }
     </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>

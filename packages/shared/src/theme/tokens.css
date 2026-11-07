@@ -141,13 +141,16 @@
   --healthy:         var(--green);
   --tag-nexus:       #A78BFA;
 
-  /* Chart series: never amber or a severity hue, mutually distinguishable,
-     >= 3:1 non-text on --bg-card. Series 1 follows the accent. */
+  /* Chart series: never amber, a severity/status hue or green (healthy),
+     mutually distinguishable by hue, >= 3:1 non-text on --bg-card. Series 1
+     follows the accent (mono overrides the set in appearance.css: its primary
+     is a neutral). Series 5 is magenta (hue 300), clear of every accent
+     primary, status colour and the other series. No consumers yet. */
   --chart-1:    var(--primary-text);
   --chart-2:    #38bdf8;
   --chart-3:    #2dd4bf;
   --chart-4:    #f472b6;
-  --chart-5:    #34d399;
+  --chart-5:    #f07cf0;
   --chart-6:    var(--text-tertiary);
   --chart-grid: rgba(255, 255, 255, 0.08);
   --chart-axis: var(--text-tertiary);
@@ -424,10 +427,17 @@
   --disabled-bg:     rgba(15, 20, 35, 0.06);
   --disabled-fg:     rgba(15, 20, 35, 0.38);
   --disabled-border: rgba(15, 20, 35, 0.12);
+  /* Status as text must clear AA on a white card: use the dark -text
+     variants (the dark-mode fills are ~1.5-2.5:1 on white). No consumers yet;
+     accent light blocks inherit these through the same aliases. */
+  --status-warn: var(--sev-medium-text);
+  --status-bad:  var(--sev-critical-text);
+  --status-info: var(--sev-low-text);
+  --status-ok:   var(--green-text);
   --chart-2:    #0284c7;
   --chart-3:    #0d9488;
   --chart-4:    #db2777;
-  --chart-5:    #4d7c0f;
+  --chart-5:    #b021b0;
   --chart-grid: rgba(15, 20, 35, 0.10);
 
   /* Account surface tokens, light overrides (accent hexes stay constant). */

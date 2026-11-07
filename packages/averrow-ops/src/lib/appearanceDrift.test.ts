@@ -25,6 +25,10 @@ describe('appearance.css generator drift', () => {
       mkdirSync(join(tmp, 'packages/shared/src/theme'), { recursive: true });
       cpSync(join(REPO, 'packages/shared/scripts/gen-appearance.mjs'), join(tmp, 'packages/shared/scripts/gen-appearance.mjs'));
       cpSync(join(REPO, 'docs/brand/palettes'), join(tmp, 'docs/brand/palettes'), { recursive: true });
+      // The generator reads shell-v4.css to find the tokens the v4 shell redeclares.
+      const shell = 'packages/averrow-ops/src/components/layout/shell-v4.css';
+      mkdirSync(join(tmp, 'packages/averrow-ops/src/components/layout'), { recursive: true });
+      cpSync(join(REPO, shell), join(tmp, shell));
       execFileSync(process.execPath, [join(tmp, 'packages/shared/scripts/gen-appearance.mjs')], { stdio: 'pipe' });
       const fresh = readFileSync(join(tmp, 'packages/shared/src/theme/appearance.css'), 'utf8');
       const committed = readFileSync(join(REPO, 'packages/shared/src/theme/appearance.css'), 'utf8');
@@ -190,6 +194,39 @@ describe('useAppearance', () => {
     expect(localStorage.getItem('averrow-base')).toBeNull();
     expect(result.current.accent).toBeNull();
     expect(result.current.base).toBeNull();
+  });
+
+  it('simulated P3-6 flip: setAccent(null) / setBase(null) apply the defaults to DOM and state', async () => {
+    vi.resetModules();
+    vi.doMock('../../../shared/src/theme/appearanceDefaults', async (orig) => ({
+      ...(await orig<typeof import('../../../shared/src/theme/appearanceDefaults')>()),
+      DEFAULT_ACCENT: 'indigo',
+      DEFAULT_BASE: 'graphite',
+    }));
+    try {
+      // Fresh React + testing-library alongside the re-imported hook (same module graph).
+      const rtl = await import('@testing-library/react');
+      const theme = await import('../../../shared/src/theme/useAppearance');
+      expect(theme.DEFAULT_ACCENT).toBe('indigo');
+      const { result } = rtl.renderHook(() => theme.useAppearance());
+      expect(result.current.accent).toBe('indigo');
+      expect(result.current.base).toBe('graphite');
+      rtl.act(() => { result.current.setAccent('lime'); result.current.setBase('navy'); });
+      expect(html.getAttribute('data-accent')).toBe('lime');
+      rtl.act(() => { result.current.setAccent(null); result.current.setBase(null); });
+      expect(html.getAttribute('data-accent')).toBe('indigo');
+      expect(html.getAttribute('data-base')).toBe('graphite');
+      expect(result.current.accent).toBe('indigo');
+      expect(result.current.base).toBe('graphite');
+      // storage is cleared so a later default change is followed
+      expect(localStorage.getItem('averrow-accent')).toBeNull();
+      expect(localStorage.getItem('averrow-base')).toBeNull();
+      rtl.act(() => result.current.setAccent('nope' as never));
+      expect(html.getAttribute('data-accent')).toBe('indigo');
+    } finally {
+      vi.doUnmock('../../../shared/src/theme/appearanceDefaults');
+      vi.resetModules();
+    }
   });
 
   it('an invalid value passed at runtime is treated as null', () => {
