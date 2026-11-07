@@ -49,6 +49,7 @@ const SecurityPage = React.lazy(() => import('@/features/settings/SecurityPage')
 const NotificationSettingsPage = React.lazy(() => import('@/features/settings/NotificationSettingsPage').then(m => ({ default: m.NotificationSettingsPage })));
 const ObservatoryV3 = React.lazy(() => import('@/features/observatory-v3/ObservatoryV3').then(m => ({ default: m.ObservatoryV3 })));
 const IdentityThreatsPage = React.lazy(() => import('@/features/identity-threats/IdentityThreatsPage').then(m => ({ default: m.IdentityThreatsPage })));
+const KitGallery = React.lazy(() => import('@/features/kit/KitGallery').then(m => ({ default: m.KitGallery })));
 const SearchResults = React.lazy(() => import('@/features/search/SearchResults').then(m => ({ default: m.SearchResults })));
 
 function RouteLoader() {
@@ -155,6 +156,8 @@ export default function App() {
             lands here. See features/search/searchRouting.ts for the
             shared per-type routing table. */}
         <Route path="search" element={lazyRoute(<SearchResults />)} />
+        {/* Staff design-kit gallery (P3-4). URL-only: no nav row, no palette entry. */}
+        <Route path="kit" element={lazyRoute(<KitGallery />)} />
         <Route path="admin/operations" element={lazyRoute(<OperationsWorkspace />)} />
         <Route path="admin/governance" element={lazyRoute(<GovernanceWorkspace />)} />
         <Route path="observatory" element={lazyRoute(<ObservatoryV3 />, <ObservatoryLoader />)} />

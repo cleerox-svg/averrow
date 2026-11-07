@@ -8,6 +8,8 @@
 /* Appearance system (accent x base x mode). Every rule inside is scoped under
    :root[data-accent], so this import changes nothing until an accent is set. */
 @import "./appearance.css";
+/* Motion kit (P3-4): also scoped under :root[data-accent]. */
+@import "./motion.css";
 
 /* Type (Geist + Geist Mono, --type-* scale). Font families and base element
    styles are scoped under :root[data-accent]; legacy loads no Geist bytes. */

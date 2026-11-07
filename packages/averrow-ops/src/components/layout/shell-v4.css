@@ -294,3 +294,9 @@
   --border-base:   rgba(255, 255, 255, 0.10);
   --border-strong: rgba(229, 168, 50, 0.20);
 }
+
+/* ── Motion kit (P3-4): gliding nav indicator ───────────────────────────
+   Under an accent <NavIndicator/> marks .v4-nav data-glide and draws the
+   active bar itself (same 3px x inset-6 box as the ::before below), so the
+   per-item bar hides. No accent: no indicator, no data-glide, legacy bar. */
+:root[data-accent] .v4-nav[data-glide] .v4-item.active::before { visibility: hidden; }

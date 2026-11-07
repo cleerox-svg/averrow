@@ -29,6 +29,7 @@ import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { ThemeCycleButton } from './ThemeCycleButton';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
+import { NavIndicator, usePageSlide } from '@averrow/shared/ui';
 import './shell-v4.css';
 
 interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; count?: number; }
@@ -216,6 +217,23 @@ export function isWallScreen(pathname: string, search: string): boolean {
   return path === FILL_ROUTE_PREFIX && new URLSearchParams(search).get('wall') === '1';
 }
 
+/** Index of the nav row that owns `pathname` (longest matching path), or null. Drives the page-slide direction. */
+function navOrderFor(nav: NavGroup[], pathname: string): number | null {
+  let best: number | null = null;
+  let bestLen = -1;
+  const items = nav.flatMap((g) => g.items);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!;
+    const to = item.to.split('?')[0]!;
+    const hit = item.end || to === '/' ? pathname === to : pathname === to || pathname.startsWith(to + '/');
+    if (hit && to.length > bestLen) { best = i; bestLen = to.length; }
+  }
+  return best;
+}
+
+/** The settings area runs its own screen transitions; moves inside it don't page-slide. */
+const withinSettings = (a: string, b: string) => /^\/settings(\/|$)/.test(a) && /^\/settings(\/|$)/.test(b);
+
 export function ShellV4() {
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
@@ -241,6 +259,10 @@ export function ShellV4() {
   // nothing on screen to explain why. Render nothing in the Outlet while
   // locked; PasskeyEnrollmentGate overlays the screen instead.
   const enrollmentLocked = !!user?.passkey_required;
+  // Motion kit (P3-4): directional page slide on route change. No-op without data-accent.
+  const pageRef = useRef<HTMLDivElement>(null);
+  usePageSlide(pageRef, location.pathname, navOrderFor(nav, location.pathname), withinSettings);
+  const navKey = `${location.pathname}|${nav.map((g) => g.items.length).join(',')}`;
 
   // global ⌘K / Ctrl-K to toggle the palette (and "/" when not already typing)
   useEffect(() => {
@@ -354,6 +376,8 @@ export function ShellV4() {
         </div>
 
         <nav className="v4-nav">
+          {/* Gliding active indicator (motion kit P3-4); renders nothing without data-accent. */}
+          <NavIndicator activeKey={navKey} />
           {nav.map(group => (
             <div key={group.label}>
               <div className="v4-grp">{group.label}</div>
@@ -407,7 +431,7 @@ export function ShellV4() {
               itself via :empty when the banner renders nothing, so no stray
               mobile padding appears on other routes. */}
           <div className="v4-banner-wrap"><PlatformAlertBanner /></div>
-          <div className={`v4-page v4-page--${outletLayoutFor(location.pathname)}`}>
+          <div ref={pageRef} className={`v4-page v4-page--${outletLayoutFor(location.pathname)}`}>
             {enrollmentLocked ? null : <Outlet />}
           </div>
         </div>
