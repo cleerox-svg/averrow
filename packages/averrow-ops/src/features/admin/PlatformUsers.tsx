@@ -29,7 +29,7 @@ import {
 } from '@/design-system/components';
 import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
-import { relativeTime } from '@/lib/time';
+import { isFuture, relativeTime, relativeTimeSigned } from '@/lib/time';
 import { parseInitials, colorForUserId, SELF_AVATAR_COLOR } from '@/lib/avatar';
 import {
   usePlatformUsers, useUpdatePlatformUser, useForceLogout, useUserSessions,
@@ -440,7 +440,7 @@ function PendingInvites() {
               <span className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>{inv.email}</span>
               <Badge variant={roleBadgeVariant(inv.role)}>{inv.role}</Badge>
               <span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                expires {relativeTime(inv.expires_at)}
+                {isFuture(inv.expires_at) ? 'expires' : 'expired'} {relativeTimeSigned(inv.expires_at)}
                 {inv.invited_by_email && <> · by {inv.invited_by_email}</>}
               </span>
             </div>

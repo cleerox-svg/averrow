@@ -24,21 +24,49 @@ export function formatSpan(ms: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
+/** Unsigned magnitude for relativeTime: "5m" / "3h" / "2d" / "4mo" / "1y". */
+function relativeMagnitude(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
+/**
+ * Past-only relative time: "5m ago" / "3h ago". A future timestamp (client
+ * clock behind the server) reads "just now". Use for history ("created",
+ * "last run"); for expiries / snoozes / mutes use relativeTimeSigned.
+ */
 export function relativeTime(date: string | null): string {
   if (!date) return 'Never';
   const ms = Date.now() - parseUtc(date).getTime();
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (days < 365) return `${months}mo ago`;
-  const years = Math.floor(days / 365);
-  return `${years}y ago`;
+  return `${relativeMagnitude(seconds)} ago`;
+}
+
+/**
+ * Signed relative time for timestamps that may be in the future: past →
+ * "5m ago" (same as relativeTime), future → "in 5m" / "in 3h" / "in 2d".
+ * Within a minute either side reads "just now". Future values round up to
+ * the minute so a fresh 7-day expiry reads "in 7d", not "in 6d".
+ */
+export function relativeTimeSigned(date: string | null): string {
+  if (!date) return 'Never';
+  const ms = Date.now() - parseUtc(date).getTime();
+  if (ms >= 0) return relativeTime(date);
+  const ahead = -ms;
+  if (ahead < 60_000) return 'just now';
+  return `in ${relativeMagnitude(Math.ceil(ahead / 60_000) * 60)}`;
+}
+
+/** True when `date` is strictly in the future. */
+export function isFuture(date: string | null): boolean {
+  return !!date && parseUtc(date).getTime() > Date.now();
 }
 
 export function timeAgo(dateStr: string | null): string | null {
