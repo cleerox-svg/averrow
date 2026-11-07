@@ -1,0 +1,121 @@
+/* ============================================================
+   Type (facelift Phase 3, P3-3) — Geist + Geist Mono and the type scale.
+   BRAND_BRIEF.md §9 G3.
+
+   Legacy contract: with NO data-accent attribute this file changes nothing
+   visible and downloads no font bytes.
+   - @font-face rules are declared unconditionally, but a browser fetches a
+     face only when some rendered text resolves to it. Only the
+     :root[data-accent] block below names 'Geist' / 'Geist Mono', so legacy
+     never resolves to them. Do NOT add <link rel="preload"> for these files:
+     a preload downloads even when unused.
+   - The --type-* scale tokens are always defined (inert until a consumer
+     uses them); the base element styles that apply them are scoped under
+     [data-accent].
+
+   Fonts: geist@1.9.2 (npm, vercel/geist-font, SIL OFL 1.1 — fonts/OFL.txt),
+   dist/fonts/geist-{sans,mono}/Geist{,Mono}-Variable.woff2, subset to the latin range below
+   with fontTools pyftsubset (--layout-features='*', --flavor=woff2). One
+   variable file per family covers wght 100–900, so no weight in use
+   (400–900) is synthesized. Re-subset with the same unicode list if the
+   range changes; keep the unicode-range descriptors in step.
+   ============================================================ */
+
+@font-face {
+  font-family: 'Geist';
+  src: url('./fonts/geist-sans-latin-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./fonts/geist-mono-latin-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Type scale (always defined) ──
+   Named --type-<role>-* because --text-* is the colour namespace.
+   Tailwind: text-type-display … text-type-mono in both apps' configs. */
+:root {
+  --type-display-size: 32px;
+  --type-display-lh: 36px;
+  --type-display-weight: 600;
+  --type-display-tracking: -0.03em;
+
+  --type-h1-size: 24px;
+  --type-h1-lh: 30px;
+  --type-h1-weight: 600;
+  --type-h1-tracking: 0em;
+
+  --type-h2-size: 18px;
+  --type-h2-lh: 24px;
+  --type-h2-weight: 600;
+  --type-h2-tracking: 0em;
+
+  --type-body-size: 14px;
+  --type-body-lh: 21px;
+  --type-body-weight: 400;
+  --type-body-tracking: 0em;
+
+  --type-small-size: 13px;
+  --type-small-lh: 18px;
+  --type-small-weight: 400;
+  --type-small-tracking: 0em;
+
+  --type-label-size: 12px;
+  --type-label-lh: 16px;
+  --type-label-weight: 500;
+  --type-label-tracking: 0.01em;
+
+  --type-mono-size: 13px;
+  --type-mono-lh: 20px;
+  --type-mono-weight: 400;
+  --type-mono-tracking: 0em;
+}
+
+/* ── Facelift families (only with an accent set) ──
+   Same element as tokens.css's :root, so the --font-display alias
+   (var(--font-sans)) picks these up too. Legacy stacks stay as fallback. */
+:root[data-accent] {
+  --font-sans: 'Geist', 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* Mono = facts: no contextual alternates or ligatures, tabular figures.
+   (tokens.css already turns calt off on :root for inline-style mono users.) */
+:root[data-accent] :is(code, kbd, samp, pre, .font-mono, .tt-mono) {
+  font-variant-ligatures: none;
+  font-feature-settings: "calt" 0, "liga" 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Base element styles (only with an accent set) ──
+   Tailwind preflight loads AFTER this file and resets `body { line-height:
+   inherit }` and `h1, h2 { font-size: inherit; font-weight: inherit }` at
+   (0,0,1). The body rule is (0,1,1), above preflight; body carries no
+   type utilities. The heading rules are `:where(...) body h1` = (0,0,2):
+   above preflight, but below any utility or component class (0,1,0), so
+   classed headings keep their own sizes. */
+:root[data-accent] body {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-weight);
+}
+:where(:root[data-accent]) body h1 {
+  font-size: var(--type-h1-size);
+  line-height: var(--type-h1-lh);
+  font-weight: var(--type-h1-weight);
+  letter-spacing: var(--type-h1-tracking);
+}
+:where(:root[data-accent]) body h2 {
+  font-size: var(--type-h2-size);
+  line-height: var(--type-h2-lh);
+  font-weight: var(--type-h2-weight);
+  letter-spacing: var(--type-h2-tracking);
+}
