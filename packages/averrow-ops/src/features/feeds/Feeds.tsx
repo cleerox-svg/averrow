@@ -207,7 +207,7 @@ function FeedActionButton({
     setTimeout(() => queryClient.invalidateQueries({ queryKey: [queryKey] }), 500);
   });
   const color =
-    tone === 'primary'  ? 'var(--primary)' :
+    tone === 'primary'  ? 'var(--primary-as-text)' :
     tone === 'green'    ? 'var(--green)' :
                           'var(--sev-high)';
 

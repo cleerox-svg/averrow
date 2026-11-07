@@ -299,6 +299,12 @@ commonLight.set('--link', 'var(--primary-text)');
 for (const m of [commonDark, commonLight]) {
   m.set('--btn-primary-shadow', '0 0 #0000');
   m.set('--btn-primary-border', 'transparent');
+  // P3-2b review: legacy = --amber (tokens.css); under an accent, primary-coloured
+  // TEXT takes the AA text token, focus rings take --focus-ring and plain metric
+  // tiles go neutral.
+  m.set('--primary-as-text', 'var(--primary-text)');
+  m.set('--primary-focus', 'var(--focus-ring)');
+  m.set('--metric-accent', 'var(--text-tertiary)');
 }
 
 /** Shell tokens this file also sets for a combo. Dark-only shell tokens take

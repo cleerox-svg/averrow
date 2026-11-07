@@ -984,7 +984,7 @@ function RawTabButton({
       className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
       style={{
         background:    active ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'transparent',
-        color:         active ? 'var(--primary)' : 'var(--text-secondary)',
+        color:         active ? 'var(--primary-as-text)' : 'var(--text-secondary)',
         border:        active ? '1px solid color-mix(in srgb, var(--primary) 30%, transparent)' : '1px solid transparent',
       }}
     >
@@ -1216,7 +1216,7 @@ function DetailField({
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">{label}</div>
       <div
         className={`text-[12px] ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} break-all`}
-        style={{ color: color ?? (accent ? 'var(--primary)' : 'rgba(255,255,255,0.92)') }}
+        style={{ color: color ?? (accent ? 'var(--primary-as-text)' : 'rgba(255,255,255,0.92)') }}
       >
         {value ?? <span className="text-white/55">—</span>}
       </div>
@@ -1419,7 +1419,7 @@ function InboxToolbar({
               className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
               style={{
                 background: active ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'transparent',
-                color:      active ? 'var(--primary)' : 'var(--text-secondary)',
+                color:      active ? 'var(--primary-as-text)' : 'var(--text-secondary)',
                 border:     active ? '1px solid color-mix(in srgb, var(--primary) 30%, transparent)' : '1px solid transparent',
               }}
             >
@@ -1505,7 +1505,7 @@ function StatusActions({ message }: { message: AdminAbuseInboxMessage }) {
       {BTN('Investigate', 'investigating', 'var(--sev-medium)')}
       {BTN('Resolve',     'resolved',      'var(--green)')}
       {BTN('Dismiss',     'dismissed',     'var(--text-secondary)')}
-      {cur !== 'new' && BTN('Reopen',      'new',           'var(--primary)')}
+      {cur !== 'new' && BTN('Reopen',      'new',           'var(--primary-as-text)')}
     </div>
   );
 }

@@ -153,7 +153,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
       </div>
       <div
         className="font-display text-2xl font-bold"
-        style={{ color: accent === 'primary' ? 'var(--primary)' : 'var(--text-primary)' }}
+        style={{ color: accent === 'primary' ? 'var(--primary-as-text)' : 'var(--text-primary)' }}
       >
         {value}
       </div>

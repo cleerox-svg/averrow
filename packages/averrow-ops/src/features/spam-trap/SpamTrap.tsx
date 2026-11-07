@@ -104,8 +104,8 @@ export function SpamTrap() {
 
       {/* Stats strip */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatTile label="Seeds deployed"   value={tileValue(seedCount, addresses === undefined)}   error={addrFailed} accent="var(--primary)" />
-        <StatTile label="Domains"          value={tileValue(domainCount, addresses === undefined)} error={addrFailed} accent="var(--primary)" />
+        <StatTile label="Seeds deployed"   value={tileValue(seedCount, addresses === undefined)}   error={addrFailed} accent="var(--metric-accent)" />
+        <StatTile label="Domains"          value={tileValue(domainCount, addresses === undefined)} error={addrFailed} accent="var(--metric-accent)" />
         <StatTile label="Captures"         value={tileValue(captureCount, stats === undefined)}    error={statsFailed} accent="#fb923c" />
         <StatTile label="Catch rate · all" value={tileValue(catchRate, addresses === undefined || stats === undefined)} error={addrFailed || statsFailed} accent="#4ADE80" />
         <StatTile label="Catch rate · 7d"  value={tileValue(last7Rate, addresses === undefined || daily === undefined)} error={addrFailed || dailyFailed} accent="#4ADE80" />

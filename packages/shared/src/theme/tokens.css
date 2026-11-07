@@ -136,6 +136,15 @@
   --text-selection:  var(--text-primary);
   --link:            var(--amber-text);
   --link-hover:      var(--amber-text);
+  /* P3-2b review: legacy-identical aliases for sites that painted raw --amber.
+     Legacy (both themes) = --amber, exactly as before; under an accent
+     appearance.css repoints them: --primary-as-text -> --primary-text (AA
+     text; raw --primary is ~3.7:1 as small text on indigo/violet dark),
+     --primary-focus -> --focus-ring, --metric-accent -> --text-tertiary
+     (a plain metric tile is data, not a primary action). */
+  --primary-as-text: var(--amber);
+  --primary-focus:   var(--amber);
+  --metric-accent:   var(--amber);
   --focus-ring-offset: 2px;
   --disabled-bg:     rgba(255, 255, 255, 0.06);
   --disabled-fg:     rgba(255, 255, 255, 0.38);

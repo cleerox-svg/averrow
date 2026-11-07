@@ -989,7 +989,7 @@ export function Takedowns() {
         <>
           {/* ─── STAT CARDS ──────────────────────────── */}
           <StatGrid cols={4}>
-            <StatTile label="Total takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--primary)" />
+            <StatTile label="Total takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--metric-accent)" />
             <StatTile label="Pending review"  value={statValue(stats.draft)} error={listFailed}     accent="var(--sev-high)" />
             <StatTile label="Submitted"       value={statValue(stats.submitted)} error={listFailed} accent="var(--blue)" />
             <StatTile label="Resolved"        value={statValue(stats.resolved)} error={listFailed}  accent="var(--green)" />

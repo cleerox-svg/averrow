@@ -310,7 +310,7 @@ function SliceSummaryStrip({ agg, hasFilters }: {
 function Stat({ label, value, tone }: {
   label: string; value: string; tone: 'info' | 'primary' | 'ok' | 'warn';
 }) {
-  const color = tone === 'primary' ? 'var(--primary)'
+  const color = tone === 'primary' ? 'var(--primary-as-text)'
     : tone === 'ok' ? 'var(--green)'
     : tone === 'warn' ? 'var(--sev-medium)'
     : 'var(--text-secondary)';
@@ -388,7 +388,7 @@ function Slicer({ label, value, onChange, options }: {
         onChange={(e) => onChange(e.target.value)}
         className="bg-transparent text-[11px] font-mono px-1 py-0.5 rounded"
         style={{
-          color: value ? 'var(--primary)' : 'var(--text-secondary)',
+          color: value ? 'var(--primary-as-text)' : 'var(--text-secondary)',
           border: '1px solid var(--border-base)',
           textTransform: 'none',
           letterSpacing: 0,

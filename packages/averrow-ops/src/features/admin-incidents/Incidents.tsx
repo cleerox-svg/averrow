@@ -88,7 +88,7 @@ export function AdminIncidents() {
             <Link
               key={inc.id}
               to={`/admin/incidents/${inc.id}`}
-              className="hover:bg-[var(--bg-elevated)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--primary)]"
+              className="hover:bg-[var(--bg-elevated)] focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--primary-focus)]"
               style={{
                 display: 'flex',
                 flexWrap: 'wrap',

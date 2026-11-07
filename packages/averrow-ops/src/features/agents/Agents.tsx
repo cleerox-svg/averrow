@@ -684,7 +684,7 @@ function AgentControlBar({ agent }: { agent: Agent }) {
   return (
     <div className="mb-4 pb-4 border-b flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--border-base)' }}>
       <span className="font-mono text-[9px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
-      {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--primary)', () => trigger.mutate(agent.name))}
+      {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--primary-as-text)', () => trigger.mutate(agent.name))}
       {isPaused
         ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
         : btn(toggle.isPending ? 'Pausing…' : 'Pause', 'var(--text-secondary)', () => toggle.mutate({ agentId: agent.name, enabled: false }))}

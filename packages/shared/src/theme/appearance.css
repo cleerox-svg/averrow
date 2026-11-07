@@ -44,6 +44,9 @@
   --link: var(--primary-text);
   --btn-primary-shadow: 0 0 #0000;
   --btn-primary-border: transparent;
+  --primary-as-text: var(--primary-text);
+  --primary-focus: var(--focus-ring);
+  --metric-accent: var(--text-tertiary);
 }
 :root[data-accent][data-theme="light"] {
   --sev-critical: #f87171;
@@ -79,6 +82,9 @@
   --link: var(--primary-text);
   --btn-primary-shadow: 0 0 #0000;
   --btn-primary-border: transparent;
+  --primary-as-text: var(--primary-text);
+  --primary-focus: var(--focus-ring);
+  --metric-accent: var(--text-tertiary);
 }
 :root[data-accent] ::selection {
   background: var(--selection-bg);

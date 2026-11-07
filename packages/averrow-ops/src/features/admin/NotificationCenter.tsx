@@ -103,7 +103,7 @@ function StatsPanel({
       </div>
       {/* null = still loading (StatTile shows "—"); `error` on failure. Never a fake 0. */}
       <StatGrid cols={4}>
-        <StatTile label="Total fired" value={stats ? (stats.totals?.total ?? 0) : null} error={failed} accent="var(--primary)" />
+        <StatTile label="Total fired" value={stats ? (stats.totals?.total ?? 0) : null} error={failed} accent="var(--metric-accent)" />
         <StatTile label="Distinct types" value={stats ? (stats.totals?.types ?? 0) : null} error={failed} accent="#0A8AB5" />
         <StatTile label="Unique recipients" value={stats ? (stats.totals?.unique_recipients ?? 0) : null} error={failed} accent="#3CB878" />
         <StatTile label="Critical" value={stats ? (stats.totals?.critical_count ?? 0) : null} error={failed} accent="#C83C3C" />

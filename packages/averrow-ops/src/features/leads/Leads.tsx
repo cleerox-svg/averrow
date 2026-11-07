@@ -769,7 +769,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
   return (
     <div className="space-y-6">
       <StatGrid cols={3}>
-        <StatTile label="Total leads" value={leads.length} accent="var(--primary)" />
+        <StatTile label="Total leads" value={leads.length} accent="var(--metric-accent)" />
         <StatTile label="AI enriched" value={enriched.length} accent="#3CB878" />
         <StatTile label="Awaiting enrichment" value={unenriched.length} accent="#0A8AB5" />
       </StatGrid>

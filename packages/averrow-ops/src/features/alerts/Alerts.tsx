@@ -574,7 +574,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
       tabIndex={-1}
       variant="active"
       style={{ padding: '20px', marginTop: 4 }}
-      className="outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
+      className="outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary-focus)]"
       data-testid="alert-detail"
     >
       {/* Header */}

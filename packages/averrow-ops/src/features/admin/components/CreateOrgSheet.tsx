@@ -178,7 +178,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
       <div className="relative w-full sm:max-w-lg bg-instrument border border-white/10 rounded-t-2xl sm:rounded-xl p-6 max-h-[85vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <div className="font-mono text-xs font-bold text-[color:var(--primary)] uppercase tracking-wider">
+          <div className="font-mono text-xs font-bold text-[color:var(--primary-as-text)] uppercase tracking-wider">
             Create Organization — Step {step}/{totalSteps}
           </div>
           <button onClick={onClose} className="text-white/55 hover:text-[color:var(--text-primary)] text-lg">&times;</button>
@@ -296,7 +296,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                         <button
                           type="button"
                           onClick={() => setPrimaryBrand(b.id)}
-                          className="text-[10px] font-mono text-white/55 hover:text-[color:var(--primary)] transition-colors"
+                          className="text-[10px] font-mono text-white/55 hover:text-[color:var(--primary-as-text)] transition-colors"
                         >
                           Set Primary
                         </button>

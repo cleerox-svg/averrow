@@ -848,7 +848,7 @@ export function AdminDashboard() {
             {healthReady ? (
               <StatGrid cols={4}>
                 <StatTile label="Threats today" value={fmt(threats.today)} accent="var(--red)" sub={`${fmt(threats.total)} total`} />
-                <StatTile label="Feed ingestion" value={fmt(feeds.ingested)} accent="var(--primary)" sub="records (24h)" />
+                <StatTile label="Feed ingestion" value={fmt(feeds.ingested)} accent="var(--metric-accent)" sub="records (24h)" />
                 <StatTile label="Agent runs" value={fmt(agents.total)} accent="var(--blue)" sub={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
                 <StatTile label="Active sessions" value={fmt(activeSessions)} accent="var(--green)" sub="authenticated" />
               </StatGrid>

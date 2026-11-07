@@ -1654,7 +1654,7 @@ function DomainRow({ domain, apex = false }: { domain: BrandDomain; apex?: boole
       background: apex ? 'color-mix(in srgb, var(--primary) 5%, transparent)' : 'var(--bg-input)',
       display: 'flex', alignItems: 'center', gap: 10,
     }}>
-      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--primary)' : 'var(--text-primary)' }}>
+      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--primary-as-text)' : 'var(--text-primary)' }}>
         {domain.domain}
       </code>
       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"

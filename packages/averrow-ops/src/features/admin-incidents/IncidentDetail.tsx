@@ -372,7 +372,7 @@ export function AdminIncidentDetail() {
             const glyph = u.synthetic ? '↯' : u.kind === 'system' ? '·' : '✎';
             const glyphColor = u.synthetic
               ? 'var(--blue, #0A8AB5)'
-              : u.kind === 'system' ? 'var(--text-tertiary)' : 'var(--primary)';
+              : u.kind === 'system' ? 'var(--text-tertiary)' : 'var(--primary-as-text)';
             return (
             <div
               key={u.id}
