@@ -20,13 +20,13 @@ import type { Alert } from '@/hooks/useAlerts';
 const get = api.get as unknown as ReturnType<typeof vi.fn>;
 const auth = useAuth as unknown as ReturnType<typeof vi.fn>;
 
-function alert(id: string, severity: string): Alert {
+function alert(id: string, severity: string, createdAt = new Date(Date.now() + 1000).toISOString()): Alert {
   return {
     id, brand_id: 'b1', user_id: 'u9', alert_type: 'social_impersonation', severity,
     title: `Impersonation @fake_${id} on TikTok`, summary: 'Score 80%', details: null,
     source_type: null, source_id: null, ai_assessment: null, ai_recommendations: null,
     status: 'new', acknowledged_at: null, resolved_at: null, resolution_notes: null,
-    email_sent: 0, webhook_sent: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    email_sent: 0, webhook_sent: 0, created_at: createdAt, updated_at: new Date().toISOString(),
     brand_name: 'Acme', brand_domain: 'acme.com',
     saas_technique_id: null, saas_technique_name: null, saas_technique_phase: null,
     saas_technique_phase_label: null, saas_technique_severity: null,
@@ -85,6 +85,16 @@ describe('critical alert arrival', () => {
     await waitFor(() => expect(rowOf('a3')).toHaveClass('motion-arrive'));
     expect(rowOf('a4')).not.toHaveClass('motion-arrive');
     expect(rowOf('a2')).not.toHaveClass('motion-arrive');
+  });
+
+  it('an OLD critical alert that newly enters the list (SLA window, list cap) does not flash', async () => {
+    document.documentElement.setAttribute('data-accent', 'indigo');
+    renderAlerts();
+    await waitFor(() => expect(rowOf('a2')).not.toBeNull());
+    const daysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    await refetchWith([alert('old', 'critical', daysAgo), ...list]);
+    await waitFor(() => expect(rowOf('old')).not.toBeNull());
+    expect(document.querySelector('.motion-arrive')).toBeNull();
   });
 
   it('no accent: nothing gets motion-arrive', async () => {

@@ -353,7 +353,7 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-              className={cn('flex items-center gap-3', isSelected && 'bg-[var(--primary-glow)]', arrived?.has(alert.id) && 'motion-arrive')}
+                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--primary-glow)]', arrived?.has(alert.id) && 'motion-arrive')}
                 >
                   {/* Severity dot — uses the shared design-system
                       primitive so the dot color + pulse semantics
@@ -1107,13 +1107,23 @@ export function Alerts() {
   // Motion kit (P3-4): flag critical rows that arrive on a refetch (never on
   // the first load, a filter change or a placeholder swap) for the one-shot
   // scan-line slide-in. The reset key re-baselines on each of those.
-  const criticalIds = useMemo(
-    () => alerts.filter(a => severityToBadge(a.severity) === 'critical').map(a => a.id),
+  const criticalById = useMemo(
+    () => new Map(alerts.filter(a => severityToBadge(a.severity) === 'critical').map(a => [a.id, a] as const)),
     [alerts],
   );
+  const criticalIds = useMemo(() => [...criticalById.keys()], [criticalById]);
+  // Only alerts CREATED since the last update count: an old alert that newly
+  // qualifies for the SLA filter or slides in under the list cap is not new.
   const arrivedCritical = useArrivalFlash(
     criticalIds,
     JSON.stringify([filters, search, aiVerdictFilter, slaFilter, mineOnly, alertsPlaceholder, alertsData === undefined]),
+    {
+      timeOf: (id) => {
+        const created = criticalById.get(id)?.created_at;
+        const ms = created ? parseUtc(created).getTime() : NaN;
+        return Number.isFinite(ms) ? ms : null;
+      },
+    },
   );
 
   // Error beats loading beats empty. A failed refetch that still has this

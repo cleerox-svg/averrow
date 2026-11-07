@@ -99,9 +99,9 @@ function SwatchSection() {
 
 // ── motion demos ─────────────────────────────────────────────────────
 
-function Demo({ title, onReplay, children }: { title: string; onReplay: () => void; children: React.ReactNode }) {
+function Demo({ title, onReplay, children, wide = false }: { title: string; onReplay: () => void; children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="rounded-xl p-3" style={{ border: '1px solid var(--border-base)' }}>
+    <div className="rounded-xl p-3 min-w-0" style={{ border: '1px solid var(--border-base)', gridColumn: wide ? '1 / -1' : undefined }}>
       <div className="flex items-center justify-between gap-2 mb-3">
         <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</h3>
         <Button size="sm" variant="secondary" onClick={onReplay}>Replay</Button>
@@ -113,7 +113,8 @@ function Demo({ title, onReplay, children }: { title: string; onReplay: () => vo
 
 function ArrivalDemo() {
   const [rows, setRows] = useState<Array<{ id: string; label: string; sev: Severity }>>([
-    { id: 'a0', label: 'login-acme.example', sev: 'high' },
+    { id: 'a0', label: 'acme-login-verify.example', sev: 'critical' },
+    { id: 'a1', label: 'login-acme.example', sev: 'high' },
   ]);
   const counter = useRef(0);
   const ids = useMemo(() => rows.filter((r) => r.sev === 'critical').map((r) => r.id), [rows]);
@@ -162,7 +163,7 @@ function NavDemo() {
 
 const TAB_DEMO = [
   { id: 'brands', label: 'Brands' },
-  { id: 'actors', label: 'Threat actors' },
+  { id: 'actors', label: 'Actors' },
   { id: 'campaigns', label: 'Campaigns' },
   { id: 'providers', label: 'Providers' },
 ];
@@ -171,7 +172,8 @@ function TabsDemo() {
   const [tab, setTab] = useState('brands');
   const next = () => setTab((t) => TAB_DEMO[(TAB_DEMO.findIndex((x) => x.id === t) + 1) % TAB_DEMO.length]!.id);
   return (
-    <Demo title="Tab underline morph" onReplay={next}>
+    // Full row: the underline tab bar scrolls (and clips) in a narrow card.
+    <Demo title="Tab underline morph" onReplay={next} wide>
       <Tabs variant="underline" tabs={TAB_DEMO} activeTab={tab} onChange={setTab} aria-label="Demo tabs" />
     </Demo>
   );
@@ -193,6 +195,50 @@ function PageSlideDemo() {
         </div>
       </div>
     </Demo>
+  );
+}
+
+// ── type ─────────────────────────────────────────────────────────────
+
+const TYPE_SCALE = ['display', 'h1', 'h2', 'body', 'small', 'label', 'mono'] as const;
+const TYPE_SAMPLE: Record<(typeof TYPE_SCALE)[number], string> = {
+  display: 'Operation FX-114 · example',
+  h1: 'Threat actor overview',
+  h2: 'Infrastructure linked',
+  body: 'Three lookalike domains share one hosting provider and certificate serial.',
+  small: 'Updated 4 minutes ago by the correlation pass.',
+  label: 'Open alerts',
+  mono: 'acme-login.example · AS4837 · 203.0.113.7 · 2026-11-07T14:02Z',
+};
+
+function TypeSection() {
+  return (
+    <Section title="Type">
+      <p className="text-[12px] mb-3" style={{ color: 'var(--text-tertiary)' }}>
+        Geist and Geist Mono apply under an accent; the legacy look keeps its current families. Sizes from the --type-* scale.
+      </p>
+      <div className="flex flex-col gap-3">
+        {TYPE_SCALE.map((step) => (
+          <div key={step} data-type-step={step} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 min-w-0">
+            <span className="w-[64px] shrink-0 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{step}</span>
+            <span
+              className={step === 'mono' ? 'tt-mono min-w-0' : 'min-w-0'}
+              style={{
+                fontFamily: step === 'mono' ? 'var(--font-mono)' : 'var(--font-sans)',
+                fontSize: `var(--type-${step}-size)`,
+                lineHeight: `var(--type-${step}-lh)`,
+                fontWeight: `var(--type-${step}-weight)`,
+                letterSpacing: `var(--type-${step}-tracking)`,
+                color: 'var(--text-primary)',
+                overflowWrap: 'anywhere',
+              }}
+            >
+              {TYPE_SAMPLE[step]}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 
@@ -280,6 +326,7 @@ export function KitGallery() {
       <PageHeader title="Design kit" subtitle="Appearance, tokens, motion and components for the 2026-11 facelift. Staff only." />
       <AppearanceSection />
       <SwatchSection />
+      <TypeSection />
       <MotionSection />
       <ComponentsSection />
       <LogoSlot />

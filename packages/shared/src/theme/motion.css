@@ -71,24 +71,35 @@
 }
 
 :root[data-accent] .motion-arrive {
-  position: relative;
-  animation: motion-row-in var(--motion-slow) var(--ease-standard) both,
-             motion-settle 400ms var(--ease-standard) both;
+  /* `backwards`: the first frame applies at once, nothing persists after. */
+  animation: motion-row-in var(--motion-slow) var(--ease-standard) backwards;
 }
-/* Short tinted settle: the row starts critical-tinted and clears. */
-@keyframes motion-settle {
-  from { box-shadow: inset 0 0 0 999px color-mix(in srgb, var(--sev-critical) 16%, transparent); }
-  to   { box-shadow: inset 0 0 0 999px transparent; }
-}
+/* Short tinted settle and the edge scan-line live on pseudo-elements (the
+   row is already position: relative), so the row's own background and
+   box-shadow are never overridden. Both rest at opacity 0. */
+:root[data-accent] .motion-arrive::before,
 :root[data-accent] .motion-arrive::after {
   content: "";
   position: absolute;
+  pointer-events: none;
+  opacity: 0;
+}
+:root[data-accent] .motion-arrive::before {
+  inset: 0;
+  background: color-mix(in srgb, var(--sev-critical) 16%, transparent);
+  animation: motion-settle 400ms var(--ease-standard) backwards;
+}
+/* Short tinted settle: the row starts critical-tinted and clears. */
+@keyframes motion-settle {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+:root[data-accent] .motion-arrive::after {
   left: 0; top: 0; bottom: 0;
   width: 2px;
-  pointer-events: none;
   background: linear-gradient(180deg, transparent 33%, var(--sev-critical) 45%, var(--sev-critical) 55%, transparent 67%);
   background-size: 100% 300%;
-  animation: motion-scan 400ms var(--ease-standard) both;
+  animation: motion-scan 400ms var(--ease-standard) backwards;
 }
 
 /* Reduced motion: opacity only. !important (with higher specificity) beats
@@ -96,11 +107,13 @@
    the arrival still reads, just without travel or the scan-line. */
 @media (prefers-reduced-motion: reduce) {
   :root[data-accent] .motion-arrive {
-    animation: motion-fade-in var(--motion-fast) linear both !important;
+    animation: motion-fade-in var(--motion-fast) linear backwards !important;
   }
+  :root[data-accent] .motion-arrive::before,
   :root[data-accent] .motion-arrive::after { display: none; }
 }
 :root[data-accent][data-motion="reduce"] .motion-arrive {
-  animation: motion-fade-in var(--motion-fast) linear both !important;
+  animation: motion-fade-in var(--motion-fast) linear backwards !important;
 }
+:root[data-accent][data-motion="reduce"] .motion-arrive::before,
 :root[data-accent][data-motion="reduce"] .motion-arrive::after { display: none; }

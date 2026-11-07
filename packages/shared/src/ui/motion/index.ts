@@ -6,4 +6,4 @@ export {
 export { useGlideIndicator, type GlideOptions } from './useGlideIndicator';
 export { NavIndicator, type NavIndicatorProps } from './NavIndicator';
 export { usePageSlide } from './usePageSlide';
-export { useArrivalFlash } from './useArrivalFlash';
+export { useArrivalFlash, type ArrivalFlashOptions } from './useArrivalFlash';

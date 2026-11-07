@@ -69,9 +69,20 @@ export function useGlideIndicator(
     };
 
     place(true);
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => place(false)) : null;
-    ro?.observe(box);
-    return () => ro?.disconnect();
+    // Items can shift while the container keeps its size (a tab count
+    // loading late, a web-font swap), so observe the container's children
+    // and the active item too, and re-place once the fonts have loaded.
+    let live = true;
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => { if (live) place(false); }) : null;
+    if (ro) {
+      ro.observe(box);
+      for (const child of Array.from(box.children)) if (child !== ind) ro.observe(child);
+      const active = box.querySelector(selector);
+      if (active && active.parentElement !== box) ro.observe(active);
+    }
+    const fonts = typeof document !== 'undefined' ? (document as Document & { fonts?: FontFaceSet }).fonts : undefined;
+    fonts?.ready?.then(() => { if (live) place(false); }, () => {});
+    return () => { live = false; ro?.disconnect(); };
   }, [containerRef, indicatorRef, moveKey, axis, selector, inset, enabled]);
 
   // Unmount: leave the container as we found it.

@@ -97,6 +97,20 @@ describe('duration tokens', () => {
   });
 });
 
+describe('arrival styles do not persist on the row', () => {
+  it('the row animation has no fill-forwards and no box-shadow; tint and scan-line live on pseudo-elements', () => {
+    const list = rules(MOTION_CSS).filter((r) => r.at === null);
+    const row = list.find((r) => r.selector.trim() === ':root[data-accent] .motion-arrive')!;
+    expect(row.body).not.toMatch(/\b(both|forwards)\b/);
+    expect(row.body).not.toMatch(/box-shadow|position/);
+    const before = list.find((r) => r.selector.trim() === ':root[data-accent] .motion-arrive::before')!;
+    const after = list.find((r) => r.selector.trim() === ':root[data-accent] .motion-arrive::after')!;
+    expect(before.body).toMatch(/motion-settle/);
+    expect(after.body).toMatch(/motion-scan/);
+    for (const r of [before, after]) expect(r.body).not.toMatch(/\b(both|forwards)\b/);
+  });
+});
+
 describe('reduced motion', () => {
   it('has an opacity-only version of the arrival move (OS setting and /kit simulation)', () => {
     const reduced = rules(MOTION_CSS).filter((r) => r.at?.includes('prefers-reduced-motion') || r.selector.includes('[data-motion="reduce"]'));

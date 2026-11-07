@@ -142,6 +142,56 @@ describe('Tabs underline morph', () => {
     expect(frames()).toEqual([[{ opacity: 0 }, { opacity: 1 }]]);
   });
 
+  it('re-places the underline when items shift but the container keeps its size', async () => {
+    // Capture ResizeObserver instances and the elements they watch.
+    const observers: Array<{ cb: () => void; targets: Element[] }> = [];
+    class FakeRO {
+      targets: Element[] = [];
+      constructor(public cb: () => void) { observers.push(this); }
+      observe(el: Element) { this.targets.push(el); }
+      unobserve() {}
+      disconnect() { this.targets = []; }
+    }
+    vi.stubGlobal('ResizeObserver', FakeRO);
+    let fontsLoaded!: () => void;
+    const ready = new Promise<void>((r) => { fontsLoaded = r; });
+    Object.defineProperty(document, 'fonts', { configurable: true, value: { ready } });
+    try {
+      setAccent(true);
+      const { container } = render(<Harness />);
+      const line = container.querySelector<HTMLElement>('.motion-glide--x')!;
+      const alpha = screen.getByRole('tab', { name: 'Alpha' });
+      expect(line.style.width).toBe('80px');
+      // The tab buttons themselves are observed, not just the tablist.
+      // (Tabs' own scroll-edge observer watches only the tablist.)
+      const ro = observers.find((o) => o.targets.includes(alpha));
+      expect(ro, 'the active tab is observed').toBeDefined();
+      if (!ro) return;
+      expect(ro.targets).toContain(screen.getByRole('tab', { name: 'Gamma' }));
+
+      // A count loads into Alpha: it grows to 120px, the tablist does not change.
+      const rect = HTMLElement.prototype.getBoundingClientRect as unknown as ReturnType<typeof vi.fn>;
+      const base = rect.getMockImplementation()!;
+      rect.mockImplementation(function (this: HTMLElement) {
+        const r = base.call(this) as DOMRect;
+        return this === alpha ? ({ ...r, width: 120, right: r.left + 120 } as DOMRect) : r;
+      });
+      act(() => ro.cb());
+      expect(line.style.width).toBe('120px');
+
+      // A web-font swap: re-placed once document.fonts.ready resolves.
+      rect.mockImplementation(function (this: HTMLElement) {
+        const r = base.call(this) as DOMRect;
+        return this === alpha ? ({ ...r, width: 96, right: r.left + 96 } as DOMRect) : r;
+      });
+      await act(async () => { fontsLoaded(); await ready; });
+      expect(line.style.width).toBe('96px');
+    } finally {
+      vi.unstubAllGlobals();
+      delete (document as unknown as { fonts?: unknown }).fonts;
+    }
+  });
+
   it('only the underline variant morphs', () => {
     setAccent(true);
     const { container } = render(<Harness variant="pills" />);
@@ -198,6 +248,21 @@ describe('useArrivalFlash', () => {
     expect(result.current.size).toBe(0);
   });
 
+  it('with timeOf: an old id that newly enters the list (SLA window, list cap) is not an arrival', () => {
+    setAccent(true);
+    const now = Date.now();
+    const created: Record<string, number | null> = {
+      a: now - 86_400_000,
+      old: now - 3 * 86_400_000, // created days ago, newly qualifies for a clock filter
+      fresh: now + 1_000, // created after the last update
+      unknown: null, // no timestamp: still flagged
+    };
+    const timeOf = (id: string) => created[id] ?? null;
+    const { result, rerender } = renderHook(({ ids }) => useArrivalFlash(ids, null, { timeOf }), { initialProps: { ids: ['a'] } });
+    rerender({ ids: ['old', 'fresh', 'unknown', 'a'] });
+    expect([...result.current].sort()).toEqual(['fresh', 'unknown']);
+  });
+
   it('flags nothing without an accent', () => {
     const { result, rerender } = renderHook(({ ids }) => useArrivalFlash(ids), { initialProps: { ids: ['a'] } });
     rerender({ ids: ['b', 'a'] });
@@ -208,7 +273,7 @@ describe('useArrivalFlash', () => {
     vi.useFakeTimers();
     try {
       setAccent(true);
-      const { result, rerender } = renderHook(({ ids }) => useArrivalFlash(ids, null, 500), { initialProps: { ids: ['a'] } });
+      const { result, rerender } = renderHook(({ ids }) => useArrivalFlash(ids, null, { holdMs: 500 }), { initialProps: { ids: ['a'] } });
       rerender({ ids: ['b', 'a'] });
       expect(result.current.has('b')).toBe(true);
       act(() => { vi.advanceTimersByTime(600); });

@@ -61,6 +61,12 @@ describe('/kit route', () => {
       expect(await screen.findByRole('heading', { name: 'Design kit' })).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Motion' })).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: 'Tokens' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Type' })).toBeInTheDocument();
+      for (const step of ['display', 'h1', 'h2', 'body', 'small', 'label', 'mono']) {
+        expect(document.querySelector(`[data-type-step="${step}"]`)).not.toBeNull();
+      }
+      // The arrival demo starts with a critical row on screen.
+      expect(screen.getByText('acme-login-verify.example')).toBeInTheDocument();
       expect(document.querySelector('[data-slot="logo"]')).not.toBeNull();
     });
   }
