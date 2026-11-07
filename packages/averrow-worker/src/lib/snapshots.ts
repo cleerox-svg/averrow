@@ -4,10 +4,22 @@
  *
  * Scheduled path: the dedicated `28 0,12 * * *` cron
  * (`runDailySnapshotsCron` in `handlers/dailySnapshots.ts`), with
- * `skipExisting: true` — each entity type is generated only if today has no
- * row of that type yet, so the 00:28 run does the work and the 12:28 run is
- * a near-free repair pass. Manual path: `POST /api/snapshots/generate`
+ * `resume: true` — each entity type continues from the highest entity_id
+ * already written for the date, so the 00:28 run does the work and the
+ * 12:28 run is a near-free repair pass (one boundary read per complete
+ * type) that finishes any type a killed or deadline-stopped run left
+ * half-written. Manual path: `POST /api/snapshots/generate`
  * (`handlers/threats.ts`) forces regeneration of both types.
+ *
+ * Bounded work (2026-11-07): each type is written in keyset chunks of
+ * `SNAPSHOT_CHUNK_SIZE` entities (`entity_id > lo AND entity_id <= hi`,
+ * seeking idx_threats_brand_status / idx_threats_provider_created), never
+ * as one whole-table INSERT … SELECT. The single statement (~1.75M rows
+ * read, ~11-14K rows / ~44-55K index entries written per type) was where
+ * the cron invocation died from 2026-11-04 on: the rows committed, but no
+ * line after the statement ever ran, so agent_runs stayed 'running'
+ * forever. Each chunk commits on its own, so progress survives a killed
+ * invocation and the next pass resumes after the last committed entity.
  *
  * Consumer: Flight Control's provider-escalation watcher compares
  * `hosting_providers.active_threat_count` to YESTERDAY's provider snapshot,
@@ -23,22 +35,46 @@
 
 export type SnapshotEntityType = "brand" | "provider";
 
+/** Entities per INSERT … SELECT chunk. */
+export const SNAPSHOT_CHUNK_SIZE = 1000;
+
+/** Hard ceiling on chunks per type per call — a runaway-loop backstop. */
+const MAX_CHUNKS_PER_TYPE = 1000;
+
 export interface SnapshotTypeResult {
-  /** 'generated' = INSERT ran; 'skipped' = rows for the date already existed. */
+  /**
+   * 'generated' = at least one chunk was written (or a forced run over an
+   * empty source); 'skipped' = resumed and nothing was left to write.
+   */
   action: "generated" | "skipped";
   rows: number;
+  /** False when the deadline stopped the type before its last chunk. */
+  complete: boolean;
+  chunks: number;
 }
 
 export interface GenerateSnapshotsOptions {
   /**
-   * When true, each entity type is first probed with a PK-prefix
-   * `SELECT 1 … LIMIT 1` and skipped if the date already has rows of that
-   * type. Default false (force — the manual endpoint's semantics).
+   * When true, continue after the highest entity_id already written for
+   * the date (a PK-prefix MAX probe, one row read). A complete type costs
+   * one boundary read and no INSERT; a half-written type is finished.
+   * Default false (force — the manual endpoint's semantics).
    */
-  skipExisting?: boolean;
+  resume?: boolean;
+  /** Entities per chunk; defaults to SNAPSHOT_CHUNK_SIZE. */
+  chunkSize?: number;
+  /**
+   * Epoch ms. No new chunk starts at or after it; the type returns
+   * `complete: false` and the next resume pass carries on.
+   */
+  deadline?: number;
+  /** Called after every committed chunk with the type's running row total. */
+  onChunk?: (rowsSoFar: number) => Promise<void> | void;
+  /** Clock, injectable for tests. */
+  now?: () => number;
 }
 
-const BRAND_SNAPSHOT_SQL = `
+const BRAND_SNAPSHOT_CHUNK_SQL = `
     INSERT OR REPLACE INTO daily_snapshots (date, entity_type, entity_id, new_threats, active_threats, remediated_threats, dominant_threat_type, dominant_hosting_provider)
     SELECT
       ? AS date,
@@ -55,11 +91,11 @@ const BRAND_SNAPSHOT_SQL = `
        WHERE t3.target_brand_id = threats.target_brand_id AND t3.status = 'active'
        GROUP BY hp.name ORDER BY COUNT(*) DESC LIMIT 1) AS dominant_hosting_provider
     FROM threats
-    WHERE target_brand_id IS NOT NULL
+    WHERE target_brand_id > ? AND target_brand_id <= ?
     GROUP BY target_brand_id
   `;
 
-const PROVIDER_SNAPSHOT_SQL = `
+const PROVIDER_SNAPSHOT_CHUNK_SQL = `
     INSERT OR REPLACE INTO daily_snapshots (date, entity_type, entity_id, new_threats, active_threats, remediated_threats, dominant_threat_type)
     SELECT
       ? AS date,
@@ -72,13 +108,37 @@ const PROVIDER_SNAPSHOT_SQL = `
        WHERE t2.hosting_provider_id = threats.hosting_provider_id AND t2.status = 'active'
        GROUP BY threat_type ORDER BY COUNT(*) DESC LIMIT 1) AS dominant_threat_type
     FROM threats
-    WHERE hosting_provider_id IS NOT NULL
+    WHERE hosting_provider_id > ? AND hosting_provider_id <= ?
     GROUP BY hosting_provider_id
   `;
 
-const SNAPSHOT_SQL: Record<SnapshotEntityType, string> = {
-  brand: BRAND_SNAPSHOT_SQL,
-  provider: PROVIDER_SNAPSHOT_SQL,
+/**
+ * Upper bound (inclusive) of the next chunk: the `limit`-th distinct entity
+ * id after `after`, or the last one when fewer remain; NULL when none do.
+ * A covering-index range read over the chunk's own threats.
+ */
+const BRAND_CHUNK_BOUND_SQL = `
+    SELECT MAX(id) AS hi FROM (
+      SELECT target_brand_id AS id FROM threats
+      WHERE target_brand_id > ?
+      GROUP BY target_brand_id ORDER BY target_brand_id LIMIT ?
+    )`;
+
+const PROVIDER_CHUNK_BOUND_SQL = `
+    SELECT MAX(id) AS hi FROM (
+      SELECT hosting_provider_id AS id FROM threats
+      WHERE hosting_provider_id > ?
+      GROUP BY hosting_provider_id ORDER BY hosting_provider_id LIMIT ?
+    )`;
+
+const SNAPSHOT_CHUNK_SQL: Record<SnapshotEntityType, string> = {
+  brand: BRAND_SNAPSHOT_CHUNK_SQL,
+  provider: PROVIDER_SNAPSHOT_CHUNK_SQL,
+};
+
+const CHUNK_BOUND_SQL: Record<SnapshotEntityType, string> = {
+  brand: BRAND_CHUNK_BOUND_SQL,
+  provider: PROVIDER_CHUNK_BOUND_SQL,
 };
 
 /**
@@ -99,10 +159,28 @@ export async function hasSnapshotsFor(
 }
 
 /**
- * Generate (or, with `skipExisting`, repair) one entity type's snapshots
- * for `date`. A single INSERT … SELECT statement, so each type is atomic:
- * a failure leaves that type absent for the date (and the next scheduled
- * pass repairs it) rather than half-written.
+ * Highest entity_id written for (date, entityType), or null. SQLite's
+ * min/max optimisation answers this from the PK (date, entity_type,
+ * entity_id) — one row read in prod.
+ */
+export async function lastSnapshotEntityId(
+  db: D1Database,
+  date: string,
+  entityType: SnapshotEntityType,
+): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT MAX(entity_id) AS last_id FROM daily_snapshots WHERE date = ? AND entity_type = ?")
+    .bind(date, entityType)
+    .first<{ last_id: string | null }>();
+  return row?.last_id ?? null;
+}
+
+/**
+ * Generate (or, with `resume`, finish) one entity type's snapshots for
+ * `date`, chunk by chunk in entity_id order. Each chunk is one atomic
+ * INSERT … SELECT; a throw propagates after the chunks before it have
+ * committed (`onChunk` has seen their running total), and the next resume
+ * pass continues after the last committed entity.
  */
 export async function generateSnapshotType(
   db: D1Database,
@@ -110,11 +188,45 @@ export async function generateSnapshotType(
   entityType: SnapshotEntityType,
   opts: GenerateSnapshotsOptions = {},
 ): Promise<SnapshotTypeResult> {
-  if (opts.skipExisting && (await hasSnapshotsFor(db, date, entityType))) {
-    return { action: "skipped", rows: 0 };
+  const chunkSize = Math.max(1, Math.floor(opts.chunkSize ?? SNAPSHOT_CHUNK_SIZE));
+  const now = opts.now ?? Date.now;
+
+  let cursor = "";
+  let resumed = false;
+  if (opts.resume) {
+    const last = await lastSnapshotEntityId(db, date, entityType);
+    if (last !== null) {
+      cursor = last;
+      resumed = true;
+    }
   }
-  const res = await db.prepare(SNAPSHOT_SQL[entityType]).bind(date, date, date).run();
-  return { action: "generated", rows: res.meta.changes ?? 0 };
+
+  let rows = 0;
+  let chunks = 0;
+  while (chunks < MAX_CHUNKS_PER_TYPE) {
+    if (opts.deadline !== undefined && now() >= opts.deadline) {
+      return { action: chunks > 0 || !resumed ? "generated" : "skipped", rows, complete: false, chunks };
+    }
+    const bound = await db
+      .prepare(CHUNK_BOUND_SQL[entityType])
+      .bind(cursor, chunkSize)
+      .first<{ hi: string | null }>();
+    const hi = bound?.hi ?? null;
+    // hi > cursor by construction, so every iteration makes progress.
+    if (hi === null || hi <= cursor) break;
+
+    const res = await db
+      .prepare(SNAPSHOT_CHUNK_SQL[entityType])
+      .bind(date, date, date, cursor, hi)
+      .run();
+    rows += res.meta.changes ?? 0;
+    chunks += 1;
+    cursor = hi;
+    if (opts.onChunk) await opts.onChunk(rows);
+  }
+
+  const complete = chunks < MAX_CHUNKS_PER_TYPE;
+  return { action: resumed && chunks === 0 ? "skipped" : "generated", rows, complete, chunks };
 }
 
 /**

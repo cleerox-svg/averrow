@@ -15,12 +15,27 @@
 // rows at all, and 2026-10-12 had 10,137 brand rows / 0 provider rows
 // because the "any row today" fallback could not see a missing TYPE.
 //
-// Idempotency is per entity type: each type is probed with a PK-prefix
-// `SELECT 1 … LIMIT 1` and generated only if absent. The 00:28 run does the
-// work; the 12:28 run costs two one-row probes unless a type is missing, in
-// which case it repairs only that type. Existing types are never rebuilt.
+// Idempotency is per entity type and resumable: each type continues after
+// the highest entity_id already written for the date (one-row PK MAX probe)
+// and is written in bounded keyset chunks (lib/snapshots.ts). The 00:28 run
+// does the work; the 12:28 run costs one boundary read per complete type
+// and finishes any type an earlier run left half-written.
+//
+// Orphaned-run fix (2026-11-07): from 2026-11-04 every 00:28 run (and the
+// 12:28 run on 11-05 / 11-07) stayed 'running' forever with no
+// completed_at and no snapshots_generated event — while its snapshot rows
+// DID commit (e.g. 11-07 brand: 11,019 rows ≈ the 44K rows written). The
+// invocation never ran a line after the single whole-table INSERT … SELECT
+// (~1.75M rows read), and nothing closes a 'running' row: the navigator
+// reaper matched only 'partial' and Flight Control's recovery only walks
+// registered AgentModules. Now: (1) the work is chunked and each chunk
+// heartbeats records_processed, so progress is durable and visible;
+// (2) a wall-clock budget stops starting new chunks well inside the cron
+// invocation's limit, leaving the rest to the 12:28 resume; (3) finalize
+// runs in a `finally`, with retries; (4) lib/agent-runs-reaper.ts now also
+// reaps stuck 'running' rows.
 
-import { createAgentRun, completeAgentRun, failAgentRun } from "../db/agent-runs";
+import { createAgentRun, finalizeAgentRun, updateAgentRunProgress } from "../db/agent-runs";
 import { logger } from "../lib/logger";
 import {
   generateSnapshotType,
@@ -30,6 +45,13 @@ import type { Env } from "../types";
 
 export const DAILY_SNAPSHOTS_AGENT_ID = "daily_snapshots";
 export const DAILY_SNAPSHOTS_CRON = "28 0,12 * * *";
+
+/**
+ * Wall-clock budget for starting new chunks, measured from handler start.
+ * Well inside the scheduled invocation's limit so the finalize + event
+ * writes always have room; a type cut short resumes on the next pass.
+ */
+export const DAILY_SNAPSHOTS_BUDGET_MS = 8 * 60_000;
 
 /**
  * Provider first: it is the type with a live consumer (Flight Control's
@@ -42,7 +64,10 @@ const SNAPSHOT_TYPES: readonly SnapshotEntityType[] = ["provider", "brand"];
 export type SnapshotTypeOutcome =
   | { action: "generated"; rows: number }
   | { action: "skipped"; rows: 0 }
-  | { action: "failed"; rows: 0; error: string };
+  /** Budget ran out before the last chunk; the next pass resumes. */
+  | { action: "incomplete"; rows: number }
+  /** `rows` = chunks committed before the failing statement. */
+  | { action: "failed"; rows: number; error: string };
 
 export interface DailySnapshotsRunResult {
   date: string;
@@ -52,94 +77,145 @@ export interface DailySnapshotsRunResult {
   recordsProcessed: number;
 }
 
+export interface DailySnapshotsOptions {
+  /** Override DAILY_SNAPSHOTS_BUDGET_MS (tests). */
+  budgetMs?: number;
+  /** Override the chunk size (tests). */
+  chunkSize?: number;
+  /** Clock (tests). */
+  now?: () => number;
+  /** Finalize retry backoff (tests). */
+  finalizeBackoffMs?: readonly number[];
+}
+
+const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 /**
- * Generate any missing snapshot types for the UTC date of `scheduledTime`.
+ * Generate any missing snapshot rows for the UTC date of `scheduledTime`.
  * Never throws: per-type failures are recorded on the run row
  * (`error_message`) and returned; run bookkeeping is best-effort so a D1
- * hiccup on agent_runs cannot stop the snapshot work.
+ * hiccup on agent_runs cannot stop the snapshot work, and the finalize
+ * sits in a `finally` so every path that reaches it closes the run.
  */
 export async function runDailySnapshotsCron(
   env: Env,
   scheduledTime: Date,
   trigger = "cron",
+  opts: DailySnapshotsOptions = {},
 ): Promise<DailySnapshotsRunResult> {
   const date = scheduledTime.toISOString().slice(0, 10);
+  const now = opts.now ?? Date.now;
+  const deadline = now() + (opts.budgetMs ?? DAILY_SNAPSHOTS_BUDGET_MS);
 
   let runId: string | null = null;
   try {
     runId = await createAgentRun(env, DAILY_SNAPSHOTS_AGENT_ID);
   } catch (err) {
-    logger.error("daily_snapshots_run_start_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.error("daily_snapshots_run_start_error", { error: errMsg(err) });
   }
 
-  const outcomes = {} as Record<SnapshotEntityType, SnapshotTypeOutcome>;
-  for (const type of SNAPSHOT_TYPES) {
-    try {
-      const r = await generateSnapshotType(env.DB, date, type, { skipExisting: true });
-      outcomes[type] = r.action === "skipped" ? { action: "skipped", rows: 0 } : { action: "generated", rows: r.rows };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      outcomes[type] = { action: "failed", rows: 0, error: message };
-      logger.error("daily_snapshots_type_error", { date, entity_type: type, error: message });
-    }
-  }
+  const outcomes: Record<SnapshotEntityType, SnapshotTypeOutcome> = {
+    provider: { action: "failed", rows: 0, error: "not attempted" },
+    brand: { action: "failed", rows: 0, error: "not attempted" },
+  };
+  let status: DailySnapshotsRunResult["status"] = "failed";
+  let recordsProcessed = 0;
 
-  const failures = SNAPSHOT_TYPES.filter((t) => outcomes[t].action === "failed");
-  const recordsProcessed = SNAPSHOT_TYPES.reduce((n, t) => n + outcomes[t].rows, 0);
-  const status: DailySnapshotsRunResult["status"] =
-    failures.length === 0
-      ? "success"
-      : failures.length === SNAPSHOT_TYPES.length
-        ? "failed"
-        : "partial";
-  const errorMessage =
-    failures.length === 0
-      ? null
-      : failures
-          .map((t) => {
-            const o = outcomes[t];
-            return `${t}: ${o.action === "failed" ? o.error : ""}`;
-          })
-          .join("; ");
-
-  if (runId) {
-    try {
-      if (status === "failed") {
-        await failAgentRun(env, runId, errorMessage ?? "all snapshot types failed");
-      } else {
-        await completeAgentRun(env, runId, {
-          records_processed: recordsProcessed,
-          outputs_generated: SNAPSHOT_TYPES.filter((t) => outcomes[t].action === "generated").length,
-          status,
-          error_message: errorMessage,
-        });
-      }
-    } catch (err) {
-      logger.error("daily_snapshots_run_complete_error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  // Telemetry-only completion event: target_agent = NULL, so the
-  // orchestrator's agent_events consumer records it without dispatching.
   try {
-    await env.DB.prepare(
-      `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
-       VALUES (?, 'snapshots_generated', ?, NULL, ?, 3, 'pending')`,
-    )
-      .bind(
-        crypto.randomUUID(),
-        DAILY_SNAPSHOTS_AGENT_ID,
-        JSON.stringify({ date, trigger, status, provider: outcomes.provider, brand: outcomes.brand }),
-      )
-      .run();
+    const written: Record<SnapshotEntityType, number> = { provider: 0, brand: 0 };
+    const heartbeat = async (): Promise<void> => {
+      if (!runId) return;
+      try {
+        await updateAgentRunProgress(env, runId, written.provider + written.brand);
+      } catch (err) {
+        logger.warn("daily_snapshots_heartbeat_error", { error: errMsg(err) });
+      }
+    };
+
+    for (const type of SNAPSHOT_TYPES) {
+      try {
+        const r = await generateSnapshotType(env.DB, date, type, {
+          resume: true,
+          deadline,
+          now,
+          chunkSize: opts.chunkSize,
+          onChunk: async (rowsSoFar) => {
+            written[type] = rowsSoFar;
+            await heartbeat();
+          },
+        });
+        outcomes[type] = !r.complete
+          ? { action: "incomplete", rows: r.rows }
+          : r.action === "skipped"
+            ? { action: "skipped", rows: 0 }
+            : { action: "generated", rows: r.rows };
+      } catch (err) {
+        const message = errMsg(err);
+        outcomes[type] = { action: "failed", rows: written[type], error: message };
+        logger.error("daily_snapshots_type_error", { date, entity_type: type, error: message });
+      }
+    }
   } catch (err) {
-    logger.error("daily_snapshots_event_write_error", {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    // Unexpected throw outside the per-type guards: the outcomes already
+    // recorded stand, the rest stay 'failed: not attempted'.
+    logger.error("daily_snapshots_unexpected_error", { date, error: errMsg(err) });
+  } finally {
+    const notOk = SNAPSHOT_TYPES.filter(
+      (t) => outcomes[t].action === "failed" || outcomes[t].action === "incomplete",
+    );
+    const allFailed = SNAPSHOT_TYPES.every((t) => outcomes[t].action === "failed");
+    recordsProcessed = SNAPSHOT_TYPES.reduce((n, t) => n + outcomes[t].rows, 0);
+    status = notOk.length === 0 ? "success" : allFailed ? "failed" : "partial";
+    const errorMessage =
+      notOk.length === 0
+        ? null
+        : notOk
+            .map((t) => {
+              const o = outcomes[t];
+              return o.action === "failed"
+                ? `${t}: ${o.error}`
+                : `${t}: budget exhausted after ${o.rows} rows — resumes next pass`;
+            })
+            .join("; ");
+
+    if (runId) {
+      const fin = await finalizeAgentRun(
+        env,
+        runId,
+        status === "failed"
+          ? { kind: "failed", error_message: errorMessage ?? "all snapshot types failed" }
+          : {
+              kind: "complete",
+              stats: {
+                records_processed: recordsProcessed,
+                outputs_generated: SNAPSHOT_TYPES.filter((t) => outcomes[t].action === "generated").length,
+                status,
+                error_message: errorMessage,
+              },
+            },
+        opts.finalizeBackoffMs ? { backoffMs: opts.finalizeBackoffMs } : {},
+      );
+      if (!fin.ok) {
+        logger.error("daily_snapshots_run_complete_error", { run_id: runId, error: fin.error });
+      }
+    }
+
+    // Telemetry-only completion event: target_agent = NULL, so the
+    // orchestrator's agent_events consumer records it without dispatching.
+    try {
+      await env.DB.prepare(
+        `INSERT INTO agent_events (id, event_type, source_agent, target_agent, payload_json, priority, status)
+         VALUES (?, 'snapshots_generated', ?, NULL, ?, 3, 'pending')`,
+      )
+        .bind(
+          crypto.randomUUID(),
+          DAILY_SNAPSHOTS_AGENT_ID,
+          JSON.stringify({ date, trigger, status, provider: outcomes.provider, brand: outcomes.brand }),
+        )
+        .run();
+    } catch (err) {
+      logger.error("daily_snapshots_event_write_error", { error: errMsg(err) });
+    }
   }
 
   return {

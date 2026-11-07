@@ -169,6 +169,30 @@ export async function peekCount(
 }
 
 /**
+ * Like `peekCount`, but also returns the entry's write time (`t`, epoch ms)
+ * so a caller can judge freshness on its own terms (e.g. "computed within
+ * the last 90 min") independently of the key's TTL. Never computes, records
+ * no stat; null when absent, unparseable, older than `ttlSeconds`, or on any
+ * KV error.
+ */
+export async function peekCountEntry(
+  env: { CACHE?: KVNamespace },
+  key: string,
+  ttlSeconds: number,
+): Promise<{ v: number; t: number } | null> {
+  if (ttlSeconds <= 0 || !env.CACHE) return null;
+  try {
+    const raw = await env.CACHE.get(CACHE_PREFIX + key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CachedEntry>;
+    if (typeof parsed?.v !== "number" || typeof parsed?.t !== "number") return null;
+    return (Date.now() - parsed.t) / 1000 < ttlSeconds ? { v: parsed.v, t: parsed.t } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Prime the counter cache with a value that was already computed by an
  * authoritative write path, so the next `cachedCount` read of the same
  * key is a hit instead of re-running the expensive scan.

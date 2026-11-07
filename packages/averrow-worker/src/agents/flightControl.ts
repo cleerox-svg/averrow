@@ -54,10 +54,10 @@ import { parseCronIntervalMs } from "../lib/feedRunner";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { cachedCount } from "../lib/cached-count";
 import {
-  countDnsCandidatesInThreats,
-  DNS_DRAINABLE_CACHE_KEY,
-  DNS_DRAINABLE_TTL_S,
-  resolveDnsDrift,
+  classifyDnsQueueStall,
+  readDnsDrainableForTick,
+  shouldEmitDnsQueueDrift,
+  type ReconcilerDiagnostic,
 } from "../lib/dns-drainable";
 // From `lib/lookalike-budget.ts`, NOT from `scanners/lookalike-domains`:
 // importing two integers from the scanner statically dragged `lib/haiku`,
@@ -906,7 +906,7 @@ export const flightControlAgent: AgentModule = {
       try {
         const queueDb = env.DNS_QUEUE_DB;
 
-        // Snapshot queue size + threats-drainable in parallel.
+        // Queue size — cheap (DNS_QUEUE_DB, ~35K rows) and shared.
         // TTL 1800s so this key coheres with the dns-queue reconciler,
         // which reads it every 5-min Navigator tick — at a 300s tick a
         // 600s TTL only cleared alternate ticks (~50% hit ceiling), so
@@ -914,60 +914,40 @@ export const flightControlAgent: AgentModule = {
         // the drift gauge below (threshold 500); 30-min staleness moves
         // it only tens of rows, far under that threshold, so the alert
         // stays correct. MUST match the reconciler's TTL.
-        const [queueSizeRow, drainableRow] = await Promise.all([
-          cachedCount(env, 'count.dns_queue.size', 1800, async () => {
-            const r = await queueDb.prepare('SELECT COUNT(*) AS n FROM dns_queue').first<{ n: number }>();
-            return r?.n ?? 0;
-          }).then((n) => ({ n })),
-          // PR-4: dropped INDEXED BY hint + the
-          // `enrichment_attempts < 8` filter. Threats.attempts is
-          // no longer written (dns_queue owns the state), so the
-          // legacy filter would exclude no rows anyway. The drift
-          // check is now "count of threats needing DNS resolution
-          // by existence" vs "count of rows in dns_queue".
-          // Key/TTL/predicate shared with diagnostics via
-          // lib/dns-drainable.ts. TTL (90 min) > FC's hourly cadence;
-          // both alerts below re-verify with a fresh count first.
-          cachedCount(env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S,
-            () => countDnsCandidatesInThreats(db),
-          ).then((n) => ({ n })),
-        ]);
-
-        const queueSize = queueSizeRow.n;
-        const DRIFT_THRESHOLD = 500;
-        // The cached drainable can be up to DNS_DRAINABLE_TTL_S old; when
-        // it suggests drift > threshold, re-count fresh before either
-        // alert below (both require that), so staleness can only delay an
-        // alert, never fire one. One uncached scan only on suspected drift.
-        const { drainable, drift } = await resolveDnsDrift({
-          queueSize,
-          cachedDrainable: drainableRow.n,
-          threshold: DRIFT_THRESHOLD,
-          recount: () => countDnsCandidatesInThreats(db),
-          env,
+        const queueSize = await cachedCount(env, 'count.dns_queue.size', 1800, async () => {
+          const r = await queueDb.prepare('SELECT COUNT(*) AS n FROM dns_queue').first<{ n: number }>();
+          return r?.n ?? 0;
         });
+        const DRIFT_THRESHOLD = 500;
 
-        if (drift > DRIFT_THRESHOLD) {
+        // Threats-side candidate count (lib/dns-drainable.ts) — a KV PEEK
+        // only. The count itself is a full threats scan (1.5–2.7M rows)
+        // that used to run here and got FC-led orchestrator ticks killed
+        // before feed ingestion (2026-11-07); Navigator now computes it
+        // once a day in its own invocation. Drift alerts act only on a
+        // count computed within the last 90 min, so staleness can't
+        // false-alert.
+        const dnsTick = await readDnsDrainableForTick({ env, queueSize });
+        const drainable = dnsTick.drainable;
+
+        if (shouldEmitDnsQueueDrift(dnsTick, DRIFT_THRESHOLD)) {
           await emitPlatformNotification(env, 'platform_dns_queue_drift',
             renderPlatformDnsQueueDrift({
-              drift,
+              drift: dnsTick.drift ?? 0,
               threshold: DRIFT_THRESHOLD,
               queue_size: queueSize,
-              drainable_in_threats: drainable,
+              drainable_in_threats: drainable ?? 0,
             })
           );
         }
 
         // Stall detection (PR-BI cursor architecture) — read the
-        // latest reconciler diagnostic's `cursor_lag_minutes`. The
-        // cursor advances whenever new candidates land in threats;
-        // if drainable > queueSize + drift threshold AND cursor is
-        // lagging by >30 min, the reconciler is broken (cursor not
-        // advancing despite available work).
-        //
-        // A quiet queue with nothing to drain legitimately has
-        // cursor_lag_minutes growing — that's not a stall. We
-        // require BOTH conditions: lag is high AND drainable > queue.
+        // latest reconciler diagnostic. `cursor_stuck` is a reconciler
+        // fault on its own. Otherwise a lagging cursor is a stall only
+        // with evidence of new work behind it (the reconciler's last page
+        // was FULL and enqueued something, or the fresh daily count
+        // exceeds the queue) — a quiet platform legitimately grows lag.
+        // Decision lives in classifyDnsQueueStall (lib/dns-drainable.ts).
         const lastReconciler = await db.prepare(`
           SELECT details, created_at
           FROM agent_outputs
@@ -980,26 +960,20 @@ export const flightControlAgent: AgentModule = {
 
         if (lastReconciler?.details) {
           try {
-            const parsed = JSON.parse(lastReconciler.details) as {
-              cursor_lag_minutes?: number;
-              skipped?: boolean;
-              cursor_stuck?: boolean;
-            };
-            const lag = parsed.cursor_lag_minutes ?? 0;
+            const parsed = JSON.parse(lastReconciler.details) as ReconcilerDiagnostic;
             const STALL_THRESHOLD_MIN = 30;
-            // `cursor_stuck` = the reconciler saw a full page make no
-            // keyset progress and had to self-heal (skip ahead). That is
-            // a reconciler fault on its own, independent of lag/drift.
-            if (
-              !parsed.skipped
-              && (
-                parsed.cursor_stuck === true
-                || (lag > STALL_THRESHOLD_MIN && drainable > queueSize + DRIFT_THRESHOLD)
-              )
-            ) {
+            const stallKind = classifyDnsQueueStall({
+              reconciler: parsed,
+              tick: dnsTick,
+              queueSize,
+              driftThreshold: DRIFT_THRESHOLD,
+              stallThresholdMin: STALL_THRESHOLD_MIN,
+            });
+            if (stallKind) {
               await emitPlatformNotification(env, 'platform_dns_queue_stalled',
                 renderPlatformDnsQueueStalled({
-                  minutes_idle: lag,
+                  kind: stallKind,
+                  minutes_idle: parsed.cursor_lag_minutes ?? 0,
                   threshold_minutes: STALL_THRESHOLD_MIN,
                   queue_size: queueSize,
                   drainable_in_threats: drainable,

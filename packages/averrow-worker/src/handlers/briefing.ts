@@ -1,7 +1,7 @@
 // Comprehensive Platform Operations Briefing — 12-section intelligence report
 import { json } from "../lib/cors";
 import { sendBriefingEmail } from "../lib/briefing-email";
-import { createAgentRun, completeAgentRun, failAgentRun } from "../db/agent-runs";
+import { createAgentRun, finalizeAgentRun } from "../db/agent-runs";
 import { logger } from "../lib/logger";
 import { fetchMarketingVisibility } from "../lib/marketing-analytics";
 import type { MarketingVisibility } from "../lib/marketing-analytics";
@@ -58,29 +58,28 @@ async function withBriefingRun<T>(
   } catch (err) {
     // Genuine generation failure — mark the run failed (best-effort) and
     // re-throw so the caller's existing error handling is unchanged.
+    // finalizeAgentRun retries and never throws, so run-tracking failure
+    // cannot mask the original error.
     const message = err instanceof Error ? err.message : String(err);
     if (runId) {
-      await failAgentRun(env, runId, message).catch(() => {
-        /* run-tracking failure must not mask the original error */
-      });
+      const fin = await finalizeAgentRun(env, runId, { kind: "failed", error_message: message });
+      if (!fin.ok) logger.error("briefing_run_fail_error", { error: fin.error });
     }
     throw err;
   }
 
   // fn() succeeded: the deliverable is done. Everything below is
   // instrumentation only and must not be able to fail the briefing.
+  // Bounded retries (finalizeAgentRun): the single-attempt finalize left
+  // the 2026-11-05 run 'running' forever. A run killed inside fn() is
+  // closed by the navigator reaper (lib/agent-runs-reaper.ts), which now
+  // also reaps stuck 'running' rows.
   if (runId) {
-    try {
-      await completeAgentRun(env, runId, {
-        records_processed: 1,
-        outputs_generated: 1,
-        status: "success",
-      });
-    } catch (err) {
-      logger.error("briefing_run_complete_error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const fin = await finalizeAgentRun(env, runId, {
+      kind: "complete",
+      stats: { records_processed: 1, outputs_generated: 1, status: "success" },
+    });
+    if (!fin.ok) logger.error("briefing_run_complete_error", { error: fin.error });
   }
 
   // Telemetry-only completion event: target_agent = NULL means the

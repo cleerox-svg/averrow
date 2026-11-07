@@ -30,6 +30,7 @@ import {
 import { runDomainGeoBackfillBatch, type DnsBackfillResult } from '../lib/dns-backfill';
 import { reconcileDnsQueue, backfillDnsQueueHistory, type ReconcileResult } from '../lib/dns-queue-reconciler';
 import { reapDnsQueue, type ReaperResult } from '../lib/dns-queue-reaper';
+import { countDnsCandidatesInThreats, isDnsDrainableRecountHour, runDnsDrainableRecount } from '../lib/dns-drainable';
 import {
   purgeNrdDomains,
   parseNrdRetentionLastResult,
@@ -298,7 +299,7 @@ async function runNavigatorImpl(
     try {
       const reapedAgentCount = await reapOrphanAgentRuns(env);
       if (reapedAgentCount > 0) {
-        console.warn(`[navigator] reaped ${reapedAgentCount} orphan agent_runs rows (status=partial, past per-agent ceiling)`);
+        console.warn(`[navigator] reaped ${reapedAgentCount} orphan agent_runs rows (status=partial|running, past per-agent ceiling)`);
       }
     } catch (err) {
       console.error('[navigator] orphan agent_runs reap error:', err);
@@ -771,6 +772,35 @@ async function runNavigatorImpl(
     } catch (e) {
       console.error('[navigator] cache-warm error:', e instanceof Error ? e.message : String(e));
     }
+  }
+
+  // ── 4b. Threats-side DNS candidate count (daily, UTC hour 3) ──
+  // The full-table COUNT(DISTINCT malicious_domain) behind FC's
+  // platform_dns_queue_drift / diagnostics dns_queue_parity
+  // (lib/dns-drainable.ts). It reads 1.5–2.7M rows, so it runs here — in
+  // Navigator's own invocation, as a waitUntil tail after every other
+  // stage — instead of inside the hourly orchestrator tick whose FC run
+  // used to carry it (2026-11-07: those ticks were killed before feed
+  // ingestion). Hour-only gate (cron-audit rule, no minute check); a KV
+  // claim stops overlapping 5-min ticks from both scanning, an entry
+  // < 1h old skips, and it is skipped while the D1 read budget is over
+  // its soft-cap (FC then simply has no fresh count — drift goes
+  // unevaluated, never false-alerts). Never throws.
+  if (isDnsDrainableRecountHour(scheduledTime.getTime())) {
+    _ctx.waitUntil(
+      runDnsDrainableRecount({
+        env,
+        nowMs: scheduledTime.getTime(),
+        overBudget: skipNonEssential,
+        recount: () => countDnsCandidatesInThreats(env.DB),
+      }).then((r) => {
+        if (r.ran) {
+          console.log(`[navigator] dns-drainable recount: drainable=${r.drainable} duration=${r.durationMs}ms`);
+        } else if (r.reason === 'error' || r.reason === 'over_budget') {
+          console.warn(`[navigator] dns-drainable recount skipped: ${r.reason}${r.error ? ` (${r.error})` : ''}`);
+        }
+      }),
+    );
   }
 
   // ── 5. Build result struct ──

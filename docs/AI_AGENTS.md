@@ -528,10 +528,27 @@ Handler-dispatched writer following the `daily_briefing` pattern: an
 `completed_at` + `records_processed` (`success`; `partial` + `error_message`
 when one entity type failed; `failed` when both did), then a telemetry
 `agent_events` row (`snapshots_generated`, `target_agent=NULL`, payload has
-the per-type outcome). Each type is probed with a PK-prefix
-`SELECT 1 … LIMIT 1` and generated only when absent, so the 12:28 fire is a
-repair pass for a type the 00:28 fire lost. Pure SQL — no AI call. Moved off
-the hourly orchestrator tail on 2026-10-14 (see `CLAUDE.md §6`).
+the per-type outcome). Each type is written in bounded keyset chunks
+(`SNAPSHOT_CHUNK_SIZE` = 1000 entities, `entity_id > lo AND entity_id <= hi`)
+and resumes after the highest `entity_id` already written for the date (a
+one-row PK `MAX` probe), so the 12:28 fire is a repair pass that finishes any
+type the 00:28 fire lost or left half-written. Every committed chunk
+heartbeats `agent_runs.records_processed`; an 8-minute budget
+(`DAILY_SNAPSHOTS_BUDGET_MS`) stops starting new chunks (type outcome
+`incomplete`, run `partial`, resumed next pass); the finalize sits in a
+`finally` and retries (`finalizeAgentRun`, `db/agent-runs.ts`). Pure SQL — no
+AI call. Moved off the hourly orchestrator tail on 2026-10-14 (see
+`CLAUDE.md §6`).
+
+**Orphaned-run fix (2026-11-07).** From 2026-11-04 the single whole-table
+`INSERT … SELECT` per type (~1.75M rows read) committed its rows but the
+invocation never ran another line, leaving `agent_runs` rows `running`
+forever (6 for `daily_snapshots`, 1 for `daily_briefing` on 11-05). Handler
+writers seed `running`, not `partial`, so neither the navigator reaper nor
+Flight Control's orphan force-fail (registered modules only) closed them.
+`lib/agent-runs-reaper.ts` now reaps `status IN ('partial','running')` past
+the per-agent ceiling (default 90 min for these handler writers), stamping
+`reaped by navigator: agent run stuck running > …`.
 
 **Inputs:** `threats`, `hosting_providers` (names for `dominant_hosting_provider`)
 **Outputs:** `daily_snapshots` rows; `agent_runs` + `agent_events` (`snapshots_generated`)
@@ -751,8 +768,10 @@ runs write `agent_id='navigator'`. Not an AI agent — pure SQL. Responsibilitie
    set-diff reconciler that scanned ~83K rows on both sides every tick —
    total reconciler reads dropped from ~15M/day to ~10.7K/day (99.4%
    reduction). Skips cleanly when `DNS_QUEUE_DB` is unbound. Drift between
-   queue and threats is surfaced by FC via `platform_dns_queue_drift`;
-   reconciler cursor lag is surfaced via `platform_dns_queue_stalled`.
+   queue and threats is surfaced by FC via `platform_dns_queue_drift`
+   (checked once per day — the threats-side count is a full-table scan that
+   Navigator computes on UTC hour 3, `lib/dns-drainable.ts`; FC only peeks KV);
+   reconciler cursor lag is surfaced hourly via `platform_dns_queue_stalled`.
 3. **DNS-queue reap (daily, hour===0)** — `lib/dns-queue-reaper.ts` sweeps
    stale rows whose underlying threat flipped to inactive after enqueue.
    Since the reconciler only ADDS rows (cursor pagination), the reaper

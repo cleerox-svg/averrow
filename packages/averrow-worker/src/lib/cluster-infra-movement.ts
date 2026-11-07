@@ -111,9 +111,13 @@ export const DEFAULT_MAX_EVENTS_PER_RUN = 5;
  *  more distinct IPs/serials than this is hub-scale and is hub-excluded
  *  first; the cap is a defensive ceiling on stored-set size only. */
 export const DEFAULT_MAX_FINGERPRINT_ELEMENTS = 256;
-/** IN-list chunk size for the member-infra aggregate — keeps bound params
- *  per statement well under SQLite's 999-variable ceiling. */
-const MEMBER_QUERY_CHUNK = 400;
+/** IN-list chunk size for the member-infra aggregate. D1 caps bound
+ *  parameters at 100 per statement (NOT SQLite's 999): the old value of 400
+ *  failed both NEXUS workflow runs on 2026-11-07 with `too many SQL
+ *  variables at offset 457` (the 101st `?`) once the live bridge-cluster
+ *  population passed 100. The statement binds only the ids, so 90 leaves
+ *  headroom under the cap. */
+export const MEMBER_QUERY_CHUNK = 90;
 
 // ─── Fingerprint model ────────────────────────────────────────────────────
 
@@ -521,8 +525,8 @@ export async function detectClusterInfraMovement(
   if (bridgeRows.length === 0) return result;
 
   // 2. Grouped aggregate over member threats (rides the cluster_id index).
-  //    CHUNKED so the bound-parameter count per statement stays well under
-  //    SQLite's 999-variable ceiling: bridge clusters carry persistent
+  //    CHUNKED so the bound-parameter count per statement stays under
+  //    D1's 100-variable ceiling (MEMBER_QUERY_CHUNK): bridge clusters carry persistent
   //    deterministic ids and ACCUMULATE across runs, so the population can
   //    grow past a single IN list over time. Chunking processes every
   //    cluster (no fail-safe drop needed here).
