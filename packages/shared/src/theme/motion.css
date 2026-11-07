@@ -1,0 +1,119 @@
+/* Averrow motion kit — M1 "Precision" + four Kinetic moves (P3-4).
+   Decision: docs/brand/BRAND_BRIEF.md §10 G4.
+
+   EVERY rule here is scoped under :root[data-accent], so with no accent
+   attribute the legacy UI is pixel-identical and gains no animation. The
+   JS side (packages/shared/src/ui/motion/) is gated the same way.
+
+   M1: 120 / 160 / 200 ms on ease-standard, 4-8 px travel, opacity + slight
+   scale, short tinted settle. 500 ms is retired from product UI: under an
+   accent --dur-slower collapses to 200 ms. Springs are critically damped
+   linear() curves: they never overshoot on data.
+
+   Reduced motion (OS setting, or html[data-motion="reduce"] for the staff
+   /kit simulation): opacity only, no travel, no loops. */
+
+:root[data-accent] {
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-slow: 200ms;
+  --motion-travel: 6px;
+  --motion-page-travel: 24px;
+  /* Critically damped: monotonic, settles at 1 without overshoot. */
+  --ease-spring: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Remap the shared duration scale (legacy :root values are untouched). */
+  --dur-base:   160ms;
+  --dur-slow:   200ms;
+  --dur-slower: 200ms;
+}
+
+@supports (transition-timing-function: linear(0, 1)) {
+  :root[data-accent] {
+    --ease-spring: linear(0, 0.21 6%, 0.46 13%, 0.66 21%, 0.8 30%, 0.89 39%, 0.95 50%, 0.98 62%, 0.995 77%, 1);
+  }
+}
+
+/* ── Glide indicators (nav rail + tab underline) ─────────────────────────
+   The element is only rendered (and the container only gets data-glide)
+   while an accent is set; the JS writes its position and animates moves. */
+:root[data-accent] [data-glide] { position: relative; }
+:root[data-accent] .motion-glide {
+  position: absolute;
+  pointer-events: none;
+  background: var(--primary);
+  border-radius: 3px;
+}
+:root[data-accent] .motion-glide--y { left: 0; top: 0; width: 3px; }
+:root[data-accent] .motion-glide--x { left: 0; bottom: 0; height: 2px; border-radius: 2px; }
+/* The tab's own underline hands over to the gliding one. */
+:root[data-accent] [data-glide] > [role="tab"][aria-selected="true"] {
+  border-bottom-color: transparent !important;
+}
+
+/* ── Critical-alert arrival: tinted row slide-in + edge scan-line ────────
+   Applied only to rows that ARRIVED after first render (useArrivalFlash);
+   each plays once, never loops. */
+@keyframes motion-row-in {
+  from { opacity: 0; transform: translateX(calc(-1 * var(--motion-travel))); }
+  to   { opacity: 1; transform: none; }
+}
+/* A bright segment runs down the row's left edge once (background-position,
+   so the row needs no overflow clipping). */
+@keyframes motion-scan {
+  from { background-position: 0 100%; opacity: 1; }
+  80%  { opacity: 1; }
+  to   { background-position: 0 0; opacity: 0; }
+}
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+:root[data-accent] .motion-arrive {
+  /* `backwards`: the first frame applies at once, nothing persists after. */
+  animation: motion-row-in var(--motion-slow) var(--ease-standard) backwards;
+}
+/* Short tinted settle and the edge scan-line live on pseudo-elements (the
+   row is already position: relative), so the row's own background and
+   box-shadow are never overridden. Both rest at opacity 0. */
+:root[data-accent] .motion-arrive::before,
+:root[data-accent] .motion-arrive::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+}
+:root[data-accent] .motion-arrive::before {
+  inset: 0;
+  background: color-mix(in srgb, var(--sev-critical) 16%, transparent);
+  animation: motion-settle 400ms var(--ease-standard) backwards;
+}
+/* Short tinted settle: the row starts critical-tinted and clears. */
+@keyframes motion-settle {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+:root[data-accent] .motion-arrive::after {
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, transparent 33%, var(--sev-critical) 45%, var(--sev-critical) 55%, transparent 67%);
+  background-size: 100% 300%;
+  animation: motion-scan 400ms var(--ease-standard) backwards;
+}
+
+/* Reduced motion: opacity only. !important (with higher specificity) beats
+   shells that kill all animation under reduced motion (shell-v4.css), so
+   the arrival still reads, just without travel or the scan-line. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-accent] .motion-arrive {
+    animation: motion-fade-in var(--motion-fast) linear backwards !important;
+  }
+  :root[data-accent] .motion-arrive::before,
+  :root[data-accent] .motion-arrive::after { display: none; }
+}
+:root[data-accent][data-motion="reduce"] .motion-arrive {
+  animation: motion-fade-in var(--motion-fast) linear backwards !important;
+}
+:root[data-accent][data-motion="reduce"] .motion-arrive::before,
+:root[data-accent][data-motion="reduce"] .motion-arrive::after { display: none; }

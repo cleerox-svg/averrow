@@ -46,6 +46,9 @@ export {
   type PageHeaderProps,
 } from './PageHeader';
 
+// Motion kit (P3-4): every move no-ops unless <html data-accent>.
+export * from './motion';
+
 // Account-experience kit (docs/ACCOUNT_DESIGN_SPEC.md): form controls,
 // overlays (sheet, dialog, menu, toast, time zone picker) and settings
 // layout (shell, groups, rows, hero).

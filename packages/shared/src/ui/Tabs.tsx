@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { cn } from './cn';
+import { useMotionOn } from './motion/motion';
+import { useGlideIndicator } from './motion/useGlideIndicator';
 
 export interface Tab {
   id: string;
@@ -56,6 +58,14 @@ export function Tabs({
     : tabs[0]?.id;
 
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  // Underline morph (motion kit P3-4): under an accent a single underline
+  // glides between tabs; with no accent nothing renders and each tab keeps
+  // its own border, exactly as before.
+  const motionOn = useMotionOn() && variant === 'underline';
+  const underlineRef = React.useRef<HTMLSpanElement | null>(null);
+  useGlideIndicator(scrollRef, underlineRef, `${activeTab}|${tabs.map((t) => t.id).join(',')}`, {
+    axis: 'x', selector: '[role="tab"][aria-selected="true"]', enabled: motionOn,
+  });
   const [edges, setEdges] = React.useState({ left: false, right: false });
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -212,6 +222,7 @@ export function Tabs({
       >
         <div ref={scrollRef} {...listProps} className="flex gap-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
           {tabs.map(renderTab)}
+          {motionOn && <span ref={underlineRef} aria-hidden="true" className="motion-glide motion-glide--x" />}
         </div>
         {edges.left && (
           <div aria-hidden className={cn('pointer-events-none absolute inset-y-0 left-0', size === 'md' ? 'w-12' : 'w-6')}
