@@ -19,6 +19,71 @@ I checked each of those against the code. The platform is further along than the
 - **Legal/Brand second:** these budgets are larger but more competitive (BrandShield, Red Points, Corsearch). It needs work that doesn't exist yet: marketplace and counterfeit coverage, logo similarity, and legal-grade evidence. The evidence work (Sprint 8) serves both buyers, so the Legal pack becomes a cheap upsell on the same engine, not a separate product.
 - **MSSP last:** one MSSP brings in many end customers, but the platform has no parent/child orgs, a session can only bind to one org, and per-member brand scoping (register items G35/G36) is missing. Start it once you have reference customers.
 
+## Owner stipulation (2026-11-07): the assessment was written from the website
+
+The assessment was written from the public marketing site (`packages/averrow-marketing`) alone. **So wherever it gets Averrow wrong, the site is what's wrong.** A claim-by-claim audit against the site and the code (run by the disclosure-strategist agent) found:
+
+| Assessment said | Why | Verdict |
+|---|---|---|
+| DRPS / brand protection category | `<title>` and JSON-LD say "Digital Risk Protection"; only the hero eyebrow says threat-actor intelligence | **Mixed message**: search engines and AI readers will file us as DRPS |
+| Correlates "registrar, hosting, MX, kit characteristics" | `OperationStory.astro` ("registration patterns", social and app profiles "linked to the same operation"), `Layout.astro:53` and `index.astro` ("phishing kits … links them to the operation") | **Overclaim**: NEXUS uses cert, IP, /24, registrar and ASN, with no MX, nameserver or kit. Only domains and IPs are linked across surfaces. Operation mapping is Enterprise-only |
+| "Transparent pricing" | Not on the site; prices were removed 2026-10-05. The module grid reads as transparency | Assessor's guess; the plan page should say plainly that pricing is scoped |
+| Zero-friction, fast time-to-value | True for the free scan; monitoring still needs a demo and staff onboarding | **Overstated**: add a "what onboarding looks like" section |
+| MSSP-ready | `solutions/mssp.astro` is honest; blog `brand-threat-intelligence-for-mssps.mdx` says "multi-tenant from the ground up" | **Overclaim** (blog) |
+| Weak on takedown reach and speed | The site never names a channel or the stay-down re-check | **Undersold**: Web Risk, NetBeacon, GoDaddy API, abuse email and the 7-day re-check exist |
+| Buyer split unclear | Persona pages exist, but plans aren't mapped to personas | **Information-architecture problem** |
+| Didn't notice abuse mailbox, dark web, app stores, trademark, Observatory | Dark web, app store and trademark have no pages; there's no integrations page | **Undersold** |
+
+Live problems the audit found that the register doesn't list (N1–N5):
+- **N1 (legal, High):** `legal/dpa.astro:102` says no third-party AI provider receives customer data. Prod now runs `AI_MODE=enabled`, and the abuse-mailbox deep analyzer sends email excerpts to Anthropic. **This is false today.**
+- **N2:** the homepage OperationStory overclaims cross-surface linking and calls social takedowns "filed" when they are only drafted.
+- **N3:** the all-plans copy and JSON-LD imply kit correlation (register L43).
+- **N4:** the MSSP blog post overclaims.
+- **N5:** two blog posts publish detection detail in the T3 tier (homoglyph/TLD swaps, multi-selector DKIM).
+- Also re-check the open register items L35 (contact form goes to an unwatched table), L36 (`/team` honeypot lists invented people), L45 (terms reference prices that aren't published) and L46 (no `security.txt`).
+
+## Track W — Website uplevel (runs FIRST, in parallel with engineering)
+
+The site is cheap to change, so it ships ahead of the engineering sprints. Roles: content-strategist and web-copywriter (copy), disclosure-strategist (clears every claim and keeps `docs/DISCLOSURE_REGISTER.md`), seo-strategist (title, JSON-LD, metadata), frontend-engineer (pages), design-reviewer.
+
+**W1 · Week 1: stop the overclaims** (small PRs)
+- N1: an owner decision. Either add Anthropic as an AI sub-processor in the DPA and on the sub-processor list (needs legal review), or remove the tasks that send customer data from `AI_CLAUDE_TASKS`. **[owner OK: legal + AI switch]**
+- N2–N5 copy fixes in `OperationStory.astro`, `Layout.astro`, `index.astro`, the MSSP blog post and the two T3 blog posts.
+- Re-check L35, L36, L45 and L46. Add `/.well-known/security.txt`.
+- Re-baseline the register: the AI rows L10/L11 still assume `rules_only`. Add rows N1–N5.
+
+**W2 · Weeks 2–3: positioning and information architecture**
+- One primary category line, the same in the title, JSON-LD, hero and pricing. Recommended: *"Brand protection that traces the operation"*, keeping "DRPS" as an SEO keyword and saying plainly that operation mapping is Enterprise.
+- Map plans to personas on `/pricing` and the solution pages: SecOps → Business, Legal/Brand → takedowns plus trademark, lean teams → Professional plus the managed SOC.
+- A "What onboarding looks like" section (scan → demo → monitoring live in N days), replacing the implied self-serve.
+
+**W3 · Weeks 3–5: surface what's undersold**
+- An `/integrations` page: the five SIEM/ticketing connectors and webhooks, "set up with our team".
+- The takedowns page names its channels at the T2 level: "direct API reporting to registrars and industry abuse services, plus email". Add stay-down re-checks and the evidence summary on each draft. Confirm NetBeacon and GoDaddy are enabled in prod first, and never name Web Risk until G23.
+- Surface pages for dark web, app store and trademark, written to the register's approved wording.
+- An evidence methodology page: what a takedown evidence pack contains (no detection internals).
+
+**W4 · Weeks 5–6: proof and comparison**
+- Comparison pages ("Averrow vs Netcraft / Bolster / ZeroFox") comparing coverage, evidence and the operation model, never removal speed or price.
+- Aggregate T1 proof numbers (threat and provider volume), refreshed from the platform.
+- Sample evidence pack and sample operation report as gated downloads, so the demo funnel can capture leads.
+
+**Claims unlocked as engineering ships** (disclosure-strategist adds each to the site once it is verified in prod):
+
+| Claim | Unlocked by |
+|---|---|
+| Median time to removal, success rate by channel | S3 (and n ≥ 30 takedowns, owner OK) |
+| REST API | S1 (G2 API-key auth) |
+| Integrations customers set up themselves; Slack/Teams | S10 |
+| Correlation by MX, nameservers and kit (T2 wording only) | S5 + S6 (this makes the homepage story true) |
+| Copycat logo and visual matching | S9 (trademark Phase 2) |
+| Evidence pack for legal use | S8 |
+| Self-serve trial | S11 |
+| MSSP single login | S12 (G35/G36) |
+| Cloaking resistance | **Never claim publicly**: it's the T3 tier and would tell attackers what we see |
+
+Budget impact of Track W: $0 in outside services. Comparison and legal pages go through the existing one-time legal review (~$1.5–3K, already budgeted below).
+
 ## What the code shows against the assessment
 
 | Assessment theme | Already built | Gaps that matter |
@@ -30,7 +95,9 @@ I checked each of those against the code. The platform is further along than the
 | Evidence you can trace | Capture hashes, AI-written evidence narrative (currently off pending a review gate) | No signed manifest, no custody log, no legal export bundle, no WHOIS/DNS snapshot taken at capture time |
 | Getting paid / onboarding *(not in the assessment)* | Stripe checkout and customer portal, per-module entitlements, free scan | **G-B1: checkout never links the subscription to the org.** Brand and seat limits aren't enforced. API keys are created but never checked, so there is no customer API. No self-service signup. Customers have no settings screen for integrations or webhooks |
 
-## The plan (12 sprints × 2 weeks)
+## Engineering track (12 sprints × 2 weeks, in parallel with Track W)
+
+Order is chosen by what each sprint unlocks on the site: S1 (API) and S3 (removal metrics) make the first new public claims possible, and S5/S6 make the homepage's operation story true.
 
 Every sprint goes through the CLAUDE.md §1A pipeline: delivery-lead → engineer → test-engineer → qa-verifier → reviewers → ship. Items marked **[owner OK]** need your approval before merge under §9a (paid service, new binding or cron, pricing or billing, access changes).
 
