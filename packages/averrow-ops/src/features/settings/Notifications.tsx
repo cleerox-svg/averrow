@@ -244,7 +244,7 @@ function NotificationsInbox() {
             <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
             Filters
             {activeFilterCount > 0 && (
-              <span className="rounded-full bg-[var(--amber)] px-1.5 font-mono text-[12px] font-bold text-[var(--text-on-amber)]">
+              <span className="rounded-full bg-[var(--primary)] px-1.5 font-mono text-[12px] font-bold text-[var(--primary-ink)]">
                 {activeFilterCount}
               </span>
             )}

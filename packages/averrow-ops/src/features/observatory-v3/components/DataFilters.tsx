@@ -46,7 +46,7 @@ export function TypeMultiSelect({ types, onChange, touch = false }: { types: rea
                 checked={on}
                 onChange={() => onChange(toggleType(types, t.id))}
                 className="shrink-0"
-                style={{ accentColor: 'var(--amber)', width: 14, height: 14 }}
+                style={{ accentColor: 'var(--primary)', width: 14, height: 14 }}
               />
               <span aria-hidden className="shrink-0 rounded-full" style={{ width: 8, height: 8, background: rgbCss(THREAT_TYPE_COLORS[t.id] ?? [120, 130, 145, 255]) }} />
               <span className="min-w-0 truncate capitalize">{t.label}</span>
@@ -86,7 +86,7 @@ export function BrandFilter({ brand, brandName, data, onChange, onActivate, touc
         aria-busy={!brand && loading ? true : undefined}
       >
         {brand
-          ? <>Showing <span style={{ color: 'var(--amber-text)' }}>{brandName || 'the selected brand'}</span> in arcs and stats (the node layer has no brand split).</>
+          ? <>Showing <span style={{ color: 'var(--primary-text)' }}>{brandName || 'the selected brand'}</span> in arcs and stats (the node layer has no brand split).</>
           : loading ? 'Loading brands…' : failed ? 'Couldn\u2019t load brands.' : 'Brands on the map are searchable here; pick one to follow it.'}
       </div>
     </div>
@@ -145,11 +145,11 @@ export function DataFiltersPopover({ count, children, touch = false, className }
         aria-label={count > 0 ? `Data filters: ${count} active` : 'Data filters'}
         onClick={() => setOpen(o => !o)}
         className="ds-focusable inline-flex items-center gap-2 rounded-xl px-3 font-mono text-[11px] cursor-pointer"
-        style={{ ...GLASS, height: touch ? 48 : 40, color: count > 0 ? 'var(--amber-text)' : 'var(--text-secondary)' }}
+        style={{ ...GLASS, height: touch ? 48 : 40, color: count > 0 ? 'var(--primary-text)' : 'var(--text-secondary)' }}
       >
         <FilterIcon size={13} aria-hidden />
         <span>Filter</span>
-        {count > 0 && <span className="rounded-full px-1.5" style={{ background: 'color-mix(in srgb, var(--amber) 18%, transparent)', color: 'var(--amber-text)' }}>{count}</span>}
+        {count > 0 && <span className="rounded-full px-1.5" style={{ background: 'color-mix(in srgb, var(--primary) 18%, transparent)', color: 'var(--primary-text)' }}>{count}</span>}
         <ChevronDown size={13} aria-hidden className={cn('shrink-0 transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
       </button>
       <div
@@ -232,7 +232,7 @@ export function FilterChips({ chips, onRemove, onClear, touch = false, className
           aria-label={`Show ${hidden} more active filter${hidden === 1 ? '' : 's'}`}
           onClick={() => setExpanded(true)}
           className="ds-focusable shrink-0 rounded-full px-2.5 font-mono text-[11px]"
-          style={{ ...pill, color: 'var(--amber-text)', cursor: 'pointer', opacity: muted ? 0.55 : 1 }}
+          style={{ ...pill, color: 'var(--primary-text)', cursor: 'pointer', opacity: muted ? 0.55 : 1 }}
         >
           +{hidden}
         </button>

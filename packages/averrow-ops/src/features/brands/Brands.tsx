@@ -82,9 +82,9 @@ export function BrandsV3() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
-                activeTab === tab.id ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/55 hover:text-white/70'
+                activeTab === tab.id ? 'border-amber-500 text-amber-400 ops-accent-tab' : 'border-transparent text-white/55 hover:text-white/70'
               }`}
-              style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
+              style={activeTab === tab.id ? { textShadow: '0 0 10px color-mix(in srgb, var(--primary) 60%, transparent)' } : undefined}
               title={tab.hint}
             >
               {tab.label}
@@ -660,7 +660,7 @@ function MoversCard({ title, rows, tone, emptyMsg, loading, status }: {
                   size={28}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--amber-text)] transition-colors">
+                  <div className="text-sm font-semibold text-[var(--text-primary)] truncate group-hover:text-[var(--primary-text)] transition-colors">
                     {b.name}
                   </div>
                   <div className="text-[11px] font-mono text-[var(--text-tertiary)] truncate">{b.canonical_domain}</div>
@@ -765,7 +765,7 @@ function HotProspectsTeaser({ onViewAll }: { onViewAll: () => void }) {
         ))}
         <button
           onClick={onViewAll}
-          className="w-full mt-1 text-[11px] font-mono text-[var(--amber-text)] hover:underline"
+          className="w-full mt-1 text-[11px] font-mono text-[var(--primary-text)] hover:underline"
         >
           View {data?.total ?? 0} pending candidates →
         </button>
@@ -825,12 +825,12 @@ function ProspectsTab() {
             key={s}
             onClick={() => setStatus(s)}
             className={`px-3 py-1.5 text-[11px] font-mono uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${
-              status === s ? 'border-amber-500 text-amber-400' : 'border-transparent text-white/55 hover:text-white/70'
+              status === s ? 'border-amber-500 text-amber-400 ops-accent-tab' : 'border-transparent text-white/55 hover:text-white/70'
             }`}
           >
             <span>{s}</span>
             <span className={`px-1.5 py-0.5 rounded text-[9px] ${
-              status === s ? 'bg-amber-500/20 text-amber-400' : 'bg-white/[0.05] text-white/55'
+              status === s ? 'bg-amber-500/20 text-amber-400 ops-accent-count' : 'bg-white/[0.05] text-white/55'
             }`}>
               {counts[s]}
             </span>

@@ -115,8 +115,8 @@ function Header({ windowSel, onWindowChange }: { windowSel: Window; onWindowChan
               onClick={() => onWindowChange(w)}
               className="px-2.5 py-1 font-mono text-[10px] tracking-[0.18em] uppercase transition-colors"
               style={{
-                background: active ? 'var(--amber)' : 'transparent',
-                color:      active ? '#0A0F1C' : 'var(--text-secondary)',
+                background: active ? 'var(--primary)' : 'transparent',
+                color:      active ? 'var(--btn-primary-ink, #0A0F1C)' : 'var(--text-secondary)',
                 fontWeight: active ? 600 : 500,
               }}
             >
@@ -134,7 +134,7 @@ function Totals({ data, window }: { data: AiSpendPayload; window: Window }) {
   const w = data.windows[window];
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-      <Tile label="Total cost"    value={`$${w.cost_usd.toFixed(2)}`} accent="amber" />
+      <Tile label="Total cost"    value={`$${w.cost_usd.toFixed(2)}`} accent="primary" />
       <Tile label="Calls"         value={w.calls.toLocaleString()} />
       <Tile label="Input tokens"  value={formatBig(w.input_tokens)} />
       <Tile label="Output tokens" value={formatBig(w.output_tokens)} />
@@ -142,7 +142,7 @@ function Totals({ data, window }: { data: AiSpendPayload; window: Window }) {
   );
 }
 
-function Tile({ label, value, accent }: { label: string; value: string; accent?: 'amber' }) {
+function Tile({ label, value, accent }: { label: string; value: string; accent?: 'primary' }) {
   return (
     <Card variant="elevated" className="p-4">
       <div
@@ -153,7 +153,7 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
       </div>
       <div
         className="font-display text-2xl font-bold"
-        style={{ color: accent === 'amber' ? 'var(--amber)' : 'var(--text-primary)' }}
+        style={{ color: accent === 'primary' ? 'var(--primary)' : 'var(--text-primary)' }}
       >
         {value}
       </div>
@@ -188,8 +188,8 @@ function DailyChart({ data }: { data: AiSpendPayload }) {
           <BarChart data={chartData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="ai-spend-bar" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%"  stopColor="var(--amber)" stopOpacity={0.9} />
-                <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.4} />
+                <stop offset="0%"  stopColor="var(--primary)" stopOpacity={0.9} />
+                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.4} />
               </linearGradient>
             </defs>
             <XAxis
@@ -587,8 +587,8 @@ function CartographerTrend({ data }: { data: AiSpendPayload }) {
           <CartesianGrid strokeDasharray="2 3" stroke="var(--border-base)" vertical={false} />
           <defs>
             <linearGradient id="cart-cost-bar" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="var(--amber)" stopOpacity={0.9} />
-              <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.4} />
+              <stop offset="0%"   stopColor="var(--primary)" stopOpacity={0.9} />
+              <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.4} />
             </linearGradient>
           </defs>
           <XAxis

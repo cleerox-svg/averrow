@@ -109,7 +109,7 @@ function ClusterPanel({
         <button
           onClick={() => onSelect(null)}
           className="w-full text-left font-mono text-[10px] px-2 py-1 mb-1"
-          style={{ color: 'var(--amber-text)' }}
+          style={{ color: 'var(--primary-text)' }}
         >
           Clear filter
         </button>
@@ -270,7 +270,7 @@ function ProviderCard({
                 data={sparkData}
                 fill
                 height={36}
-                color={isProblemState ? 'var(--sev-high)' : 'var(--amber)'}
+                color={isProblemState ? 'var(--sev-high)' : 'var(--primary)'}
                 animate={false}
               />
             </div>
@@ -432,7 +432,7 @@ function ProviderDetailPanel({ providerId }: { providerId: string }) {
             )}
             {detail.abuse_contact.abuse_api_url && (
               <div className="flex items-start gap-2">
-                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--amber-text)' }} />
+                <Zap size={14} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--primary-text)' }} />
                 <div className="min-w-0 flex-1">
                   <div className="font-mono text-[9px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--text-muted)' }}>
                     API {detail.abuse_contact.abuse_api_type ? `· ${detail.abuse_contact.abuse_api_type}` : ''}
@@ -764,7 +764,7 @@ export function Providers() {
           label="Accelerating"
           value={intelValue(intelligence?.accelerating)}
           error={intelFailed}
-          accent="var(--amber)"
+          accent="var(--primary)"
           sub="7d trend > 30d average"
         />
         <StatTile

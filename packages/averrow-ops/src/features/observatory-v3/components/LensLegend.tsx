@@ -314,7 +314,7 @@ function BotShareSection({ bot }: { bot: LegendSectionProps['baseline']['bot'] }
           <div className={TEXT} style={{ color: 'var(--text-muted)' }}>
             Source: Cloudflare Radar{m.asOf ? ` · as of ${m.asOf}` : ''} · {m.rows.size} countries. ≥ / ≤ marks an estimate bound.
           </div>
-          <Link to={tabUrl('bot-traffic')} className={`${TEXT} underline`} style={{ color: 'var(--amber-text)' }}>View as table (Bot Traffic tab)</Link>
+          <Link to={tabUrl('bot-traffic')} className={`${TEXT} underline`} style={{ color: 'var(--link)' }}>View as table (Bot Traffic tab)</Link>
         </>
       )}
     </Section>

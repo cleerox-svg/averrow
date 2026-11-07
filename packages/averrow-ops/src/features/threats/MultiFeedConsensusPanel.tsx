@@ -90,7 +90,7 @@ export function MultiFeedConsensusPanel() {
                     <div className="mt-1 flex items-center gap-1 flex-wrap">
                       <span
                         className="text-[10px] font-mono font-bold mr-1"
-                        style={{ color: 'var(--amber-text)' }}
+                        style={{ color: 'var(--primary-text)' }}
                       >
                         {plural(r.feed_count, 'feed')}
                       </span>
@@ -110,7 +110,7 @@ export function MultiFeedConsensusPanel() {
               aria-expanded={showAll}
               aria-controls="multi-feed-consensus-list"
               className="ds-focusable mt-2 py-1.5 min-h-[24px] font-mono text-[10px] font-bold uppercase tracking-wider"
-              style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--amber-text)' }}
+              style={{ background: 'none', border: 0, cursor: 'pointer', color: 'var(--primary-text)' }}
             >
               {showAll ? 'Show fewer' : `Show all (${rows.length})`}
             </button>

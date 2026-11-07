@@ -63,7 +63,7 @@ function IntegrationCard({ it }: { it: IntegrationHealth }) {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {it.channel === 'api'
-                ? <Zap size={15} style={{ color: 'var(--amber-text)' }} />
+                ? <Zap size={15} style={{ color: 'var(--primary-text)' }} />
                 : <Send size={15} style={{ color: 'var(--text-secondary)' }} />}
               <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>{it.label}</span>
             </div>
@@ -155,9 +155,9 @@ export function Integrations() {
                 onClick={() => setHours(w.hours)}
                 style={{
                   padding: '5px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer',
-                  background: hours === w.hours ? 'var(--amber)' : 'transparent',
-                  color: hours === w.hours ? '#1a1205' : 'var(--text-secondary)',
-                  border: `1px solid ${hours === w.hours ? 'var(--amber)' : 'var(--bg-card)'}`,
+                  background: hours === w.hours ? 'var(--primary)' : 'transparent',
+                  color: hours === w.hours ? 'var(--btn-primary-ink, #1a1205)' : 'var(--text-secondary)',
+                  border: `1px solid ${hours === w.hours ? 'var(--primary)' : 'var(--bg-card)'}`,
                   fontWeight: hours === w.hours ? 600 : 400,
                 }}
               >

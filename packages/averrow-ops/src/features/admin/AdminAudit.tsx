@@ -84,11 +84,11 @@ function outcomeBadgeStyle(outcome: string): React.CSSProperties {
 
 function pillStyle(active: boolean): React.CSSProperties {
   return {
-    // A light amber tint (not --amber-glow) keeps --amber-text at AA on the
+    // A light primary tint (not --primary-glow) keeps --primary-text at AA on the
     // active pill in both themes.
-    background: active ? 'color-mix(in srgb, var(--amber) 10%, transparent)' : 'var(--bg-input)',
-    border:     `1px solid ${active ? 'var(--amber-border)' : 'var(--border-base)'}`,
-    color:      active ? 'var(--amber-text)' : 'var(--text-secondary)',
+    background: active ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'var(--bg-input)',
+    border:     `1px solid ${active ? 'color-mix(in srgb, var(--primary) 25%, transparent)' : 'var(--border-base)'}`,
+    color:      active ? 'var(--primary-text)' : 'var(--text-secondary)',
     transition: 'var(--transition-fast)',
   };
 }
@@ -463,7 +463,7 @@ export function AdminAudit() {
                         ? 'border-white/30'
                         : 'border-white/10 text-white/55'
                     }`}
-                    style={page === p ? { color: 'var(--amber-text)', borderColor: 'var(--amber)' } : undefined}
+                    style={page === p ? { color: 'var(--primary-text)', borderColor: 'var(--primary)' } : undefined}
                   >
                     {p}
                   </button>
@@ -505,7 +505,7 @@ function AuditRow({ entry, expanded, onToggle }: {
             aria-expanded={expanded}
             aria-controls={detailId}
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            className="font-mono text-[12px] whitespace-nowrap rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]"
+            className="font-mono text-[12px] whitespace-nowrap rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
             style={{ color: 'inherit' }}
           >
             {relativeTime(entry.timestamp)}

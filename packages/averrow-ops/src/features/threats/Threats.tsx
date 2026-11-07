@@ -237,7 +237,7 @@ export function Threats() {
             ? ([
                 status !== 'remediated'     && { label: 'Mark remediated', to: 'remediated',     color: 'var(--green-text)' },
                 status !== 'false_positive' && { label: 'False positive',  to: 'false_positive', color: 'var(--text-tertiary)' },
-                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--amber-text)' },
+                status !== 'active'         && { label: 'Re-open',         to: 'active',         color: 'var(--primary-text)' },
               ].filter(Boolean) as Array<{ label: string; to: string; color: string }>)
             : [];
           if (!brandId && !actorId && transitions.length === 0) return null;
@@ -300,7 +300,7 @@ function SliceSummaryStrip({ agg, hasFilters }: {
       <span style={{ color: 'var(--text-tertiary)' }}>{hasFilters ? 'In slice:' : 'Across catalog:'}</span>
       <Stat label="Confirmed"  value={`${agg.confirmed.toLocaleString()} (${confirmedPct}%)`}  tone="info" />
       <Stat label="Correlated" value={`${agg.correlated.toLocaleString()} (${correlatedPct}%)`} tone="info" />
-      <Stat label="Attributed" value={`${agg.attributed.toLocaleString()} (${attributedPct}%)`} tone="amber" />
+      <Stat label="Attributed" value={`${agg.attributed.toLocaleString()} (${attributedPct}%)`} tone="primary" />
       <Stat label="Addressed"  value={`${agg.addressed.toLocaleString()} (${addressedPct}%)`}  tone="ok" />
       {agg.new_24h > 0 && <Stat label="New 24h" value={agg.new_24h.toLocaleString()} tone="warn" />}
     </div>
@@ -308,9 +308,9 @@ function SliceSummaryStrip({ agg, hasFilters }: {
 }
 
 function Stat({ label, value, tone }: {
-  label: string; value: string; tone: 'info' | 'amber' | 'ok' | 'warn';
+  label: string; value: string; tone: 'info' | 'primary' | 'ok' | 'warn';
 }) {
-  const color = tone === 'amber' ? 'var(--amber)'
+  const color = tone === 'primary' ? 'var(--primary)'
     : tone === 'ok' ? 'var(--green)'
     : tone === 'warn' ? 'var(--sev-medium)'
     : 'var(--text-secondary)';
@@ -388,7 +388,7 @@ function Slicer({ label, value, onChange, options }: {
         onChange={(e) => onChange(e.target.value)}
         className="bg-transparent text-[11px] font-mono px-1 py-0.5 rounded"
         style={{
-          color: value ? 'var(--amber)' : 'var(--text-secondary)',
+          color: value ? 'var(--primary)' : 'var(--text-secondary)',
           border: '1px solid var(--border-base)',
           textTransform: 'none',
           letterSpacing: 0,
@@ -432,9 +432,9 @@ function ActiveFilterChips(props: {
         <span key={c.label}
           className="flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded"
           style={{
-            background: 'rgba(229,168,50,0.10)',
-            color: 'var(--amber-text)',
-            border: '1px solid rgba(229,168,50,0.30)',
+            background: 'color-mix(in srgb, var(--primary) 10%, transparent)',
+            color: 'var(--primary-text)',
+            border: '1px solid color-mix(in srgb, var(--primary) 30%, transparent)',
           }}>
           <span>{c.label}</span>
           <button onClick={c.onClear}

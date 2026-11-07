@@ -230,7 +230,7 @@ function Note({ children, tone = 'muted' }: { children: ReactNode; tone?: 'muted
   );
 }
 
-function Bar({ value, color = 'var(--amber)', label }: { value: number; color?: string; label: string }) {
+function Bar({ value, color = 'var(--primary)', label }: { value: number; color?: string; label: string }) {
   const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
   return (
     <div role="img" aria-label={`${label}: ${pct}%`} className="h-1.5 rounded-full overflow-hidden" style={{ background: 'color-mix(in srgb, var(--text-primary) 10%, transparent)' }}>
@@ -322,7 +322,7 @@ function ArcBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'arc' }>; on
         cta={cc ? { label: `Open ${countryName(cc)}`, onClick: () => onSelect({ kind: 'country', code: cc }) } : null}
       />
       <Section>
-        {a.brand_name && <KV k="Target"><span style={{ color: 'var(--amber-text)' }}>{a.brand_name}</span></KV>}
+        {a.brand_name && <KV k="Target"><span style={{ color: 'var(--primary-text)' }}>{a.brand_name}</span></KV>}
         <KV k="From">{a.source_region || 'unknown'}</KV>
         <KV k="Severity"><span className="uppercase" style={{ color: sevText(a.severity) }}>{a.severity}</span></KV>
       </Section>
@@ -471,7 +471,7 @@ function OperationBody({ t, data, onSelect }: { t: Extract<DrillTarget, { kind: 
         {op.last_movement_pivot_at && <KV k="Last moved">{fmtDate(op.last_movement_pivot_at)}</KV>}
         <KV k="Actor">
           {op.actor
-            ? <button type="button" className="ds-focusable" onClick={() => onSelect({ kind: 'actor', id: op.actor!.id, name: op.actor!.name })} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit' }}>{op.actor.name}</button>
+            ? <button type="button" className="ds-focusable" onClick={() => onSelect({ kind: 'actor', id: op.actor!.id, name: op.actor!.name })} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary-text)', cursor: 'pointer', font: 'inherit' }}>{op.actor.name}</button>
             : 'unattributed'}
         </KV>
       </Section>
@@ -526,7 +526,7 @@ function ProviderBody({ t, data, onSelect, canSeeTakedowns }: { t: Extract<Drill
         {p.asn && <KV k="ASN">{p.asn}</KV>}
         {cc && (
           <KV k="Country">
-            <button type="button" className="ds-focusable" onClick={() => onSelect({ kind: 'country', code: cc })} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit' }}>{countryName(cc)}</button>
+            <button type="button" className="ds-focusable" onClick={() => onSelect({ kind: 'country', code: cc })} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--primary-text)', cursor: 'pointer', font: 'inherit' }}>{countryName(cc)}</button>
           </KV>
         )}
         <KV k="All-time">{num(p.total_threat_count)}</KV>
@@ -565,7 +565,7 @@ function ActorBody({ t, onSelect }: { t: Extract<DrillTarget, { kind: 'actor' }>
       <div role="alert">
         <Note tone="warn">{missing ? 'This actor no longer exists.' : 'The actor could not be loaded.'}</Note>
         {!missing && (
-          <button type="button" onClick={() => void q.refetch()} className={cn('ds-focusable mt-2', CHIP)} style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
+          <button type="button" onClick={() => void q.refetch()} className={cn('ds-focusable mt-2', CHIP)} style={{ background: 'none', border: 'none', color: 'var(--primary-text)', cursor: 'pointer', padding: 0 }}>Retry</button>
         )}
       </div>
     );

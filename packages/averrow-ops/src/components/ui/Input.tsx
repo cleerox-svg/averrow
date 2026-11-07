@@ -16,8 +16,8 @@ export function Input({ className, ...props }: InputProps) {
         width: '100%',
       }}
       onFocus={e => {
-        e.currentTarget.style.borderColor = 'var(--amber-border)';
-        e.currentTarget.style.boxShadow = '0 0 0 2px var(--amber-glow)';
+        e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--primary) 25%, transparent)';
+        e.currentTarget.style.boxShadow = '0 0 0 2px var(--primary-glow)';
       }}
       onBlur={e => {
         e.currentTarget.style.borderColor = 'var(--border-base)';

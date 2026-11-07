@@ -42,7 +42,7 @@ const AvatarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
         type="button"
         aria-label={`Account menu for ${name}`}
         aria-haspopup="menu"
-        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-[var(--amber)] touch-target"
+        className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] touch-target"
         {...rest}
       >
         <Avatar name={name} initials={initials} tone="self" size={36} radius={18} />
@@ -91,7 +91,7 @@ export function UserAvatar() {
                 role="img"
                 title="No passkey"
                 aria-label="No passkey"
-                className="inline-flex h-5 w-5 items-center justify-center text-[var(--amber-text,var(--amber))]"
+                className="inline-flex h-5 w-5 items-center justify-center text-[var(--primary-text)]"
               >
                 <ShieldAlert aria-hidden="true" className="h-[18px] w-[18px]" />
               </span>

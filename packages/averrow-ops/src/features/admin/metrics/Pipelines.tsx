@@ -296,8 +296,8 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
                 <AreaChart data={sparkData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id={`pipeline-spark-${detail.id}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="var(--amber)" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
+                      <stop offset="5%"  stopColor="var(--primary)" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis
@@ -323,7 +323,7 @@ function PipelineDetailPanelV3({ pipelineId }: { pipelineId: string }) {
                   <Area
                     type="monotone"
                     dataKey="v"
-                    stroke="var(--amber)"
+                    stroke="var(--primary)"
                     strokeWidth={1.5}
                     fill={`url(#pipeline-spark-${detail.id})`}
                     name="Backlog"

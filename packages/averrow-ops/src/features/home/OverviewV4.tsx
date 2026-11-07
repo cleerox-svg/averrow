@@ -65,7 +65,7 @@ function Hero({ queue }: { queue: HomeQueue }) {
           <h1 className="console-title">{greeting}, {name}</h1>
           {parts && (
             <p className="home-hero-sub" aria-live="polite">
-              {parts.count && <strong style={{ color: 'var(--amber-text)' }}>{parts.count}</strong>}
+              {parts.count && <strong style={{ color: 'var(--primary-text)' }}>{parts.count}</strong>}
               {parts.text}
             </p>
           )}

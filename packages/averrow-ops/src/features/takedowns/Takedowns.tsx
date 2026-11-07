@@ -248,7 +248,7 @@ function TakedownCard({
               to={`/brands/${takedown.brand_id}`}
               onClick={(e) => e.stopPropagation()}
               style={{ color: 'var(--text-muted)' }}
-              className="hover:text-[var(--amber-text)] transition-colors"
+              className="hover:text-[var(--primary-text)] transition-colors"
             >
               {takedown.brand_name} ↗
             </Link>
@@ -465,6 +465,7 @@ function ProspectBrandCard({ group }: { group: ProspectGroup }) {
           rather than a change to the shared component. */}
       <Link
         to={`/brands/${group.brand_id}?tab=risk`}
+        className="ds-btn-primary"
         style={{
           display:        'flex',
           alignItems:     'center',
@@ -480,15 +481,15 @@ function ProspectBrandCard({ group }: { group: ProspectGroup }) {
           outline:        'none',
           transition:     'var(--transition-fast)',
           userSelect:     'none',
-          background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
-          border:     '1px solid rgba(229, 168, 50, 0.60)',
-          color:      '#000',
-          boxShadow: [
-            '0 4px 16px var(--amber-glow)',
+          background: 'var(--btn-primary-bg, linear-gradient(135deg, var(--primary), var(--primary-pressed)))',
+          border:     '1px solid var(--btn-primary-border, color-mix(in srgb, var(--primary) 60%, transparent))',
+          color:      'var(--btn-primary-ink, #000)',
+          boxShadow: `var(--btn-primary-shadow, ${[
+            '0 4px 16px var(--primary-glow)',
             '0 2px 4px rgba(0, 0, 0, 0.40)',
             'inset 0 1px 0 rgba(255, 255, 255, 0.30)',
             'inset 0 -1px 0 rgba(0, 0, 0, 0.20)',
-          ].join(', '),
+          ].join(', ')})`,
           fontSize:     10,
           padding:      '6px 14px',
           borderRadius: 8,
@@ -620,7 +621,7 @@ function TakedownNotes({ takedown, onSave, isUpdating, onDirtyChange }: {
           placeholder="Add internal notes..."
           rows={3}
           maxLength={4000}
-          className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--amber-border)] resize-none font-mono"
+          className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] resize-none font-mono"
           style={{ color: 'var(--text-primary)' }}
         />
         {dirty && (
@@ -936,7 +937,7 @@ export function Takedowns() {
         <>
           {/* ─── PROSPECT STAT CARDS ─────────────────── */}
           <StatGrid cols={4}>
-            <StatTile label="Brands"          value={statValue(prospectStats.brands)} error={listFailed}        accent="var(--amber)" />
+            <StatTile label="Brands"          value={statValue(prospectStats.brands)} error={listFailed}        accent="var(--primary)" />
             <StatTile label="Total drafts"    value={statValue(stats.total)} error={listFailed}                 accent="var(--blue)" />
             <StatTile label="High/critical"   value={statValue(prospectStats.highSeverity)} error={listFailed}  accent="var(--red)" />
             <StatTile label="Evidence points" value={statValue(prospectStats.evidenceTotal)} error={listFailed} accent="var(--green)" />
@@ -988,7 +989,7 @@ export function Takedowns() {
         <>
           {/* ─── STAT CARDS ──────────────────────────── */}
           <StatGrid cols={4}>
-            <StatTile label="Total takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--amber)" />
+            <StatTile label="Total takedowns" value={statValue(stats.total)} error={listFailed}     accent="var(--primary)" />
             <StatTile label="Pending review"  value={statValue(stats.draft)} error={listFailed}     accent="var(--sev-high)" />
             <StatTile label="Submitted"       value={statValue(stats.submitted)} error={listFailed} accent="var(--blue)" />
             <StatTile label="Resolved"        value={statValue(stats.resolved)} error={listFailed}  accent="var(--green)" />

@@ -328,8 +328,8 @@ function AddBrandModal({ open, onClose }: { open: boolean; onClose: () => void }
           <button
             onClick={handleSubmit}
             disabled={addBrand.isPending}
-            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors disabled:opacity-50"
-            style={{ color: 'var(--amber-text)' }}
+            className="font-mono text-[11px] font-semibold uppercase tracking-wider px-4 py-2 rounded-lg border border-primary/30 hover:bg-primary-tint transition-colors disabled:opacity-50"
+            style={{ color: 'var(--primary-text)' }}
           >
             {addBrand.isPending ? 'Adding...' : 'Monitor Brand'}
           </button>
@@ -695,8 +695,8 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
       <div className="flex justify-end mb-3">
         <button
           onClick={() => setModalOpen(true)}
-          className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-afterburner-border hover:bg-afterburner-muted transition-colors whitespace-nowrap"
-          style={{ color: 'var(--amber-text)' }}
+          className="font-mono text-[11px] font-semibold uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg border border-primary/30 hover:bg-primary-tint transition-colors whitespace-nowrap"
+          style={{ color: 'var(--primary-text)' }}
         >
           <span className="hidden sm:inline">+ Monitor Brand</span>
           <span className="sm:hidden">+ Brand</span>
@@ -748,7 +748,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                       className={cn(
                         'px-3 py-1.5 text-[10px] font-mono tracking-wider capitalize rounded-lg border transition-colors whitespace-nowrap',
                         activeTab === tab
-                          ? 'text-[var(--amber-text)] border-afterburner-border bg-afterburner-muted'
+                          ? 'text-[var(--primary-text)] border-primary/30 bg-primary-tint'
                           : 'text-white/55 border-white/10 hover:text-white/70'
                       )}
                     >
@@ -823,7 +823,7 @@ export function BrandsGrid({ initialQuery = '' }: { initialQuery?: string }) {
                         className={cn(
                           'font-mono text-[11px] px-2.5 py-1 rounded border transition-colors',
                           page === p
-                            ? 'border-afterburner text-[var(--amber-text)]'
+                            ? 'border-primary text-[var(--primary-text)]'
                             : 'border-white/10 text-white/55 hover:text-[var(--text-primary)]',
                         )}
                       >

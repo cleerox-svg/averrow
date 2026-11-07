@@ -88,9 +88,9 @@ function RailButton({ item, layout }: { item: Item; layout: 'rail' | 'panel' }) 
           panel ? 'w-full min-h-[44px] gap-1.5 px-2 py-1 font-mono text-[11px]' : 'w-9 h-9',
         )}
         style={{
-          background: item.pressed ? 'color-mix(in srgb, var(--amber) 14%, transparent)' : 'transparent',
-          border: `1px solid ${item.pressed ? 'var(--amber-border)' : panel ? 'var(--border-base)' : 'transparent'}`,
-          color: item.pressed ? 'var(--amber-text)' : 'var(--text-secondary)',
+          background: item.pressed ? 'color-mix(in srgb, var(--primary) 14%, transparent)' : 'transparent',
+          border: `1px solid ${item.pressed ? 'color-mix(in srgb, var(--primary) 25%, transparent)' : panel ? 'var(--border-base)' : 'transparent'}`,
+          color: item.pressed ? 'var(--primary-text)' : 'var(--text-secondary)',
         }}
       >
         {item.icon}

@@ -170,7 +170,7 @@ export function CampaignDetail() {
       {/* ─── Back link ─────────────────────────────────────── */}
       <button
         onClick={backToList}
-        className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber-text)]"
+        className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--primary-text)]"
         style={{ color: 'var(--text-tertiary)' }}
       >
         <ArrowLeft size={12} /> Back to Operations
@@ -224,7 +224,7 @@ export function CampaignDetail() {
         {/* Metric tiles row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
           <MetricTile label="Threats" value={campaign.threat_count} color={accent} glow />
-          <MetricTile label="Brands" value={campaign.brand_count} color="var(--amber)" glow />
+          <MetricTile label="Brands" value={campaign.brand_count} color="var(--primary)" glow />
           <MetricTile label="Providers" value={campaign.provider_count} color="var(--blue)" glow />
           <MetricTile label="Domains" value={campaign.domain_count} color="var(--text-secondary)" />
         </div>

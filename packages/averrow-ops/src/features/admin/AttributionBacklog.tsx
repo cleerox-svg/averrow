@@ -51,7 +51,7 @@ function ClusterRow({
           type="button"
           onClick={(e) => { e.stopPropagation(); onSelect(); }}
           aria-label={`Open cluster ${cluster.cluster_name || cluster.id.slice(0, 12)}`}
-          className="text-left font-mono text-[11px] rounded hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber-text)]"
+          className="text-left font-mono text-[11px] rounded hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
         >
           {cluster.cluster_name || cluster.id.slice(0, 12)}
         </button>
@@ -111,7 +111,7 @@ function ClusterRow({
             aria-controls={`attribute-picker-${cluster.id}`}
             disabled={busy}
             className="font-mono text-[10px] uppercase tracking-wider px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
-            style={{ color: 'var(--amber-text)', background: 'rgba(0,0,0,0.30)', border: '1px solid rgba(229,168,50,0.35)' }}
+            style={{ color: 'var(--primary-text)', background: 'rgba(0,0,0,0.30)', border: '1px solid color-mix(in srgb, var(--primary) 35%, transparent)' }}
           >
             {pickerOpen ? 'Close' : 'Attribute'}
           </button>
@@ -194,7 +194,7 @@ function AttributePickerRow({ cluster, onDone }: {
                     onClick={() => pick(a)}
                     disabled={attribute.isPending}
                     className="font-mono text-[11px] px-2.5 py-1 rounded-md transition-colors disabled:opacity-40"
-                    style={{ color: 'var(--text-primary)', background: 'rgba(229,168,50,0.08)', border: '1px solid rgba(229,168,50,0.30)' }}
+                    style={{ color: 'var(--text-primary)', background: 'color-mix(in srgb, var(--primary) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--primary) 30%, transparent)' }}
                   >
                     {a.name}
                     {a.country && <span style={{ color: 'var(--text-tertiary)' }}> · {a.country}</span>}

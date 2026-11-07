@@ -84,8 +84,8 @@ export function ProjectionToggle({ projection, flatOnly = false, onToggle, touch
           width: showLabel ? 'auto' : size, minWidth: size, height: size, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           gap: showLabel ? 6 : 0, padding: showLabel ? '0 8px' : undefined,
           opacity: flatOnly ? 0.45 : 1, cursor: flatOnly ? 'not-allowed' : 'pointer',
-          // pressed = the globe is on: MapLibre's control chrome with the console's amber for the on state
-          color: globe && !flatOnly ? 'var(--amber-dim, #B8821F)' : '#333',
+          // pressed = the globe is on: MapLibre's control chrome with the console's primary for the on state
+          color: globe && !flatOnly ? 'var(--primary-pressed, #B8821F)' : '#333',
         }}
       >
         {globe ? <MapIcon size={touch ? 18 : 16} aria-hidden /> : <Globe2 size={touch ? 18 : 16} aria-hidden />}

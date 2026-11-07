@@ -246,7 +246,7 @@ function PillGroup({ label, options, selected, onChange }: PillGroupProps) {
           className={cn(
             'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all',
             selected === o.value
-              ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
+              ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
               : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
           )}
         >
@@ -350,7 +350,7 @@ function BrandGroupCard({
                   severity={sev}
                   unread={alert.status === 'new'}
                   onClick={() => onSelectAlert(alert)}
-                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--amber-glow)]')}
+                  className={cn('flex items-center gap-3', isSelected && 'bg-[var(--primary-glow)]')}
                 >
                   {/* Severity dot — uses the shared design-system
                       primitive so the dot color + pulse semantics
@@ -494,7 +494,7 @@ function BrandGroupCard({
               {remaining > 0 && !showAll && (
                 <button
                   onClick={() => setShowAll(true)}
-                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--amber-text)' }}
+                  className="font-mono text-[10px] font-semibold hover:opacity-80 transition-colors" style={{ color: 'var(--primary-text)' }}
                 >
                   + {remaining} more
                 </button>
@@ -522,7 +522,7 @@ function BrandGroupCard({
                 <button
                   onClick={onAcknowledgeAll}
                   disabled={bulkBusy}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
                 >
                   {bulk?.kind === 'ack' ? bulk.text : 'Acknowledge All'}
                 </button>
@@ -574,7 +574,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
       tabIndex={-1}
       variant="active"
       style={{ padding: '20px', marginTop: 4 }}
-      className="outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--amber)]"
+      className="outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
       data-testid="alert-detail"
     >
       {/* Header */}
@@ -623,7 +623,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               alt=""
               className="w-4 h-4 rounded-sm"
             />
-            <span className="font-display text-sm font-bold group-hover:text-[var(--amber-text)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
+            <span className="font-display text-sm font-bold group-hover:text-[var(--primary-text)] transition-colors" style={{ color: 'var(--text-primary)' }}>{alert.brand_name ?? 'Unknown'}</span>
             <span className="font-mono text-[10px] text-[var(--text-secondary)]">{alert.brand_domain ?? ''}</span>
           </Link>
 
@@ -634,14 +634,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
             {alert.source_type === 'threat' && alert.source_id && (
               <Link
                 to={`/console?tab=threats&q=${encodeURIComponent(alert.source_id)}`}
-                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
+                className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--primary-text)] transition-colors"
               >
                 View source threat →
               </Link>
             )}
             <Link
               to={`/console?tab=threats&brand_id=${encodeURIComponent(alert.brand_id)}`}
-              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--amber-text)] transition-colors"
+              className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--text-tertiary)] hover:text-[var(--primary-text)] transition-colors"
             >
               View brand's threats →
             </Link>
@@ -767,7 +767,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => currentUserId && onAssign(currentUserId)}
                   disabled={isAssigning || !currentUserId}
-                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50 flex-shrink-0"
+                  className="font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50 flex-shrink-0"
                 >
                   {alert.staff_assigned_to ? 'Take over' : 'Assign to me'}
                 </button>
@@ -789,7 +789,7 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
                 <button
                   onClick={() => onUpdate('acknowledged')}
                   disabled={isUpdating}
-                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[var(--amber-border)] text-[var(--amber-text)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                  className="w-full font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-2 rounded-md border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
                 >
                   Acknowledge
                 </button>
@@ -854,14 +854,14 @@ function AlertDetail({ alert, currentUserId, onClose, onUpdate, onAssign, isUpda
               readOnly={!canEdit}
               aria-describedby={canEdit ? undefined : `alert-readonly-${alert.id}`}
               rows={3}
-              className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--amber-border)] resize-none font-mono" style={{ color: 'var(--text-primary)' }}
+              className="w-full rounded-md bg-white/[0.04] border border-white/[0.08] px-3 py-2 text-[11px] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] resize-none font-mono" style={{ color: 'var(--text-primary)' }}
             />
             )}
             {canEdit && notes !== (alert.staff_notes ?? '') && (
               <button
                 onClick={() => onUpdate(alert.status, notes.trim() ? notes : null)}
                 disabled={isUpdating}
-                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--amber-glow)] text-[var(--amber-text)] border border-[var(--amber-border)] hover:bg-[var(--amber-glow)] transition-all disabled:opacity-50"
+                className="mt-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide px-3 py-1.5 rounded-md bg-[var(--primary-glow)] text-[var(--primary-text)] border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] hover:bg-[var(--primary-glow)] transition-all disabled:opacity-50"
               >
                 Save Notes
               </button>
@@ -1291,7 +1291,7 @@ export function Alerts() {
               className={cn(
                 'group inline-flex items-center gap-1 font-mono text-[10px] font-semibold px-2.5 py-1 rounded-md border transition-all cursor-pointer',
                 active
-                  ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
+                  ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
                   : 'bg-white/[0.03] text-[var(--text-tertiary)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-secondary)]',
               )}
               onClick={() => applyView(v.filters)}
@@ -1416,7 +1416,7 @@ export function Alerts() {
             className={cn(
               'font-mono text-[10px] font-semibold uppercase tracking-wide px-2.5 py-1 rounded-md border transition-all disabled:opacity-30',
               mineOnly
-                ? 'bg-afterburner-muted text-[var(--amber-text)] border-afterburner-border'
+                ? 'bg-primary-tint text-[var(--primary-text)] border-primary/30'
                 : 'bg-white/[0.03] text-[var(--text-muted)] border-white/[0.06] hover:border-white/15 hover:text-[var(--text-tertiary)]',
             )}
             title="Show only signals assigned to me"

@@ -363,8 +363,8 @@ function WindowToggle({ value, onChange }: { value: Window; onChange: (v: Window
               border: 'none',
               cursor: 'pointer',
               borderRadius: 6,
-              color: active ? 'var(--bg-page)' : 'var(--text-secondary)',
-              background: active ? 'var(--amber)' : 'transparent',
+              color: active ? 'var(--btn-primary-ink, var(--bg-page))' : 'var(--text-secondary)',
+              background: active ? 'var(--primary)' : 'transparent',
               transition: 'background 0.15s ease, color 0.15s ease',
             }}
           >

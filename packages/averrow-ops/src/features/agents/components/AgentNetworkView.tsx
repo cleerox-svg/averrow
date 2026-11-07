@@ -24,14 +24,14 @@
 // at this density they're the most useful affordance.
 //
 // Live signal:
-//   - Pulsing amber edge: upstream agent ran in last 10 min
+//   - Pulsing primary edge: upstream agent ran in last 10 min
 //   - Comm burst (particle traveling along edge): upstream AND
 //     downstream both ran within the last 60s — implies recent
 //     event hand-off
 //   - Running pulse (animated halo around node): agent's last_run_at
 //     is within 60s
 //   - Failure ring (red): circuit_state='tripped' OR last_run_status='failed'
-//   - Selection halo: animated amber halo around selected node
+//   - Selection halo: animated primary halo around selected node
 //
 // All visuals are pure SVG with CSS-var colors → flips with theme.
 
@@ -565,7 +565,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
             markerWidth="6" markerHeight="6"
             orient="auto-start-reverse"
           >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--amber)" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--primary)" />
           </marker>
         </defs>
 
@@ -638,7 +638,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
             <g key={`feed-edge-${feed.feed_name}`} opacity={opacity}>
               <line
                 x1={x1} y1={y1} x2={x2} y2={y2}
-                stroke={pulsing ? 'var(--amber)' : 'var(--text-tertiary)'}
+                stroke={pulsing ? 'var(--primary)' : 'var(--text-tertiary)'}
                 strokeWidth={pulsing ? 1.6 : 0.9}
                 strokeDasharray={pulsing ? undefined : '2 3'}
                 markerEnd={pulsing ? 'url(#arrow-amber)' : 'url(#arrow)'}
@@ -646,7 +646,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               {pulsing && (
                 <line
                   x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke="var(--amber)"
+                  stroke="var(--primary)"
                   strokeWidth={5}
                   strokeLinecap="round"
                   opacity={0.20}
@@ -660,7 +660,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 </line>
               )}
               {bursting && (
-                <circle r={3} fill="var(--amber)">
+                <circle r={3} fill="var(--primary)">
                   <animateMotion
                     dur="1.4s"
                     repeatCount="indefinite"
@@ -793,7 +793,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               <path
                 id={pathId}
                 d={`M ${x1} ${y1} L ${x2} ${y2}`}
-                stroke={pulsing ? 'var(--amber)' : 'var(--text-tertiary)'}
+                stroke={pulsing ? 'var(--primary)' : 'var(--text-tertiary)'}
                 strokeWidth={pulsing ? 2 : 1.4}
                 fill="none"
                 markerEnd={pulsing ? 'url(#arrow-amber)' : 'url(#arrow)'}
@@ -801,7 +801,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               {pulsing && (
                 <line
                   x1={x1} y1={y1} x2={x2} y2={y2}
-                  stroke="var(--amber)"
+                  stroke="var(--primary)"
                   strokeWidth={6}
                   strokeLinecap="round"
                   opacity={0.25}
@@ -815,7 +815,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
                 </line>
               )}
               {bursting && (
-                <circle r={4} fill="var(--amber)">
+                <circle r={4} fill="var(--primary)">
                   <animateMotion
                     dur="1.4s"
                     repeatCount="indefinite"
@@ -843,7 +843,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           const isSupervisor = name === 'flight_control';
           const failing = agent?.circuit_state === 'tripped' || agent?.last_run_status === 'failed';
           const running = ranWithin(name, RUNNING_WINDOW_MS);
-          const tint    = isSupervisor ? 'var(--amber)' : (meta?.color ?? 'var(--blue)');
+          const tint    = isSupervisor ? 'var(--primary)' : (meta?.color ?? 'var(--blue)');
           return (
             <g
               key={name}
@@ -852,12 +852,12 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
               style={{ cursor: 'pointer' }}
               onClick={() => handleNodeClick(name)}
             >
-              {/* Selection halo (animated amber) */}
+              {/* Selection halo (animated primary) */}
               {isSel && (
                 <circle
                   r={NODE_R + 8}
                   fill="none"
-                  stroke="var(--amber)"
+                  stroke="var(--primary)"
                   strokeWidth={2}
                   opacity={0.7}
                 >
@@ -947,7 +947,7 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
       </svg>
       <div className="flex items-center gap-4 mt-2 font-mono text-[9px] tracking-wide uppercase flex-wrap" style={{ color: 'var(--text-tertiary)' }}>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--amber)' }} />
+          <span className="inline-block w-3 h-3 rounded-full" style={{ background: 'var(--primary)' }} />
           Supervisor
         </span>
         <span className="flex items-center gap-1.5">
@@ -959,15 +959,15 @@ export function AgentNetworkView({ agents, selectedAgent, onSelect }: AgentNetwo
           Trigger edge
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-6 h-0.5 rounded" style={{ background: 'var(--amber)' }} />
+          <span className="inline-block w-6 h-0.5 rounded" style={{ background: 'var(--primary)' }} />
           In flight (last 10m)
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--amber)' }} />
+          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--primary)' }} />
           Comm burst (both ran ≤ 60s)
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--amber)' }} />
+          <span className="inline-block w-3 h-3 rounded-full border-2" style={{ borderColor: 'var(--primary)' }} />
           Running now (≤ 60s)
         </span>
         <span className="flex items-center gap-1.5">

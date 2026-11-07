@@ -228,7 +228,7 @@ export function ReplayTimeline({
         style={{
           width: isMobile ? 44 : 32, height: isMobile ? 44 : 32,
           background: 'var(--bg-card)', border: '1px solid var(--border-base)',
-          color: reducedMotion ? 'var(--text-muted)' : 'var(--amber-text)',
+          color: reducedMotion ? 'var(--text-muted)' : 'var(--primary-text)',
           cursor: reducedMotion ? 'not-allowed' : 'pointer', opacity: reducedMotion ? 0.55 : 1,
         }}
         onClickCapture={e => { if (reducedMotion) { e.preventDefault(); e.stopPropagation(); } }}
@@ -246,8 +246,8 @@ export function ReplayTimeline({
               onClick={() => onSpeed(s)}
               className="ds-focusable font-mono text-[10px] px-2 min-h-[30px]"
               style={{
-                background: speed === s ? 'color-mix(in srgb, var(--amber) 15%, transparent)' : 'transparent',
-                color: speed === s ? 'var(--amber-text)' : 'var(--text-tertiary)',
+                background: speed === s ? 'color-mix(in srgb, var(--primary) 15%, transparent)' : 'transparent',
+                color: speed === s ? 'var(--primary-text)' : 'var(--text-tertiary)',
                 border: 'none', cursor: 'pointer',
               }}
             >
@@ -295,7 +295,7 @@ export function ReplayTimeline({
               ref={headRef}
               aria-hidden
               className="absolute top-0 bottom-0 left-0 pointer-events-none"
-              style={{ width: 2, marginLeft: -1, background: 'var(--amber)', boxShadow: '0 0 6px var(--amber)', willChange: 'transform' }}
+              style={{ width: 2, marginLeft: -1, background: 'var(--primary)', boxShadow: '0 0 6px var(--primary)', willChange: 'transform' }}
             />}
           </div>
           {(isLoading || error || empty || !hist) && (
@@ -303,7 +303,7 @@ export function ReplayTimeline({
               {error ? (
                 <span role="alert" className="pointer-events-auto">
                   Timeline unavailable{' '}
-                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--amber-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
+                  <button type="button" onClick={e => { e.stopPropagation(); onRetry(); }} className="ds-focusable" style={{ background: 'none', border: 'none', color: 'var(--primary-text)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Retry</button>
                 </span>
               ) : isLoading ? <span role="status">Loading timeline…</span>
                 : empty ? <span role="status">{velocity ? 'Coverage still filling: no fast-weaponized threats counted yet' : 'No activity in this period'}</span>
@@ -317,7 +317,7 @@ export function ReplayTimeline({
             ? <span style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
               {hist && !empty ? <><span style={{ color: VELOCITY_RGB }}>■</span> very fast (≤ 24h) <span style={{ opacity: 0.6, color: VELOCITY_RGB }}>■</span> fast (≤ 72h)</> : null}
             </span>
-            : <span ref={readoutRef} aria-hidden style={{ color: 'var(--amber-text)', minWidth: 0 }} />}
+            : <span ref={readoutRef} aria-hidden style={{ color: 'var(--primary-text)', minWidth: 0 }} />}
           {!isMobile && (
             <span className="truncate">
               {hist ? `${formatPlayheadTime(hist.startMs, hist.bucketMs)} – ${formatPlayheadTime(hist.endMs, hist.bucketMs)}` : subtitle}

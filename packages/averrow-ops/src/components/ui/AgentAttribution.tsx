@@ -11,7 +11,7 @@ export function AgentAttribution({ agent, lastRun, outputCount }: AgentAttributi
 
   return (
     <div className="flex items-center gap-1.5 text-white/55 text-[10px] font-mono">
-      <span className="w-1 h-1 rounded-full bg-amber-500/40" />
+      <span className="w-1 h-1 rounded-full bg-amber-500/40 ops-accent-dot-40" />
       <span>
         Powered by {agent}
         {timeLabel && ` · ${timeLabel}`}

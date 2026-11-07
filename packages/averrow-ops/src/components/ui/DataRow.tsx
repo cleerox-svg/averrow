@@ -1,6 +1,6 @@
 // Averrow Design System — DataRow v1.0
 // Shared clickable row for all tables and lists platform-wide.
-// Built-in: hover amber left border, severity-aware hover, unread state.
+// Built-in: hover primary left border, severity-aware hover, unread state.
 // Replaces all inline div/tr row implementations.
 
 import React from 'react';
@@ -42,8 +42,8 @@ export function DataRow({
   style     = {},
   as        = 'div',
 }: DataRowProps) {
-  const dotColor = severity ? SEV_COLORS[severity] : 'var(--amber)';
-  const bgColor  = severity ? SEV_BG[severity] : 'var(--amber-glow)';
+  const dotColor = severity ? SEV_COLORS[severity] : 'var(--primary)';
+  const bgColor  = severity ? SEV_BG[severity] : 'var(--primary-glow)';
 
   const baseStyle: React.CSSProperties = {
     borderLeft:  `2px solid ${unread ? dotColor : 'transparent'}`,

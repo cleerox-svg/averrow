@@ -129,7 +129,7 @@ export function PlatformStatusFlyout() {
           textAlign: 'left',
           transition: 'border-color 0.15s ease, transform 0.05s ease',
         }}
-        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'rgba(229,168,50,0.20)')}
+        onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--primary) 20%, transparent)')}
         onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border-base, var(--border-base))')}
       >
         <PlatformStatusBadge variant="prominent" />
@@ -215,7 +215,7 @@ export function PlatformStatusFlyout() {
               borderTop: '1px solid var(--border-base)',
               fontFamily: 'var(--font-mono)', fontSize: 10,
               fontWeight: 700, letterSpacing: '0.10em',
-              color: 'var(--amber-text)', textDecoration: 'none',
+              color: 'var(--link)', textDecoration: 'none',
               textTransform: 'uppercase', textAlign: 'center',
             }}
           >

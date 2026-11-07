@@ -206,9 +206,9 @@ export function BrandDetailV3() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-shrink-0 px-4 py-3 text-xs font-bold transition-all border-b-2 ${
-                activeTab === tab.id ? 'border-[var(--amber)] text-[var(--amber-text)]' : 'border-transparent text-white/55 hover:text-white/70'
+                activeTab === tab.id ? 'border-[var(--primary)] text-[var(--primary-text)]' : 'border-transparent text-white/55 hover:text-white/70'
               }`}
-              style={activeTab === tab.id ? { textShadow: '0 0 10px rgba(229,168,50,0.60)' } : undefined}
+              style={activeTab === tab.id ? { textShadow: '0 0 10px color-mix(in srgb, var(--primary) 60%, transparent)' } : undefined}
               title={tab.hint}
             >
               {tab.label}
@@ -453,7 +453,7 @@ function ThreatsTab({ brandId }: { brandId: string }) {
           </div>
           <Link
             to={tabUrl('threats', { brand_id: brandId })}
-            className="text-[11px] font-mono text-[var(--amber-text)] hover:underline"
+            className="text-[11px] font-mono text-[var(--primary-text)] hover:underline"
           >
             Open in Threats →
           </Link>
@@ -521,7 +521,7 @@ function SignalsTab({ signals, brandId }: { signals: any[]; brandId: string }) {
           </div>
           <Link
             to={tabUrl('alerts', { brand_id: brandId })}
-            className="text-[11px] font-mono text-[var(--amber-text)] hover:underline"
+            className="text-[11px] font-mono text-[var(--primary-text)] hover:underline"
           >
             Open in Alerts →
           </Link>
@@ -596,7 +596,7 @@ function SignalFilterRow({
           onClick={() => onChange(opt.key)}
           className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase tracking-wider border transition-colors ${
             value === opt.key
-              ? 'bg-[var(--amber-glow)] text-[var(--amber-text)] border-[var(--amber-border)]'
+              ? 'bg-[var(--primary-glow)] text-[var(--primary-text)] border-[color-mix(in_srgb,var(--primary)_25%,transparent)]'
               : 'bg-white/[0.04] text-white/55 border-white/[0.08] hover:text-white/85'
           }`}
         >
@@ -843,7 +843,7 @@ function AttackInfraSection({ providers, campaigns }: {
                     <Badge status={active ? 'active' : 'inactive'} label={active ? 'Active' : 'Dormant'} size="xs" pulse={active} />
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="font-mono text-xs font-bold text-[var(--amber-text)]">{(c.threat_count ?? 0).toLocaleString()}</span>
+                    <span className="font-mono text-xs font-bold text-[var(--primary-text)]">{(c.threat_count ?? 0).toLocaleString()}</span>
                     <span className="text-[var(--text-muted)]">→</span>
                   </div>
                 </Link>
@@ -1073,7 +1073,7 @@ function TyposquatsSection({ threats }: { threats: any[] }) {
                 <TsTd>
                   {r.source_feed === 'abuse_mailbox' ? (
                     <span
-                      className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--amber-text)] bg-[var(--amber-glow)] border border-[var(--amber-border)] rounded px-1.5 py-0.5"
+                      className="inline-flex items-center text-[9px] uppercase tracking-widest font-mono text-[var(--primary-text)] bg-[var(--primary-glow)] border border-[color-mix(in_srgb,var(--primary)_25%,transparent)] rounded px-1.5 py-0.5"
                       title="Reported via abuse mailbox — community-submitted phishing capture"
                     >
                       community report
@@ -1562,10 +1562,10 @@ function HealthExposureQuadrant({
           {/* Brand position dot */}
           {haveBoth && (
             <>
-              <circle cx={x * 100} cy={y * 100} r="4" fill="var(--amber)"
+              <circle cx={x * 100} cy={y * 100} r="4" fill="var(--primary)"
                 stroke="rgba(0,0,0,0.4)" strokeWidth="1" />
               <circle cx={x * 100} cy={y * 100} r="8" fill="none"
-                stroke="var(--amber)" strokeOpacity="0.4" strokeWidth="1" />
+                stroke="var(--primary)" strokeOpacity="0.4" strokeWidth="1" />
             </>
           )}
         </svg>
@@ -1651,10 +1651,10 @@ function DomainRow({ domain, apex = false }: { domain: BrandDomain; apex?: boole
     <div style={{
       padding: '6px 10px', borderRadius: 6,
       border: '1px solid var(--border-base)',
-      background: apex ? 'rgba(229,168,50,0.05)' : 'var(--bg-input)',
+      background: apex ? 'color-mix(in srgb, var(--primary) 5%, transparent)' : 'var(--bg-input)',
       display: 'flex', alignItems: 'center', gap: 10,
     }}>
-      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--amber)' : 'var(--text-primary)' }}>
+      <code className="text-xs flex-1 truncate" style={{ color: apex ? 'var(--primary)' : 'var(--text-primary)' }}>
         {domain.domain}
       </code>
       <span className="text-[10px] font-mono px-1.5 py-0.5 rounded"

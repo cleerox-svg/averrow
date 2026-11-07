@@ -60,7 +60,7 @@ export function WallOverlay({ periodLabel, threats, countries, operations, loadF
           <span aria-hidden className="inline-block rounded-full motion-safe:animate-pulse" style={{ width: 10, height: 10, background: 'var(--green)', boxShadow: '0 0 10px var(--green)' }} />
           <span style={{ color: 'var(--green-text)' }}>Live</span>
           <span aria-hidden>·</span>
-          <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+          <span style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
         </div>
         <div className={phone ? 'grid gap-2' : 'flex gap-3'} style={phone ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } : undefined} role="group" aria-label={`Headline numbers, ${periodLabel}`}>
           {tiles.map(t => (

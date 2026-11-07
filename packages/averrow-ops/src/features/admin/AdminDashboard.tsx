@@ -92,7 +92,7 @@ const sectionEyebrow: CSSProperties = {
 const dividerLine: CSSProperties = {
   border: 'none',
   height: 1,
-  background: 'linear-gradient(90deg, transparent, rgba(229,168,50,0.18), transparent)',
+  background: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--primary) 18%, transparent), transparent)',
   margin: '14px 0',
 };
 
@@ -126,7 +126,7 @@ function CardEyebrow({ icon: Icon, label, right }: { icon?: LucideIcon; label: s
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {Icon && <Icon size={12} style={{ color: 'var(--amber-text)' }} />}
+        {Icon && <Icon size={12} style={{ color: 'var(--primary-text)' }} />}
         <div style={sectionEyebrow}>{label}</div>
       </div>
       {right}
@@ -248,7 +248,7 @@ function BudgetPanel() {
               onClick={() => setShowAll(!showAll)}
               style={{
                 marginTop: 8, ...mono, fontSize: 11, fontWeight: 600,
-                color: 'var(--amber-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                color: 'var(--primary-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
               }}
             >
               {showAll ? 'Show top 5 only' : `Show all ${breakdownItems.length} agents`}
@@ -264,7 +264,7 @@ function BudgetPanel() {
           onClick={() => { setEditing(true); setLimitInput(String(budget.config.monthly_limit_usd)); }}
           style={{
             ...mono, fontSize: 11, fontWeight: 600,
-            color: 'var(--amber-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            color: 'var(--primary-text)', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
           }}
         >
           Edit monthly limit →
@@ -434,7 +434,7 @@ function EmailSecuritySection() {
         <div
           style={{
             height: '100%', width: `${Math.min(coveragePct, 100)}%`,
-            background: 'linear-gradient(90deg, var(--amber-dim), var(--amber))',
+            background: 'linear-gradient(90deg, var(--primary-pressed), var(--primary))',
             transition: 'width 300ms',
           }}
         />
@@ -494,7 +494,7 @@ function OperationCard({ op }: { op: OperationConfig }) {
   return (
     <Card padding="16px">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <Icon size={14} style={{ color: 'var(--amber-text)' }} />
+        <Icon size={14} style={{ color: 'var(--primary-text)' }} />
         <span style={{ ...mono, fontSize: 12, fontWeight: 700, ...textPrimary }}>{op.label}</span>
       </div>
       <div style={{ ...mono, fontSize: 11, ...textTertiary, marginBottom: 12 }}>{op.badge}</div>
@@ -571,7 +571,7 @@ function MaintenanceSection() {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Cpu size={14} style={{ color: 'var(--amber-text)' }} />
+            <Cpu size={14} style={{ color: 'var(--primary-text)' }} />
             <div style={sectionEyebrow}>Maintenance Operations</div>
           </div>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: 'var(--amber-text)', letterSpacing: '0.16em', textTransform: 'uppercase' }}>
@@ -649,7 +649,7 @@ function PushBootstrapCard() {
             style={{
               flexShrink: 0, width: 36, height: 36, borderRadius: 8,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'var(--amber-glow)', color: 'var(--amber-text)',
+              background: 'var(--primary-glow)', color: 'var(--primary-text)',
             }}
           >
             <BellRing size={16} />
@@ -848,7 +848,7 @@ export function AdminDashboard() {
             {healthReady ? (
               <StatGrid cols={4}>
                 <StatTile label="Threats today" value={fmt(threats.today)} accent="var(--red)" sub={`${fmt(threats.total)} total`} />
-                <StatTile label="Feed ingestion" value={fmt(feeds.ingested)} accent="var(--amber)" sub="records (24h)" />
+                <StatTile label="Feed ingestion" value={fmt(feeds.ingested)} accent="var(--primary)" sub="records (24h)" />
                 <StatTile label="Agent runs" value={fmt(agents.total)} accent="var(--blue)" sub={`${fmt(agents.successes)} success / ${agents.errors} errors`} />
                 <StatTile label="Active sessions" value={fmt(activeSessions)} accent="var(--green)" sub="authenticated" />
               </StatGrid>
@@ -893,8 +893,8 @@ export function AdminDashboard() {
                           <AreaChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
                             <defs>
                               <linearGradient id="amberGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="var(--amber)" stopOpacity={0.35} />
-                                <stop offset="100%" stopColor="var(--amber)" stopOpacity={0.02} />
+                                <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.35} />
+                                <stop offset="100%" stopColor="var(--primary)" stopOpacity={0.02} />
                               </linearGradient>
                             </defs>
                             <XAxis
@@ -913,7 +913,7 @@ export function AdminDashboard() {
                             <Area
                               type="monotone"
                               dataKey="threats"
-                              stroke="var(--amber)"
+                              stroke="var(--primary)"
                               strokeWidth={2}
                               fill="url(#amberGradient)"
                             />
@@ -1165,7 +1165,7 @@ export function AdminDashboard() {
                     right={
                       <Link
                         to="/admin/governance?tab=audit"
-                        style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--amber-text)', textDecoration: 'none' }}
+                        style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--link)', textDecoration: 'none' }}
                       >
                         Audit Log →
                       </Link>
@@ -1195,7 +1195,7 @@ export function AdminDashboard() {
                     )}
                     <Link
                       to="/settings/security"
-                      style={{ ...mono, fontSize: 11, color: 'var(--amber-text)', textDecoration: 'none' }}
+                      style={{ ...mono, fontSize: 11, color: 'var(--link)', textDecoration: 'none' }}
                     >
                       Revoke all sessions →
                     </Link>
@@ -1265,7 +1265,7 @@ function InfraTile({
               boxShadow: `0 0 10px ${pulseColor}`, flexShrink: 0,
             }} />
           ) : (
-            <Icon size={13} style={{ color: 'var(--amber-text)' }} />
+            <Icon size={13} style={{ color: 'var(--primary-text)' }} />
           )}
           <span style={{
             ...mono, fontSize: 12, fontWeight: 700, ...textPrimary,

@@ -236,7 +236,7 @@ function OperationCard({
                 data={sparkData}
                 fill
                 height={36}
-                color={isProblemState ? 'var(--sev-high)' : 'var(--amber)'}
+                color={isProblemState ? 'var(--sev-high)' : 'var(--primary)'}
               />
             </div>
             <div
@@ -740,7 +740,7 @@ export function Campaigns() {
           label="Campaigns tracked"
           value={opsStatValue(opsStats?.campaigns_tracked)}
           error={opsStatsError && !opsStats}
-          accent="var(--amber)"
+          accent="var(--primary)"
         />
         <StatTile
           label="Brands targeted"
@@ -760,7 +760,7 @@ export function Campaigns() {
             return String(raw);
           })()}
           error={opsStatsError && !opsStats}
-          accent="var(--amber)"
+          accent="var(--primary)"
         />
       </StatGrid>
 

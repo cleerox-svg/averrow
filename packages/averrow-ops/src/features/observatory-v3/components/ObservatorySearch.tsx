@@ -213,7 +213,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
             className="flex items-center gap-2 rounded-lg px-2.5 cursor-pointer"
             style={{
               minHeight: touch ? 44 : 34,
-              background: i === active ? 'color-mix(in srgb, var(--amber) 12%, transparent)' : 'transparent',
+              background: i === active ? 'color-mix(in srgb, var(--primary) 12%, transparent)' : 'transparent',
             }}
           >
             <span
@@ -251,7 +251,7 @@ export function ObservatorySearch({ data, onPick, onActivate, className, touch =
             width: touch ? 44 : 40, height: touch ? 44 : 40,
             background: 'var(--bg-card)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
             border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)',
-            color: popover ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer',
+            color: popover ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer',
           }}
         >
           <Search size={15} />

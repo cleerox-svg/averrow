@@ -57,7 +57,7 @@
   }
   .glass-card:hover {
     background: rgba(15, 23, 42, 0.60);
-    border-color: rgba(229, 168, 50, 0.2);
+    border-color: color-mix(in srgb, var(--primary) 20%, transparent);
     transform: translateY(-1px);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35),
                 inset 0 1px 0 rgba(255, 255, 255, 0.07);
@@ -76,7 +76,7 @@
     color: var(--text-primary);
   }
   .glass-input:focus {
-    @apply border-afterburner/50 ring-2 ring-afterburner/10;
+    @apply border-primary/50 ring-2 ring-primary/10;
   }
 }
 
@@ -112,8 +112,8 @@
   color: var(--text-primary);
 }
 [data-theme="light"] .glass-input:focus {
-  border-color: var(--amber-border);
-  box-shadow: 0 0 0 2px var(--amber-glow);
+  border-color: color-mix(in srgb, var(--primary) 25%, transparent);
+  box-shadow: 0 0 0 2px var(--primary-glow);
 }
 
 /* ═══════════════════════════════════════════════
@@ -141,20 +141,20 @@
 }
 .glass-btn:hover {
   background: rgba(255,255,255,0.08);
-  border-color: rgba(229,168,50,0.3);
-  box-shadow: 0 0 12px rgba(229,168,50,0.15);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--primary) 15%, transparent);
 }
 .glass-btn-active {
-  background: linear-gradient(135deg, rgba(229,168,50,0.18) 0%, rgba(212,154,40,0.08) 100%);
-  border: 1px solid rgba(229,168,50,0.5);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, transparent) 0%, rgba(212,154,40,0.08) 100%);
+  border: 1px solid color-mix(in srgb, var(--primary) 50%, transparent);
   box-shadow:
-    0 0 16px rgba(229,168,50,0.25),
+    0 0 16px color-mix(in srgb, var(--primary) 25%, transparent),
     inset 0 1px 0 rgba(255,255,255,0.1);
-  color: var(--amber-text);
+  color: var(--primary-text);
 }
 .glass-btn-active:hover {
   box-shadow:
-    0 0 24px rgba(229,168,50,0.35),
+    0 0 24px color-mix(in srgb, var(--primary) 35%, transparent),
     inset 0 1px 0 rgba(255,255,255,0.12);
 }
 
@@ -171,7 +171,7 @@
   background: rgba(15, 20, 35, 0.06);
 }
 [data-theme="light"] .glass-btn-active {
-  color: var(--amber-text);
+  color: var(--primary-text);
 }
 
 /* ── STATUS BADGES ───────────────────────────── */
@@ -306,8 +306,8 @@
   animation: pulse-teal 2s ease-in-out infinite;
 }
 .dot-pulse-afterburner {
-  background: #E5A832;
-  box-shadow: 0 0 6px rgba(229,168,50,0.7);
+  background: var(--primary);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--primary) 70%, transparent);
   animation: pulse-afterburner 2s ease-in-out infinite;
 }
 .dot-pulse-gray {
@@ -334,20 +334,20 @@
   50%       { box-shadow: 0 0 14px rgba(0,212,255,0.9), 0 0 28px rgba(0,212,255,0.4); }
 }
 @keyframes pulse-afterburner {
-  0%, 100% { box-shadow: 0 0 4px rgba(229,168,50,0.5); }
-  50%       { box-shadow: 0 0 14px rgba(229,168,50,0.9), 0 0 28px rgba(229,168,50,0.4); }
+  0%, 100% { box-shadow: 0 0 4px color-mix(in srgb, var(--primary) 50%, transparent); }
+  50%       { box-shadow: 0 0 14px color-mix(in srgb, var(--primary) 90%, transparent), 0 0 28px color-mix(in srgb, var(--primary) 40%, transparent); }
 }
 
 /* ── NAV SIDEBAR ─────────────────────────────── */
 .nav-item-active {
-  background: linear-gradient(90deg, rgba(229,168,50,0.1) 0%, rgba(229,168,50,0.02) 100%) !important;
-  border-left: 2px solid #E5A832 !important;
-  color: var(--amber-text) !important;
-  box-shadow: -4px 0 12px rgba(229, 168, 50, 0.15),
-              inset 0 0 20px rgba(229,168,50,0.04);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--primary) 10%, transparent) 0%, color-mix(in srgb, var(--primary) 2%, transparent) 100%) !important;
+  border-left: 2px solid var(--primary) !important;
+  color: var(--primary-text) !important;
+  box-shadow: -4px 0 12px color-mix(in srgb, var(--primary) 15%, transparent),
+              inset 0 0 20px color-mix(in srgb, var(--primary) 4%, transparent);
 }
 [data-theme="light"] .nav-item-active {
-  color: var(--amber-text) !important;
+  color: var(--primary-text) !important;
 }
 
 /* ── SECTION LABELS ──────────────────────────── */
@@ -356,7 +356,7 @@
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--amber-text);
+  color: var(--primary-text);
   font-family: var(--font-mono);
 }
 
@@ -372,8 +372,8 @@
   border-color: var(--border-base);
 }
 .progress-bar-fill-teal {
-  background: linear-gradient(90deg, #D49A28, #E5A832);
-  box-shadow: 0 0 10px rgba(229,168,50,0.5);
+  background: linear-gradient(90deg, #D49A28, var(--primary));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 50%, transparent);
   height: 100%;
   border-radius: 4px;
   transition: width 0.5s ease;
@@ -442,10 +442,10 @@
 ::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
 [data-theme="light"] ::-webkit-scrollbar-track { background: rgba(15, 20, 35, 0.03); }
 ::-webkit-scrollbar-thumb {
-  background: rgba(229,168,50,0.2);
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
   border-radius: 2px;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(229,168,50,0.4); }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--primary) 40%, transparent); }
 
 /* ── TABULAR NUMS ────────────────────────────── */
 .tabular-nums {
@@ -478,7 +478,7 @@
 }
 .ev-progress {
   position: absolute; left: 0; bottom: 0; height: 2px; width: 100%;
-  background: var(--amber);
+  background: var(--primary);
   transform-origin: left center;
   animation-name: ev-progress; animation-timing-function: linear; animation-fill-mode: both;
 }
@@ -495,7 +495,7 @@
   .ev-hit-y { position: relative; }
 }
 @keyframes ev-row-arrive {
-  from { background: color-mix(in srgb, var(--amber) 22%, transparent); }
+  from { background: color-mix(in srgb, var(--primary) 22%, transparent); }
   to   { background: transparent; }
 }
 .ev-row-new { animation: ev-row-arrive 1.2s ease-out 1; }
@@ -587,7 +587,7 @@
   color: var(--sev-low-text);
 }
 
-/* ── TABLE ROW HOVER — amber left border slide ── */
+/* ── TABLE ROW HOVER — primary left border slide ── */
 .data-row {
   position: relative;
   border-left: 2px solid transparent;
@@ -595,8 +595,8 @@
   cursor: pointer;
 }
 .data-row:hover {
-  background: linear-gradient(90deg, var(--amber-glow) 0%, transparent 40%);
-  border-left-color: var(--amber-border) !important;
+  background: linear-gradient(90deg, var(--primary-glow) 0%, transparent 40%);
+  border-left-color: color-mix(in srgb, var(--primary) 25%, transparent) !important;
 }
 
 /* Severity-specific hover overrides */
@@ -777,3 +777,46 @@
 [data-theme="light"] .text-\[\#D49A28\],
 [data-theme="light"] .hover\:text-\[\#D49A28\]:hover { color: var(--amber-text); }
 [data-theme="light"] .text-\[\#A78BFA\]    { color: var(--nexus-text); } /* NEXUS violet */
+
+/* ════════════════════════════════════════════════════════════════
+   P3-2b — primary sites whose legacy colour is not --primary, or whose
+   design intent under an accent is NEUTRAL rather than primary. Every
+   override fires only under :root[data-accent]; the base rules resolve
+   to the legacy values, so the legacy look (no data-accent) is unchanged.
+   ──────────────────────────────────────────────────────────────── */
+
+/* Tabs / count pills drawn with Tailwind's default amber-400/500 (not
+   --amber): legacy keeps those exact hues; under an accent they follow
+   the primary. (0,3,0) beats the utilities and their light overrides. */
+:root[data-accent] .ops-accent-tab   { border-color: var(--primary); color: var(--primary-text); }
+:root[data-accent] .ops-accent-count { background-color: color-mix(in srgb, var(--primary) 20%, transparent); color: var(--primary-text); }
+:root[data-accent] .ops-accent-text,
+:root[data-accent] .ops-accent-text:hover { color: var(--primary-text); }
+:root[data-accent] .ops-accent-border-15 { border-color: color-mix(in srgb, var(--primary) 15%, transparent); }
+:root[data-accent] .ops-accent-dot-40 { background-color: color-mix(in srgb, var(--primary) 40%, transparent); }
+
+/* Gradients whose second stop is the legacy afterburner-hover hex #D49A28
+   (no token equals it): legacy keeps it, an accent swaps in --primary-pressed. */
+:root[data-accent] .glass-btn-active {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, transparent) 0%, color-mix(in srgb, var(--primary-pressed) 8%, transparent) 100%);
+}
+:root[data-accent] .progress-bar-fill-teal { background: linear-gradient(90deg, var(--primary-pressed), var(--primary)); }
+
+/* Observatory map fallback "Retry": the primary tint in the legacy look,
+   a secondary (neutral) button under an accent — a retry is not a CTA. */
+.obs-map-retry {
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  color: var(--primary-text);
+}
+:root[data-accent] .obs-map-retry {
+  background: linear-gradient(160deg, var(--bg-card), var(--bg-card-deep));
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+
+/* Observatory arc tooltip "Target: <brand>": one primary-text line in the
+   legacy look; under an accent the name is plain text with a muted label. */
+.obs-tooltip-target { color: var(--primary-text); }
+:root[data-accent] .obs-tooltip-target { color: var(--text-primary); }
+:root[data-accent] .obs-tooltip-target-label { color: var(--text-tertiary); }

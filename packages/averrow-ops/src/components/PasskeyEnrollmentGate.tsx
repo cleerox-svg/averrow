@@ -172,9 +172,9 @@ export function PasskeyEnrollmentGate() {
               disabled={busy}
               className="font-mono uppercase"
               style={{
-                background: 'linear-gradient(135deg, var(--amber), var(--amber-dim))',
-                color: 'var(--text-on-amber, #0A0F1E)',
-                border: '1px solid var(--amber-border, rgba(229,168,50,0.55))',
+                background: 'linear-gradient(135deg, var(--primary), var(--primary-pressed))',
+                color: 'var(--primary-ink, #0A0F1E)',
+                border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)',
                 padding: '12px 20px',
                 borderRadius: 10,
                 fontSize: 12,
@@ -182,7 +182,7 @@ export function PasskeyEnrollmentGate() {
                 letterSpacing: '0.10em',
                 minHeight: 44,
                 cursor: busy ? 'wait' : 'pointer',
-                boxShadow: '0 4px 16px rgba(229,168,50,0.30)',
+                boxShadow: '0 4px 16px color-mix(in srgb, var(--primary) 30%, transparent)',
               }}
             >
               {primaryLabel}

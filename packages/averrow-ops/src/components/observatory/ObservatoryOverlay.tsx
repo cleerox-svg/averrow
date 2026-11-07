@@ -32,13 +32,13 @@ export function ObservatoryOverlay({ kind, timeWindow, totalThreats, sourceLabel
         <div className="relative mx-auto w-10 h-10 mb-4">
           <div
             className="absolute inset-0 rounded-full animate-ping motion-reduce:animate-none"
-            style={{ background: 'var(--amber-glow)' }}
+            style={{ background: 'var(--primary-glow)' }}
           />
           <div
             className="relative flex items-center justify-center w-10 h-10 rounded-full"
-            style={{ background: 'color-mix(in srgb, var(--amber) 12%, transparent)' }}
+            style={{ background: 'color-mix(in srgb, var(--primary) 12%, transparent)' }}
           >
-            <Globe className="w-5 h-5" style={{ color: 'var(--amber-text)' }} aria-hidden />
+            <Globe className="w-5 h-5" style={{ color: 'var(--primary-text)' }} aria-hidden />
           </div>
         </div>
 

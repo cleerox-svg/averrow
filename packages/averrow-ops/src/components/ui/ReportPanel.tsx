@@ -147,11 +147,11 @@ function renderSection(section: Section, idx: number): React.ReactNode {
           }}>
             <div style={{
               width: 3, height: 14, borderRadius: 99,
-              background: 'linear-gradient(180deg, var(--amber), var(--amber-dim))',
+              background: 'linear-gradient(180deg, var(--primary), var(--primary-pressed))',
               flexShrink: 0,
             }} />
             <h2 style={{
-              fontSize: 11, fontWeight: 800, color: 'var(--amber-text)',
+              fontSize: 11, fontWeight: 800, color: 'var(--primary-text)',
               fontFamily: 'var(--font-mono)', letterSpacing: '0.16em',
               textTransform: 'uppercase', margin: 0,
             }}>
@@ -190,7 +190,7 @@ function renderSection(section: Section, idx: number): React.ReactNode {
           {(section.items ?? []).map((item, i) => (
             <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
               <span style={{
-                color: 'var(--amber-text)', fontSize: 10, marginTop: 4,
+                color: 'var(--primary-text)', fontSize: 10, marginTop: 4,
                 flexShrink: 0, fontFamily: 'var(--font-mono)',
               }}>›</span>
               <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55 }}>

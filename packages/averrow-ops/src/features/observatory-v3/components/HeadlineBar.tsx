@@ -184,7 +184,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
             <button
               type="button"
               className={`${ICON_BTN} ${btnSize}`}
-              style={{ color: userPaused ? 'var(--amber-text)' : 'var(--text-secondary)' }}
+              style={{ color: userPaused ? 'var(--primary-text)' : 'var(--text-secondary)' }}
               onClick={() => setUserPaused(p => !p)}
               aria-pressed={userPaused}
               aria-label={userPaused ? 'Resume rotation' : 'Pause rotation'}
@@ -215,7 +215,7 @@ export function HeadlineBar({ result, loading, error, onRetry, onOpenEvent, onOp
           type="button"
           onClick={onOpenAll}
           className={`ds-focusable ev-hit ml-1 shrink-0 rounded-full px-2.5 font-mono text-[11px] ${phone ? 'py-1.5' : 'py-0.5'}`}
-          style={{ color: 'var(--amber-text)', border: '1px solid var(--amber-border)', background: 'var(--amber-glow)', cursor: 'pointer' }}
+          style={{ color: 'var(--primary-text)', border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)', background: 'var(--primary-glow)', cursor: 'pointer' }}
           aria-label={`Open all ${queue.length} events`}
           title={`${queue.length} ${queue.length === 1 ? 'event' : 'events'} · ${total} records`}
         >

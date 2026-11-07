@@ -76,7 +76,7 @@ function SourceChips({ briefing }: { briefing: IntelligenceBriefing }) {
         <Link
           key={c.key}
           to={c.to}
-          className="rounded px-2 py-1 font-mono text-[10px] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
+          className="rounded px-2 py-1 font-mono text-[10px] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
           style={{ background: 'var(--border-base)', color: 'var(--text-primary)' }}
         >
           {c.label}
@@ -130,7 +130,7 @@ export function IntelligenceBriefingBody() {
               </p>
               {body.length > BODY_PREVIEW && (
                 <details className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]" style={{ color: 'var(--amber-text)' }}>
+                  <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-widest focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]" style={{ color: 'var(--primary-text)' }}>
                     Read full briefing
                   </summary>
                   <div className="mt-2 whitespace-pre-wrap leading-relaxed">{body}</div>
@@ -141,8 +141,8 @@ export function IntelligenceBriefingBody() {
           <SourceChips briefing={latest} />
           <Link
             to={tabUrl('trends')}
-            className="font-mono text-[10px] uppercase tracking-widest hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
-            style={{ color: 'var(--amber-text)' }}
+            className="font-mono text-[10px] uppercase tracking-widest hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
+            style={{ color: 'var(--primary-text)' }}
           >
             View all briefings →
           </Link>

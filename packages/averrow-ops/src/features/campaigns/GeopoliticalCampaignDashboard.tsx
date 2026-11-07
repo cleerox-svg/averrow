@@ -105,10 +105,10 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
       {/* Area fill */}
       <path d={areaPath} fill="url(#timeline-gradient)" opacity={0.3} />
       {/* Line */}
-      <path d={linePath} fill="none" stroke="#E5A832" strokeWidth={2} />
+      <path d={linePath} fill="none" stroke="var(--primary)" strokeWidth={2} />
       {/* Dots */}
       {points.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="#E5A832" />
+        <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="var(--primary)" />
       ))}
       {/* X-axis labels */}
       {labels.map((label, i) => {
@@ -123,8 +123,8 @@ function TimelineChart({ labels, values }: { labels: string[]; values: number[] 
       })}
       <defs>
         <linearGradient id="timeline-gradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#E5A832" stopOpacity={0.5} />
-          <stop offset="100%" stopColor="#E5A832" stopOpacity={0} />
+          <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.5} />
+          <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
         </linearGradient>
       </defs>
     </svg>
@@ -530,7 +530,7 @@ export function GeopoliticalCampaignDashboard() {
           </div>
           <div className="text-right">
             <div className="text-[10px] text-[var(--text-tertiary)] font-mono">Active since</div>
-            <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--amber-text)' }}>
+            <div className="text-[14px] font-mono font-bold" style={{ color: 'var(--primary-text)' }}>
               {formatDate(campaign.start_date)}
             </div>
             <div className="text-[10px] text-[var(--text-tertiary)] font-mono mt-1">{daysActive} days</div>
@@ -577,7 +577,7 @@ export function GeopoliticalCampaignDashboard() {
             onClick={handleRunAssessment}
             disabled={assessmentMutation.isPending}
             className="rounded-lg border px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
-            style={{ borderColor: 'rgba(229,168,50,0.30)', background: 'rgba(229,168,50,0.10)', color: 'var(--amber-text)' }}
+            style={{ borderColor: 'color-mix(in srgb, var(--primary) 30%, transparent)', background: 'color-mix(in srgb, var(--primary) 10%, transparent)', color: 'var(--primary-text)' }}
           >
             {assessmentMutation.isPending ? 'Analyzing...' : assessment ? 'Regenerate' : 'Run Assessment'}
           </button>
@@ -654,14 +654,14 @@ export function GeopoliticalCampaignDashboard() {
         <BreakdownCard
           title="LAST 24 HOURS"
           metric={
-            <span className="text-[32px] font-bold leading-none" style={{ color: 'var(--amber-text)' }}>
+            <span className="text-[32px] font-bold leading-none" style={{ color: 'var(--primary-text)' }}>
               {stats?.threats_24h ?? 0}
             </span>
           }
           metricLabel="new threats"
         >
           <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-afterburner" />
+            <div className="w-1.5 h-1.5 rounded-full bg-primary" />
             <span className="text-[11px] text-white/60">7-day</span>
             <span className="text-[11px] font-mono text-[var(--text-primary)]">{stats?.threats_7d ?? 0}</span>
           </div>

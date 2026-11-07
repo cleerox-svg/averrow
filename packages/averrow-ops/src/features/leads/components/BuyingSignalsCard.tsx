@@ -107,7 +107,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 font-mono text-xs mt-1 hover:underline"
-                  style={{ color: 'var(--amber-text)' }}
+                  style={{ color: 'var(--link)' }}
                 >
                   Source
                   <ExternalLink className="w-3 h-3" />
@@ -163,7 +163,7 @@ export function BuyingSignalsCard({ lead }: BuyingSignalsCardProps) {
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 font-mono text-xs mt-1 hover:underline"
-                  style={{ color: 'var(--amber-text)' }}
+                  style={{ color: 'var(--link)' }}
                 >
                   LinkedIn profile
                   <ExternalLink className="w-3 h-3" />

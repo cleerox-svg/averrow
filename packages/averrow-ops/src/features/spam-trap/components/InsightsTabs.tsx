@@ -282,7 +282,7 @@ export function StrategyTab({ insights }: { insights: SpamTrapInsights | null })
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <StatTile label="Last run" value={last_run ? relativeTime(last_run.started_at) : 'never'} accent="#E5A832" />
+        <StatTile label="Last run" value={last_run ? relativeTime(last_run.started_at) : 'never'} accent="var(--primary)" />
         <StatTile label="Last status" value={last_run?.status ?? '—'} accent={last_run?.status === 'success' ? '#4ADE80' : '#fb923c'} />
         <StatTile label="Auto-pruned · 30d" value={recent_prunes_30d} accent="#A78BFA" />
       </div>
