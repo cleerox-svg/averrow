@@ -34,6 +34,7 @@ import { AuthProvider, useAuth, type AuthHttpClient } from '@averrow/shared/auth
 import { __resetAccountSyncForTests, hydratedUserId } from '../../../../shared/src/theme/accountSync';
 import { __resetAppearanceStoreForTests } from '../../../../shared/src/theme/useAppearance';
 import { ToastProvider } from '@averrow/shared/ui';
+import { LoginPage } from '@averrow/shared/login';
 import { installDomStubs, stubViewport } from '../../features/settings/settingsTestUtils';
 
 const html = document.documentElement;
@@ -426,6 +427,53 @@ describe('theme_preference hydrates useTheme', () => {
     expect(html.getAttribute('data-theme')).toBe('light');
     expect(localStorage.getItem('averrow-theme')).toBe('light');
     expect(html.getAttribute('data-accent')).toBe('violet'); // the same hydration did run
+  });
+});
+
+// ── login brand-lock vs. account theme (QA, P3-5) ──
+
+describe('LoginPage unmount and the account theme', () => {
+  function renderLogin() {
+    return render(
+      <LoginPage
+        branding={{ brandLetters: 'AV', productName: 'Averrow', tagline: 'TAG', footerPillars: 'A · B' }}
+        apiClient={{ post: vi.fn().mockResolvedValue({ success: true }) }}
+        passkeyAdapter={{ isSupported: () => false, startConditionalUI: vi.fn().mockResolvedValue(undefined), signIn: vi.fn().mockResolvedValue(false) }}
+        lastSignInMethod={{ read: () => null, write: vi.fn() }}
+        returnTo="/v2/"
+      />,
+    );
+  }
+
+  it('flag on: a passkey sign-in that hydrates a different theme keeps it after the login unmounts', () => {
+    flags.enabled = true;
+    localStorage.setItem('averrow-theme', 'dark');
+    html.setAttribute('data-theme', 'dark');
+    const theme = renderHook(() => useTheme());
+    const login = renderLogin();
+    expect(html.getAttribute('data-theme')).toBe('dark'); // brand-locked
+    // Passkey onSuccess -> refreshUser -> /me -> hydration, while still on the login.
+    act(() => hydrateAppearanceFromAccount({ id: 'u1', theme_preference: 'light' }));
+    login.unmount(); // then the app navigates away
+    expect(localStorage.getItem('averrow-theme')).toBe('light');
+    expect(html.getAttribute('data-theme')).toBe('light');
+    expect(theme.result.current.theme).toBe('light');
+    expect(theme.result.current.resolvedTheme).toBe('light');
+  });
+
+  it('flag off: unmount restores exactly the theme that was there before', () => {
+    localStorage.setItem('averrow-theme', 'light');
+    html.setAttribute('data-theme', 'light');
+    const login = renderLogin();
+    expect(html.getAttribute('data-theme')).toBe('dark');
+    act(() => hydrateAppearanceFromAccount({ id: 'u1', theme_preference: 'dark' })); // no-op, flag off
+    login.unmount();
+    expect(html.getAttribute('data-theme')).toBe('light');
+    expect(localStorage.getItem('averrow-theme')).toBe('light');
+
+    html.removeAttribute('data-theme'); // no attribute before -> none after, as before
+    renderLogin().unmount();
+    expect(html.hasAttribute('data-theme')).toBe(false);
   });
 });
 

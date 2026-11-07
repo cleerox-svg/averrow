@@ -43,7 +43,7 @@ function persistTheme(theme: Theme): void {
   safeSetItem(STORAGE_KEY, theme);
 }
 
-function readStoredTheme(): Theme {
+export function readStoredTheme(): Theme {
   const raw = safeGetItem(STORAGE_KEY);
   return raw === 'auto' || raw === 'dark' || raw === 'light' ? raw : 'auto';
 }

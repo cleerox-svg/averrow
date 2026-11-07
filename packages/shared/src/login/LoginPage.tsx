@@ -19,6 +19,8 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import type { LoginPageProps, SignInMethod } from './types';
+import { applyThemePreference, readStoredTheme } from '../theme/useTheme';
+import { APPEARANCE_PICKER_ENABLED } from '../theme/appearanceDefaults';
 
 type MagicLinkState =
   | { kind: 'idle' }
@@ -102,14 +104,24 @@ export function LoginPage(props: LoginPageProps) {
   // Brand-lock to dark (login audit F2). The login is a brand surface, so
   // it always renders in the dark brand theme regardless of the OS / stored
   // preference (which only governs the look INSIDE the app). Without this,
-  // a light-OS device gets a white, off-brand login card. Restore the prior
-  // value on unmount so the app honours the user's theme once signed in.
+  // a light-OS device gets a white, off-brand login card. On unmount the app
+  // must honour the user's theme once signed in:
+  //   - flag on (account-synced theme): re-resolve from the STORED preference.
+  //     A passkey sign-in hydrates the account's theme (refreshUser) while
+  //     this page is still mounted; restoring the old attribute would undo it
+  //     and leave data-theme out of sync with averrow-theme / useTheme.
+  //   - flag off: restore the prior value exactly, as before (nothing can
+  //     change the stored preference while the login is shown).
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     const prev = root.getAttribute('data-theme');
     root.setAttribute('data-theme', 'dark');
     return () => {
+      if (APPEARANCE_PICKER_ENABLED) {
+        applyThemePreference(readStoredTheme());
+        return;
+      }
       if (prev === null) root.removeAttribute('data-theme');
       else root.setAttribute('data-theme', prev);
     };
