@@ -143,7 +143,7 @@ export function NotificationRow({
                 {isSnoozed && notification.snoozed_until && (
                   <span className="inline-flex items-center gap-1 text-[var(--sev-medium-text)]">
                     <Clock aria-hidden="true" className="h-3 w-3" />
-                    Snoozed until {relativeTime(notification.snoozed_until)}
+                    Snoozed · back {relativeTime(notification.snoozed_until)}
                   </span>
                 )}
                 {isDone && <span>Done</span>}

@@ -24,21 +24,35 @@ export function formatSpan(ms: number): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
+/** Unsigned magnitude for relativeTime: "5m" / "3h" / "2d" / "4mo" / "1y". */
+function relativeMagnitude(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
+/**
+ * Relative time, signed: past → "5m ago", future → "in 5m". Anything within
+ * a minute either side reads "just now" (absorbs client/server clock skew on
+ * "last seen" stamps). Use for expiries / snoozes / mutes as well as history.
+ */
 export function relativeTime(date: string | null): string {
   if (!date) return 'Never';
   const ms = Date.now() - parseUtc(date).getTime();
-  const seconds = Math.floor(ms / 1000);
+  const seconds = Math.floor(Math.abs(ms) / 1000);
   if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  if (days < 365) return `${months}mo ago`;
-  const years = Math.floor(days / 365);
-  return `${years}y ago`;
+  const mag = relativeMagnitude(seconds);
+  return ms < 0 ? `in ${mag}` : `${mag} ago`;
+}
+
+/** True when `date` is strictly in the future. */
+export function isFuture(date: string | null): boolean {
+  return !!date && parseUtc(date).getTime() > Date.now();
 }
 
 export function timeAgo(dateStr: string | null): string | null {
