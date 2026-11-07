@@ -14,7 +14,7 @@ import {
   Menu, MenuTrigger, MenuContent, MenuItem, MenuLabel, MenuSeparator,
 } from '@averrow/shared/ui';
 import type { Notification } from '@/hooks/useNotifications';
-import { isFuture, relativeTime } from '@/lib/time';
+import { isFuture, relativeTime, relativeTimeSigned } from '@/lib/time';
 import { SNOOZE_OPTIONS } from '@/lib/snooze';
 
 export function typeLabel(type: string): string {
@@ -144,8 +144,8 @@ export function NotificationRow({
                   <span className="inline-flex items-center gap-1 text-[var(--sev-medium-text)]">
                     <Clock aria-hidden="true" className="h-3 w-3" />
                     {isFuture(notification.snoozed_until)
-                      ? `Snoozed · back ${relativeTime(notification.snoozed_until)}`
-                      : 'Snoozed · waking soon'}
+                      ? `Snoozed · back ${relativeTimeSigned(notification.snoozed_until)}`
+                      : 'Snooze ended'}
                   </span>
                 )}
                 {isDone && <span>Done</span>}

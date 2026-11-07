@@ -25,7 +25,7 @@ import {
 } from '@/design-system/components';
 import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
-import { relativeTime } from '@/lib/time';
+import { relativeTimeSigned } from '@/lib/time';
 import {
   useNotificationStats,
   useNotificationMutes,
@@ -221,7 +221,7 @@ function MutesPanel({ mutes }: { mutes: NotificationMute[] }) {
             {mutes.map((m) => (
               <tr key={m.id} className="data-row">
                 <Td><span className="font-mono text-xs">{m.type}</span></Td>
-                <Td><span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{relativeTime(m.muted_until)}</span></Td>
+                <Td><span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>{relativeTimeSigned(m.muted_until)}</span></Td>
                 <Td><span className="text-xs">{m.reason ?? <em className="text-white/55">—</em>}</span></Td>
                 <Td><span className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{m.created_by.slice(0, 8)}…</span></Td>
                 <Td>
