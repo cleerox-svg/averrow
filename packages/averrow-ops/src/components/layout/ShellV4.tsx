@@ -29,7 +29,7 @@ import { useOpenAlertCount } from '@/hooks/useOpenAlertCount';
 import { ThemeCycleButton } from './ThemeCycleButton';
 import { PasskeyEnrollmentGate } from '@/components/PasskeyEnrollmentGate';
 import { FirstSignInPasskeyPrompt } from '@/components/FirstSignInPasskeyPrompt';
-import { NavIndicator, usePageSlide } from '@averrow/shared/ui';
+import { AverrowLockup, LOGO_LEGACY_CLASS, LOGO_R3_CLASS, NavIndicator, usePageSlide } from '@averrow/shared/ui';
 import './shell-v4.css';
 
 interface NavItem { label: string; to: string; icon: LucideIcon; end?: boolean; count?: number; }
@@ -355,7 +355,9 @@ export function ShellV4() {
         {...(drawerOpen ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Main navigation' } : {})}
       >
         <div className="v4-brand">
-          <svg width="34" height="34" viewBox="0 0 32 32" fill="none" style={{ flex: '0 0 auto', boxShadow: '0 0 22px rgba(200,60,60,.45)', borderRadius: 9 }}>
+          {/* Legacy mark + name until the P3-6 flip; the R3 lockup (no tagline)
+              replaces both once an accent is set (LOGO_* toggle classes). */}
+          <svg className={LOGO_LEGACY_CLASS} width="34" height="34" viewBox="0 0 32 32" fill="none" style={{ flex: '0 0 auto', boxShadow: '0 0 22px rgba(200,60,60,.45)', borderRadius: 9 }}>
             <defs>
               <linearGradient id="v4mark" x1="16" y1="5" x2="16" y2="26" gradientUnits="userSpaceOnUse">
                 <stop stopColor="#6B1010" /><stop offset="1" stopColor="#C83C3C" />
@@ -366,10 +368,11 @@ export function ShellV4() {
             <path d="M16 5L26 26H18L16 21L14 26H6Z" fill="url(#v4mark)" />
             <path d="M14.5 22H17.5L16 18Z" fill="#0C1220" />
           </svg>
-          <div>
+          <div className={LOGO_LEGACY_CLASS}>
             <div className="name">AVERROW</div>
             <div className="sub">THREAT INTERCEPTOR</div>
           </div>
+          <AverrowLockup height={28} className={LOGO_R3_CLASS} />
           <button type="button" ref={closeBtnRef} className="v4-drawer-close" onClick={closeDrawer} aria-label="Close menu">
             <X size={18} strokeWidth={2} />
           </button>

@@ -1370,3 +1370,21 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 :root[data-accent] .ds-btn-focus:focus-visible {
   --tw-ring-color: var(--focus-ring);
 }
+
+/* R3 logo toggle (facelift P3-5; ui/brand/logoToggle.ts). Swap sites render the
+   legacy logo AND the R3 logo; without data-accent (today) only the legacy one
+   shows, unchanged. !important so no utility or inline display can leak the
+   hidden variant. */
+:root .av-logo-r3,
+:root .av-logo-r3-block {
+  display: none !important;
+}
+:root[data-accent] .av-logo-legacy {
+  display: none !important;
+}
+:root[data-accent] .av-logo-r3 {
+  display: inline-flex !important;
+}
+:root[data-accent] .av-logo-r3-block {
+  display: block !important;
+}

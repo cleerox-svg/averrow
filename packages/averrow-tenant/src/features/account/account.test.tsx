@@ -7,7 +7,7 @@
 // unavailable, and the Security page reading the caller-scoped sessions API.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { configure, render, screen, waitFor } from '@testing-library/react';
+import { act, configure, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   patch: vi.fn(),
   put: vi.fn(),
   del: vi.fn(),
+  appearanceEnabled: false,
 }));
 
 vi.mock('@/lib/auth', () => ({ useAuth: mocks.useAuth }));
@@ -26,6 +27,11 @@ vi.mock('@/lib/api', () => ({
   apiGet: mocks.get, apiPost: mocks.post, apiPatch: mocks.patch, apiPut: mocks.put, apiDelete: mocks.del,
 }));
 vi.mock('@/lib/passkeys', () => ({ isPasskeySupported: () => true, registerPasskey: vi.fn() }));
+// Settings -> Appearance waits for the P3-6 flip; the getter lets a test flip it.
+vi.mock('../../../../shared/src/theme/appearanceDefaults', async (orig) => ({
+  ...(await orig<typeof import('../../../../shared/src/theme/appearanceDefaults')>()),
+  get APPEARANCE_PICKER_ENABLED() { return mocks.appearanceEnabled; },
+}));
 
 import { accountRoutes } from './routes';
 
@@ -76,6 +82,7 @@ const subs = [{ brand_id: 'b1', brand_name: 'Acme', level: 'watching', snoozed_u
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.appearanceEnabled = false;
   stubDom(true);
   mocks.get.mockImplementation((url: string) => {
     if (url.startsWith('/api/notifications/preferences/v2')) return Promise.resolve({ success: true, data: baseV2 });
@@ -138,6 +145,35 @@ describe('account routes', () => {
     renderAt('/account/notifications/bogus');
     expect(await screen.findByRole('switch', { name: 'Push notifications' })).toBeInTheDocument();
     expect(screen.getByTestId('where')).toHaveTextContent('/account/notifications/channels');
+  });
+});
+
+describe('appearance for a customer', () => {
+  it('is hidden until the P3-6 flip: no rail entry, /account/appearance redirects to Profile', async () => {
+    renderAt('/account/appearance');
+    expect(await screen.findByLabelText('Display name')).toBeInTheDocument();
+    expect(screen.getByTestId('where')).toHaveTextContent('/account/profile');
+    expect(screen.getByRole('navigation', { name: 'Settings sections' })).not.toHaveTextContent('Appearance');
+  });
+
+  it('once enabled: listed under /account and saves accent to the account', async () => {
+    mocks.appearanceEnabled = true;
+    mocks.patch.mockResolvedValue({ success: true, data: null });
+    renderAt('/account/appearance');
+    const violet = await screen.findByRole('radio', { name: 'Violet' });
+    expect(screen.getByTestId('where')).toHaveTextContent('/account/appearance');
+    const link = screen.getByRole('link', { name: /Appearance/ });
+    expect(link).toHaveAttribute('href', '/account/appearance');
+    expect(link).toHaveAttribute('aria-current', 'page');
+    await act(async () => { violet.click(); await new Promise((r) => setTimeout(r, 0)); });
+    await waitFor(() => expect(mocks.patch).toHaveBeenCalledWith('/api/profile', { accent_preference: 'violet' }));
+    expect(document.documentElement.getAttribute('data-accent')).toBe('violet');
+    // The appearance observer re-renders the page on attribute changes; let it settle inside act.
+    await act(async () => {
+      document.documentElement.removeAttribute('data-accent');
+      localStorage.removeItem('averrow-accent');
+      await new Promise((r) => setTimeout(r, 0));
+    });
   });
 });
 

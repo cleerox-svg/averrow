@@ -5,7 +5,7 @@
 
 export {
   ACCOUNT_SECTION_DEFS, ACCOUNT_SECTION_IDS, ACCOUNT_SETTINGS_BASE_PATH,
-  getAccountSections, accountSectionIdFromPath,
+  getAccountSections, accountSectionIdFromPath, isAccountSectionEnabled,
   type AccountSectionId, type AccountSectionsOptions,
 } from './sections';
 export { securitySummary, notificationsSummary, devicesSummary } from './summaries';
@@ -13,6 +13,9 @@ export { SignOutRow, type SignOutRowProps } from './SignOutRow';
 export {
   ProfileSettings, type ProfileSettingsProps, type ProfileSettingsUser,
 } from './ProfileSettings';
+export {
+  AppearanceSettings, ACCENT_SWATCHES, BASE_SWATCHES, type AppearanceSettingsProps,
+} from './AppearanceSettings';
 export {
   DevicesSettings,
   type DevicesSettingsProps, type DevicesInstallState, type DevicesPushAdapter, type PushDeviceRow,

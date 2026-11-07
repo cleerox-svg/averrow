@@ -8,6 +8,7 @@
 
 import { Navigate, Route } from 'react-router-dom';
 import { AccountIndex, AccountLayout } from './AccountLayout';
+import { AppearanceSettingsPage } from './AppearanceSettingsPage';
 import { NotificationSettingsPage } from './NotificationSettingsPage';
 import { ProfileSettingsPage } from './ProfileSettingsPage';
 import { SecurityPage } from './SecurityPage';
@@ -17,6 +18,8 @@ export const accountRoutes = (
     <Route path="account" element={<AccountLayout />}>
       <Route index element={<AccountIndex />} />
       <Route path="profile" element={<ProfileSettingsPage />} />
+      {/* Redirects to /account/profile until APPEARANCE_PICKER_ENABLED (P3-6). */}
+      <Route path="appearance" element={<AppearanceSettingsPage />} />
       <Route path="security" element={<SecurityPage />} />
       <Route path="notifications" element={<Navigate to="/account/notifications/channels" replace />} />
       <Route path="notifications/:tab" element={<NotificationSettingsPage />} />

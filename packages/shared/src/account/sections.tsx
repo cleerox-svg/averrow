@@ -5,9 +5,10 @@
 // mobile list and the avatar menu always agree on what exists.
 
 import type { SettingsSection } from '../ui/settings';
-import { BellIcon, ShieldCheckIcon, SmartphoneIcon, UserIcon } from './section-icons';
+import { APPEARANCE_PICKER_ENABLED } from '../theme/appearanceDefaults';
+import { BellIcon, PaletteIcon, ShieldCheckIcon, SmartphoneIcon, UserIcon } from './section-icons';
 
-export const ACCOUNT_SECTION_IDS = ['profile', 'security', 'notifications', 'devices'] as const;
+export const ACCOUNT_SECTION_IDS = ['profile', 'security', 'appearance', 'notifications', 'devices'] as const;
 export type AccountSectionId = (typeof ACCOUNT_SECTION_IDS)[number];
 
 export const ACCOUNT_SETTINGS_BASE_PATH = '/settings';
@@ -25,6 +26,7 @@ interface AccountSectionDef {
 export const ACCOUNT_SECTION_DEFS: readonly AccountSectionDef[] = [
   { id: 'profile',       label: 'Profile',        description: 'Name, appearance and time zone', tone: 'amber',  group: 'Account',     icon: () => <UserIcon /> },
   { id: 'security',      label: 'Security',       description: 'Passkeys and sessions',          tone: 'green',  group: 'Account',     icon: () => <ShieldCheckIcon /> },
+  { id: 'appearance',    label: 'Appearance',     description: 'Accent color and background',   tone: 'violet', group: 'Preferences', icon: () => <PaletteIcon /> },
   { id: 'notifications', label: 'Notifications',  description: 'Push, email and quiet hours',    tone: 'blue',   group: 'Preferences', icon: () => <BellIcon /> },
   { id: 'devices',       label: 'Devices & App',  description: 'Install the app and manage devices', tone: 'violet', group: 'Preferences', icon: () => <SmartphoneIcon /> },
 ];
@@ -38,10 +40,16 @@ export interface AccountSectionsOptions {
   badges?: Partial<Record<AccountSectionId, number | string>>;
 }
 
-/** Sections in `SettingsShell` shape, with absolute hrefs under `basePath`. */
+/** Whether a section is offered right now. Appearance waits for the P3-6 flip
+ *  (APPEARANCE_PICKER_ENABLED); hosts redirect its route to Profile meanwhile. */
+export function isAccountSectionEnabled(id: AccountSectionId): boolean {
+  return id !== 'appearance' || APPEARANCE_PICKER_ENABLED;
+}
+
+/** Sections in `SettingsShell` shape, with absolute hrefs under `basePath`. Disabled sections are left out. */
 export function getAccountSections(opts: AccountSectionsOptions = {}): SettingsSection[] {
   const root = (opts.basePath ?? ACCOUNT_SETTINGS_BASE_PATH).replace(/\/+$/, '');
-  return ACCOUNT_SECTION_DEFS.map((d) => ({
+  return ACCOUNT_SECTION_DEFS.filter((d) => isAccountSectionEnabled(d.id)).map((d) => ({
     id: d.id,
     label: d.label,
     description: opts.descriptions?.[d.id] ?? d.description,

@@ -30,8 +30,12 @@ export {
   DEFAULT_BASE,
   ACCENT_STORAGE_KEY,
   BASE_STORAGE_KEY,
+  APPEARANCE_PICKER_ENABLED,
+  applyAccent,
+  applyBase,
+  hydrateAppearanceFromAccount,
 } from './useAppearance';
-export type { Accent, Base, UseAppearanceReturn } from './useAppearance';
+export type { Accent, Base, UseAppearanceReturn, AccountAppearance } from './useAppearance';
 // Runtime token reader for canvas / WebGL colours (P3-2a).
 export {
   readToken,

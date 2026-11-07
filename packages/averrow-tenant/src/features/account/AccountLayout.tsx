@@ -46,8 +46,9 @@ const DESKTOP_QUERY = '(min-width: 1024px)';
 
 export const ACCOUNT_BASE_PATH = '/account';
 
-/** Sections the tenant app offers. Devices & App needs a service worker (see header). */
-export const TENANT_ACCOUNT_SECTIONS: readonly AccountSectionId[] = ['profile', 'security', 'notifications'];
+/** Sections the tenant app offers. Devices & App needs a service worker (see header).
+ *  Appearance is listed only once getAccountSections enables it (P3-6 flip). */
+export const TENANT_ACCOUNT_SECTIONS: readonly AccountSectionId[] = ['profile', 'security', 'appearance', 'notifications'];
 
 /** /account on its own: desktop never shows a blank home, it lands on Profile; mobile shows the section list (rendered by the shell). */
 export function AccountIndex(): ReactNode {

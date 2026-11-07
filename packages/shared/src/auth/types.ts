@@ -22,6 +22,10 @@ export interface SharedAuthUser {
   display_name?:    string | null;
   timezone?:        string | null;
   theme_preference?: 'dark' | 'light' | null;
+  /** Account-synced accent (migration 0317). Validated on read; unknown -> default. */
+  accent_preference?: string | null;
+  /** Account-synced dark-mode background (migration 0317). */
+  base_preference?:   string | null;
   passkey_count?:   number;
   /**
    * H-3 (AUTH_AUDIT_2026-06): true when this session is restricted to
