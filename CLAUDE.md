@@ -436,7 +436,9 @@ Active edges (event-driven):
                                              confidence >= 25 on the ASN-only 0-40 scale)
                                              and 'infra_movement' (bridge-kind cluster
                                              gains new IPs/ASNs/cert-serials vs its
-                                             prior-run fingerprint, S2.4/D5b). Same
+                                             prior-run fingerprint, S2.4/D5b; member queries chunk at
+                                             `MEMBER_QUERY_CHUNK` = 90 for D1's 100-bind
+                                             cap, `lib/cluster-infra-movement.ts`). Same
                                              event_type + target_agent — no new
                                              dispatch wiring.)
 
@@ -542,10 +544,13 @@ while every agent reported `success`. Rules that came out of it:
   then finalizes `agent_runs.status = 'partial'` (not `failed` — the
   rule-based fallback did real work) and the agent's summary `agent_outputs`
   row goes out at `severity: 'high'`. **`partial` alone is ambiguous**:
-  `executeAgent` also seeds every in-flight run as `partial`, and
+  `executeAgent` also seeds every in-flight run as `partial` (handler-dispatched
+  writers via `createAgentRun` seed `running` instead), and
   held-for-approval runs finish `partial`. The distinction is `completed_at` — `NULL` = still running (or
-  orphaned), set = a finished run (degraded or awaiting approval). Never read
-  `status = 'partial'` without it.
+  orphaned), set = a finished run (degraded, incomplete or awaiting approval). Never read
+  `status = 'partial'` without it. Navigator's reaper (`lib/agent-runs-reaper.ts`)
+  reaps orphans with `status IN ('partial','running')` past the per-agent
+  ceiling (default 90 min).
 - **Alert:** Flight Control raises `platform_ai_calls_failing` (severity
   `high` — NOT `critical`, which would auto-create an incident that surfaces
   on the public status page) when `budget_ledger` has been silent >2h AND an
@@ -568,6 +573,11 @@ while every agent reported `success`. Rules that came out of it:
 ### Cron schedule (wrangler.toml):
 ```
 navigator:    */5 * * * *    (every 5 min — DNS resolution, cube refresh, KV cache warming of 23 page-load requests)
+                              (UTC hour 3, hour-only gate: `runDnsDrainableRecount` as a waitUntil tail —
+                               the once-a-day threats-side DNS candidate count,
+                               `countDnsCandidatesInThreats`, `lib/dns-drainable.ts`; best-effort KV claim
+                               `dns_drainable:recount_claim` (20 min), skipped if the cached entry is < 1h
+                               old or D1 is over its soft-cap; seeds the `cachedCount` key with a 26h TTL)
                               (independent agent; FC monitors health but does not dispatch;
                                historical agent_runs rows use agent_id='fast_tick')
                               (UTC hour 0, hour-only gate: dns-queue reaper + nrd_domains tiered
@@ -675,15 +685,22 @@ daily_snapshots: 28 0,12 * * * (00:28 + 12:28 UTC — writes `daily_snapshots` b
                              the tail of the orchestrator tick: starved like PR-E/F/Q/T, and
                              its any-row check could not see a missing TYPE — prod lacked
                              provider snapshots on 11 of ~23 days (2026-10-12: 10,137 brand
-                             rows / 0 provider). Per-type idempotent: each type is probed with
-                             a PK-prefix `SELECT 1 … LIMIT 1` and generated only if absent, so
-                             00:28 does the work and 12:28 is a two-read repair pass that
-                             rebuilds only a missing type. `handleScheduled` early-returns on
+                             rows / 0 provider). Per-type and resumable: each type is written in
+                             keyset chunks of 1000 entities (`SNAPSHOT_CHUNK_SIZE`,
+                             `lib/snapshots.ts`), resuming after MAX(entity_id) for that
+                             date+type, so a complete type is skipped and a partial one
+                             continues. An 8-min budget (`DAILY_SNAPSHOTS_BUDGET_MS`) ends a
+                             type `incomplete`; the run then finishes `partial` with
+                             `completed_at` set and the 12:28 pass resumes it. 00:28 does the
+                             work and 12:28 is the repair/resume pass. `handleScheduled` early-returns on
                              an exact `event.cron` match above the hourly-mesh guard; no
                              minute/hour gates. Handler: `handlers/dailySnapshots.ts`
                              `runDailySnapshotsCron` — handler-dispatched writer like
                              daily_briefing: `agent_runs` (agent_id 'daily_snapshots';
-                             success / partial when one type failed / failed) + telemetry
+                             success / partial when one type failed or is incomplete / failed;
+                             per-chunk `records_processed` heartbeat; finalized in try/finally
+                             via `finalizeAgentRun`, `db/agent-runs.ts`, with retries — also
+                             used by daily_briefing's `withBriefingRun`) + telemetry
                              `agent_events` (`snapshots_generated`, target_agent=NULL). The
                              provider-counter recount it used to run was dropped —
                              `lib/provider-counts.ts` (enrichment Stage 5, every 4h) owns
@@ -1128,7 +1145,7 @@ as `averrow`) did rename — see §2.
 - Primary DB: `trust-radar-v2` (D1, SQLite) — internal name kept intentionally
 - Audit DB: `trust-radar-v2-audit`
 - GeoIP DB: `geoip-db` (D1, optional binding `GEOIP_DB`) — dedicated reference DB for the third-tier MaxMind GeoLite2 lookup. Migrations live in `migrations-geoip/`. Cartographer Phase 0.5 queries it; the `geoip_refresh` agent loads it. Isolated to keep range-scan reads off the main DB's budget — see `lib/geoip-mmdb.ts`.
-- DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set. After the PR-1 → PR-4 split (May 17–18), `dns_queue` is the **source of truth** for the cooldown + attempts state previously kept on `threats.attempted_resolve_at` + `threats.enrichment_attempts`. Navigator's dns-backfill drains it; `lib/dns-queue-reconciler.ts` enqueues new candidates from threats every tick using a **cursor-paginated** read (KV key `reconciler:dns_queue:cursor`, reads only rows added since the last cursor — PR-BI 2026-05-19). The cursor is a tie-safe `(created_at, rowid)` keyset (2026-10-12: a bare `created_at` cursor froze for ~6 days because bulk `db.batch()` inserts give ≥500 rows the same second); a no-progress page self-heals and flags `cursor_stuck` → FC `platform_dns_queue_stalled`. Manual catch-up: `POST /api/internal/dns-queue/reconcile?pages=1..20[&from=…]`. The companion `lib/dns-queue-reaper.ts` sweeps stale rows once per day at hour===0 (rows whose threats flipped to inactive after enqueue). Threats table still owns the `ip_address` deliverable but no longer carries the per-attempt state. Threats-side dns indexes (`idx_threats_dns_pending_strict`, `idx_threats_dns_backfill`, `idx_threats_dns_backfill_select`) were dropped in migration 0200. FC backlog (`backlog.domain_geo` / `domain_geo_drainable`), diagnostics (`enrichment_pipeline.domain_geo_drainable`, `dns_queue_parity.drainable_in_threats`), and the admin backfill endpoint all read from `dns_queue` now. Health monitored by FC via `platform_dns_queue_drift`, `platform_dns_queue_stalled`, and `platform_dns_queue_reaper_stalled` notifications. Read-budget: cursor + reaper architecture ≈ 94K reads/day on main DB (down from 15M/day pre-PR-BI, 99.4% reduction). See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts` + `lib/dns-queue-reaper.ts`.
+- DNS queue DB: `trust-radar-dns-queue` (D1, optional binding `DNS_QUEUE_DB`) — side DB holding the "needs DNS resolution" working set. After the PR-1 → PR-4 split (May 17–18), `dns_queue` is the **source of truth** for the cooldown + attempts state previously kept on `threats.attempted_resolve_at` + `threats.enrichment_attempts`. Navigator's dns-backfill drains it; `lib/dns-queue-reconciler.ts` enqueues new candidates from threats every tick using a **cursor-paginated** read (KV key `reconciler:dns_queue:cursor`, reads only rows added since the last cursor — PR-BI 2026-05-19). The cursor is a tie-safe `(created_at, rowid)` keyset (2026-10-12: a bare `created_at` cursor froze for ~6 days because bulk `db.batch()` inserts give ≥500 rows the same second); a no-progress page self-heals and flags `cursor_stuck` → FC `platform_dns_queue_stalled`. Manual catch-up: `POST /api/internal/dns-queue/reconcile?pages=1..20[&from=…]`. The companion `lib/dns-queue-reaper.ts` sweeps stale rows once per day at hour===0 (rows whose threats flipped to inactive after enqueue). Threats table still owns the `ip_address` deliverable but no longer carries the per-attempt state. Threats-side dns indexes (`idx_threats_dns_pending_strict`, `idx_threats_dns_backfill`, `idx_threats_dns_backfill_select`) were dropped in migration 0200. FC backlog (`backlog.domain_geo` / `domain_geo_drainable`), diagnostics (`enrichment_pipeline.domain_geo_drainable`, `dns_queue_parity.drainable_in_threats`), and the admin backfill endpoint all read from `dns_queue` now. The threats-side candidate count (`countDnsCandidatesInThreats`, a 1.5–2.7M-row scan) runs once a day in Navigator at UTC hour 3 (`runDnsDrainableRecount`, see §6 Navigator entry), no longer in Flight Control, which only peeks the cached value; diagnostics `dns_queue_parity` reports it with `drainable_computed_at` / `drainable_age_hours`. Health monitored by FC via `platform_dns_queue_drift` (acts only on a count ≤ 90 min old), `platform_dns_queue_stalled` (stays hourly; classified `cursor_stuck` / `falling_behind` — the latter needs a full reconciler page with enqueued > 0), and `platform_dns_queue_reaper_stalled` notifications. Read-budget: cursor + reaper architecture ≈ 94K reads/day on main DB (down from 15M/day pre-PR-BI, 99.4% reduction). See `lib/dns-backfill.ts` + `lib/dns-queue-reconciler.ts` + `lib/dns-queue-reaper.ts`.
 - **Never DROP or ALTER existing columns** without explicit instruction
 - New columns: `ALTER TABLE ... ADD COLUMN` only
 - New migrations: `migrations/NNNN_description.sql`
