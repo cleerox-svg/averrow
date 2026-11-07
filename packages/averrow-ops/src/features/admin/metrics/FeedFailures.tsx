@@ -366,9 +366,9 @@ function FeedRiskDetail({ row }: { row: FeedFailureRow }) {
         to="/admin/operations?tab=feeds"
         className="inline-flex items-center gap-2 px-3 py-1.5 rounded font-mono text-[10px] tracking-[0.12em] uppercase transition-colors"
         style={{
-          background: 'var(--amber-glow)',
-          color:      'var(--amber-text)',
-          border:     '1px solid var(--amber-border)',
+          background: 'var(--primary-glow)',
+          color:      'var(--primary-text)',
+          border:     '1px solid color-mix(in srgb, var(--primary) 25%, transparent)',
         }}
         onClick={(e) => e.stopPropagation()}
       >

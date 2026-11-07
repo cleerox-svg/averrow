@@ -60,7 +60,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
         {!inline && (
           <button
             onClick={() => navigate('/explore?tab=actors')}
-            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--amber-text)]"
+            className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors hover:text-[var(--primary-text)]"
             style={{ color: 'var(--text-tertiary)' }}
           >
             <ArrowLeft size={12} /> Back to Threat Actors
@@ -161,7 +161,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
               <span className="text-[11px] font-mono text-[var(--text-primary)]">{actor.attribution ?? 'Unknown'}</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-[var(--amber)]" />
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--primary)]" />
               <span className="text-[11px] text-white/60">Country</span>
               <span className="text-[11px] font-mono text-[var(--text-primary)]">{actor.country ?? 'Unknown'}</span>
             </div>
@@ -169,7 +169,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
         </BreakdownCard>
         <BreakdownCard
           title="TARGET SECTORS"
-          metric={<span className="text-lg sm:text-[24px] font-bold leading-none" style={{ color: 'var(--amber-text)' }}>{sectors.length || 0}</span>}
+          metric={<span className="text-lg sm:text-[24px] font-bold leading-none" style={{ color: 'var(--primary-text)' }}>{sectors.length || 0}</span>}
           metricLabel="sectors"
         >
           {sectors.length > 0 ? (
@@ -224,10 +224,10 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   to={`/campaigns/${campaign.id}`}
                   className="flex items-center justify-between p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] hover:border-white/[0.10] transition-all group"
                 >
-                  <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--amber-text)] transition-colors">
+                  <p className="text-[var(--text-primary)] text-sm font-medium group-hover:text-[var(--primary-text)] transition-colors">
                     {campaign.name}
                   </p>
-                  <span className="text-white/55 group-hover:text-[var(--amber-text)] transition-colors">&rarr;</span>
+                  <span className="text-white/55 group-hover:text-[var(--primary-text)] transition-colors">&rarr;</span>
                 </Link>
               ) : (
                 <div
@@ -309,7 +309,7 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
               <button
                 key={target.id}
                 onClick={() => target.brand_id ? navigate(`/brands/${target.brand_id}`) : undefined}
-                className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left hover:border-[var(--amber)]/30 transition-all"
+                className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3 text-left hover:border-[var(--primary)]/30 transition-all"
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] font-mono text-[var(--text-primary)] font-semibold">
@@ -403,10 +403,10 @@ export function ThreatActorDetail({ actorId: actorIdProp, inline = false }: Thre
                   href={m.article_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-[var(--amber-border)] transition-all"
+                  className="block rounded-lg border border-white/10 bg-white/5 p-3 hover:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] transition-all"
                 >
                   <div className="flex items-start justify-between gap-3 mb-1">
-                    <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--amber-text)]">
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--primary-text)]">
                       {m.source_feed}
                     </span>
                     {m.is_geopolitical === 1 && (

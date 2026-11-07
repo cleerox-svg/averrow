@@ -226,8 +226,8 @@ export function ArchitectDetail() {
             size={22}
             strokeWidth={1.8}
             style={{
-              color: 'var(--amber-text)',
-              filter: 'drop-shadow(0 0 6px rgba(229,168,50,0.45))',
+              color: 'var(--primary-text)',
+              filter: 'drop-shadow(0 0 6px color-mix(in srgb, var(--primary) 45%, transparent))',
             }}
           />
         }
@@ -239,7 +239,7 @@ export function ArchitectDetail() {
           <div className="min-w-0">
             <div
               className="font-mono text-[10px] uppercase tracking-[0.18em]"
-              style={{ color: 'var(--amber-text)' }}
+              style={{ color: 'var(--primary-text)' }}
             >
               Run Audit
             </div>
@@ -278,9 +278,9 @@ export function ArchitectDetail() {
                     color: 'var(--sev-critical-text)',
                   }
                 : {
-                    background: 'rgba(229,168,50,0.08)',
-                    border: '1px solid rgba(229,168,50,0.25)',
-                    color: 'var(--amber-text)',
+                    background: 'color-mix(in srgb, var(--primary) 8%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--primary) 25%, transparent)',
+                    color: 'var(--primary-text)',
                   }
             }
           >
@@ -297,7 +297,7 @@ export function ArchitectDetail() {
         >
           <div
             className="font-mono text-[10px] uppercase tracking-[0.18em]"
-            style={{ color: 'var(--amber-text)' }}
+            style={{ color: 'var(--primary-text)' }}
           >
             Latest Audit
           </div>
@@ -504,7 +504,7 @@ export function ArchitectDetail() {
                 >
                   <div
                     className="font-mono text-[11px] uppercase tracking-[0.18em]"
-                    style={{ color: 'var(--amber-text)' }}
+                    style={{ color: 'var(--primary-text)' }}
                   >
                     {modalContent.title} · {latest?.details.run_id.slice(0, 8)}…
                   </div>

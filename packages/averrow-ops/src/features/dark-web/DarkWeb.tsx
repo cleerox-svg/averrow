@@ -269,7 +269,7 @@ function SourceMixCard({ data, totalActive }: { data: Array<{ source: string; n:
                     <span className="font-mono text-white/60 tabular-nums">{d.n.toLocaleString()} · {pct}%</span>
                   </div>
                   <div className="mt-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
-                    <div className="h-full bg-[var(--amber)] opacity-70" style={{ width: `${pct}%` }} />
+                    <div className="h-full bg-[var(--primary)] opacity-70" style={{ width: `${pct}%` }} />
                   </div>
                 </div>
               );
@@ -336,13 +336,13 @@ function SearchAndScopeCard({
           value={q}
           onChange={e => onQ(e.target.value)}
           placeholder="Search snippet, channel, brand…"
-          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-[var(--amber-border)] focus:outline-none"
+          className="w-full h-9 px-3 rounded-lg bg-black/30 border border-white/[0.08] text-sm text-white/90 placeholder:text-white/55 focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] focus:outline-none"
         />
         {hasFilters && (
           <button
             type="button"
             onClick={onReset}
-            className="mt-3 text-[11px] font-mono text-[var(--amber-text)] hover:underline"
+            className="mt-3 text-[11px] font-mono text-[var(--primary-text)] hover:underline"
           >
             Clear filters
           </button>
@@ -366,7 +366,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={e => onChange(e.target.value)}
-        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-[var(--amber-border)] focus:outline-none"
+        className="h-7 px-2 rounded bg-black/30 border border-white/[0.08] text-[11px] text-white/85 font-mono focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] focus:outline-none"
       >
         {options.map(o => (
           <option key={o.value} value={o.value} className="bg-bg-card">{o.label}</option>
@@ -392,7 +392,7 @@ function SortableTh({
       <button
         type="button"
         onClick={() => onClick(sortKey)}
-        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-[var(--amber-text)]' : ''}`}
+        className={`inline-flex items-center gap-1 hover:text-white/85 ${active ? 'text-[var(--primary-text)]' : ''}`}
       >
         <span>{label}</span>
         {active && <span className="text-[9px]">{dir === 'asc' ? '↑' : '↓'}</span>}
@@ -427,7 +427,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
           <button
             type="button"
             onClick={onBrandClick}
-            className="text-left hover:text-[var(--amber-text)]"
+            className="text-left hover:text-[var(--primary-text)]"
           >
             <div className="text-sm text-white/90">{m.brand_name ?? m.brand_id}</div>
             {m.brand_domain && <div className="font-mono text-[10px] text-white/55">{m.brand_domain}</div>}
@@ -464,7 +464,7 @@ function MentionRow({ m, onBrandClick }: { m: DarkWebMentionWithBrand; onBrandCl
             href={m.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 mt-1 text-[10px] text-[var(--amber-text)] hover:underline"
+            className="inline-flex items-center gap-1 mt-1 text-[10px] text-[var(--primary-text)] hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
             <ExternalLink size={10} /> source

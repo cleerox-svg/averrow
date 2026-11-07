@@ -167,8 +167,8 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
               onKeyDown={e => onRadioKey(e, i)}
               className={`ds-focusable min-h-[28px] flex-1 rounded px-2 font-mono text-[11px] font-semibold uppercase tracking-wider [@media(pointer:coarse)]:min-h-[44px]`}
               style={{
-                background: p === period ? 'var(--amber-glow)' : 'transparent',
-                color: p === period ? 'var(--amber-text)' : 'var(--text-secondary)',
+                background: p === period ? 'var(--primary-glow)' : 'transparent',
+                color: p === period ? 'var(--primary-text)' : 'var(--text-secondary)',
                 border: 'none', cursor: 'pointer',
               }}
             >
@@ -275,8 +275,8 @@ export function EventRail({ period, onPeriod, kinds, onKinds, onOpenEvent, onClo
 const chipClass = (on: boolean) =>
   `ds-focusable rounded-full px-2.5 font-mono text-[11px] min-h-[28px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-3.5 ${on ? 'font-semibold' : ''}`;
 const chipStyle = (on: boolean) => ({
-  color: on ? 'var(--amber-text)' : 'var(--text-secondary)',
-  background: on ? 'var(--amber-glow)' : 'transparent',
-  border: `1px solid ${on ? 'var(--amber-border)' : 'var(--border-base)'}`,
+  color: on ? 'var(--primary-text)' : 'var(--text-secondary)',
+  background: on ? 'var(--primary-glow)' : 'transparent',
+  border: `1px solid ${on ? 'color-mix(in srgb, var(--primary) 25%, transparent)' : 'var(--border-base)'}`,
   cursor: 'pointer',
 });

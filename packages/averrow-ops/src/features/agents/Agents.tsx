@@ -240,7 +240,7 @@ function CardHealthChart({
   outputs?:  number[];
   errors?:   number[];
   /** Tint used for the runs series — flips to sev-high when the
-   *  agent matches a failure pattern, otherwise amber. */
+   *  agent matches a failure pattern, otherwise the primary. */
   runsColor: string;
   width?:    number;
   height?:   number;
@@ -357,9 +357,9 @@ function ConnectivityChips({ agentName }: { agentName: string }) {
               key={a}
               className="px-1.5 py-0.5 rounded"
               style={{
-                background: 'var(--amber-glow)',
-                color:      'var(--amber-text)',
-                border:     '1px solid var(--amber-border)',
+                background: 'var(--primary-glow)',
+                color:      'var(--primary-text)',
+                border:     '1px solid color-mix(in srgb, var(--primary) 25%, transparent)',
               }}
             >
               {a}
@@ -488,7 +488,7 @@ function AgentRowV3({ agent, isSelected, onSelect, variant: variantOverride }: A
               runs={agent.activity}
               outputs={agent.outputs_per_hour}
               errors={agent.errors_per_hour}
-              runsColor={failurePattern ? 'var(--sev-high)' : 'var(--amber)'}
+              runsColor={failurePattern ? 'var(--sev-high)' : 'var(--primary)'}
               width={120}
               height={36}
             />
@@ -558,8 +558,8 @@ function HealthChart({ name }: { name: string }) {
         <AreaChart data={chartData}>
           <defs>
             <linearGradient id="agents-v3-runsGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor="var(--amber)" stopOpacity={0.35} />
-              <stop offset="95%" stopColor="var(--amber)" stopOpacity={0} />
+              <stop offset="5%"  stopColor="var(--primary)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--primary)" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="agents-v3-outputsGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%"  stopColor="#22D3EE" stopOpacity={0.30} />
@@ -594,7 +594,7 @@ function HealthChart({ name }: { name: string }) {
           <Area
             type="monotone"
             dataKey="runs"
-            stroke="var(--amber)"
+            stroke="var(--primary)"
             strokeWidth={1.5}
             fill="url(#agents-v3-runsGrad)"
             name="Runs"
@@ -621,7 +621,7 @@ function HealthChart({ name }: { name: string }) {
       </ResponsiveContainer>
       <div className="flex items-center gap-3 mt-1 font-mono text-[9px] tracking-[0.12em] uppercase" style={{ color: 'var(--text-tertiary)' }}>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--amber)', opacity: 0.6 }} />
+          <span className="inline-block w-3 h-2 rounded-sm" style={{ background: 'var(--primary)', opacity: 0.6 }} />
           Runs
         </span>
         <span className="flex items-center gap-1.5">
@@ -684,7 +684,7 @@ function AgentControlBar({ agent }: { agent: Agent }) {
   return (
     <div className="mb-4 pb-4 border-b flex flex-wrap items-center gap-2" style={{ borderColor: 'var(--border-base)' }}>
       <span className="font-mono text-[9px] tracking-[0.18em] uppercase mr-1" style={{ color: 'var(--text-tertiary)' }}>Controls</span>
-      {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--amber)', () => trigger.mutate(agent.name))}
+      {btn(trigger.isPending ? 'Triggering…' : 'Trigger now', 'var(--primary-as-text)', () => trigger.mutate(agent.name))}
       {isPaused
         ? btn(toggle.isPending ? 'Resuming…' : 'Resume', 'var(--green)', () => toggle.mutate({ agentId: agent.name, enabled: true }))
         : btn(toggle.isPending ? 'Pausing…' : 'Pause', 'var(--text-secondary)', () => toggle.mutate({ agentId: agent.name, enabled: false }))}
@@ -760,7 +760,7 @@ function AgentDetailPanelV3({ agent }: { agent: Agent }) {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>Total</div>
-                  <div className="text-lg font-mono" style={{ color: 'var(--amber-text)' }}>{fmtTokens(tu.total_tokens)}</div>
+                  <div className="text-lg font-mono" style={{ color: 'var(--primary-text)' }}>{fmtTokens(tu.total_tokens)}</div>
                 </div>
                 <div>
                   <div className="font-mono text-[9px] tracking-[0.15em] uppercase" style={{ color: 'var(--text-muted)' }}>In · Out</div>
@@ -838,7 +838,7 @@ function SupervisorSection({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <Shield size={14} style={{ color: 'var(--amber-text)' }} />
+        <Shield size={14} style={{ color: 'var(--primary-text)' }} />
         <span className="font-mono text-[10px] tracking-[0.20em] uppercase font-bold" style={{ color: 'var(--text-primary)' }}>
           Supervisors
         </span>

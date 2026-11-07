@@ -55,8 +55,8 @@ export function PeriodSegment({ period, onChange, touch = false, className }: { 
             className={cn('ds-focusable rounded-[9px] px-2 font-mono text-[11px] font-bold tracking-[0.04em] cursor-pointer transition-[background,color] duration-150 motion-reduce:transition-none', touch ? 'min-h-[42px] min-w-[44px]' : 'min-h-[32px]')}
             style={{
               border: `1px solid ${on ? 'var(--pill-active-border)' : 'transparent'}`,
-              background: on ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
-              color: on ? 'var(--amber-text)' : 'var(--text-secondary)',
+              background: on ? 'linear-gradient(135deg, var(--primary-glow), var(--pill-active-fill-2-strong))' : 'transparent',
+              color: on ? 'var(--primary-text)' : 'var(--text-secondary)',
             }}
           >
             {PERIOD_LABELS[id]}
@@ -145,9 +145,9 @@ export function FiltersPopover({
         className={cn('ds-focusable inline-flex items-center gap-2 rounded-xl px-3 font-mono text-[11px] cursor-pointer', triggerClassName)}
         style={{ ...GLASS, height: touch ? 48 : 40, color: 'var(--text-secondary)' }}
       >
-        <span style={{ color: 'var(--amber-text)' }}>{PERIOD_LABELS[period]}</span>
+        <span style={{ color: 'var(--primary-text)' }}>{PERIOD_LABELS[period]}</span>
         <span aria-hidden style={{ color: 'var(--text-tertiary)' }}>·</span>
-        <span className="truncate max-w-[110px]" style={{ color: 'var(--amber-text)' }}>{SOURCE_LABELS[source]}</span>
+        <span className="truncate max-w-[110px]" style={{ color: 'var(--primary-text)' }}>{SOURCE_LABELS[source]}</span>
         <ChevronDown size={13} aria-hidden className={cn('shrink-0 ml-auto transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} style={{ color: 'var(--text-tertiary)' }} />
       </button>
       <div

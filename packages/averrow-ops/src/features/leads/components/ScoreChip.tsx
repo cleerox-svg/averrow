@@ -14,11 +14,11 @@ export interface ScoreChipProps {
 }
 
 function intensity(score: number): { bg: string; border: string } {
-  // Amber tinting tracks score buckets: dim (<50), mid (50-69), hot (70+).
+  // Primary tinting tracks score buckets: dim (<50), mid (50-69), hot (70+).
   // Three buckets keep the visual grammar legible to a rep skimming the kanban.
-  if (score >= 70) return { bg: 'rgba(229,168,50,0.18)', border: 'rgba(229,168,50,0.40)' };
-  if (score >= 50) return { bg: 'rgba(229,168,50,0.10)', border: 'rgba(229,168,50,0.25)' };
-  return { bg: 'rgba(229,168,50,0.05)', border: 'rgba(229,168,50,0.15)' };
+  if (score >= 70) return { bg: 'color-mix(in srgb, var(--primary) 18%, transparent)', border: 'color-mix(in srgb, var(--primary) 40%, transparent)' };
+  if (score >= 50) return { bg: 'color-mix(in srgb, var(--primary) 10%, transparent)', border: 'color-mix(in srgb, var(--primary) 25%, transparent)' };
+  return { bg: 'color-mix(in srgb, var(--primary) 5%, transparent)', border: 'color-mix(in srgb, var(--primary) 15%, transparent)' };
 }
 
 const SIZE: Record<NonNullable<ScoreChipProps['size']>, string> = {
@@ -39,7 +39,7 @@ export function ScoreChip({ score, size = 'md', className }: ScoreChipProps) {
       style={{
         background: tone.bg,
         border: `1px solid ${tone.border}`,
-        color: 'var(--amber-text)',
+        color: 'var(--primary-text)',
       }}
       title={`Prospect score: ${score}`}
     >

@@ -44,7 +44,7 @@ export function Digest() {
           <Link
             key={l.key}
             to={l.to}
-            className="rounded-full px-3 py-1.5 font-mono text-[11px] no-underline hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--amber-text)]"
+            className="rounded-full px-3 py-1.5 font-mono text-[11px] no-underline hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
             style={{ background: 'var(--border-base)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }}
           >
             {l.label}

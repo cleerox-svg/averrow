@@ -19,7 +19,7 @@ export function IdentityThreatsTile() {
           style={{ color: 'var(--text-primary)' }}
         >
           <span className="flex items-center gap-2 text-sm">
-            <ShieldCheck size={16} aria-hidden style={{ color: 'var(--amber-text)' }} />
+            <ShieldCheck size={16} aria-hidden style={{ color: 'var(--primary-text)' }} />
             Identity Provider Impersonation — <strong>{n.toLocaleString('en-US')} {n === 1 ? 'detection' : 'detections'}</strong> (7d)
           </span>
           <span className="font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>View →</span>

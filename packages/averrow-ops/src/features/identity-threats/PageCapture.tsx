@@ -256,7 +256,7 @@ function CaptureDetails({ capture, detectionHost }: { capture: PageCapture; dete
                 aria-expanded={chainOpen}
                 onClick={() => setChainOpen((o) => !o)}
                 className="mb-1 inline-flex min-h-[44px] cursor-pointer items-center gap-1 border-0 bg-transparent p-0 font-sans text-[13px]"
-                style={{ color: 'var(--amber-text)' }}
+                style={{ color: 'var(--primary-text)' }}
               >
                 <ChevronRight aria-hidden="true" size={14} style={{ transform: chainOpen ? 'rotate(90deg)' : 'none' }} />
                 {chainOpen ? 'Hide' : 'Show'} {chain.length} redirects

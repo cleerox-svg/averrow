@@ -6,6 +6,7 @@
 const ACCENT_TEXT: Record<string, string> = {
   '#e5a832': 'var(--amber-text)',
   'var(--amber)': 'var(--amber-text)',
+  'var(--primary)': 'var(--primary-text)',
   '#3cb878': 'var(--green-text)',
   'var(--green)': 'var(--green-text)',
   '#28a050': 'var(--green-text)',

@@ -97,18 +97,18 @@ export function StateMachineButtons<T extends string>({
               padding:       z.padding,
               borderRadius:  99,
               background:    isCurrent
-                ? 'linear-gradient(135deg, var(--amber), var(--amber-dim))'
+                ? 'linear-gradient(135deg, var(--primary), var(--primary-pressed))'
                 : 'transparent',
               color:         isCurrent
-                ? '#000'
+                ? 'var(--btn-primary-ink, #000)'
                 : isAllowed
                   ? 'var(--text-secondary)'
                   : 'var(--text-muted)',
               border:        isCurrent
-                ? '1px solid var(--amber-border)'
+                ? '1px solid color-mix(in srgb, var(--primary) 25%, transparent)'
                 : '1px solid transparent',
               boxShadow:     isCurrent
-                ? '0 4px 12px var(--amber-glow), inset 0 1px 0 var(--text-muted)'
+                ? '0 4px 12px var(--primary-glow), inset 0 1px 0 var(--text-muted)'
                 : 'none',
               cursor:        clickable ? 'pointer' : isCurrent ? 'default' : 'not-allowed',
               opacity:       isAllowed ? 1 : 0.4,

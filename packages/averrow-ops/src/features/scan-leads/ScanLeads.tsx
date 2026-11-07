@@ -101,7 +101,7 @@ export function ScanLeadsView() {
             className={[
               "px-3 py-1 text-xs font-mono uppercase tracking-wider rounded-sm border transition-colors",
               statusFilter === s
-                ? "bg-[var(--amber,#E5A832)]/15 border-[var(--amber,#E5A832)] text-[var(--amber,#E5A832)]"
+                ? "bg-[var(--primary)]/15 border-[var(--primary)] text-[var(--primary-as-text)]"
                 : "border-white/10 text-[var(--text-secondary,var(--text-secondary))] hover:border-white/20",
             ].join(" ")}
           >
@@ -549,7 +549,7 @@ function ScanLeadDetailBody({
                   navigator.clipboard?.writeText(lead.id).catch(() => undefined);
                   showToast("Lead ID copied", "success");
                 }}
-                className="mt-1 inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-tertiary,#8A8F9C)] hover:text-[var(--amber,#E5A832)]"
+                className="mt-1 inline-flex items-center gap-1 font-mono text-[11px] text-[var(--text-tertiary,#8A8F9C)] hover:text-[var(--primary-as-text)]"
               >
                 <Copy className="w-3 h-3" /> Lead #{shortId(lead.id)}
               </button>
@@ -627,7 +627,7 @@ function ScanLeadDetailBody({
                     Known brand:{" "}
                     <Link
                       to={`/brands/${intel.platform_history.known_brand.id}`}
-                      className="text-[var(--amber,#E5A832)] hover:underline inline-flex items-center gap-1"
+                      className="text-[var(--primary-as-text)] hover:underline inline-flex items-center gap-1"
                     >
                       {intel.platform_history.known_brand.name}
                       <ExternalLink className="w-3 h-3" />
@@ -724,7 +724,7 @@ function ScanLeadDetailBody({
                 {intel.correlated_brand ? (
                   <Link
                     to={`/brands/${intel.correlated_brand.id}`}
-                    className="mt-3 inline-flex items-center gap-1 text-xs text-[var(--amber,#E5A832)] hover:underline"
+                    className="mt-3 inline-flex items-center gap-1 text-xs text-[var(--primary-as-text)] hover:underline"
                   >
                     {intel.correlated_brand.name} <ExternalLink className="w-3 h-3" />
                   </Link>

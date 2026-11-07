@@ -239,7 +239,7 @@ const TopOriginsWidget = memo(function TopOriginsWidget({
             <span className="text-sm shrink-0" aria-hidden>{countryFlag(code)}</span>
             <span className="text-xs font-mono shrink-0 w-6" style={{ color: 'var(--text-secondary)' }}>{code}</span>
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'color-mix(in srgb, var(--text-primary) 10%, transparent)' }}>
-              <div className="h-full rounded-full" style={{ width: `${(count / max) * 100}%`, background: 'var(--amber)' }} />
+              <div className="h-full rounded-full" style={{ width: `${(count / max) * 100}%`, background: 'var(--primary)' }} />
             </div>
             <span className="text-xs font-mono font-bold tabular-nums shrink-0" style={{ color: 'var(--text-primary)' }}>
               {count.toLocaleString()}
@@ -317,8 +317,8 @@ const TopBrandsWidget = memo(function TopBrandsWidget({ period }: { period: stri
           <Link key={brand.id} to={`/brands/${encodeURIComponent(String(brand.id))}`} className={`${ROW_LINK} flex items-center gap-2.5 py-1.5`}>
             <Avatar
               name={brand.name}
-              color="var(--amber)"
-              dimColor="var(--amber-dim)"
+              color="var(--primary)"
+              dimColor="var(--primary-pressed)"
               faviconUrl={brand.canonical_domain ? `https://www.google.com/s2/favicons?domain=${brand.canonical_domain}&sz=32` : undefined}
               size={24}
               glow

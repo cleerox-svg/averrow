@@ -116,11 +116,11 @@ function BriefingCard({
       onClick={onSelect}
       className="w-full text-left rounded-xl p-4 transition-all cursor-pointer hover:bg-white/[0.03]"
       style={{
-        background: isSelected ? 'rgba(229,168,50,0.06)' : 'var(--bg-card)',
+        background: isSelected ? 'color-mix(in srgb, var(--primary) 6%, transparent)' : 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: isSelected
-          ? '1px solid rgba(229,168,50,0.45)'
+          ? '1px solid color-mix(in srgb, var(--primary) 45%, transparent)'
           : sev === 'critical' ? '1px solid rgba(200,60,60,0.30)'
           : sev === 'high'     ? '1px solid rgba(229,168,50,0.30)'
                                : '1px solid var(--border-base)',
@@ -143,7 +143,7 @@ function BriefingCard({
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
               })}
             </span>
-            <span style={{ color: 'var(--amber-text)' }}>
+            <span style={{ color: 'var(--primary-text)' }}>
               {isSelected ? '▾ Collapse' : '▸ View context'}
             </span>
           </div>
@@ -240,7 +240,7 @@ function BriefingDetailPanel({ briefing }: { briefing: IntelligenceBriefing }) {
           <ul className="space-y-1.5">
             {details.recommendations.map((r, i) => (
               <li key={i} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--amber)' }} />
+                <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--primary)' }} />
                 <span>{r}</span>
               </li>
             ))}
@@ -413,7 +413,7 @@ function BrandRiskMomentum() {
                   <tr key={b.target_brand_id ?? b.brand_name} className="data-row border-t border-white/5">
                     <Td className="p-0 py-2" style={{ color: 'var(--text-primary)' }}>
                       {b.target_brand_id
-                        ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--amber-text)] transition-colors">{b.brand_name}</Link>
+                        ? <Link to={`/brands/${b.target_brand_id}`} className="hover:text-[var(--primary-text)] transition-colors">{b.brand_name}</Link>
                         : b.brand_name}
                     </Td>
                     <Td className="p-0 py-2 text-right font-mono" style={{ color: 'var(--text-primary)' }}>{thisWeek.toLocaleString()}</Td>
@@ -467,7 +467,7 @@ function ProviderMomentumPanel() {
                 <div key={p.provider_id ?? p.provider} className="flex items-center gap-3">
                   <div className="w-28 text-xs truncate font-mono" style={{ color: 'var(--text-primary)' }}>
                     {p.provider_id
-                      ? <Link to={tabUrl('providers', { focus: encodeURIComponent(p.provider_id) })} className="hover:text-[var(--amber-text)] transition-colors">{p.provider}</Link>
+                      ? <Link to={tabUrl('providers', { focus: encodeURIComponent(p.provider_id) })} className="hover:text-[var(--primary-text)] transition-colors">{p.provider}</Link>
                       : p.provider}
                   </div>
                   <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">

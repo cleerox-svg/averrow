@@ -199,7 +199,7 @@ function FeedActionButton({
   action:   'trigger' | 'pause' | 'unpause';
   label:    string;
   icon:     React.ReactNode;
-  tone:     'amber' | 'green' | 'sev-high';
+  tone:     'primary' | 'green' | 'sev-high';
   queryKey: string;
 }) {
   const queryClient = useQueryClient();
@@ -207,7 +207,7 @@ function FeedActionButton({
     setTimeout(() => queryClient.invalidateQueries({ queryKey: [queryKey] }), 500);
   });
   const color =
-    tone === 'amber'    ? 'var(--amber)' :
+    tone === 'primary'  ? 'var(--primary-as-text)' :
     tone === 'green'    ? 'var(--green)' :
                           'var(--sev-high)';
 
@@ -384,7 +384,7 @@ function FeedCardV3({
           action="trigger"
           label="Trigger"
           icon={<RotateCw size={12} />}
-          tone="amber"
+          tone="primary"
           queryKey="feeds-overview"
         />
         {Boolean(feed.enabled) && !feed.paused_reason ? (

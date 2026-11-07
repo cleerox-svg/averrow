@@ -21,7 +21,7 @@ export interface SectionLabelProps {
 
 export function SectionLabel({
   label,
-  accent       = 'var(--amber-text)',
+  accent       = 'var(--primary-text)',
   action,
   onAction,
   attribution,

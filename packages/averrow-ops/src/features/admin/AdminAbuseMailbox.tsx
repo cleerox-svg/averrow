@@ -125,7 +125,7 @@ export function AdminAbuseMailbox() {
         }}
       >
         <p className="text-sm text-white/85 leading-relaxed">
-          The marketing site at <a className="text-[var(--amber-text)] hover:underline font-medium" href="https://averrow.com/report-abuse" target="_blank" rel="noreferrer">averrow.com/report-abuse</a> advertises public mailboxes for the same service we sell to customers. Every submission — phishing reports, impersonation tips, vulnerability disclosures, attacker probes — lands here, gets classified by Haiku, and feeds platform threat intelligence. We dogfood the abuse-mailbox module on ourselves.
+          The marketing site at <a className="text-[var(--link)] hover:underline font-medium" href="https://averrow.com/report-abuse" target="_blank" rel="noreferrer">averrow.com/report-abuse</a> advertises public mailboxes for the same service we sell to customers. Every submission — phishing reports, impersonation tips, vulnerability disclosures, attacker probes — lands here, gets classified by Haiku, and feeds platform threat intelligence. We dogfood the abuse-mailbox module on ourselves.
         </p>
       </div>
 
@@ -354,7 +354,7 @@ function AliasCard({ alias }: { alias: AdminAbuseAlias | null }) {
               <div className="text-[10px] font-mono text-white/65 uppercase tracking-wider">
                 {m.label}
               </div>
-              <code className="text-[12px] font-mono text-[var(--amber-text)]">{m.addr}</code>
+              <code className="text-[12px] font-mono text-[var(--primary-text)]">{m.addr}</code>
             </div>
             <button
               type="button"
@@ -384,7 +384,7 @@ function HeadlineMetrics({
   unboundTotal: number;
 }) {
   const tiles: Array<{ label: string; value: number; accent: string }> = [
-    { label: 'TOTAL CAPTURES',  value: totals.messages_total,         accent: '#E5A832' },
+    { label: 'TOTAL CAPTURES',  value: totals.messages_total,         accent: 'var(--primary)' },
     { label: 'PHISHING',        value: totals.messages_phishing,      accent: '#fb923c' },
     { label: 'MALWARE',         value: totals.messages_malware,       accent: '#f87171' },
     { label: 'HIGH / CRITICAL', value: totals.messages_high_critical, accent: '#f87171' },
@@ -527,9 +527,9 @@ function MessageRow({ message, expanded, onToggle }: {
     <button
       type="button"
       onClick={onToggle}
-      className={`w-full text-left rounded-xl px-4 py-3 transition-all hover:bg-white/[0.04] ${expanded ? 'ring-1 ring-[var(--amber)]/30' : ''}`}
+      className={`w-full text-left rounded-xl px-4 py-3 transition-all hover:bg-white/[0.04] ${expanded ? 'ring-1 ring-[var(--primary)]/30' : ''}`}
       style={{
-        background: expanded ? 'rgba(229,168,50,0.04)' : 'var(--bg-card)',
+        background: expanded ? 'color-mix(in srgb, var(--primary) 4%, transparent)' : 'var(--bg-card)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
         border: '1px solid var(--border-base)',
@@ -598,7 +598,7 @@ function MessageRow({ message, expanded, onToggle }: {
       </div>
       <div className="flex items-center gap-3 mt-1 text-[10px] font-mono text-white/70 flex-wrap">
         <span>
-          from <span className="text-[var(--amber-text)]">{message.original_from ?? message.forwarded_by_email ?? '—'}</span>
+          from <span className="text-[var(--primary-text)]">{message.original_from ?? message.forwarded_by_email ?? '—'}</span>
         </span>
         {message.original_from && message.forwarded_by_email && message.original_from !== message.forwarded_by_email && (
           <>
@@ -983,9 +983,9 @@ function RawTabButton({
       onClick={onClick}
       className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
       style={{
-        background:    active ? 'rgba(229,168,50,0.10)' : 'transparent',
-        color:         active ? 'var(--amber)' : 'var(--text-secondary)',
-        border:        active ? '1px solid rgba(229,168,50,0.30)' : '1px solid transparent',
+        background:    active ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'transparent',
+        color:         active ? 'var(--primary-as-text)' : 'var(--text-secondary)',
+        border:        active ? '1px solid color-mix(in srgb, var(--primary) 30%, transparent)' : '1px solid transparent',
       }}
     >
       <span className="uppercase tracking-wider">{label}</span>
@@ -1032,7 +1032,7 @@ function UrlsPanel({ urls, loading }: { urls: ExtractedUrl[]; loading: boolean }
         {urls.map((u, i) => (
           <div key={`${u.url}-${i}`} className="px-3 py-2 flex items-center gap-2">
             {u.domain && (
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--amber-text)] min-w-0 shrink-0">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--primary-text)] min-w-0 shrink-0">
                 {u.domain}
               </span>
             )}
@@ -1074,7 +1074,7 @@ function HeadersPanel({ entries, loading }: { entries: Array<[string, string]>; 
           <tbody className="divide-y divide-white/[0.04]">
             {sorted.map(([k, v]) => (
               <tr key={k}>
-                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-[var(--amber-text)] whitespace-nowrap">{k}</Td>
+                <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-[var(--primary-text)] whitespace-nowrap">{k}</Td>
                 <Td className="p-0 border-b-0 text-[11px] align-top px-3 py-1.5 text-white/85 break-all">{v}</Td>
               </tr>
             ))}
@@ -1216,7 +1216,7 @@ function DetailField({
       <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-0.5">{label}</div>
       <div
         className={`text-[12px] ${mono ? 'font-mono' : ''} ${uppercase ? 'uppercase' : ''} break-all`}
-        style={{ color: color ?? (accent ? 'var(--amber)' : 'rgba(255,255,255,0.92)') }}
+        style={{ color: color ?? (accent ? 'var(--primary-as-text)' : 'rgba(255,255,255,0.92)') }}
       >
         {value ?? <span className="text-white/55">—</span>}
       </div>
@@ -1418,9 +1418,9 @@ function InboxToolbar({
               onClick={() => onStatusTabChange(t.key)}
               className="px-3 py-1.5 rounded-md text-[11px] font-mono transition-colors"
               style={{
-                background: active ? 'rgba(229,168,50,0.10)' : 'transparent',
-                color:      active ? 'var(--amber)' : 'var(--text-secondary)',
-                border:     active ? '1px solid rgba(229,168,50,0.30)' : '1px solid transparent',
+                background: active ? 'color-mix(in srgb, var(--primary) 10%, transparent)' : 'transparent',
+                color:      active ? 'var(--primary-as-text)' : 'var(--text-secondary)',
+                border:     active ? '1px solid color-mix(in srgb, var(--primary) 30%, transparent)' : '1px solid transparent',
               }}
             >
               <span className="uppercase tracking-wider">{t.label}</span>
@@ -1437,7 +1437,7 @@ function InboxToolbar({
           onClick={() => onClassFilterChange(null)}
           className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
             classFilter === null
-              ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
+              ? 'border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] bg-[var(--primary-glow)]'
               : 'border-white/[0.08] text-white/55 hover:text-white/85'
           }`}
         >
@@ -1454,7 +1454,7 @@ function InboxToolbar({
               onClick={() => onClassFilterChange(active ? null : c.key)}
               className={`text-[10px] font-mono uppercase tracking-wider px-2 py-1 rounded border ${
                 active
-                  ? 'border-[var(--amber-border)] text-[var(--amber-text)] bg-[var(--amber-glow)]'
+                  ? 'border-[color-mix(in_srgb,var(--primary)_25%,transparent)] text-[var(--primary-text)] bg-[var(--primary-glow)]'
                   : 'border-white/[0.08] text-white/55 hover:text-white/85'
               }`}
             >
@@ -1467,7 +1467,7 @@ function InboxToolbar({
           placeholder="Search subject / sender / alias…"
           value={searchText}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-[var(--amber-border)] min-w-[200px]"
+          className="ml-auto text-[11px] font-mono bg-black/30 border border-white/[0.08] rounded px-3 py-1.5 text-white/85 placeholder-white/55 focus:outline-none focus:border-[color-mix(in_srgb,var(--primary)_25%,transparent)] min-w-[200px]"
         />
       </div>
     </div>
@@ -1505,7 +1505,7 @@ function StatusActions({ message }: { message: AdminAbuseInboxMessage }) {
       {BTN('Investigate', 'investigating', 'var(--sev-medium)')}
       {BTN('Resolve',     'resolved',      'var(--green)')}
       {BTN('Dismiss',     'dismissed',     'var(--text-secondary)')}
-      {cur !== 'new' && BTN('Reopen',      'new',           'var(--amber)')}
+      {cur !== 'new' && BTN('Reopen',      'new',           'var(--primary-as-text)')}
     </div>
   );
 }
@@ -1539,8 +1539,8 @@ function EmptyMessages() {
       }}
     >
       <div className="inline-flex items-center justify-center w-10 h-10 rounded-full mb-3"
-           style={{ background: 'rgba(229,168,50,0.10)' }}>
-        <Inbox size={18} style={{ color: 'var(--amber-text)' }} />
+           style={{ background: 'color-mix(in srgb, var(--primary) 10%, transparent)' }}>
+        <Inbox size={18} style={{ color: 'var(--primary-text)' }} />
       </div>
       <div className="text-sm text-white/85 font-mono">No captures yet</div>
       <p className="text-[11px] text-white/65 mt-1 max-w-md mx-auto">

@@ -11,7 +11,7 @@ export function NotFound() {
         to="/observatory"
         className="px-4 py-2 rounded-lg text-sm mt-2"
         style={{
-          color: 'var(--amber-text)',
+          color: 'var(--link)',
           background: 'transparent',
           border: '1px solid var(--border-base)',
         }}

@@ -106,7 +106,7 @@ export function FirmographicsCard({ lead, onRefresh, refreshing }: Firmographics
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 font-mono text-xs hover:underline"
-                    style={{ color: 'var(--amber-text)' }}
+                    style={{ color: 'var(--link)' }}
                   >
                     {row.value}
                     <ExternalLink className="w-3 h-3" />

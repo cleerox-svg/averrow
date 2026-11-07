@@ -121,7 +121,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
   }
 
   return (
-    <div className="bg-[var(--bg-card)] backdrop-blur-md border border-amber-500/15 rounded-xl p-5">
+    <div className="bg-[var(--bg-card)] backdrop-blur-md border border-amber-500/15 ops-accent-border-15 rounded-xl p-5">
       <div className="flex items-start justify-between mb-3">
         <div>
           <h2 className="text-white/80 font-semibold text-sm">
@@ -159,7 +159,7 @@ export function ExecutiveSummary({ period }: ExecutiveSummaryProps) {
             <p className="text-white/55 text-[10px]">Period Trend</p>
           </div>
           <div className="min-w-0">
-            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--amber-text)' }}>
+            <p className="font-mono font-bold text-base sm:text-lg break-words" style={{ color: 'var(--primary-text)' }}>
               {metrics.topType.label}
             </p>
             <p className="text-white/55 text-[10px]">Top Threat Type</p>

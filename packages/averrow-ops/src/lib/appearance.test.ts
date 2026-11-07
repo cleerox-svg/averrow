@@ -620,3 +620,26 @@ describe('appearance.css re-emits every shell-v4 token override it also sets', (
     }
   });
 });
+
+describe('P3-2b review aliases: --primary-as-text / --primary-focus / --metric-accent', () => {
+  const ALIASES = ['--primary-as-text', '--primary-focus', '--metric-accent'] as const;
+
+  it.each(['dark', 'light'] as const)('legacy %s: every alias resolves to --amber (pixel-identical)', (theme) => {
+    const c = computed({ accent: null, base: null, theme });
+    for (const n of ALIASES) expect(resolve(c, n), n).toBe(resolve(c, '--amber'));
+  });
+
+  describe.each(combos)('%s / %s / %s', (accent, base, theme) => {
+    const c = computed({ accent, base, theme });
+    const col = (n: string) => parseColor(resolve(c, n));
+
+    it('--primary-as-text on --bg-card >= 4.5 (AA small text)', () => {
+      expect(contrast(col('--primary-as-text'), col('--bg-card'))).toBeGreaterThanOrEqual(AA);
+    });
+
+    it('--primary-focus is --focus-ring and --metric-accent is --text-tertiary', () => {
+      expect(resolve(c, '--primary-focus')).toBe(resolve(c, '--focus-ring'));
+      expect(resolve(c, '--metric-accent')).toBe(resolve(c, '--text-tertiary'));
+    });
+  });
+});

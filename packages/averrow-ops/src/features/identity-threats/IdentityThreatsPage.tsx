@@ -73,8 +73,8 @@ const SELECTABLE_CLS = 'flex w-full min-h-[44px] cursor-pointer items-center jus
 
 function selectedStyle(selected: boolean): React.CSSProperties {
   return {
-    background: selected ? 'var(--amber-glow)' : 'transparent',
-    boxShadow: selected ? 'inset 2px 0 0 var(--amber)' : 'none',
+    background: selected ? 'var(--primary-glow)' : 'transparent',
+    boxShadow: selected ? 'inset 2px 0 0 var(--primary)' : 'none',
   };
 }
 
@@ -109,7 +109,7 @@ function FilterChips({ items, onRemove, onClear }: {
           onClick={() => onRemove(c.key)}
           aria-label={`Remove filter: ${c.label}`}
           className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full px-3 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-          style={{ border: '1px solid var(--amber)', background: 'var(--amber-glow)', color: 'var(--text-primary)' }}
+          style={{ border: '1px solid var(--primary)', background: 'var(--primary-glow)', color: 'var(--text-primary)' }}
         >
           <span>{c.label}</span><span aria-hidden="true">×</span>
         </button>
@@ -118,7 +118,7 @@ function FilterChips({ items, onRemove, onClear }: {
         type="button"
         onClick={onClear}
         className="min-h-[44px] cursor-pointer border-0 bg-transparent px-2 text-[13px] underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-        style={{ color: 'var(--amber-text)' }}
+        style={{ color: 'var(--primary-text)' }}
       >
         Clear all
       </button>}
@@ -197,7 +197,7 @@ function Content({ data, ctl, detectionsRef }: {
                     to={`/brands/${encodeURIComponent(b.brand_id)}`}
                     aria-label={`Open ${b.brand_name} brand page`}
                     className="inline-flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-lg no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]"
-                    style={{ color: 'var(--amber-text)' }}
+                    style={{ color: 'var(--primary-text)' }}
                   >
                     <span aria-hidden="true">↗</span>
                   </Link>
@@ -235,7 +235,7 @@ function Content({ data, ctl, detectionsRef }: {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="absolute right-0 top-0 inline-flex h-[44px] w-[44px] items-center justify-center text-[13px] no-underline"
-                    style={{ color: 'var(--amber-text)' }}
+                    style={{ color: 'var(--link)' }}
                   >
                     <span aria-hidden="true">↗</span><span className="sr-only">{m.id} on MITRE ATT&CK (opens in new tab)</span>
                   </a>
@@ -252,7 +252,7 @@ function Content({ data, ctl, detectionsRef }: {
                 {data.mitre.map((m) => (
                   <tr key={m.id}>
                     <Td>
-                      <a href={mitreUrl(m.id)} target="_blank" rel="noopener noreferrer" className="font-mono hover:underline" style={{ color: 'var(--amber-text)' }}>
+                      <a href={mitreUrl(m.id)} target="_blank" rel="noopener noreferrer" className="font-mono hover:underline" style={{ color: 'var(--link)' }}>
                         {m.id}<span className="sr-only"> (opens in new tab)</span>
                       </a>
                     </Td>

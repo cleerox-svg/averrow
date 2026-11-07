@@ -3,7 +3,7 @@
 //
 // - >=56px tall, severity dot + sr-only severity text, title 14/600 (2-line
 //   clamp), body 13 secondary (2-line clamp), time 12 mono tertiary.
-// - Unread = 3px amber left bar + bold title (never colour alone).
+// - Unread = 3px primary left bar + bold title (never colour alone).
 // - Actions are never hover-gated. `inline` shows Snooze + Done buttons (inbox);
 //   `kebab` folds them into one overflow Menu (bell). Snooze durations come
 //   from lib/snooze so both surfaces offer identical choices.
@@ -87,7 +87,7 @@ export function NotificationRow({
         <span
           aria-hidden="true"
           data-testid="unread-bar"
-          className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r-full bg-[var(--amber)]"
+          className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r-full bg-[var(--primary)]"
         />
       )}
       <div className="flex items-start">
@@ -133,7 +133,7 @@ export function NotificationRow({
               </span>
             )}
             {showDetail && notification.recommended_action && (
-              <span className="mt-1 block text-[13px] font-medium leading-[1.45] text-[var(--amber-text)]">
+              <span className="mt-1 block text-[13px] font-medium leading-[1.45] text-[var(--primary-text)]">
                 {notification.recommended_action}
               </span>
             )}

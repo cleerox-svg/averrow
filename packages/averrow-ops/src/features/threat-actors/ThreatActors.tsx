@@ -223,7 +223,7 @@ function ActorCard({ actor, isSelected = false, onClick }: { actor: ThreatActor;
                 data={sparkData}
                 fill
                 height={36}
-                color={isProblemState ? 'var(--sev-high)' : 'var(--amber)'}
+                color={isProblemState ? 'var(--sev-high)' : 'var(--primary)'}
                 animate={false}
               />
             </div>
@@ -455,8 +455,8 @@ export function ThreatActors() {
           }}>
             <span style={{
               width: 6, height: 6, borderRadius: '50%',
-              background: 'var(--amber)',
-              boxShadow: '0 0 6px var(--amber)',
+              background: 'var(--primary)',
+              boxShadow: '0 0 6px var(--primary)',
             }} />
             <span>ASNs / IPs / Domains</span>
           </div>

@@ -84,7 +84,7 @@ function AsOfNote({ date }: { date: string }) {
   );
 }
 
-/** Section heading for this page — the shared `.section-label` (AA-contrast amber). */
+/** Section heading for this page — the shared `.section-label` (AA-contrast primary text). */
 function PageSectionLabel({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <h3 className={cn('section-label', className)}>
@@ -119,7 +119,7 @@ function ChartTooltip({ active, payload, label }: {
     >
       <div className="font-mono mb-1" style={{ color: 'var(--text-secondary)' }}>{label ? fmtDate(label) : ''}</div>
       <div className="flex justify-between gap-4">
-        <span style={{ color: 'var(--amber-text)' }}>Bot share</span>
+        <span style={{ color: 'var(--primary-text)' }}>Bot share</span>
         <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{fmtPct(payload[0]?.value ?? 0)}</span>
       </div>
     </div>
@@ -186,7 +186,7 @@ function ShareBar({ pct, max = 0, absolute = false, marker }: { pct: number; max
   const width = absolute ? absoluteBarWidth(pct) : max > 0 ? Math.max(2, (pct / max) * 100) : 0;
   return (
     <div aria-hidden="true" className="relative h-1.5 w-full rounded-full" style={{ background: 'var(--border-base)' }}>
-      <div className="h-full rounded-full" style={{ width: `${width}%`, background: 'var(--amber)' }} />
+      <div className="h-full rounded-full" style={{ width: `${width}%`, background: 'var(--primary)' }} />
       {absolute && marker != null && Number.isFinite(marker) ? (
         <div
           className="absolute"
@@ -380,9 +380,9 @@ function BotTrafficContent() {
                   type="monotone"
                   dataKey="bot_pct"
                   name="Bot share"
-                  stroke="var(--amber)"
+                  stroke="var(--primary)"
                   strokeWidth={2}
-                  fill="var(--amber)"
+                  fill="var(--primary)"
                   fillOpacity={0.2}
                 />
               </AreaChart>

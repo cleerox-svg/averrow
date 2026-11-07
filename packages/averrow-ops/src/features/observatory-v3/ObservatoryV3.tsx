@@ -893,7 +893,7 @@ export function ObservatoryV3() {
               onClick={toggleShared}
               aria-pressed={state.shared}
               className="ds-focusable self-start rounded-md px-2 py-1 min-h-[32px]"
-              style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+              style={{ background: 'none', border: '1px solid var(--border-base)', color: state.shared ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               Show low-evidence clusters
             </button>
@@ -1080,7 +1080,7 @@ export function ObservatoryV3() {
               aria-label="Find on map"
               aria-expanded={mobileSearchOpen}
               className="ds-focusable shrink-0 inline-flex items-center justify-center rounded-xl w-12 h-12"
-              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)', color: mobileSearchOpen ? 'var(--amber-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
+              style={{ background: 'var(--bg-card)', backdropFilter: 'blur(20px)', border: '1px solid var(--border-base)', boxShadow: 'var(--card-shadow)', color: mobileSearchOpen ? 'var(--primary-text)' : 'var(--text-secondary)', cursor: 'pointer' }}
             >
               <SearchIcon size={15} />
             </button>
@@ -1217,7 +1217,7 @@ export function ObservatoryV3() {
         <div className="flex items-center gap-4 min-w-0">
           {fast ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span style={{ color: 'var(--amber-text)' }}>{periodLabel}</span>
+              <span style={{ color: 'var(--primary-text)' }}>{periodLabel}</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{(L.velocityModel?.total ?? 0).toLocaleString()}</span> fast-weaponized
               {' · '}
@@ -1226,7 +1226,7 @@ export function ObservatoryV3() {
           ) : isBotMode ? (
             <div className="font-mono text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {/* Bot share fetches the 7-day Radar window (useBotTraffic(7)). */}
-              <span style={{ color: 'var(--amber-text)' }}>7D</span>
+              <span style={{ color: 'var(--primary-text)' }}>7D</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{botPoints.length}</span> countries
               {botGlobalAvg != null && (
@@ -1235,7 +1235,7 @@ export function ObservatoryV3() {
             </div>
           ) : (
             <div className="font-mono text-[10px]" aria-busy={statsUpdating} style={{ color: 'var(--text-muted)', opacity: statsUpdating ? 0.6 : 1 }}>
-              <span style={{ color: 'var(--amber-text)' }}>{footerPeriodLabel}</span>
+              <span style={{ color: 'var(--primary-text)' }}>{footerPeriodLabel}</span>
               {' · '}
               <span style={{ color: 'var(--text-secondary)' }}>{(stats?.threats_mapped ?? 0).toLocaleString()}</span> threats
               {' · '}
@@ -1347,7 +1347,7 @@ export function ObservatoryV3() {
             border: '1px solid var(--border-base)',
             backdropFilter: 'blur(20px)',
             WebkitBackdropFilter: 'blur(20px)',
-            color: 'var(--amber-text)',
+            color: 'var(--primary-text)',
             boxShadow: 'var(--card-shadow)',
             cursor: 'pointer',
             zIndex: Z_PANEL,

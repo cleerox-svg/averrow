@@ -315,13 +315,10 @@ function MapFallback({ message, onRetry }: { message: string; onRetry?: () => vo
         <button
           type="button"
           onClick={onRetry}
-          className="ds-focusable font-mono text-xs px-4 py-2 rounded-lg"
-          style={{
-            background: 'color-mix(in srgb, var(--amber) 15%, transparent)',
-            border: '1px solid var(--amber-border)',
-            color: 'var(--amber-text)',
-            cursor: 'pointer',
-          }}
+          // Legacy look: the primary (amber) tint. Under an accent a retry is not a primary
+          // action, so `.obs-map-retry` (index.css) restyles it as a secondary button.
+          className="ds-focusable obs-map-retry font-mono text-xs px-4 py-2 rounded-lg"
+          style={{ cursor: 'pointer' }}
         >
           Retry
         </button>
@@ -1481,7 +1478,8 @@ function ThreatMapV3Inner({
                 {tooltip.arc.volume} threat{tooltip.arc.volume === 1 ? '' : 's'}
               </div>
               {tooltip.arc.brand_name && (
-                <div className="mt-1" style={{ color: 'var(--amber-text)' }}>Target: {tooltip.arc.brand_name}</div>
+                // Colours in index.css: primary text in the legacy look, neutral under an accent.
+                <div className="mt-1 obs-tooltip-target"><span className="obs-tooltip-target-label">Target:</span> {tooltip.arc.brand_name}</div>
               )}
               {tooltip.arc.source_region && (
                 <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>From: {tooltip.arc.source_region}</div>

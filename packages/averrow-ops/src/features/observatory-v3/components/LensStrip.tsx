@@ -129,9 +129,9 @@ export function LensStrip({ lens, onChange, touch = false, className }: LensStri
               )}
               style={{
                 border: `1px solid ${active ? 'var(--pill-active-border)' : 'transparent'}`,
-                background: active ? 'linear-gradient(135deg, var(--amber-glow), var(--pill-active-fill-2-strong))' : 'transparent',
-                color: active ? 'var(--amber-text)' : 'var(--text-secondary)',
-                boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--amber-glow)' : 'none',
+                background: active ? 'linear-gradient(135deg, var(--primary-glow), var(--pill-active-fill-2-strong))' : 'transparent',
+                color: active ? 'var(--primary-text)' : 'var(--text-secondary)',
+                boxShadow: active ? 'inset 0 1px 0 var(--pill-active-rim-strong), 0 0 12px var(--primary-glow)' : 'none',
               }}
             >
               {LENS_DEFS[id].label}

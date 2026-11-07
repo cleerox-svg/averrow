@@ -19,7 +19,7 @@ const textPrimary: CSSProperties = { color: 'var(--text-primary)' };
 const textSecondary: CSSProperties = { color: 'var(--text-secondary)' };
 const textTertiary: CSSProperties = { color: 'var(--text-tertiary)' };
 const textMuted: CSSProperties = { color: 'var(--text-muted)' };
-const amberText: CSSProperties = { color: 'var(--amber-text)' };
+const primaryText: CSSProperties = { color: 'var(--primary-text)' };
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -196,17 +196,17 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
     <div className="space-y-4">
       {/* ── SECTION 1: PLATFORM OVERVIEW ─────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <OverviewCard title="Total Threats" metric={fmt(p.totalThreats)} metricLabel="total" metricColor="var(--amber-text)">
+        <OverviewCard title="Total Threats" metric={fmt(p.totalThreats)} metricLabel="total" metricColor="var(--primary-text)">
           <DotRow color="var(--red)" label="New 24h" count={p.last24h ?? 0} />
           <DotRow color="var(--amber)" label="New 12h" count={p.last12h ?? 0} />
         </OverviewCard>
 
-        <OverviewCard title="24H Ingest" metric={fmt(p.last24h)} metricLabel="new" metricColor="var(--amber-text)">
+        <OverviewCard title="24H Ingest" metric={fmt(p.last24h)} metricLabel="new" metricColor="var(--primary-text)">
           <DotRow color="var(--green)" label="Brands" count={p.brandsMonitored ?? 0} />
           <DotRow color="var(--blue)" label="Classified" count={p.brandsClassified ?? 0} />
         </OverviewCard>
 
-        <OverviewCard title="Hourly Rate" metric={`${fmt(p.avgPerHour)}`} metricLabel="/hr" metricColor="var(--amber-text)">
+        <OverviewCard title="Hourly Rate" metric={`${fmt(p.avgPerHour)}`} metricLabel="/hr" metricColor="var(--primary-text)">
           <div className="text-[11px]" style={textTertiary}>Last 24h average</div>
         </OverviewCard>
 
@@ -227,7 +227,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
         <Card variant="flat" padding={16} className="space-y-3">
           <div className="flex items-center justify-between">
             <SectionTitle>New Threats (12h)</SectionTitle>
-            <span className="font-mono text-[14px] font-bold" style={amberText}>{fmt(total12h)}</span>
+            <span className="font-mono text-[14px] font-bold" style={primaryText}>{fmt(total12h)}</span>
           </div>
           <div className="flex flex-wrap gap-3 font-mono text-[11px]">
             {briefing.newThreats.bySeverity.map((s) => (
@@ -286,7 +286,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                 <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{c.status}</Td>
                 <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{c.briefing_priority}</Td>
                 <Td className="p-0 py-1 pr-4 text-right" style={textSecondary}>{fmt(c.total_threats)}</Td>
-                <Td className="p-0 py-1 pr-4 text-right" style={amberText}>{fmt(c.new_24h)}</Td>
+                <Td className="p-0 py-1 pr-4 text-right" style={primaryText}>{fmt(c.new_24h)}</Td>
                 <Td className="p-0 py-1 text-right" style={textSecondary}>{fmt(c.brands_hit)}</Td>
               </tr>
             ))}
@@ -308,7 +308,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                 <tr key={f.feed_name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
                   <Td className="p-0 py-1 pr-4 truncate max-w-[140px]" style={textPrimary}>{f.feed_name}</Td>
                   <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(f.runs)}</Td>
-                  <Td className="p-0 py-1 text-right" style={amberText}>{fmt(f.ingested)}</Td>
+                  <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(f.ingested)}</Td>
                 </tr>
               ))}
             </DataTable>
@@ -342,7 +342,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
               {briefing.feedHealth.degradedFeeds.map((f) => (
-                <div key={f.feed_name} className="font-mono text-[10px]" style={amberText}>
+                <div key={f.feed_name} className="font-mono text-[10px]" style={primaryText}>
                   {'⚠'} {f.feed_name} — {f.last_error ?? 'unknown error'}
                 </div>
               ))}
@@ -352,7 +352,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
             <>
               <hr style={{ borderColor: 'var(--border-base)' }} />
               {briefing.feedHealth.staleFeeds.map((f) => (
-                <div key={f.feed_name} className="font-mono text-[10px]" style={amberText}>
+                <div key={f.feed_name} className="font-mono text-[10px]" style={primaryText}>
                   {'⚠'} {f.feed_name} — last run {f.last_successful_pull ?? 'never'} (stale)
                 </div>
               ))}
@@ -370,7 +370,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
               <tr key={e.name} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
                 <Td className="p-0 py-1 pr-4" style={textPrimary}>{e.name}</Td>
                 <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(e.checked)}</Td>
-                <Td className="p-0 py-1 text-right pr-4" style={amberText}>{fmt(e.hits)}</Td>
+                <Td className="p-0 py-1 text-right pr-4" style={primaryText}>{fmt(e.hits)}</Td>
                 <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{pct(e.hits, e.checked)}</Td>
                 <Td className="p-0 py-1 text-right">
                   <Badge status={e.checked > 0 ? 'success' : 'warning'} label={e.checked > 0 ? 'OK' : 'Idle'} size="xs" />
@@ -389,26 +389,26 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
             <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
               <Td className="p-0 py-1 pr-4" style={textPrimary}>Typosquat</Td>
               <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.typosquat_total)}</Td>
-              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.typosquat_new)}</Td>
+              <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(briefing.newCapabilities.typosquat_new)}</Td>
             </tr>
             <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
               <Td className="p-0 py-1 pr-4" style={textPrimary}>Social</Td>
               <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.social_total)}</Td>
-              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.social_new)}</Td>
+              <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(briefing.newCapabilities.social_new)}</Td>
             </tr>
             <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
               <Td className="p-0 py-1 pr-4" style={textPrimary}>App stores</Td>
               <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.appstore_total)}</Td>
-              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.appstore_new)}</Td>
+              <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(briefing.newCapabilities.appstore_new)}</Td>
             </tr>
             <tr className="border-b" style={{ borderColor: 'var(--border-base)' }}>
               <Td className="p-0 py-1 pr-4" style={textPrimary}>Dark web</Td>
               <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(briefing.newCapabilities.darkweb_total)}</Td>
-              <Td className="p-0 py-1 text-right" style={amberText}>{fmt(briefing.newCapabilities.darkweb_new)}</Td>
+              <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(briefing.newCapabilities.darkweb_new)}</Td>
             </tr>
           </DataTable>
           <div className="font-mono text-[10px]" style={textSecondary}>
-            CertStream captures: <span style={amberText}>{fmt(briefing.newCapabilities.certstream)}</span>
+            CertStream captures: <span style={primaryText}>{fmt(briefing.newCapabilities.certstream)}</span>
           </div>
         </Card>
       )}
@@ -453,9 +453,9 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
         <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Spam Trap Intelligence</SectionTitle>
           <div className="flex flex-wrap gap-4 font-mono text-[11px]">
-            <span style={textSecondary}>Seeds: <span style={amberText}>{fmt(briefing.spamTrap.totalSeeds)}</span></span>
-            <span style={textSecondary}>Captures: <span style={amberText}>{fmt(briefing.spamTrap.totalCaptures)}</span></span>
-            <span style={textSecondary}>New (12h): <span style={amberText}>{fmt(briefing.spamTrap.captures12h)}</span></span>
+            <span style={textSecondary}>Seeds: <span style={primaryText}>{fmt(briefing.spamTrap.totalSeeds)}</span></span>
+            <span style={textSecondary}>Captures: <span style={primaryText}>{fmt(briefing.spamTrap.totalCaptures)}</span></span>
+            <span style={textSecondary}>New (12h): <span style={primaryText}>{fmt(briefing.spamTrap.captures12h)}</span></span>
           </div>
           {briefing.spamTrap.seedingSources.length > 0 && (
             <>
@@ -466,7 +466,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                   <tr key={s.seeded_location} className="border-b" style={{ borderColor: 'var(--border-base)' }}>
                     <Td className="p-0 py-1 pr-4 truncate max-w-[160px]" style={textPrimary}>{s.seeded_location}</Td>
                     <Td className="p-0 py-1 text-right pr-4" style={textSecondary}>{fmt(s.seeds)}</Td>
-                    <Td className="p-0 py-1 text-right" style={amberText}>{fmt(s.catches)}</Td>
+                    <Td className="p-0 py-1 text-right" style={primaryText}>{fmt(s.catches)}</Td>
                   </tr>
                 ))}
               </DataTable>
@@ -497,10 +497,10 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
         <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Honeypot Activity</SectionTitle>
           <div className="flex flex-wrap gap-4 font-mono text-[11px]">
-            <span style={textSecondary}>Total: <span style={amberText}>{fmt(briefing.honeypot.totalVisits)}</span></span>
+            <span style={textSecondary}>Total: <span style={primaryText}>{fmt(briefing.honeypot.totalVisits)}</span></span>
             <span style={textSecondary}>Bots: <span style={textSecondary}>{fmt(briefing.honeypot.botVisits)}</span></span>
             <span style={textSecondary}>Humans: <span style={textSecondary}>{fmt(briefing.honeypot.humanVisits)}</span></span>
-            <span style={textSecondary}>Last 12h: <span style={amberText}>{fmt(briefing.honeypot.visits12h)}</span></span>
+            <span style={textSecondary}>Last 12h: <span style={primaryText}>{fmt(briefing.honeypot.visits12h)}</span></span>
           </div>
           {briefing.honeypot.pageBreakdown.length > 0 && (
             <>
@@ -541,7 +541,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                 const time = h.visited_at ? new Date(h.visited_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false }) + ' UTC' : '—';
                 const asn = h.asn ? ' AS' + h.asn : '';
                 return (
-                  <div key={i} className="font-mono text-[11px]" style={amberText}>
+                  <div key={i} className="font-mono text-[11px]" style={primaryText}>
                     {'⚠'} {label}: {h.country || '??'}{asn} &rarr; {h.page} at {time}
                   </div>
                 );
@@ -556,12 +556,12 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
         <Card variant="flat" padding={16} className="space-y-3">
           <SectionTitle>Marketing Visibility ({fmt(briefing.marketingVisibility.windowHours)}h)</SectionTitle>
           <div className="flex flex-wrap gap-4 font-mono text-[11px]">
-            <span style={textSecondary}>Human views: <span style={amberText}>{fmt(briefing.marketingVisibility.humanViews)}</span></span>
-            <span style={textSecondary}>AI crawlers: <span style={amberText}>{fmt(briefing.marketingVisibility.aiCrawlerViews)}</span></span>
+            <span style={textSecondary}>Human views: <span style={primaryText}>{fmt(briefing.marketingVisibility.humanViews)}</span></span>
+            <span style={textSecondary}>AI crawlers: <span style={primaryText}>{fmt(briefing.marketingVisibility.aiCrawlerViews)}</span></span>
             <span style={textSecondary}>Other bots: <span style={textSecondary}>{fmt(briefing.marketingVisibility.otherBotViews)}</span></span>
-            <span style={textSecondary}>AI referrals: <span style={amberText}>{fmt(briefing.marketingVisibility.aiReferralSessions)}</span></span>
-            <span style={textSecondary}>CTA clicks: <span style={amberText}>{fmt(briefing.marketingVisibility.ctaClicks)}</span></span>
-            <span style={textSecondary}>Contact submissions: <span style={amberText}>{fmt(briefing.marketingVisibility.contactSubs)}</span></span>
+            <span style={textSecondary}>AI referrals: <span style={primaryText}>{fmt(briefing.marketingVisibility.aiReferralSessions)}</span></span>
+            <span style={textSecondary}>CTA clicks: <span style={primaryText}>{fmt(briefing.marketingVisibility.ctaClicks)}</span></span>
+            <span style={textSecondary}>Contact submissions: <span style={primaryText}>{fmt(briefing.marketingVisibility.contactSubs)}</span></span>
           </div>
           {(briefing.marketingVisibility.topPages ?? []).length > 0 && (
             <>
@@ -612,7 +612,7 @@ function OpsSections({ briefing }: { briefing: ComprehensiveBriefing }) {
                   <span className="w-5 text-right" style={textTertiary}>{i + 1}.</span>
                   <span className="truncate" style={textPrimary}>{b.name}</span>
                 </div>
-                <span className="ml-2" style={amberText}>{fmt(b.threats_24h)}</span>
+                <span className="ml-2" style={primaryText}>{fmt(b.threats_24h)}</span>
               </div>
             ))}
           </div>

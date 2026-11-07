@@ -256,7 +256,7 @@ function PipelineView({ leads, stats, statsFailed = false, onSelect }: { leads: 
                 <span className="font-mono text-xs" style={{ color: 'var(--text-primary)' }}>{(stats.conversion_rate ?? 0).toFixed(1)}%</span>
               </div>
               <div className="w-full h-2 bg-white/5 rounded overflow-hidden">
-                <div className="h-full rounded" style={{ background: 'var(--amber)', width: `${stats.conversion_rate ?? 0}%` }} />
+                <div className="h-full rounded" style={{ background: 'var(--primary)', width: `${stats.conversion_rate ?? 0}%` }} />
               </div>
             </div>
           </div>
@@ -548,7 +548,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs" style={{ color: 'var(--text-secondary)' }}>
           {lead.company_domain && <span>{lead.company_domain}</span>}
           {lead.company_domain && <span>·</span>}
-          <span>Score: <span className="font-bold" style={{ color: 'var(--amber-text)' }}>{Math.round(lead.prospect_score)}</span></span>
+          <span>Score: <span className="font-bold" style={{ color: 'var(--primary-text)' }}>{Math.round(lead.prospect_score)}</span></span>
           {lead.email_security_grade && (
             <>
               <span>·</span>
@@ -562,7 +562,7 @@ function LeadDetail({ lead, onBack }: { lead: SalesLead; onBack: () => void }) {
 
         {/* Overview Stats */}
         <StatGrid cols={4}>
-          <StatTile label="Prospect score" value={Math.round(lead.prospect_score)} accent="#E5A832" />
+          <StatTile label="Prospect score" value={Math.round(lead.prospect_score)} accent="var(--primary)" />
           <StatTile
             label="Email grade"
             value={lead.email_security_grade ?? '—'}
@@ -769,7 +769,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
   return (
     <div className="space-y-6">
       <StatGrid cols={3}>
-        <StatTile label="Total leads" value={leads.length} accent="#E5A832" />
+        <StatTile label="Total leads" value={leads.length} accent="var(--metric-accent)" />
         <StatTile label="AI enriched" value={enriched.length} accent="#3CB878" />
         <StatTile label="Awaiting enrichment" value={unenriched.length} accent="#0A8AB5" />
       </StatGrid>
@@ -806,7 +806,7 @@ function EnrichView({ leads }: { leads: SalesLead[] }) {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-sm font-bold" style={{ color: 'var(--amber-text)' }}>{lead.prospect_score}</span>
+                  <span className="font-mono text-sm font-bold" style={{ color: 'var(--primary-text)' }}>{lead.prospect_score}</span>
                   {lead.email_security_grade && (
                     <Badge variant={gradeVariant(lead.email_security_grade)} className="text-[8px] py-0 px-1.5">
                       {lead.email_security_grade}

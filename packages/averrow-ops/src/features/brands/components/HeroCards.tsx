@@ -367,7 +367,7 @@ export function EmailPostureCard({ emailSec, grade, brand, onViewDetails }: { em
         {onViewDetails && (
           <button
             onClick={onViewDetails}
-            className="mt-3 w-full text-center text-[10px] text-[var(--text-secondary)] transition-colors font-mono py-1 hover:[color:var(--amber)]"
+            className="mt-3 w-full text-center text-[10px] text-[var(--text-secondary)] transition-colors font-mono py-1 hover:[color:var(--primary-as-text)]"
           >
             View DNS Details &rarr;
           </button>

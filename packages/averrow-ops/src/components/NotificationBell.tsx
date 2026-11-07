@@ -120,7 +120,7 @@ function NotificationPanel({
             type="button"
             onClick={() => markAllRead.mutate()}
             disabled={unreadCount === 0}
-            className={`${TEXT_LINK} cursor-pointer border-0 bg-transparent text-[var(--amber-text)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] disabled:cursor-not-allowed disabled:text-[var(--text-tertiary)] disabled:hover:bg-transparent`}
+            className={`${TEXT_LINK} cursor-pointer border-0 bg-transparent text-[var(--primary-text)] hover:bg-[color-mix(in_srgb,var(--text-primary)_6%,transparent)] disabled:cursor-not-allowed disabled:text-[var(--text-tertiary)] disabled:hover:bg-transparent`}
           >
             Mark all read
           </button>
@@ -241,7 +241,7 @@ function NotificationPanel({
         className="sticky bottom-0 z-[2] flex items-center justify-between gap-2 border-t border-[var(--border-base)] bg-[var(--bg-elevated-solid)] px-2"
         style={isSheet ? { paddingBottom: 'env(safe-area-inset-bottom, 0px)' } : undefined}
       >
-        <Link to="/notifications" onClick={onClose} className={`${TEXT_LINK} text-[var(--amber-text)]`}>
+        <Link to="/notifications" onClick={onClose} className={`${TEXT_LINK} text-[var(--primary-text)]`}>
           View all
         </Link>
         <Link to="/settings/notifications" onClick={onClose} className={`${TEXT_LINK} text-[var(--text-secondary)] hover:text-[var(--text-primary)]`}>

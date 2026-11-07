@@ -123,7 +123,7 @@ function OrgListView({ onSelect, onCreate }: {
             Manage all organizations on the platform
           </p>
         </div>
-        <Button onClick={onCreate} className="bg-[color:var(--amber)] hover:bg-[color:var(--amber-dim)] text-black">
+        <Button onClick={onCreate} className="bg-[color:var(--primary)] hover:bg-[color:var(--primary-pressed)] text-[color:var(--btn-primary-ink,#000)]">
           Create New Organization
         </Button>
       </div>
@@ -472,7 +472,7 @@ function DetailBrandsTab({ orgId, brands, maxBrands }: {
                   <div className="flex items-center gap-2">
                     <Link
                       to={`/brands/${b.brand_id}`}
-                      className="text-sm font-medium text-[color:var(--text-primary)] hover:text-[var(--amber-text)] transition-colors"
+                      className="text-sm font-medium text-[color:var(--text-primary)] hover:text-[var(--primary-text)] transition-colors"
                     >
                       {b.brand_name} ↗
                     </Link>

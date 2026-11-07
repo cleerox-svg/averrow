@@ -81,7 +81,7 @@ function DetailBody({ d }: { d: IdentityDetectionDetail }) {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex min-h-[44px] flex-col justify-center rounded-lg px-3 py-1 no-underline hover:underline"
-                  style={{ border: '1px solid var(--border-base)', background: 'var(--bg-card)', color: 'var(--amber-text)' }}
+                  style={{ border: '1px solid var(--border-base)', background: 'var(--bg-card)', color: 'var(--link)' }}
                 >
                   <span className="font-mono text-[13px] font-bold">
                     {t.id} · {t.name}<span className="sr-only"> (opens in new tab)</span>

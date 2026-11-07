@@ -64,7 +64,7 @@ function CampaignCard({ campaign }: { campaign: SeedCampaign }) {
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-white/60">{ch}</Td>
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{seedCount}</Td>
                 <Td className="p-0 py-1.5 font-mono text-[11px] text-white/55 text-right">{catches}</Td>
-                <Td className="p-0 py-1.5 font-mono text-[11px] text-[var(--amber-text)] text-right">{catchRate}%</Td>
+                <Td className="p-0 py-1.5 font-mono text-[11px] text-[var(--primary-text)] text-right">{catchRate}%</Td>
               </tr>
             ))}
           </tbody>
@@ -101,7 +101,7 @@ function SeedStrategist() {
       <button
         onClick={run}
         disabled={running}
-        className="px-3 py-2 rounded-lg bg-afterburner-muted border border-afterburner-border text-[var(--amber-text)] text-[11px] font-mono hover:bg-afterburner-muted disabled:opacity-40 transition-colors"
+        className="px-3 py-2 rounded-lg bg-primary-tint border border-primary/30 text-[var(--primary-text)] text-[11px] font-mono hover:bg-primary-tint disabled:opacity-40 transition-colors"
       >
         {running ? 'Running…' : 'Run Seed Strategist'}
       </button>
@@ -166,9 +166,9 @@ function CaptureTimeline() {
                 fontFamily: 'var(--font-mono)',
               }}
               labelStyle={{ color: 'var(--text-tertiary)' }}
-              itemStyle={{ color: 'var(--amber-text)' }}
+              itemStyle={{ color: 'var(--primary-text)' }}
             />
-            <Bar dataKey="total" fill="#E5A832" radius={[2, 2, 0, 0]} />
+            <Bar dataKey="total" fill="var(--primary)" radius={[2, 2, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>

@@ -178,7 +178,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
       <div className="relative w-full sm:max-w-lg bg-instrument border border-white/10 rounded-t-2xl sm:rounded-xl p-6 max-h-[85vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <div className="font-mono text-xs font-bold text-[color:var(--amber)] uppercase tracking-wider">
+          <div className="font-mono text-xs font-bold text-[color:var(--primary-as-text)] uppercase tracking-wider">
             Create Organization — Step {step}/{totalSteps}
           </div>
           <button onClick={onClose} className="text-white/55 hover:text-[color:var(--text-primary)] text-lg">&times;</button>
@@ -187,7 +187,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
         {/* Progress bar */}
         <div className="h-1 rounded-full bg-white/5 mb-6">
           <div
-            className="h-full rounded-full bg-[color:var(--amber)] transition-all"
+            className="h-full rounded-full bg-[color:var(--primary)] transition-all"
             style={{ width: `${(step / totalSteps) * 100}%` }}
           />
         </div>
@@ -296,7 +296,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                         <button
                           type="button"
                           onClick={() => setPrimaryBrand(b.id)}
-                          className="text-[10px] font-mono text-white/55 hover:text-[color:var(--amber)] transition-colors"
+                          className="text-[10px] font-mono text-white/55 hover:text-[color:var(--primary-as-text)] transition-colors"
                         >
                           Set Primary
                         </button>
@@ -331,7 +331,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                     type="checkbox"
                     checked={selectedServices.has(svc.id)}
                     onChange={() => toggleService(svc.id)}
-                    className="accent-[color:var(--amber)] w-3.5 h-3.5"
+                    className="accent-[color:var(--primary)] w-3.5 h-3.5"
                   />
                   <span className="text-sm text-[color:var(--text-primary)]/80">{svc.label}</span>
                 </label>
@@ -346,7 +346,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
                     type="checkbox"
                     checked={selectedServices.has(svc.id)}
                     onChange={() => toggleService(svc.id)}
-                    className="accent-[color:var(--amber)] w-3.5 h-3.5"
+                    className="accent-[color:var(--primary)] w-3.5 h-3.5"
                   />
                   <span className="text-sm text-[color:var(--text-primary)]/80">{svc.label}</span>
                 </label>
@@ -414,7 +414,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
               size="md"
               onClick={() => setStep(step + 1)}
               disabled={step === 1 && !name.trim()}
-              className="flex-1 bg-[color:var(--amber)] hover:bg-[color:var(--amber-dim)] text-black"
+              className="flex-1 bg-[color:var(--primary)] hover:bg-[color:var(--primary-pressed)] text-[color:var(--btn-primary-ink,#000)]"
             >
               Continue
             </Button>
@@ -424,7 +424,7 @@ export function CreateOrgSheet({ open, onClose, onCreated }: CreateOrgSheetProps
               size="md"
               onClick={handleCreate}
               disabled={createOrg.isPending || !name.trim()}
-              className="flex-1 bg-[color:var(--amber)] hover:bg-[color:var(--amber-dim)] text-black"
+              className="flex-1 bg-[color:var(--primary)] hover:bg-[color:var(--primary-pressed)] text-[color:var(--btn-primary-ink,#000)]"
             >
               {createOrg.isPending ? 'Creating...' : 'Create Organization'}
             </Button>
