@@ -19,18 +19,20 @@ export interface ButtonProps
 
 const VARIANT_STYLES: Record<ButtonVariant, React.CSSProperties> = {
   // L2 primary. Legacy look (no data-accent): --btn-primary-* are unset, so the
-  // fallbacks render today's amber gradient + black ink. Accent hover/press:
+  // fallbacks render today's amber gradient, border, black ink and bevel/glow
+  // stack. Under an accent the button is flat: --btn-primary-shadow is `none` and
+  // --btn-primary-border transparent (appearance.css). Accent hover/press:
   // tokens.css `.ds-btn-primary` (inline styles cannot carry :hover).
   primary: {
     background: 'var(--btn-primary-bg, linear-gradient(135deg, var(--primary), var(--primary-pressed)))',
-    border:     '1px solid color-mix(in srgb, var(--primary) 60%, transparent)',
+    border:     '1px solid var(--btn-primary-border, color-mix(in srgb, var(--primary) 60%, transparent))',
     color:      'var(--btn-primary-ink, #000)',
-    boxShadow: [
+    boxShadow: `var(--btn-primary-shadow, ${[
       '0 4px 16px var(--primary-glow)',
       '0 2px 4px rgba(0, 0, 0, 0.40)',
       'inset 0 1px 0 rgba(255, 255, 255, 0.30)',
       'inset 0 -1px 0 rgba(0, 0, 0, 0.20)',
-    ].join(', '),
+    ].join(', ')})`,
   },
   secondary: {
     background: 'linear-gradient(160deg, var(--bg-card), var(--bg-card-deep))',

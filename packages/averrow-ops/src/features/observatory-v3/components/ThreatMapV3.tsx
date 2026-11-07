@@ -771,8 +771,10 @@ function ThreatMapV3Inner({
   const selectedArcId = selectedArc ? arcKey(selectedArc) : null;
   // Selection ring / arc follow the platform primary (amber in the legacy look); re-read on appearance change.
   const { colors: tokenColors } = useTokenColors(PRIMARY_TOKEN);
-  // Stable identity until the appearance changes (useTokenColors memoises on its version).
-  const selRgba = tokenColors['--primary'] ?? SELECTION_FALLBACK;
+  // Keyed on the colour VALUE, not the read: an appearance change that leaves --primary
+  // as it was (e.g. a mode switch in the legacy look) must not rebuild the layers.
+  const selKey = (tokenColors['--primary'] ?? SELECTION_FALLBACK).join(',');
+  const selRgba = useMemo(() => selKey.split(',').map(Number) as Rgba, [selKey]);
 
   // ─── Static layers (rebuilt only when their data / style inputs change) ──
   const staticLayers = useMemo(() => {

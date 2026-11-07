@@ -14,7 +14,7 @@ import {
 import { __resetTokenReaderForTests } from '../../../../shared/src/theme/tokenReader';
 
 const CSS = `
-:root { --amber: #E5A832; --primary: var(--amber); --glow: rgba(229, 168, 50, 0.2); --fb: var(--missing, #0a8ab5); }
+:root { --amber: #E5A832; --primary: var(--amber); --glow: rgba(229, 168, 50, 0.2); --fb: var(--missing, #0a8ab5); --pct: 16%; }
 :root[data-accent="indigo"] { --primary: #4c5cf8; }
 `;
 
@@ -61,6 +61,20 @@ describe('readToken / readTokenRgba', () => {
   it('returns empty / null for an undefined token', () => {
     expect(readToken('--nope')).toBe('');
     expect(readTokenRgba('--nope')).toBeNull();
+  });
+
+  it('returns empty / null for a token that is not a colour (colour tokens only)', () => {
+    expect(readToken('--pct')).toBe('');
+    expect(readTokenRgba('--pct')).toBeNull();
+  });
+
+  it('does not bump the version when an attribute is re-set to the value it already has', async () => {
+    document.documentElement.setAttribute('data-accent', 'indigo');
+    await flush();
+    const before = getAppearanceVersion();
+    document.documentElement.setAttribute('data-accent', 'indigo');
+    await flush();
+    expect(getAppearanceVersion()).toBe(before);
   });
 
   it('re-reads after an appearance attribute change on <html>', async () => {

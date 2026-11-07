@@ -275,7 +275,8 @@ function UserRow({
           <div className="flex items-center gap-3 min-w-[180px]">
             <div
               className="w-8 h-8 rounded-lg grid place-items-center text-[11px] font-extrabold shrink-0"
-              style={{ background: avatarColor, color: '#0A0F1E' }}
+              // Self ink follows the primary (legacy --primary-ink = #0A0F1E); palette avatars keep the dark ink.
+              style={{ background: avatarColor, color: isSelf ? 'var(--primary-ink)' : '#0A0F1E' }}
             >
               {initials}
             </div>

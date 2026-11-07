@@ -6,7 +6,7 @@
     "tailwind (text|bg|border|ring)-amber": 24
   },
   "averrow-tenant": {
-    "var(--amber)": 3,
+    "var(--amber)": 1,
     "#e5a832": 0,
     "rgba(229, 168, 50": 0,
     "tailwind (text|bg|border|ring)-amber": 556

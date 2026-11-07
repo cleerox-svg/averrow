@@ -292,6 +292,14 @@ const commonLight = intersect(allLight, (k) => NEUTRAL.test(k));
 // Links follow the accent (legacy: amber-text, defined in tokens.css).
 commonDark.set('--link', 'var(--primary-text)');
 commonLight.set('--link', 'var(--primary-text)');
+// Primary buttons are flat under an accent (P3-2a review): no bevel / glow stack
+// and no tinted border. Legacy keeps both through the components' var() fallbacks.
+// `0 0 #0000` rather than `none`: the shared Button feeds this into Tailwind's
+// --tw-shadow, which sits in a comma list with the focus ring, where `none` is invalid.
+for (const m of [commonDark, commonLight]) {
+  m.set('--btn-primary-shadow', '0 0 #0000');
+  m.set('--btn-primary-border', 'transparent');
+}
 
 /** Shell tokens this file also sets for a combo. Dark-only shell tokens take
  *  the accent value; all-mode colour tokens (the glows) keep the accent colour

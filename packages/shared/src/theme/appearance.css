@@ -42,6 +42,8 @@
   --violet-text: #d8b4fe;
   --cyan-text: #7adff7;
   --link: var(--primary-text);
+  --btn-primary-shadow: 0 0 #0000;
+  --btn-primary-border: transparent;
 }
 :root[data-accent][data-theme="light"] {
   --sev-critical: #f87171;
@@ -75,6 +77,8 @@
   --cyan-text: #005e6f;
   --healthy: var(--green-text);
   --link: var(--primary-text);
+  --btn-primary-shadow: 0 0 #0000;
+  --btn-primary-border: transparent;
 }
 :root[data-accent] ::selection {
   background: var(--selection-bg);

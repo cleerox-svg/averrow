@@ -75,11 +75,19 @@
   content: ""; position: absolute; left: -12px; top: 6px; bottom: 6px; width: 3px;
   border-radius: 3px; background: var(--primary); box-shadow: 0 0 12px var(--primary);
 }
+/* Accents (P3-2a review): the indicator is a flat bar, no glow. Legacy keeps the amber glow. */
+:root[data-accent] .v4-item.active::before { box-shadow: none; }
 .v4-item .count {
   margin-left: auto; font-family: var(--font-mono, ui-monospace); font-size: 10px; font-weight: 600;
-  /* triage-queue count, not a critical signal: the primary (amber in the legacy look) */
+  /* Triage-queue count, not a critical signal. Legacy look: amber pill. Under an
+     accent it is a neutral pill (rule below): a count is not a primary action. */
   background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--primary-text); padding: 1px 7px; border-radius: 20px;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+:root[data-accent] .v4-item .count {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 .v4-foot { border-top: 1px solid var(--border-base); padding: 10px 10px 4px; display: flex; align-items: center; gap: 7px; }
 .v4-foot button { min-width: 44px; min-height: 44px; display: grid; place-items: center; }

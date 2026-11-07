@@ -11,6 +11,10 @@
 // Where that does not resolve (jsdom, very old engines) it falls back to
 // following the var() chain on <html> by hand (hex / rgb() / rgba() leaves).
 //
+// COLOUR TOKENS ONLY: tokens whose value is a hex / rgb() / rgba() colour (or a
+// var() / color-mix() chain ending in one). A non-colour token (a length, a
+// percentage, a shadow) reads as '' / null, never as a misleading colour.
+//
 // Results are cached per appearance version; a single MutationObserver on
 // <html> bumps the version (and clears the cache) whenever one of the three
 // appearance attributes changes. Everything is SSR / no-DOM safe: reads return
@@ -19,6 +23,12 @@
 // Note: the probe hangs off <body>, so it reads the :root (page-level) value
 // of a token. A value overridden on a nested scope (e.g. `.shell-v4`) is not
 // seen; pass such tokens down from CSS instead.
+//
+// Cache caveat: the cache is invalidated only by the appearance attributes.
+// A read made BEFORE the stylesheet defining a token has loaded caches ''
+// (or the pre-load value) until the next appearance change. The app imports
+// tokens.css synchronously at boot, so read tokens from render / effects, not
+// at module load.
 
 import { useMemo, useSyncExternalStore } from 'react';
 
@@ -32,6 +42,13 @@ const cache = new Map<string, string>();
 const listeners = new Set<(version: number) => void>();
 let observer: MutationObserver | null = null;
 let probe: HTMLElement | null = null;
+
+/** Fallback colour for an UNDEFINED token. */
+const SENTINEL = 'rgb(1, 2, 3)';
+const SENTINEL_RGBA = '1,2,3,255';
+/** Inherited colour seen when a token is defined but is not a colour. */
+const NON_COLOR_SENTINEL = 'rgb(4, 5, 6)';
+const NON_COLOR_SENTINEL_RGBA = '4,5,6,255';
 
 function hasDom(): boolean {
   return typeof window !== 'undefined' && typeof document !== 'undefined' && !!document.documentElement
@@ -48,19 +65,30 @@ function bump(): void {
 function ensureObserver(): void {
   if (observer || !hasDom() || typeof MutationObserver === 'undefined') return;
   observer = new MutationObserver((records) => {
-    if (records.some((r) => r.type === 'attributes')) bump();
+    // useTheme / useAppearance may re-set an attribute to the value it already
+    // has; that is not an appearance change, so it must not rebuild layers.
+    const changed = records.some((r) => r.type === 'attributes' && r.attributeName !== null
+      && document.documentElement.getAttribute(r.attributeName) !== r.oldValue);
+    if (changed) bump();
   });
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: [...OBSERVED_ATTRIBUTES] });
+  observer.observe(document.documentElement, {
+    attributes: true, attributeOldValue: true, attributeFilter: [...OBSERVED_ATTRIBUTES],
+  });
 }
 
 function getProbe(): HTMLElement | null {
   if (!hasDom()) return null;
   if (probe && probe.isConnected) return probe;
+  // The wrapper's colour is the second sentinel: a token whose value is not a
+  // colour makes the probe's `color` invalid at computed-value time, so the
+  // probe inherits the wrapper's colour instead of the page text colour.
+  const wrap = document.createElement('span');
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.setAttribute('data-token-probe', '');
+  wrap.style.cssText = `position:absolute;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;color:${NON_COLOR_SENTINEL};`;
   const el = document.createElement('span');
-  el.setAttribute('aria-hidden', 'true');
-  el.setAttribute('data-token-probe', '');
-  el.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;';
-  (document.body ?? document.documentElement).appendChild(el);
+  wrap.appendChild(el);
+  (document.body ?? document.documentElement).appendChild(wrap);
   probe = el;
   return el;
 }
@@ -121,8 +149,6 @@ function resolveByHand(value: string, depth = 0): Rgba | null {
   return m[2] !== undefined ? resolveByHand(m[2], depth + 1) : null;
 }
 
-const SENTINEL = 'rgb(1, 2, 3)';
-const SENTINEL_RGBA = '1,2,3,255';
 
 function resolve(name: string): string {
   const p = getProbe();
@@ -132,7 +158,8 @@ function resolve(name: string): string {
   p.style.color = `var(${name}, ${SENTINEL})`;
   const computed = window.getComputedStyle(p).color || '';
   const viaProbe = parseColor(computed);
-  if (viaProbe && viaProbe.join() === SENTINEL_RGBA) return '';
+  // Undefined token (the var() fallback) or a non-colour value (inherited from the wrapper).
+  if (viaProbe && (viaProbe.join() === SENTINEL_RGBA || viaProbe.join() === NON_COLOR_SENTINEL_RGBA)) return '';
   // jsdom has no cascade for var(): an unset probe colour reads as '' or the literal `var(...)`.
   if (viaProbe && !/var\(/.test(computed)) return formatRgba(viaProbe);
   const byHand = resolveByHand(`var(${name})`);
@@ -207,6 +234,7 @@ export function useTokenColors(names: readonly string[]): TokenColors {
 export function __resetTokenReaderForTests(): void {
   observer?.disconnect();
   observer = null;
+  probe?.parentElement?.remove();
   probe?.remove();
   probe = null;
   cache.clear();

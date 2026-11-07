@@ -11,8 +11,9 @@
 //    The baseline is amber-ratchet.baseline.json; lower it when you migrate
 //    more sites, never raise it (new primary colour = an L2 token).
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { countAmber, RATCHET_PACKAGES, RATCHET_PATTERN_KEYS } from './amberRatchet';
 
 const PACKAGES = resolve(__dirname, '../../../..');
 const read = (rel: string) => readFileSync(resolve(PACKAGES, rel), 'utf8');
@@ -75,6 +76,25 @@ describe('L2 tokens are legacy-equivalent to the literals they replaced', () => 
   });
 });
 
+describe('--btn-primary-* are accent-only, so the legacy look renders the components\' fallbacks', () => {
+  const BTN = ['--btn-primary-bg', '--btn-primary-bg-hover', '--btn-primary-ink', '--btn-primary-shadow', '--btn-primary-border'];
+  it.each(BTN)('%s is not declared in the legacy :root or light block', (name) => {
+    expect(ROOT.has(name)).toBe(false);
+    expect(LIGHT.has(name)).toBe(false);
+  });
+
+  it('appearance.css declares --btn-primary-shadow / -border only under :root[data-accent], flat in every combo', () => {
+    const css = read('shared/src/theme/appearance.css').replace(/\/\*[\s\S]*?\*\//g, '');
+    const hits = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => /--btn-primary-(shadow|border)\s*:/.test(m[2]!));
+    expect(hits.length).toBeGreaterThan(0);
+    for (const m of hits) {
+      expect(m[1]!.trim()).toMatch(/^:root\[data-accent\]/);
+      expect(m[2]).toMatch(/--btn-primary-shadow:\s*0 0 #0000;/);
+      expect(m[2]).toMatch(/--btn-primary-border:\s*transparent;/);
+    }
+  });
+});
+
 describe('scoped --amber-glow overrides carry their --primary-glow twin', () => {
   const SHELL = read('averrow-ops/src/components/layout/shell-v4.css').replace(/\/\*[\s\S]*?\*\//g, '');
   const blocks = [...SHELL.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
@@ -93,55 +113,23 @@ describe('scoped --amber-glow overrides carry their --primary-glow twin', () => 
   });
 });
 
-// ── amber ratchet ──────────────────────────────────────────────────────
-const RATCHET_PACKAGES = ['averrow-ops', 'averrow-tenant', 'shared'] as const;
-const PATTERNS: Record<string, RegExp> = {
-  'var(--amber)': /var\(--amber\)/g,
-  '#e5a832': /#e5a832/gi,
-  'rgba(229, 168, 50': /rgba\(\s*229\s*,\s*168\s*,\s*50\b/g,
-  'tailwind (text|bg|border|ring)-amber': /\b(?:text|bg|border|ring)-amber\b/g,
-};
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '.turbo', 'coverage']);
-
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    if (SKIP_DIRS.has(name)) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.(tsx?|css)$/.test(name) && !/\.test\.tsx?$/.test(name) && name !== 'appearance.css') out.push(p);
-  }
-  return out;
-}
-
-/** Count per package + pattern. tokens.css custom-property DEFINITIONS are allowlisted. */
-export function countAmber(): Record<string, Record<string, number>> {
-  const result: Record<string, Record<string, number>> = {};
-  for (const pkg of RATCHET_PACKAGES) {
-    const counts: Record<string, number> = Object.fromEntries(Object.keys(PATTERNS).map((k) => [k, 0]));
-    for (const file of walk(resolve(PACKAGES, pkg, 'src'))) {
-      let src = readFileSync(file, 'utf8');
-      if (relative(PACKAGES, file) === join('shared', 'src', 'theme', 'tokens.css')) {
-        src = src.split('\n').filter((l) => !/^\s*--[\w-]+\s*:/.test(l)).join('\n');
-      }
-      for (const [k, re] of Object.entries(PATTERNS)) counts[k]! += src.match(re)?.length ?? 0;
-    }
-    result[pkg] = counts;
-  }
-  return result;
-}
-
 describe('amber ratchet (primary-pattern amber may only go down)', () => {
   const baseline = JSON.parse(read('averrow-ops/src/test/shared-ui/amber-ratchet.baseline.json')) as Record<string, Record<string, number>>;
-  const now = countAmber();
+  const now = countAmber(PACKAGES);
   for (const pkg of RATCHET_PACKAGES) {
-    for (const k of Object.keys(PATTERNS)) {
-      it(`${pkg}: ${k} <= baseline`, () => {
+    for (const k of RATCHET_PATTERN_KEYS) {
+      it(`${pkg}: ${k} matches the baseline`, () => {
         const b = baseline[pkg]?.[k];
         expect(b, `baseline missing ${pkg} / ${k}`).toBeTypeOf('number');
+        const n = now[pkg]![k]!;
         expect(
-          now[pkg]![k],
-          `${pkg} gained ${k} hits (${now[pkg]![k]} > ${b}). Use an L2 token (--primary, --primary-text, --focus-ring, ...) for primary colour; amber is a status colour. If you REMOVED hits, lower the baseline.`,
+          n,
+          `${pkg} gained ${k} hits (${n} > ${b}). Use an L2 token (--primary, --primary-text, --focus-ring, ...) for primary colour; amber is a status colour.`,
         ).toBeLessThanOrEqual(b!);
+        expect(
+          n,
+          `${pkg} ${k} dropped to ${n} (baseline ${b}): lower it in averrow-ops/src/test/shared-ui/amber-ratchet.baseline.json so the ratchet holds the gain.`,
+        ).toBe(b);
       });
     }
   }

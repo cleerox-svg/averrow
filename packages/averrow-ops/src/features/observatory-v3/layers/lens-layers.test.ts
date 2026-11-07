@@ -149,6 +149,17 @@ describe('selection', () => {
     expect(line(p)[0]).toBe(229); // amber selection
     expect(line(q)[3]).toBeLessThan(100); // dimmed
   });
+  it('draws the selection in input.selectionColor (the resolved --primary) and re-triggers on it', () => {
+    const indigo: [number, number, number, number] = [76, 92, 248, 255];
+    const i = input({ hosting: true }, { sel: { ...NO_SELECTION, providerId: 'p' }, selectionColor: indigo });
+    const rings = props(find(i, 'hosting-rings'));
+    const [p] = i.hosting!.rings;
+    expect((rings.getLineColor as (r: unknown) => number[])(p)).toEqual(indigo);
+    expect(((rings.updateTriggers as Props).getLineColor as unknown[])).toContain('76,92,248,255');
+    const base = input({ baseline: true }, { sel: { ...NO_SELECTION, country: 'NL' }, selectionColor: indigo });
+    const outline = buildLensBaseLayers(base).find(l => l.id === 'baseline-selected');
+    expect(props(outline).getLineColor).toEqual(indigo);
+  });
 });
 
 describe('picking', () => {

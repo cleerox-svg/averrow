@@ -540,6 +540,12 @@
   line-height: 1;
   text-shadow: 0 0 20px color-mix(in srgb, var(--primary) 40%, transparent);
 }
+/* Accents (P3-2a review): a metric is data, not a primary action, so it takes
+   the text colour with no glow. The legacy look keeps the amber number. */
+:root[data-accent] .detail-stat-metric-value {
+  color: var(--text-primary);
+  text-shadow: none;
+}
 .detail-stat-metric-label {
   font-size: 9px;
   font-family: var(--font-mono);
@@ -1342,4 +1348,11 @@ html[data-ds-nav="back"]::view-transition-new(ds-settings-screen) { animation: d
 :root[data-accent] .ds-btn-primary:active:not(:disabled) {
   background: var(--primary-pressed) !important;
   filter: none !important;
+}
+/* Shared kit Button focus ring: --primary (amber) in BOTH legacy themes, which
+   is not --focus-ring in legacy light (--amber-text), so the switch to the
+   semantic ring colour happens only under an accent. Beats the Tailwind
+   `focus-visible:ring-[var(--primary)]` utility (0,2,0) on specificity. */
+:root[data-accent] .ds-btn-focus:focus-visible {
+  --tw-ring-color: var(--focus-ring);
 }

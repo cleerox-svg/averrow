@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Ref } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, ChevronDown, LogOut, UserCircle, Settings as SettingsIcon, UserPlus } from 'lucide-react';
-import { parseInitials } from '@averrow/shared/avatar';
+import { parseInitials, SELF_AVATAR_COLOR } from '@averrow/shared/avatar';
 import { useAuth } from '@/lib/auth';
 
 // Tenant TopBar — header with org context + clickable user avatar.
@@ -11,9 +11,9 @@ import { useAuth } from '@/lib/auth';
 // the refresh cookie + sessions row) before clearing local state and
 // hard-navigating to '/'.
 //
-// Self-avatar is always SELF_AVATAR_COLOR (var(--amber)) per the
-// SHARED_LOGIN_SPEC §3 rule. Initials only — never the Google
-// profile picture.
+// Self-avatar is always SELF_AVATAR_COLOR (var(--primary): amber in the
+// legacy look, the accent once one is set) with --primary-ink initials, per
+// the SHARED_LOGIN_SPEC §3 rule. Initials only — never the Google profile picture.
 
 export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?: boolean; onOpenNav?: () => void; hamburgerRef?: Ref<HTMLButtonElement> }) {
   const { user, logout } = useAuth();
@@ -89,8 +89,8 @@ export function TopBar({ navOpen = false, onOpenNav, hamburgerRef }: { navOpen?:
           <span
             className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold"
             style={{
-              background: 'var(--amber)',
-              color: 'var(--text-on-amber, #0A0F1E)',
+              background: SELF_AVATAR_COLOR,
+              color: 'var(--primary-ink)',
             }}
           >
             {initials || '?'}
