@@ -7,6 +7,8 @@ import { join, resolve, relative } from 'node:path';
 export const RATCHET_PACKAGES = ['averrow-ops', 'averrow-tenant', 'shared'] as const;
 const PATTERNS: Record<string, RegExp> = {
   'var(--amber)': /var\(--amber\)/g,
+  // P3-2c review: --amber-text is legacy --primary-text; primary text uses the L2 token.
+  'var(--amber-text)': /var\(--amber-text\)/g,
   '#e5a832': /#e5a832/gi,
   'rgba(229, 168, 50': /rgba\(\s*229\s*,\s*168\s*,\s*50\b/g,
   'tailwind (text|bg|border|ring)-amber': /\b(?:text|bg|border|ring)-amber\b/g,

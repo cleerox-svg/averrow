@@ -372,7 +372,7 @@ function ModuleCard({ module: m, entitled }: { module: TenantModuleSurface; enti
           <p className="text-[11px] text-white/55 mt-1 leading-relaxed">{MODULE_DESCRIPTIONS[m.module_key]}</p>
         </div>
         {entitled ? (
-          <span className="flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono text-primary-text">
+          <span className={`flex items-center gap-1 text-[9px] uppercase tracking-widest font-mono ${trial ? 'text-amber' : 'text-primary-text'}`}>
             <CheckCircle2 size={11} />
             {trial ? 'Trial' : 'Active'}
           </span>

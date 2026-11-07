@@ -442,7 +442,7 @@ function MessageRow({ message: m, expanded, onToggle }: {
         {m.original_subject ?? <span className="italic text-white/55">(no subject)</span>}
       </div>
       <div className="text-[12px] text-white/75 mt-0.5">
-        from <span className="font-mono text-[var(--amber-text)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
+        from <span className="font-mono text-[var(--primary-text)]">{m.original_from ?? m.forwarded_by_email ?? 'unknown'}</span>
         {m.original_from && m.forwarded_by_email && m.original_from !== m.forwarded_by_email && (
           <>
             {' '}· forwarded by <span className="font-mono text-white/90">{m.forwarded_by_email}</span>
@@ -687,7 +687,7 @@ function TenantPlatformIntelSection({
           <div>
             <div className="text-[9px] font-mono uppercase tracking-widest text-white/55 mb-1">Platform correlation</div>
             <div className="text-[12px] text-white/90">
-              <span className="text-primary-text font-semibold">{correlatedCount}</span> URL/domain
+              <span className="text-amber font-semibold">{correlatedCount}</span> URL/domain
               {correlatedCount === 1 ? '' : 's'} already in threat intel
             </div>
           </div>
@@ -1314,7 +1314,7 @@ export function TenantStatusActions({ message }: { message: AbuseInboxMessageRow
       {BTN('Investigate', 'investigating', 'var(--sev-medium)')}
       {BTN('Resolve',     'resolved',      'var(--green)')}
       {BTN('Dismiss',     'dismissed',     'var(--text-secondary)')}
-      {cur !== 'new' && BTN('Reopen',      'new',           'var(--primary)')}
+      {cur !== 'new' && BTN('Reopen',      'new',           'var(--amber)')}
     </div>
   );
 }
