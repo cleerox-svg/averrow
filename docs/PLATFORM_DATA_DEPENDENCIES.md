@@ -113,13 +113,23 @@ geoip refresh stall supervisor ───────► platform_geoip_refresh_s
   reads: geo_ip_refresh_log
 
 dns-queue parity drift supervisor ────► platform_dns_queue_drift            ► notifications inbox
-  reads: dns_queue COUNT (DNS_QUEUE_DB), threats drainable count (main DB)
-  fires when |queue_size - drainable| > 500
+  reads: dns_queue COUNT (DNS_QUEUE_DB), threats drainable count (KV peek)
+  the threats count is a full-table scan (1.5–2.7M rows) → computed ONCE
+  PER DAY by Navigator (own `*/5` invocation, waitUntil tail) on UTC hour 3
+  (DNS_DRAINABLE_RECOUNT_HOUR_UTC, hour-only gate; KV claim
+  `dns_drainable:recount_claim` 20 min; skipped when < 1h old or the D1
+  budget is over its soft-cap) into KV `cc:count.threats.dns_drainable`
+  (26h TTL). Flight Control only peeks — it never scans.
+  fires when |queue_size - drainable| > 500, evaluated only on a count
+  computed within the last 90 min (FC's 03:07 / 04:07 ticks)
 
 dns-queue reconciler-stalled supervisor ► platform_dns_queue_stalled         ► notifications inbox
-  reads: dns_queue COUNT, threats drainable, latest agent_outputs row
-         WHERE summary LIKE 'dns-queue-reconcile%' (reads details.cursor_lag_minutes)
-  fires when cursor_lag_minutes > 30 AND drainable > queue + 500
+  reads: dns_queue COUNT, latest agent_outputs row
+         WHERE summary LIKE 'dns-queue-reconcile%' (details.cursor_stuck,
+         cursor_lag_minutes, scanned, enqueued); fresh threats count if < 90 min old
+  fires hourly when cursor_stuck ("cursor stuck"), OR cursor_lag_minutes > 30
+  AND (the reconciler's last page was full (scanned >= 500) and enqueued > 0,
+  OR a fresh drainable > queue + 500) ("falling behind")
          (PR-BI cursor architecture — replaced the pre-PR-BI 'no enqueue/dequeue in 30 min' check)
 
 dns-queue reaper-stalled supervisor ───► platform_dns_queue_reaper_stalled   ► notifications inbox

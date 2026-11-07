@@ -157,6 +157,22 @@ describe("buildDnsQueueParity", () => {
     expect(parity.delta).toBe(-200);
   });
 
+  it("reports the daily count's age (it is compared against a live queue)", () => {
+    const nowMs = Date.UTC(2026, 10, 7, 15, 0, 0);
+    const t = Date.UTC(2026, 10, 7, 3, 2, 0);
+    const parity = buildDnsQueueParity({
+      bound: true, queueSize: 5000, candidatesInThreats: 5000, candidatesComputedAtMs: t, nowMs,
+    });
+    expect(parity.drainable_computed_at).toBe("2026-11-07T03:02:00.000Z");
+    expect(parity.drainable_age_hours).toBe(12);
+  });
+
+  it("age fields are null when the write time is unknown", () => {
+    const parity = buildDnsQueueParity({ bound: true, queueSize: 1, candidatesInThreats: 1 });
+    expect(parity.drainable_computed_at).toBeNull();
+    expect(parity.drainable_age_hours).toBeNull();
+  });
+
   it("delta is null when DNS_QUEUE_DB is unbound", () => {
     const parity = buildDnsQueueParity({ bound: false, queueSize: 0, candidatesInThreats: 5000 });
     expect(parity.delta).toBeNull();

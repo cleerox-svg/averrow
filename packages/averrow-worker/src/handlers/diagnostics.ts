@@ -10,7 +10,7 @@ import { PRIVATE_IP_SQL_FILTER } from "../lib/geoip";
 import { GEO_UNMAPPED_POPULATION_SQL, GEO_UNMAPPED_THREATS_FROM, GEO_TERMINAL_SQL } from "../lib/geo-exhaustion";
 import { withIndexHintFallback } from "../lib/indexed-by-fallback";
 import { getBudgetDiagnostics, fetchD1TopQueries, fetchBillingCycleMetrics, fetchRecentWindowMetrics, fetchD1HourlyMetrics, clampHourlyWindow, hourlyWindowStart, toHourLabel, D1_TOP_QUERIES_SAMPLING_NOTE } from "../lib/d1-budget";
-import { cachedCount, getCachedCountStats } from "../lib/cached-count";
+import { cachedCount, getCachedCountStats, peekCountEntry } from "../lib/cached-count";
 import { cachedValue } from "../lib/cached-value";
 import {
   countDnsCandidatesInThreats,
@@ -426,21 +426,23 @@ export async function fetchD1HourlyAttribution(
 // ── DNS-queue parity: threats-side candidate count ──────────────────
 // The REAL "how many domains still need DNS resolution" number. Its
 // predicate is the same candidate set that FC's `platform_dns_queue_drift`
-// alert gates on (`agents/flightControl.ts` count.threats.dns_drainable),
+// alert gates on (KV count.threats.dns_drainable, lib/dns-drainable.ts),
 // that `lib/dns-queue-reconciler.ts` enqueues from, and that
 // `lib/dns-queue-reaper.ts` reaps against. This — NOT the cooldown-filtered
 // dns_queue "drainable right now" count — is the correct parity partner for
-// dns_queue's row count: |queue_size - candidatesInThreats| ≈ 0 in the
-// healthy steady state (matches the reaper's observed scanned≈candidates
-// parity). Cooldown-independent: a domain mid-retry-cooldown is still a
+// dns_queue's row count: |queue_size - candidatesInThreats| ≈ 0 shortly
+// after the daily recount in the healthy steady state (matches the
+// reaper's observed scanned≈candidates parity); the count is a daily
+// value, so the block also reports its age. Cooldown-independent: a domain mid-retry-cooldown is still a
 // candidate that needs resolving, so it counts here.
 //
 // (The cooldown-filtered "how many can I try THIS tick" count is a
 // different, still-useful metric — it stays under its honest name
 // `enrichment_pipeline.domain_geo_drainable`.)
 //
-// The count is now defined once in lib/dns-drainable.ts and Flight Control
-// calls the same function under the same cache key + TTL. The reconciler/
+// The count is defined once in lib/dns-drainable.ts; Navigator recomputes
+// it daily into the shared cache key that Flight Control peeks and this
+// handler reads. The reconciler/
 // reaper still wrap the same core conditions in load-bearing, non-identical
 // SQL (distinct `INDEXED BY` hints, a cursor `created_at >= ?` predicate, an
 // `IN (...)` existence check) — keep them in sync if the predicate changes.
@@ -449,24 +451,38 @@ export async function fetchD1HourlyAttribution(
 export { countDnsCandidatesInThreats };
 
 /** Build the `dns_queue_parity` diagnostics block. `drainable_in_threats`
- *  is the threats-side candidate count (cooldown-independent); `delta`
- *  is queue_size minus that count, ≈ 0 when the queue mirrors threats and
- *  growing only on a real enqueue/dequeue gap. `delta` is null when
+ *  is the threats-side candidate count (cooldown-independent), computed
+ *  ONCE A DAY (Navigator, UTC hour 3 — lib/dns-drainable.ts) and therefore
+ *  up to ~24h old; `drainable_computed_at` / `drainable_age_hours` say how
+ *  old (null when unknown). `delta` is the live queue_size minus that
+ *  count: ≈ 0 shortly after the daily recount in steady state, but it also
+ *  absorbs queue movement since the recount, so read it together with the
+ *  age — a sizable delta on an old count is not by itself drift (FC's
+ *  drift alert only acts on a count < 90 min old). `delta` is null when
  *  DNS_QUEUE_DB is unbound (nothing to compare). */
 export function buildDnsQueueParity(opts: {
   bound: boolean;
   queueSize: number;
   candidatesInThreats: number;
+  /** Epoch ms the candidate count was computed, or null/absent if unknown. */
+  candidatesComputedAtMs?: number | null;
+  nowMs?: number;
 }): {
   bound: boolean;
   queue_size: number;
   drainable_in_threats: number;
+  drainable_computed_at: string | null;
+  drainable_age_hours: number | null;
   delta: number | null;
 } {
+  const t = opts.candidatesComputedAtMs ?? null;
+  const nowMs = opts.nowMs ?? Date.now();
   return {
     bound: opts.bound,
     queue_size: opts.queueSize,
     drainable_in_threats: opts.candidatesInThreats,
+    drainable_computed_at: t === null ? null : new Date(t).toISOString(),
+    drainable_age_hours: t === null ? null : Math.round(((nowMs - t) / 3_600_000) * 10) / 10,
     delta: opts.bound ? opts.queueSize - opts.candidatesInThreats : null,
   };
 }
@@ -1516,13 +1532,21 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
     // Threats-side DNS candidate count — the REAL parity partner for
     // dns_queue's row total (see countDnsCandidatesInThreats). Distinct
     // from domainGeoDrainable above, which is cooldown-filtered.
-    // Shares flightControl's cache key + TTL (lib/dns-drainable.ts) so this
-    // piggybacks on its periodically-warmed count instead of running its
-    // own full-table COUNT(DISTINCT) scan on every diagnostics call.
+    // Shares the dns_drainable cache key + TTL (lib/dns-drainable.ts) so this
+    // piggybacks on Navigator's once-daily count (26h TTL) instead of
+    // running its own full-table COUNT(DISTINCT) scan on every diagnostics
+    // call. It computes only when the key is absent (first deploy / the
+    // daily recount was skipped); the value can be up to ~24h old.
     const dnsCandidatesInThreatsP = cachedCount(
       env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S,
       () => countDnsCandidatesInThreats(env.DB),
-    ).then((n) => ({ n }));
+    ).then(async (n) => {
+      // Write time of the entry just read (or just written on a miss) so
+      // the parity block can say how old the count is — it is a daily
+      // value compared against a live queue size.
+      const e = await peekCountEntry(env, DNS_DRAINABLE_CACHE_KEY, DNS_DRAINABLE_TTL_S);
+      return { n, t: e?.t ?? null };
+    });
 
     // Cartographer queue — matches actual Phase 0 query (private IPs and
     // attempts-exhausted threats excluded — see migration 0110).
@@ -2467,8 +2491,11 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
         // DNS-queue parity. Compares the dns_queue row total against the
         // threats-side DNS candidate count (countDnsCandidatesInThreats —
         // the same predicate FC's platform_dns_queue_drift alert gates on
-        // and the reconciler/reaper converge to). Healthy state: |delta|
-        // ≈ 0. Persistent positive delta = stale rows the reaper hasn't
+        // and the reconciler/reaper converge to). The count is daily
+        // (drainable_computed_at / drainable_age_hours give its age), so
+        // |delta| ≈ 0 holds shortly after the recount in a healthy steady
+        // state and otherwise also includes queue movement since then.
+        // Persistent positive delta = stale rows the reaper hasn't
         // dequeued; persistent negative delta = reconciler enqueue lagging
         // behind threats.
         //
@@ -2484,6 +2511,7 @@ export async function handlePlatformDiagnostics(request: Request, env: Env): Pro
           bound: dnsQueueSize.bound,
           queueSize: dnsQueueSize.n,
           candidatesInThreats: dnsCandidatesInThreats?.n ?? 0,
+          candidatesComputedAtMs: dnsCandidatesInThreats?.t ?? null,
         }),
 
         // PR-3 → PR-4 gate: aggregated stability signals over the

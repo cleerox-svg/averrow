@@ -130,13 +130,19 @@ export interface PlatformDnsQueueDriftVars {
 }
 
 export interface PlatformDnsQueueStalledVars {
-  /** Minutes since the reconciler last produced enqueued>0 or
-   *  dequeued>0 — the queue is alive but doing nothing while threats
-   *  candidates keep growing. */
+  /** Which stall (lib/dns-drainable.ts classifyDnsQueueStall):
+   *  `cursor_stuck` — a full page made no keyset progress;
+   *  `falling_behind` — the cursor lags while new work keeps arriving.
+   *  Omitted → generic wording (legacy callers). */
+  kind?: 'cursor_stuck' | 'falling_behind';
+  /** Reconciler cursor lag in minutes (cursor_lag_minutes): how far
+   *  behind real time the newest enqueued candidate is. */
   minutes_idle: number;
   threshold_minutes: number;
   queue_size: number;
-  drainable_in_threats: number;
+  /** Threats-side candidate count from the daily recount — null when no
+   *  count is cached (lib/dns-drainable.ts). */
+  drainable_in_threats: number | null;
 }
 
 export interface PlatformDnsQueueReaperStalledVars {
@@ -537,11 +543,28 @@ export function renderPlatformDnsQueueDrift(v: PlatformDnsQueueDriftVars): Rende
 }
 
 export function renderPlatformDnsQueueStalled(v: PlatformDnsQueueStalledVars): RenderedTemplate {
+  const drainable = v.drainable_in_threats ?? 'n/a (counted daily)';
+  const counts = `queue=${v.queue_size}, drainable_in_threats=${drainable}.`;
+  const { title, message } =
+    v.kind === 'cursor_stuck'
+      ? {
+          title: `DNS queue reconciler cursor stuck (${v.minutes_idle} min behind)`,
+          message: `The reconciler read a full page that made no cursor progress and had to skip ahead; candidates in the skipped range may not be enqueued. Cursor lag ${v.minutes_idle} min. ${counts}`,
+        }
+      : v.kind === 'falling_behind'
+        ? {
+            title: `DNS queue reconciler falling behind: cursor ${v.minutes_idle} min behind`,
+            message: `New DNS candidates are arriving faster than the reconciler enqueues them — its cursor is ${v.minutes_idle} min behind real time (threshold ${v.threshold_minutes}). ${counts}`,
+          }
+        : {
+            title: `DNS queue reconciler stalled: cursor ${v.minutes_idle} min behind`,
+            message: `Reconciler cursor is ${v.minutes_idle} min behind real time (threshold ${v.threshold_minutes}). ${counts}`,
+          };
   return {
-    title: `DNS queue reconciler stalled: ${v.minutes_idle} min idle`,
-    message: `Reconciler hasn't enqueued or dequeued for ${v.minutes_idle} min (threshold ${v.threshold_minutes}). queue=${v.queue_size}, drainable=${v.drainable_in_threats}. Navigator cron may be skipping the reconcile step.`,
+    title,
+    message,
     reason_text: `Platform alert — operational only.`,
-    recommended_action: `Check Navigator cron health; inspect agent_outputs for reconciler errors; verify DNS_QUEUE_DB binding is wired in wrangler.toml.`,
+    recommended_action: `Check Navigator cron health and the latest agent_outputs 'dns-queue-reconcile' diagnostic (cursor_lag_minutes, scanned, enqueued, batches_failed); catch up with POST /api/internal/dns-queue/reconcile?pages=N; verify the DNS_QUEUE_DB binding.`,
     link: PLATFORM_AGENTS_LINK,
     group_key: `platform_dns_queue_stalled:${todayKey()}`,
     audience: 'super_admin',
