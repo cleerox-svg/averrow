@@ -55,8 +55,10 @@ export const STALE_TRENDS_SQL = `
   WHERE COALESCE(trend_7d, 0) != 0 OR COALESCE(trend_30d, 0) != 0
 `;
 
-/** Bind ceiling per zeroing UPDATE — under D1's 100-bound-parameter limit. */
-const ZERO_CHUNK = 90;
+/** Bind ceiling per IN-list statement (current-trend read + zeroing UPDATE)
+ *  — under D1's 100-bound-parameter limit. */
+export const PROVIDER_TRENDS_BIND_CHUNK = 90;
+const ZERO_CHUNK = PROVIDER_TRENDS_BIND_CHUNK;
 
 export async function updateProviderTrends(
   db: D1Database,
@@ -90,9 +92,9 @@ export async function updateProviderTrends(
   }
 
   // 2. Fetch current trend values in chunks (placeholder-limit safe).
-  // 100 placeholders per chunk is well inside D1's max-vars ceiling
-  // and keeps the read row-count comfortably small.
-  const READ_CHUNK = 100;
+  // D1 caps bound parameters at 100 per statement; 100 sat exactly on the
+  // ceiling, so read in the same 90-id chunks as the zeroing UPDATE.
+  const READ_CHUNK = PROVIDER_TRENDS_BIND_CHUNK;
   const current = new Map<string, { trend_7d: number; trend_30d: number }>();
   for (let i = 0; i < agg.results.length; i += READ_CHUNK) {
     const ids = agg.results.slice(i, i + READ_CHUNK).map(r => r.hosting_provider_id);
