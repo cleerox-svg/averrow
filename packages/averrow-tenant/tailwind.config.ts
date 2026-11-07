@@ -125,6 +125,16 @@ const config: Config = {
         display: ['var(--font-display)'],
         mono: ['var(--font-mono)'],
       },
+      // Facelift type scale (P3-3) — tokens in @averrow/shared theme/type.css.
+      fontSize: {
+        'type-display': ['var(--type-display-size)', { lineHeight: 'var(--type-display-lh)', fontWeight: 'var(--type-display-weight)', letterSpacing: 'var(--type-display-tracking)' }],
+        'type-h1': ['var(--type-h1-size)', { lineHeight: 'var(--type-h1-lh)', fontWeight: 'var(--type-h1-weight)', letterSpacing: 'var(--type-h1-tracking)' }],
+        'type-h2': ['var(--type-h2-size)', { lineHeight: 'var(--type-h2-lh)', fontWeight: 'var(--type-h2-weight)', letterSpacing: 'var(--type-h2-tracking)' }],
+        'type-body': ['var(--type-body-size)', { lineHeight: 'var(--type-body-lh)', fontWeight: 'var(--type-body-weight)', letterSpacing: 'var(--type-body-tracking)' }],
+        'type-small': ['var(--type-small-size)', { lineHeight: 'var(--type-small-lh)', fontWeight: 'var(--type-small-weight)', letterSpacing: 'var(--type-small-tracking)' }],
+        'type-label': ['var(--type-label-size)', { lineHeight: 'var(--type-label-lh)', fontWeight: 'var(--type-label-weight)', letterSpacing: 'var(--type-label-tracking)' }],
+        'type-mono': ['var(--type-mono-size)', { lineHeight: 'var(--type-mono-lh)', fontWeight: 'var(--type-mono-weight)', letterSpacing: 'var(--type-mono-tracking)' }],
+      },
     },
   },
   plugins: [],

@@ -9,6 +9,10 @@
    :root[data-accent], so this import changes nothing until an accent is set. */
 @import "./appearance.css";
 
+/* Type (Geist + Geist Mono, --type-* scale). Font families and base element
+   styles are scoped under :root[data-accent]; legacy loads no Geist bytes. */
+@import "./type.css";
+
 :root {
   /* Native controls (select, time picker, scrollbars) follow the theme. */
   color-scheme: dark;
