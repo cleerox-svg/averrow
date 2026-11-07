@@ -9,8 +9,12 @@
  * fragment you would see at that point.
  *
  * Disclosure (docs/DISCLOSURE_REGISTER.md, infrastructure clustering = T2):
- * we say threats are linked by "shared hosting, certificates and registration
- * patterns" and never name signals, thresholds, weights, cadences or feeds.
+ * we say domains are linked by "shared hosting and certificates" and never
+ * name signals, thresholds, weights, cadences or feeds. Only domains and IPs
+ * are correlated into an operation; social profiles and apps are shown as
+ * related findings reviewed alongside it, never as "linked to the operation".
+ * Social/app takedowns are drafted for review, not filed. Operation mapping
+ * is an Enterprise-plan feature (pricing.astro comparison table).
  * Step 1 makes no timing promise ("as soon as it appears in new-registration
  * data"); the day markers are labelled illustrative.
  *
@@ -74,16 +78,16 @@ const steps: Step[] = [
   {
     when: "Day 2",
     title: "It isn't alone",
-    text: "Eight more lookalikes turn up on the same hosting network, all presenting the same TLS certificate. Averrow links them by shared hosting, certificates and registration patterns, and groups the nine into one operation: OP-2291. One campaign instead of nine separate alerts.",
+    text: "Eight more lookalikes turn up on the same hosting network, all presenting the same TLS certificate. Averrow links them by shared hosting and certificate, and groups the nine into one operation: OP-2291. One campaign instead of nine separate alerts.",
     card: {
       kind: "Operation",
       pill: { tone: "crit", label: "Active" },
-      heading: "OP-2291 · Payroll-portal phishing kit",
+      heading: "OP-2291 · Acme payroll sign-in impersonation",
       rows: [
         ["Lookalike domains", "9"],
         ["Hosting networks", "1"],
         ["Shared certificate", "1"],
-        ["Linked by", "hosting, certificate, registration"],
+        ["Linked by", "hosting, certificate"],
       ],
     },
     graphLabel:
@@ -92,24 +96,24 @@ const steps: Step[] = [
   {
     when: "Day 3",
     title: "It spreads beyond domains",
-    text: "A second hosting network comes online with more domains. A fake HR-support profile, @acme_hr_support, and a copycat “Acme Pay” app turn up, and both are linked to the same operation.",
+    text: "A second hosting network comes online with more domains. A fake HR-support profile, @acme_hr_support, and a copycat “Acme Pay” app also turn up using Acme's name. Averrow surfaces them next to the operation so they are reviewed together.",
     card: {
-      kind: "Linked findings",
-      heading: "OP-2291 · 16 linked findings",
+      kind: "Operation and related findings",
+      heading: "OP-2291 · 11 domains, 2 related findings",
       rows: [
         ["Lookalike domains", "11 on 2 networks"],
-        ["Social profile", "@acme_hr_support"],
-        ["App listing", "“Acme Pay”"],
+        ["Related: social profile", "@acme_hr_support"],
+        ["Related: app listing", "“Acme Pay”"],
         ["Shared certificate", "1"],
       ],
     },
     graphLabel:
-      "Operation graph, step 4 of 5: eleven domains on two hosting networks, a fake social profile and a copycat app, all linked to OP-2291.",
+      "Operation graph, step 4 of 5: eleven domains on two hosting networks form OP-2291, with a fake social profile and a copycat app shown alongside as related findings.",
   },
   {
     when: "Day 4 to 9",
     title: "It comes down",
-    text: "Takedowns go to registrars, hosts and platforms, and three more domains join the operation along the way. By Day 9, 8 of the 14 domains are removed, 4 are pending and 2 are queued. Removed domains are re-checked to confirm they stay down.",
+    text: "Takedown requests go to registrars and hosts, and three more domains join the operation along the way. The social and app reports are drafted with evidence for review. By Day 9, 8 of the 14 domains are removed, 4 are pending and 2 are queued. Removed domains are re-checked to confirm they stay down.",
     card: {
       kind: "Takedowns",
       pill: { tone: "ok", label: "8 removed" },
@@ -117,8 +121,8 @@ const steps: Step[] = [
         ["Domains removed", "8 of 14"],
         ["Pending with registrar", "4"],
         ["Queued", "2"],
-        ["Social profile", "report filed · pending platform review"],
-        ["App listing", "evidence in review · queued"],
+        ["Social profile", "report drafted · in review"],
+        ["App listing", "report drafted · in review"],
       ],
       track: {
         removed: 57,
@@ -128,7 +132,7 @@ const steps: Step[] = [
       },
     },
     graphLabel:
-      "Operation graph, step 5 of 5: operation OP-2291 with 14 domains on 2 hosting networks, 1 shared certificate, a social profile and a copycat app. 8 domains are removed, 4 pending and 2 queued.",
+      "Operation graph, step 5 of 5: operation OP-2291 with 14 domains on 2 hosting networks, 1 shared certificate, with a social profile and a copycat app shown alongside. 8 domains are removed, 4 pending and 2 queued.",
   },
 ];
 
@@ -155,8 +159,8 @@ const social = { x: 395, y: 48 };
 const app = { x: 395, y: 108 };
 
 const side = [
-  { p: social, step: 4, tone: "blue", title: "Social profile", sub: "@acme_hr_support" },
-  { p: app, step: 4, tone: "blue", title: "Copycat app", sub: "“Acme Pay”" },
+  { p: social, step: 4, tone: "blue", title: "Related profile", sub: "@acme_hr_support" },
+  { p: app, step: 4, tone: "blue", title: "Related app", sub: "“Acme Pay”" },
   { p: cert, step: 2, tone: "amber", title: "TLS certificate", sub: "1 shared serial" },
   { p: hostA, step: 2, tone: "high", title: "Hosting network", sub: "AS64500" },
   { p: hostB, step: 4, tone: "high", title: "Hosting network", sub: "AS64501" },
@@ -170,7 +174,7 @@ const finalLabel = steps[steps.length - 1].graphLabel;
   <p class="opstory-lede">
     Most tools hand you a list of alerts. Averrow shows you which ones belong
     together, so you take down the whole operation instead of chasing it one
-    domain at a time.
+    domain at a time. Operation mapping is part of the Enterprise plan.
   </p>
 
   <div class="os-body" data-body>
@@ -214,8 +218,8 @@ const finalLabel = steps[steps.length - 1].graphLabel;
           <line class="e" x1={HUB.x} y1={HUB.y} x2={cert.x} y2={cert.y} data-step="3" />
           <line class="e" x1={HUB.x} y1={HUB.y} x2={hostA.x} y2={hostA.y} data-step="3" />
           <line class="e" x1={HUB.x} y1={HUB.y} x2={hostB.x} y2={hostB.y} data-step="4" />
-          <line class="e" x1={HUB.x} y1={HUB.y} x2={social.x} y2={social.y} data-step="4" />
-          <line class="e" x1={HUB.x} y1={HUB.y} x2={app.x} y2={app.y} data-step="4" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={social.x} y2={social.y} data-step="4" stroke-dasharray="3 3" />
+          <line class="e" x1={HUB.x} y1={HUB.y} x2={app.x} y2={app.y} data-step="4" stroke-dasharray="3 3" />
         </g>
 
         {domains.map(d => (

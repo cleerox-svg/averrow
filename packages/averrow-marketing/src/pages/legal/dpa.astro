@@ -98,8 +98,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
               <li><strong>Resend</strong> &mdash; transactional email delivery (sign-in links, invitations, report acknowledgements and notifications).</li>
               <li><strong>Stripe</strong> &mdash; payment processing and subscription billing.</li>
               <li><strong>Google</strong> &mdash; sign-in with Google, where a user chooses it.</li>
+              <li><strong>Anthropic, PBC</strong> (United States) &mdash; AI-assisted analysis and summarisation of threat activity. Data sent: brand and threat metadata (such as brand names, domains, and detected signals) and, where the Abuse Mailbox is set to use this provider, the sender, subject, links and a short excerpt of emails that customers forward to it. Requests are routed through Cloudflare. We send only what the analysis needs.</li>
             </ul>
-            <p>No third-party AI model provider currently receives customer data. If that changes, this list will be updated first.</p>
+            <p>Apart from Cloudflare (above), Anthropic is the only third-party AI model provider that receives customer data. We will update this list before adding another.</p>
           </div>
           <div class="dpa-summary-item">
             <h4><span class="dpa-dot" style="background:var(--green)"></span>Personal data we process</h4>

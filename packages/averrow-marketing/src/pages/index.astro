@@ -69,22 +69,23 @@ const toneVar: Record<Tone, string> = {
 ---
 
 <Layout
-  title="Averrow — Digital Risk Protection & Brand Protection"
-  description="Averrow finds lookalike domains, fake profiles, cloned apps and phishing kits aimed at your brand and executives, links them to the operation behind them, and files takedowns for lookalike domains and phishing URLs under your authorization. Free domain scan, no sign-up."
+  title="Averrow — Brand protection that traces the operation"
+  description="Brand protection that traces the operation. Averrow, a Digital Risk Protection (DRPS) platform, finds lookalike domains, fake profiles and cloned apps aimed at your brand and executives, and files takedowns for lookalike domains and phishing URLs under your authorization. Enterprise adds operation mapping. Free domain scan, no sign-up."
 >
   <div class="hero-wrap">
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <div class="hero-eyebrow">Brand protection · threat-actor intelligence</div>
-      <h1 class="hero-h1" id="hero-title">See <em>who</em> is attacking your brand, and shut them down.</h1>
+      <div class="hero-eyebrow">Digital risk protection · threat-actor intelligence</div>
+      <h1 class="hero-h1" id="hero-title">Brand protection that <em>traces the operation</em>.</h1>
       <p class="hero-lede">
-        Averrow finds lookalike domains, fake profiles, cloned apps and phishing
-        kits aimed at your brand and executives. It links them to the
-        infrastructure and operation behind them, then files takedowns for lookalike
-        domains and phishing URLs under your authorization.
+        Averrow finds lookalike domains, fake profiles and cloned apps aimed at
+        your brand and executives, then files takedowns for lookalike domains and
+        phishing URLs under your authorization. On the Enterprise plan, operation
+        mapping groups related lookalike domains into one campaign, so you act on
+        the operation instead of one alert at a time.
       </p>
       <p class="hero-lede hero-lede-short">
-        Find the fakes, trace the operation behind them, and file takedowns.
+        Find the fakes, file takedowns, and on Enterprise, trace the operation.
       </p>
 
       <form class="scan-box" id="scanForm" action={`${base}/assess`} method="POST">
@@ -115,13 +116,14 @@ const toneVar: Record<Tone, string> = {
         <span class="op-id">OPERATION · EXAMPLE</span>
         <span class="op-tag">Active</span>
       </div>
-      <div class="op-title" id="op-title">Payroll-portal phishing kit</div>
+      <div class="op-title" id="op-title">Acme payroll sign-in impersonation</div>
       <svg class="op-graph" viewBox="0 0 400 190" role="img" aria-labelledby="op-svg-title op-svg-desc">
         <title id="op-svg-title">Example operation graph</title>
         <desc id="op-svg-desc">
-          One operation linking 14 lookalike domains, 2 hosting networks, a shared
-          TLS certificate, a fake social profile, a cloned app and a weak email
-          authentication record. Illustrative example with names changed.
+          One operation grouping 14 lookalike domains, 2 hosting networks and a shared
+          TLS certificate, shown with a fake social profile, a cloned app and a weak
+          email authentication record found alongside it. Illustrative example with
+          names changed.
         </desc>
         <g stroke="var(--border-strong)" stroke-width="1.2" fill="none">
           {opNodes.map(n => <path d={`M200 95 L${n.x} ${n.y}`} />)}
@@ -132,7 +134,7 @@ const toneVar: Record<Tone, string> = {
         </g>
         <circle cx="200" cy="95" r="30" fill="var(--sev-critical-bg, rgba(239,68,68,0.10))" stroke="var(--red)" stroke-width="1.5" />
         <text x="200" y="92" text-anchor="middle" class="op-hub-id">OP-2291</text>
-        <text x="200" y="105" text-anchor="middle" class="op-hub-sub">19 linked</text>
+        <text x="200" y="105" text-anchor="middle" class="op-hub-sub">19 findings</text>
         {opNodes.map(n => {
           const right = n.x > 200;
           const tx = n.x + (right ? -12 : 12);
