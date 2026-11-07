@@ -13,12 +13,16 @@
      uses them); the base element styles that apply them are scoped under
      [data-accent].
 
-   Fonts: geist@1.9.2 (npm, vercel/geist-font, SIL OFL 1.1 — fonts/OFL.txt),
-   dist/fonts/geist-{sans,mono}/Geist{,Mono}-Variable.woff2, subset to the latin range below
-   with fontTools pyftsubset (--layout-features='*', --flavor=woff2). One
-   variable file per family covers wght 100–900, so no weight in use
-   (400–900) is synthesized. Re-subset with the same unicode list if the
-   range changes; keep the unicode-range descriptors in step.
+   Fonts: geist@1.9.2 (npm, vercel/geist-font, SIL OFL 1.1 — fonts/OFL.txt):
+   dist/fonts/geist-sans/Geist-Variable.woff2, Geist-Italic[wght].woff2 and
+   the geist-mono equivalents, subset to the latin range below with fontTools
+   pyftsubset --layout-features='*' --name-IDs='*' --name-legacy
+   --name-languages='*' --flavor=woff2 (name IDs kept, so the licence
+   entries 13/14 survive). One variable file per family and style covers
+   wght 100-900, so no weight in use (400-900) is synthesized, and italic is
+   a real italic, not a slanted upright. Re-subset with the same unicode
+   list if the range changes; keep the unicode-range descriptors in step (a
+   test checks every cmap codepoint is inside them).
    ============================================================ */
 
 @font-face {
@@ -31,10 +35,28 @@
 }
 
 @font-face {
+  font-family: 'Geist';
+  src: url('./fonts/geist-sans-latin-italic-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
   font-family: 'Geist Mono';
   src: url('./fonts/geist-mono-latin-var.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('./fonts/geist-mono-latin-italic-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
   font-display: swap;
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2199, U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -96,26 +118,28 @@
 }
 
 /* ── Base element styles (only with an accent set) ──
+   Size and line-height only. Weight and tracking stay inherited, as today
+   (preflight sets headings to `font-weight: inherit`), so existing heading
+   classes behave exactly as before; a heading that wants the G3 weight uses
+   text-type-h1 / text-type-h2. Line-heights are UNITLESS ratios of the G3
+   px values (21/14, 30/24, 24/18) so they scale with each descendant's own
+   font size instead of leaking a fixed px value into children; the px
+   --type-*-lh tokens stay for the text-type-* utilities.
    Tailwind preflight loads AFTER this file and resets `body { line-height:
-   inherit }` and `h1, h2 { font-size: inherit; font-weight: inherit }` at
-   (0,0,1). The body rule is (0,1,1), above preflight; body carries no
-   type utilities. The heading rules are `:where(...) body h1` = (0,0,2):
-   above preflight, but below any utility or component class (0,1,0), so
-   classed headings keep their own sizes. */
+   inherit }` and `h1, h2 { font-size: inherit }` at (0,0,1). The body rule
+   `:root[data-accent] body` is (0,2,1), above preflight; body carries no
+   type utilities. The heading rules `:where(:root[data-accent]) body h1`
+   are (0,0,2): above preflight, but below any utility or component class
+   (0,1,0), so classed headings keep their own sizes. */
 :root[data-accent] body {
   font-size: var(--type-body-size);
-  line-height: var(--type-body-lh);
-  font-weight: var(--type-body-weight);
+  line-height: 1.5;
 }
 :where(:root[data-accent]) body h1 {
   font-size: var(--type-h1-size);
-  line-height: var(--type-h1-lh);
-  font-weight: var(--type-h1-weight);
-  letter-spacing: var(--type-h1-tracking);
+  line-height: 1.25;
 }
 :where(:root[data-accent]) body h2 {
   font-size: var(--type-h2-size);
-  line-height: var(--type-h2-lh);
-  font-weight: var(--type-h2-weight);
-  letter-spacing: var(--type-h2-tracking);
+  line-height: 1.3333;
 }
