@@ -78,3 +78,15 @@ Each palette must ship with tokens for both themes and a severity-collision chec
 3. **Red as brand:** keep red in the logo, or reserve red strictly for "critical"? (keep / reserve)
 4. **Tone dial:** closer to **calm authority** (Stripe/Linear) or **sharper edge** (security-native)? (calm / sharp)
 5. **Scope of facelift:** marketing site and logo only, or **marketing + ops + tenant** apps? (marketing / all)
+
+## 8. Owner decisions (2026-11-07)
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Mark DNA | **Mix:** one direction evolves the current upward-A mark (flat, 16px- and email-safe); two directions start fresh. |
+| 2 | Primary accent | **Replace amber.** Every palette option proposes a new primary; amber becomes a status/severity colour only. |
+| 3 | Red in the brand | **Show both:** each logo direction is shown in a red and a non-red version, side by side. |
+| 4 | Tone | **Sharper edge:** higher contrast, more kinetic motion, a sense of live threat activity, while staying precise (no clichés from section 3). |
+| 5 | Scope | **Everything:** marketing site, ops and tenant apps. The login screen follows the platform in full; FarmTrack parity is deferred. |
+
+`WEBSITE_REBRAND_BRIEF_2026-11.md` (written in a separate marketing session) is reference input only; this brief and the gate decisions above are authoritative.
