@@ -1,5 +1,13 @@
 # Shared Login & Account Spec — Averrow ↔ FarmTrack
 
+> **2026-11-07 — FarmTrack parity suspended (owner decision).** The Averrow
+> login takes the full 2026-11 facelift (logo R3, indigo/graphite palette,
+> Geist, motion; see `docs/brand/BRAND_BRIEF.md` §8–§10 and the "Appearance &
+> theme model" section of `AVERROW_UI_STANDARD.md`). Structural parity with
+> FarmTrack is deferred for the facelift: FarmTrack will be brought along
+> later. Until then the "identical to FarmTrack" and per-product-delta rules
+> below describe the pre-facelift state and are not enforced on Averrow.
+
 **Purpose:** two things, with different rules.
 
 1. **Login, PWA install prompts, biometric prompt, token model (§1, §3-§5, §8):**
@@ -146,6 +154,11 @@ same tokens) to stay identical to Averrow** — this replaces the previous
 `IBM Plex Mono` / system-ui defaults.
 
 ### Per-product deltas (allowed)
+
+> 2026-11 facelift: this list is the pre-facelift contract. Averrow's login
+> now also differs from FarmTrack in logo (R3), palette, type (Geist) and
+> motion, by owner decision; FarmTrack parity is deferred (see the note at the
+> top of this doc).
 
 - **Brand tile letters:** Averrow uses `AV`, FarmTrack uses `FT`. Used only as
   the fallback glyph when `brandMark` is not supplied.

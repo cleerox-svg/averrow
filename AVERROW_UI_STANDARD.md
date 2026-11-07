@@ -997,6 +997,37 @@ NEVER use:          text-white/20 or below on readable content
 
 ---
 
+## Appearance & theme model (facelift 2026-11)
+
+**Status: lands in Phase 3; NOT yet the default.** Decisions: `docs/brand/BRAND_BRIEF.md` §8–§10. Palettes: `docs/brand/palettes/` (`indigo.css`, `violet.css`, `mono.css`, `lime.css`). Logo: `docs/brand/logo/`.
+
+**Attributes on `<html>`**
+
+| Attribute | Values | localStorage key |
+|---|---|---|
+| `data-theme` | `dark` \| `light` (resolved) | `averrow-theme` stores `auto` \| `dark` \| `light`; `auto` is shown as "System" |
+| `data-accent` | `indigo` \| `violet` \| `mono` \| `lime` | `averrow-accent` |
+| `data-base` | `graphite` \| `navy` (dark mode only) | `averrow-base` |
+
+No `data-accent` attribute = today's legacy look, until the flip PR (P3-6) makes indigo + graphite the default.
+
+**Token layers**
+- L0 neutrals: base x mode.
+- L1 accent: accent x mode.
+- L2 semantic tokens, which components should use: `--primary`, `--primary-hover`, `--primary-ink`, `--primary-text`, `--focus-ring`, `--status-warn` (= `--sev-medium`), `--healthy`, `--tag-nexus`.
+- `--amber` becomes a status colour only; never a primary/CTA colour in new code.
+- Lime remaps `--healthy` to emerald; Violet remaps `--tag-nexus`.
+
+**Surfaces:** ops and tenant get Settings → Appearance (mode, accent, background). Marketing has dark/light only and is always indigo/graphite.
+
+**Type:** Geist + Geist Mono, self-hosted. Sentence-case sans labels at 12px or larger; mono only for facts (IDs, domains, ASNs, timestamps, counts); tabular numerals; `calt`/`liga` off in mono.
+
+**Motion:** M1 tokens 120 / 160 / 200 ms on ease-standard; the four Kinetic moves (critical-alert edge scan-line, gliding nav indicator, tab underline morph, ~24 px page slide); every animation has a reduced-motion version; 500 ms is retired from product UI.
+
+**Logo:** R3 mark; tile `#121B31`, radius 7/32, no rim; the sidebar lockup omits the tagline (it stays on login and marketing).
+
+---
+
 ## HOW TO APPLY THIS IN CLAUDE CODE SESSIONS
 
 Every future UI session starts with:

@@ -247,6 +247,15 @@ were deleted as unused in UI consolidation Phase 1 PR3, 2026-10.)
 --orbital-teal: #00d4ff
 ```
 
+### Facelift (2026-11) — token model is changing
+The theme/token model is being rebuilt in Phase 3 (indigo/graphite default,
+accent and background options, `--amber` demoted to a status colour). It is
+not the default yet. In new code use the L2 semantic tokens (`--primary`,
+`--primary-hover`, `--primary-ink`, `--primary-text`, `--focus-ring`) rather
+than `--amber` for primary actions. Contract: `AVERROW_UI_STANDARD.md`
+"Appearance & theme model (facelift 2026-11)". The table above is rewritten at
+the flip PR (P3-6).
+
 ### Light Theme
 `[data-theme="light"]` overrides all `--bg-*` and `--text-*` vars.
 Accent colors and severity colors stay the same in light mode.
@@ -315,8 +324,11 @@ SELF_AVATAR_COLOR                           // var(--amber)
 ### Login + Account composition
 
 **Login** — don't redesign it without checking `docs/SHARED_LOGIN_SPEC.md`
-first. It must stay structurally identical to FarmTrack. Per-product deltas
-are limited to:
+first. It is meant to stay structurally identical to FarmTrack, but that
+parity is **suspended for the 2026-11 facelift by owner decision** (Averrow's
+login takes the full facelift: logo R3, indigo/graphite, Geist, motion;
+FarmTrack will be brought along later). Pre-facelift per-product deltas were
+limited to:
 - Brand tile letters (`AV` here, `FT` on FarmTrack)
 - Tagline (`AI-FIRST THREAT INTELLIGENCE` here, `AN AVERROW PRODUCT` on FarmTrack)
 - Footer pillars (`DETECT · ANALYZE · CORRELATE · RESPOND` here)
